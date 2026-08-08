@@ -238,7 +238,10 @@ void registerExtensions(mole::PluginRegistry& registry) override
 {
     mole::MenuAction action;
     action.id = QStringLiteral("org.example.duplicates.scan");  // namespaced
-    action.section = mole::MenuAction::Section::Tools;
+    // Workflows opens a tool in a tab of its own; Operations does something to
+    // the files in front of you and leaves you where you were. One question
+    // decides it, and ADR-0003 works through the cases that sound like both.
+    action.section = mole::MenuAction::Section::Workflows;
     action.title = QStringLiteral("Find duplicates here");
     action.iconText = QStringLiteral("⧉");
     action.sortOrder = 50;               // built-ins leave gaps; 500 is the default

@@ -129,7 +129,7 @@ public:
         for (const QString& id : m_config.menuActionIds) {
             MenuAction action;
             action.id = id;
-            action.section = MenuAction::Section::Tools;
+            action.section = MenuAction::Section::Workflows;
             action.title = id;
             action.trigger = [] {};
             registry.addMenuAction(std::move(action));

@@ -19,26 +19,18 @@ screenshots come from `make screenshots`, which photographs states the tests hav
 just asserted — so the documentation cannot drift into showing something that no
 longer works.
 
-### Sort the F4 menu by what an entry actually does
+### F3 on a folder should open it
 
-The menu behind `F4` has everything in one heap. The Tools section holds two
-different kinds of thing at once: entries that open a workflow — sync, duplicate
-finding, bulk rename, saved reports, alerts, scheduled jobs, drives — and entries
-that do something to whatever is under the cursor right now, such as previewing
-this file, analysing this folder, indexing it or adding it to a set. Read as a
-list they are indistinguishable, so finding anything means reading all of it.
+`F3` previews the file under the cursor, and a folder has nothing to preview, so
+pressing it there does nothing at all -- which is indistinguishable from a key that
+is broken. When the cursor is on a folder, `F3` should simply open it: the same
+thing `Enter` does.
 
-The two need separating and naming: building sets, bulk changes and the other
-workflows on one side, and the concrete operations on the selected files and
-folders on the other. Choosing the names is part of the work, because the present
-headings do not carry the distinction.
-
-This changes an extension point rather than only the shell. Sections come from
-`MenuAction::Section` in [src/sdk/MenuAction.h](src/sdk/MenuAction.h), which
-every plugin picks from, and that enum is deliberately small — a menu with eleven
-top-level headings is a search problem, not navigation. So the split needs an ADR
-before the code: what the sections are, what belongs in each, and what a plugin
-that guesses wrong should do.
+Cheap to build and cheap to get subtly wrong, so the test says which of the two
+paths ran: `F3` on a file opens a preview tab and does not navigate, `F3` on a
+folder navigates and opens no tab. `previewArrowsStepThroughTheFolder` and
+`f3OpensAPreviewAndReusesTheTab` are next door to it in
+`tst_KeyboardNavigation` and are the shape to follow.
 
 ### How big is this folder, answered in the listing
 

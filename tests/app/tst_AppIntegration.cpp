@@ -516,13 +516,42 @@ QVariantMap menuEntry(const QVariantList& menu, const QString& id)
 
 void TestAppIntegration::menuHasTheClassicSections()
 {
+    const QVariantList menu = m_app->buildMenu();
     QStringList titles;
-    for (const QVariant& section : m_app->buildMenu())
+    for (const QVariant& section : menu)
         titles.append(section.toMap().value(QStringLiteral("title")).toString());
 
     QCOMPARE(titles,
-        QStringList({ QStringLiteral("File"), QStringLiteral("View"), QStringLiteral("Bookmarks"),
-            QStringLiteral("Tools"), QStringLiteral("Help") }));
+        QStringList({ QStringLiteral("File"), QStringLiteral("View"), QStringLiteral("Operations"),
+            QStringLiteral("Workflows"), QStringLiteral("Bookmarks"), QStringLiteral("Help") }));
+
+    // And the split holds for the real entries, not only for a registry fed by a
+    // test. Doing something to the files in front of you on one side, being handed
+    // a tool to work in on the other -- ADR-0003 has the rule and the cases that
+    // sound like both.
+    const auto sectionOf = [&menu](const QString& id) {
+        for (const QVariant& sectionEntry : menu) {
+            const QVariantMap section = sectionEntry.toMap();
+            for (const QVariant& action : section.value(QStringLiteral("actions")).toList()) {
+                if (action.toMap().value(QStringLiteral("id")).toString() == id)
+                    return section.value(QStringLiteral("title")).toString();
+            }
+        }
+        return QString();
+    };
+
+    QCOMPARE(sectionOf(QStringLiteral("mole.tools.preview")), QStringLiteral("Operations"));
+    QCOMPARE(sectionOf(QStringLiteral("mole.tools.indexFolder")), QStringLiteral("Operations"));
+    QCOMPARE(sectionOf(QStringLiteral("mole.tools.addToSet")), QStringLiteral("Operations"));
+    QCOMPARE(sectionOf(QStringLiteral("mole.tools.terminal")), QStringLiteral("Operations"));
+
+    QCOMPARE(sectionOf(QStringLiteral("mole.tools.bulkRename")), QStringLiteral("Workflows"));
+    QCOMPARE(sectionOf(QStringLiteral("mole.tools.duplicates")), QStringLiteral("Workflows"));
+    QCOMPARE(sectionOf(QStringLiteral("mole.tools.analyse")), QStringLiteral("Workflows"));
+    QCOMPARE(sectionOf(QStringLiteral("mole.tools.sync")), QStringLiteral("Workflows"));
+    QCOMPARE(sectionOf(QStringLiteral("mole.tools.reports")), QStringLiteral("Workflows"));
+    QCOMPARE(sectionOf(QStringLiteral("mole.tools.alerts")), QStringLiteral("Workflows"));
+    QCOMPARE(sectionOf(QStringLiteral("mole.tools.automation")), QStringLiteral("Workflows"));
 }
 
 void TestAppIntegration::menuOffersOneNewTabEntryPerFeature()
@@ -581,8 +610,8 @@ void TestAppIntegration::viewMenuOffersThreeExclusiveLayouts()
     const auto tickedLayout = [this]() -> QString {
         const QVariantList menu = m_app->buildMenu();
         QStringList ticked;
-        for (const QString& id : { QStringLiteral("mole.view.singlePane"), QStringLiteral("mole.view.dualPane"),
-                 QStringLiteral("mole.view.gridView") }) {
+        for (const QString& id : { QStringLiteral("mole.view.singlePane"),
+                 QStringLiteral("mole.view.dualPane"), QStringLiteral("mole.view.gridView") }) {
             if (menuEntry(menu, id).value(QStringLiteral("checked")).toBool())
                 ticked.append(id);
         }

@@ -50,6 +50,7 @@ private slots:
     void triggerIgnoresUnknownIds();
     void disabledActionCannotBeTriggered();
     void sectionsComeOutInAFixedOrder();
+    void operationsAndWorkflowsAreSeparateSections();
     void emptySectionsAreDropped();
     void actionsAreSortedWithinTheirSection();
     void checkableStateIsEvaluatedEachTime();
@@ -62,10 +63,10 @@ void TestActionRegistry::rejectsIncompleteActions()
 {
     ActionRegistry registry;
 
-    MenuAction noId = makeAction(QString(), MenuAction::Section::Tools, QStringLiteral("x"));
+    MenuAction noId = makeAction(QString(), MenuAction::Section::Workflows, QStringLiteral("x"));
     QVERIFY(!registry.addAction(noId));
 
-    MenuAction noTitle = makeAction(QStringLiteral("a"), MenuAction::Section::Tools, QString());
+    MenuAction noTitle = makeAction(QStringLiteral("a"), MenuAction::Section::Workflows, QString());
     QVERIFY(!registry.addAction(noTitle));
 
     // An entry with no handler would be a dead menu row.
@@ -81,11 +82,11 @@ void TestActionRegistry::rejectsDuplicateIds()
 {
     ActionRegistry registry;
     QVERIFY(registry.addAction(
-        makeAction(QStringLiteral("same"), MenuAction::Section::Tools, QStringLiteral("First"))));
+        makeAction(QStringLiteral("same"), MenuAction::Section::Workflows, QStringLiteral("First"))));
     QVERIFY(!registry.addAction(
-        makeAction(QStringLiteral("same"), MenuAction::Section::Tools, QStringLiteral("Second"))));
+        makeAction(QStringLiteral("same"), MenuAction::Section::Workflows, QStringLiteral("Second"))));
 
-    QCOMPARE(titlesOf(actionsOf(registry.buildModel(), QStringLiteral("Tools"))),
+    QCOMPARE(titlesOf(actionsOf(registry.buildModel(), QStringLiteral("Workflows"))),
         QStringList({ QStringLiteral("First") }));
 }
 
@@ -94,7 +95,8 @@ void TestActionRegistry::triggerRunsTheHandler()
     ActionRegistry registry;
     int calls = 0;
 
-    MenuAction action = makeAction(QStringLiteral("run"), MenuAction::Section::Tools, QStringLiteral("Run"));
+    MenuAction action
+        = makeAction(QStringLiteral("run"), MenuAction::Section::Workflows, QStringLiteral("Run"));
     action.trigger = [&calls] { ++calls; };
     QVERIFY(registry.addAction(std::move(action)));
 
@@ -116,7 +118,7 @@ void TestActionRegistry::disabledActionCannotBeTriggered()
     bool allowed = false;
 
     MenuAction action
-        = makeAction(QStringLiteral("guarded"), MenuAction::Section::Tools, QStringLiteral("Guarded"));
+        = makeAction(QStringLiteral("guarded"), MenuAction::Section::Workflows, QStringLiteral("Guarded"));
     action.trigger = [&calls] { ++calls; };
     action.enabled = [&allowed] { return allowed; };
     registry.addAction(std::move(action));
@@ -136,7 +138,7 @@ void TestActionRegistry::sectionsComeOutInAFixedOrder()
     ActionRegistry registry;
     // Registered back to front on purpose.
     registry.addAction(makeAction(QStringLiteral("h"), MenuAction::Section::Help, QStringLiteral("H")));
-    registry.addAction(makeAction(QStringLiteral("t"), MenuAction::Section::Tools, QStringLiteral("T")));
+    registry.addAction(makeAction(QStringLiteral("t"), MenuAction::Section::Workflows, QStringLiteral("T")));
     registry.addAction(makeAction(QStringLiteral("v"), MenuAction::Section::View, QStringLiteral("V")));
     registry.addAction(makeAction(QStringLiteral("f"), MenuAction::Section::File, QStringLiteral("F")));
 
@@ -147,18 +149,46 @@ void TestActionRegistry::sectionsComeOutInAFixedOrder()
     // Registration order must never reorder the menu, or a newly installed
     // plugin would shuffle the user's muscle memory.
     QCOMPARE(sections,
-        QStringList({ QStringLiteral("File"), QStringLiteral("View"), QStringLiteral("Tools"),
+        QStringList({ QStringLiteral("File"), QStringLiteral("View"), QStringLiteral("Workflows"),
             QStringLiteral("Help") }));
+}
+
+void TestActionRegistry::operationsAndWorkflowsAreSeparateSections()
+{
+    ActionRegistry registry;
+    // What used to be one bucket. Doing something to the files in front of you
+    // and being handed a tool to work in are different questions, and the menu
+    // has to ask them separately -- see ADR-0003.
+    registry.addAction(
+        makeAction(QStringLiteral("index"), MenuAction::Section::Operations, QStringLiteral("Index this")));
+    registry.addAction(
+        makeAction(QStringLiteral("rename"), MenuAction::Section::Workflows, QStringLiteral("Bulk rename")));
+
+    const QVariantList model = registry.buildModel();
+    QStringList sections;
+    for (const QVariant& entry : model)
+        sections.append(entry.toMap().value(QStringLiteral("title")).toString());
+
+    // Operations first: the shorter and more frequently wanted list should not
+    // have to be read past to reach the other one.
+    QCOMPARE(sections, QStringList({ QStringLiteral("Operations"), QStringLiteral("Workflows") }));
+
+    QCOMPARE(actionsOf(model, QStringLiteral("Operations")).size(), 1);
+    QCOMPARE(actionsOf(model, QStringLiteral("Operations")).first().toMap().value(QStringLiteral("id")),
+        QStringLiteral("index"));
+    QCOMPARE(actionsOf(model, QStringLiteral("Workflows")).size(), 1);
+    QCOMPARE(actionsOf(model, QStringLiteral("Workflows")).first().toMap().value(QStringLiteral("id")),
+        QStringLiteral("rename"));
 }
 
 void TestActionRegistry::emptySectionsAreDropped()
 {
     ActionRegistry registry;
-    registry.addAction(makeAction(QStringLiteral("t"), MenuAction::Section::Tools, QStringLiteral("T")));
+    registry.addAction(makeAction(QStringLiteral("t"), MenuAction::Section::Workflows, QStringLiteral("T")));
 
     const QVariantList model = registry.buildModel();
     QCOMPARE(model.size(), 1);
-    QCOMPARE(model.first().toMap().value(QStringLiteral("title")).toString(), QStringLiteral("Tools"));
+    QCOMPARE(model.first().toMap().value(QStringLiteral("title")).toString(), QStringLiteral("Workflows"));
 }
 
 void TestActionRegistry::actionsAreSortedWithinTheirSection()
@@ -202,20 +232,20 @@ void TestActionRegistry::enabledStateIsEvaluatedEachTime()
     bool available = false;
 
     MenuAction guarded
-        = makeAction(QStringLiteral("guarded"), MenuAction::Section::Tools, QStringLiteral("Guarded"));
+        = makeAction(QStringLiteral("guarded"), MenuAction::Section::Workflows, QStringLiteral("Guarded"));
     guarded.enabled = [&available] { return available; };
     registry.addAction(std::move(guarded));
 
     // No predicate at all means always enabled.
     registry.addAction(
-        makeAction(QStringLiteral("plain"), MenuAction::Section::Tools, QStringLiteral("Plain"), 200));
+        makeAction(QStringLiteral("plain"), MenuAction::Section::Workflows, QStringLiteral("Plain"), 200));
 
-    QVariantList entries = actionsOf(registry.buildModel(), QStringLiteral("Tools"));
+    QVariantList entries = actionsOf(registry.buildModel(), QStringLiteral("Workflows"));
     QVERIFY(!entries.at(0).toMap().value(QStringLiteral("enabled")).toBool());
     QVERIFY(entries.at(1).toMap().value(QStringLiteral("enabled")).toBool());
 
     available = true;
-    entries = actionsOf(registry.buildModel(), QStringLiteral("Tools"));
+    entries = actionsOf(registry.buildModel(), QStringLiteral("Workflows"));
     QVERIFY(entries.at(0).toMap().value(QStringLiteral("enabled")).toBool());
 }
 
@@ -243,15 +273,15 @@ void TestActionRegistry::pluginsCanSlotBetweenBuiltIns()
 {
     ActionRegistry registry;
     // Built-ins leave gaps in the ordering precisely so this works.
-    registry.addAction(makeAction(QStringLiteral("mole.tools.index"), MenuAction::Section::Tools,
+    registry.addAction(makeAction(QStringLiteral("mole.tools.index"), MenuAction::Section::Workflows,
         QStringLiteral("Index this folder"), 10));
-    registry.addAction(makeAction(
-        QStringLiteral("mole.tools.late"), MenuAction::Section::Tools, QStringLiteral("Something else"), 100));
+    registry.addAction(makeAction(QStringLiteral("mole.tools.late"), MenuAction::Section::Workflows,
+        QStringLiteral("Something else"), 100));
 
-    registry.addAction(makeAction(QStringLiteral("org.example.dupes"), MenuAction::Section::Tools,
+    registry.addAction(makeAction(QStringLiteral("org.example.dupes"), MenuAction::Section::Workflows,
         QStringLiteral("Find duplicates"), 50));
 
-    QCOMPARE(titlesOf(actionsOf(registry.buildModel(), QStringLiteral("Tools"))),
+    QCOMPARE(titlesOf(actionsOf(registry.buildModel(), QStringLiteral("Workflows"))),
         QStringList({ QStringLiteral("Index this folder"), QStringLiteral("Find duplicates"),
             QStringLiteral("Something else") }));
 }

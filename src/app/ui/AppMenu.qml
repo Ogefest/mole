@@ -164,11 +164,13 @@ Menu {
         }
     }
 
-    // The four sections the API enum fixes, plus Help. Order is the order they
-    // appear in.
+    // The sections the API enum fixes, in the order they appear. Empty ones are
+    // skipped when the model is built, so a heading never appears with nothing
+    // under it.
     SectionMenu { section: "File" }
     SectionMenu { section: "View" }
+    SectionMenu { section: "Operations" }
+    SectionMenu { section: "Workflows" }
     SectionMenu { section: "Bookmarks" }
-    SectionMenu { section: "Tools" }
     SectionMenu { section: "Help" }
 }

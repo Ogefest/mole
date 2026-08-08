@@ -902,10 +902,10 @@ void AppController::registerShellActions()
     {
         MenuAction action;
         action.id = QStringLiteral("mole.tools.preview");
-        action.section = MenuAction::Section::Tools;
+        action.section = MenuAction::Section::Operations;
         action.title = QStringLiteral("Preview this file");
         action.shortcut = QStringLiteral("F3");
-        action.sortOrder = 5;
+        action.sortOrder = 10;
         action.enabled = [this] { return !currentFile().isEmpty(); };
         action.trigger = [this] { previewFile(currentFile()); };
         m_actions->addAction(std::move(action));
@@ -913,10 +913,10 @@ void AppController::registerShellActions()
     {
         MenuAction action;
         action.id = QStringLiteral("mole.tools.analyse");
-        action.section = MenuAction::Section::Tools;
+        action.section = MenuAction::Section::Workflows;
         action.title = QStringLiteral("Analyse folder");
         action.shortcut = QStringLiteral("Ctrl+Shift+A");
-        action.sortOrder = 8;
+        action.sortOrder = 10;
         action.enabled = [this] { return !currentLocation().isEmpty(); };
         action.trigger = [this] { analyseSelection(); };
         m_actions->addAction(std::move(action));
@@ -934,10 +934,10 @@ void AppController::registerShellActions()
     {
         MenuAction action;
         action.id = QStringLiteral("mole.tools.terminal");
-        action.section = MenuAction::Section::Tools;
+        action.section = MenuAction::Section::Operations;
         action.title = QStringLiteral("Terminal here");
         action.shortcut = QStringLiteral("Ctrl+`");
-        action.sortOrder = 2;
+        action.sortOrder = 20;
         action.enabled = [this] { return m_terminal && m_terminal->isAvailable(); };
         action.trigger = [this] {
             if (!m_terminal)
@@ -957,9 +957,9 @@ void AppController::registerShellActions()
     {
         MenuAction action;
         action.id = QStringLiteral("mole.tools.sync");
-        action.section = MenuAction::Section::Tools;
+        action.section = MenuAction::Section::Workflows;
         action.title = QStringLiteral("Sync folders");
-        action.sortOrder = 4;
+        action.sortOrder = 40;
         action.enabled = [this] { return !currentLocation().isEmpty(); };
         action.trigger = [this] {
             // Read before opening, or the new tab is asked to seed itself from
@@ -980,9 +980,9 @@ void AppController::registerShellActions()
     {
         MenuAction action;
         action.id = QStringLiteral("mole.tools.duplicates");
-        action.section = MenuAction::Section::Tools;
+        action.section = MenuAction::Section::Workflows;
         action.title = QStringLiteral("Find duplicates");
-        action.sortOrder = 5;
+        action.sortOrder = 20;
         action.enabled = [this] { return !currentLocation().isEmpty(); };
         action.trigger = [this] {
             // Read before opening: afterwards the current tab is the new one,
@@ -1005,10 +1005,10 @@ void AppController::registerShellActions()
     {
         MenuAction action;
         action.id = QStringLiteral("mole.tools.bulkRename");
-        action.section = MenuAction::Section::Tools;
+        action.section = MenuAction::Section::Workflows;
         action.title = QStringLiteral("Bulk rename");
         action.shortcut = QStringLiteral("Ctrl+Shift+R");
-        action.sortOrder = 6;
+        action.sortOrder = 30;
         action.enabled = [this] { return !currentTargets().isEmpty(); };
         action.trigger = [this] { openFeatureTab(QStringLiteral("core.bulkrename")); };
         m_actions->addAction(std::move(action));
@@ -1016,10 +1016,10 @@ void AppController::registerShellActions()
     {
         MenuAction action;
         action.id = QStringLiteral("mole.tools.addToSet");
-        action.section = MenuAction::Section::Tools;
+        action.section = MenuAction::Section::Operations;
         action.title = QStringLiteral("Add to set");
         action.shortcut = QStringLiteral("Ctrl+Shift+S");
-        action.sortOrder = 7;
+        action.sortOrder = 30;
         action.enabled = [this] { return !currentTargets().isEmpty(); };
         action.trigger = [this] {
             // Into the most recent set, or a new one when there is none. The
@@ -1037,9 +1037,9 @@ void AppController::registerShellActions()
     {
         MenuAction action;
         action.id = QStringLiteral("mole.tools.reports");
-        action.section = MenuAction::Section::Tools;
+        action.section = MenuAction::Section::Workflows;
         action.title = QStringLiteral("Saved reports");
-        action.sortOrder = 8;
+        action.sortOrder = 50;
         action.enabled = [] { return true; };
         action.trigger = [this] { openFeatureTab(QStringLiteral("core.reports")); };
         m_actions->addAction(std::move(action));
@@ -1047,10 +1047,10 @@ void AppController::registerShellActions()
     {
         MenuAction action;
         action.id = QStringLiteral("mole.tools.alerts");
-        action.section = MenuAction::Section::Tools;
+        action.section = MenuAction::Section::Workflows;
         action.title = QStringLiteral("Alerts");
         action.shortcut = QStringLiteral("Ctrl+Shift+L");
-        action.sortOrder = 9;
+        action.sortOrder = 60;
         action.enabled = [] { return true; };
         action.trigger = [this] { openFeatureTab(QStringLiteral("core.alerts")); };
         m_actions->addAction(std::move(action));
@@ -1058,10 +1058,10 @@ void AppController::registerShellActions()
     {
         MenuAction action;
         action.id = QStringLiteral("mole.tools.automation");
-        action.section = MenuAction::Section::Tools;
+        action.section = MenuAction::Section::Workflows;
         action.title = QStringLiteral("Scheduled jobs");
         action.shortcut = QStringLiteral("Ctrl+Shift+J");
-        action.sortOrder = 9;
+        action.sortOrder = 70;
         // Always available: the reason to open it is usually that something is
         // failing, which is exactly when nothing else points you at it.
         action.enabled = [] { return true; };
@@ -1071,10 +1071,10 @@ void AppController::registerShellActions()
     {
         MenuAction action;
         action.id = QStringLiteral("mole.tools.indexFolder");
-        action.section = MenuAction::Section::Tools;
+        action.section = MenuAction::Section::Operations;
         action.title = QStringLiteral("Index this folder");
         action.iconText = QStringLiteral("\u26C1");
-        action.sortOrder = 10;
+        action.sortOrder = 40;
         action.enabled = [this] { return currentTabProperty("activePane").value<QObject*>() != nullptr; };
         action.trigger = [this] {
             QObject* pane = currentTabProperty("activePane").value<QObject*>();
@@ -1139,7 +1139,8 @@ void AppController::previewFile(const QString& uri)
     // One preview tab, reused. Pressing F3 on twenty files should not leave
     // twenty tabs behind.
     for (int row = 0; row < m_tabs->rowCount(); ++row) {
-        if (m_tabs->index(row, 0).data(TabsModel::FeatureIdRole).toString() != QLatin1String("mole.preview")) {
+        if (m_tabs->index(row, 0).data(TabsModel::FeatureIdRole).toString()
+            != QLatin1String("mole.preview")) {
             continue;
         }
         if (QObject* controller = m_tabs->controllerAt(row)) {

@@ -23,8 +23,10 @@ QString ActionRegistry::sectionTitle(MenuAction::Section section)
         return QStringLiteral("View");
     case MenuAction::Section::Bookmarks:
         return QStringLiteral("Bookmarks");
-    case MenuAction::Section::Tools:
-        return QStringLiteral("Tools");
+    case MenuAction::Section::Operations:
+        return QStringLiteral("Operations");
+    case MenuAction::Section::Workflows:
+        return QStringLiteral("Workflows");
     case MenuAction::Section::Help:
         return QStringLiteral("Help");
     }
@@ -85,8 +87,11 @@ bool ActionRegistry::trigger(const QString& id)
 
 QVariantList ActionRegistry::buildModel() const
 {
-    const std::array<MenuAction::Section, 5> order { MenuAction::Section::File, MenuAction::Section::View,
-        MenuAction::Section::Bookmarks, MenuAction::Section::Tools, MenuAction::Section::Help };
+    // The order the headings appear in. Operations before Workflows because the
+    // shorter, more frequent list should not be read past to reach the other.
+    const std::array<MenuAction::Section, 6> order { MenuAction::Section::File, MenuAction::Section::View,
+        MenuAction::Section::Operations, MenuAction::Section::Workflows, MenuAction::Section::Bookmarks,
+        MenuAction::Section::Help };
 
     QVariantList sections;
     for (MenuAction::Section section : order) {

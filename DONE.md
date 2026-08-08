@@ -9,6 +9,43 @@ wrong.
 
 ---
 
+## The menu had one heap called Tools
+
+Eleven entries under one heading, of two entirely different kinds. *Preview this
+file*, *Terminal here*, *Add to set* and *Index this folder* do something to the
+files in front of you and hand you back to the listing. *Analyse folder*, *Find
+duplicates*, *Bulk rename*, *Sync folders*, *Saved reports*, *Alerts* and
+*Scheduled jobs* open a tab that is a tool you then work in. Read as one list they
+are indistinguishable, so finding anything meant reading all of it.
+
+`Tools` is now `Operations` and `Workflows`, and the deciding question is written
+down: does the entry do something to the files in front of you, or hand you a tool
+to work with? The tie-break for the ones that sound like both — if it needs a tab of
+its own to be useful at all, it is a workflow. *Bulk rename* is a workflow even
+though it acts on a selection, because what it opens is a tool with rules and a
+preview. *Add to set* is an operation even though the sets view is a workflow,
+because adding the selection to a set is one act, finished when it is done.
+
+This is an extension point, not decoration: `Section` is what a plugin picks, so
+leaving it as one bucket guaranteed plugins would keep filling the same bucket. The
+names, the rule and the alternatives that lost are in
+[ADR-0003](docs/adr/0003-menu-sections.md) — including why not `Tasks` (the
+application already shows running tasks in a strip and the word would mean two
+things), why not `Selection` (*Terminal here* acts on the folder, not a selection),
+and why not `Actions` (every entry in a menu is an action).
+
+`Section::Tools` is gone rather than deprecated, which breaks any out-of-tree plugin
+that named it. That is deliberate: an alias would let a plugin keep dodging the
+question this change exists to force. `docs/WRITING_PLUGINS.md` documents both
+sections and the default is now `Workflows`, since a contributed feature tab is the
+common case.
+
+Two tests, at both levels. The registry one proves the sections come out in a fixed
+order and that entries land where they asked to; the application one proves it for
+the real eleven entries rather than for a registry fed by a test. What no test can
+settle is whether a given entry was *filed* correctly — that is what the rule and
+its worked examples are for.
+
 ## The F4 menu stopped answering the keyboard halfway along
 
 Opening the menu with F4 worked, and so did stepping along the headings and opening

@@ -53,7 +53,7 @@ public:
     virtual bool addPreviewProvider(std::unique_ptr<IPreviewProvider> provider) = 0;
 
     /// Contribute an entry to the application menu. Most plugins want
-    /// MenuAction::Section::Tools.
+    /// MenuAction::Section::Workflows.
     virtual bool addMenuAction(MenuAction action) = 0;
 
     /// The host services this plugin may use. Valid for the plugin's lifetime.
