@@ -18,6 +18,7 @@
 #include "core/index/IndexDatabase.h"
 #include "core/index/ScanTask.h"
 #include "core/sets/FileSetStore.h"
+#include "core/tasks/FolderSizesTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/IFileSystemFactory.h"
 #include "core/vfs/RemoteRegistry.h"
@@ -1070,6 +1071,18 @@ void AppController::registerShellActions()
     }
     {
         MenuAction action;
+        action.id = QStringLiteral("mole.tools.folderSizes");
+        action.section = MenuAction::Section::Operations;
+        action.title = QStringLiteral("Folder sizes");
+        action.shortcut = QStringLiteral("Ctrl+Shift+S");
+        action.iconText = QStringLiteral("\u2211");
+        action.sortOrder = 35;
+        action.enabled = [this] { return !currentLocation().isEmpty(); };
+        action.trigger = [this] { measureFolderSizes(); };
+        m_actions->addAction(std::move(action));
+    }
+    {
+        MenuAction action;
         action.id = QStringLiteral("mole.tools.indexFolder");
         action.section = MenuAction::Section::Operations;
         action.title = QStringLiteral("Index this folder");
@@ -1209,6 +1222,50 @@ QStringList AppController::selectedFolders() const
             folders.append(uri);
     }
     return folders;
+}
+
+void AppController::measureFolderSizes()
+{
+    QObject* pane = currentTabProperty("activePane").value<QObject*>();
+    QObject* files = pane ? pane->property("files").value<QObject*>() : nullptr;
+    if (!files)
+        return;
+
+    // Ticked folders if there are any; otherwise every folder in the listing,
+    // because "which of these is the big one" is the question being asked.
+    QStringList targets = selectedFolders();
+    if (targets.isEmpty())
+        QMetaObject::invokeMethod(files, "folderUris", Q_RETURN_ARG(QStringList, targets));
+    if (targets.isEmpty()) {
+        emit notification(static_cast<int>(EventBus::Severity::Info), QStringLiteral("Nothing to measure"),
+            QStringLiteral("There are no folders in this listing"));
+        return;
+    }
+
+    QList<VfsUri> folders;
+    folders.reserve(targets.size());
+    for (const QString& uri : targets)
+        folders.append(VfsUri::fromString(uri));
+
+    FileSystemPtr fs = m_vfs->resolve(folders.first());
+    if (!fs) {
+        emit notification(static_cast<int>(EventBus::Severity::Warning), QStringLiteral("Cannot measure"),
+            QStringLiteral("No drive is mounted for %1").arg(folders.first().toString()));
+        return;
+    }
+
+    auto* task = new FolderSizesTask(fs, folders);
+    // Guarded by a QPointer: the answers arrive over seconds and the listing they
+    // were asked about may be gone by then, which is not an error -- the user
+    // navigated away, and the measurement simply has nowhere to land.
+    QPointer<QObject> model(files);
+    connect(task, &FolderSizesTask::folderSized, this, [model](const VfsUri& folder, qint64 bytes, qint64) {
+        if (!model)
+            return;
+        QMetaObject::invokeMethod(
+            model, "setMeasuredSize", Q_ARG(QString, folder.toString()), Q_ARG(qint64, bytes));
+    });
+    m_taskManager->submit(task);
 }
 
 void AppController::analyseSelection()

@@ -118,6 +118,12 @@ ApplicationWindow {
         onActivated: root.openFeature("mole.livesearch")
     }
     Shortcut {
+        // Measures the folders in front of you, in the background, and writes the
+        // answers into the listing.
+        sequence: "Ctrl+Shift+S"
+        onActivated: App.triggerAction("mole.tools.folderSizes")
+    }
+    Shortcut {
         sequence: "Ctrl+Shift+I"
         onActivated: root.openFeature("mole.indexsearch")
     }
@@ -597,6 +603,7 @@ ApplicationWindow {
                 ["Ctrl+Shift+I", "Search the index (new tab)"],
                 ["F3", "Preview the file under the cursor"],
                 ["Ctrl+Shift+A", "Analyse the selected folders, or this one"],
+                ["Ctrl+Shift+S", "Size the selected folders, or all of them"],
                 ["Ctrl+W", "Close tab"],
                 ["Ctrl+Tab / Ctrl+PgDn", "Next tab"],
                 ["Ctrl+1 … Ctrl+9", "Jump to tab"]]},

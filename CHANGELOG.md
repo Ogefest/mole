@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- Ctrl+Shift+S measures the folders in front of you in the background and writes
+  their sizes into the listing as each one lands.
 - F3 on a folder opens it, instead of doing nothing because there is nothing to
   preview.
 - The F4 menu separates what acts on the files in front of you (Operations) from

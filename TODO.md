@@ -19,39 +19,6 @@ screenshots come from `make screenshots`, which photographs states the tests hav
 just asserted — so the documentation cannot drift into showing something that no
 longer works.
 
-### How big is this folder, answered in the listing
-
-There is no quick way to see what a folder contains. Analysing it gives the answer
-and more, but opening an analysis tab is a detour when the question is just "which
-of these five folders is the big one".
-
-An action on the active view, then: the selected folders, or every folder in the
-listing when nothing is selected, sized in the background and the answer written
-into the rows themselves — beside the entry, where the eye already is, filling in
-as each total lands rather than all at once at the end. A `Task` like everything
-else that takes time, so it reports progress, can be cancelled and shows up in the
-task strip.
-
-The walking is already written: `AnalyseDirectoryTask` produces an `AnalysisReport`
-carrying `bytes`, `fileCount` and `folderCount`, which is more than this needs but
-means there is no second tree-walker to write and keep correct. What is missing is
-somewhere for a computed total to live — `FileEntry::size` for a directory is the
-inode's own size and must not be overwritten with a recursive total, or the two
-meanings become one field that is sometimes a lie — and a column or suffix in the
-listing to show it.
-
-Two decisions to make rather than assume. What happens to a computed size when the
-listing is refreshed or the folder changes underneath: dropped, kept with a hint
-that it is from a moment ago, or recomputed. And whether asking twice recomputes or
-answers from what was already measured. Both are worth an ADR only if the answer
-turns out to be a cache; if it is "dropped on refresh", a line in the code will do.
-
-The tests are straightforward and worth being strict about: a tree of known size
-totals correctly including nested folders, sizes appear on rows progressively rather
-than only at the end, cancelling leaves the rows it had already filled and stops,
-and a folder the walk cannot read reports what it managed rather than nothing at
-all.
-
 ### Ctrl+F needs to be usable as a search box
 
 Three things are wrong with the search tab, and only the third is a feature.

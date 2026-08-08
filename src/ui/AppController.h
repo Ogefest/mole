@@ -167,6 +167,9 @@ public:
     Q_INVOKABLE QString openArchive(const QString& archiveUri);
     /// True when this file can be mounted as a drive.
     Q_INVOKABLE bool isMountableArchive(const QString& uri) const;
+    /// Totals up the ticked folders, or every folder in the listing when none
+    /// are ticked, and writes the answers into the rows as they arrive.
+    Q_INVOKABLE void measureFolderSizes();
     Q_INVOKABLE void queueScan(const QString& uri, const QString& label);
 
     // ---- application menu -------------------------------------------------

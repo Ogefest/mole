@@ -42,6 +42,8 @@ private slots:
     void opensABrowserTabByDefault();
     void everyRegisteredFeatureCanOpenATab();
     void browserTabBrowsesTheRealFilesystem();
+    void measuringFoldersFillsTheirSizesIntoTheListing();
+    void measuringUsesTheTickedFoldersWhenThereAreAny();
     void splitViewGivesTwoIndependentPanes();
     void browserTabRenamesItselfWhileNavigating();
     void directoryChangedEventRefreshesOpenPanes();
@@ -171,6 +173,72 @@ void TestAppIntegration::browserTabBrowsesTheRealFilesystem()
     // notes.txt, reports/ and empty/
     QCOMPARE(pane->files()->rowCount(), 3);
     QVERIFY(pane->errorText().isEmpty());
+}
+
+void TestAppIntegration::measuringFoldersFillsTheirSizesIntoTheListing()
+{
+    QVERIFY(m_tree->writeFile(QStringLiteral("reports/deeper/more.txt"), QByteArray(700, 'x')));
+
+    auto* browser = qobject_cast<BrowserController*>(m_app->tabs()->controllerAt(0));
+    QVERIFY(browser);
+    BrowserPaneController* pane = browser->activePane();
+    QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() == 3; }));
+
+    FileListModel* files = pane->files();
+    const QString reports = m_tree->rootUri().child(QStringLiteral("reports")).toString();
+    const QString empty = m_tree->rootUri().child(QStringLiteral("empty")).toString();
+
+    // A folder is unmeasured until asked, and the listing says nothing rather
+    // than showing the inode's own size as though it were the contents.
+    QCOMPARE(files->measuredSize(reports), -1);
+    QCOMPARE(files->data(files->index(files->rowOfUri(reports), 0), FileListModel::SizeTextRole).toString(),
+        QString());
+
+    m_app->measureFolderSizes();
+
+    // Nothing ticked, so every folder in the listing is measured -- "which of
+    // these is the big one" is the question being asked.
+    QVERIFY(waitFor([files, reports] { return files->measuredSize(reports) >= 0; }, 15000));
+    QVERIFY(waitFor([files, empty] { return files->measuredSize(empty) >= 0; }, 15000));
+
+    // "q1" is two bytes, plus the 700 nested one level down.
+    QCOMPARE(files->measuredSize(reports), 702);
+    QCOMPARE(files->measuredSize(empty), 0);
+
+    // And the row shows it, which is the whole point of measuring in the listing.
+    const QString shown
+        = files->data(files->index(files->rowOfUri(reports), 0), FileListModel::SizeTextRole).toString();
+    QVERIFY2(!shown.isEmpty(), "the measured total has to reach the row");
+
+    // A file's size is untouched by any of this.
+    const QString notes = m_tree->rootUri().child(QStringLiteral("notes.txt")).toString();
+    QCOMPARE(files->measuredSize(notes), -1);
+
+    // Refreshing throws the measurements away: they describe the tree as it was
+    // when they were taken, and a stale number is worse than an empty cell.
+    pane->refresh();
+    QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() == 3; }));
+    QCOMPARE(files->measuredSize(reports), -1);
+}
+
+void TestAppIntegration::measuringUsesTheTickedFoldersWhenThereAreAny()
+{
+    auto* browser = qobject_cast<BrowserController*>(m_app->tabs()->controllerAt(0));
+    QVERIFY(browser);
+    BrowserPaneController* pane = browser->activePane();
+    QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() == 3; }));
+
+    FileListModel* files = pane->files();
+    const QString reports = m_tree->rootUri().child(QStringLiteral("reports")).toString();
+    const QString empty = m_tree->rootUri().child(QStringLiteral("empty")).toString();
+
+    files->setSelected(files->rowOfUri(empty), true);
+    m_app->measureFolderSizes();
+
+    QVERIFY(waitFor([files, empty] { return files->measuredSize(empty) >= 0; }, 15000));
+    // The one that was ticked, and only that one: measuring everything when a
+    // selection exists would ignore what the user asked for.
+    QCOMPARE(files->measuredSize(reports), -1);
 }
 
 void TestAppIntegration::splitViewGivesTwoIndependentPanes()

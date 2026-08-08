@@ -84,6 +84,23 @@ public:
     bool sortDescending() const { return m_sortDescending; }
     void setSortDescending(bool descending);
 
+    // ---- measured folder sizes -------------------------------------------
+    //
+    // A directory's own `size` is the inode's, not what is inside it, so a
+    // measured total is kept separately rather than written over the entry --
+    // one field that is sometimes one thing and sometimes another is a field
+    // nobody can trust. Keyed by uri, so sorting and refiltering cannot move a
+    // number onto the wrong row.
+
+    /// Fills in what a folder was measured to contain. Ignores a uri that is not
+    /// in this listing, which happens when the answer arrives after the user has
+    /// moved on.
+    Q_INVOKABLE void setMeasuredSize(const QString& uri, qint64 bytes);
+    /// -1 when this folder has not been measured.
+    Q_INVOKABLE qint64 measuredSize(const QString& uri) const;
+    /// Every folder in the listing, for "measure these" when nothing is picked.
+    Q_INVOKABLE QStringList folderUris() const;
+
     Q_INVOKABLE QString uriAt(int row) const;
     Q_INVOKABLE QString nameAt(int row) const;
     Q_INVOKABLE bool isDirAt(int row) const;
@@ -137,6 +154,9 @@ private:
     FileEntryList m_all;
     FileEntryList m_visible;
     QSet<QString> m_selected;
+    /// Dropped whenever the listing is replaced: a measurement belongs to the
+    /// tree as it was when it was taken.
+    QHash<QString, qint64> m_measured;
     bool m_showHidden = false;
     QString m_filterText;
     /// Unicode-lowercased once, so filtering does not re-fold on every row.

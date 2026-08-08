@@ -52,6 +52,7 @@ private slots:
     void highlightsSourceAndPagesLargeFiles();
     void rendersMarkdownAsAPage();
     void aSlowTableSaysSoAndThenFillsAsItReads();
+    void folderSizesLandInTheListing();
     void breadcrumbsClimbTheTree();
     void ctrlGRevealsTheEditablePath();
     void aSlowFolderSaysSoInTheMiddleOfThePane();
@@ -530,6 +531,25 @@ void TestWalkthrough::aSlowTableSaysSoAndThenFillsAsItReads()
 
     QVERIFY(m_harness->until([table] { return !table->isImporting(); }, 30000));
     QCOMPARE(table->table()->totalRows(), 12000);
+}
+
+void TestWalkthrough::folderSizesLandInTheListing()
+{
+    // The fixture has media/ at 120 kB across two files and documents/ with a
+    // report and a price list, so the two folders have visibly different answers.
+    FileListModel* files = pane()->files();
+    const QString media = pane()->currentUri() + QStringLiteral("/media");
+    QVERIFY(files->rowOfUri(media) >= 0);
+    QCOMPARE(files->measuredSize(media), -1);
+
+    m_harness->app()->triggerAction(QStringLiteral("mole.tools.folderSizes"));
+    QVERIFY(m_harness->until([files, media] { return files->measuredSize(media) > 0; }, 15000));
+
+    // 90 000 + 30 000 across the two files in there.
+    QCOMPARE(files->measuredSize(media), 120000);
+
+    m_harness->settle(8);
+    m_harness->screenshot(QStringLiteral("01b-folder-sizes"));
 }
 
 void TestWalkthrough::breadcrumbsClimbTheTree()

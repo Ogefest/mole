@@ -9,6 +9,44 @@ wrong.
 
 ---
 
+## How big is this folder, answered in the listing
+
+`Ctrl+Shift+S` measures the ticked folders — or every folder in the listing when
+nothing is ticked, because "which of these is the big one" is the question — and
+writes each total into its row as the walk finishes it. A background `Task` like
+everything else that takes time: progress, cancellable, visible in the task strip,
+and the window stays usable throughout.
+
+No second tree-walker: `FolderSizesTask` uses the same `DirectoryWalker` the
+analysis and the indexer use, so cancellation, unreadable directories and symlink
+loops stay solved in one place. What it does not reuse is `AnalyseDirectoryTask`
+itself, which was the first plan — it produces a whole `AnalysisReport` per folder,
+and forty folders would mean forty reports built and thrown away to read one number
+off each.
+
+A measured total lives beside the entry rather than in it. `FileEntry::size` for a
+directory is the inode's own size, and writing a recursive total over it would make
+one field that is sometimes one thing and sometimes another — a field nobody can
+trust afterwards. Keyed by uri, so re-sorting or filtering cannot move a number onto
+the wrong row, and dropped whenever the listing is replaced: a measurement describes
+the tree as it was when it was taken, and a stale number is worse than an empty cell.
+Sorting by size uses the measured total for folders that have one, which is the only
+number anyone means when they sort a listing by size.
+
+Two things the tests had to be dragged into being honest about. Cancellation cannot
+be tested on a local disk: `folderSized` is queued to the test's thread, and by the
+time the cancel is sent the worker has already finished the next folder, so both
+answers arrive and the test proves nothing — it needed a drive that takes its time
+listing, and then it asserts exactly one whole answer arrived. And "cancelled" must
+never mean "reported half a folder as a total", because a wrong number in a listing
+is worse than none, so the task checks for cancellation between finishing a folder
+and announcing it.
+
+Also covered: an empty folder answers zero rather than staying silent for ever, a
+folder the walk cannot fully read reports what it managed, files are counted but the
+directories in between are not, the ticked folders win over the whole listing when
+there are any, and a refresh clears what was measured.
+
 ## F3 did nothing on a folder
 
 `F3` previews the file under the cursor, `currentFile()` returns nothing for a

@@ -83,6 +83,9 @@ void FileListModel::setEntries(FileEntryList entries)
 {
     beginResetModel();
     m_all = std::move(entries);
+    // A measurement describes the tree as it was when it was taken, so a new
+    // listing starts without any.
+    m_measured.clear();
     rebuildVisible();
     pruneSelection();
     endResetModel();
@@ -112,6 +115,7 @@ void FileListModel::clear()
     m_all.clear();
     m_visible.clear();
     m_selected.clear();
+    m_measured.clear();
     endResetModel();
     emit countChanged();
     emit selectionChanged();
@@ -248,9 +252,19 @@ QVariant FileListModel::data(const QModelIndex& index, int role) const
     case IsHiddenRole:
         return entry.isHidden;
     case SizeRole:
+        // A measured folder sorts by what is inside it, which is the only number
+        // anyone means when they sort a listing by size.
+        if (entry.isDir) {
+            const qint64 measured = measuredSize(entry.uri.toString());
+            return measured >= 0 ? measured : entry.size;
+        }
         return entry.size;
-    case SizeTextRole:
-        return entry.isDir ? QString() : formatSize(entry.size);
+    case SizeTextRole: {
+        if (!entry.isDir)
+            return formatSize(entry.size);
+        const qint64 measured = measuredSize(entry.uri.toString());
+        return measured >= 0 ? formatSize(measured) : QString();
+    }
     case ModifiedRole:
         return entry.modified;
     case ModifiedTextRole:
@@ -315,6 +329,34 @@ int FileListModel::rowOfUri(const QString& uri) const
             return row;
     }
     return -1;
+}
+
+void FileListModel::setMeasuredSize(const QString& uri, qint64 bytes)
+{
+    // Recorded even when the row is not visible: a filter can be hiding it, and
+    // clearing the filter should not lose a measurement already paid for.
+    m_measured.insert(uri, bytes);
+
+    const int row = rowOfUri(uri);
+    if (row < 0)
+        return;
+    const QModelIndex changed = index(row, 0);
+    emit dataChanged(changed, changed, { SizeRole, SizeTextRole });
+}
+
+qint64 FileListModel::measuredSize(const QString& uri) const
+{
+    return m_measured.value(uri, -1);
+}
+
+QStringList FileListModel::folderUris() const
+{
+    QStringList out;
+    for (const FileEntry& entry : m_visible) {
+        if (entry.isDir)
+            out.append(entry.uri.toString());
+    }
+    return out;
 }
 
 void FileListModel::pruneSelection()
