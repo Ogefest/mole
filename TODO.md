@@ -103,6 +103,43 @@ matches at that moment or something that re-runs the query. A snapshot is what "
 a set from this" means to anyone reading it, and it is the one that cannot surprise
 you later, but say so explicitly rather than leaving it implied.
 
+### Previews need options of their own, remembered per file type
+
+An `.html` file previews as source, coloured, and sometimes that is exactly what
+someone wants — but sometimes they want to see the page. Neither answer is right for
+everyone, which makes it a setting rather than a decision.
+
+The strip above a preview already has room for it: it shows the viewer's name and an
+OPEN button, so *how this viewer behaves* belongs there too. Choosing "render" for
+HTML should apply at once and be remembered, so the next `.html` opens rendered
+until it is changed back. HTML is only the first case — this is worth being generic
+from the start, because the same question will arrive for other viewers.
+
+There is nowhere to put a preference today. `SessionStore` persists the open tabs and
+the window geometry and nothing else: there is no user-preferences store at all. So
+the work is three things, and the first is architecture — hence an ADR before the
+code:
+
+- somewhere for preferences to live, and a shape for them that is not one hard-coded
+  key per feature;
+- a way for a preview provider to *declare* its options — a name, the choices, the
+  default — so the strip can render them without knowing what any of them mean, the
+  same way the menu renders entries it knows nothing about;
+- and what the preference is keyed by. Per file suffix is what the request describes
+  ("the next `.html`"), but per provider is what the strip is actually showing. They
+  differ the moment two suffixes share a viewer, so pick one and say why.
+
+One thing to decide deliberately rather than inherit: rendering HTML through Qt's
+rich text engine means letting a document from disk name external resources. A
+preview must not fetch them — previewing a file should not put anything on the
+network, and a page that could phone home when looked at is a nasty surprise in a
+file manager. Whatever the ADR says about the rest, it should say that.
+
+Tests: choosing an option changes the current view immediately; reopening the same
+type comes back with the remembered choice; a different type is not affected by it;
+the default applies when nothing has been remembered yet; and a rendered HTML preview
+reaches for nothing off the disk.
+
 ### Compressing files and folders
 
 An action on the selection — one file, one folder, or several of each — that opens
