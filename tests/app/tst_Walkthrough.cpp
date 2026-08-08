@@ -10,6 +10,9 @@
 #include "ui/AppController.h"
 #include "ui/models/BookmarkModel.h"
 #include "ui/models/BrowserPaneController.h"
+#include "ui/models/CommandPaletteModel.h"
+
+#include <QSignalSpy>
 #include "ui/models/FileListModel.h"
 #include "ui/models/TableModel.h"
 #include "ui/models/TabsModel.h"
@@ -66,6 +69,7 @@ private slots:
     void folderSizesLandInTheListing();
     void compressingTheSelectionMakesAnArchiveBesideIt();
     void deletingAsksWithTheFilesNamed();
+    void theDrivesAreInThePaletteToo();
     void theListingTakesItsTypeSizeFromTheScale();
     void theIconOnlyControlsAreBigEnoughToHit();
     void theCommandPaletteFindsAndRunsThings();
@@ -1108,6 +1112,55 @@ void TestWalkthrough::deletingAsksWithTheFilesNamed()
     // Left as it was found: this test is about the question, not the answer.
     m_harness->key(Qt::Key_Escape);
     QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 2; }));
+}
+
+// Every drive in the sidebar has to be reachable by typing, or the list on the left is
+// the only way to it and the palette's promise -- everything that can be done, from one
+// box -- is not true.
+void TestWalkthrough::theDrivesAreInThePaletteToo()
+{
+    QObject* palette = m_harness->app()->property("commands").value<QObject*>();
+    QVERIFY(palette);
+    QVERIFY(QMetaObject::invokeMethod(palette, "refresh"));
+
+    auto* model = qobject_cast<QAbstractItemModel*>(palette);
+    QVERIFY(model);
+
+    QStringList drives;
+    for (int row = 0; row < model->rowCount(); ++row) {
+        const QModelIndex index = model->index(row, 0);
+        if (model->data(index, CommandPaletteModel::GroupRole).toString() == QStringLiteral("Drives"))
+            drives.append(model->data(index, CommandPaletteModel::TitleRole).toString());
+    }
+
+    // Every one of them, not merely one: the palette holds no list of its own, so
+    // anything missing here is something the sidebar can reach and typing cannot.
+    MountListModel* mounts = m_harness->app()->mounts();
+    QVERIFY(mounts->rowCount() > 0);
+    QCOMPARE(drives.size(), mounts->rowCount());
+    for (int row = 0; row < mounts->rowCount(); ++row) {
+        QVERIFY2(drives.contains(mounts->data(mounts->index(row, 0), MountListModel::DisplayNameRole)
+                                     .toString()),
+            "a drive on the left that cannot be typed for");
+    }
+
+    // And by name, which is the point -- the drive is reached without the mouse.
+    const QString wanted = mounts->data(mounts->index(0, 0), MountListModel::DisplayNameRole).toString();
+    palette->setProperty("filter", wanted);
+    QVERIFY(model->rowCount() > 0);
+    int found = -1;
+    for (int row = 0; row < model->rowCount(); ++row) {
+        if (model->data(model->index(row, 0), CommandPaletteModel::TitleRole).toString() == wanted) {
+            found = row;
+            break;
+        }
+    }
+    QVERIFY2(found >= 0, qPrintable(QStringLiteral("typing \"%1\" does not offer it").arg(wanted)));
+
+    QSignalSpy went(qobject_cast<CommandPaletteModel*>(palette), &CommandPaletteModel::locationRequested);
+    QVERIFY(QMetaObject::invokeMethod(palette, "activate", Q_ARG(int, found)));
+    QCOMPARE(went.size(), 1);
+    QCOMPARE(went.first().first().toString(), mounts->rootUriAt(0));
 }
 
 void TestWalkthrough::breadcrumbsClimbTheTree()

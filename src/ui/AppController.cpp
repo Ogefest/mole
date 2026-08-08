@@ -226,6 +226,11 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     m_bookmarks = new BookmarkModel(BookmarkModel::defaultFilePath(), this);
     connect(m_bookmarks, &BookmarkModel::countChanged, this, &AppController::refreshBookmarkActions);
 
+    // Before the palette, which is handed a pointer to it. Built after, the palette
+    // held a null one for the lifetime of the application and quietly offered no
+    // drives at all -- everything else about it worked, which is why nobody noticed.
+    m_mounts = new MountListModel(m_vfs, m_taskManager, this);
+
     // The palette knows nothing about tabs or navigation: it says what was chosen
     // and the shell does it, which is why the model can be a plain view over the
     // registries.
@@ -239,7 +244,6 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
             QStringLiteral("Cannot open %1").arg(VfsUri::fromString(uri).fileName()), reason);
     });
 
-    m_mounts = new MountListModel(m_vfs, m_taskManager, this);
     m_taskModel = new TaskListModel(m_taskManager, this);
     m_terminal = new TerminalController(this);
     m_tabs = new TabsModel(m_features, this);

@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- The command palette offers the drives again, so a drive can be reached by typing
+  instead of clicking the list on the left.
 - Dialog buttons say what they do, the one that acts is filled — red when it cannot be
   undone — and a destructive dialog opens with the keyboard on the way out.
 - Compressing can delete the originals once the archive is written, and keeps them if

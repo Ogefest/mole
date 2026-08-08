@@ -30,6 +30,28 @@ README.md gained a *Using it* section pointing at the guide, and its list of thi
 yet done lost PDF, SQLite and Parquet — all three are built, and leaving them on a wish
 list would have been the same kind of lie the screenshot rule exists to prevent.
 
+## The palette had never actually offered the drives
+
+Reported: searching commands should find the available drives too, because they sit in
+the list on the left and reaching one means clicking rather than typing.
+
+They were supposed to be there already — the palette is built as a view over the action
+registry, the bookmarks *and* the mount list, precisely so it cannot drift out of step
+with them. The test said otherwise at once: five drives in the sidebar, none in the
+palette.
+
+The cause was ten lines of ordering. The palette was constructed with a pointer to the
+mount list before that list existed, so it held null for the lifetime of the process and
+offered no drives at all. Everything else about the palette worked, which is why this
+survived: the failure is silent, and an empty category looks exactly like a category
+nobody has anything in.
+
+The test is the useful part, and it does not check that *a* drive is offered — it checks
+that every drive in the sidebar is, because the palette holds no list of its own and
+anything missing is something the mouse can reach and the keyboard cannot. It then types
+a drive name and follows the choice through to the navigation it asks for. Putting the
+old order back makes it fail.
+
 ## Telling the two buttons in a dialog apart
 
 Reported: on the popups it is not clear which button is the active one, they look the

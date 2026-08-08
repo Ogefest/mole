@@ -3,7 +3,8 @@
 ![The command palette](images/11-command-palette.png)
 
 `Ctrl+R` opens a box with everything that can be done right now underneath it: the
-whole `F4` menu, every bookmark, every drive. Type part of a name and the list narrows —
+whole `F4` menu, every bookmark, every drive — so a disk or a share is reached by
+typing its name rather than by finding it in the list on the left. Type part of a name and the list narrows —
 `termi` leaves *Operations → Terminal here* — and `Enter` runs it.
 
 Arrows move, `Escape` leaves, and nothing about it needs the mouse. Which is the point:
