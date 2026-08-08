@@ -538,6 +538,13 @@ void TablePreviewController::reimport()
         return;
     }
 
+    // Attached before the import starts, not after it finishes. The store is a
+    // database that answers queries about whatever has been committed to it so
+    // far, so the grid can show the first rows while the rest are still being
+    // read -- and a model with no source reports no rows however many have
+    // arrived, which is what made a large file look like a hang.
+    m_table->setSource(m_store.get());
+
     setErrorText({});
     setLoading(true);
     m_importing = true;
@@ -548,6 +555,15 @@ void TablePreviewController::reimport()
     task->setSeparator(m_separator);
     task->setFirstRowIsHeader(m_firstRowIsHeader);
     m_task = task;
+
+    // The detected separator, as soon as it is known rather than at the end, so
+    // the picker above a half-filled grid is telling the truth about it.
+    connect(task, &ImportDelimitedTask::separatorDetected, this, [this, task](QChar separator) {
+        if (m_task != task || m_separator == separator)
+            return;
+        m_separator = separator;
+        emit optionsChanged();
+    });
 
     // Rows appear as they arrive rather than after the whole file: on a large
     // export the first screen is usable long before the import finishes.
@@ -579,7 +595,10 @@ void TablePreviewController::reimport()
 
         m_separator = task->separator();
         m_importedRows = task->importedRows();
-        m_table->setSource(m_store.get());
+        // Refreshed rather than re-sourced: the source has been attached since
+        // before the import began, and setting it again would clear a filter
+        // typed while the file was still being read.
+        m_table->refresh();
         updateSummary();
         emit importProgress();
     });

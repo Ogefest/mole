@@ -9,6 +9,43 @@ wrong.
 
 ---
 
+## A slow table preview looked like a hang
+
+Opening a large CSV showed an empty grid until the whole file had been imported,
+however long that took, while the task strip insisted something was running. The
+view said nothing, and a view that says nothing reads as a frozen application.
+
+The comment in `TablePreviewController::reimport()` claimed the opposite — *"Rows
+appear as they arrive rather than after the whole file"* — and it was not true. The
+progress handler called `TableModel::refresh()`, but the model's source was only
+attached in the `finished` handler, and `refresh()` without a source reports no
+headers and no rows. So every batch of five thousand rows refreshed a model that
+had nothing to look at. The store is a database that answers for whatever has been
+committed to it, so the source is now attached before the import is submitted, and
+the finish refreshes rather than re-sourcing — re-sourcing would clear a filter
+typed while the file was still being read.
+
+Fixing that broke a test, which was the interesting part: `parsesCsvWithADetected
+Separator` had been using "there are rows" as its signal for "the import has
+finished", and the detected separator was only published at the end. With rows now
+arriving early, the picker above a half-filled grid was captioned with the default
+guess instead of the separator actually in use. The task announces the separator
+the moment the shape is settled, before the first row is stored, so the caption
+tells the truth from the first row on.
+
+What is left is the gap before the first batch, which on a slow drive is the whole
+problem. The view now says it is reading, after one second, in the middle of the
+grid — the threshold and the wording follow the file pane, which had solved this
+already for slow folders — and gets out of the way as soon as rows land, because
+rows are a better answer to "is this stuck" than any spinner.
+
+Both halves are covered. `tableFillsWhileTheImportIsStillRunning` samples the row
+count from the progress signal rather than polling, because a poll that arrives one
+turn late would be looking at the finished state and pass without ever seeing the
+middle. The view half needed a drive that is genuinely slow to open a file, so
+`MemoryFileSystem` grew `setReadDelayMs` beside the `setListDelayMs` that the slow
+folder test already used.
+
 ## Markdown previews were cramped
 
 Qt's Markdown importer gives a heading no space above or below it, sets every

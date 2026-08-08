@@ -27,11 +27,16 @@ public:
     void setSeparator(QChar separator) { m_separator = separator; }
     void setFirstRowIsHeader(bool isHeader) { m_firstRowIsHeader = isHeader; }
 
-    /// Valid once the task has succeeded.
+    /// Valid once the task has succeeded, or as soon as separatorDetected() has
+    /// been delivered.
     QChar separator() const { return m_separator; }
     qint64 importedRows() const { return m_importedRows; }
 
 signals:
+    /// Emitted once the shape of the file has been settled, before the first
+    /// row is stored. A view that shows rows while the import is still running
+    /// would otherwise be captioned with a separator that was only a guess.
+    void separatorDetected(QChar separator);
     /// Emitted as rows land, so a long import can be watched rather than
     /// waited on. Delivered on the receiver's thread like any other signal.
     void rowsImported(qint64 rows);

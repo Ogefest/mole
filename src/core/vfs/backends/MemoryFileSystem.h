@@ -45,6 +45,9 @@ public:
     /// Sleeps this long inside list() -- used to test cancellation and to keep
     /// the UI honest about slow backends.
     void setListDelayMs(int ms) { m_listDelayMs = ms; }
+    /// The same for openRead(), because the honest way to test what a view does
+    /// while a file is slow to arrive is to have one that is.
+    void setReadDelayMs(int ms) { m_readDelayMs = ms; }
 
     int listCallCount() const;
 
@@ -64,6 +67,7 @@ private:
     QHash<QString, Node> m_nodes;
     QHash<QString, VfsError::Code> m_faults;
     int m_listDelayMs = 0;
+    int m_readDelayMs = 0;
     mutable int m_listCalls = 0;
 };
 

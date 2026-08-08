@@ -59,6 +59,7 @@ private slots:
     // --- the tab ---
     void loadsTextContent();
     void parsesCsvWithADetectedSeparator();
+    void tableFillsWhileTheImportIsStillRunning();
     void separatorCanBeOverridden();
     void reportsFactsForAnUnknownFile();
     void arrowsStepThroughFilesOnly();
@@ -518,6 +519,39 @@ void TestPreview::parsesCsvWithADetectedSeparator()
     QCOMPARE(viewer->table()->rowCount(), 2);
     QCOMPARE(viewer->table()->headerAt(1), QStringLiteral("price"));
     QCOMPARE(viewer->table()->index(0, 1).data(TableModel::CellRole).toString(), QStringLiteral("1,50"));
+}
+
+void TestPreview::tableFillsWhileTheImportIsStillRunning()
+{
+    // Comfortably more than the import's batch of five thousand rows, so
+    // progress is reported several times and there is a middle to observe.
+    QByteArray csv = QByteArray("name;value\n");
+    for (int row = 0; row < 12000; ++row)
+        csv += QStringLiteral("row%1;%2\n").arg(row).arg(row).toUtf8();
+    QVERIFY(m_tree->writeFile(QStringLiteral("big.csv"), csv));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("big.csv"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TablePreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+
+    // Sampled from the signal rather than polled. The import finishes when it
+    // finishes, and a poll that arrives one turn late would be looking at the
+    // final state and pass without ever seeing the middle.
+    qint64 rowsVisibleMidImport = -1;
+    connect(viewer, &TablePreviewController::importProgress, viewer, [&] {
+        if (rowsVisibleMidImport < 0 && viewer->isImporting() && viewer->importedRows() > 0)
+            rowsVisibleMidImport = viewer->table()->totalRows();
+    });
+
+    QVERIFY(waitFor([viewer] { return !viewer->isImporting() && viewer->importedRows() == 12000; }, 30000));
+
+    // The whole promise of importing into a database instead of parsing into
+    // memory: the first screen is usable long before the last row lands. An
+    // empty grid until the end is what makes a big file look like a hang.
+    QVERIFY2(rowsVisibleMidImport > 0,
+        "the grid has to fill as rows arrive, not only once the import has finished");
+    QCOMPARE(viewer->table()->totalRows(), 12000);
 }
 
 void TestPreview::separatorCanBeOverridden()

@@ -125,36 +125,6 @@ half-written archive behind.
 In the menu this belongs with the operations on the selected files rather than
 with the workflows, so it wants the split above to have happened first.
 
-### A slow preview looks like a hang
-
-Opening a large CSV takes a while — the file is imported into a scratch database
-before the grid can answer anything — and while it does, the task strip shows a
-job running but the body of the preview stays empty. An empty view that says
-nothing reads as a frozen application, and the honest state is "working on it".
-
-Half of this is a real defect rather than missing decoration.
-`TablePreviewController::reimport()` carries the comment *"Rows appear as they
-arrive rather than after the whole file: on a large export the first screen is
-usable long before the import finishes"*, and the code does not do it. The
-progress handler calls `TableModel::refresh()`, but the model has no source until
-`setSource()` runs in the `finished` handler — and `refresh()` without a source
-reports no headers and no rows. So the grid is empty until the whole import
-completes, however big the file is. Attaching the source when the store is
-created, before the task is submitted, is where to start.
-
-The other half is saying so while it happens. The browser pane already solved this
-for slow folders: `loadingView` in `FilePane.qml`, with a one-second threshold so
-that a quick listing does not flash a spinner, covered by
-`aSlowFolderSaysSoInTheMiddleOfThePane`. The preview should follow that rather
-than invent something new — and it already has the numbers to show, since the
-controller publishes `importing` and `importedRows` and today spends them on a
-small spinner in the header strip, where nobody is looking.
-
-Worth confirming on the way that nothing actually blocks the interface: if it
-does, no amount of feedback will fix it. And per the rules the fix arrives with a
-test — a file big enough to be slow, the view saying so past the threshold, rows
-on screen before the import has finished, and no flash for a small one.
-
 ### PDFs have no preview
 
 A PDF falls through to the information viewer — the last resort that describes a

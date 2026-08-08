@@ -227,6 +227,11 @@ Result<void> MemoryFileSystem::rename(const VfsUri& from, const VfsUri& to)
 
 Result<std::unique_ptr<QIODevice>> MemoryFileSystem::openRead(const VfsUri& target)
 {
+    // Slept before the lock is taken, so a delayed read does not block every
+    // other caller of this drive for the duration.
+    if (m_readDelayMs > 0)
+        QThread::msleep(static_cast<unsigned long>(m_readDelayMs));
+
     QMutexLocker lock(&m_mutex);
     const QString path = target.path();
     if (Result<void> fault = faultFor(path); !fault.ok())

@@ -50,6 +50,7 @@ private slots:
     void browsesAndPreviews();
     void highlightsSourceAndPagesLargeFiles();
     void rendersMarkdownAsAPage();
+    void aSlowTableSaysSoAndThenFillsAsItReads();
     void breadcrumbsClimbTheTree();
     void ctrlGRevealsTheEditablePath();
     void aSlowFolderSaysSoInTheMiddleOfThePane();
@@ -464,6 +465,69 @@ void TestWalkthrough::rendersMarkdownAsAPage()
         return again.isValid() && again.blockFormat().topMargin() > 0.0;
     }),
         "coming back to a Markdown file has to style it again");
+}
+
+void TestWalkthrough::aSlowTableSaysSoAndThenFillsAsItReads()
+{
+    // A quick file first: the message must not flash for something that arrives
+    // immediately, which is the whole reason for the one-second threshold.
+    m_harness->app()->previewFile(m_harness->fixtureUri() + QStringLiteral("/documents/prices.csv"));
+    auto* quick = qobject_cast<PreviewTabController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY(quick);
+    QVERIFY(m_harness->until([quick] {
+        auto* table = qobject_cast<TablePreviewController*>(quick->viewer());
+        return table && table->table()->rowCount() > 0;
+    }));
+    m_harness->settle(8);
+    for (QQuickItem* view : m_harness->items(QStringLiteral("csvLoadingView")))
+        QVERIFY2(!view->isVisible(), "a file that arrives at once must not flash a message");
+
+    // Now a drive that takes its time opening the file. Contrived, because the
+    // only honest way to test what a view does while a read is slow is to have
+    // one that is.
+    QByteArray csv = QByteArray("name;value\n");
+    for (int row = 0; row < 12000; ++row)
+        csv += QStringLiteral("row%1;%2\n").arg(row).arg(row).toUtf8();
+
+    auto slow = std::make_shared<MemoryFileSystem>();
+    slow->addFile(QStringLiteral("/export.csv"), csv);
+    slow->setReadDelayMs(2500);
+
+    Mount mount;
+    mount.id = QStringLiteral("slowtable");
+    mount.displayName = QStringLiteral("slowtable");
+    mount.root = VfsUri::fromString(QStringLiteral("mem://slowtable/"));
+    mount.fileSystem = slow;
+    m_harness->app()->services().vfs->addMount(mount);
+
+    m_harness->app()->previewFile(QStringLiteral("mem://slowtable/export.csv"));
+    auto* preview = qobject_cast<PreviewTabController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY(preview);
+    auto* table = qobject_cast<TablePreviewController*>(preview->viewer());
+    QVERIFY(table);
+
+    // Both panes of a preview exist even when one is hidden, so the visible one
+    // with a size is the one that means anything.
+    const auto visibleLoadingView = [this]() -> QQuickItem* {
+        for (QQuickItem* candidate : m_harness->items(QStringLiteral("csvLoadingView"))) {
+            if (candidate->isVisible() && candidate->width() > 0)
+                return candidate;
+        }
+        return nullptr;
+    };
+
+    QVERIFY2(m_harness->until([&] { return visibleLoadingView() != nullptr; }, 6000),
+        "past a second with nothing to show yet, the view has to say it is reading");
+    m_harness->screenshot(QStringLiteral("02b-preview-csv-loading"));
+
+    // And once rows start landing the message gets out of the way, because the
+    // rows themselves are the better answer to "is this stuck".
+    QVERIFY(m_harness->until([table] { return table->table()->rowCount() > 0; }, 20000));
+    QVERIFY(m_harness->until([&] { return visibleLoadingView() == nullptr; }, 6000));
+    QVERIFY2(m_harness->item(QStringLiteral("csvGrid")) != nullptr, "the grid takes the space back");
+
+    QVERIFY(m_harness->until([table] { return !table->isImporting(); }, 30000));
+    QCOMPARE(table->table()->totalRows(), 12000);
 }
 
 void TestWalkthrough::breadcrumbsClimbTheTree()

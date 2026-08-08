@@ -14,6 +14,23 @@ Item {
 
     readonly property var table: (controller && controller.table) ? controller.table : null
 
+    // Called on every way into the waiting state, including the one that is easy
+    // to miss: the controller starts reading before this view is instantiated, so
+    // by the time there is anything here to react to, `loadingChanged` has
+    // already been and gone.
+    function watchTheImport() {
+        if (controller && controller.loading) {
+            slowImport.tripped = false
+            slowImport.restart()
+        } else {
+            slowImport.stop()
+            slowImport.tripped = false
+        }
+    }
+
+    Component.onCompleted: watchTheImport()
+    onControllerChanged: watchTheImport()
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
@@ -108,11 +125,67 @@ Item {
             font.pixelSize: 12
         }
 
+        // Rows appear as the import commits them, so for most files there is
+        // nothing to wait for. What is left is the gap before the first batch --
+        // on a slow drive that gap is long, and an empty grid during it reads as
+        // "this file is empty" rather than "still reading". One second is the
+        // threshold, as in the file pane: below it a spinner is only a flash.
+        Timer {
+            id: slowImport
+            interval: 1000
+            repeat: false
+            property bool tripped: false
+            onTriggered: tripped = true
+        }
+
+        Connections {
+            target: controller
+            function onLoadingChanged() { view.watchTheImport() }
+        }
+
+        // Anchored inside a filling Item rather than laid out: a ColumnLayout is
+        // only as wide as its widest child, so centring in one puts this against
+        // the left edge instead of in the middle.
+        Item {
+            objectName: "csvLoadingView"
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: slowImport.tripped && controller && controller.importing === true
+                     && (view.table ? view.table.rows === 0 : true)
+
+            ColumnLayout {
+                anchors.centerIn: parent
+                width: Math.min(parent.width - 32, 420)
+                spacing: 10
+
+                BusyIndicator {
+                    Layout.alignment: Qt.AlignHCenter
+                    running: parent.parent.visible
+                }
+                Label {
+                    Layout.alignment: Qt.AlignHCenter
+                    text: "Reading this file…"
+                    font.pixelSize: 14
+                }
+                Label {
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.Wrap
+                    text: "Rows appear as they are read, and the first ones are on their way. "
+                          + "Nothing is stuck."
+                    color: "#6f7788"
+                    font.pixelSize: 11
+                }
+            }
+        }
+
         DataGrid {
             id: dataGrid
             objectName: "csvGrid"
             Layout.fillWidth: true
             Layout.fillHeight: true
+            visible: !(slowImport.tripped && controller && controller.importing === true
+                       && (view.table ? view.table.rows === 0 : true))
             table: view.table
             onCopyRequested: function(top, left, bottom, right) {
                 if (controller)

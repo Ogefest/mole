@@ -135,6 +135,10 @@ void ImportDelimitedTask::run()
                 return;
             }
             started = true;
+            // Announced now rather than at the end: the shape is settled here,
+            // and the rows below are about to become visible under a caption
+            // that would otherwise still be showing the default guess.
+            emit separatorDetected(m_separator);
             batch.append(rows);
         } else {
             batch.append(parser.feed(pending));
