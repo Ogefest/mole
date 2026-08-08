@@ -65,6 +65,7 @@ private slots:
     void reportsWhoMayDoWhatHere();
     void openExternallyGoesThroughTheLauncher();
     void menuHasTheClassicSections();
+    void theTypeScaleIsOrderedAndAboveTheFloor();
     void menuOffersOneNewTabEntryPerFeature();
     void menuEntryOpensTheTab();
     void viewMenuReflectsAndTogglesTheCurrentTab();
@@ -620,6 +621,26 @@ void TestAppIntegration::menuHasTheClassicSections()
     QCOMPARE(sectionOf(QStringLiteral("mole.tools.reports")), QStringLiteral("Workflows"));
     QCOMPARE(sectionOf(QStringLiteral("mole.tools.alerts")), QStringLiteral("Workflows"));
     QCOMPARE(sectionOf(QStringLiteral("mole.tools.automation")), QStringLiteral("Workflows"));
+}
+
+void TestAppIntegration::theTypeScaleIsOrderedAndAboveTheFloor()
+{
+    // Sizes live here so that a listing, a preview and a form line up instead of
+    // each picking a number. What a test can hold is the shape of the scale: the
+    // steps in order, and nothing so small that it stops being readable.
+    QVERIFY(m_app->smallTextSize() < m_app->secondaryTextSize());
+    QVERIFY(m_app->secondaryTextSize() < m_app->textSize());
+    QVERIFY(m_app->textSize() < m_app->headingSize());
+
+    // The floor. Text below about eleven pixels is a squint, and the listing used
+    // to reach down to nine.
+    QVERIFY2(m_app->smallTextSize() >= 11, "nothing in the interface may be smaller than this");
+
+    // Code sits a shade under prose, never over it.
+    QVERIFY(m_app->monospaceSize() <= m_app->textSize());
+
+    // Derived, so raising the text size cannot crop a row.
+    QVERIFY(m_app->listRowHeight() > m_app->textSize() * 2);
 }
 
 void TestAppIntegration::menuOffersOneNewTabEntryPerFeature()

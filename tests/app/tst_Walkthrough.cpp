@@ -53,6 +53,7 @@ private slots:
     void rendersMarkdownAsAPage();
     void aSlowTableSaysSoAndThenFillsAsItReads();
     void folderSizesLandInTheListing();
+    void theListingTakesItsTypeSizeFromTheScale();
     void breadcrumbsClimbTheTree();
     void ctrlGRevealsTheEditablePath();
     void aSlowFolderSaysSoInTheMiddleOfThePane();
@@ -550,6 +551,18 @@ void TestWalkthrough::folderSizesLandInTheListing()
 
     m_harness->settle(8);
     m_harness->screenshot(QStringLiteral("01b-folder-sizes"));
+}
+
+void TestWalkthrough::theListingTakesItsTypeSizeFromTheScale()
+{
+    // The scale is only worth having if the views actually read from it, and a
+    // literal left behind in a delegate is invisible until someone compares two
+    // views side by side.
+    QQuickItem* name = m_harness->item(QStringLiteral("fileName"));
+    QVERIFY2(name, "a listing row has to have a name label to measure");
+
+    const QFont font = name->property("font").value<QFont>();
+    QCOMPARE(font.pixelSize(), m_harness->app()->textSize());
 }
 
 void TestWalkthrough::breadcrumbsClimbTheTree()

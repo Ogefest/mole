@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- Text in the listing, the previews and the sidebar is larger and comes from one
+  shared scale instead of a number picked per view.
 - Ctrl+Shift+S measures the folders in front of you in the background and writes
   their sizes into the listing as each one lands.
 - F3 on a folder opens it, instead of doing nothing because there is nothing to

@@ -66,13 +66,13 @@ Rectangle {
                     Layout.fillWidth: true
                     text: row.label
                     elide: Text.ElideMiddle
-                    font.pixelSize: 13
+                    font.pixelSize: App.textSize
                 }
                 Label {
                     visible: row.capacityKnown && !row.hovered
                     text: row.capacityFree + " free"
                     color: sidebar.mutedText
-                    font.pixelSize: 10
+                    font.pixelSize: App.smallTextSize
                 }
                 ToolButton {
                     visible: row.removable && row.hovered
@@ -106,7 +106,7 @@ Rectangle {
                 visible: row.capacityKnown
                 text: Math.round(row.capacityUsed * 100) + "% of " + row.capacityTotal
                 color: sidebar.mutedText
-                font.pixelSize: 10
+                font.pixelSize: App.smallTextSize
             }
         }
     }
@@ -118,7 +118,7 @@ Rectangle {
 
         Label {
             text: "DRIVES"
-            font.pixelSize: 11
+            font.pixelSize: App.smallTextSize
             font.letterSpacing: 1
             color: sidebar.mutedText
         }
@@ -168,7 +168,7 @@ Rectangle {
             Label {
                 Layout.fillWidth: true
                 text: "BOOKMARKS"
-                font.pixelSize: 11
+                font.pixelSize: App.smallTextSize
                 font.letterSpacing: 1
                 color: sidebar.mutedText
             }
@@ -208,7 +208,7 @@ Rectangle {
                 wrapMode: Text.Wrap
                 text: "No bookmarks yet.\nCtrl+D adds the folder you are in."
                 color: "#5c6472"
-                font.pixelSize: 11
+                font.pixelSize: App.smallTextSize
             }
         }
     }

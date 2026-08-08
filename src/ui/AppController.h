@@ -54,6 +54,30 @@ class AppController : public QObject
     /// The family every code and data view uses. Picked once, here, so a
     /// preview, a table and a log all line up rather than each guessing.
     Q_PROPERTY(QString monospaceFont READ monospaceFont CONSTANT)
+
+    // ---- the type scale --------------------------------------------------
+    //
+    // Sizes are chosen here for the same reason the monospace family is: so that
+    // a listing, a preview and a form line up instead of each picking its own
+    // number. Four steps and one code size, each with a job:
+    //
+    //   headingSize        a title in a view
+    //   textSize           primary content -- file names, prose, cell text
+    //   secondaryTextSize  supporting content -- sizes, dates, column headers,
+    //                      form labels
+    //   smallTextSize      captions and badges, and the floor: nothing is
+    //                      allowed to be smaller than this
+    //   monospaceSize      code and data, which reads a shade smaller than prose
+    //
+    // Constant for now. When these become a preference the views do not change,
+    // which is the point of them being here.
+    Q_PROPERTY(int headingSize READ headingSize CONSTANT)
+    Q_PROPERTY(int textSize READ textSize CONSTANT)
+    Q_PROPERTY(int secondaryTextSize READ secondaryTextSize CONSTANT)
+    Q_PROPERTY(int smallTextSize READ smallTextSize CONSTANT)
+    Q_PROPERTY(int monospaceSize READ monospaceSize CONSTANT)
+    /// Derived rather than stated, so raising the text size does not crop a row.
+    Q_PROPERTY(int listRowHeight READ listRowHeight CONSTANT)
     Q_PROPERTY(mole::TerminalController* terminal READ terminal CONSTANT)
     /// The credential store's state, so the interface can ask for a passphrase
     /// once rather than failing drive by drive.
@@ -124,6 +148,12 @@ public:
     const PluginServices& services() const { return m_services; }
 
     QString monospaceFont() const;
+    int headingSize() const { return 17; }
+    int textSize() const { return 14; }
+    int secondaryTextSize() const { return 13; }
+    int smallTextSize() const { return 11; }
+    int monospaceSize() const { return 13; }
+    int listRowHeight() const { return qRound(textSize() * 2.2); }
 
     QStringList pluginSummary() const;
     QStringList pluginErrors() const;

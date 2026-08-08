@@ -50,12 +50,12 @@ Item {
                 Label {
                     text: "Separator"
                     color: "#8b93a7"
-                    font.pixelSize: 11
+                    font.pixelSize: App.smallTextSize
                 }
                 ComboBox {
                     objectName: "separatorPicker"
                     implicitContentWidthPolicy: ComboBox.WidestText
-                    font.pixelSize: 12
+                    font.pixelSize: App.secondaryTextSize
                     focusPolicy: Qt.NoFocus
                     model: (controller && controller.separatorChoices) ? controller.separatorChoices : []
                     currentIndex: controller ? model.indexOf(controller.separator) : 0
@@ -65,7 +65,7 @@ Item {
                 CheckBox {
                     objectName: "headerToggle"
                     text: "First row is a header"
-                    font.pixelSize: 12
+                    font.pixelSize: App.secondaryTextSize
                     focusPolicy: Qt.NoFocus
                     checked: controller ? controller.firstRowIsHeader === true : true
                     onToggled: if (controller) controller.firstRowIsHeader = checked
@@ -76,7 +76,7 @@ Item {
                 TextField {
                     objectName: "tableFilter"
                     Layout.preferredWidth: 220
-                    font.pixelSize: 12
+                    font.pixelSize: App.secondaryTextSize
                     placeholderText: "Filter rows…"
                     text: view.table ? view.table.filter : ""
                     onTextEdited: if (view.table) view.table.filter = text
@@ -99,13 +99,13 @@ Item {
                     objectName: "tableSummary"
                     text: (controller && controller.summary) ? controller.summary : ""
                     color: "#8b93a7"
-                    font.pixelSize: 11
+                    font.pixelSize: App.smallTextSize
                 }
 
                 ToolButton {
                     text: "Copy"
                     enabled: dataGrid.hasSelection
-                    font.pixelSize: 12
+                    font.pixelSize: App.secondaryTextSize
                     focusPolicy: Qt.NoFocus
                     onClicked: dataGrid.copySelection()
                     ToolTip.text: "Copy the selected cells  (Ctrl+C)"
@@ -122,7 +122,7 @@ Item {
             text: controller ? controller.errorText : ""
             color: Material.color(Material.Red)
             wrapMode: Text.Wrap
-            font.pixelSize: 12
+            font.pixelSize: App.secondaryTextSize
         }
 
         // Rows appear as the import commits them, so for most files there is
@@ -165,7 +165,7 @@ Item {
                 Label {
                     Layout.alignment: Qt.AlignHCenter
                     text: "Reading this file…"
-                    font.pixelSize: 14
+                    font.pixelSize: App.textSize
                 }
                 Label {
                     Layout.fillWidth: true
@@ -174,7 +174,7 @@ Item {
                     text: "Rows appear as they are read, and the first ones are on their way. "
                           + "Nothing is stuck."
                     color: "#6f7788"
-                    font.pixelSize: 11
+                    font.pixelSize: App.smallTextSize
                 }
             }
         }

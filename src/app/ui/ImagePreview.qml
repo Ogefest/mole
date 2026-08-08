@@ -57,12 +57,12 @@ Item {
             visible: picture.status === Image.Ready
             text: picture.implicitWidth + " × " + picture.implicitHeight
             color: "#8b93a7"
-            font.pixelSize: 11
+            font.pixelSize: App.smallTextSize
         }
         Button {
             text: view.actualSize ? "Fit" : "1:1"
             flat: true
-            font.pixelSize: 11
+            font.pixelSize: App.smallTextSize
             focusPolicy: Qt.NoFocus
             onClicked: view.actualSize = !view.actualSize
         }

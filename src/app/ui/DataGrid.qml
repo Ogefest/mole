@@ -75,7 +75,7 @@ Item {
     TextMetrics {
         id: metrics
         font.family: App.monospaceFont
-        font.pixelSize: 12
+        font.pixelSize: App.secondaryTextSize
         text: "0"
     }
 
@@ -142,7 +142,7 @@ Item {
                             verticalAlignment: Text.AlignVCenter
                             text: grid.table ? grid.table.headerAt(index) : ""
                             elide: Text.ElideRight
-                            font.pixelSize: 11
+                            font.pixelSize: App.smallTextSize
                             font.bold: true
                             color: "#c9d1e0"
                         }
@@ -187,7 +187,7 @@ Item {
                     text: cell
                     elide: Text.ElideRight
                     font.family: App.monospaceFont
-                    font.pixelSize: 12
+                    font.pixelSize: App.secondaryTextSize
                     // A null reads differently from an empty string, because the
                     // difference is usually what the reader is looking for.
                     color: cell === "NULL" ? "#6f7788" : "#d5dbe6"
@@ -229,7 +229,7 @@ Item {
                 Label {
                     Layout.fillWidth: true
                     color: "#8b93a7"
-                    font.pixelSize: 11
+                    font.pixelSize: App.smallTextSize
                     elide: Text.ElideRight
                     text: {
                         if (!grid.hasSelection || !grid.table)

@@ -14,9 +14,10 @@ Item {
 
     readonly property bool showsMarkdown: controller ? controller.markdown : false
 
-    // Prose is set larger than code: code is scanned a line at a time, prose is
-    // read by the paragraph.
-    readonly property int bodyPixelSize: showsMarkdown ? 15 : 12
+    // Prose and code come from the same scale as everywhere else; code sits a
+    // shade smaller because it is scanned a line at a time rather than read by
+    // the paragraph.
+    readonly property int bodyPixelSize: showsMarkdown ? App.textSize : App.monospaceSize
 
     // A page of prose needs a measure. Text that runs the full width of a wide
     // window is tiring to read -- the eye loses the line coming back -- so the
@@ -87,21 +88,21 @@ Item {
                 text: controller ? controller.errorText : ""
                 color: Material.color(Material.Red)
                 wrapMode: Text.Wrap
-                font.pixelSize: 12
+                font.pixelSize: App.secondaryTextSize
             }
 
             Label {
                 visible: controller && controller.languageName.length > 0
                 text: controller ? controller.languageName : ""
                 color: "#8b93a7"
-                font.pixelSize: 11
+                font.pixelSize: App.smallTextSize
             }
 
             Label {
                 visible: view.showsMarkdown
                 text: "Markdown"
                 color: "#8b93a7"
-                font.pixelSize: 11
+                font.pixelSize: App.smallTextSize
             }
 
             Item { Layout.fillWidth: true }
@@ -110,7 +111,7 @@ Item {
                 objectName: "positionLabel"
                 text: controller ? controller.positionText : ""
                 color: "#8b93a7"
-                font.pixelSize: 11
+                font.pixelSize: App.smallTextSize
             }
         }
 
@@ -221,7 +222,7 @@ Item {
                 Label {
                     text: controller ? controller.sizeText : ""
                     color: "#8b93a7"
-                    font.pixelSize: 11
+                    font.pixelSize: App.smallTextSize
                 }
             }
         }

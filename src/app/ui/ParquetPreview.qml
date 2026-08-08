@@ -31,7 +31,7 @@ Item {
                     objectName: "parquetSummary"
                     text: (controller && controller.summary) ? controller.summary : ""
                     color: "#8b93a7"
-                    font.pixelSize: 11
+                    font.pixelSize: App.smallTextSize
                     elide: Text.ElideRight
                     Layout.maximumWidth: 520
                 }
@@ -44,7 +44,7 @@ Item {
                 TextField {
                     objectName: "parquetFilter"
                     Layout.preferredWidth: 220
-                    font.pixelSize: 12
+                    font.pixelSize: App.secondaryTextSize
                     placeholderText: "Filter rows…"
                     text: view.table ? view.table.filter : ""
                     onTextEdited: if (view.table) view.table.filter = text
@@ -57,7 +57,7 @@ Item {
                 ToolButton {
                     text: "Copy"
                     enabled: dataGrid.hasSelection
-                    font.pixelSize: 12
+                    font.pixelSize: App.secondaryTextSize
                     focusPolicy: Qt.NoFocus
                     onClicked: dataGrid.copySelection()
                     ToolTip.text: "Copy the selected cells  (Ctrl+C)"
@@ -74,7 +74,7 @@ Item {
             text: controller ? controller.errorText : ""
             color: Material.color(Material.Red)
             wrapMode: Text.Wrap
-            font.pixelSize: 12
+            font.pixelSize: App.secondaryTextSize
         }
 
         Label {

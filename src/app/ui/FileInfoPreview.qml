@@ -28,7 +28,7 @@ Item {
                 Layout.fillWidth: true
                 wrapMode: Text.Wrap
                 color: "#8b93a7"
-                font.pixelSize: 12
+                font.pixelSize: App.secondaryTextSize
                 text: "No installed viewer handles this file type. A plugin can add one."
             }
 
@@ -42,13 +42,13 @@ Item {
                         Layout.preferredWidth: 110
                         text: modelData.label
                         color: "#6f7788"
-                        font.pixelSize: 12
+                        font.pixelSize: App.secondaryTextSize
                     }
                     Label {
                         Layout.fillWidth: true
                         text: modelData.value
                         wrapMode: Text.Wrap
-                        font.pixelSize: 12
+                        font.pixelSize: App.secondaryTextSize
                     }
                 }
             }

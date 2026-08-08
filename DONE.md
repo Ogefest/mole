@@ -9,6 +9,39 @@ wrong.
 
 ---
 
+## The type was too small, and there was no scale to raise
+
+A file name was 13 pixels, most of a listing 12, supporting text 11, and in places
+it dropped to 10 and 9. A file manager is a thing people stare at all day.
+
+Raising the numbers where they stood was the wrong shape of fix: there were about
+270 `font.pixelSize` literals across 27 QML files, so "a bit bigger" would have been
+270 edits and the next view added would have guessed its own size again. The sizes
+now come from `AppController`, for the same reason the monospace family already did
+— picked once so that a listing, a preview and a form line up instead of each
+choosing. Five steps, each with a job: `headingSize`, `textSize` for primary content,
+`secondaryTextSize` for sizes and dates and labels, `smallTextSize` as captions *and*
+the floor, and `monospaceSize` for code, which reads a shade smaller than prose.
+`listRowHeight` is derived from `textSize` rather than stated, so raising the text
+cannot crop a row.
+
+Applied where the reading happens: the file listing, every preview, and the sidebar
+— which was not in the original plan but ended up looking small next to a listing
+that had grown, and it is the next place the eye goes. Around 200 literals remain in
+the other views and adopt the scale as those views are touched; that is recorded in
+TODO.md rather than left as a surprise.
+
+Constant for now, and deliberately so: when these become a preference the views do
+not change, which is the whole point of them living in one place.
+
+Two tests, because "looks better" is not assertable but two things around it are.
+The scale's shape is held at the application level — the steps in order, nothing
+below the floor of eleven, code no larger than prose — and the binding is held in the
+real window: a listing row's name label must report exactly `textSize`, because a
+literal left behind in a delegate is invisible until someone compares two views side
+by side. Whether the result is *pleasant* is still what `make screenshots` and a
+human are for.
+
 ## How big is this folder, answered in the listing
 
 `Ctrl+Shift+S` measures the ticked folders — or every folder in the listing when

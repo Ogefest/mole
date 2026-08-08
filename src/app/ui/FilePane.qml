@@ -368,7 +368,7 @@ FocusScope {
                                     visible: index > 0
                                     text: "  ›  "
                                     color: "#4a5364"
-                                    font.pixelSize: 13
+                                    font.pixelSize: App.textSize
                                 }
 
                                 Rectangle {
@@ -384,7 +384,7 @@ FocusScope {
                                         anchors.centerIn: parent
                                         text: modelData.label
                                         color: modelData.current ? "#e6ebf5" : "#9aa4b8"
-                                        font.pixelSize: 13
+                                        font.pixelSize: App.textSize
                                         font.bold: modelData.current
                                     }
 
@@ -412,7 +412,7 @@ FocusScope {
                     visible: parent.editing
                     text: paneController ? paneController.displayPath : ""
                     selectByMouse: true
-                    font.pixelSize: 13
+                    font.pixelSize: App.textSize
                     // Handled here rather than through onAccepted, and accepted
                     // explicitly. onAccepted moves focus back to the list first,
                     // and the un-accepted key then bubbles to the pane -- which
@@ -462,7 +462,7 @@ FocusScope {
             Label {
                 text: "Filter"
                 color: "#8b93a7"
-                font.pixelSize: 12
+                font.pixelSize: App.secondaryTextSize
             }
 
             TextField {
@@ -470,7 +470,7 @@ FocusScope {
                 objectName: "filterField"
                 Layout.fillWidth: true
                 placeholderText: "part of a name"
-                font.pixelSize: 12
+                font.pixelSize: App.secondaryTextSize
                 onTextChanged: {
                     if (paneController)
                         paneController.files.filterText = text
@@ -526,7 +526,7 @@ FocusScope {
                       ? paneController.files.count + " of " + paneController.files.totalCount
                       : ""
                 color: Material.accent
-                font.pixelSize: 12
+                font.pixelSize: App.secondaryTextSize
             }
 
             ToolButton {
@@ -543,7 +543,7 @@ FocusScope {
             text: paneController ? paneController.errorText : ""
             color: Material.color(Material.Red)
             wrapMode: Text.Wrap
-            font.pixelSize: 12
+            font.pixelSize: App.secondaryTextSize
         }
 
         // Scanning 50 000 files takes seconds, and an empty pane during those
@@ -591,7 +591,7 @@ FocusScope {
                 Label {
                     Layout.alignment: Qt.AlignHCenter
                     text: "Reading " + (paneController ? paneController.locationName : "") + "…"
-                    font.pixelSize: 14
+                    font.pixelSize: App.textSize
                 }
                 Label {
                     Layout.fillWidth: true
@@ -599,13 +599,13 @@ FocusScope {
                     wrapMode: Text.Wrap
                     text: "A folder with tens of thousands of files takes a moment. Nothing is stuck."
                     color: "#6f7788"
-                    font.pixelSize: 11
+                    font.pixelSize: App.smallTextSize
                 }
                 Button {
                     Layout.alignment: Qt.AlignHCenter
                     text: "Stop"
                     flat: true
-                    font.pixelSize: 11
+                    font.pixelSize: App.smallTextSize
                     focusPolicy: Qt.NoFocus
                     onClicked: if (paneController) paneController.goBack()
                 }
@@ -654,7 +654,8 @@ FocusScope {
                 required property bool alertTriggered
 
                 width: ListView.view.width
-                height: 30
+                // From the scale, so raising the text size cannot crop a row.
+                height: App.listRowHeight
                 highlighted: ListView.isCurrentItem
 
                 // A row is a click target, never a keyboard destination -- but
@@ -700,13 +701,14 @@ FocusScope {
                     anchors.rightMargin: 8
                     spacing: 8
 
-                    Label { text: iconText; font.pixelSize: 14 }
+                    Label { text: iconText; font.pixelSize: App.textSize }
 
                     Label {
+                        objectName: "fileName"
                         Layout.fillWidth: true
                         text: name
                         elide: Text.ElideMiddle
-                        font.pixelSize: 13
+                        font.pixelSize: App.textSize
                         font.bold: selected
                         color: selected ? Material.accent : Material.foreground
                     }
@@ -716,7 +718,7 @@ FocusScope {
                         horizontalAlignment: Text.AlignRight
                         text: sizeText
                         color: "#8b93a7"
-                        font.pixelSize: 12
+                        font.pixelSize: App.secondaryTextSize
                     }
 
                     // What the application already knows about this row.
@@ -735,7 +737,7 @@ FocusScope {
                                 anchors.centerIn: parent
                                 text: "report"
                                 color: "#7cc4ff"
-                                font.pixelSize: 9
+                                font.pixelSize: App.smallTextSize
                             }
                         }
                         Rectangle {
@@ -749,7 +751,7 @@ FocusScope {
                                 anchors.centerIn: parent
                                 text: "alert"
                                 color: alertTriggered ? "#e5534b" : "#8b93a7"
-                                font.pixelSize: 9
+                                font.pixelSize: App.smallTextSize
                             }
                         }
                     }
@@ -759,7 +761,7 @@ FocusScope {
                         horizontalAlignment: Text.AlignRight
                         text: modifiedText
                         color: "#8b93a7"
-                        font.pixelSize: 12
+                        font.pixelSize: App.secondaryTextSize
                     }
                 }
             }
@@ -832,7 +834,7 @@ FocusScope {
                         elide: Text.ElideMiddle
                         maximumLineCount: 2
                         wrapMode: Text.Wrap
-                        font.pixelSize: 11
+                        font.pixelSize: App.smallTextSize
                         font.bold: selected
                         color: selected ? Material.accent : Material.foreground
                     }
@@ -840,7 +842,7 @@ FocusScope {
                         Layout.alignment: Qt.AlignHCenter
                         text: sizeText
                         color: "#6f7788"
-                        font.pixelSize: 10
+                        font.pixelSize: App.smallTextSize
                     }
                 }
             }
@@ -862,14 +864,14 @@ FocusScope {
                 color: paneController && paneController.files
                        && paneController.files.selectionCount > 0
                        ? Material.accent : "#8b93a7"
-                font.pixelSize: 11
+                font.pixelSize: App.smallTextSize
             }
 
             Label {
                 visible: paneController && !paneController.writable
                 text: "read-only"
                 color: "#8b93a7"
-                font.pixelSize: 11
+                font.pixelSize: App.smallTextSize
             }
 
             Item { Layout.fillWidth: true }

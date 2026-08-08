@@ -247,38 +247,15 @@ assert that no icon-only control is below it. Most of these buttons have no
 assertion possible in the first place. Whether the result is *pleasant* is what
 `make screenshots` and a human are for.
 
-### The type is too small, and there is no scale to raise
-
-Listings and previews are set smaller than is comfortable to read: a file name is
-13 pixels, most of the rest of a listing is 12, secondary text is 11, and in
-places it drops to 10 and 9. A file manager is a thing people stare at all day.
-
-Raising it view by view is the wrong shape of fix. There are around 270
-`font.pixelSize` literals across 27 QML files — 12 and 11 between them account for
-most — so "a bit bigger" is 270 edits, and the next view added will guess its own
-size again.
-
-The application already chooses the monospace family once, centrally, so that a
-preview, a table and a log line up instead of each guessing; sizes deserve exactly
-the same treatment. One base size and a few named steps derived from it — body,
-secondary, heading — and this becomes one number to change. The Markdown page
-already works that way: the view hands `MarkdownStyle` a single body size and every
-margin and heading is a ratio of it, so that page follows the base size for free.
-
-Doing it this way also leaves the door open to making it a preference later, which
-is what anyone on a high-density screen or with tired eyes actually wants — but it
-does not need to be a preference to stop being too small.
-
-Start where the reading happens: the file listing and the previews. The rest can
-adopt the scale as those views are touched, so long as nothing new adds a literal.
-What a test can hold is that the views take their sizes from the scale rather than
-from numbers of their own; whether the result looks right is what the screenshots
-from `make screenshots` are for, and that judgement stays human.
-
 ---
 
 ## Notes
 
+- The type scale in `AppController` (`textSize`, `secondaryTextSize`,
+  `smallTextSize`, `headingSize`, `monospaceSize`) is used by the listing, the
+  previews and the sidebar. Around 200 `font.pixelSize` literals remain in the
+  other views; they adopt the scale as those views are touched. Nothing new should
+  add a literal.
 - Video preview is still a documented gap: it needs `qt6-multimedia-dev` and
   `qml6-module-qtmultimedia`, neither of which is installed here.
 - Qt's Markdown importer mangles a table placed directly after a blockquote or a
