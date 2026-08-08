@@ -177,6 +177,7 @@ ApplicationWindow {
     Connections {
         target: App
         function onDrivesRequested() { drivesDialog.open() }
+        function onCompressionRequested() { compressDialog.open() }
     }
 
     Shortcut {
@@ -323,6 +324,7 @@ ApplicationWindow {
 
     AppMenu { id: appMenu }
     CommandPalette { id: commandPalette }
+    CompressDialog { id: compressDialog }
 
     // Last stop for navigation keys.
     //

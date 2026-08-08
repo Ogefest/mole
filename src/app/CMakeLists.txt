@@ -19,6 +19,7 @@ qt_add_qml_module(mole
         ui/Main.qml
         ui/AppMenu.qml
         ui/CommandPalette.qml
+        ui/CompressDialog.qml
         ui/Sidebar.qml
         ui/TaskStrip.qml
         ui/FilePane.qml

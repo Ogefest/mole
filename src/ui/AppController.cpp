@@ -19,6 +19,10 @@
 #include "core/index/IndexDatabase.h"
 #include "core/index/ScanTask.h"
 #include "core/sets/FileSetStore.h"
+#ifdef MOLE_HAVE_ARCHIVE
+#include "plugins/archive/CompressTask.h"
+#endif
+
 #include "core/settings/Preferences.h"
 #include "core/tasks/FolderSizesTask.h"
 #include "core/tasks/TaskManager.h"
@@ -1102,6 +1106,20 @@ void AppController::registerShellActions()
     }
     {
         MenuAction action;
+        action.id = QStringLiteral("mole.tools.compress");
+        action.section = MenuAction::Section::Operations;
+        action.title = QStringLiteral("Compress…");
+        action.iconText = QStringLiteral("\U0001F5DC");
+        action.sortOrder = 25;
+        // Absent rather than greyed out in a build without libarchive: there is
+        // nothing to explain, the feature simply is not there. See ADR-0007.
+        action.enabled = [this] { return canCompress() && !currentLocation().isEmpty(); };
+        action.trigger = [this] { emit compressionRequested(); };
+        if (canCompress())
+            m_actions->addAction(std::move(action));
+    }
+    {
+        MenuAction action;
         action.id = QStringLiteral("mole.tools.folderSizes");
         action.section = MenuAction::Section::Operations;
         action.title = QStringLiteral("Folder sizes");
@@ -1253,6 +1271,99 @@ QStringList AppController::selectedFolders() const
             folders.append(uri);
     }
     return folders;
+}
+
+bool AppController::canCompress() const
+{
+#ifdef MOLE_HAVE_ARCHIVE
+    return true;
+#else
+    return false;
+#endif
+}
+
+QStringList AppController::compressionFormats() const
+{
+#ifdef MOLE_HAVE_ARCHIVE
+    return CompressTask::formatNames();
+#else
+    return {};
+#endif
+}
+
+QString AppController::suggestedArchiveName(const QString& format) const
+{
+#ifdef MOLE_HAVE_ARCHIVE
+    const QStringList targets = currentTargets();
+    const QString here = currentLocation();
+    // One item takes its own name; several take the folder's, because "3 items.zip"
+    // tells you nothing a month later.
+    QString base;
+    if (targets.size() == 1)
+        base = VfsUri::fromString(targets.first()).fileName();
+    else if (!here.isEmpty())
+        base = VfsUri::fromString(here).fileName();
+    if (base.isEmpty())
+        base = QStringLiteral("archive");
+
+    // A name like "notes.txt" becomes "notes.zip" rather than "notes.txt.zip".
+    const int dot = base.lastIndexOf(QLatin1Char('.'));
+    if (dot > 0)
+        base = base.left(dot);
+    return base + CompressTask::suffixFor(CompressTask::formatFromName(format));
+#else
+    Q_UNUSED(format);
+    return {};
+#endif
+}
+
+void AppController::compressSelection(const QString& archiveName, const QString& format)
+{
+#ifdef MOLE_HAVE_ARCHIVE
+    QStringList targets = currentTargets();
+    const QString here = currentLocation();
+    if (targets.isEmpty() && !here.isEmpty())
+        targets.append(here);
+    if (targets.isEmpty() || archiveName.trimmed().isEmpty())
+        return;
+
+    CompressTask::Request request;
+    request.format = CompressTask::formatFromName(format);
+    for (const QString& uri : targets)
+        request.sources.append(VfsUri::fromString(uri));
+
+    request.sourceFileSystem = m_vfs->resolve(request.sources.first());
+    // Beside what is being packed, which is where anyone would look for it.
+    const VfsUri folder = here.isEmpty() ? request.sources.first().parent() : VfsUri::fromString(here);
+    request.target = folder.child(archiveName.trimmed());
+    request.targetFileSystem = m_vfs->resolve(request.target);
+
+    if (!request.sourceFileSystem || !request.targetFileSystem) {
+        emit notification(static_cast<int>(EventBus::Severity::Warning), QStringLiteral("Cannot compress"),
+            QStringLiteral("No drive is mounted for this"));
+        return;
+    }
+
+    auto* task = new CompressTask(request);
+    const QString targetUri = request.target.toString();
+    connect(task, &Task::finished, this, [this, task, targetUri] {
+        if (task->state() == Task::State::Failed) {
+            emit notification(static_cast<int>(EventBus::Severity::Warning),
+                QStringLiteral("Compression failed"), task->error().message);
+            return;
+        }
+        if (task->state() != Task::State::Succeeded)
+            return;
+        // The listing has a new file in it, and whoever asked wants to see it.
+        m_events->postDirectoryChanged(VfsUri::fromString(targetUri).parent());
+    });
+    m_taskManager->submit(task);
+#else
+    Q_UNUSED(archiveName);
+    Q_UNUSED(format);
+    emit notification(static_cast<int>(EventBus::Severity::Warning), QStringLiteral("Cannot compress"),
+        QStringLiteral("This build was made without libarchive"));
+#endif
 }
 
 void AppController::measureFolderSizes()

@@ -80,6 +80,8 @@ if(LibArchive_FOUND)
     add_library(mole_archive_backend STATIC
         archive/ArchiveFileSystem.h
         archive/ArchiveFileSystem.cpp
+        archive/CompressTask.h
+        archive/CompressTask.cpp
     )
     target_include_directories(mole_archive_backend PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
     target_link_libraries(mole_archive_backend
@@ -102,6 +104,15 @@ if(LibArchive_FOUND)
     # Dropped next to the executable, where PluginManager looks first.
     set_target_properties(mole_plugin_archive PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
+
+    # Writing archives is an operation on the files in front of you rather than a
+    # kind of drive, so the writer is linked where the operation lives -- with
+    # AppController in mole_ui -- while the loadable plugin stays the thin wrapper
+    # that publishes the filesystem. No layering is inverted: the backend sits on
+    # mole_core like mole_ui does, and knows nothing about the interface.
+    # See docs/adr/0007-writing-archives.md.
+    target_link_libraries(mole_ui PUBLIC mole_archive_backend)
+    target_compile_definitions(mole_ui PUBLIC MOLE_HAVE_ARCHIVE)
 
     set(MOLE_HAVE_ARCHIVE_PLUGIN ON CACHE INTERNAL "")
 else()

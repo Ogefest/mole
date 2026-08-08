@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- The selection can be compressed into a new zip, tar.gz or tar.xz beside it, packed
+  in the background.
 - Search results can be walked with the arrows, opened in their folder with Enter, and
   turned into a set from a button beside them.
 - An HTML file can be shown as source or as a page, and the choice is remembered for

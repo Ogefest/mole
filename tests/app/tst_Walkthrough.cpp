@@ -64,6 +64,7 @@ private slots:
     void aPdfOpensAsPages();
     void htmlCanBeSwitchedBetweenSourceAndPage();
     void folderSizesLandInTheListing();
+    void compressingTheSelectionMakesAnArchiveBesideIt();
     void theListingTakesItsTypeSizeFromTheScale();
     void theIconOnlyControlsAreBigEnoughToHit();
     void theCommandPaletteFindsAndRunsThings();
@@ -966,6 +967,68 @@ void TestWalkthrough::searchResultsAreWalkableAndLeadSomewhere()
                  },
                  10000),
         "Enter on a result opens its folder with the cursor on it");
+}
+
+void TestWalkthrough::compressingTheSelectionMakesAnArchiveBesideIt()
+{
+    if (!m_harness->app()->canCompress())
+        QSKIP("this build was made without libarchive");
+
+    // The entry is in Operations, because packing acts on the files in front of you.
+    bool inOperations = false;
+    for (const QVariant& sectionEntry : m_harness->app()->buildMenu()) {
+        const QVariantMap section = sectionEntry.toMap();
+        for (const QVariant& action : section.value(QStringLiteral("actions")).toList()) {
+            if (action.toMap().value(QStringLiteral("id")).toString()
+                == QStringLiteral("mole.tools.compress")) {
+                inOperations
+                    = section.value(QStringLiteral("title")).toString() == QStringLiteral("Operations");
+            }
+        }
+    }
+    QVERIFY2(inOperations, "compressing is an operation on the selection");
+
+    m_harness->key(Qt::Key_Return); // into "documents"
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 2; }));
+    pane()->files()->selectAll();
+    m_harness->settle();
+
+    // The dialog asks the two things worth asking, and suggests the rest.
+    m_harness->app()->triggerAction(QStringLiteral("mole.tools.compress"));
+    QObject* dialog = m_harness->object(QStringLiteral("compressDialog"));
+    QVERIFY(dialog);
+    QVERIFY(m_harness->until([dialog] { return dialog->property("opened").toBool(); }));
+
+    QQuickItem* name = m_harness->item(QStringLiteral("archiveNameField"));
+    QVERIFY(name);
+    QVERIFY2(name->hasActiveFocus(), "the name has the keyboard, since that is what is being asked");
+    QVERIFY2(name->property("text").toString().endsWith(QStringLiteral(".zip")),
+        "zip by default, because it is the one anyone can open");
+
+    m_harness->screenshot(QStringLiteral("13-compress"));
+
+    name->setProperty("text", QStringLiteral("documents.zip"));
+    QVERIFY(QMetaObject::invokeMethod(dialog, "accept"));
+
+    // It lands beside what was packed, and the listing shows it without being asked
+    // to refresh.
+    QVERIFY2(m_harness->until(
+                 [this] {
+                     return pane()->files()->rowOfUri(pane()->currentUri() + QStringLiteral("/documents.zip"))
+                         >= 0;
+                 },
+                 20000),
+        "the archive appears next to what was packed");
+
+    // And it is a real zip, not an empty file with the right name. Whether its
+    // contents survive a round trip is tst_CompressTask's job, in three formats;
+    // what this test is for is the path from the menu entry to a file on disk.
+    const QString archive = m_harness->fixturePath() + QStringLiteral("/documents/documents.zip");
+    QVERIFY(QFileInfo::exists(archive));
+    QFile written(archive);
+    QVERIFY(written.open(QIODevice::ReadOnly));
+    QCOMPARE(written.read(2), QByteArray("PK"));
+    QVERIFY(written.size() > 2);
 }
 
 void TestWalkthrough::breadcrumbsClimbTheTree()

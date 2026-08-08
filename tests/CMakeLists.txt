@@ -149,6 +149,9 @@ if(MOLE_HAVE_ARCHIVE_PLUGIN)
 
     mole_add_test(tst_ArchiveFileSystem SOURCES plugins/tst_ArchiveFileSystem.cpp
                                        LIBS mole_archive_backend)
+
+    mole_add_test(tst_CompressTask      SOURCES plugins/tst_CompressTask.cpp
+                                       LIBS mole_archive_backend)
 else()
     message(STATUS "Archive tests skipped: the archive plugin was not built")
 endif()

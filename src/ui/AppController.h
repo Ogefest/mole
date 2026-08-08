@@ -215,6 +215,17 @@ public:
     /// Totals up the ticked folders, or every folder in the listing when none
     /// are ticked, and writes the answers into the rows as they arrive.
     Q_INVOKABLE void measureFolderSizes();
+    /// True when this build can write archives at all, so the interface can offer
+    /// the operation or leave it out rather than offering it and then failing.
+    Q_INVOKABLE bool canCompress() const;
+    /// What formats to offer, in the order to offer them.
+    Q_INVOKABLE QStringList compressionFormats() const;
+    /// A name for the archive worked out from what is selected, so the dialog opens
+    /// with something sensible in it.
+    Q_INVOKABLE QString suggestedArchiveName(const QString& format) const;
+    /// Packs the selection, or the folder in view when nothing is selected, into a
+    /// new archive beside it.
+    Q_INVOKABLE void compressSelection(const QString& archiveName, const QString& format);
     Q_INVOKABLE void queueScan(const QString& uri, const QString& label);
 
     // ---- application menu -------------------------------------------------
@@ -255,6 +266,9 @@ signals:
     /// call, because this layer has no business knowing what a dialog is.
     void drivesRequested();
     void notification(int severity, const QString& title, const QString& detail);
+    /// The shell asks for the little dialog: a name and a format are the user's to
+    /// choose, and a controller has no business owning a window.
+    void compressionRequested();
     /// A menu entry whose body is a QML dialog was picked; the shell decides
     /// which one to show. Keeps dialog markup out of C++.
     void dialogRequested(const QString& actionId);

@@ -9,6 +9,56 @@ wrong.
 
 ---
 
+## Compressing files and folders
+
+An operation on the selection — or on the folder in view when nothing is ticked —
+that asks the two things worth asking, a name and a kind, and packs in the background
+like every other job that takes time. The archive lands beside what was packed, which
+is where anyone would look for it.
+
+Three formats: zip, tar.gz, tar.xz, with zip the default because it is the one anyone
+can open anywhere without being told how. 7z is deliberately absent — libarchive
+writes less of that format than it reads, so offering it would mean sometimes
+producing an archive something else refuses. Reading 7z is unchanged.
+[ADR-0007](docs/adr/0007-writing-archives.md) has that and the rest.
+
+Both ends go through `IFileSystem`, so packing a selection on a remote drive is the
+same code as packing one on local disk, and archive mounts stay read-only: this writes
+a new archive and nothing else. Adding to an existing one sounds like a small extension
+and is not — it means rewriting the container and having something sensible to do when
+the process dies half way — so it is not offered.
+
+A cancelled or failed compression deletes the partial file. An archive that exists is
+one that finished; a half-written file waiting to be mistaken for a good one is the
+worst outcome available here. One unreadable file is recorded and skipped rather than
+fatal, the way the walker treats a directory it cannot enter — the rest of the archive
+is still worth having, and what was missed is said out loud.
+
+Where the code lives took a correction. The writer went into
+`mole_archive_backend`, which already links libarchive, and the define was put on
+`mole_builtin` — but `AppController` lives in `mole_ui`, *below* the built-ins, so
+`canCompress()` compiled to `false` and the walkthrough test skipped itself while
+looking like it had run. The link belongs where the operation is; `mole_ui` sits on
+`mole_core` exactly as the backend does, so nothing is inverted.
+
+The tests pack a tree and read it back through the archive *reading* backend, in all
+three formats, so the writer and the reader hold each other to account rather than the
+writer being checked against its own idea of what it wrote. The cancellation test
+needed a second version: waiting to observe `Running` and then cancelling is a race the
+task can win, and under a loaded machine it did once — it now packs from a drive that
+is slow to open files and cancels on the first sign of progress, which lands mid-write
+every time.
+
+And then a test failed about one run in three, which turned out to be the most useful
+thing that happened here. It was not flakiness: the entry header was written *before*
+the file was opened, so a file that then could not be read left a header promising N
+bytes with nothing behind it — corrupting everything after it in the stream. It only
+showed when the walker happened to reach the unreadable file before a good one, which
+is exactly why it looked intermittent. The file is opened first now, and the test names
+the unreadable file ahead of the readable one instead of leaving the order to the
+walker, so the case that found the bug is checked every time rather than a third of the
+time.
+
 ## Search results were a list you could only look at
 
 Three things they could not do, and one of them was in the wrong place.
