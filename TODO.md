@@ -40,19 +40,6 @@ top-level headings is a search problem, not navigation. So the split needs an AD
 before the code: what the sections are, what belongs in each, and what a plugin
 that guesses wrong should do.
 
-### The whole menu under the keyboard
-
-`F4` opens the menu without touching the mouse, and it should stay that way all
-the way down: arrows to move, Right or Enter to open a submenu, Left or Escape to
-come back out. Today the submenus want a click. (Jumping to an entry by its first
-letter would be welcome too, but that is a separate nicety, not part of this.)
-
-`AppMenu.qml` sets `focus: true` on the root menu and on the File submenu only,
-and Qt Quick Controls' handling of focus in a nested `Menu` is the part that will
-fight back. None of it is covered: `tst_KeyboardNavigation` does not touch the
-menu at all, so the tests come with the fix, driven through `QmlAppHarness` like
-the rest of the keyboard coverage.
-
 ### Compressing files and folders
 
 An action on the selection — one file, one folder, or several of each — that opens

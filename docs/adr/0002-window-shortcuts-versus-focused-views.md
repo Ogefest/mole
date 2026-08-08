@@ -77,3 +77,10 @@ a list of keys the shell is not allowed to receive — which is precisely backwa
   declared with `focus: true` is not the same as having it: something must call
   `forceActiveFocus()` when the panel is revealed, or the keyboard stays where it
   was. The menu does this on open, and the terminal now does it as well.
+- The same applies on the way back. Closing a nested popup leaves the one it came
+  from without the keyboard, so a submenu hands it back explicitly — deferred,
+  because Qt moves the focus itself as part of closing, and anything claimed from
+  inside the handler is taken straight back. Restoring it only when the exit
+  transition finishes is too late: that is a fifth of a second in which the arrow
+  keys do nothing, so the hand-back happens on `aboutToHide` as well as on
+  `closed`.

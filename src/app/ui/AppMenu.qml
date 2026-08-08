@@ -11,6 +11,7 @@ import QtQuick.Layouts
 // enum; only the entries inside them are dynamic.
 Menu {
     id: appMenu
+    objectName: "appMenu"
 
     property var sections: []
 
@@ -108,64 +109,66 @@ Menu {
         }
     }
 
-    Menu {
-        id: fileMenu
-        title: "File"
-        width: appMenu.widthOf(fileMenu)
+    // One component for all five, so they cannot drift apart. They did: only the
+    // File submenu declared `focus: true`, which is the kind of difference nobody
+    // notices until the keyboard stops halfway along the menu.
+    component SectionMenu: Menu {
+        id: sectionMenu
+        /// The section title as the C++ side names it. The objectName follows it
+        /// so a test can address one submenu without a second thing to keep in
+        /// step.
+        required property string section
+
+        title: sectionMenu.section
+        objectName: "menu" + sectionMenu.section
+        width: appMenu.widthOf(sectionMenu)
         focus: true
+
+        // Leaving a submenu with Left or Escape closes it and leaves the menu it
+        // came from without the keyboard: the arrows then did nothing, which is
+        // what made walking this menu impossible without a mouse.
+        //
+        // Restored on both signals, and deferred on each. `aboutToHide` fires as
+        // the close begins and `closed` only after the exit transition -- a fifth
+        // of a second later, which is long enough for the next keystroke to fall
+        // into the gap. The deferral itself is not optional: Qt moves the focus as
+        // part of closing the popup, so anything claimed from inside the handler
+        // is taken straight back.
+        onAboutToHide: if (appMenu.opened) Qt.callLater(sectionMenu.handBackTheKeyboard)
+        onClosed: if (appMenu.opened) Qt.callLater(sectionMenu.handBackTheKeyboard)
+
+        function handBackTheKeyboard() {
+            if (!appMenu.opened)
+                return
+            appMenu.forceActiveFocus()
+
+            // Only when Qt has actually cleared the highlight. Setting it
+            // unconditionally would undo a heading the user had already moved to
+            // while the transition was still running.
+            if (appMenu.currentIndex >= 0)
+                return
+            for (var i = 0; i < appMenu.count; ++i) {
+                const item = appMenu.itemAt(i)
+                if (item && item.subMenu === sectionMenu) {
+                    appMenu.currentIndex = i
+                    return
+                }
+            }
+        }
+
         Instantiator {
-            model: appMenu.entriesFor("File")
+            model: appMenu.entriesFor(sectionMenu.section)
             delegate: ActionItem {}
-            onObjectAdded: function(index, object) { fileMenu.insertItem(index, object) }
-            onObjectRemoved: function(index, object) { fileMenu.removeItem(object) }
+            onObjectAdded: function(index, object) { sectionMenu.insertItem(index, object) }
+            onObjectRemoved: function(index, object) { sectionMenu.removeItem(object) }
         }
     }
 
-    Menu {
-        id: viewMenu
-        title: "View"
-        width: appMenu.widthOf(viewMenu)
-        Instantiator {
-            model: appMenu.entriesFor("View")
-            delegate: ActionItem {}
-            onObjectAdded: function(index, object) { viewMenu.insertItem(index, object) }
-            onObjectRemoved: function(index, object) { viewMenu.removeItem(object) }
-        }
-    }
-
-    Menu {
-        id: bookmarksMenu
-        title: "Bookmarks"
-        width: appMenu.widthOf(bookmarksMenu)
-        Instantiator {
-            model: appMenu.entriesFor("Bookmarks")
-            delegate: ActionItem {}
-            onObjectAdded: function(index, object) { bookmarksMenu.insertItem(index, object) }
-            onObjectRemoved: function(index, object) { bookmarksMenu.removeItem(object) }
-        }
-    }
-
-    Menu {
-        id: toolsMenu
-        title: "Tools"
-        width: appMenu.widthOf(toolsMenu)
-        Instantiator {
-            model: appMenu.entriesFor("Tools")
-            delegate: ActionItem {}
-            onObjectAdded: function(index, object) { toolsMenu.insertItem(index, object) }
-            onObjectRemoved: function(index, object) { toolsMenu.removeItem(object) }
-        }
-    }
-
-    Menu {
-        id: helpMenu
-        title: "Help"
-        width: appMenu.widthOf(helpMenu)
-        Instantiator {
-            model: appMenu.entriesFor("Help")
-            delegate: ActionItem {}
-            onObjectAdded: function(index, object) { helpMenu.insertItem(index, object) }
-            onObjectRemoved: function(index, object) { helpMenu.removeItem(object) }
-        }
-    }
+    // The four sections the API enum fixes, plus Help. Order is the order they
+    // appear in.
+    SectionMenu { section: "File" }
+    SectionMenu { section: "View" }
+    SectionMenu { section: "Bookmarks" }
+    SectionMenu { section: "Tools" }
+    SectionMenu { section: "Help" }
 }

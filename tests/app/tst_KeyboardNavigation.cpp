@@ -63,6 +63,7 @@ private slots:
     void f3OpensAPreviewAndReusesTheTab();
     void previewArrowsStepThroughTheFolder();
     void newTabShortcutOpensATab();
+    void f4MenuWalksIntoSubmenusWithTheKeyboard();
 
 private:
     BrowserPaneController* pane() const;
@@ -70,6 +71,9 @@ private:
     /// SplitView build, so walk the item tree instead.
     static QQuickItem* findItem(QQuickItem* root, const QString& objectName);
     QQuickItem* findItem(const QString& objectName) const;
+    /// A Menu is a Popup, not an Item, so it never appears in the visual tree
+    /// that findItem walks.
+    QObject* findObject(const QString& objectName) const;
     void pressKey(Qt::Key key, Qt::KeyboardModifiers modifiers = Qt::NoModifier);
     void settle();
 
@@ -659,6 +663,69 @@ void TestKeyboardNavigation::newTabShortcutOpensATab()
     const int before = m_app->tabs()->rowCount();
     pressKey(Qt::Key_T, Qt::ControlModifier);
     QCOMPARE(m_app->tabs()->rowCount(), before + 1);
+}
+
+QObject* TestKeyboardNavigation::findObject(const QString& objectName) const
+{
+    if (QObject* root = m_engine->rootObjects().value(0))
+        return root->findChild<QObject*>(objectName);
+    return nullptr;
+}
+
+void TestKeyboardNavigation::f4MenuWalksIntoSubmenusWithTheKeyboard()
+{
+    // `opened` rather than `visible`, and waited for: the enter transition runs
+    // after the popup is shown, and a menu mid-animation has not got the
+    // keyboard yet.
+    const auto isOpen = [](QObject* target) {
+        return waitFor([target] { return target->property("opened").toBool(); }, 3000);
+    };
+    const auto isClosed = [](QObject* target) {
+        return waitFor([target] { return !target->property("opened").toBool(); }, 3000);
+    };
+
+    pressKey(Qt::Key_F4);
+    QObject* menu = findObject(QStringLiteral("appMenu"));
+    QVERIFY(menu);
+    QVERIFY2(isOpen(menu), "F4 opens the menu");
+
+    // Down highlights the first heading. Without this the menu is open and inert
+    // until something is clicked, which is the whole complaint.
+    pressKey(Qt::Key_Down);
+    QCOMPARE(menu->property("currentIndex").toInt(), 0);
+
+    QObject* fileMenu = findObject(QStringLiteral("menuFile"));
+    QVERIFY(fileMenu);
+    QVERIFY(!fileMenu->property("opened").toBool());
+
+    pressKey(Qt::Key_Right);
+    QVERIFY2(isOpen(fileMenu), "Right has to open the highlighted submenu");
+
+    // Opening it highlights its first entry, so the keyboard is inside it and
+    // the next Down moves within the submenu rather than along the headings.
+    QCOMPARE(fileMenu->property("currentIndex").toInt(), 0);
+    pressKey(Qt::Key_Down);
+    QCOMPARE(fileMenu->property("currentIndex").toInt(), 1);
+
+    // Left comes back out to the headings without closing everything, which is
+    // what makes walking the menu possible rather than a one-way trip.
+    pressKey(Qt::Key_Left);
+    QVERIFY2(isClosed(fileMenu), "Left leaves the submenu");
+    QVERIFY2(menu->property("opened").toBool(), "and the menu it belongs to stays open");
+    QVERIFY2(waitFor([menu] { return menu->property("activeFocus").toBool(); }, 3000),
+        "and gets the keyboard back, or the arrows do nothing from here on");
+
+    // A second heading, opened with Enter this time: both keys mean "go in".
+    pressKey(Qt::Key_Down);
+    QCOMPARE(menu->property("currentIndex").toInt(), 1);
+    pressKey(Qt::Key_Return);
+    QObject* viewMenu = findObject(QStringLiteral("menuView"));
+    QVERIFY(viewMenu);
+    QVERIFY2(isOpen(viewMenu), "Enter opens a submenu as well");
+
+    pressKey(Qt::Key_Escape);
+    pressKey(Qt::Key_Escape);
+    QVERIFY2(isClosed(menu), "Escape gets out of the menu entirely");
 }
 
 int main(int argc, char** argv)

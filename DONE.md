@@ -9,6 +9,38 @@ wrong.
 
 ---
 
+## The F4 menu stopped answering the keyboard halfway along
+
+Opening the menu with F4 worked, and so did stepping along the headings and opening
+one with Right or Enter. Coming back out was where it ended: Left closed the
+submenu and left the menu it came from without the keyboard, so the arrows did
+nothing from then on and the only way forward was the mouse — which is the whole
+thing F4 exists to avoid.
+
+Measured rather than assumed, and it took three attempts to get right, each one
+corrected by what the previous measurement said. Restoring the focus inside the
+`closed` handler does nothing, because Qt moves the focus as part of closing the
+popup and takes back anything claimed there; deferring with `Qt.callLater` does
+work, but `closed` only fires once the exit transition has finished, which is
+around a fifth of a second in which the menu is still deaf — long enough for the
+next keystroke to fall into the gap, and long enough that an early version of the
+fix reset the highlight *after* the user had already moved off it. The hand-back
+now happens on `aboutToHide` as well, and it only restores the highlight when Qt
+has actually cleared it, so it can never undo a heading the user has just moved to.
+
+The five submenus were five near-identical blocks, and they had already drifted:
+only File declared `focus: true`. They are one `SectionMenu` component now, which
+is why the behaviour cannot differ between them again — the drift was part of the
+bug, not tidiness. Each submenu's `objectName` follows its section name, so a test
+can address one without a second thing to keep in step.
+
+`f4MenuWalksIntoSubmenusWithTheKeyboard` walks the whole path — open, along,
+in with Right, within, out with Left, in again with Enter, out with Escape — and
+was checked against the bug by putting it back. The rule this belongs to is in
+[ADR-0002](docs/adr/0002-window-shortcuts-versus-focused-views.md), alongside the
+terminal: focus declared is not focus held, and that applies coming back as much as
+going in.
+
 ## The terminal did not get the keyboard, and Ctrl+D bookmarked instead of closing
 
 Opening the panel left the keyboard on the file list, so the shell was on screen
