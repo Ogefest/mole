@@ -204,6 +204,9 @@ public:
     Q_INVOKABLE void openLocation(const QString& uri);
     /// Navigates the current tab if it can navigate, otherwise opens a new one.
     Q_INVOKABLE void goTo(const QString& uri);
+    /// Opens the folder holding this file with the cursor on it -- what "show me
+    /// where this is" means at the end of a search.
+    Q_INVOKABLE void revealFile(const QString& fileUri);
     /// Mounts an archive as a drive and opens it. Returns the new mount's root
     /// uri, or an empty string on failure.
     Q_INVOKABLE QString openArchive(const QString& archiveUri);

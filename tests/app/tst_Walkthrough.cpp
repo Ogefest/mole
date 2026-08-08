@@ -69,6 +69,7 @@ private slots:
     void theCommandPaletteFindsAndRunsThings();
     void theHeaderAdvertisesTheCommandPalette();
     void ctrlFIsASearchBoxYouCanTypeInto();
+    void searchResultsAreWalkableAndLeadSomewhere();
     void bulkRenameShowsThePreviewAsYouType();
     void breadcrumbsClimbTheTree();
     void ctrlGRevealsTheEditablePath();
@@ -861,7 +862,7 @@ void TestWalkthrough::ctrlFIsASearchBoxYouCanTypeInto()
     m_harness->settle(6);
     m_harness->screenshot(QStringLiteral("12-search-box"));
 
-    QQuickItem* buildSet = m_harness->item(QStringLiteral("buildSetButton"));
+    QQuickItem* buildSet = m_harness->item(QStringLiteral("buildSetFromResultsButton"));
     QVERIFY(buildSet);
     QVERIFY(buildSet->property("enabled").toBool());
     QVERIFY(QMetaObject::invokeMethod(buildSet, "clicked"));
@@ -913,6 +914,58 @@ void TestWalkthrough::htmlCanBeSwitchedBetweenSourceAndPage()
     QVERIFY(text);
     QCOMPARE(text->property("textFormat").toInt(), int(Qt::RichText));
     m_harness->screenshot(QStringLiteral("03f-preview-html-rendered"));
+}
+
+void TestWalkthrough::searchResultsAreWalkableAndLeadSomewhere()
+{
+    QVERIFY(m_harness->writeFile(QStringLiteral("documents/needle-one.txt"), QByteArray("a")));
+    QVERIFY(m_harness->writeFile(QStringLiteral("documents/needle-two.txt"), QByteArray("b")));
+
+    m_harness->key(Qt::Key_F, Qt::ControlModifier);
+    auto* search = qobject_cast<LiveSearchController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY(search);
+    m_harness->settle(6);
+
+    m_harness->type(QStringLiteral("needle-"));
+    m_harness->key(Qt::Key_Return);
+    QVERIFY(m_harness->until([search] { return !search->isRunning(); }, 15000));
+    QCOMPARE(search->results()->rowCount(), 2);
+
+    // The actions sit with the results, not with the criteria: they act on the rows.
+    QQuickItem* actions = m_harness->item(QStringLiteral("resultActions"));
+    QVERIFY2(actions, "what can be done with results belongs beside them");
+    QVERIFY(actions->isVisible());
+    QVERIFY(m_harness->item(QStringLiteral("buildSetFromResultsButton")) != nullptr);
+
+    // Down out of the query box walks into the results, and the arrows move there.
+    QQuickItem* list = m_harness->item(QStringLiteral("searchResults"));
+    QVERIFY(list);
+    m_harness->key(Qt::Key_Down);
+    QVERIFY2(m_harness->until([list] { return list->hasActiveFocus(); }),
+        "Down out of the box puts the keyboard on the answers");
+
+    QCOMPARE(list->property("currentIndex").toInt(), 0);
+    m_harness->key(Qt::Key_Down);
+    QVERIFY(m_harness->until([list] { return list->property("currentIndex").toInt() == 1; }));
+    m_harness->key(Qt::Key_Up);
+    QVERIFY(m_harness->until([list] { return list->property("currentIndex").toInt() == 0; }));
+
+    m_harness->settle(6);
+    m_harness->screenshot(QStringLiteral("12b-search-results"));
+
+    // Enter is "show me where this is": the folder holding it, cursor on the file.
+    const QString wanted = search->results()->uriAt(list->property("currentIndex").toInt());
+    QVERIFY(!wanted.isEmpty());
+    m_harness->key(Qt::Key_Return);
+
+    QVERIFY2(m_harness->until(
+                 [this, wanted] {
+                     BrowserPaneController* pane = this->pane();
+                     return pane && pane->currentIndex() >= 0
+                         && pane->files()->uriAt(pane->currentIndex()) == wanted;
+                 },
+                 10000),
+        "Enter on a result opens its folder with the cursor on it");
 }
 
 void TestWalkthrough::breadcrumbsClimbTheTree()

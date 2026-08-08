@@ -57,6 +57,7 @@ private slots:
     void turningTheIndexOffForcesAWalk();
     void narrowingResultsDoesNotSearchAgain();
     void aSetCanBeBuiltFromWhatTheSearchFound();
+    void revealingAFileOpensItsFolderWithTheCursorOnIt();
     void textPreviewProviderClaimsTextFiles();
     void archivePluginMountsAZip();
     void dualPaneIsItsOwnFeature();
@@ -507,6 +508,36 @@ void TestAppIntegration::aSetCanBeBuiltFromWhatTheSearchFound()
     // Nothing to build from is not a set: an empty one would just be litter.
     search->results()->setFilterText(QStringLiteral("nothing matches this"));
     QCOMPARE(search->buildSetFromResults(QStringLiteral("Empty")), QString());
+}
+
+void TestAppIntegration::revealingAFileOpensItsFolderWithTheCursorOnIt()
+{
+    QVERIFY(m_tree->writeFile(QStringLiteral("reports/deep/needle.txt"), QByteArray("x")));
+    QVERIFY(m_tree->writeFile(QStringLiteral("reports/deep/haystack.txt"), QByteArray("y")));
+
+    auto* browser = qobject_cast<BrowserController*>(m_app->tabs()->controllerAt(0));
+    QVERIFY(browser);
+    BrowserPaneController* pane = browser->activePane();
+    QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() == 3; }));
+
+    const QString needle = m_tree->rootUri().child(QStringLiteral("reports/deep/needle.txt")).toString();
+    m_app->revealFile(needle);
+
+    // The folder it is in, and the cursor on the file itself -- arriving in the
+    // right folder with the cursor somewhere else is only half an answer.
+    QVERIFY(waitFor([pane] { return pane->currentUri().endsWith(QStringLiteral("/reports/deep")); }, 10000));
+    QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() == 2; }, 10000));
+    QVERIFY(waitFor(
+        [pane, needle] {
+            return pane->currentIndex() >= 0 && pane->files()->uriAt(pane->currentIndex()) == needle;
+        },
+        10000));
+
+    // Asked for again while already there: no navigation to wait for, and the
+    // cursor still lands on what was asked for.
+    const QString other = m_tree->rootUri().child(QStringLiteral("reports/deep/haystack.txt")).toString();
+    m_app->revealFile(other);
+    QCOMPARE(pane->files()->uriAt(pane->currentIndex()), other);
 }
 
 void TestAppIntegration::textPreviewProviderClaimsTextFiles()

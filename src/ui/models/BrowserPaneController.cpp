@@ -140,6 +140,27 @@ bool BrowserPaneController::isWritable() const
     return fs && fs->capabilities().testFlag(VfsCapability::Write);
 }
 
+void BrowserPaneController::revealFile(const QString& fileUri)
+{
+    const VfsUri file = VfsUri::fromString(fileUri);
+    if (!file.isValid())
+        return;
+
+    m_pendingReveal = fileUri;
+    const VfsUri folder = file.parent();
+    if (folder == m_current) {
+        // Already here, so there is no listing coming to put the cursor on it.
+        const int row = m_files->rowOfUri(fileUri);
+        m_pendingReveal.clear();
+        if (row >= 0) {
+            m_currentIndex = row;
+            emit currentIndexChanged();
+        }
+        return;
+    }
+    navigateTo(folder.toString());
+}
+
 void BrowserPaneController::moveCursor(int delta)
 {
     const int rows = m_files->rowCount();
@@ -384,7 +405,10 @@ void BrowserPaneController::load(const VfsUri& uri, bool recordHistory)
             // exists; the first row otherwise.
             annotateListing(entries);
 
-            const QString wanted = rememberedCursor(directory);
+            // A file someone asked to be shown wins over where the cursor was
+            // last time in this folder: they said which one they meant.
+            const QString wanted = m_pendingReveal.isEmpty() ? rememberedCursor(directory) : m_pendingReveal;
+            m_pendingReveal.clear();
             const int row = wanted.isEmpty() ? -1 : m_files->rowOfUri(wanted);
             m_currentIndex = row >= 0 ? row : (m_files->rowCount() > 0 ? 0 : -1);
             emit currentIndexChanged();

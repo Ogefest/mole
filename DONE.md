@@ -9,6 +9,31 @@ wrong.
 
 ---
 
+## Search results were a list you could only look at
+
+Three things they could not do, and one of them was in the wrong place.
+
+Building a set from them existed, beside the criteria — which is not where the rows
+are. It has moved to a strip above the results, along with the two other things worth
+doing to a match: showing it in its folder, and looking at it without leaving. The
+index search shows the same strip without the set button, since it has nowhere to put
+one yet.
+
+Walking them was impossible: the list had no focus handling at all, so results could be
+read and double-clicked and nothing else. Arrows move now, Enter goes there, F3 previews,
+and Down out of the query box walks into the answers — once a search has answered, the
+answers are where the keyboard should be. Arriving at a fresh list puts the cursor on the
+first row rather than nowhere, which took a second attempt: results arrive after the view
+exists, and a model that had no rows leaves `currentIndex` at -1.
+
+"Show me where this is" is the natural end of most searches and had no way to be asked
+for. `revealFile()` opens the folder holding a file *with the cursor on the file* —
+arriving in the right folder with the cursor somewhere else is only half an answer. The
+listing lands asynchronously, so the pane remembers what it was asked to reveal and
+consumes it when the entries arrive; a file already in the current folder needs no
+navigation and is selected straight away. Both paths are tested, because the second is
+the one that quietly does nothing if forgotten.
+
 ## Previews had no options, and nowhere to remember one
 
 An `.html` file previewed as coloured source. Sometimes that is what someone wants and

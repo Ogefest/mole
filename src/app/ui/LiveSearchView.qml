@@ -46,6 +46,9 @@ Item {
                 font.pixelSize: App.secondaryTextSize
                 onTextChanged: if (controller) controller.queryText = text
                 onAccepted: if (controller) controller.start()
+                // Down out of the box and into the results: once a search has
+                // answered, the answers are where the keyboard should be.
+                Keys.onDownPressed: resultList.takeFocus()
             }
 
             Label { text: "Extension"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
@@ -134,21 +137,6 @@ Item {
 
             Item { Layout.fillWidth: true }
 
-            Button {
-                objectName: "buildSetButton"
-                text: "Build a set"
-                flat: true
-                font.pixelSize: App.secondaryTextSize
-                enabled: controller && controller.results && controller.results.count > 0
-                ToolTip.text: "Make a file set of these results, to keep working on them"
-                ToolTip.visible: hovered
-                ToolTip.delay: 600
-                onClicked: {
-                    const id = controller.buildSetFromResults("")
-                    if (id.length > 0)
-                        App.openFeatureTab("core.filesets")
-                }
-            }
         }
 
         // Folded away until wanted, so the common case stays one field and one key.
@@ -264,8 +252,15 @@ Item {
         }
 
         SearchResultList {
+            id: resultList
             Layout.fillWidth: true
             Layout.fillHeight: true
+            canBuildSet: true
+            onBuildSetRequested: {
+                const id = controller.buildSetFromResults("")
+                if (id.length > 0)
+                    App.openFeatureTab("core.filesets")
+            }
             visible: !(controller && controller.running === true
                        && (controller.results ? controller.results.count === 0 : true))
             resultsModel: controller ? controller.results : null

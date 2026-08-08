@@ -61,6 +61,11 @@ public:
     bool isWritable() const;
 
     Q_INVOKABLE void navigateTo(const QString& uri);
+    /// Navigates to the folder holding `fileUri` and puts the cursor on the file
+    /// once the listing arrives. The end of most searches is "show me where this
+    /// is", and arriving in the right folder with the cursor somewhere else is only
+    /// half an answer.
+    Q_INVOKABLE void revealFile(const QString& fileUri);
     /// Moves the cursor by `delta` rows, clamped to the listing.
     Q_INVOKABLE void moveCursor(int delta);
     Q_INVOKABLE void cursorToStart();
@@ -109,6 +114,9 @@ private:
     /// it without the user opening anything.
     void annotateListing(const FileEntryList& entries);
     /// The entry to select on arrival, or an empty string for "the first row".
+    /// Set by revealFile(), consumed by the next listing that lands.
+    QString m_pendingReveal;
+
     QString rememberedCursor(const VfsUri& folder) const;
     void setLoading(bool loading);
 

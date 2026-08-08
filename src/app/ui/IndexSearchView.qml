@@ -72,6 +72,8 @@ Item {
         }
 
         SearchResultList {
+            // No set from here yet: the index tab has nowhere to put one.
+            canBuildSet: false
             Layout.fillWidth: true
             Layout.fillHeight: true
             resultsModel: controller ? controller.results : null

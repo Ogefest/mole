@@ -651,6 +651,25 @@ void AppController::openLocation(const QString& uri)
         QMetaObject::invokeMethod(controller, "navigateActive", Q_ARG(QString, uri));
 }
 
+void AppController::revealFile(const QString& fileUri)
+{
+    // A browser tab, because that is what can show a folder; the current one when
+    // it is already a browser, so a search does not leave tabs behind.
+    QObject* current = m_tabs->currentController();
+    QObject* pane = current ? current->property("activePane").value<QObject*>() : nullptr;
+    if (!pane) {
+        const int row = m_tabs->openTab(QStringLiteral("mole.browser"));
+        if (row < 0)
+            return;
+        QObject* opened = m_tabs->controllerAt(row);
+        pane = opened ? opened->property("activePane").value<QObject*>() : nullptr;
+    }
+    if (!pane)
+        return;
+
+    QMetaObject::invokeMethod(pane, "revealFile", Q_ARG(QString, fileUri));
+}
+
 void AppController::goTo(const QString& uri)
 {
     QObject* current = m_tabs->currentController();

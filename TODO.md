@@ -19,29 +19,6 @@ screenshots come from `make screenshots`, which photographs states the tests hav
 just asserted — so the documentation cannot drift into showing something that no
 longer works.
 
-### Working with search results
-
-Three things the results list still cannot do.
-
-Building a set from them exists as a button beside the criteria, which is the wrong
-place for it: it belongs with the results it acts on, and it should be joined there by
-whatever else turns out to be worth doing to a list of matches.
-
-Walking the results needs to feel like walking a listing — arrows, Enter, the same
-keys that work everywhere else — rather than being a list that can only be looked at.
-`SearchResultList` is its own view and does not share `FilePane`'s key handling, so
-either it grows the same handling or the two stop being separate.
-
-And "show me where this is": opening the folder that holds a found file, with the
-cursor on it. That is the natural end of most searches and it has no way to be asked
-for at the moment.
-
-While in there: streaming results resets the model on every batch, which throws away
-the view's scroll position and selection. Scrolling through results as they arrive is
-therefore unsatisfying even though it is no longer slow (see DONE.md, "A long search
-froze the interface"). The fix is insert semantics rather than a reset — `beginInsertRows`
-per run of new rows — which is a bigger change than the freeze warranted at the time.
-
 ### Compressing files and folders
 
 An action on the selection — one file, one folder, or several of each — that opens
@@ -79,6 +56,11 @@ with the workflows, so it wants the split above to have happened first.
 
 ## Notes
 
+- Streaming search results still resets the model on every batch, which throws away
+  the view's scroll position and the highlighted row. It is no longer slow (see
+  DONE.md, "A long search froze the interface") but it is unsatisfying to scroll
+  through while results arrive. The fix is `beginInsertRows` per run of new rows
+  instead of a reset.
 - Hit targets: `App.minimumTarget` is the floor for anything that is only an icon,
   and the twenty-four such controls that were below it have been raised. The
   spinners left at 16-20 are deliberate — a `BusyIndicator` is not a click target.

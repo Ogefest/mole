@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- Search results can be walked with the arrows, opened in their folder with Enter, and
+  turned into a set from a button beside them.
 - An HTML file can be shown as source or as a page, and the choice is remembered for
   the next file of that type.
 - A long search no longer makes the window stop responding: streaming results into

@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.Material
 import QtQuick.Layouts
 
 // Shared result list for every search flavour. Rows carry a full uri, so
@@ -8,18 +9,131 @@ Rectangle {
     id: results
 
     property var resultsModel: null
+    /// Whether to offer building a file set from what was found. The live search
+    /// can; the index search has nowhere to put one yet.
+    property bool canBuildSet: false
+
+    signal buildSetRequested()
+
+    /// Called by the view when the keyboard should come here.
+    function takeFocus() {
+        if (list.currentIndex < 0 && list.count > 0)
+            list.currentIndex = 0
+        list.forceActiveFocus()
+    }
+
+    function revealCurrent() {
+        if (list.currentIndex < 0 || !resultsModel)
+            return
+        const uri = resultsModel.uriAt(list.currentIndex)
+        if (uri.length === 0)
+            return
+        // A folder is opened; a file has its folder opened with the cursor on it,
+        // which is what "show me where this is" means.
+        if (resultsModel.isDirAt(list.currentIndex))
+            App.goTo(uri)
+        else
+            App.revealFile(uri)
+    }
+
+    function previewCurrent() {
+        if (list.currentIndex < 0 || !resultsModel)
+            return
+        if (!resultsModel.isDirAt(list.currentIndex))
+            App.previewFile(resultsModel.uriAt(list.currentIndex))
+    }
 
     color: "#151922"
     border.color: "#2a3140"
     border.width: 1
 
+    // What can be done with what was found. Beside the results rather than beside
+    // the criteria: these act on the rows, so they belong with them.
+    ToolBar {
+        id: actions
+        objectName: "resultActions"
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.margins: 1
+        visible: results.resultsModel ? results.resultsModel.count > 0 : false
+
+        RowLayout {
+            anchors.fill: parent
+            anchors.leftMargin: 6
+            anchors.rightMargin: 6
+            spacing: 6
+
+            ToolButton {
+                objectName: "revealButton"
+                text: "Show in folder"
+                font.pixelSize: App.secondaryTextSize
+                focusPolicy: Qt.NoFocus
+                enabled: list.currentIndex >= 0
+                ToolTip.text: "Open the folder this is in, with the cursor on it  (Enter)"
+                ToolTip.visible: hovered
+                ToolTip.delay: 600
+                onClicked: results.revealCurrent()
+            }
+            ToolButton {
+                objectName: "previewResultButton"
+                text: "Preview"
+                font.pixelSize: App.secondaryTextSize
+                focusPolicy: Qt.NoFocus
+                enabled: list.currentIndex >= 0
+                ToolTip.text: "Look at this without leaving the results  (F3)"
+                ToolTip.visible: hovered
+                ToolTip.delay: 600
+                onClicked: results.previewCurrent()
+            }
+
+            Item { Layout.fillWidth: true }
+
+            ToolButton {
+                objectName: "buildSetFromResultsButton"
+                visible: results.canBuildSet
+                text: "Build a set"
+                font.pixelSize: App.secondaryTextSize
+                focusPolicy: Qt.NoFocus
+                ToolTip.text: "Make a file set of these results, to keep working on them"
+                ToolTip.visible: hovered
+                ToolTip.delay: 600
+                onClicked: results.buildSetRequested()
+            }
+        }
+    }
+
     ListView {
-        anchors.fill: parent
+        id: list
+        objectName: "searchResults"
+        anchors.top: actions.visible ? actions.bottom : parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
         anchors.margins: 1
         clip: true
         model: results.resultsModel
         reuseItems: true
+        // Walking the results should feel like walking a listing: arrows move,
+        // Enter goes there, F3 looks at it without leaving.
+        focus: true
+        keyNavigationEnabled: true
+        currentIndex: 0
+        highlightMoveDuration: 0
+        // Results arrive after this view exists, and a model that had no rows
+        // leaves the cursor at -1. Arriving at a list of answers should put it on
+        // the first one rather than nowhere.
+        onCountChanged: if (currentIndex < 0 && count > 0) currentIndex = 0
         ScrollBar.vertical: ScrollBar {}
+
+        Keys.onReturnPressed: results.revealCurrent()
+        Keys.onEnterPressed: results.revealCurrent()
+        Keys.onPressed: function(event) {
+            if (event.key === Qt.Key_F3) {
+                results.previewCurrent()
+                event.accepted = true
+            }
+        }
 
         delegate: ItemDelegate {
             required property int index
@@ -32,10 +146,15 @@ Rectangle {
 
             width: ListView.view.width
             height: 34
-            onDoubleClicked: App.goTo(isDir ? uri : parentUri)
+            highlighted: ListView.isCurrentItem
+            onClicked: list.currentIndex = index
+            onDoubleClicked: {
+                list.currentIndex = index
+                results.revealCurrent()
+            }
 
             background: Rectangle {
-                color: hovered ? "#232a36" : "transparent"
+                color: parent.highlighted ? "#232a36" : (hovered ? "#1d232e" : "transparent")
             }
 
             RowLayout {
@@ -44,7 +163,7 @@ Rectangle {
                 anchors.rightMargin: 8
                 spacing: 8
 
-                Label { text: iconText; font.pixelSize: 14 }
+                Label { text: iconText; font.pixelSize: App.textSize }
 
                 ColumnLayout {
                     Layout.fillWidth: true
@@ -54,14 +173,14 @@ Rectangle {
                         Layout.fillWidth: true
                         text: name
                         elide: Text.ElideMiddle
-                        font.pixelSize: 13
+                        font.pixelSize: App.textSize
                     }
                     Label {
                         Layout.fillWidth: true
                         text: parentUri
                         elide: Text.ElideLeft
                         color: "#6f7788"
-                        font.pixelSize: 10
+                        font.pixelSize: App.smallTextSize
                     }
                 }
 
@@ -70,7 +189,7 @@ Rectangle {
                     horizontalAlignment: Text.AlignRight
                     text: sizeText
                     color: "#8b93a7"
-                    font.pixelSize: 12
+                    font.pixelSize: App.secondaryTextSize
                 }
             }
         }
