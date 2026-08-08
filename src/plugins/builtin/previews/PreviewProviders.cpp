@@ -12,6 +12,7 @@
 #include <QLocale>
 #include <QMimeDatabase>
 #include <QQuickTextDocument>
+#include <QRegularExpression>
 #include <QStringDecoder>
 #include <QUrl>
 
@@ -143,6 +144,46 @@ QString TextPreviewController::positionText() const
             locale.formattedDataSize(m_windowOffset + m_windowBytes), locale.formattedDataSize(m_fileSize));
 }
 
+void TextPreviewController::setViewerOption(const QString& key, const QString& value)
+{
+    if (key != QLatin1String("mode"))
+        return;
+
+    const bool render = value.compare(QLatin1String("Rendered"), Qt::CaseInsensitive) == 0;
+    if (render == m_renderHtml)
+        return;
+    m_renderHtml = render;
+
+    // The text already read is reused: switching between source and page is a
+    // question about the same bytes, not a reason to go back to the drive.
+    updateDisplayText();
+    emit textChanged();
+}
+
+QString TextPreviewController::withoutExternalReferences(const QString& html)
+{
+    // Blunt on purpose. Qt's rich text engine resolves what a document names, so a
+    // page could tell whoever wrote it that a file had been looked at -- and in a
+    // file manager that is a nasty surprise, not a feature. Telling a local
+    // reference from a remote one means parsing and resolving, and getting that
+    // subtly wrong is the failure this exists to prevent. See ADR-0006.
+    static const QRegularExpression tags(
+        QStringLiteral("<\\s*(img|script|link|iframe|object|embed|source|audio|video)\\b[^>]*>"),
+        QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression closers(
+        QStringLiteral("<\\s*/\\s*(script|iframe|object|embed|audio|video)\\s*>"),
+        QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression handlers(
+        QStringLiteral("\\son[a-z]+\\s*=\\s*(\"[^\"]*\"|'[^']*'|[^\\s>]+)"),
+        QRegularExpression::CaseInsensitiveOption);
+
+    QString safe = html;
+    safe.remove(tags);
+    safe.remove(closers);
+    safe.remove(handlers);
+    return safe;
+}
+
 void TextPreviewController::attachDocument(
     QQuickTextDocument* document, int bodyPixelSize, const QString& monospaceFamily)
 {
@@ -156,6 +197,11 @@ void TextPreviewController::attachDocument(
     m_markdownStyle->setMetrics(metrics);
 
     applyViewers();
+}
+
+void TextPreviewController::updateDisplayText()
+{
+    m_displayText = isRenderedHtml() ? withoutExternalReferences(m_text) : m_text;
 }
 
 void TextPreviewController::applyViewers()
@@ -193,6 +239,7 @@ void TextPreviewController::load(const FileEntry& entry)
     // Markdown is rendered, not coloured, so the highlighter stays off for it.
     m_markdown = suffix == QLatin1String("md") || suffix == QLatin1String("markdown")
         || suffix == QLatin1String("mdown") || suffix == QLatin1String("mkd");
+    m_isHtml = TextPreviewProvider::isRenderable(suffix);
     m_language = m_markdown ? QString() : SourceHighlighter::languageForSuffix(suffix);
     m_highlighter->setLanguage(m_language);
     // Stepping from a Markdown file to a source file, or back, changes which of
@@ -245,6 +292,7 @@ void TextPreviewController::readWindow(qint64 offset)
         // window cut mid-character is expected when paging by bytes.
         QStringDecoder decoder(QStringDecoder::Utf8);
         m_text = decoder.decode(task->contents());
+        updateDisplayText();
 
         m_windowOffset = task->actualOffset();
         m_windowBytes = task->contents().size();
@@ -297,6 +345,27 @@ void TextPreviewController::seekToFraction(double fraction)
 TextPreviewProvider::TextPreviewProvider(PluginServices services)
     : m_services(services)
 {
+}
+
+bool TextPreviewProvider::isRenderable(const QString& suffix)
+{
+    const QString lower = suffix.toLower();
+    return lower == QLatin1String("html") || lower == QLatin1String("htm") || lower == QLatin1String("xhtml");
+}
+
+QList<ViewerOption> TextPreviewProvider::options(const FileEntry& entry) const
+{
+    if (entry.isDir || !isRenderable(entry.uri.suffix()))
+        return {};
+
+    ViewerOption mode;
+    mode.key = QStringLiteral("mode");
+    mode.title = QStringLiteral("Show");
+    mode.choices = { QStringLiteral("Source"), QStringLiteral("Rendered") };
+    // Source by default: a file manager showing a file should show what is in it,
+    // and someone who wants the page can say so once and be remembered.
+    mode.defaultChoice = QStringLiteral("Source");
+    return { mode };
 }
 
 QStringList TextPreviewProvider::textSuffixes()

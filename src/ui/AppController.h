@@ -36,6 +36,7 @@ class Scheduler;
 class AlertStore;
 class AnalysisStore;
 class FileSetStore;
+class Preferences;
 class SecretStore;
 class RemoteRegistry;
 
@@ -293,6 +294,7 @@ private:
     AlertStore* m_alerts = nullptr;
     std::unique_ptr<AnalysisStore> m_reports;
     FileSetStore* m_sets = nullptr;
+    Preferences* m_preferences = nullptr;
     SecretStore* m_secrets = nullptr;
     RemoteRegistry* m_remotes = nullptr;
     QString m_credentialsError;

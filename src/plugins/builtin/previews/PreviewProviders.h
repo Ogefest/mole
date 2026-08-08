@@ -64,6 +64,9 @@ class TextPreviewController final : public PreviewController
     /// as source -- if someone wants the source they can open it as text.
     Q_PROPERTY(bool markdown READ isMarkdown NOTIFY textChanged)
     Q_PROPERTY(QString languageName READ languageName NOTIFY textChanged)
+    /// Rendered as a page rather than shown as source. Only ever true for markup
+    /// the viewer was asked to render -- see setViewerOption().
+    Q_PROPERTY(bool renderedHtml READ isRenderedHtml NOTIFY textChanged)
 
     /// Where this window sits in the file, for the position bar.
     Q_PROPERTY(qint64 fileSize READ fileSize NOTIFY windowChanged)
@@ -81,9 +84,12 @@ public:
     explicit TextPreviewController(PluginServices services, QObject* parent = nullptr);
     ~TextPreviewController() override;
 
-    QString text() const { return m_text; }
+    /// What the view shows: the source as read, or the page with everything that
+    /// could reach off the disk taken out of it.
+    QString text() const { return m_displayText; }
     bool isHighlighted() const { return !m_language.isEmpty(); }
     bool isMarkdown() const { return m_markdown; }
+    bool isRenderedHtml() const { return m_renderHtml && m_isHtml; }
     QString languageName() const;
 
     qint64 fileSize() const { return m_fileSize; }
@@ -96,6 +102,13 @@ public:
     QString sizeText() const;
 
     void load(const FileEntry& entry) override;
+    void setViewerOption(const QString& key, const QString& value) override;
+
+    /// Removes everything a document could use to reach off the disk: images,
+    /// scripts, stylesheets, frames, embedded objects and event handlers. Static
+    /// and exposed because it is the rule that matters most here and deserves a
+    /// test of its own -- previewing a file must put nothing on the network.
+    static QString withoutExternalReferences(const QString& html);
 
     // ---- paging ---------------------------------------------------------
 
@@ -122,6 +135,8 @@ private:
     /// Points whichever of the two the current file needs at the document, and
     /// takes the other one off it.
     void applyViewers();
+    /// Recomputes what the view shows from what was read.
+    void updateDisplayText();
 
     /// 512 kB is roughly ten thousand lines of code -- more than anyone reads
     /// in one screen, and small enough that paging feels instant.
@@ -133,7 +148,12 @@ private:
     QPointer<QQuickTextDocument> m_document;
     QString m_language;
     bool m_markdown = false;
+    bool m_isHtml = false;
+    bool m_renderHtml = false;
     QString m_text;
+    /// Derived from m_text and the chosen mode, computed once per change rather
+    /// than on every read.
+    QString m_displayText;
 
     FileEntry m_entry;
     FileSystemPtr m_fileSystem;
@@ -157,7 +177,13 @@ public:
     QUrl viewSource() const override;
     PreviewController* createController(QObject* parent) override;
 
+    /// HTML can be read as source or shown as a page, and which one is right
+    /// depends entirely on who is looking. Nothing else here has a choice to make.
+    QList<ViewerOption> options(const FileEntry& entry) const override;
+
     static QStringList textSuffixes();
+    /// Markup this viewer can render as a page rather than colour as source.
+    static bool isRenderable(const QString& suffix);
 
 private:
     PluginServices m_services;

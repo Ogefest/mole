@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- An HTML file can be shown as source or as a page, and the choice is remembered for
+  the next file of that type.
 - A long search no longer makes the window stop responding: streaming results into
   the list is near-linear instead of re-sorting everything on every batch.
 - Search results appear as they are found, can be narrowed where they are, and can be

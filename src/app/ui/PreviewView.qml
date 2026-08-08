@@ -60,7 +60,7 @@ Item {
                         Layout.fillWidth: true
                         text: controller ? controller.fileName : ""
                         elide: Text.ElideMiddle
-                        font.pixelSize: 13
+                        font.pixelSize: App.textSize
                         font.bold: true
                     }
 
@@ -69,7 +69,7 @@ Item {
                         text: controller
                               ? controller.position + " of " + controller.siblingCount : ""
                         color: "#8b93a7"
-                        font.pixelSize: 12
+                        font.pixelSize: App.secondaryTextSize
                     }
 
                     ToolSeparator {}
@@ -77,12 +77,40 @@ Item {
                     Label {
                         text: controller ? controller.viewerName : ""
                         color: Material.accent
-                        font.pixelSize: 11
+                        font.pixelSize: App.smallTextSize
+                    }
+
+                    // Whatever this viewer says can be chosen about how it shows
+                    // this file. The strip renders these without knowing what any
+                    // of them mean, the same way the menu renders entries from
+                    // plugins it has never heard of.
+                    Repeater {
+                        model: controller ? controller.viewerOptions : []
+
+                        delegate: RowLayout {
+                            required property var modelData
+                            spacing: 4
+
+                            Label {
+                                text: modelData.title
+                                color: "#8b93a7"
+                                font.pixelSize: App.smallTextSize
+                            }
+                            ComboBox {
+                                objectName: "viewerOption_" + modelData.key
+                                implicitContentWidthPolicy: ComboBox.WidestText
+                                font.pixelSize: App.secondaryTextSize
+                                focusPolicy: Qt.NoFocus
+                                model: modelData.choices
+                                currentIndex: modelData.choices.indexOf(modelData.chosen)
+                                onActivated: controller.chooseViewerOption(modelData.key, currentText)
+                            }
+                        }
                     }
 
                     ToolButton {
                         text: "Open"
-                        font.pixelSize: 12
+                        font.pixelSize: App.secondaryTextSize
                         focusPolicy: Qt.NoFocus
                         ToolTip.visible: hovered
                         ToolTip.text: "Hand this file to the desktop's default application"
@@ -127,7 +155,7 @@ Item {
                 text: controller ? controller.folderPath : ""
                 elide: Text.ElideLeft
                 color: "#6f7788"
-                font.pixelSize: 11
+                font.pixelSize: App.smallTextSize
             }
         }
     }

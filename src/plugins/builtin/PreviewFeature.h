@@ -8,6 +8,7 @@
 
 #include <QPointer>
 #include <QUrl>
+#include <QVariantList>
 
 namespace mole {
 
@@ -34,6 +35,10 @@ class PreviewTabController final : public FeatureController
     Q_PROPERTY(QUrl viewSource READ viewSource NOTIFY currentChanged)
     /// The object that component binds to. Owned by this controller.
     Q_PROPERTY(QObject* viewer READ viewer NOTIFY currentChanged)
+    /// What can be chosen about how this file is shown, for the strip to render:
+    /// one map per option with `key`, `title`, `choices` and `chosen`. Empty for
+    /// most files. See docs/adr/0006-preview-options-and-preferences.md.
+    Q_PROPERTY(QVariantList viewerOptions READ viewerOptions NOTIFY currentChanged)
     Q_PROPERTY(int position READ position NOTIFY currentChanged)
     Q_PROPERTY(int siblingCount READ siblingCount NOTIFY currentChanged)
     Q_PROPERTY(bool canGoNext READ canGoNext NOTIFY currentChanged)
@@ -47,6 +52,9 @@ public:
     QString fileName() const { return m_current.name; }
     QString folderPath() const;
     QString viewerName() const { return m_viewerName; }
+    QVariantList viewerOptions() const { return m_viewerOptions; }
+    /// Chooses one, remembers it for this file type, and shows the result now.
+    Q_INVOKABLE void chooseViewerOption(const QString& key, const QString& value);
     QUrl viewSource() const { return m_viewSource; }
     QObject* viewer() const;
     /// One-based, for "3 of 17".
@@ -76,6 +84,14 @@ private:
     /// Files only: stepping into a directory from a preview makes no sense.
     FileEntryList m_siblings;
     QString m_viewerName;
+    QVariantList m_viewerOptions;
+    /// The provider showing the current file, for the preference keys.
+    QString m_providerId;
+
+    // The two halves of remembering a choice: where it is written, and what it
+    // says when nothing has been written yet.
+    QString preferenceKey(const QString& optionKey, const FileEntry& entry) const;
+    QString rememberedChoice(const ViewerOption& option, const FileEntry& entry) const;
     QUrl m_viewSource;
     QPointer<QObject> m_viewer;
     QPointer<ListDirectoryTask> m_listing;

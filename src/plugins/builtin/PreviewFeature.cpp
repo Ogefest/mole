@@ -1,5 +1,6 @@
 #include "plugins/builtin/PreviewFeature.h"
 
+#include "core/settings/Preferences.h"
 #include "core/tasks/ListDirectoryTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/VfsManager.h"
@@ -98,9 +99,26 @@ void PreviewTabController::showEntry(const FileEntry& entry)
 
     m_viewerName = provider->displayName();
     m_viewSource = provider->viewSource();
+    m_providerId = provider->id();
 
     auto* controller = provider->createController(this);
     m_viewer = controller;
+
+    // What this viewer offers for this file, and what was chosen last time. Applied
+    // before load(), so the file is read once and shown the way it was asked for
+    // rather than shown one way and then the other.
+    m_viewerOptions.clear();
+    const QList<ViewerOption> declared = provider->options(entry);
+    for (const ViewerOption& option : declared) {
+        const QString chosen = rememberedChoice(option, entry);
+        if (controller)
+            controller->setViewerOption(option.key, chosen);
+
+        m_viewerOptions.append(
+            QVariantMap { { QStringLiteral("key"), option.key }, { QStringLiteral("title"), option.title },
+                { QStringLiteral("choices"), option.choices }, { QStringLiteral("chosen"), chosen } });
+    }
+
     if (controller)
         controller->load(entry);
 
@@ -197,6 +215,47 @@ PreviewFeature::PreviewFeature(PluginServices services)
 QUrl PreviewFeature::viewSource() const
 {
     return QUrl(QStringLiteral("qrc:/qt/qml/Mole/ui/PreviewView.qml"));
+}
+
+QString PreviewTabController::preferenceKey(const QString& optionKey, const FileEntry& entry) const
+{
+    // Provider and suffix both: per suffix because "the next .html" is what was
+    // asked for, and one text viewer serves .html, .xml and .svg with different
+    // sensible answers; the provider id so two viewers claiming a suffix cannot
+    // overwrite each other. See ADR-0006.
+    return QStringLiteral("preview.%1.%2.%3").arg(m_providerId, entry.uri.suffix().toLower(), optionKey);
+}
+
+QString PreviewTabController::rememberedChoice(const ViewerOption& option, const FileEntry& entry) const
+{
+    if (!m_services.preferences)
+        return option.defaultChoice;
+
+    const QString remembered
+        = m_services.preferences->value(preferenceKey(option.key, entry), option.defaultChoice).toString();
+    // A choice that is no longer offered falls back rather than being obeyed: the
+    // viewer's options can change between versions.
+    return option.choices.contains(remembered) ? remembered : option.defaultChoice;
+}
+
+void PreviewTabController::chooseViewerOption(const QString& key, const QString& value)
+{
+    if (m_services.preferences)
+        m_services.preferences->setValue(preferenceKey(key, m_current), value);
+
+    // Applied to what is on screen now as well as remembered for next time, so
+    // nothing has to be reopened by hand.
+    if (auto* controller = qobject_cast<PreviewController*>(m_viewer.data()))
+        controller->setViewerOption(key, value);
+
+    for (QVariant& entry : m_viewerOptions) {
+        QVariantMap option = entry.toMap();
+        if (option.value(QStringLiteral("key")).toString() == key) {
+            option[QStringLiteral("chosen")] = value;
+            entry = option;
+        }
+    }
+    emit currentChanged();
 }
 
 FeatureController* PreviewFeature::createController(QObject* parent)

@@ -13,17 +13,19 @@ Item {
     property var controller: null
 
     readonly property bool showsMarkdown: controller ? controller.markdown : false
+    // A page rather than its source, when that is what was chosen for this type.
+    readonly property bool showsPage: controller ? controller.renderedHtml === true : false
 
     // Prose and code come from the same scale as everywhere else; code sits a
     // shade smaller because it is scanned a line at a time rather than read by
     // the paragraph.
-    readonly property int bodyPixelSize: showsMarkdown ? App.textSize : App.monospaceSize
+    readonly property int bodyPixelSize: (showsMarkdown || showsPage) ? App.textSize : App.monospaceSize
 
     // A page of prose needs a measure. Text that runs the full width of a wide
     // window is tiring to read -- the eye loses the line coming back -- so the
     // gutters take the surplus and the page stays centred at a readable width.
     readonly property int readingWidth: 760
-    readonly property int gutter: showsMarkdown
+    readonly property int gutter: (showsMarkdown || showsPage)
         ? Math.max(28, Math.round((scroll.availableWidth - readingWidth) / 2)) : 0
 
     // Colouring and Markdown typography both have to attach to the real
@@ -99,8 +101,8 @@ Item {
             }
 
             Label {
-                visible: view.showsMarkdown
-                text: "Markdown"
+                visible: view.showsMarkdown || view.showsPage
+                text: view.showsMarkdown ? "Markdown" : "Rendered page"
                 color: "#8b93a7"
                 font.pixelSize: App.smallTextSize
             }
@@ -126,21 +128,24 @@ Item {
                 objectName: "previewText"
                 readOnly: true
                 selectByMouse: true
-                wrapMode: view.showsMarkdown ? TextArea.Wrap : TextArea.NoWrap
+                wrapMode: (view.showsMarkdown || view.showsPage) ? TextArea.Wrap : TextArea.NoWrap
                 // One family for every code and data view, chosen once by the
                 // application rather than guessed per view.
-                font.family: view.showsMarkdown ? Qt.application.font.family : App.monospaceFont
+                font.family: (view.showsMarkdown || view.showsPage)
+                             ? Qt.application.font.family : App.monospaceFont
                 font.pixelSize: view.bodyPixelSize
                 // A rendered page gets margins; a log or a source file does not,
                 // because there every column position is information.
-                leftPadding: view.showsMarkdown ? view.gutter : padding
-                rightPadding: view.showsMarkdown ? view.gutter : padding
-                topPadding: view.showsMarkdown ? 24 : padding
-                bottomPadding: view.showsMarkdown ? 40 : padding
-                // Markdown is rendered; everything else stays plain, because
-                // letting the TextArea parse markup would swallow the very
-                // tags an XML preview exists to show.
-                textFormat: view.showsMarkdown ? TextEdit.MarkdownText : TextEdit.PlainText
+                leftPadding: (view.showsMarkdown || view.showsPage) ? view.gutter : padding
+                rightPadding: (view.showsMarkdown || view.showsPage) ? view.gutter : padding
+                topPadding: (view.showsMarkdown || view.showsPage) ? 24 : padding
+                bottomPadding: (view.showsMarkdown || view.showsPage) ? 40 : padding
+                // Markdown is rendered, HTML is rendered when asked for, and
+                // everything else stays plain -- letting the TextArea parse markup
+                // would swallow the very tags an XML preview exists to show.
+                textFormat: view.showsMarkdown
+                            ? TextEdit.MarkdownText
+                            : (view.showsPage ? TextEdit.RichText : TextEdit.PlainText)
                 // Not re-attached on every text change: attaching rehighlights,
                 // which changes the text, which would call this again. The
                 // document object outlives each file, and the controller sets

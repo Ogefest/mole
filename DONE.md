@@ -9,6 +9,47 @@ wrong.
 
 ---
 
+## Previews had no options, and nowhere to remember one
+
+An `.html` file previewed as coloured source. Sometimes that is what someone wants and
+sometimes they want to read the page, which makes it a setting — and there was nowhere
+to put a setting: `SessionStore` remembered which tabs were open and the window
+geometry, and nothing else about anything.
+
+Three answers, all in [ADR-0006](docs/adr/0006-preview-options-and-preferences.md).
+`Preferences` is one small file of dotted keys that knows nothing about what they mean.
+A provider *declares* its options — key, title, choices, default — and the strip above
+the preview renders them without knowing what any of them are, the same way the menu
+renders entries from plugins it has never heard of. And a choice is keyed by provider
+*and* suffix, because "the next `.html`" is what was asked for and one text viewer
+serves `.html`, `.xml` and `.svg` with different sensible answers; the provider id keeps
+two viewers claiming a suffix from overwriting each other.
+
+The choice applies immediately and is remembered, and it is applied *before* the file
+is read, so opening the next `.html` shows the page straight away rather than showing
+source and then correcting itself.
+
+The rule that mattered most is the one about the network. Qt's rich text engine
+resolves what a document names, so a page could quietly tell whoever wrote it that a
+file had been looked at — in a file manager that is a nasty surprise, not a feature.
+Anything a document could reach out with is removed before it is rendered: images,
+scripts, stylesheets, frames, embedded objects, event handlers. Blunt rather than
+clever, because telling a local reference from a remote one means parsing and resolving
+and getting that subtly wrong is exactly the failure being prevented. The test feeds it
+a deliberately hostile page and asserts that not one `http` survives while the words do.
+
+Two mistakes worth recording. The first is mine and it leaked: adding a store without
+teaching `PrivateProfile` about it meant the tests wrote into
+`~/.local/share/Mole/mole-tests/preferences.json` — real user data, outside the sandbox
+— which is why one test passed alone and failed in the suite, reading back what a
+previous *run* had left. `MOLE_PREFERENCES_PATH` is in the profile's list now, the
+leaked file is gone, and the suite was run twice to prove it. Adding a store means
+teaching the test profile about it, or the tests are not isolated at all.
+
+The second was the same delegate-recreation trap as bulk rename: republishing the option
+list rebuilds the Repeater's delegate, so the test's pointer to the picker was dangling
+and reading it hung the run. The test looks the item up again instead.
+
 ## A long search froze the interface
 
 Reported as: a search that runs for a while eats so much CPU that the window stops

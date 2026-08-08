@@ -48,6 +48,9 @@ private slots:
     void imageProviderOnlyClaimsWhatQtCanDecode();
     void pdfProviderClaimsPdfsOnlyWhenItCanRenderThem();
     void pdfPreviewRendersPagesOnDemand();
+    void htmlCanBeShownAsSourceOrAsAPage();
+    void aRenderedPageReachesForNothingOffTheDisk();
+    void theChoiceIsRememberedPerFileType();
 
     // --- syntax highlighting ---
     void recognisesHighlightableLanguages_data();
@@ -312,6 +315,115 @@ void TestPreview::pdfPreviewRendersPagesOnDemand()
     QVERIFY(!viewer->pageImage(1, 320).isEmpty());
     // Past the end is nothing, not a crash.
     QVERIFY(viewer->pageImage(5, 320).isEmpty());
+}
+
+void TestPreview::htmlCanBeShownAsSourceOrAsAPage()
+{
+    QVERIFY(m_tree->writeFile(QStringLiteral("page.html"),
+        QByteArray("<html><body><h1>Title</h1><p>Some prose.</p></body></html>")));
+
+    // The viewer says what can be chosen; nothing else in the shell knows that HTML
+    // has a mode at all.
+    TextPreviewProvider provider(m_app->services());
+    FileEntry html;
+    html.name = QStringLiteral("page.html");
+    html.uri = m_tree->rootUri().child(QStringLiteral("page.html"));
+
+    const QList<ViewerOption> options = provider.options(html);
+    QCOMPARE(options.size(), 1);
+    QCOMPARE(options.first().key, QStringLiteral("mode"));
+    QCOMPARE(options.first().choices, QStringList({ QStringLiteral("Source"), QStringLiteral("Rendered") }));
+    QVERIFY2(options.first().defaultChoice == QStringLiteral("Source"),
+        "a file manager shows what is in a file until asked for something else");
+
+    // And a file with nothing to choose offers nothing, rather than an empty picker.
+    FileEntry log;
+    log.name = QStringLiteral("notes.txt");
+    log.uri = m_tree->rootUri().child(QStringLiteral("notes.txt"));
+    QVERIFY(provider.options(log).isEmpty());
+
+    PreviewTabController* preview = openPreview(QStringLiteral("page.html"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(waitFor([viewer] { return !viewer->text().isEmpty(); }, 5000));
+
+    // Source by default: what is shown is what is in the file, tags and all.
+    QVERIFY(!viewer->isRenderedHtml());
+    QVERIFY(viewer->text().contains(QStringLiteral("<h1>")));
+    QCOMPARE(preview->viewerOptions().size(), 1);
+    QCOMPARE(preview->viewerOptions().first().toMap().value(QStringLiteral("chosen")).toString(),
+        QStringLiteral("Source"));
+
+    // Choosing the page shows it as one, from the bytes already read rather than by
+    // going back to the drive.
+    preview->chooseViewerOption(QStringLiteral("mode"), QStringLiteral("Rendered"));
+    QVERIFY(viewer->isRenderedHtml());
+    QCOMPARE(preview->viewerOptions().first().toMap().value(QStringLiteral("chosen")).toString(),
+        QStringLiteral("Rendered"));
+
+    // Back again, because a choice that cannot be undone is a trap.
+    preview->chooseViewerOption(QStringLiteral("mode"), QStringLiteral("Source"));
+    QVERIFY(!viewer->isRenderedHtml());
+    QVERIFY(viewer->text().contains(QStringLiteral("<h1>")));
+}
+
+void TestPreview::aRenderedPageReachesForNothingOffTheDisk()
+{
+    // The rule that matters most here: previewing a file must put nothing on the
+    // network. Qt's rich text engine resolves what a document names, so a page could
+    // otherwise tell whoever wrote it that a file had been looked at.
+    const QString hostile
+        = QStringLiteral("<html><head><link rel='stylesheet' href='http://example.invalid/x.css'>"
+                         "<script src='https://example.invalid/x.js'></script></head>"
+                         "<body onload='fetch(\"http://example.invalid/beacon\")'>"
+                         "<h1>Heading</h1><img src='http://example.invalid/pixel.png' onerror='alert(1)'>"
+                         "<iframe src='http://example.invalid/frame'></iframe>"
+                         "<p>Text that must survive.</p></body></html>");
+
+    const QString safe = TextPreviewController::withoutExternalReferences(hostile);
+
+    QVERIFY2(!safe.contains(QStringLiteral("http"), Qt::CaseInsensitive),
+        qPrintable(QStringLiteral("something could still be fetched: %1").arg(safe)));
+    QVERIFY(!safe.contains(QStringLiteral("<img"), Qt::CaseInsensitive));
+    QVERIFY(!safe.contains(QStringLiteral("<script"), Qt::CaseInsensitive));
+    QVERIFY(!safe.contains(QStringLiteral("<iframe"), Qt::CaseInsensitive));
+    QVERIFY(!safe.contains(QStringLiteral("onload"), Qt::CaseInsensitive));
+    QVERIFY(!safe.contains(QStringLiteral("onerror"), Qt::CaseInsensitive));
+
+    // What the document actually says still gets shown -- this strips references,
+    // not content.
+    QVERIFY(safe.contains(QStringLiteral("Heading")));
+    QVERIFY(safe.contains(QStringLiteral("Text that must survive.")));
+    QVERIFY(safe.contains(QStringLiteral("<h1>")));
+}
+
+void TestPreview::theChoiceIsRememberedPerFileType()
+{
+    QVERIFY(m_tree->writeFile(QStringLiteral("one.html"), QByteArray("<p>one</p>")));
+    QVERIFY(m_tree->writeFile(QStringLiteral("two.html"), QByteArray("<p>two</p>")));
+    QVERIFY(m_tree->writeFile(QStringLiteral("markup.xhtml"), QByteArray("<p>three</p>")));
+
+    PreviewTabController* first = openPreview(QStringLiteral("one.html"));
+    QVERIFY(first);
+    first->chooseViewerOption(QStringLiteral("mode"), QStringLiteral("Rendered"));
+
+    // The next .html opens the way the last one was left, which is the whole point
+    // of remembering it.
+    PreviewTabController* second = openPreview(QStringLiteral("two.html"));
+    QVERIFY(second);
+    QCOMPARE(second->viewerOptions().first().toMap().value(QStringLiteral("chosen")).toString(),
+        QStringLiteral("Rendered"));
+    auto* secondViewer = qobject_cast<TextPreviewController*>(second->viewer());
+    QVERIFY(secondViewer);
+    QVERIFY2(secondViewer->isRenderedHtml(), "and it is applied before the file is read, not after");
+
+    // A different suffix is untouched: one text viewer serves several kinds of
+    // markup, and choosing for one must not answer for the others.
+    PreviewTabController* other = openPreview(QStringLiteral("markup.xhtml"));
+    QVERIFY(other);
+    QCOMPARE(other->viewerOptions().first().toMap().value(QStringLiteral("chosen")).toString(),
+        QStringLiteral("Source"));
 }
 
 // ---------------------------------------------------------- highlighting

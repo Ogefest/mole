@@ -5,6 +5,7 @@
 #include "core/vfs/FileEntry.h"
 
 #include <QObject>
+#include <QStringList>
 #include <QUrl>
 
 namespace mole {
@@ -27,6 +28,14 @@ public:
     /// Called once after construction with the entry to display.
     virtual void load(const FileEntry& entry) = 0;
 
+    /// One of the choices the provider declared, applied before load(). Ignored by
+    /// default, so a viewer with no options needs no code for this at all.
+    virtual void setViewerOption(const QString& key, const QString& value)
+    {
+        Q_UNUSED(key);
+        Q_UNUSED(value);
+    }
+
 signals:
     void loadingChanged();
     void errorTextChanged();
@@ -45,6 +54,21 @@ private:
 /// The second half of "preview as many formats as possible": text, PDF, audio
 /// tags, SQLite tables, Parquet schemas -- each is a provider, and each can
 /// ship in its own plugin so heavy dependencies stay optional.
+/// How a viewer behaves, offered to whoever is looking at the file.
+///
+/// The provider says what the choices are; the strip above the preview renders them
+/// without knowing what any of them mean, and the answer is remembered per file type.
+/// See docs/adr/0006-preview-options-and-preferences.md.
+struct ViewerOption
+{
+    /// Provider-local, e.g. "mode". Becomes part of the preference key.
+    QString key;
+    /// Shown to the reader, e.g. "Show".
+    QString title;
+    QStringList choices;
+    QString defaultChoice;
+};
+
 class IPreviewProvider
 {
 public:
@@ -57,6 +81,15 @@ public:
     /// When several providers accept the same file the highest priority wins,
     /// so a dedicated SQLite viewer beats the generic hex dump.
     virtual int priority() const { return 0; }
+
+    /// What can be chosen about how this file is shown. Empty for most viewers,
+    /// and it takes the entry because the answer depends on it: an .html has a
+    /// source-or-rendered choice and a .log has nothing to choose.
+    virtual QList<ViewerOption> options(const FileEntry& entry) const
+    {
+        Q_UNUSED(entry);
+        return {};
+    }
 
     /// Cheap test based on name, suffix and size. Must not do any I/O.
     virtual bool canPreview(const FileEntry& entry) const = 0;

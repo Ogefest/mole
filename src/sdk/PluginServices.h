@@ -11,6 +11,7 @@ class Scheduler;
 class AlertStore;
 class AnalysisStore;
 class FileSetStore;
+class Preferences;
 
 /// The host services a plugin is allowed to use.
 ///
@@ -44,6 +45,11 @@ struct PluginServices
     /// Named collections of files. A plugin can offer to add to one without
     /// knowing what any other plugin does with them.
     FileSetStore* sets = nullptr;
+    /// The small things someone has chosen about how they like to work -- how a
+    /// viewer behaves for a file type, and whatever else earns a key later. A
+    /// plugin reads and writes it without the shell knowing what the keys mean.
+    /// See docs/adr/0006-preview-options-and-preferences.md.
+    Preferences* preferences = nullptr;
 
     bool isValid() const { return vfs && tasks && index && events; }
 };

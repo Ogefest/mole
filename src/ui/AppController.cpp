@@ -19,6 +19,7 @@
 #include "core/index/IndexDatabase.h"
 #include "core/index/ScanTask.h"
 #include "core/sets/FileSetStore.h"
+#include "core/settings/Preferences.h"
 #include "core/tasks/FolderSizesTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/IFileSystemFactory.h"
@@ -173,6 +174,7 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     m_reports = std::make_unique<AnalysisStore>(AnalysisStore::defaultDirectory());
 
     m_sets = new FileSetStore(FileSetStore::defaultPath(), this);
+    m_preferences = new Preferences(Preferences::defaultPath(), this);
     m_sets->load();
 
     m_secrets = new SecretStore(SecretStore::defaultPath(), this);
@@ -199,6 +201,7 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     m_services.alerts = m_alerts;
     m_services.reports = m_reports.get();
     m_services.sets = m_sets;
+    m_services.preferences = m_preferences;
 
     // The mount table is the source of truth; the bus just broadcasts it so
     // views do not have to know about VfsManager.

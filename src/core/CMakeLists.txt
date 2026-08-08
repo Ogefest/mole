@@ -60,6 +60,8 @@ add_library(mole_core STATIC
     tasks/ReadRangeTask.cpp
     tasks/TransferTask.h
     tasks/TransferTask.cpp
+    settings/Preferences.h
+    settings/Preferences.cpp
     tasks/FolderSizesTask.h
     tasks/FolderSizesTask.cpp
 

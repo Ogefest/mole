@@ -20,6 +20,7 @@ namespace {
         { "MOLE_SCHEDULE_PATH", "schedule.json" },
         { "MOLE_ALERTS_PATH", "alerts.json" },
         { "MOLE_SETS_PATH", "sets.json" },
+        { "MOLE_PREFERENCES_PATH", "preferences.json" },
         { "MOLE_SECRETS_PATH", "credentials.enc" },
         { "MOLE_REMOTES_PATH", "drives.json" },
     };

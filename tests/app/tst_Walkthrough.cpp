@@ -62,6 +62,7 @@ private slots:
     void rendersMarkdownAsAPage();
     void aSlowTableSaysSoAndThenFillsAsItReads();
     void aPdfOpensAsPages();
+    void htmlCanBeSwitchedBetweenSourceAndPage();
     void folderSizesLandInTheListing();
     void theListingTakesItsTypeSizeFromTheScale();
     void theIconOnlyControlsAreBigEnoughToHit();
@@ -869,6 +870,49 @@ void TestWalkthrough::ctrlFIsASearchBoxYouCanTypeInto()
     // can carry on there.
     QVERIFY(m_harness->until([this] { return !m_harness->app()->services().sets->sets().isEmpty(); }));
     QCOMPARE(m_harness->app()->services().sets->sets().first().uris.size(), found);
+}
+
+void TestWalkthrough::htmlCanBeSwitchedBetweenSourceAndPage()
+{
+    QVERIFY(m_harness->writeFile(QStringLiteral("page.html"),
+        QByteArray("<html><body><h1>A page</h1><p>Sometimes you want the source, and sometimes "
+                   "you want to read it.</p></body></html>")));
+
+    m_harness->app()->previewFile(m_harness->fixtureUri() + QStringLiteral("/page.html"));
+    auto* preview = qobject_cast<PreviewTabController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(m_harness->until([viewer] { return !viewer->text().isEmpty(); }));
+    m_harness->settle(6);
+
+    // The strip renders whatever the viewer declared, without knowing what it means.
+    QQuickItem* picker = m_harness->item(QStringLiteral("viewerOption_mode"));
+    QVERIFY2(picker, "the preview strip offers the choice the viewer declared");
+    QCOMPARE(picker->property("currentText").toString(), QStringLiteral("Source"));
+    m_harness->screenshot(QStringLiteral("03e-preview-html-source"));
+
+    preview->chooseViewerOption(QStringLiteral("mode"), QStringLiteral("Rendered"));
+    QVERIFY(m_harness->until([viewer] { return viewer->isRenderedHtml(); }));
+    m_harness->settle(8);
+
+    // Looked up again rather than reused: the option list is republished when a
+    // choice is made, so the Repeater builds a new delegate and the old pointer is
+    // gone. Holding it would be reading freed memory, which is how the first
+    // version of this test hung.
+    QQuickItem* refreshed = m_harness->item(QStringLiteral("viewerOption_mode"));
+    QVERIFY(refreshed);
+    QVERIFY2(m_harness->until([this] {
+        QQuickItem* now = m_harness->item(QStringLiteral("viewerOption_mode"));
+        return now && now->property("currentText").toString() == QStringLiteral("Rendered");
+    }),
+        "and the picker shows what is in force");
+
+    // What the view is actually showing: a page, not a wall of tags.
+    QQuickItem* text = m_harness->item(QStringLiteral("previewText"));
+    QVERIFY(text);
+    QCOMPARE(text->property("textFormat").toInt(), int(Qt::RichText));
+    m_harness->screenshot(QStringLiteral("03f-preview-html-rendered"));
 }
 
 void TestWalkthrough::breadcrumbsClimbTheTree()
