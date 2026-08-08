@@ -9,6 +9,48 @@ wrong.
 
 ---
 
+## Ctrl+F was not usable as a search box
+
+Three things, and only the last is a feature.
+
+The keyboard was not in the field, so the first thing anyone did after pressing
+`Ctrl+F` was reach for the mouse to click into it — which is exactly what the key is
+supposed to save. It is focused now, on creation and whenever the shell asks the tab
+for its pane.
+
+Enter already started a search; nothing said one was *running*. A tree walk over a
+large disk takes long enough that silence reads as nothing having happened, so the
+results area now says it is searching while there is nothing to show, and steps aside
+the moment rows arrive — the same threshold-free rule the table preview uses, because
+here the walk streams matches from the start.
+
+Then the criteria. Size, typed the way people write it: `10M`, `1.5 GiB`, `500k`,
+`1,5M` with a comma, because that is a decimal point in most of Europe and this
+application already shows sizes that way. Nothing and nonsense both mean "no limit"
+rather than zero — a limit of zero bytes would quietly match nothing. It lives in a
+*More* section that is folded away, so the common case stays one field and one key.
+
+The interesting part was the index, and it needed a decision rather than code:
+[ADR-0005](docs/adr/0005-which-engine-answers-a-search.md). The form now asks the
+index when an indexed volume's root is a prefix of the folder being searched, and
+walks otherwise. Partial coverage counts as none — the temptation was to ask the index
+for the part it covers and walk the rest, which would produce one list where some rows
+are current and some are as old as the last scan, with nothing to say which. The
+toggle is on by default because the index is enormously faster and usually right, and
+what makes that default safe is that the status line always names the engine that
+answered and how old the index is. Turning it off is the case that matters: the truth
+on disk right now, whatever the index remembers.
+
+Both engines already had `minSize`/`maxSize`, which is why size was the criterion
+added first — anything the index cannot express would have to fall back to walking and
+say so.
+
+Tested at both levels: the size parser on its own including the cases that must mean
+"no limit", the engine choice as behaviour (unindexed walks, indexed answers from the
+index, the toggle forces a walk on a file written after the scan), and the box itself
+in the real window — the field holds the keyboard on opening, five typed characters
+reach the controller, and a 500M floor empties a fixture that has nothing that big.
+
 ## One input that can reach everything
 
 `Ctrl+Shift+P` opens a box with a list underneath of everything that can be done

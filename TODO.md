@@ -19,36 +19,6 @@ screenshots come from `make screenshots`, which photographs states the tests hav
 just asserted — so the documentation cannot drift into showing something that no
 longer works.
 
-### Ctrl+F needs to be usable as a search box
-
-Three things are wrong with the search tab, and only the third is a feature.
-
-Opening it with `Ctrl+F` leaves the keyboard elsewhere, so the first thing anyone
-does is reach for the mouse to click into the field. It should be focused, with the
-cursor in "Name contains", ready for typing. Enter already starts the search --
-`onAccepted` is wired to `controller.start()` -- but nothing about the view makes it
-clear that a search is *running*, and a tree walk over a large disk takes long
-enough that silence reads as nothing having happened. `LiveSearchController` already
-publishes `running` and `statusText`; what is missing is the view making something
-of them where the results will appear, the way the file pane and the table preview
-now do.
-
-Then the criteria. Today it is a name fragment, an extension and a case-sensitivity
-tick. Size belongs there — bigger than, smaller than, between — and once there is
-somewhere to put it, so do modification time and possibly type. Worth designing the
-form so a fourth criterion does not mean rearranging it again: an "advanced" section
-that is collapsed until wanted keeps the common case one field and one key.
-
-The interesting part is the index. `IndexSearchController` exists as its own tab on
-`Ctrl+Shift+I`, over indexed volumes, and it is enormously faster than walking a
-tree. If the path being searched is inside something already indexed, `Ctrl+F`
-should answer from the index instead of scanning — with a toggle to force a real
-scan, because an index is only as fresh as its last run and sometimes the truth on
-disk is the point. That means the two search features stop being separate strangers,
-which is an architectural change and wants an ADR: which one owns the form, how a
-path is matched to an index, what the toggle is called, and what happens when the
-index covers only part of what was asked for.
-
 ### Search results need to arrive sooner, and be worth something once they do
 
 Two halves, and the first is about latency rather than features. A tree walk finds

@@ -9,6 +9,9 @@
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/VfsManager.h"
 
+#include <QLocale>
+#include <QRegularExpression>
+
 namespace mole {
 
 // ---------------------------------------------------------------- live search
@@ -65,6 +68,115 @@ void LiveSearchController::setCaseSensitive(bool sensitive)
     emit criteriaChanged();
 }
 
+void LiveSearchController::setUseIndex(bool use)
+{
+    if (m_useIndex == use)
+        return;
+    m_useIndex = use;
+    emit criteriaChanged();
+}
+
+qint64 LiveSearchController::parseSize(const QString& text)
+{
+    const QString trimmed = text.trimmed();
+    if (trimmed.isEmpty())
+        return -1;
+
+    // A number, optional space, optional unit. Nobody should have to count zeros
+    // to say "bigger than ten megabytes".
+    static const QRegularExpression pattern(QStringLiteral("^([0-9]+(?:[.,][0-9]+)?)\\s*([kmgt]?)(?:i?b)?$"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch match = pattern.match(trimmed);
+    if (!match.hasMatch())
+        return -1;
+
+    QString number = match.captured(1);
+    number.replace(QLatin1Char(','), QLatin1Char('.'));
+    bool ok = false;
+    const double value = number.toDouble(&ok);
+    if (!ok || value < 0)
+        return -1;
+
+    // Powers of 1024, which is what a file manager showing "GiB" everywhere else
+    // has to mean by "G".
+    const QString unit = match.captured(2).toLower();
+    double multiplier = 1;
+    if (unit == QLatin1String("k"))
+        multiplier = 1024.0;
+    else if (unit == QLatin1String("m"))
+        multiplier = 1024.0 * 1024;
+    else if (unit == QLatin1String("g"))
+        multiplier = 1024.0 * 1024 * 1024;
+    else if (unit == QLatin1String("t"))
+        multiplier = 1024.0 * 1024 * 1024 * 1024;
+
+    return static_cast<qint64>(value * multiplier);
+}
+
+void LiveSearchController::setSizeRange(const QString& minText, const QString& maxText)
+{
+    const qint64 low = parseSize(minText);
+    const qint64 high = parseSize(maxText);
+    if (low == m_minSize && high == m_maxSize)
+        return;
+    m_minSize = low;
+    m_maxSize = high;
+    emit criteriaChanged();
+}
+
+std::optional<IndexVolume> LiveSearchController::coveringVolume() const
+{
+    if (!m_services.isValid() || !m_services.index || !m_services.index->isOpen())
+        return std::nullopt;
+
+    Result<QList<IndexVolume>> volumes = m_services.index->volumes();
+    if (!volumes.ok())
+        return std::nullopt;
+
+    // The volume's root has to be a prefix of what is being searched: an index
+    // that covers only part of the subtree covers none of it, because a list where
+    // some rows are current and some are as old as the last scan is an answer
+    // nobody can reason about. See ADR-0005.
+    std::optional<IndexVolume> best;
+    for (const IndexVolume& volume : volumes.value()) {
+        if (volume.fileCount <= 0 || !volume.lastScan.isValid())
+            continue;
+        if (!m_rootUri.startsWith(volume.rootUri))
+            continue;
+        // The deepest match, so a nested volume wins over the disk it sits on.
+        if (!best || volume.rootUri.size() > best->rootUri.size())
+            best = volume;
+    }
+    return best;
+}
+
+bool LiveSearchController::indexCoversRoot() const
+{
+    return coveringVolume().has_value();
+}
+
+QString LiveSearchController::indexNote() const
+{
+    const std::optional<IndexVolume> volume = coveringVolume();
+    if (!volume)
+        return {};
+
+    // How stale it might be, in words: the whole reason the index is safe to
+    // default to is that it admits its own age.
+    const qint64 seconds = volume->lastScan.secsTo(QDateTime::currentDateTime());
+    QString age;
+    if (seconds < 120)
+        age = QStringLiteral("just now");
+    else if (seconds < 7200)
+        age = QStringLiteral("%1 minutes ago").arg(seconds / 60);
+    else if (seconds < 172800)
+        age = QStringLiteral("%1 hours ago").arg(seconds / 3600);
+    else
+        age = QStringLiteral("%1 days ago").arg(seconds / 86400);
+
+    return QStringLiteral("%1 is indexed, scanned %2").arg(volume->label, age);
+}
+
 void LiveSearchController::start()
 {
     if (!m_services.isValid())
@@ -83,10 +195,55 @@ void LiveSearchController::start()
     m_results->clear();
     m_truncated = false;
 
+    // Which engine answers, and saying so. ADR-0005: the index when it covers the
+    // whole subtree and has not been turned off, a walk otherwise.
+    if (const std::optional<IndexVolume> volume = m_useIndex ? coveringVolume() : std::nullopt) {
+        IndexSearchQuery query;
+        query.text = m_queryText;
+        query.extension = m_extension;
+        query.caseSensitive = m_caseSensitive;
+        query.volumeId = volume->id;
+        query.minSize = m_minSize;
+        query.maxSize = m_maxSize;
+
+        auto* indexTask = new IndexSearchTask(m_services.index, query);
+        m_indexTask = indexTask;
+        connect(
+            indexTask, &IndexSearchTask::resultsReady, this, [this, indexTask](const FileEntryList& hits) {
+                if (m_indexTask != indexTask)
+                    return;
+                // Only what is under the folder being searched: the volume can be a
+                // whole disk and the question was about one folder in it.
+                FileEntryList inScope;
+                for (const FileEntry& entry : hits) {
+                    if (entry.uri.toString().startsWith(m_rootUri))
+                        inScope.append(entry);
+                }
+                m_results->setEntries(inScope);
+            });
+        connect(indexTask, &Task::finished, this, [this, indexTask] {
+            if (m_indexTask != indexTask)
+                return;
+            setRunning(false);
+            setStatusText(indexTask->state() == Task::State::Failed
+                    ? indexTask->error().message
+                    : QStringLiteral("%1 from the index — %2")
+                          .arg(QLocale().toString(m_results->totalCount()), indexNote()));
+            m_indexTask.clear();
+        });
+
+        setRunning(true);
+        setStatusText(QStringLiteral("Asking the index…"));
+        m_services.tasks->submit(indexTask);
+        return;
+    }
+
     LiveSearchTask::Criteria criteria;
     criteria.text = m_queryText;
     criteria.extension = m_extension;
     criteria.caseSensitive = m_caseSensitive;
+    criteria.minSize = m_minSize;
+    criteria.maxSize = m_maxSize;
 
     auto* task = new LiveSearchTask(std::move(fs), root, criteria);
     m_task = task;
@@ -116,6 +273,10 @@ void LiveSearchController::start()
 
 void LiveSearchController::stop()
 {
+    if (m_indexTask) {
+        m_indexTask->requestCancel();
+        m_indexTask.clear();
+    }
     if (m_task) {
         m_task->requestCancel();
         m_task.clear();

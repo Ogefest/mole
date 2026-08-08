@@ -3,6 +3,7 @@
 #include "plugins/builtin/BrowserFeature.h"
 #include "plugins/builtin/BulkRenameFeature.h"
 #include "plugins/builtin/PreviewFeature.h"
+#include "plugins/builtin/SearchFeatures.h"
 #include "plugins/builtin/previews/PdfPreview.h"
 #include "plugins/builtin/previews/PreviewProviders.h"
 #include "support/QmlAppHarness.h"
@@ -62,6 +63,7 @@ private slots:
     void theListingTakesItsTypeSizeFromTheScale();
     void theIconOnlyControlsAreBigEnoughToHit();
     void theCommandPaletteFindsAndRunsThings();
+    void ctrlFIsASearchBoxYouCanTypeInto();
     void bulkRenameShowsThePreviewAsYouType();
     void breadcrumbsClimbTheTree();
     void ctrlGRevealsTheEditablePath();
@@ -728,6 +730,60 @@ void TestWalkthrough::theCommandPaletteFindsAndRunsThings()
     QVERIFY2(
         m_harness->until([terminal] { return terminal->isVisible(); }), "Enter runs the highlighted command");
     QVERIFY(m_harness->until([palette] { return !palette->property("opened").toBool(); }));
+}
+
+void TestWalkthrough::ctrlFIsASearchBoxYouCanTypeInto()
+{
+    m_harness->key(Qt::Key_F, Qt::ControlModifier);
+
+    auto* search = qobject_cast<LiveSearchController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY2(search, "Ctrl+F opens a search tab");
+    m_harness->settle(6);
+
+    // Typed into straight away. Having to click into the field is what the key is
+    // supposed to save.
+    QQuickItem* field = m_harness->item(QStringLiteral("searchQueryField"));
+    QVERIFY(field);
+    QVERIFY2(field->hasActiveFocus(), "the query field has the keyboard as soon as the tab opens");
+
+    m_harness->type(QStringLiteral("report"));
+    QCOMPARE(search->queryText(), QStringLiteral("report"));
+
+    // Enter starts it, and while there is nothing to show the view says it is
+    // working rather than sitting there looking broken.
+    QQuickItem* waiting = m_harness->item(QStringLiteral("searchWaitingView"));
+    QVERIFY(waiting);
+    QVERIFY(!waiting->isVisible());
+
+    m_harness->key(Qt::Key_Return);
+    QVERIFY(m_harness->until(
+        [search] { return search->results()->rowCount() > 0 || !search->isRunning(); }, 15000));
+    QVERIFY(m_harness->until([search] { return !search->isRunning(); }, 15000));
+    QVERIFY2(search->results()->rowCount() >= 1, "report.txt is in the fixture");
+
+    // The criteria that were not there before, folded away until asked for.
+    QQuickItem* advanced = m_harness->item(QStringLiteral("advancedCriteria"));
+    QVERIFY(advanced);
+    QVERIFY2(!advanced->isVisible(), "the common case stays one field and one key");
+
+    QQuickItem* toggle = m_harness->item(QStringLiteral("advancedToggle"));
+    QVERIFY(toggle);
+    QVERIFY(QMetaObject::invokeMethod(toggle, "clicked"));
+    QVERIFY(m_harness->until([advanced] { return advanced->isVisible(); }));
+
+    // A size that excludes everything in the fixture, typed the way people write it.
+    QQuickItem* minSize = m_harness->item(QStringLiteral("minSizeField"));
+    QVERIFY(minSize);
+    minSize->setProperty("text", QStringLiteral("500M"));
+    QVERIFY(QMetaObject::invokeMethod(minSize, "textEdited"));
+    QCOMPARE(search->minSize(), qint64(500) * 1024 * 1024);
+
+    search->start();
+    QVERIFY(m_harness->until([search] { return !search->isRunning(); }, 15000));
+    QCOMPARE(search->results()->rowCount(), 0);
+
+    m_harness->settle(6);
+    m_harness->screenshot(QStringLiteral("12-search-box"));
 }
 
 void TestWalkthrough::breadcrumbsClimbTheTree()

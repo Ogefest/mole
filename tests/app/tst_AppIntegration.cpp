@@ -49,6 +49,10 @@ private slots:
     void directoryChangedEventRefreshesOpenPanes();
     void scanThenIndexSearchFindsTheFile();
     void liveSearchFindsFilesOnDisk();
+    void searchSizesAreTypedTheWayPeopleWriteThem();
+    void searchWalksWhenNothingIsIndexed();
+    void searchAsksTheIndexWhenItCoversTheFolder();
+    void turningTheIndexOffForcesAWalk();
     void textPreviewProviderClaimsTextFiles();
     void archivePluginMountsAZip();
     void dualPaneIsItsOwnFeature();
@@ -329,6 +333,106 @@ void TestAppIntegration::liveSearchFindsFilesOnDisk()
     QVERIFY(waitFor([search] { return !search->isRunning(); }, 10000));
     QCOMPARE(search->results()->rowCount(), 1);
     QVERIFY(!search->isTruncated());
+}
+
+void TestAppIntegration::searchSizesAreTypedTheWayPeopleWriteThem()
+{
+    // Nobody should have to count zeros to say "bigger than ten megabytes".
+    QCOMPARE(LiveSearchController::parseSize(QStringLiteral("100")), 100);
+    QCOMPARE(LiveSearchController::parseSize(QStringLiteral("10k")), 10 * 1024);
+    QCOMPARE(LiveSearchController::parseSize(QStringLiteral("10 KB")), 10 * 1024);
+    QCOMPARE(LiveSearchController::parseSize(QStringLiteral("2M")), 2 * 1024 * 1024);
+    QCOMPARE(LiveSearchController::parseSize(QStringLiteral("1.5 GiB")),
+        static_cast<qint64>(1.5 * 1024 * 1024 * 1024));
+    // A comma is a decimal point in most of Europe, and this application already
+    // shows sizes that way.
+    QCOMPARE(LiveSearchController::parseSize(QStringLiteral("1,5M")), static_cast<qint64>(1.5 * 1024 * 1024));
+
+    // Nothing, and nonsense, both mean "no limit" rather than zero -- a limit of
+    // zero bytes would quietly match nothing at all.
+    QCOMPARE(LiveSearchController::parseSize(QString()), -1);
+    QCOMPARE(LiveSearchController::parseSize(QStringLiteral("  ")), -1);
+    QCOMPARE(LiveSearchController::parseSize(QStringLiteral("big")), -1);
+    QCOMPARE(LiveSearchController::parseSize(QStringLiteral("-5M")), -1);
+}
+
+void TestAppIntegration::searchWalksWhenNothingIsIndexed()
+{
+    const int row = m_app->tabs()->openTab(QStringLiteral("mole.livesearch"));
+    QVERIFY(row >= 0);
+    auto* search = qobject_cast<LiveSearchController*>(m_app->tabs()->controllerAt(row));
+    QVERIFY(search);
+    search->setRootUri(m_tree->rootUri().toString());
+
+    // Nothing has been scanned, so there is nothing to ask and the form says so by
+    // saying nothing.
+    QVERIFY(!search->indexCoversRoot());
+    QVERIFY(search->indexNote().isEmpty());
+
+    search->setQueryText(QStringLiteral("quarterly"));
+    search->start();
+    QVERIFY(waitFor([search] { return !search->isRunning(); }, 15000));
+
+    QCOMPARE(search->results()->rowCount(), 1);
+    QVERIFY2(!search->statusText().contains(QStringLiteral("index")),
+        "a walk must not claim to have come from the index");
+}
+
+void TestAppIntegration::searchAsksTheIndexWhenItCoversTheFolder()
+{
+    // Indexed first, through the same path the index-search tab uses.
+    const int indexRow = m_app->tabs()->openTab(QStringLiteral("mole.indexsearch"));
+    QVERIFY(indexRow >= 0);
+    auto* indexed = qobject_cast<IndexSearchController*>(m_app->tabs()->controllerAt(indexRow));
+    QVERIFY(indexed);
+    indexed->scanDirectory(m_tree->rootUri().toString(), QStringLiteral("fixture"));
+    QVERIFY(waitFor([this] { return m_app->tasks()->activeCount() == 0; }, 20000));
+
+    const int row = m_app->tabs()->openTab(QStringLiteral("mole.livesearch"));
+    QVERIFY(row >= 0);
+    auto* search = qobject_cast<LiveSearchController*>(m_app->tabs()->controllerAt(row));
+    QVERIFY(search);
+    search->setRootUri(m_tree->rootUri().toString());
+
+    QVERIFY2(search->indexCoversRoot(), "the folder that was just scanned is covered");
+    QVERIFY2(search->indexNote().contains(QStringLiteral("indexed")),
+        "and the form can say so, with how old it is");
+
+    search->setQueryText(QStringLiteral("quarterly"));
+    search->start();
+    QVERIFY(waitFor([search] { return !search->isRunning(); }, 15000));
+
+    QCOMPARE(search->results()->rowCount(), 1);
+    QVERIFY2(search->statusText().contains(QStringLiteral("from the index")),
+        "an answer that might be stale has to say where it came from");
+}
+
+void TestAppIntegration::turningTheIndexOffForcesAWalk()
+{
+    const int indexRow = m_app->tabs()->openTab(QStringLiteral("mole.indexsearch"));
+    auto* indexed = qobject_cast<IndexSearchController*>(m_app->tabs()->controllerAt(indexRow));
+    QVERIFY(indexed);
+    indexed->scanDirectory(m_tree->rootUri().toString(), QStringLiteral("fixture"));
+    QVERIFY(waitFor([this] { return m_app->tasks()->activeCount() == 0; }, 20000));
+
+    const int row = m_app->tabs()->openTab(QStringLiteral("mole.livesearch"));
+    auto* search = qobject_cast<LiveSearchController*>(m_app->tabs()->controllerAt(row));
+    QVERIFY(search);
+    search->setRootUri(m_tree->rootUri().toString());
+    QVERIFY(search->indexCoversRoot());
+
+    // A file written after the scan: the index cannot know about it, which is
+    // exactly the case the toggle exists for.
+    QVERIFY(m_tree->writeFile(QStringLiteral("written-after-the-scan.txt"), QByteArray("new")));
+
+    search->setUseIndex(false);
+    search->setQueryText(QStringLiteral("written-after"));
+    search->start();
+    QVERIFY(waitFor([search] { return !search->isRunning(); }, 15000));
+
+    QCOMPARE(search->results()->rowCount(), 1);
+    QVERIFY2(!search->statusText().contains(QStringLiteral("from the index")),
+        "with the index off, the walk answers and says so");
 }
 
 void TestAppIntegration::textPreviewProviderClaimsTextFiles()

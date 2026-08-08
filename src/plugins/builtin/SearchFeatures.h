@@ -4,10 +4,13 @@
 #include "sdk/IFeature.h"
 #include "ui/models/FileListModel.h"
 
+#include "core/index/IndexDatabase.h"
 #include "core/search/LiveSearchTask.h"
 
 #include <QPointer>
 #include <QStringList>
+
+#include <optional>
 
 namespace mole {
 
@@ -22,6 +25,20 @@ class LiveSearchController final : public FeatureController
     Q_PROPERTY(QString queryText READ queryText WRITE setQueryText NOTIFY queryTextChanged)
     Q_PROPERTY(QString extension READ extension WRITE setExtension NOTIFY criteriaChanged)
     Q_PROPERTY(bool caseSensitive READ caseSensitive WRITE setCaseSensitive NOTIFY criteriaChanged)
+    /// Bytes; -1 for "no limit". Set through setSizeRange() from the form, which
+    /// takes what a person types.
+    Q_PROPERTY(qint64 minSize READ minSize NOTIFY criteriaChanged)
+    Q_PROPERTY(qint64 maxSize READ maxSize NOTIFY criteriaChanged)
+    /// Answer from the index when it covers this folder. On by default: the index
+    /// is enormously faster and, for a folder that was indexed, usually right.
+    /// See docs/adr/0005-which-engine-answers-a-search.md.
+    Q_PROPERTY(bool useIndex READ useIndex WRITE setUseIndex NOTIFY criteriaChanged)
+    /// True when an indexed volume's root is a prefix of this folder, so the index
+    /// covers the whole subtree. Partial coverage counts as none.
+    Q_PROPERTY(bool indexCoversRoot READ indexCoversRoot NOTIFY rootUriChanged)
+    /// "last scanned 2 hours ago", for the form to show beside the toggle. Empty
+    /// when nothing covers this folder.
+    Q_PROPERTY(QString indexNote READ indexNote NOTIFY rootUriChanged)
     Q_PROPERTY(bool running READ isRunning NOTIFY runningChanged)
     Q_PROPERTY(bool truncated READ isTruncated NOTIFY statusChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusChanged)
@@ -43,6 +60,19 @@ public:
     bool isTruncated() const { return m_truncated; }
     QString statusText() const { return m_statusText; }
 
+    qint64 minSize() const { return m_minSize; }
+    qint64 maxSize() const { return m_maxSize; }
+    bool useIndex() const { return m_useIndex; }
+    void setUseIndex(bool use);
+    bool indexCoversRoot() const;
+    QString indexNote() const;
+
+    /// Takes what a person types -- "10M", "1.5 GB", "500k", or nothing at all --
+    /// and returns the bytes, or -1 for anything it cannot make sense of. A form
+    /// should not make someone count zeros.
+    static qint64 parseSize(const QString& text);
+    Q_INVOKABLE void setSizeRange(const QString& minText, const QString& maxText);
+
     Q_INVOKABLE void start();
     Q_INVOKABLE void stop();
 
@@ -57,6 +87,9 @@ signals:
     void statusChanged();
 
 private:
+    /// The deepest indexed volume whose root is a prefix of the search root, if
+    /// any covers it at all.
+    std::optional<IndexVolume> coveringVolume() const;
     void setRunning(bool running);
     void setStatusText(const QString& text);
 
@@ -66,10 +99,15 @@ private:
     QString m_queryText;
     QString m_extension;
     bool m_caseSensitive = false;
+    qint64 m_minSize = -1;
+    qint64 m_maxSize = -1;
+    bool m_useIndex = true;
     bool m_running = false;
     bool m_truncated = false;
     QString m_statusText;
     QPointer<LiveSearchTask> m_task;
+    /// The other engine. Only ever one of the two is running.
+    QPointer<IndexSearchTask> m_indexTask;
 };
 
 /// Queries what a previous scan recorded. Instant, possibly stale.
