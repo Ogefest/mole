@@ -348,7 +348,12 @@ Item {
         anchors.centerIn: parent
         modal: true
         title: "This will delete files"
-        standardButtons: Dialog.Ok | Dialog.Cancel
+        focus: true
+        footer: ConfirmButtons {
+            acceptText: "Delete and sync"
+            rejectText: "Cancel"
+            destructive: true
+        }
         width: 520
 
         property var doomed: []

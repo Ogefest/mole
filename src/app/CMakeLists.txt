@@ -21,6 +21,7 @@ qt_add_qml_module(mole
         ui/CommandPalette.qml
         ui/CompressDialog.qml
         ui/TargetList.qml
+        ui/ConfirmButtons.qml
         ui/Sidebar.qml
         ui/TaskStrip.qml
         ui/FilePane.qml

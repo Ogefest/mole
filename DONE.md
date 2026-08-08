@@ -30,6 +30,37 @@ README.md gained a *Using it* section pointing at the guide, and its list of thi
 yet done lost PDF, SQLite and Parquet — all three are built, and leaving them on a wish
 list would have been the same kind of lie the screenshot rule exists to prevent.
 
+## Telling the two buttons in a dialog apart
+
+Reported: on the popups it is not clear which button is the active one, they look the
+same, and it is easy to make a mistake.
+
+Measured, it was worse than that. The two buttons were flat labels of identical size,
+weight and colour, **and neither of them held the keyboard** — so there was no active
+one to see. Over the delete dialog they read *Yes* and *No*, which says nothing about
+which one deletes.
+
+Now: the button that acts is filled and the one that backs out is outlined; the fill is
+red when the thing cannot be undone; both are labelled with the verb — *Delete*,
+*Compress*, *Rename*, *Create* — and a destructive dialog opens with the keyboard on
+the safe way out, outlined so it can be seen. A stray Return closes the question rather
+than answering it. Dialogs that are typed into keep the keyboard in the field.
+
+The instructive part was the Material style. Asking it for a highlighted button gives
+an item that reports itself visible, correctly sized, and filled with the colour asked
+for, and paints nothing. Every property said red. What settled it was counting red
+pixels in the screenshot: zero. The backgrounds are drawn by hand now, and the test
+reads the colours off the items rather than the properties that had lied.
+
+Two process notes worth keeping. My direct runs of the test binary do not write
+screenshots — only the `screenshots` target does — so for a while I was looking at a
+stale image and drawing conclusions from it. And the focus took three attempts because
+a `DialogButtonBox` is three focus scopes deep: the popup, the box, and the ListView
+the box lays its buttons out with. Miss the middle one and the focus is set, reported
+as set, and never active.
+
+See [ADR-0010](docs/adr/0010-telling-the-two-buttons-apart.md).
+
 ## Compressing can take the originals with it
 
 Asked for as a checkbox: pack this, and leave me the archive without the files.

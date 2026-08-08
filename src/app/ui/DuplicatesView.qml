@@ -314,7 +314,12 @@ Item {
         anchors.centerIn: parent
         modal: true
         title: "Delete these files?"
-        standardButtons: Dialog.Ok | Dialog.Cancel
+        focus: true
+        footer: ConfirmButtons {
+            acceptText: "Delete"
+            rejectText: "Keep"
+            destructive: true
+        }
         width: 520
 
         // Snapshotted when the question is asked, so a tick landing behind the

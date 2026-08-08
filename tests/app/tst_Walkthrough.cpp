@@ -1076,6 +1076,33 @@ void TestWalkthrough::deletingAsksWithTheFilesNamed()
     named.sort();
     QCOMPARE(named, QStringList({ QStringLiteral("prices.csv"), QStringLiteral("report.txt") }));
 
+    // The two ways out, told apart. They used to be "Yes" and "No" in the same flat
+    // grey, with the keyboard on neither.
+    QQuickItem* accept = m_harness->item(QStringLiteral("dialogAccept"));
+    QQuickItem* reject = m_harness->item(QStringLiteral("dialogReject"));
+    QVERIFY(accept);
+    QVERIFY(reject);
+    QCOMPARE(accept->property("text").toString(), QStringLiteral("Delete"));
+    QCOMPARE(reject->property("text").toString(), QStringLiteral("Keep"));
+    // Filled, and filled red because this one cannot be undone -- read off the pixels
+    // rather than off the properties. The Material style reported a highlighted button
+    // as visible, sized and red while painting nothing at all, which is the whole
+    // reason these backgrounds are drawn by hand.
+    QQuickItem* acceptBackground = accept->property("background").value<QQuickItem*>();
+    QVERIFY(acceptBackground);
+    const QColor filled = acceptBackground->property("color").value<QColor>();
+    QVERIFY2(filled.red() > 150 && filled.red() > filled.green() * 2 && filled.red() > filled.blue() * 2,
+        qPrintable(QStringLiteral("the acting button is red here, not %1").arg(filled.name())));
+
+    QQuickItem* rejectBackground = reject->property("background").value<QQuickItem*>();
+    QVERIFY(rejectBackground);
+    QVERIFY2(rejectBackground->property("color").value<QColor>().alpha() == 0,
+        "the way out is outlined, not filled -- one of the two has to be the quiet one");
+
+    // And the keyboard starts on the safe one, so a stray Return closes the question
+    // rather than answering it with the irreversible answer.
+    QVERIFY2(reject->hasActiveFocus(), "a destructive dialog opens on the way out");
+
     m_harness->screenshot(QStringLiteral("14-delete"));
 
     // Left as it was found: this test is about the question, not the answer.

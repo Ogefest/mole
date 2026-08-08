@@ -14,7 +14,7 @@ Dialog {
     title: "Compress"
     modal: true
     anchors.centerIn: parent
-    standardButtons: Dialog.Ok | Dialog.Cancel
+    footer: ConfirmButtons { acceptText: "Compress" }
     width: Math.min(460, parent ? parent.width - 80 : 460)
 
     readonly property bool passwordPossible: App.formatSupportsPassword(formatBox.currentText)

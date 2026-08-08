@@ -887,7 +887,7 @@ FocusScope {
         modal: true
         anchors.centerIn: Overlay.overlay
         width: 400
-        standardButtons: Dialog.Ok | Dialog.Cancel
+        footer: ConfirmButtons { acceptText: "Create" }
 
         onOpened: { mkdirField.text = ""; mkdirField.forceActiveFocus() }
         onAccepted: { paneController.createDirectory(mkdirField.text); pane.takeFocus() }
@@ -908,7 +908,7 @@ FocusScope {
         modal: true
         anchors.centerIn: Overlay.overlay
         width: 400
-        standardButtons: Dialog.Ok | Dialog.Cancel
+        footer: ConfirmButtons { acceptText: "Rename" }
 
         onOpened: {
             renameField.text = paneController ? paneController.currentName : ""
@@ -931,9 +931,16 @@ FocusScope {
         objectName: "deleteDialog"
         title: "Delete"
         modal: true
+        // Without this the popup never becomes a focus scope, so nothing inside it
+        // can hold the keyboard and forceActiveFocus() quietly does nothing.
+        focus: true
         anchors.centerIn: Overlay.overlay
         width: 440
-        standardButtons: Dialog.Yes | Dialog.No
+        footer: ConfirmButtons {
+            acceptText: "Delete"
+            rejectText: "Keep"
+            destructive: true
+        }
 
         // Taken once, when the question is asked. Binding it live would mean the
         // list could change under the dialog -- a refresh landing, a watcher

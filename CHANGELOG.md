@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- Dialog buttons say what they do, the one that acts is filled — red when it cannot be
+  undone — and a destructive dialog opens with the keyboard on the way out.
 - Compressing can delete the originals once the archive is written, and keeps them if
   anything could not be read.
 - The dialogs that delete, sync or pack now list the files by name instead of counting
