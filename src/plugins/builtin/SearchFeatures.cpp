@@ -6,6 +6,7 @@
 #include "core/index/IndexDatabase.h"
 #include "core/index/IndexSearchTask.h"
 #include "core/index/ScanTask.h"
+#include "core/sets/FileSetStore.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/VfsManager.h"
 
@@ -269,6 +270,28 @@ void LiveSearchController::start()
 
     setRunning(true);
     m_services.tasks->submit(task);
+}
+
+QString LiveSearchController::buildSetFromResults(const QString& name)
+{
+    if (!m_services.isValid() || !m_services.sets)
+        return {};
+
+    // What is visible, filter and all: narrowing the results is how someone says
+    // "these ones", so the set has to mean the same thing the screen does.
+    QStringList uris;
+    for (int row = 0; row < m_results->rowCount(); ++row)
+        uris.append(m_results->data(m_results->index(row, 0), FileListModel::UriRole).toString());
+    if (uris.isEmpty())
+        return {};
+
+    const QString chosen = name.trimmed().isEmpty()
+        ? QStringLiteral("Search: %1").arg(m_queryText.isEmpty() ? m_rootUri : m_queryText)
+        : name.trimmed();
+
+    const FileSet built = m_services.sets->create(chosen, uris);
+    m_services.sets->save();
+    return built.id;
 }
 
 void LiveSearchController::stop()

@@ -19,27 +19,6 @@ screenshots come from `make screenshots`, which photographs states the tests hav
 just asserted — so the documentation cannot drift into showing something that no
 longer works.
 
-### Search results need to arrive sooner, and be worth something once they do
-
-Two halves, and the first is about latency rather than features. A tree walk finds
-matches early and the view should show them early: results as they are found, the
-same way the table preview now fills as it reads, rather than a wait followed by a
-list. Whether that is already happening or the view is batching them is the first
-thing to measure.
-
-The second half is what you can then do with them. A search over a large tree
-returns more than anyone wants to read, so the results need filtering in place --
-narrowing what is already found, without walking the disk again. And they need a way
-out: building a file set from the results, so the work continues over that set
-instead of ending when the tab is closed. The sets feature already exists and its
-view is the place that work continues, so this is a bridge between two features
-rather than a new one.
-
-Design question worth settling before the code: whether the set is a snapshot of the
-matches at that moment or something that re-runs the query. A snapshot is what "build
-a set from this" means to anyone reading it, and it is the one that cannot surprise
-you later, but say so explicitly rather than leaving it implied.
-
 ### Previews need options of their own, remembered per file type
 
 An `.html` file previews as source, coloured, and sometimes that is exactly what

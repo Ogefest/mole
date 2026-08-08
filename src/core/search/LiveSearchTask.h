@@ -39,7 +39,13 @@ protected:
     void run() override;
 
 private:
+    /// A full batch is sent as soon as it fills, so a flood of matches costs one
+    /// signal per two hundred rather than one per file.
     static constexpr int kEmitBatchSize = 200;
+    /// ...and a partial one is sent anyway after this long, which is the half that
+    /// was missing: a search finding a dozen matches used to show none of them
+    /// until the whole walk finished, because the batch never reached two hundred.
+    static constexpr int kEmitIntervalMs = 120;
 
     bool matches(const FileEntry& entry) const;
 

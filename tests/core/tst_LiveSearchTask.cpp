@@ -5,6 +5,8 @@
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
+#include <QElapsedTimer>
+
 using namespace mole;
 using namespace mole::test;
 
@@ -18,6 +20,7 @@ private slots:
 
     void findsMatchesByName();
     void streamsResultsWhileRunning();
+    void aHandfulOfMatchesArrivesBeforeTheWalkEnds();
     void filtersByExtension();
     void filtersByKind();
     void filtersBySize();
@@ -89,6 +92,59 @@ void TestLiveSearchTask::streamsResultsWhileRunning()
 
     QCOMPARE(task->hitCount(), 450);
     QCOMPARE(m_hits.size(), 450);
+}
+
+void TestLiveSearchTask::aHandfulOfMatchesArrivesBeforeTheWalkEnds()
+{
+    // Six matches -- nowhere near the two hundred that fill a batch -- spread over
+    // directories on a drive that takes a quarter of a second to list each one, so
+    // the walk lasts well over a second. Batching on count alone meant a search
+    // like this showed nothing until it had finished, which is the case anyone
+    // searching a large disk actually meets.
+    m_fs->addFile(QStringLiteral("/a/hit-1.txt"));
+    m_fs->addFile(QStringLiteral("/a/hit-2.txt"));
+    m_fs->addFile(QStringLiteral("/b/hit-3.txt"));
+    m_fs->addFile(QStringLiteral("/c/hit-4.txt"));
+    m_fs->addFile(QStringLiteral("/d/hit-5.txt"));
+    m_fs->addFile(QStringLiteral("/e/hit-6.txt"));
+    m_fs->setListDelayMs(250);
+
+    LiveSearchTask::Criteria criteria;
+    criteria.text = QStringLiteral("hit");
+
+    // Timed rather than checked against isFinished(): the last flush happens inside
+    // run(), before the task is marked finished, so "arrived while not finished" is
+    // true even when everything arrives in one lump at the very end. The question is
+    // *when*, and only a clock can answer it.
+    QElapsedTimer clock;
+    qint64 firstBatchAt = -1;
+    qint64 finishedAt = -1;
+
+    auto* task = new LiveSearchTask(m_fs, VfsUri::fromString(QStringLiteral("mem:///")), criteria);
+    connect(
+        task, &LiveSearchTask::hitsFound, this, [this, &clock, &firstBatchAt](const FileEntryList& batch) {
+            m_hits.append(batch);
+            if (firstBatchAt < 0)
+                firstBatchAt = clock.elapsed();
+        });
+    connect(task, &Task::finished, this, [&clock, &finishedAt] { finishedAt = clock.elapsed(); });
+
+    clock.start();
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task, 30000));
+
+    QCOMPARE(task->hitCount(), 6);
+    // Six is far below the two hundred that fill a batch, which is the whole point:
+    // if this passed by filling one, it would be testing nothing.
+    QVERIFY(task->hitCount() < 200);
+
+    QVERIFY(firstBatchAt >= 0);
+    QVERIFY(finishedAt > 0);
+    QVERIFY2(firstBatchAt < finishedAt / 2,
+        qPrintable(QStringLiteral("first matches arrived at %1 ms of a %2 ms walk; they have to reach the "
+                                  "view early, not at the end")
+                       .arg(firstBatchAt)
+                       .arg(finishedAt)));
 }
 
 void TestLiveSearchTask::filtersByExtension()

@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- Search results appear as they are found, can be narrowed where they are, and can be
+  turned into a file set to carry on working with.
 - The licence check says which launcher it expected when a bundle in dist/ is not
   this project's.
 - A search-commands bar sits in the middle of the title bar, showing the Ctrl+R that

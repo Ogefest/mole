@@ -9,6 +9,35 @@ wrong.
 
 ---
 
+## Search results arrived late, and led nowhere
+
+Two halves, and the first turned out to be one number.
+
+`LiveSearchTask` batched matches at two hundred before emitting them — and only at
+two hundred. A search over a large tree that matched a dozen files therefore showed
+nothing at all until the whole walk had finished, which is exactly the case anyone
+searching a disk meets. Batches now go out on whichever comes first, enough matches or
+a hundred and twenty milliseconds, so the first answers arrive almost immediately and a
+flood still costs one signal per two hundred rather than one per file.
+
+The test for that was the interesting part. The suite already had
+`streamsResultsWhileRunning`, which only checked the totals once everything had
+finished — it proved nothing about arriving early, and it passed before and after. The
+first replacement was no better: asserting a batch arrived while `isFinished()` was
+false passes even with count-only batching, because the last flush happens inside
+`run()` before the task is marked finished. Only a clock can answer *when*, so the test
+now times the first batch against the whole walk and fails with a sentence that says
+what went wrong: *first matches arrived at 1511 ms of a 1511 ms walk*.
+
+The second half is what results are for. They can be narrowed where they are —
+straight onto the model that already holds them, so no walk and no query, just less of
+what is there — with a count that reads "3 of 41" when a filter is on. And they can
+become a file set, which is where the work carries on: a snapshot of what is on screen,
+narrowing included, because the rows in front of someone are what "these results"
+means. A set that re-ran the query later would be a different promise from the one the
+button makes. Nothing to build from produces no set rather than an empty one, and an
+unnamed set is named after the query rather than after nothing.
+
 ## Ctrl+F was not usable as a search box
 
 Three things, and only the last is a feature.

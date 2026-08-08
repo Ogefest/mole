@@ -2,6 +2,8 @@
 
 #include "core/vfs/DirectoryWalker.h"
 
+#include <QElapsedTimer>
+
 namespace mole {
 
 LiveSearchTask::LiveSearchTask(FileSystemPtr fileSystem, VfsUri root, Criteria criteria, QObject* parent)
@@ -48,11 +50,18 @@ void LiveSearchTask::run()
     FileEntryList batch;
     batch.reserve(kEmitBatchSize);
 
+    // Batches go out on whichever comes first: enough matches, or enough time.
+    // Counting alone meant a search over a big tree that matched twelve files
+    // showed nothing at all until it had finished walking.
+    QElapsedTimer sinceLastEmit;
+    sinceLastEmit.start();
+
     const auto flush = [&] {
         if (batch.isEmpty())
             return;
         emit hitsFound(batch);
         batch.clear();
+        sinceLastEmit.restart();
     };
 
     DirectoryWalker walker(m_fileSystem);
@@ -60,7 +69,7 @@ void LiveSearchTask::run()
         if (matches(entry)) {
             batch.append(entry);
             ++m_hitCount;
-            if (batch.size() >= kEmitBatchSize)
+            if (batch.size() >= kEmitBatchSize || sinceLastEmit.elapsed() >= kEmitIntervalMs)
                 flush();
         }
 

@@ -14,6 +14,8 @@
 #include "core/alerts/AlertStore.h"
 #include "core/events/EventBus.h"
 #include "core/index/IndexDatabase.h"
+#include "core/sets/FileSet.h"
+#include "core/sets/FileSetStore.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/VfsManager.h"
 
@@ -53,6 +55,8 @@ private slots:
     void searchWalksWhenNothingIsIndexed();
     void searchAsksTheIndexWhenItCoversTheFolder();
     void turningTheIndexOffForcesAWalk();
+    void narrowingResultsDoesNotSearchAgain();
+    void aSetCanBeBuiltFromWhatTheSearchFound();
     void textPreviewProviderClaimsTextFiles();
     void archivePluginMountsAZip();
     void dualPaneIsItsOwnFeature();
@@ -433,6 +437,76 @@ void TestAppIntegration::turningTheIndexOffForcesAWalk()
     QCOMPARE(search->results()->rowCount(), 1);
     QVERIFY2(!search->statusText().contains(QStringLiteral("from the index")),
         "with the index off, the walk answers and says so");
+}
+
+void TestAppIntegration::narrowingResultsDoesNotSearchAgain()
+{
+    QVERIFY(m_tree->writeFile(QStringLiteral("reports/alpha-notes.txt"), QByteArray("a")));
+    QVERIFY(m_tree->writeFile(QStringLiteral("reports/beta-notes.txt"), QByteArray("b")));
+
+    const int row = m_app->tabs()->openTab(QStringLiteral("mole.livesearch"));
+    auto* search = qobject_cast<LiveSearchController*>(m_app->tabs()->controllerAt(row));
+    QVERIFY(search);
+    search->setRootUri(m_tree->rootUri().toString());
+    search->setQueryText(QStringLiteral("-notes"));
+    search->start();
+    QVERIFY(waitFor([search] { return !search->isRunning(); }, 15000));
+
+    QCOMPARE(search->results()->rowCount(), 2);
+    const QString statusAfterSearch = search->statusText();
+
+    // Narrowing works on the matches already found. No walk, no query -- just less
+    // of what is there, which is why it is instant and why it must not restart
+    // anything.
+    search->results()->setFilterText(QStringLiteral("alpha"));
+    QCOMPARE(search->results()->rowCount(), 1);
+    QCOMPARE(search->results()->totalCount(), 2);
+    QVERIFY2(!search->isRunning(), "narrowing must not start a search");
+    QCOMPARE(search->statusText(), statusAfterSearch);
+
+    // And clearing it brings the rest back, since they were never thrown away.
+    search->results()->setFilterText(QString());
+    QCOMPARE(search->results()->rowCount(), 2);
+}
+
+void TestAppIntegration::aSetCanBeBuiltFromWhatTheSearchFound()
+{
+    QVERIFY(m_tree->writeFile(QStringLiteral("reports/alpha-notes.txt"), QByteArray("a")));
+    QVERIFY(m_tree->writeFile(QStringLiteral("reports/beta-notes.txt"), QByteArray("b")));
+
+    const int row = m_app->tabs()->openTab(QStringLiteral("mole.livesearch"));
+    auto* search = qobject_cast<LiveSearchController*>(m_app->tabs()->controllerAt(row));
+    QVERIFY(search);
+    search->setRootUri(m_tree->rootUri().toString());
+    search->setQueryText(QStringLiteral("-notes"));
+    search->start();
+    QVERIFY(waitFor([search] { return !search->isRunning(); }, 15000));
+    QCOMPARE(search->results()->rowCount(), 2);
+
+    // A snapshot of what is on screen, narrowing included: the rows in front of the
+    // user are what "these results" means.
+    search->results()->setFilterText(QStringLiteral("beta"));
+    QCOMPARE(search->results()->rowCount(), 1);
+
+    const QString id = search->buildSetFromResults(QStringLiteral("Notes to sort"));
+    QVERIFY2(!id.isEmpty(), "a set is built from the visible results");
+
+    const FileSet built = m_app->services().sets->set(id);
+    QCOMPARE(built.name, QStringLiteral("Notes to sort"));
+    QCOMPARE(built.uris.size(), 1);
+    QVERIFY(built.uris.first().endsWith(QStringLiteral("beta-notes.txt")));
+
+    // Named for itself when no name is given, rather than refusing or leaving a
+    // set called nothing at all.
+    search->results()->setFilterText(QString());
+    const QString unnamed = search->buildSetFromResults(QString());
+    QVERIFY(!unnamed.isEmpty());
+    QVERIFY(m_app->services().sets->set(unnamed).name.contains(QStringLiteral("-notes")));
+    QCOMPARE(m_app->services().sets->set(unnamed).uris.size(), 2);
+
+    // Nothing to build from is not a set: an empty one would just be litter.
+    search->results()->setFilterText(QStringLiteral("nothing matches this"));
+    QCOMPARE(search->buildSetFromResults(QStringLiteral("Empty")), QString());
 }
 
 void TestAppIntegration::textPreviewProviderClaimsTextFiles()

@@ -95,6 +95,62 @@ Item {
             }
         }
 
+        // What to do with the results once there are some: narrow them without
+        // walking the disk again, or take them somewhere the work continues.
+        RowLayout {
+            Layout.fillWidth: true
+            visible: controller && controller.results && controller.results.totalCount > 0
+            spacing: 8
+
+            Label {
+                text: "Narrow"
+                color: "#8b93a7"
+                font.pixelSize: App.secondaryTextSize
+            }
+            TextField {
+                objectName: "narrowResultsField"
+                Layout.preferredWidth: 220
+                placeholderText: "Filter these results…"
+                font.pixelSize: App.secondaryTextSize
+                // Straight onto the model that already holds the matches: no walk,
+                // no query, just less of what is there.
+                onTextEdited: if (controller && controller.results) controller.results.filterText = text
+                Keys.onEscapePressed: {
+                    text = ""
+                    if (controller && controller.results)
+                        controller.results.filterText = ""
+                }
+            }
+            Label {
+                objectName: "narrowCount"
+                text: controller && controller.results
+                      ? (controller.results.count === controller.results.totalCount
+                            ? controller.results.count + " results"
+                            : controller.results.count + " of " + controller.results.totalCount)
+                      : ""
+                color: "#6f7788"
+                font.pixelSize: App.smallTextSize
+            }
+
+            Item { Layout.fillWidth: true }
+
+            Button {
+                objectName: "buildSetButton"
+                text: "Build a set"
+                flat: true
+                font.pixelSize: App.secondaryTextSize
+                enabled: controller && controller.results && controller.results.count > 0
+                ToolTip.text: "Make a file set of these results, to keep working on them"
+                ToolTip.visible: hovered
+                ToolTip.delay: 600
+                onClicked: {
+                    const id = controller.buildSetFromResults("")
+                    if (id.length > 0)
+                        App.openFeatureTab("core.filesets")
+                }
+            }
+        }
+
         // Folded away until wanted, so the common case stays one field and one key.
         RowLayout {
             Layout.fillWidth: true

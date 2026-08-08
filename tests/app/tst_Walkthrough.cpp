@@ -20,6 +20,8 @@
 #include "core/alerts/AlertStore.h"
 #include "core/automation/ScheduleStore.h"
 #include "core/automation/Scheduler.h"
+#include "core/sets/FileSet.h"
+#include "core/sets/FileSetStore.h"
 #include "core/vfs/VfsManager.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
@@ -834,8 +836,39 @@ void TestWalkthrough::ctrlFIsASearchBoxYouCanTypeInto()
     QVERIFY(m_harness->until([search] { return !search->isRunning(); }, 15000));
     QCOMPARE(search->results()->rowCount(), 0);
 
+    // What to do with results once there are some: narrow them where they are, and
+    // take them somewhere the work continues.
+    minSize->setProperty("text", QString());
+    QVERIFY(QMetaObject::invokeMethod(minSize, "textEdited"));
+    search->start();
+    QVERIFY(m_harness->until([search] { return !search->isRunning(); }, 15000));
+    const int found = search->results()->rowCount();
+    QVERIFY(found >= 1);
+
+    QQuickItem* narrow = m_harness->item(QStringLiteral("narrowResultsField"));
+    QVERIFY2(narrow, "the results can be narrowed in place");
+    narrow->setProperty("text", QStringLiteral("nothinglikethis"));
+    QVERIFY(QMetaObject::invokeMethod(narrow, "textEdited"));
+    QCOMPARE(search->results()->rowCount(), 0);
+    QVERIFY2(!search->isRunning(), "narrowing must not start another walk");
+    QCOMPARE(search->results()->totalCount(), found);
+
+    narrow->setProperty("text", QString());
+    QVERIFY(QMetaObject::invokeMethod(narrow, "textEdited"));
+    QCOMPARE(search->results()->rowCount(), found);
+
     m_harness->settle(6);
     m_harness->screenshot(QStringLiteral("12-search-box"));
+
+    QQuickItem* buildSet = m_harness->item(QStringLiteral("buildSetButton"));
+    QVERIFY(buildSet);
+    QVERIFY(buildSet->property("enabled").toBool());
+    QVERIFY(QMetaObject::invokeMethod(buildSet, "clicked"));
+
+    // A set of what was found, and the sets tab in front of the user so the work
+    // can carry on there.
+    QVERIFY(m_harness->until([this] { return !m_harness->app()->services().sets->sets().isEmpty(); }));
+    QCOMPARE(m_harness->app()->services().sets->sets().first().uris.size(), found);
 }
 
 void TestWalkthrough::breadcrumbsClimbTheTree()

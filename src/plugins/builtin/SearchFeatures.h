@@ -76,6 +76,15 @@ public:
     Q_INVOKABLE void start();
     Q_INVOKABLE void stop();
 
+    /// Builds a file set from the results and returns its id, or an empty string
+    /// when there is nothing to build one from.
+    ///
+    /// A snapshot of what is on screen -- including the narrowing filter, because
+    /// the rows in front of the user are what "these results" means -- rather than
+    /// something that re-runs the query later. "Build a set from this" is what
+    /// anyone reading it expects, and it is the one that cannot surprise them.
+    Q_INVOKABLE QString buildSetFromResults(const QString& name);
+
     QVariantMap saveState() const override;
     void restoreState(const QVariantMap& state) override;
 
