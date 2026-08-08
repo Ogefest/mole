@@ -3,6 +3,7 @@
 #include "host/FeatureRegistry.h"
 #include "sdk/PluginApi.h"
 #include "ui/models/BookmarkModel.h"
+#include "ui/models/CommandPaletteModel.h"
 #include "ui/models/MountListModel.h"
 #include "ui/models/TabsModel.h"
 #include "ui/models/TaskListModel.h"
@@ -48,6 +49,9 @@ class AppController : public QObject
     Q_PROPERTY(mole::TaskListModel* tasks READ tasks CONSTANT)
     Q_PROPERTY(mole::FeatureRegistry* features READ features CONSTANT)
     Q_PROPERTY(mole::BookmarkModel* bookmarks READ bookmarks CONSTANT)
+    /// Everything that can be done right now, as one filterable list -- the menu,
+    /// the bookmarks and the drives. A view over those, never a copy of them.
+    Q_PROPERTY(mole::CommandPaletteModel* commands READ commands CONSTANT)
     Q_PROPERTY(QStringList pluginSummary READ pluginSummary CONSTANT)
     Q_PROPERTY(QStringList pluginErrors READ pluginErrors CONSTANT)
     Q_PROPERTY(QString defaultLocation READ defaultLocation CONSTANT)
@@ -115,6 +119,7 @@ public:
     TaskListModel* tasks() const { return m_taskModel; }
     TerminalController* terminal() const { return m_terminal; }
     FeatureRegistry* features() const { return m_features; }
+    CommandPaletteModel* commands() const { return m_commands; }
     BookmarkModel* bookmarks() const { return m_bookmarks; }
     PreviewRegistry* previews() const { return m_previews; }
     Scheduler* scheduler() const { return m_scheduler; }
@@ -292,6 +297,7 @@ private:
     RemoteRegistry* m_remotes = nullptr;
     QString m_credentialsError;
     BookmarkModel* m_bookmarks = nullptr;
+    CommandPaletteModel* m_commands = nullptr;
     WindowGeometry m_window;
     std::unique_ptr<SessionStore> m_session;
     /// Navigation fires state changes constantly, so writes are coalesced.

@@ -18,6 +18,7 @@ qt_add_qml_module(mole
     QML_FILES
         ui/Main.qml
         ui/AppMenu.qml
+        ui/CommandPalette.qml
         ui/Sidebar.qml
         ui/TaskStrip.qml
         ui/FilePane.qml

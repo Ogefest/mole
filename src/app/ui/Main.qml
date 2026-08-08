@@ -118,6 +118,12 @@ ApplicationWindow {
         onActivated: root.openFeature("mole.livesearch")
     }
     Shortcut {
+        // The one key that reaches everything, and the key everyone's fingers
+        // already know from an editor.
+        sequence: "Ctrl+Shift+P"
+        onActivated: commandPalette.open()
+    }
+    Shortcut {
         // Measures the folders in front of you, in the background, and writes the
         // answers into the listing.
         sequence: "Ctrl+Shift+S"
@@ -250,6 +256,7 @@ ApplicationWindow {
     }
 
     AppMenu { id: appMenu }
+    CommandPalette { id: commandPalette }
 
     // Last stop for navigation keys.
     //
@@ -605,6 +612,7 @@ ApplicationWindow {
                 ["Ctrl+Shift+I", "Search the index (new tab)"],
                 ["F3", "Preview the file under the cursor"],
                 ["Ctrl+Shift+A", "Analyse the selected folders, or this one"],
+                ["Ctrl+Shift+P", "Find any command, bookmark or drive"],
                 ["Ctrl+Shift+S", "Size the selected folders, or all of them"],
                 ["Ctrl+W", "Close tab"],
                 ["Ctrl+Tab / Ctrl+PgDn", "Next tab"],

@@ -6,6 +6,7 @@
 #include "host/PreviewRegistry.h"
 #include "ui/FileLauncher.h"
 #include "ui/SessionStore.h"
+#include "ui/models/CommandPaletteModel.h"
 #include "ui/models/MountListModel.h"
 #include "ui/models/TabsModel.h"
 #include "ui/models/TaskListModel.h"
@@ -217,6 +218,13 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
 
     m_bookmarks = new BookmarkModel(BookmarkModel::defaultFilePath(), this);
     connect(m_bookmarks, &BookmarkModel::countChanged, this, &AppController::refreshBookmarkActions);
+
+    // The palette knows nothing about tabs or navigation: it says what was chosen
+    // and the shell does it, which is why the model can be a plain view over the
+    // registries.
+    m_commands = new CommandPaletteModel(m_actions, m_bookmarks, m_mounts, this);
+    connect(m_commands, &CommandPaletteModel::actionRequested, this, &AppController::triggerAction);
+    connect(m_commands, &CommandPaletteModel::locationRequested, this, &AppController::goTo);
 
     m_launcher = new FileLauncher(m_services, this);
     connect(m_launcher, &FileLauncher::failed, this, [this](const QString& uri, const QString& reason) {

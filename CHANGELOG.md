@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- Ctrl+Shift+P opens one box that finds and runs any command, bookmark or drive by
+  typing part of its name.
 - PDFs open as pages instead of falling through to the information viewer, rendered
   one page at a time as they are reached.
 - Bulk rename shows the result as you type, and the preview is no longer squeezed

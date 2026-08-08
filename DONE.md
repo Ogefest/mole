@@ -9,6 +9,39 @@ wrong.
 
 ---
 
+## One input that can reach everything
+
+`Ctrl+Shift+P` opens a box with a list underneath of everything that can be done
+right now — the whole `F4` menu tree, every bookmark, every drive. Typing `termi`
+leaves one row, *Operations → Terminal here*, and Enter runs it. Arrows move, Escape
+leaves, and nothing about it needs the mouse, which matters because the reason it
+exists is that not every control has a shortcut of its own.
+
+The design decision that makes it worth trusting is that it holds no list. The menu
+entries come from `ActionRegistry::buildModel()`, the places from `BookmarkModel` and
+`MountListModel`; the palette is a view over those three. A second list maintained by
+hand would drift out of step with the menu the first time somebody added an action,
+and then the one thing the palette promises — that it has everything — would quietly
+stop being true. The test that says so is the first one in the file: the palette's
+paths must equal what the menu would show, entry for entry.
+
+"Only what is available" came for free rather than needing a mechanism: the menu
+already evaluates each entry's `enabled` callback at the moment it is asked, so a
+greyed-out action is simply absent. It is rebuilt on every open, because what can be
+done depends on the tab in front of the user.
+
+Ranking is less optional than it looks. A title match beats a match on the group, or
+typing `set` buries *Add to set* under everything in a section whose name contains
+those letters; and several words match anywhere in the path in any order, so both
+`op term` and `term op` find the terminal. Each of those is a test, because each is
+a way for the box to feel broken while technically working.
+
+The model asks and the shell acts — `actionRequested` and `locationRequested` rather
+than a call into tabs or navigation — which is what lets it stay a plain view. The
+walkthrough proves the whole path in the real window: the key opens it, the input has
+the keyboard immediately, five characters narrow everything to one row, and Enter
+opens the terminal.
+
 ## PDFs had no preview
 
 A PDF fell through to the information viewer — the last resort for a file we cannot

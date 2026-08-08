@@ -19,43 +19,6 @@ screenshots come from `make screenshots`, which photographs states the tests hav
 just asserted — so the documentation cannot drift into showing something that no
 longer works.
 
-### One input that can reach everything
-
-A shortcut opens a box you type into, with a list underneath of everything that can
-be done right now: the whole `F4` menu tree, every bookmark, every drive — anything
-there is a control for. Typing `termi` should leave one row, *Operations → Terminal
-here*, and Enter should run it. The same box lists bookmarks, so typing part of a
-bookmark's name goes there. VS Code's command palette is the shape.
-
-This is worth building for a reason beyond convenience: it retires the question of
-which buttons deserve a shortcut. Everything is reachable by typing, so the shortcuts
-that remain are the ones worth memorising rather than the ones somebody got round to.
-
-The data is already there, and that is the point — it must be a view over the
-existing registries rather than a second list that drifts out of step with the menu:
-
-- `ActionRegistry::buildModel()` already returns every menu entry with its section,
-  title, shortcut and — crucially — its `enabled` state, evaluated at the moment it
-  is asked. "Only what is available" is therefore free, not a new mechanism.
-- `BookmarkModel` and `MountListModel` are the bookmarks and the drives.
-- `FeatureRegistry` is the list of tabs that can be opened.
-
-The rows need a path, not just a title: *Operations → Terminal here* reads as its own
-answer, and matching against the path is what makes `termi` and `op term` both work.
-Ranking matters more than it looks — a title match must beat a section match, or
-typing `set` will bury *Add to set* under everything in a section whose name contains
-those letters.
-
-`Ctrl+Shift+P` is free here and is what people's fingers already know. Escape closes,
-arrows move, Enter runs, and nothing about it needs the mouse.
-
-Tests, with one that matters more than the rest: the palette's contents must equal
-what the menu would show plus the bookmarks and drives, so a new action appears in
-both or the test fails — that is the anti-drift assertion, and without it this becomes
-a second menu maintained by hand. Then: a disabled action never appears, filtering by
-a fragment of a title finds it, filtering by a fragment of a section finds it too,
-Enter triggers exactly the action highlighted, and Escape leaves everything as it was.
-
 ### Ctrl+F needs to be usable as a search box
 
 Three things are wrong with the search tab, and only the third is a feature.

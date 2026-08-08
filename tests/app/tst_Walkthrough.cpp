@@ -61,6 +61,7 @@ private slots:
     void folderSizesLandInTheListing();
     void theListingTakesItsTypeSizeFromTheScale();
     void theIconOnlyControlsAreBigEnoughToHit();
+    void theCommandPaletteFindsAndRunsThings();
     void bulkRenameShowsThePreviewAsYouType();
     void breadcrumbsClimbTheTree();
     void ctrlGRevealsTheEditablePath();
@@ -686,6 +687,47 @@ void TestWalkthrough::aPdfOpensAsPages()
     QVERIFY(position->property("text").toString().contains(QStringLiteral("of 2")));
 
     m_harness->screenshot(QStringLiteral("03d-preview-pdf"));
+}
+
+void TestWalkthrough::theCommandPaletteFindsAndRunsThings()
+{
+    m_harness->key(Qt::Key_P, Qt::ControlModifier | Qt::ShiftModifier);
+
+    QObject* palette = m_harness->object(QStringLiteral("commandPalette"));
+    QVERIFY(palette);
+    QVERIFY2(m_harness->until([palette] { return palette->property("opened").toBool(); }),
+        "Ctrl+Shift+P opens it");
+
+    // Typed into straight away: the box exists because not every control has a
+    // shortcut, so needing a click to reach it would be a poor sort of answer.
+    QQuickItem* field = m_harness->item(QStringLiteral("commandPaletteInput"));
+    QVERIFY(field);
+    QVERIFY2(field->hasActiveFocus(), "the input has the keyboard as soon as it opens");
+
+    QQuickItem* list = m_harness->item(QStringLiteral("commandPaletteList"));
+    QVERIFY(list);
+    QVERIFY2(m_harness->until([list] { return list->property("count").toInt() > 5; }),
+        "it opens holding everything, not empty");
+
+    m_harness->type(QStringLiteral("termi"));
+    QVERIFY2(m_harness->until([list] { return list->property("count").toInt() == 1; }),
+        "five characters is enough to find one command out of everything");
+
+    // And Enter runs it. The terminal is a good choice to prove it with: whether it
+    // ran is a fact about the application, not about the palette.
+    TerminalController* terminal = m_harness->app()->terminal();
+    QVERIFY(terminal);
+    if (!terminal->isAvailable())
+        QSKIP("no pseudo-terminal on this platform");
+    QVERIFY(!terminal->isVisible());
+
+    m_harness->settle(6);
+    m_harness->screenshot(QStringLiteral("11-command-palette"));
+
+    m_harness->key(Qt::Key_Return);
+    QVERIFY2(
+        m_harness->until([terminal] { return terminal->isVisible(); }), "Enter runs the highlighted command");
+    QVERIFY(m_harness->until([palette] { return !palette->property("opened").toBool(); }));
 }
 
 void TestWalkthrough::breadcrumbsClimbTheTree()

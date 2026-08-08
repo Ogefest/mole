@@ -8,6 +8,8 @@ add_library(mole_ui STATIC
     SessionStore.h
     SessionStore.cpp
 
+    models/CommandPaletteModel.h
+    models/CommandPaletteModel.cpp
     models/BookmarkModel.h
     models/BookmarkModel.cpp
     models/FileListModel.h
