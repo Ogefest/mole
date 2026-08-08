@@ -693,12 +693,11 @@ void TestWalkthrough::aPdfOpensAsPages()
 
 void TestWalkthrough::theCommandPaletteFindsAndRunsThings()
 {
-    m_harness->key(Qt::Key_P, Qt::ControlModifier | Qt::ShiftModifier);
+    m_harness->key(Qt::Key_R, Qt::ControlModifier);
 
     QObject* palette = m_harness->object(QStringLiteral("commandPalette"));
     QVERIFY(palette);
-    QVERIFY2(m_harness->until([palette] { return palette->property("opened").toBool(); }),
-        "Ctrl+Shift+P opens it");
+    QVERIFY2(m_harness->until([palette] { return palette->property("opened").toBool(); }), "Ctrl+R opens it");
 
     // Typed into straight away: the box exists because not every control has a
     // shortcut, so needing a click to reach it would be a poor sort of answer.
@@ -715,17 +714,33 @@ void TestWalkthrough::theCommandPaletteFindsAndRunsThings()
     QVERIFY2(m_harness->until([list] { return list->property("count").toInt() == 1; }),
         "five characters is enough to find one command out of everything");
 
-    // And Enter runs it. The terminal is a good choice to prove it with: whether it
-    // ran is a fact about the application, not about the palette.
+    m_harness->settle(6);
+    m_harness->screenshot(QStringLiteral("11-command-palette"));
+
+    // Closed and opened again: it must start empty. Leaving the last query in the
+    // box means the next Ctrl+R opens onto a list already filtered by whatever was
+    // typed before, and the first thing anyone would have to do is clear it.
+    // Checked before running anything, because a command that takes the keyboard --
+    // the terminal does -- would stop Ctrl+R reaching the window at all.
+    m_harness->key(Qt::Key_Escape);
+    QVERIFY(m_harness->until([palette] { return !palette->property("opened").toBool(); }));
+
+    m_harness->key(Qt::Key_R, Qt::ControlModifier);
+    QVERIFY(m_harness->until([palette] { return palette->property("opened").toBool(); }));
+    QCOMPARE(field->property("text").toString(), QString());
+    QVERIFY2(m_harness->until([list] { return list->property("count").toInt() > 5; }),
+        "and holding everything again, not the one row the last query left");
+
+    // And Enter runs what is highlighted. The terminal is a good thing to prove it
+    // with: whether it ran is a fact about the application, not about the palette.
     TerminalController* terminal = m_harness->app()->terminal();
     QVERIFY(terminal);
     if (!terminal->isAvailable())
         QSKIP("no pseudo-terminal on this platform");
     QVERIFY(!terminal->isVisible());
 
-    m_harness->settle(6);
-    m_harness->screenshot(QStringLiteral("11-command-palette"));
-
+    m_harness->type(QStringLiteral("termi"));
+    QVERIFY(m_harness->until([list] { return list->property("count").toInt() == 1; }));
     m_harness->key(Qt::Key_Return);
     QVERIFY2(
         m_harness->until([terminal] { return terminal->isVisible(); }), "Enter runs the highlighted command");

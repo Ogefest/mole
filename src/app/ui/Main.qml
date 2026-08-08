@@ -118,9 +118,11 @@ ApplicationWindow {
         onActivated: root.openFeature("mole.livesearch")
     }
     Shortcut {
-        // The one key that reaches everything, and the key everyone's fingers
-        // already know from an editor.
-        sequence: "Ctrl+Shift+P"
+        // The one key that reaches everything. It used to be Refresh's, which was
+        // the wrong use of a key this good: refreshing is one entry in the palette
+        // like everything else, and it still has F5's neighbour keys and the View
+        // menu.
+        sequence: "Ctrl+R"
         onActivated: commandPalette.open()
     }
     Shortcut {
@@ -185,13 +187,6 @@ ApplicationWindow {
     Shortcut {
         sequences: [StandardKey.HelpContents]    // F1
         onActivated: shortcutDialog.open()
-    }
-    Shortcut {
-        // Ctrl+R only. StandardKey.Refresh also means F5 on this platform, and
-        // F5 is the commander copy key -- the window shortcut was swallowing it
-        // before the pane ever saw it, so F5 refreshed instead of copying.
-        sequence: "Ctrl+R"
-        onActivated: App.triggerAction("mole.view.refresh")
     }
 
     // Ctrl+1..9 jumps straight to a tab.
@@ -612,7 +607,7 @@ ApplicationWindow {
                 ["Ctrl+Shift+I", "Search the index (new tab)"],
                 ["F3", "Preview the file under the cursor"],
                 ["Ctrl+Shift+A", "Analyse the selected folders, or this one"],
-                ["Ctrl+Shift+P", "Find any command, bookmark or drive"],
+                ["Ctrl+R", "Find any command, bookmark or drive"],
                 ["Ctrl+Shift+S", "Size the selected folders, or all of them"],
                 ["Ctrl+W", "Close tab"],
                 ["Ctrl+Tab / Ctrl+PgDn", "Next tab"],

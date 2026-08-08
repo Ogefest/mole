@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- The command palette opens on Ctrl+R, instantly, and always starts with an empty
+  box.
 - Ctrl+F puts the keyboard in the search box, says when a search is running, filters
   by size, and answers from the index when it covers the folder.
 - Ctrl+Shift+P opens one box that finds and runs any command, bookmark or drive by

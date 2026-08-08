@@ -25,6 +25,13 @@ Popup {
     focus: true
     padding: 0
 
+    // No animation, in or out. A box you summon to type one word into should be
+    // there the instant you ask -- and an exit transition means reopening during it
+    // is silently ignored, so pressing the key again straight after Escape would do
+    // nothing at all.
+    enter: Transition {}
+    exit: Transition {}
+
     background: Rectangle {
         color: "#1b2029"
         border.color: "#2a3140"
@@ -33,8 +40,11 @@ Popup {
     }
 
     onAboutToShow: {
-        // Rebuilt every time: what can be done depends on the tab in front of the
-        // user, and a stale list would offer things that no longer apply.
+        // Emptied every time, and the field as well as the model: resetting only
+        // the filter leaves the last query sitting in the box, so the next Ctrl+R
+        // opens onto a list filtered by something the user cannot see any reason
+        // for, and the first thing to do is clear it.
+        field.clear()
         palette.commands.filter = ""
         palette.commands.refresh()
         list.currentIndex = 0

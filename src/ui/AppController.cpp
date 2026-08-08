@@ -865,7 +865,8 @@ void AppController::registerShellActions()
         action.id = QStringLiteral("mole.view.refresh");
         action.section = MenuAction::Section::View;
         action.title = QStringLiteral("Refresh");
-        action.shortcut = QStringLiteral("Ctrl+R");
+        // No shortcut of its own any more: Ctrl+R opens the command palette, where
+        // this entry is one row like everything else.
         action.sortOrder = 30;
         action.enabled = [this] { return currentTabProperty("activePane").value<QObject*>() != nullptr; };
         action.trigger = [this] {

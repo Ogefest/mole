@@ -51,6 +51,33 @@ index, the toggle forces a walk on a file written after the scan), and the box i
 in the real window — the field holds the keyboard on opening, five typed characters
 reach the controller, and a 500M floor empties a fixture that has nothing that big.
 
+## The palette moved to Ctrl+R, and stopped remembering the last query
+
+Three small things, and one of them was only found by trying to break the test.
+
+The box kept whatever was typed into it last: `onAboutToShow` reset the model's
+filter but not the field, so the next opening showed a list narrowed by a query the
+user could no longer see a reason for. It clears the field now.
+
+`Ctrl+R` belonged to Refresh, which was the wrong use of a key that good — refreshing
+is one row in the palette like everything else, and it keeps its View menu entry. Its
+`shortcut` label went with the binding, because a menu that advertises a key that no
+longer works is worse than one that advertises nothing.
+
+And the palette lost its animations. That started as a test problem — pressing the key
+again straight after Escape did nothing, because `opened` goes false when the exit
+transition *starts* and `open()` during that transition is silently ignored — but it is
+a real one: a human closing and reopening quickly would hit exactly the same wall. A
+box you summon to type one word into should be there the instant you ask.
+
+The test was worth more than the fixes. Removing `field.clear()` and running it again
+showed it still passing, which meant the assertions I thought I had written were not in
+the file at all — the edit had not matched. Written properly, and checked the same way,
+it now fails with `"termi"` still sitting in the box. It also has to check the clearing
+*before* running a command, because the command it runs is the terminal, and a terminal
+that holds the keyboard stops `Ctrl+R` reaching the window — which is ADR-0002 working
+exactly as intended, in a place I had not expected to meet it.
+
 ## One input that can reach everything
 
 `Ctrl+Shift+P` opens a box with a list underneath of everything that can be done
