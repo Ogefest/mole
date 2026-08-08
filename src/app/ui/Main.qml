@@ -208,6 +208,7 @@ ApplicationWindow {
         focusPolicy: Qt.NoFocus
 
         RowLayout {
+            id: headerRow
             anchors.fill: parent
             anchors.leftMargin: 4
             anchors.rightMargin: 8
@@ -230,8 +231,10 @@ ApplicationWindow {
             Label {
                 text: "Mole"
                 font.bold: true
-                font.pixelSize: 15
+                font.pixelSize: App.headingSize
             }
+
+            Item { Layout.fillWidth: true }
 
             Item { Layout.fillWidth: true }
 
@@ -248,6 +251,74 @@ ApplicationWindow {
                 implicitHeight: 22
             }
         }
+
+            // Looks like the box it opens, sits where a browser would put a search
+            // bar, and says which key does it. Its job is to be seen: the palette
+            // is the answer to "how do I do X" and nobody finds a shortcut they were
+            // never told about.
+        Rectangle {
+            objectName: "commandBar"
+            // Anchored to the toolbar rather than laid out in the row: between the
+            // other items is not the same as in the middle of the window, and the
+            // middle of the window is where the eye goes looking for it.
+            anchors.centerIn: parent
+            width: Math.min(420, Math.max(240, root.width * 0.3))
+            height: App.minimumTarget
+            radius: 4
+            color: barHover.containsMouse ? "#232a36" : root.panelColor
+            border.color: barHover.containsMouse ? "#3d4757" : root.borderColor
+            border.width: 1
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 8
+                anchors.rightMargin: 6
+                spacing: 6
+
+                Label {
+                    text: "⌕"
+                    color: root.mutedText
+                    font.pixelSize: App.textSize
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: "Search commands"
+                    color: root.mutedText
+                    font.pixelSize: App.secondaryTextSize
+                    elide: Text.ElideRight
+                }
+                // The key itself, drawn like a key. Reading it here once is how
+                // someone stops needing this bar.
+                Rectangle {
+                    implicitWidth: shortcutLabel.implicitWidth + 10
+                    implicitHeight: shortcutLabel.implicitHeight + 4
+                    radius: 3
+                    color: "#232a36"
+                    border.color: root.borderColor
+                    border.width: 1
+
+                    Label {
+                        id: shortcutLabel
+                        anchors.centerIn: parent
+                        text: "Ctrl+R"
+                        color: root.mutedText
+                        font.family: App.monospaceFont
+                        font.pixelSize: App.smallTextSize
+                    }
+                }
+            }
+
+            MouseArea {
+                id: barHover
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                // Opens the real thing rather than trying to be it: one box with
+                // the list, one place that owns the filtering.
+                onClicked: commandPalette.open()
+            }
+            }
+
     }
 
     AppMenu { id: appMenu }

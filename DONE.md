@@ -51,6 +51,24 @@ index, the toggle forces a walk on a file written after the scan), and the box i
 in the real window — the field holds the keyboard on opening, five typed characters
 reach the controller, and a 500M floor empties a fixture that has nothing that big.
 
+## The header says the palette is there
+
+A shortcut nobody has been told about is a feature nobody has. So the title bar now
+carries something that looks like the box it opens — a search glyph, the words *Search
+commands*, and `Ctrl+R` drawn as a key — in the middle of the window, on the same line
+as the hamburger and the name.
+
+It opens the palette rather than trying to be one. Two boxes that both filter would
+mean two places owning the same state, and the reason the palette works is that one
+place owns the list.
+
+Centred in the *window*, which took a second attempt: laid out in the toolbar's row
+between the menu on one side and the task indicator on the other, it sat noticeably
+right of centre, because equal spacers centre a thing between its neighbours and not
+in the window. It is anchored to the toolbar instead. The test holds all three claims
+that make it work as a teaching aid — visible, within two pixels of the window's
+middle, on the same line as the menu button — and that clicking it opens the palette.
+
 ## The palette moved to Ctrl+R, and stopped remembering the last query
 
 Three small things, and one of them was only found by trying to break the test.

@@ -31,6 +31,7 @@
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickTextDocument>
+#include <QQuickWindow>
 #include <QTest>
 #include <QTextBlock>
 #include <QTextDocument>
@@ -63,6 +64,7 @@ private slots:
     void theListingTakesItsTypeSizeFromTheScale();
     void theIconOnlyControlsAreBigEnoughToHit();
     void theCommandPaletteFindsAndRunsThings();
+    void theHeaderAdvertisesTheCommandPalette();
     void ctrlFIsASearchBoxYouCanTypeInto();
     void bulkRenameShowsThePreviewAsYouType();
     void breadcrumbsClimbTheTree();
@@ -745,6 +747,41 @@ void TestWalkthrough::theCommandPaletteFindsAndRunsThings()
     QVERIFY2(
         m_harness->until([terminal] { return terminal->isVisible(); }), "Enter runs the highlighted command");
     QVERIFY(m_harness->until([palette] { return !palette->property("opened").toBool(); }));
+}
+
+void TestWalkthrough::theHeaderAdvertisesTheCommandPalette()
+{
+    // The palette is the answer to "how do I do X", and nobody finds a shortcut they
+    // were never told about -- so the bar exists to be seen, and that is what is
+    // asserted: visible, in the middle of the window, and it opens the real thing.
+    QQuickItem* bar = m_harness->item(QStringLiteral("commandBar"));
+    QVERIFY2(bar, "the header carries a command bar");
+    QVERIFY(bar->isVisible());
+    QVERIFY(bar->width() > 200);
+
+    const QPointF centre = bar->mapToScene(QPointF(bar->width() / 2, bar->height() / 2));
+    const double windowMiddle = m_harness->window()->width() / 2.0;
+    QVERIFY2(qAbs(centre.x() - windowMiddle) < 2.0,
+        "centred in the window, not merely between whatever else is in the toolbar");
+
+    // At the height of the hamburger, which is what makes it read as part of the
+    // title bar rather than as something floating in the listing.
+    QQuickItem* hamburger = m_harness->item(QStringLiteral("menuButton"));
+    QVERIFY(hamburger);
+    const double barMiddle = bar->mapToScene(QPointF(0, bar->height() / 2)).y();
+    const double menuMiddle = hamburger->mapToScene(QPointF(0, hamburger->height() / 2)).y();
+    QVERIFY2(qAbs(barMiddle - menuMiddle) < 4.0, "on the same line as the menu button");
+
+    QObject* palette = m_harness->object(QStringLiteral("commandPalette"));
+    QVERIFY(palette);
+    QVERIFY(!palette->property("opened").toBool());
+
+    // Clicking it opens the real palette rather than trying to be one: one box owns
+    // the list and the filtering.
+    QTest::mouseClick(m_harness->window(), Qt::LeftButton, Qt::NoModifier,
+        m_harness->window()->contentItem()->mapFromScene(centre).toPoint());
+    QVERIFY2(m_harness->until([palette] { return palette->property("opened").toBool(); }),
+        "the bar opens the palette");
 }
 
 void TestWalkthrough::ctrlFIsASearchBoxYouCanTypeInto()
