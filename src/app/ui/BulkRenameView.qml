@@ -159,15 +159,15 @@ Item {
                                     }
                                     ToolButton {
                                         text: "▲"
-                                        implicitWidth: 22
-                                        implicitHeight: 22
+                                        implicitWidth: App.minimumTarget
+                                        implicitHeight: App.minimumTarget
                                         enabled: modelData.index > 0
                                         onClicked: controller.moveRule(modelData.index, -1)
                                     }
                                     ToolButton {
                                         text: "▼"
-                                        implicitWidth: 22
-                                        implicitHeight: 22
+                                        implicitWidth: App.minimumTarget
+                                        implicitHeight: App.minimumTarget
                                         enabled: modelData.index < controller.rules.length - 1
                                         onClicked: controller.moveRule(modelData.index, 1)
                                     }
@@ -177,8 +177,9 @@ Item {
                                     }
                                     ToolButton {
                                         text: "×"
-                                        implicitWidth: 22
-                                        implicitHeight: 22
+                                        font.pixelSize: App.textSize
+                                        implicitWidth: App.minimumTarget
+                                        implicitHeight: App.minimumTarget
                                         onClicked: controller.removeRule(modelData.index)
                                     }
                                 }

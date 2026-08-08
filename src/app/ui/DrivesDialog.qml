@@ -189,6 +189,7 @@ Dialog {
                     ToolButton {
                         objectName: "addDriveButton"
                         text: "+"
+                        font.pixelSize: App.textSize
                         onClicked: dialog.beginAdding()
                         ToolTip.visible: hovered
                         ToolTip.text: "Add a drive"

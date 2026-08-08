@@ -174,6 +174,7 @@ Item {
 
                         ToolButton {
                             text: "×"
+                            font.pixelSize: App.textSize
                             onClicked: view.controller.removeRule(modelData.id)
                         }
                     }

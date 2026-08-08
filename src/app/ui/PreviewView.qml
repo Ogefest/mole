@@ -43,12 +43,14 @@ Item {
 
                     ToolButton {
                         text: "◀"
+                        font.pixelSize: App.textSize
                         enabled: controller ? controller.canGoPrevious : false
                         focusPolicy: Qt.NoFocus
                         onClicked: { controller.previous(); body.forceActiveFocus() }
                     }
                     ToolButton {
                         text: "▶"
+                        font.pixelSize: App.textSize
                         enabled: controller ? controller.canGoNext : false
                         focusPolicy: Qt.NoFocus
                         onClicked: { controller.next(); body.forceActiveFocus() }

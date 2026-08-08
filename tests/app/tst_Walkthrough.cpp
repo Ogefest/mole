@@ -54,6 +54,7 @@ private slots:
     void aSlowTableSaysSoAndThenFillsAsItReads();
     void folderSizesLandInTheListing();
     void theListingTakesItsTypeSizeFromTheScale();
+    void theIconOnlyControlsAreBigEnoughToHit();
     void breadcrumbsClimbTheTree();
     void ctrlGRevealsTheEditablePath();
     void aSlowFolderSaysSoInTheMiddleOfThePane();
@@ -563,6 +564,29 @@ void TestWalkthrough::theListingTakesItsTypeSizeFromTheScale()
 
     const QFont font = name->property("font").value<QFont>();
     QCOMPARE(font.pixelSize(), m_harness->app()->textSize());
+}
+
+void TestWalkthrough::theIconOnlyControlsAreBigEnoughToHit()
+{
+    // The two the complaint named: adding a bookmark and closing a tab. Both were
+    // ToolButtons of 22 by 22 with a text glyph inside, which is fiddly to hit and
+    // reads as an afterthought for the two things people do most.
+    const int floor = m_harness->app()->minimumTarget();
+    QVERIFY(floor >= 24);
+
+    for (const QString& name : { QStringLiteral("addBookmarkButton"), QStringLiteral("closeTabButton") }) {
+        QQuickItem* control = m_harness->item(name);
+        QVERIFY2(control, qPrintable(name));
+        QVERIFY2(control->width() >= floor,
+            qPrintable(
+                QStringLiteral("%1 is %2 wide, floor is %3").arg(name).arg(control->width()).arg(floor)));
+        QVERIFY2(control->height() >= floor, qPrintable(name));
+
+        // And the mark inside grew with the box: a bigger button with the style's
+        // default glyph in the middle of it looks emptier, not clearer.
+        const QFont font = control->property("font").value<QFont>();
+        QCOMPARE(font.pixelSize(), m_harness->app()->textSize());
+    }
 }
 
 void TestWalkthrough::breadcrumbsClimbTheTree()

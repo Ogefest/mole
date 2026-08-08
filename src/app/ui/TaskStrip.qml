@@ -46,7 +46,7 @@ Rectangle {
             ToolButton {
                 text: strip.expanded ? "▾" : "▸"
                 implicitWidth: 24
-                implicitHeight: 22
+                implicitHeight: App.minimumTarget
                 onClicked: strip.expanded = !strip.expanded
             }
 
@@ -237,8 +237,9 @@ Rectangle {
                 ToolButton {
                     visible: canCancel
                     text: "×"
-                    implicitWidth: 22
-                    implicitHeight: 22
+                    font.pixelSize: App.textSize
+                    implicitWidth: App.minimumTarget
+                    implicitHeight: App.minimumTarget
                     onClicked: App.tasks.cancel(index)
                 }
             }

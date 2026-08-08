@@ -175,9 +175,10 @@ Item {
 
                                 ToolButton {
                                     text: "×"
+                                    font.pixelSize: App.textSize
                                     visible: setMouse.containsMouse
-                                    implicitWidth: 22
-                                    implicitHeight: 22
+                                    implicitWidth: App.minimumTarget
+                                    implicitHeight: App.minimumTarget
                                     onClicked: controller.removeSet(modelData.id)
                                 }
                             }
@@ -252,9 +253,10 @@ Item {
                                 }
                                 ToolButton {
                                     text: "×"
+                                    font.pixelSize: App.textSize
                                     visible: memberMouse.containsMouse
-                                    implicitWidth: 22
-                                    implicitHeight: 22
+                                    implicitWidth: App.minimumTarget
+                                    implicitHeight: App.minimumTarget
                                     onClicked: controller.removeUris([modelData.uri])
                                 }
                             }

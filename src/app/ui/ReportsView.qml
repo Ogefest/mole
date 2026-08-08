@@ -237,9 +237,10 @@ Item {
                             }
                             ToolButton {
                                 text: "×"
+                                font.pixelSize: App.textSize
                                 visible: runMouse.containsMouse
-                                implicitWidth: 22
-                                implicitHeight: 22
+                                implicitWidth: App.minimumTarget
+                                implicitHeight: App.minimumTarget
                                 onClicked: controller.removeRun(modelData.rootUri, modelData.id)
                             }
                         }

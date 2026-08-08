@@ -382,9 +382,11 @@ ApplicationWindow {
                                 elide: Text.ElideMiddle
                             }
                             ToolButton {
+                                objectName: "closeTabButton"
                                 text: "×"
-                                implicitWidth: 22
-                                implicitHeight: 22
+                                font.pixelSize: App.textSize
+                                implicitWidth: App.minimumTarget
+                                implicitHeight: App.minimumTarget
                                 onClicked: App.tabs.closeTab(index)
                             }
                         }

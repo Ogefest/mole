@@ -213,44 +213,15 @@ rule changes the preview without leaving the field, and that the preview keeps a
 usable share of the width at an ordinary window size. Apply already refuses while
 any row would collide — that behaviour is right and must survive the rework.
 
-### The small controls need a review, starting with + and ×
-
-The buttons that add a bookmark and close a tab are `ToolButton`s of 22 by 22, and
-the drive's remove button is 20 by 20 — with a text glyph inside, so both the
-target and the mark it carries are small. They are fiddly to hit and they read as
-afterthoughts rather than as the controls for the two things you do most often.
-
-It is not two files. There are 52 explicit `implicitWidth` or `implicitHeight`
-values below 24 across 18 QML files: mostly 22, then 18, 20 and 16, and one 14. So
-this is a sweep with a decision behind it, not a nudge in the two places that
-annoyed someone first.
-
-The decision is a floor for anything that is only an icon — 24 is the figure
-usually quoted as a minimum for a pointer, and on a desktop something nearer 28 or
-32 stops a close button feeling like a pinprick — plus the rule that the glyph
-grows with the button instead of staying at the default text size inside a bigger
-box. It shares a cause with the entry below: sizes are decided view by view with
-nothing shared to decide them from, so both want the same home — one place holding
-the base text size, its steps, and the minimum target.
-
-Two things worth looking at while sweeping, because they are the same review.
-Several of these controls appear only on hover — the drive's × is
-`visible: row.removable && row.hovered` — and a control you cannot see until you
-are already on top of it is a discoverability problem rather than a size one; the
-review should say where that is deliberate and where it is not. And the glyphs are
-literal characters, so what they look like is at the mercy of the font that
-supplies them.
-
-The floor is testable, unlike the look: walk the visual tree in the harness and
-assert that no icon-only control is below it. Most of these buttons have no
-`objectName` today, so naming them is part of the work — which is what makes the
-assertion possible in the first place. Whether the result is *pleasant* is what
-`make screenshots` and a human are for.
-
 ---
 
 ## Notes
 
+- Hit targets: `App.minimumTarget` is the floor for anything that is only an icon,
+  and the twenty-four such controls that were below it have been raised. The
+  spinners left at 16-20 are deliberate — a `BusyIndicator` is not a click target.
+  Two controls carry `objectName`s so a test can hold the floor; the rest would each
+  need naming before a tree-wide assertion could replace it.
 - The type scale in `AppController` (`textSize`, `secondaryTextSize`,
   `smallTextSize`, `headingSize`, `monospaceSize`) is used by the listing, the
   previews and the sidebar. Around 200 `font.pixelSize` literals remain in the

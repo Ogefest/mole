@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- The + and × buttons, and every other icon-only control that was smaller, are big
+  enough to hit, with the glyph sized to match.
 - Text in the listing, the previews and the sidebar is larger and comes from one
   shared scale instead of a number picked per view.
 - Ctrl+Shift+S measures the folders in front of you in the background and writes

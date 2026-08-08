@@ -550,7 +550,7 @@ Item {
                                 ToolButton {
                                     text: "→"
                                     implicitWidth: 24
-                                    implicitHeight: 22
+                                    implicitHeight: App.minimumTarget
                                     focusPolicy: Qt.NoFocus
                                     ToolTip.visible: hovered
                                     ToolTip.text: "Show in the browser"

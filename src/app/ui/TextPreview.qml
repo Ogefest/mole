@@ -170,6 +170,7 @@ Item {
 
                 ToolButton {
                     text: "⏮"
+                    font.pixelSize: App.textSize
                     enabled: controller && !controller.atStart
                     focusPolicy: Qt.NoFocus
                     onClicked: controller.firstWindow()
@@ -179,6 +180,7 @@ Item {
                 }
                 ToolButton {
                     text: "◀"
+                    font.pixelSize: App.textSize
                     enabled: controller && !controller.atStart
                     focusPolicy: Qt.NoFocus
                     onClicked: controller.previousWindow()
@@ -202,6 +204,7 @@ Item {
 
                 ToolButton {
                     text: "▶"
+                    font.pixelSize: App.textSize
                     enabled: controller && !controller.atEnd
                     focusPolicy: Qt.NoFocus
                     onClicked: controller.nextWindow()
@@ -211,6 +214,7 @@ Item {
                 }
                 ToolButton {
                     text: "⏭"
+                    font.pixelSize: App.textSize
                     enabled: controller && !controller.atEnd
                     focusPolicy: Qt.NoFocus
                     onClicked: controller.lastWindow()

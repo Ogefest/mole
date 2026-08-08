@@ -78,6 +78,11 @@ class AppController : public QObject
     Q_PROPERTY(int monospaceSize READ monospaceSize CONSTANT)
     /// Derived rather than stated, so raising the text size does not crop a row.
     Q_PROPERTY(int listRowHeight READ listRowHeight CONSTANT)
+    /// The floor for anything that is only an icon -- a close cross, an add
+    /// button. Twenty-four is the figure usually quoted as a minimum for a
+    /// pointer; a desktop control nearer thirty stops feeling like a pinprick,
+    /// and these are the two things people reach for most.
+    Q_PROPERTY(int minimumTarget READ minimumTarget CONSTANT)
     Q_PROPERTY(mole::TerminalController* terminal READ terminal CONSTANT)
     /// The credential store's state, so the interface can ask for a passphrase
     /// once rather than failing drive by drive.
@@ -154,6 +159,7 @@ public:
     int smallTextSize() const { return 11; }
     int monospaceSize() const { return 13; }
     int listRowHeight() const { return qRound(textSize() * 2.2); }
+    int minimumTarget() const { return 28; }
 
     QStringList pluginSummary() const;
     QStringList pluginErrors() const;

@@ -9,6 +9,34 @@ wrong.
 
 ---
 
+## The small controls were too small to hit
+
+Adding a bookmark and closing a tab — the two things anyone does most — were
+`ToolButton`s of 22 by 22 with a text glyph inside, and the drive's remove button was
+20 by 20. Fiddly to hit, and they read as afterthoughts.
+
+It was never two files. Fifty-two explicit `implicitWidth` or `implicitHeight` values
+sat below 24 across 18 QML files, so the fix was a decision rather than a nudge:
+`App.minimumTarget` is now the floor for anything that is only an icon, at 28 —
+twenty-four is the figure usually quoted as a minimum for a pointer, and on a desktop
+something nearer thirty stops feeling like a pinprick. Twenty-four controls were
+raised to it, and nineteen glyphs now take their size from the type scale, because a
+bigger button with the style's default mark in the middle looks emptier rather than
+clearer.
+
+What was left alone, deliberately. The remaining small sizes all belong to
+`BusyIndicator`s, which are not click targets — a spinner does not need to be
+reachable. And several of these controls appear only on hover, the drive's × among
+them; that is a discoverability question rather than a size one, a drive can also be
+removed from the Drives dialog, and changing when a control appears is a different
+decision from how big it is when it does.
+
+The floor is testable and the look is not, so the test holds the floor: the two
+controls the request named are at least `minimumTarget` in both directions and their
+glyph reports exactly `textSize`. It is two rather than all of them because a
+tree-wide assertion would need every icon-only control to carry an `objectName`
+first — recorded in TODO.md rather than left implied.
+
 ## The type was too small, and there was no scale to raise
 
 A file name was 13 pixels, most of a listing 12, supporting text 11, and in places

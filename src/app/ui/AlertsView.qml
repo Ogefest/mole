@@ -269,6 +269,7 @@ Item {
                         }
                         ToolButton {
                             text: "×"
+                            font.pixelSize: App.textSize
                             onClicked: controller.removeAlert(modelData.id)
                         }
                     }

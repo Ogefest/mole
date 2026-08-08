@@ -77,8 +77,9 @@ Rectangle {
                 ToolButton {
                     visible: row.removable && row.hovered
                     text: "×"
-                    implicitWidth: 20
-                    implicitHeight: 20
+                    font.pixelSize: App.textSize
+                    implicitWidth: App.minimumTarget
+                    implicitHeight: App.minimumTarget
                     onClicked: row.removeRequested()
                 }
             }
@@ -173,9 +174,11 @@ Rectangle {
                 color: sidebar.mutedText
             }
             ToolButton {
+                objectName: "addBookmarkButton"
                 text: "+"
-                implicitWidth: 22
-                implicitHeight: 22
+                font.pixelSize: App.textSize
+                implicitWidth: App.minimumTarget
+                implicitHeight: App.minimumTarget
                 ToolTip.visible: hovered
                 ToolTip.text: "Add the current folder  (Ctrl+D)"
                 onClicked: App.triggerAction("mole.bookmarks.add")

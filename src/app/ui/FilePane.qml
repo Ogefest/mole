@@ -531,6 +531,7 @@ FocusScope {
 
             ToolButton {
                 text: "×"
+                font.pixelSize: App.textSize
                 implicitWidth: 24
                 implicitHeight: 24
                 onClicked: pane.clearFilter()

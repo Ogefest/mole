@@ -126,8 +126,9 @@ Rectangle {
 
                 ToolButton {
                     text: "×"
-                    implicitWidth: 22
-                    implicitHeight: 22
+                    font.pixelSize: App.textSize
+                    implicitWidth: App.minimumTarget
+                    implicitHeight: App.minimumTarget
                     focusPolicy: Qt.NoFocus
                     onClicked: terminal.visible = false
                 }
