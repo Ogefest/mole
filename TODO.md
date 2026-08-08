@@ -40,6 +40,69 @@ top-level headings is a search problem, not navigation. So the split needs an AD
 before the code: what the sections are, what belongs in each, and what a plugin
 that guesses wrong should do.
 
+### How big is this folder, answered in the listing
+
+There is no quick way to see what a folder contains. Analysing it gives the answer
+and more, but opening an analysis tab is a detour when the question is just "which
+of these five folders is the big one".
+
+An action on the active view, then: the selected folders, or every folder in the
+listing when nothing is selected, sized in the background and the answer written
+into the rows themselves — beside the entry, where the eye already is, filling in
+as each total lands rather than all at once at the end. A `Task` like everything
+else that takes time, so it reports progress, can be cancelled and shows up in the
+task strip.
+
+The walking is already written: `AnalyseDirectoryTask` produces an `AnalysisReport`
+carrying `bytes`, `fileCount` and `folderCount`, which is more than this needs but
+means there is no second tree-walker to write and keep correct. What is missing is
+somewhere for a computed total to live — `FileEntry::size` for a directory is the
+inode's own size and must not be overwritten with a recursive total, or the two
+meanings become one field that is sometimes a lie — and a column or suffix in the
+listing to show it.
+
+Two decisions to make rather than assume. What happens to a computed size when the
+listing is refreshed or the folder changes underneath: dropped, kept with a hint
+that it is from a moment ago, or recomputed. And whether asking twice recomputes or
+answers from what was already measured. Both are worth an ADR only if the answer
+turns out to be a cache; if it is "dropped on refresh", a line in the code will do.
+
+The tests are straightforward and worth being strict about: a tree of known size
+totals correctly including nested folders, sizes appear on rows progressively rather
+than only at the end, cancelling leaves the rows it had already filled and stops,
+and a folder the walk cannot read reports what it managed rather than nothing at
+all.
+
+### Ctrl+F needs to be usable as a search box
+
+Three things are wrong with the search tab, and only the third is a feature.
+
+Opening it with `Ctrl+F` leaves the keyboard elsewhere, so the first thing anyone
+does is reach for the mouse to click into the field. It should be focused, with the
+cursor in "Name contains", ready for typing. Enter already starts the search --
+`onAccepted` is wired to `controller.start()` -- but nothing about the view makes it
+clear that a search is *running*, and a tree walk over a large disk takes long
+enough that silence reads as nothing having happened. `LiveSearchController` already
+publishes `running` and `statusText`; what is missing is the view making something
+of them where the results will appear, the way the file pane and the table preview
+now do.
+
+Then the criteria. Today it is a name fragment, an extension and a case-sensitivity
+tick. Size belongs there — bigger than, smaller than, between — and once there is
+somewhere to put it, so do modification time and possibly type. Worth designing the
+form so a fourth criterion does not mean rearranging it again: an "advanced" section
+that is collapsed until wanted keeps the common case one field and one key.
+
+The interesting part is the index. `IndexSearchController` exists as its own tab on
+`Ctrl+Shift+I`, over indexed volumes, and it is enormously faster than walking a
+tree. If the path being searched is inside something already indexed, `Ctrl+F`
+should answer from the index instead of scanning — with a toggle to force a real
+scan, because an index is only as fresh as its last run and sometimes the truth on
+disk is the point. That means the two search features stop being separate strangers,
+which is an architectural change and wants an ADR: which one owns the form, how a
+path is matched to an index, what the toggle is called, and what happens when the
+index covers only part of what was asked for.
+
 ### Compressing files and folders
 
 An action on the selection — one file, one folder, or several of each — that opens
