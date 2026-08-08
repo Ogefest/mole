@@ -12,6 +12,7 @@
 #include "plugins/builtin/ReportsFeature.h"
 #include "plugins/builtin/SearchFeatures.h"
 #include "plugins/builtin/SyncFeature.h"
+#include "plugins/builtin/previews/PdfPreview.h"
 #include "plugins/builtin/previews/PreviewProviders.h"
 #include "plugins/rclone/RcloneFactory.h"
 
@@ -93,6 +94,7 @@ void BuiltinPlugin::registerExtensions(PluginRegistry& registry)
     // everything.
     // Databases and Parquet outrank the table viewer: a .db is not delimited
     // text, and reading it as such would produce nonsense rather than nothing.
+    registry.addPreviewProvider(std::make_unique<PdfPreviewProvider>(services));
     registry.addPreviewProvider(std::make_unique<SqlitePreviewProvider>(services));
     registry.addPreviewProvider(std::make_unique<ParquetPreviewProvider>(services));
     registry.addPreviewProvider(std::make_unique<TablePreviewProvider>(services));

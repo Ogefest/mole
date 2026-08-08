@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- PDFs open as pages instead of falling through to the information viewer, rendered
+  one page at a time as they are reached.
 - Bulk rename shows the result as you type, and the preview is no longer squeezed
   out by the form.
 - The + and × buttons, and every other icon-only control that was smaller, are big

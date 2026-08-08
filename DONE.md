@@ -9,6 +9,59 @@ wrong.
 
 ---
 
+## PDFs had no preview
+
+A PDF fell through to the information viewer — the last resort for a file we cannot
+show — so previewing one gave its size and its type and nothing of its contents,
+while the listing already drew it an icon and `IPreviewProvider.h` named PDF in its
+own description of what previewing is for.
+
+It opens as a column of pages now, rendered by `QPdfDocument`, read-only, with the
+same `Ctrl+PgUp`/`PgDn` paging the text viewer uses. Pages are rendered when a
+delegate asks for one, so opening a six-hundred-page scan costs the first page rather
+than six hundred, and the delegate reserves its height from the page's own aspect
+first so the list does not jump about as images arrive. The rendered width is
+quantised in steps because it goes into the cached file's name — bound to the raw
+width, dragging a window would have re-rendered every visible page per pixel.
+
+Two decisions were made before any code, and both are in
+[ADR-0004](docs/adr/0004-pdf-previews.md). Qt PDF rather than poppler, because
+poppler is GPL and does not sit with shipping Mole under Apache-2.0, while the Qt
+module as packaged declares `LGPL-3 or GPL-2` — which is what the licence audit turns
+on. And pages reach the screen as image files in a scratch directory rather than
+through a `QQuickImageProvider`, because an image provider is registered on the
+`QQmlEngine`, which a preview provider deliberately cannot reach; threading the engine
+through the plugin boundary to save a temporary file would have traded a real
+architectural rule for a smaller one.
+
+`QtQuick.Pdf` would have supplied most of this view for free and was not used: its
+QML module is not installed here, so depending on it would mean a second optional
+dependency for one feature and a view that silently does not exist without it.
+Rendering through `QPdfDocument` costs a page-image path and buys control over when
+pages are rendered, which is the part that matters.
+
+The dependency is optional. Without `Qt6::Pdf` the provider still compiles and still
+refuses every file, so a PDF behaves exactly as it did before — and the test states
+that both ways round, so a build without the module is a green build rather than a
+skipped one.
+
+Licence work done rather than promised: `THIRD-PARTY-NOTICES.md` records Qt Pdf and
+what it embeds — PDFium and PDFium's own third-party components, all inside
+`libQt6Pdf.so` rather than in Mole's binary — and the audit table in
+`docs/LICENSING.md` lists the module. `make licence-check` confirms Qt is still
+dynamically linked, now across twelve libraries including `libQt6Pdf.so`, and that no
+GPL-only module is referenced. It also fails one check, on a stale `dist/` from an old
+bundle whose launcher is still named `superfilemanager` — that failure predates this
+work and is noted in TODO.md rather than quietly worked around.
+
+The tests write their own PDF with `QPdfWriter`, because a binary fixture in the tree
+is one nobody can review. They check the page count, that an A4 page comes out
+upright, that asking twice at one width reuses the file while a different width
+renders again, that a page past the end is nothing rather than a crash — and that the
+rendered page has ink on it, since a renderer quietly producing white paper would pass
+every other assertion. The walkthrough then proves the whole path in the real window:
+a delegate asks, an image loads, and the strip says "Page 1 of 2".
+
 ## Bulk rename hid the thing it calls its own feature
 
 `BulkRenameView.qml` opens by stating its own priority — *"The preview is the

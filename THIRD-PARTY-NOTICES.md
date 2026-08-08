@@ -8,6 +8,7 @@ on the components below, none of which are part of this project.
 | Component | Licence | How it is used |
 |---|---|---|
 | **Qt 6** (Core, Gui, Qml, Quick, QuickControls2, Sql) | LGPL-3.0 | Dynamically linked. Full text: `licenses/LGPL-3.0.txt` |
+| **Qt 6 Pdf** | LGPL-3.0 | Dynamically linked; renders PDF previews. Embeds **PDFium** (BSD-3-Clause, Copyright The Chromium Authors) and PDFium's own third-party components — FreeType, libpng, libtiff, lcms, OpenJPEG and others, under BSD, Apache-2.0 and similar permissive terms. All of it lives inside `libQt6Pdf.so`, not in Mole's binary. |
 | **Qt Test** | LGPL-3.0 | Test binaries only; never shipped in a release |
 | **libarchive** | BSD-2-Clause | Dynamically linked by the archive plugin |
 | **SQLite** | Public domain | Reached through Qt's `QSQLITE` driver, not linked directly |

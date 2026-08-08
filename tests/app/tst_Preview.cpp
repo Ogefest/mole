@@ -2,6 +2,7 @@
 #include "plugins/builtin/BuiltinPlugin.h"
 #include "plugins/builtin/PreviewFeature.h"
 #include "plugins/builtin/previews/MarkdownStyle.h"
+#include "plugins/builtin/previews/PdfPreview.h"
 #include "plugins/builtin/previews/PreviewProviders.h"
 #include "plugins/builtin/previews/SyntaxHighlighter.h"
 #include "support/TestSupport.h"
@@ -14,6 +15,10 @@
 #include <QDir>
 #include <QFile>
 #include <QGuiApplication>
+#include <QImage>
+#include <QPageSize>
+#include <QPainter>
+#include <QPdfWriter>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTextBlock>
@@ -41,6 +46,8 @@ private slots:
     void tableOutranksTextForCsv();
     void directoriesGetNothing();
     void imageProviderOnlyClaimsWhatQtCanDecode();
+    void pdfProviderClaimsPdfsOnlyWhenItCanRenderThem();
+    void pdfPreviewRendersPagesOnDemand();
 
     // --- syntax highlighting ---
     void recognisesHighlightableLanguages_data();
@@ -203,6 +210,108 @@ void TestPreview::imageProviderOnlyClaimsWhatQtCanDecode()
     exotic.name = QStringLiteral("scan.heic");
     exotic.uri = m_tree->rootUri().child(QStringLiteral("scan.heic"));
     QCOMPARE(provider.canPreview(exotic), supported.contains(QStringLiteral("heic")));
+}
+
+void TestPreview::pdfProviderClaimsPdfsOnlyWhenItCanRenderThem()
+{
+    PdfPreviewProvider provider(m_app->services());
+
+    FileEntry pdf;
+    pdf.name = QStringLiteral("manual.pdf");
+    pdf.uri = m_tree->rootUri().child(QStringLiteral("manual.pdf"));
+
+    // Stated both ways round, so a build without Qt6::Pdf is a green build rather
+    // than a skipped one: with the module the provider claims the file, without it
+    // it claims nothing and the information viewer picks the file up instead.
+    QCOMPARE(provider.canPreview(pdf), PdfPreviewProvider::isAvailable());
+
+    if (!PdfPreviewProvider::isAvailable()) {
+        QVERIFY(m_app->previews()->providerFor(pdf) != nullptr);
+        return;
+    }
+
+    // And it outranks the text viewer, which would otherwise show a PDF as bytes.
+    QVERIFY(provider.priority() > TextPreviewProvider(m_app->services()).priority());
+    IPreviewProvider* chosen = m_app->previews()->providerFor(pdf);
+    QVERIFY(chosen);
+    QCOMPARE(chosen->id(), QStringLiteral("mole.preview.pdf"));
+
+    FileEntry folder;
+    folder.name = QStringLiteral("subfolder");
+    folder.uri = m_tree->rootUri().child(QStringLiteral("subfolder"));
+    folder.isDir = true;
+    QVERIFY(!provider.canPreview(folder));
+}
+
+void TestPreview::pdfPreviewRendersPagesOnDemand()
+{
+    if (!PdfPreviewProvider::isAvailable())
+        QSKIP("this build cannot render a PDF");
+
+    // Written by the test rather than committed as a fixture: a binary blob in the
+    // tree is one nobody can review, and QPdfWriter is right here.
+    const QString path = QDir(m_tree->path()).filePath(QStringLiteral("manual.pdf"));
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        QVERIFY(painter.isActive());
+        painter.drawText(QRect(0, 0, 2000, 400), Qt::AlignCenter, QStringLiteral("Page one"));
+        QVERIFY(writer.newPage());
+        painter.drawText(QRect(0, 0, 2000, 400), Qt::AlignCenter, QStringLiteral("Page two"));
+    }
+    QVERIFY(QFileInfo::exists(path));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("manual.pdf"));
+    QVERIFY(preview);
+    QCOMPARE(preview->viewerName(), QStringLiteral("Document"));
+
+    auto* viewer = qobject_cast<PdfPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(waitFor([viewer] { return viewer->pageCount() > 0; }, 10000));
+
+    QCOMPARE(viewer->pageCount(), 2);
+    QVERIFY2(viewer->errorText().isEmpty(), qPrintable(viewer->errorText()));
+    QVERIFY2(viewer->positionText().contains(QStringLiteral("of 2")), qPrintable(viewer->positionText()));
+
+    // A4 upright, so taller than it is wide. The delegate reserves its height from
+    // this before any image exists, which is what stops the list jumping about.
+    QVERIFY(viewer->pageAspect(0) > 1.0);
+
+    // Rendered when asked for, not up front, and written where it can be read.
+    const QString first = viewer->pageImage(0, 320);
+    QVERIFY2(!first.isEmpty(), "the first page has to render");
+    const QString firstPath = QUrl(first).toLocalFile();
+    QVERIFY(QFileInfo::exists(firstPath));
+
+    QImage rendered(firstPath);
+    QVERIFY(!rendered.isNull());
+    QCOMPARE(rendered.width(), 320);
+    QVERIFY2(rendered.height() > rendered.width(), "an A4 page comes out upright");
+
+    // Not blank: a renderer that quietly produced white paper would pass every
+    // assertion above.
+    bool anyInk = false;
+    for (int y = 0; y < rendered.height() && !anyInk; ++y) {
+        for (int x = 0; x < rendered.width(); ++x) {
+            if (qGray(rendered.pixel(x, y)) < 128) {
+                anyInk = true;
+                break;
+            }
+        }
+    }
+    QVERIFY2(anyInk, "the rendered page has something on it");
+
+    // Asking twice at the same width reuses the file rather than rendering again.
+    QCOMPARE(viewer->pageImage(0, 320), first);
+    // A different width is a different file, because scaling a small render up
+    // would just look soft.
+    QVERIFY(viewer->pageImage(0, 480) != first);
+
+    // The second page renders too, and only when it is asked for.
+    QVERIFY(!viewer->pageImage(1, 320).isEmpty());
+    // Past the end is nothing, not a crash.
+    QVERIFY(viewer->pageImage(5, 320).isEmpty());
 }
 
 // ---------------------------------------------------------- highlighting

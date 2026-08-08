@@ -40,7 +40,22 @@ add_library(mole_builtin STATIC
     builtin/previews/MarkdownStyle.cpp
     builtin/previews/PreviewProviders.h
     builtin/previews/PreviewProviders.cpp
+    builtin/previews/PdfPreview.h
+    builtin/previews/PdfPreview.cpp
 )
+
+# Qt PDF renders the pages. Optional: without it the provider still compiles and
+# still refuses every file, so a PDF falls through to the information viewer
+# instead of opening a frame nothing can fill. See docs/adr/0004-pdf-previews.md.
+find_package(Qt6 QUIET COMPONENTS Pdf)
+if(Qt6Pdf_FOUND)
+    target_link_libraries(mole_builtin PUBLIC Qt6::Pdf)
+    target_compile_definitions(mole_builtin PUBLIC MOLE_HAVE_QTPDF)
+else()
+    message(STATUS
+        "Qt6 Pdf not found -- PDFs will open in the information viewer. "
+        "Install qt6-pdf-dev (Debian/Ubuntu) to render them.")
+endif()
 
 add_library(mole::builtin ALIAS mole_builtin)
 

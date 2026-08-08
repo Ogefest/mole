@@ -3,6 +3,7 @@
 #include "plugins/builtin/BrowserFeature.h"
 #include "plugins/builtin/BulkRenameFeature.h"
 #include "plugins/builtin/PreviewFeature.h"
+#include "plugins/builtin/previews/PdfPreview.h"
 #include "plugins/builtin/previews/PreviewProviders.h"
 #include "support/QmlAppHarness.h"
 #include "ui/AppController.h"
@@ -23,6 +24,9 @@
 
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QPageSize>
+#include <QPainter>
+#include <QPdfWriter>
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickTextDocument>
@@ -53,6 +57,7 @@ private slots:
     void highlightsSourceAndPagesLargeFiles();
     void rendersMarkdownAsAPage();
     void aSlowTableSaysSoAndThenFillsAsItReads();
+    void aPdfOpensAsPages();
     void folderSizesLandInTheListing();
     void theListingTakesItsTypeSizeFromTheScale();
     void theIconOnlyControlsAreBigEnoughToHit();
@@ -633,6 +638,54 @@ void TestWalkthrough::bulkRenameShowsThePreviewAsYouType()
 
     m_harness->settle(8);
     m_harness->screenshot(QStringLiteral("07b-bulk-rename"));
+}
+
+void TestWalkthrough::aPdfOpensAsPages()
+{
+    if (!PdfPreviewProvider::isAvailable())
+        QSKIP("this build cannot render a PDF");
+
+    // Written here rather than committed: a binary fixture is one nobody reviews.
+    const QString path = m_harness->fixturePath() + QStringLiteral("/manual.pdf");
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        QVERIFY(painter.isActive());
+        painter.setFont(QFont(QStringLiteral("sans"), 48));
+        painter.drawText(QRect(0, 0, 6000, 1200), Qt::AlignCenter, QStringLiteral("Mole"));
+        painter.setFont(QFont(QStringLiteral("sans"), 18));
+        painter.drawText(QRect(0, 1400, 6000, 800), Qt::AlignCenter,
+            QStringLiteral("A document, rendered a page at a time."));
+        QVERIFY(writer.newPage());
+        painter.drawText(QRect(0, 0, 6000, 1000), Qt::AlignCenter, QStringLiteral("Page two"));
+    }
+
+    m_harness->app()->previewFile(m_harness->fixtureUri() + QStringLiteral("/manual.pdf"));
+    auto* preview = qobject_cast<PreviewTabController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY(preview);
+    QCOMPARE(preview->viewerName(), QStringLiteral("Document"));
+
+    auto* viewer = qobject_cast<PdfPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(m_harness->until([viewer] { return viewer->pageCount() == 2; }, 10000));
+    m_harness->settle(10);
+
+    // The view has to have asked for a page and got an image back -- the whole
+    // path from a delegate coming into view to a rendered file on disk.
+    QQuickItem* page = m_harness->item(QStringLiteral("pdfPage"));
+    QVERIFY2(page, "a page delegate has to exist");
+    QVERIFY2(m_harness->until([page] { return page->property("source").toUrl().isValid(); }, 6000),
+        "the delegate asks the controller for its page image");
+    QVERIFY2(m_harness->until([page] { return page->property("progress").toDouble() >= 1.0; }, 10000),
+        "and the image loads");
+    QVERIFY(page->width() > 0 && page->height() > page->width());
+
+    QQuickItem* position = m_harness->item(QStringLiteral("pdfPosition"));
+    QVERIFY(position);
+    QVERIFY(position->property("text").toString().contains(QStringLiteral("of 2")));
+
+    m_harness->screenshot(QStringLiteral("03d-preview-pdf"));
 }
 
 void TestWalkthrough::breadcrumbsClimbTheTree()

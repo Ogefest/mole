@@ -28,6 +28,7 @@ qt_add_qml_module(mole
         ui/TextPreview.qml
         ui/PreviewView.qml
         ui/ImagePreview.qml
+        ui/PdfPreview.qml
         ui/TablePreview.qml
         ui/FileInfoPreview.qml
         ui/AnalysisView.qml
