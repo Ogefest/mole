@@ -36,6 +36,9 @@ private slots:
     void aPasswordOnAFormatThatCannotCarryOneIsRefused();
     void aBareXzHoldsOneFileAndSaysSoOtherwise();
     void sevenZipCannotCarryAPasswordAndSaysSo();
+    void theOriginalsGoOnlyWhenAskedAndOnlyAfterTheArchiveIsWritten();
+    void theOriginalsAreKeptWhenAnythingCouldNotBeRead();
+    void theSourceHoldingTheArchiveIsNeverDeleted();
 
 private:
     /// Runs a compression to completion and returns the task.
@@ -408,6 +411,104 @@ void TestCompressTask::sevenZipCannotCarryAPasswordAndSaysSo()
     QCOMPARE(task->state(), Task::State::Failed);
     QVERIFY(task->error().message.contains(QStringLiteral("password")));
     QVERIFY(!QFile::exists(QDir(m_tree->path()).filePath(QStringLiteral("secret.7z"))));
+}
+
+// "I want the archive, not the files." The deletion happens after the archive is
+// written and closed -- never as part of writing it -- so there is no window where
+// the originals are gone and the archive is not yet there.
+void TestCompressTask::theOriginalsGoOnlyWhenAskedAndOnlyAfterTheArchiveIsWritten()
+{
+    // Unasked first, in the same tree: this is what stops the deletion becoming
+    // something that quietly happens to everybody.
+    CompressTask* kept = pack({ QStringLiteral("notes.txt") }, QStringLiteral("kept.zip"));
+    QVERIFY(kept);
+    QCOMPARE(kept->state(), Task::State::Succeeded);
+    QVERIFY2(QFile::exists(QDir(m_tree->path()).filePath(QStringLiteral("notes.txt"))),
+        "nothing is deleted unless it was asked for");
+    QVERIFY(kept->removedSources().isEmpty());
+
+    CompressTask::Request request;
+    request.sourceFileSystem = m_fs;
+    request.targetFileSystem = m_fs;
+    request.sources.append(m_tree->rootUri().child(QStringLiteral("notes.txt")));
+    request.sources.append(m_tree->rootUri().child(QStringLiteral("reports")));
+    request.target = m_tree->rootUri().child(QStringLiteral("packed.zip"));
+    request.removeSourcesWhenDone = true;
+
+    auto* task = new CompressTask(request);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task, 30000));
+    QCOMPARE(task->state(), Task::State::Succeeded);
+
+    // The archive first, because that is the whole point: what was deleted has to be
+    // recoverable from what was written.
+    const QStringList inside = contentsOf(QStringLiteral("packed.zip"));
+    QVERIFY(inside.contains(QStringLiteral("/notes.txt")));
+    QVERIFY(inside.contains(QStringLiteral("/reports/q1.txt")));
+    QVERIFY(inside.contains(QStringLiteral("/reports/deeper/q2.txt")));
+
+    QVERIFY2(!QFile::exists(QDir(m_tree->path()).filePath(QStringLiteral("notes.txt"))),
+        "the file that was packed is gone");
+    QVERIFY2(!QDir(QDir(m_tree->path()).filePath(QStringLiteral("reports"))).exists(),
+        "a folder goes with everything inside it");
+    QCOMPARE(task->removedSources().size(), 2);
+    QVERIFY2(task->statusText().contains(QStringLiteral("removed")), "and it says so");
+}
+
+// The archive is the only copy once the originals go, so anything missing from it
+// means nothing may be deleted. One unreadable file is enough.
+void TestCompressTask::theOriginalsAreKeptWhenAnythingCouldNotBeRead()
+{
+    const QString unreadable = QDir(m_tree->path()).filePath(QStringLiteral("reports/q1.txt"));
+    QFile locked(unreadable);
+    QVERIFY(locked.setPermissions(QFile::Permissions {}));
+
+    CompressTask::Request request;
+    request.sourceFileSystem = m_fs;
+    request.targetFileSystem = m_fs;
+    request.sources.append(m_tree->rootUri().child(QStringLiteral("reports")));
+    request.target = m_tree->rootUri().child(QStringLiteral("partial.zip"));
+    request.removeSourcesWhenDone = true;
+
+    auto* task = new CompressTask(request);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task, 30000));
+
+    // Restore first, so a failure here does not leave the temporary tree undeletable.
+    locked.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
+
+    QCOMPARE(task->state(), Task::State::Succeeded);
+    QVERIFY2(!task->failures().isEmpty(), "the unreadable file was recorded");
+    QVERIFY2(QDir(QDir(m_tree->path()).filePath(QStringLiteral("reports"))).exists(),
+        "nothing is deleted when the archive is not a complete copy");
+    QVERIFY(task->removedSources().isEmpty());
+    QVERIFY2(task->statusText().contains(QStringLiteral("kept")), "and it says why");
+}
+
+// Packing the folder you are standing in writes the archive inside it. Deleting that
+// source would take the archive with it -- turning "keep the archive, drop the files"
+// into keeping nothing at all.
+void TestCompressTask::theSourceHoldingTheArchiveIsNeverDeleted()
+{
+    CompressTask::Request request;
+    request.sourceFileSystem = m_fs;
+    request.targetFileSystem = m_fs;
+    request.sources.append(m_tree->rootUri().child(QStringLiteral("reports")));
+    request.target = m_tree->rootUri().child(QStringLiteral("reports/inside.zip"));
+    request.removeSourcesWhenDone = true;
+
+    auto* task = new CompressTask(request);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task, 30000));
+    QCOMPARE(task->state(), Task::State::Succeeded);
+
+    QVERIFY2(QFile::exists(QDir(m_tree->path()).filePath(QStringLiteral("reports/inside.zip"))),
+        "the archive is still there");
+    QVERIFY2(QDir(QDir(m_tree->path()).filePath(QStringLiteral("reports"))).exists(),
+        "and so is the folder holding it");
+    QVERIFY(task->removedSources().isEmpty());
+    QVERIFY2(task->statusText().contains(QStringLiteral("could not be removed")),
+        "said plainly rather than silently skipped");
 }
 
 MOLE_TEST_MAIN(TestCompressTask)

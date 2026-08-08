@@ -22,6 +22,9 @@ Dialog {
     onAboutToShow: {
         formatBox.currentIndex = 0
         protect.checked = false
+        // Never remembered between openings. Somebody who packed something once and
+        // deleted the originals has not asked to do it again the next time.
+        removeSources.checked = false
         passwordField.text = ""
         subject.text = App.compressionSubject()
         targets.model = App.compressionTargets()
@@ -35,7 +38,8 @@ Dialog {
     // one cannot travel with a format that would ignore it.
     onAccepted: App.compressSelection(nameField.text, formatBox.currentText,
                                       (protect.checked && dialog.passwordPossible)
-                                          ? passwordField.text : "")
+                                          ? passwordField.text : "",
+                                      removeSources.checked)
 
     ColumnLayout {
         anchors.fill: parent
@@ -145,6 +149,26 @@ Dialog {
                 placeholderText: "AES-256, for the contents"
                 font.pixelSize: App.textSize
             }
+        }
+
+        // For "I want the archive, not the files". Off every time the dialog opens,
+        // and it happens after the archive is written rather than as part of writing
+        // it, so a failure leaves the originals where they are.
+        CheckBox {
+            id: removeSources
+            objectName: "removeSourcesWhenDone"
+            text: "Delete the originals when finished"
+            font.pixelSize: App.secondaryTextSize
+        }
+
+        Label {
+            Layout.fillWidth: true
+            visible: removeSources.checked
+            text: "The files above are deleted once the archive is written — and kept if "
+                  + "any of them could not be read."
+            color: "#d9a441"
+            font.pixelSize: App.smallTextSize
+            wrapMode: Text.Wrap
         }
 
         Label {

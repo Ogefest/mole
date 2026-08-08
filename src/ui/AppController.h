@@ -244,9 +244,10 @@ public:
     /// folders, so the dialog can say so instead of failing on Ok.
     Q_INVOKABLE bool formatTakesOneFileOnly(const QString& format) const;
     /// Packs the selection, or the folder in view when nothing is selected, into a
-    /// new archive beside it.
-    Q_INVOKABLE void compressSelection(
-        const QString& archiveName, const QString& format, const QString& passphrase = {});
+    /// new archive beside it. With `removeSources`, the originals go once the archive
+    /// is written -- and only then, and only if every one of them could be read.
+    Q_INVOKABLE void compressSelection(const QString& archiveName, const QString& format,
+        const QString& passphrase = {}, bool removeSources = false);
     Q_INVOKABLE void queueScan(const QString& uri, const QString& label);
 
     // ---- application menu -------------------------------------------------

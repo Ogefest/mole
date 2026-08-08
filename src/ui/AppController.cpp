@@ -1417,7 +1417,7 @@ bool AppController::formatTakesOneFileOnly(const QString& format) const
 }
 
 void AppController::compressSelection(
-    const QString& archiveName, const QString& format, const QString& passphrase)
+    const QString& archiveName, const QString& format, const QString& passphrase, bool removeSources)
 {
 #ifdef MOLE_HAVE_ARCHIVE
     QStringList targets = currentTargetsOrCursor();
@@ -1430,6 +1430,7 @@ void AppController::compressSelection(
     CompressTask::Request request;
     request.format = CompressTask::formatFromName(format);
     request.passphrase = passphrase;
+    request.removeSourcesWhenDone = removeSources;
     for (const QString& uri : targets)
         request.sources.append(VfsUri::fromString(uri));
 
@@ -1455,6 +1456,10 @@ void AppController::compressSelection(
         }
         if (task->state() != Task::State::Succeeded)
             return;
+        // Anything deleted afterwards is announced entry by entry, so a second pane
+        // on the same folder stops showing files that are no longer there.
+        for (const VfsUri& removed : task->removedSources())
+            m_events->postEntryRemoved(removed);
         // The listing has a new file in it, and whoever asked wants to see it.
         m_events->postDirectoryChanged(VfsUri::fromString(targetUri).parent());
     });
@@ -1462,6 +1467,7 @@ void AppController::compressSelection(
 #else
     Q_UNUSED(archiveName);
     Q_UNUSED(format);
+    Q_UNUSED(removeSources);
     emit notification(static_cast<int>(EventBus::Severity::Warning), QStringLiteral("Cannot compress"),
         QStringLiteral("This build was made without libarchive"));
 #endif

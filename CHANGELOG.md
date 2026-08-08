@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- Compressing can delete the originals once the archive is written, and keeps them if
+  anything could not be read.
 - The dialogs that delete, sync or pack now list the files by name instead of counting
   them.
 - Compressing offers 7z and a bare xz as well, and changing the kind no longer discards

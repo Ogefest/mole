@@ -30,6 +30,45 @@ README.md gained a *Using it* section pointing at the guide, and its list of thi
 yet done lost PDF, SQLite and Parquet — all three are built, and leaving them on a wish
 list would have been the same kind of lie the screenshot rule exists to prevent.
 
+## Compressing can take the originals with it
+
+Asked for as a checkbox: pack this, and leave me the archive without the files.
+
+One operation to a person, two to a file manager -- and the middle step, finding the
+same selection again to delete it, is where the wrong thing gets deleted. So the
+feature is easy and the rules around it are the work, because this is the only thing
+here that deletes data as a side effect of something else.
+
+The archive is the only copy once the originals go, so nothing goes until the archive
+is provably a complete copy of them:
+
+- **After the archive is written and closed**, never as part of writing it. There is
+  no moment with the files gone and no archive.
+- **Nothing is deleted if anything could not be read.** One unreadable file inside a
+  packed folder means the archive is missing it, and the original is the only place it
+  exists. Both are kept and the status says which case it was.
+- **Nothing is deleted if the job was cancelled**, even when the archive survived.
+- **A source containing the archive is never deleted.** Packing the folder you are
+  standing in writes the archive inside it, so deleting that source would take the
+  archive with it -- turning "keep the archive, drop the files" into keeping nothing.
+- **A deletion that fails is reported, not fatal.** The archive is written and correct,
+  which is the part that cannot be repeated.
+
+The box is off every time the dialog opens. Archiving something once and dropping the
+originals is not a standing instruction.
+
+Three tests cover the three refusals, and the guards were checked by removing them:
+without the first, the unreadable-file case deletes a folder the archive does not fully
+contain; without the second, the archive deletes itself along with its folder. Both
+failures are real data loss in the temporary tree, which is what makes them worth
+having tests for.
+
+Moving to a trash instead was considered and left alone: it belongs to all deletion in
+the application rather than to compression, and a trash that some drives have and
+others do not is worse than none.
+
+See [ADR-0009](docs/adr/0009-packing-can-delete-the-originals.md).
+
 ## Dialogs that destroy something say what they are aimed at
 
 Reported plainly: the delete popup does not show which files it is about to delete,

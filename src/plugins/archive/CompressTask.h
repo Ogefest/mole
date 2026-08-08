@@ -50,6 +50,10 @@ public:
         /// The archive to write. Must not already exist.
         VfsUri target;
         Format format = Format::Zip;
+        /// Delete the sources once the archive is written, for "I want the archive
+        /// and not the files". Only ever after a complete success -- see
+        /// removeSources() for the three cases where it declines.
+        bool removeSourcesWhenDone = false;
         /// Empty for an archive anyone can open. Set, the contents are encrypted --
         /// AES-256 for zip, and refused outright for a format that cannot carry it,
         /// because writing something unencrypted when a password was asked for is
@@ -60,6 +64,8 @@ public:
     explicit CompressTask(Request request, QObject* parent = nullptr);
 
     int packedCount() const { return m_packed; }
+    /// Sources deleted afterwards, empty unless that was asked for.
+    const QList<VfsUri>& removedSources() const { return m_removed; }
     /// One human-readable line per entry that could not be read.
     const QStringList& failures() const { return m_failures; }
 
@@ -78,6 +84,10 @@ private:
     };
 
     bool plan(QList<Item>& items);
+    /// Deletes the sources after a successful write. Declines -- and says so in the
+    /// status -- when anything failed to be read, and never touches a source that
+    /// contains the archive itself.
+    void removeSources();
     /// Removes a partly written archive. An archive that exists is one that
     /// finished; anything else would be mistaken for a good one.
     void discardPartialArchive();
@@ -85,6 +95,7 @@ private:
     Request m_request;
     int m_packed = 0;
     QStringList m_failures;
+    QList<VfsUri> m_removed;
 };
 
 } // namespace mole

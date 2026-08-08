@@ -382,6 +382,64 @@ void CompressTask::run()
             ? QStringLiteral("%1 packed into %2").arg(locale.toString(m_packed), m_request.target.fileName())
             : QStringLiteral("%1 packed, %2 could not be read")
                   .arg(locale.toString(m_packed), locale.toString(m_failures.size())));
+
+    if (m_request.removeSourcesWhenDone)
+        removeSources();
+}
+
+void CompressTask::removeSources()
+{
+    const QLocale locale;
+
+    // The archive has to be readable as a whole before the originals go. Anything
+    // that could not be read is missing from it, so deleting now would be deleting
+    // the only copy -- the archive is kept and the sources are left alone.
+    if (!m_failures.isEmpty()) {
+        setStatusText(QStringLiteral("%1 packed; the originals were kept because %2 could not be read")
+                          .arg(locale.toString(m_packed), locale.toString(m_failures.size())));
+        return;
+    }
+
+    // Asked for and then cancelled between the last entry and here: the archive
+    // stands, but nothing gets deleted on the strength of a job that was stopped.
+    if (isCancelRequested()) {
+        setStatusText(QStringLiteral("%1 packed; the originals were kept").arg(locale.toString(m_packed)));
+        return;
+    }
+
+    QStringList refused;
+    for (const VfsUri& source : m_request.sources) {
+        // Packing the folder you are standing in puts the archive inside it, so
+        // deleting that folder would delete the archive with it. This is the case
+        // that would turn "keep the archive, drop the files" into keeping nothing.
+        const QString sourcePath = source.toString();
+        const QString targetPath = m_request.target.toString();
+        if (targetPath == sourcePath || targetPath.startsWith(sourcePath + QLatin1Char('/'))) {
+            refused.append(source.fileName());
+            continue;
+        }
+
+        Result<FileEntry> found = m_request.sourceFileSystem->stat(source);
+        const bool isDirectory = found.ok() && found.value().isDir;
+        Result<void> gone = m_request.sourceFileSystem->remove(source, isDirectory);
+        if (gone.ok())
+            m_removed.append(source);
+        else
+            refused.append(source.fileName());
+    }
+
+    if (refused.isEmpty()) {
+        setStatusText(QStringLiteral("%1 packed into %2, %3 removed")
+                          .arg(locale.toString(m_packed), m_request.target.fileName(),
+                              locale.toString(m_removed.size())));
+        return;
+    }
+
+    // Reported rather than failed: the archive is written and correct, which is the
+    // part that cannot be repeated. What is left is a deletion somebody can retry.
+    setStatusText(QStringLiteral("%1 packed into %2; %3 could not be removed: %4")
+                      .arg(locale.toString(m_packed), m_request.target.fileName(),
+                          locale.toString(refused.size()), refused.join(QStringLiteral(", "))));
 }
 
 } // namespace mole
