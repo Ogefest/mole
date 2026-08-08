@@ -48,11 +48,21 @@ for f in LICENSE NOTICE THIRD-PARTY-NOTICES.md licenses/LGPL-3.0.txt licenses/Ap
 done
 
 # 5. In a bundle, Qt has to remain replaceable.
+#
+#    Named explicitly rather than reported as a bare failure: this check once fired
+#    on a dist/ left over from before the project was renamed -- the launcher in it
+#    was still called superfilemanager -- and "bundled Qt cannot be replaced" is a
+#    puzzling way to say "that is not this project's bundle".
 if [[ -d dist/usr/lib ]]; then
-    if [[ -w dist/usr/lib/libQt6Core.so.6 ]] && grep -q LD_LIBRARY_PATH dist/mole 2>/dev/null; then
-        ok "bundled Qt is writable and found via LD_LIBRARY_PATH (replaceable)"
+    launcher="dist/$(basename "$BIN")"
+    if [[ ! -f "$launcher" ]]; then
+        bad "dist/ holds a bundle but there is no launcher at $launcher (stale bundle? run: make bundle)"
+    elif [[ ! -w dist/usr/lib/libQt6Core.so.6 ]]; then
+        bad "bundled Qt at dist/usr/lib is not writable, so the user cannot replace it"
+    elif ! grep -q LD_LIBRARY_PATH "$launcher"; then
+        bad "$launcher does not set LD_LIBRARY_PATH, so a replaced Qt would not be found"
     else
-        bad "bundled Qt cannot be replaced by the user"
+        ok "bundled Qt is writable and found via LD_LIBRARY_PATH (replaceable)"
     fi
 fi
 

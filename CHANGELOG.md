@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- The licence check says which launcher it expected when a bundle in dist/ is not
+  this project's.
 - A search-commands bar sits in the middle of the title bar, showing the Ctrl+R that
   opens it.
 - The command palette opens on Ctrl+R, instantly, and always starts with an empty

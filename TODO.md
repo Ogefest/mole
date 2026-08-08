@@ -19,25 +19,6 @@ screenshots come from `make screenshots`, which photographs states the tests hav
 just asserted — so the documentation cannot drift into showing something that no
 longer works.
 
-### Clear out the dist/ left over from superfilemanager
-
-`make licence-check` fails, and has failed since before any of the recent work, on a
-check that has nothing to do with licensing: *bundled Qt cannot be replaced by the
-user*. The cause is a `dist/` in the tree from a `make bundle` run before the project
-was renamed. Its launcher is still called `dist/superfilemanager`, so the check looks
-for `dist/mole`, finds nothing, and reports the bundle as non-replaceable. Everything
-that actually matters passes — Qt dynamically linked across twelve libraries, no Qt
-symbols in the binary, no GPL-only module.
-
-`make bundle` already starts with `rm -rf dist`, so this is a stale artefact and not a
-bug in the target: the directory is git-ignored build output and is regenerated from
-nothing. Deleting it is the fix.
-
-Worth one small change beyond deleting it, because ten minutes went into working out
-what that failure meant: the check should name the launcher it is looking for when it
-cannot find one. A message that says what was expected turns the same failure into a
-five-second diagnosis.
-
 ### Search results need to arrive sooner, and be worth something once they do
 
 Two halves, and the first is about latency rather than features. A tree walk finds

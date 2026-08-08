@@ -51,6 +51,29 @@ index, the toggle forces a walk on a file written after the scan), and the box i
 in the real window — the field holds the keyboard on opening, five typed characters
 reach the controller, and a 500M floor empties a fixture that has nothing that big.
 
+## A dist/ from before the rename failed the licence check
+
+`make licence-check` had been failing on *bundled Qt cannot be replaced by the user*
+since before any of the recent work, and it had nothing to do with licensing. A
+`dist/` sat in the tree from a `make bundle` run made when the binary was still called
+`superfilemanager`; the check looked for `dist/mole`, found nothing, and reported the
+bundle as non-replaceable. Everything that actually mattered passed throughout — Qt
+dynamically linked, no Qt symbols in the binary, no GPL-only module.
+
+Seventy-six megabytes of git-ignored build output holding the old binary and copied
+system libraries, with nothing hand-made in it. `make bundle` already begins with
+`rm -rf dist`, so it was a stale artefact rather than a bug in the target, and deleting
+it was the fix. The tree is left without a bundle, which is how a fresh checkout looks:
+one is built on demand, and a bundle left lying about is precisely what caused this.
+
+The change worth keeping is the message. Ten minutes went into working out what
+"bundled Qt cannot be replaced" meant, so the check now names the launcher it wants —
+*there is no launcher at dist/mole (stale bundle? run: make bundle)* — and separates
+the three ways replaceability can fail instead of reporting one verdict for all of
+them. A fresh `make bundle` was run end to end to confirm the check still passes when
+there is something real to check, including the replaceability test that had never
+actually run.
+
 ## The header says the palette is there
 
 A shortcut nobody has been told about is a feature nobody has. So the title bar now
