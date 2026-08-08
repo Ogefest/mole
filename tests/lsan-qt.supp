@@ -1,0 +1,8 @@
+# Qt's scene graph does not release its textures and pixmaps when a QQuickWindow
+# is torn down inside a headless test process. The allocations are real but they
+# are Qt's, not ours, and there is no API to force the render context to drop
+# them. Suppressed by module so that leaks in our own code still fail the build.
+leak:libQt6Quick.so
+leak:libQt6QuickControls2.so
+leak:libQt6Qml.so
+leak:libQt6Gui.so

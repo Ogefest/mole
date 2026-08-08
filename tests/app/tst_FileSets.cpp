@@ -1,0 +1,448 @@
+#include "plugins/builtin/AnalysisFeature.h"
+#include "plugins/builtin/BrowserFeature.h"
+#include "plugins/builtin/BuiltinPlugin.h"
+#include "plugins/builtin/BulkRenameFeature.h"
+#include "plugins/builtin/FileSetsFeature.h"
+#include "support/TestSupport.h"
+#include "ui/AppController.h"
+#include "ui/models/TabsModel.h"
+
+#include "core/CoreMetaTypes.h"
+#include "core/sets/FileSetStore.h"
+
+#include <QDir>
+#include <QGuiApplication>
+#include <QTest>
+
+using namespace mole;
+using namespace mole::test;
+
+/// Sets, and the thing that makes them worth having: an operation can act on one
+/// without knowing what a set is.
+class TestFileSets : public QObject
+{
+    Q_OBJECT
+
+private slots:
+    void initTestCase();
+    void init();
+    void cleanup();
+
+    void createsAndRemembersASet();
+    void refusesADuplicateMember();
+    void reportsWhichDrivesItSpans();
+    void survivesARestart();
+
+    void aSetNamesItsTargetsTheSameWayAPaneDoes();
+    void anOperationTakesASetWithoutKnowingWhatOneIs();
+    void addToSetTakesWhateverTheCurrentTabIsAimedAt();
+
+    void bulkRenameTakesASetLikeAnyOtherOperation();
+    void bulkRenameRefusesABatchThatWouldCollide();
+    void addsADriveThroughTheSameFormEveryBackendDeclares();
+    void aSavedPasswordIsNeverInTheSettingsFile();
+    void verifyFindsMembersThatHaveGone();
+    void forgettingMissingLeavesTheRestAlone();
+
+private:
+    FileSetsController* openSets();
+
+    PrivateProfile m_profile;
+    std::unique_ptr<TempTree> m_tree;
+    std::unique_ptr<AppController> m_app;
+};
+
+void TestFileSets::initTestCase()
+{
+    QVERIFY(m_profile.isValid());
+}
+
+void TestFileSets::init()
+{
+    m_profile.clearVolatileState();
+    QFile::remove(m_profile.filePath(QStringLiteral("sets.json")));
+    QFile::remove(m_profile.filePath(QStringLiteral("credentials.enc")));
+    QFile::remove(m_profile.filePath(QStringLiteral("drives.json")));
+
+    m_tree = std::make_unique<TempTree>();
+    QVERIFY(m_tree->isValid());
+    QVERIFY(m_tree->writeFile(QStringLiteral("a.txt"), QByteArray(100, 'a')));
+    QVERIFY(m_tree->writeFile(QStringLiteral("b.txt"), QByteArray(200, 'b')));
+    QVERIFY(m_tree->writeFile(QStringLiteral("docs/c.txt"), QByteArray(300, 'c')));
+
+    m_app = std::make_unique<AppController>();
+    std::vector<std::unique_ptr<IPlugin>> builtIns;
+    builtIns.push_back(std::make_unique<BuiltinPlugin>(m_tree->rootUri().toString()));
+    QString error;
+    QVERIFY2(m_app->initialise(std::move(builtIns), &error), qPrintable(error));
+}
+
+void TestFileSets::cleanup()
+{
+    m_app.reset();
+    m_tree.reset();
+}
+
+FileSetsController* TestFileSets::openSets()
+{
+    const int row = m_app->tabs()->openTab(QStringLiteral("core.filesets"));
+    return row < 0 ? nullptr : qobject_cast<FileSetsController*>(m_app->tabs()->controllerAt(row));
+}
+
+void TestFileSets::createsAndRemembersASet()
+{
+    FileSetsController* sets = openSets();
+    QVERIFY(sets);
+
+    const QString id = sets->createSet(QStringLiteral("Reading list"));
+    QVERIFY(!id.isEmpty());
+    QCOMPARE(sets->currentSetId(), id);
+    QCOMPARE(sets->currentName(), QStringLiteral("Reading list"));
+    QCOMPARE(sets->memberCount(), 0);
+
+    QCOMPARE(sets->addUris({ m_tree->rootUri().child(QStringLiteral("a.txt")).toString(),
+                 m_tree->rootUri().child(QStringLiteral("b.txt")).toString() }),
+        2);
+    QCOMPARE(sets->memberCount(), 2);
+
+    // A name is required; an unnamed set is one nobody can find again.
+    QVERIFY(sets->createSet(QStringLiteral("   ")).isEmpty());
+}
+
+void TestFileSets::refusesADuplicateMember()
+{
+    FileSetsController* sets = openSets();
+    QVERIFY(sets);
+    sets->createSet(QStringLiteral("Set"));
+
+    const QString a = m_tree->rootUri().child(QStringLiteral("a.txt")).toString();
+    QCOMPARE(sets->addUris({ a }), 1);
+
+    // A set is a set. A duplicate would make every operation act on it twice --
+    // copying it twice, deleting it twice, counting it twice in a report.
+    QCOMPARE(sets->addUris({ a }), 0);
+    QCOMPARE(sets->memberCount(), 1);
+}
+
+void TestFileSets::reportsWhichDrivesItSpans()
+{
+    FileSetsController* sets = openSets();
+    QVERIFY(sets);
+    sets->createSet(QStringLiteral("Mixed"));
+    sets->addUris({ m_tree->rootUri().child(QStringLiteral("a.txt")).toString(),
+        QStringLiteral("mem://scratch/elsewhere.txt") });
+
+    // Crossing drives is normal for a set and worth saying, because most
+    // operations on it then involve a transfer rather than a local move.
+    const QVariantList listed = sets->sets();
+    QCOMPARE(listed.size(), 1);
+    QCOMPARE(listed.first().toMap().value(QStringLiteral("driveCount")).toInt(), 2);
+}
+
+void TestFileSets::survivesARestart()
+{
+    {
+        FileSetsController* sets = openSets();
+        QVERIFY(sets);
+        sets->createSet(QStringLiteral("Kept"));
+        sets->addUris({ m_tree->rootUri().child(QStringLiteral("a.txt")).toString() });
+    }
+
+    m_app.reset();
+    m_app = std::make_unique<AppController>();
+    std::vector<std::unique_ptr<IPlugin>> builtIns;
+    builtIns.push_back(std::make_unique<BuiltinPlugin>(m_tree->rootUri().toString()));
+    QString error;
+    QVERIFY2(m_app->initialise(std::move(builtIns), &error), qPrintable(error));
+
+    FileSetsController* sets = openSets();
+    QVERIFY(sets);
+    QCOMPARE(sets->sets().size(), 1);
+    QCOMPARE(sets->currentName(), QStringLiteral("Kept"));
+    QCOMPARE(sets->memberCount(), 1);
+}
+
+// ---- the point of the whole thing --------------------------------------
+
+void TestFileSets::aSetNamesItsTargetsTheSameWayAPaneDoes()
+{
+    FileSetsController* sets = openSets();
+    QVERIFY(sets);
+    sets->createSet(QStringLiteral("Work"));
+
+    const QString a = m_tree->rootUri().child(QStringLiteral("a.txt")).toString();
+    const QString docs = m_tree->rootUri().child(QStringLiteral("docs")).toString();
+    sets->addUris({ a, docs });
+
+    // The same question, the same answer shape. This is what lets an operation
+    // take a set without a second code path -- and what would break the moment
+    // someone gave sets their own accessor.
+    QCOMPARE(sets->targetUris(), QStringList({ a, docs }));
+    QCOMPARE(sets->targetCount(), 2);
+    QCOMPARE(sets->targets().size(), 2);
+    QCOMPARE(sets->targets().first().toString(), a);
+}
+
+void TestFileSets::anOperationTakesASetWithoutKnowingWhatOneIs()
+{
+    FileSetsController* sets = openSets();
+    QVERIFY(sets);
+    sets->createSet(QStringLiteral("Folders"));
+    sets->addUris({ m_tree->rootUri().child(QStringLiteral("docs")).toString() });
+
+    // The shell asks the current tab what it is aimed at. It never asks whether
+    // that tab is a set.
+    QCOMPARE(
+        m_app->currentTargets(), QStringList { m_tree->rootUri().child(QStringLiteral("docs")).toString() });
+
+    // And the analysis operation, written long before sets existed, acts on it.
+    m_app->analyseSelection();
+    auto* analysis = qobject_cast<AnalysisTabController*>(m_app->tabs()->currentController());
+    QVERIFY2(analysis, "analysing a set opens the ordinary analysis tab");
+    QCOMPARE(analysis->targetCount(), 1);
+    QVERIFY(waitFor(
+        [analysis] {
+            return analysis->current() && analysis->current()->hasReport() && !analysis->current()->isBusy();
+        },
+        30000));
+    QCOMPARE(analysis->current()->headline().value(QStringLiteral("files")).toLongLong(), 1);
+}
+
+void TestFileSets::addToSetTakesWhateverTheCurrentTabIsAimedAt()
+{
+    // Selected in a browser, added from the menu -- the shell reads the pane's
+    // selection through the same path a set answers.
+    auto* browser = qobject_cast<BrowserController*>(m_app->tabs()->controllerAt(0));
+    QVERIFY(browser);
+    QVERIFY(waitFor([browser] { return browser->activePane()->files()->rowCount() > 0; }));
+
+    const int row = browser->activePane()->files()->rowOfUri(
+        m_tree->rootUri().child(QStringLiteral("a.txt")).toString());
+    QVERIFY(row >= 0);
+    browser->activePane()->files()->toggleSelected(row);
+
+    QCOMPARE(m_app->addToSet({}, QStringLiteral("From the browser")), 1);
+    QCOMPARE(m_app->sets()->sets().size(), 1);
+    QCOMPARE(m_app->sets()->sets().first().count(), 1);
+}
+
+// ---- a set outlives the files in it ------------------------------------
+
+void TestFileSets::verifyFindsMembersThatHaveGone()
+{
+    FileSetsController* sets = openSets();
+    QVERIFY(sets);
+    sets->createSet(QStringLiteral("Watched"));
+
+    const QString a = m_tree->rootUri().child(QStringLiteral("a.txt")).toString();
+    const QString b = m_tree->rootUri().child(QStringLiteral("b.txt")).toString();
+    sets->addUris({ a, b });
+
+    QVERIFY(QFile::remove(QDir(m_tree->path()).filePath(QStringLiteral("b.txt"))));
+
+    sets->verify();
+    QVERIFY(waitFor([sets] { return sets->missingCount() == 1; }, 10000));
+
+    // "Not checked yet" and "not there" are different states: reporting a
+    // healthy set as broken before anything had looked would be worse than
+    // saying nothing.
+    const QVariantList members = sets->members();
+    QCOMPARE(members.size(), 2);
+    QCOMPARE(members.at(0).toMap().value(QStringLiteral("missing")).toBool(), false);
+    QCOMPARE(members.at(0).toMap().value(QStringLiteral("checked")).toBool(), true);
+    QCOMPARE(members.at(1).toMap().value(QStringLiteral("missing")).toBool(), true);
+}
+
+void TestFileSets::forgettingMissingLeavesTheRestAlone()
+{
+    FileSetsController* sets = openSets();
+    QVERIFY(sets);
+    sets->createSet(QStringLiteral("Watched"));
+    sets->addUris({ m_tree->rootUri().child(QStringLiteral("a.txt")).toString(),
+        m_tree->rootUri().child(QStringLiteral("b.txt")).toString() });
+
+    QVERIFY(QFile::remove(QDir(m_tree->path()).filePath(QStringLiteral("b.txt"))));
+    sets->verify();
+    QVERIFY(waitFor([sets] { return sets->missingCount() == 1; }, 10000));
+
+    QCOMPARE(sets->forgetMissing(), 1);
+    QCOMPARE(sets->memberCount(), 1);
+    QCOMPARE(sets->targetUris(), QStringList { m_tree->rootUri().child(QStringLiteral("a.txt")).toString() });
+}
+
+void TestFileSets::bulkRenameTakesASetLikeAnyOtherOperation()
+{
+    FileSetsController* sets = openSets();
+    QVERIFY(sets);
+    sets->createSet(QStringLiteral("Rename me"));
+    sets->addUris({ m_tree->rootUri().child(QStringLiteral("a.txt")).toString(),
+        m_tree->rootUri().child(QStringLiteral("b.txt")).toString() });
+
+    // Opened from the set tab, so the shell hands it the set's members through
+    // exactly the path a pane's selection uses.
+    const int row = m_app->openFeatureTab(QStringLiteral("core.bulkrename"));
+    QVERIFY(row >= 0);
+    auto* rename = qobject_cast<BulkRenameController*>(m_app->tabs()->controllerAt(row));
+    QVERIFY(rename);
+    QCOMPARE(rename->sourceCount(), 2);
+
+    rename->addRule(QStringLiteral("affix"));
+    rename->setRuleField(0, QStringLiteral("prefix"), QStringLiteral("2024_"));
+
+    // The preview is the feature: it says what would happen before it does.
+    QCOMPARE(rename->changedCount(), 2);
+    QCOMPARE(rename->blockedCount(), 0);
+    QVERIFY(rename->canApply());
+    QCOMPARE(rename->preview().first().toMap().value(QStringLiteral("to")).toString(),
+        QStringLiteral("2024_a.txt"));
+
+    rename->apply();
+    QVERIFY(waitFor(
+        [this] {
+            return QFile::exists(QDir(m_tree->path()).filePath(QStringLiteral("2024_a.txt")))
+                && QFile::exists(QDir(m_tree->path()).filePath(QStringLiteral("2024_b.txt")));
+        },
+        10000));
+    QVERIFY(!QFile::exists(QDir(m_tree->path()).filePath(QStringLiteral("a.txt"))));
+
+    // And it re-aims at what now exists, rather than leaving a preview that
+    // refers to files that are gone.
+    QVERIFY(waitFor(
+        [rename] {
+            return rename->sourceUris().contains(QStringLiteral("2024_a.txt"), Qt::CaseInsensitive)
+                || rename->sourceUris().join(QChar()).contains(QStringLiteral("2024_a.txt"));
+        },
+        5000));
+}
+
+void TestFileSets::bulkRenameRefusesABatchThatWouldCollide()
+{
+    FileSetsController* sets = openSets();
+    QVERIFY(sets);
+    sets->createSet(QStringLiteral("Colliding"));
+    sets->addUris({ m_tree->rootUri().child(QStringLiteral("a.txt")).toString(),
+        m_tree->rootUri().child(QStringLiteral("b.txt")).toString() });
+
+    const int row = m_app->openFeatureTab(QStringLiteral("core.bulkrename"));
+    auto* rename = qobject_cast<BulkRenameController*>(m_app->tabs()->controllerAt(row));
+    QVERIFY(rename);
+
+    // Both names become the same thing.
+    rename->addRule(QStringLiteral("replace"));
+    rename->setRuleField(0, QStringLiteral("find"), QStringLiteral("a"));
+    rename->setRuleField(0, QStringLiteral("replaceWith"), QStringLiteral("same"));
+    rename->addRule(QStringLiteral("replace"));
+    rename->setRuleField(1, QStringLiteral("find"), QStringLiteral("b"));
+    rename->setRuleField(1, QStringLiteral("replaceWith"), QStringLiteral("same"));
+
+    QCOMPARE(rename->blockedCount(), 1);
+    QVERIFY2(!rename->canApply(), "nothing is renamed until every row can be");
+
+    // And applying anyway does nothing at all -- the original files are intact.
+    rename->apply();
+    drainEvents();
+    QVERIFY(QFile::exists(QDir(m_tree->path()).filePath(QStringLiteral("a.txt"))));
+    QVERIFY(QFile::exists(QDir(m_tree->path()).filePath(QStringLiteral("b.txt"))));
+}
+
+void TestFileSets::addsADriveThroughTheSameFormEveryBackendDeclares()
+{
+    // The kinds on offer, and the form for one of them, both come from the
+    // backend rather than from anything written by hand here.
+    const QVariantList kinds = m_app->driveKinds();
+    QVERIFY2(!kinds.isEmpty(), "at least one backend must offer configurable drives");
+
+    QString factory;
+    QString variant;
+    for (const QVariant& value : kinds) {
+        const QVariantMap kind = value.toMap();
+        if (kind.value(QStringLiteral("variant")).toString() == QLatin1String("sftp")) {
+            factory = kind.value(QStringLiteral("factory")).toString();
+            variant = QStringLiteral("sftp");
+            break;
+        }
+    }
+    if (factory.isEmpty())
+        QSKIP("no sftp backend in this build; run `make librclone`");
+
+    const QVariantList fields = m_app->driveFields(factory, variant);
+    QVERIFY(!fields.isEmpty());
+
+    bool sawSecret = false;
+    for (const QVariant& value : fields) {
+        if (value.toMap().value(QStringLiteral("secret")).toBool())
+            sawSecret = true;
+    }
+    QVERIFY2(sawSecret, "sftp has a password, and the form has to know which field it is");
+
+    QVariantMap values;
+    values.insert(QStringLiteral("host"), QStringLiteral("nas.example.org"));
+    values.insert(QStringLiteral("user"), QStringLiteral("ada"));
+
+    QVERIFY(
+        m_app->saveDrive({}, QStringLiteral("Test NAS"), factory, variant, QStringLiteral("/data"), values));
+
+    const QVariantList configured = m_app->configuredDrives();
+    QCOMPARE(configured.size(), 1);
+    QCOMPARE(configured.first().toMap().value(QStringLiteral("name")).toString(), QStringLiteral("Test NAS"));
+    // The uri scheme comes from the name, so it reads as something a person
+    // recognises rather than as an opaque id.
+    QCOMPARE(configured.first().toMap().value(QStringLiteral("uri")).toString(),
+        QStringLiteral("testnas://Test NAS/"));
+}
+
+void TestFileSets::aSavedPasswordIsNeverInTheSettingsFile()
+{
+    if (!m_app->credentialsAvailable())
+        QSKIP("this build cannot encrypt");
+
+    const QVariantList kinds = m_app->driveKinds();
+    QString factory;
+    QString variant;
+    for (const QVariant& value : kinds) {
+        const QVariantMap kind = value.toMap();
+        if (kind.value(QStringLiteral("variant")).toString() == QLatin1String("sftp")) {
+            factory = kind.value(QStringLiteral("factory")).toString();
+            variant = QStringLiteral("sftp");
+            break;
+        }
+    }
+    if (factory.isEmpty())
+        QSKIP("no sftp backend in this build; run `make librclone`");
+
+    QVERIFY(m_app->unlockCredentials(QStringLiteral("a passphrase")));
+
+    QVariantMap values;
+    values.insert(QStringLiteral("host"), QStringLiteral("nas.example.org"));
+    values.insert(QStringLiteral("pass"), QStringLiteral("hunter2-not-in-the-file"));
+    QVERIFY(m_app->saveDrive({}, QStringLiteral("Secret NAS"), factory, variant, {}, values));
+
+    // The settings file is meant to be read, diffed and backed up. The password
+    // is not in it -- only the fact that the field has one.
+    QFile settings(m_profile.filePath(QStringLiteral("drives.json")));
+    QVERIFY(settings.open(QIODevice::ReadOnly));
+    const QByteArray plain = settings.readAll();
+    QVERIFY2(!plain.contains("hunter2-not-in-the-file"), "the password must not be here");
+    QVERIFY(plain.contains("nas.example.org"));
+    QVERIFY(plain.contains("pass"));
+
+    // Nor in the encrypted one, in readable form.
+    QFile encrypted(m_profile.filePath(QStringLiteral("credentials.enc")));
+    QVERIFY(encrypted.open(QIODevice::ReadOnly));
+    QVERIFY2(!encrypted.readAll().contains("hunter2-not-in-the-file"),
+        "and it must be encrypted where it does live");
+}
+
+int main(int argc, char** argv)
+{
+    QGuiApplication app(argc, argv);
+    app.setOrganizationName(QStringLiteral("Mole"));
+    app.setApplicationName(QStringLiteral("mole-tests"));
+    mole::registerCoreMetaTypes();
+
+    TestFileSets testObject;
+    QTEST_SET_MAIN_SOURCE_PATH
+    return QTest::qExec(&testObject, argc, argv);
+}
+
+#include "tst_FileSets.moc"

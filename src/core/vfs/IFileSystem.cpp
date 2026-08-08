@@ -1,0 +1,51 @@
+#include "core/vfs/IFileSystem.h"
+
+namespace mole {
+
+Result<void> IFileSystem::notSupported(const char* what)
+{
+    return Result<void>::failure(VfsError::NotSupported,
+        QStringLiteral("Operation not supported by this backend: %1").arg(QLatin1String(what)));
+}
+
+Result<void> IFileSystem::makeDirectory(const VfsUri&)
+{
+    return notSupported("makeDirectory");
+}
+
+Result<void> IFileSystem::remove(const VfsUri&, bool)
+{
+    return notSupported("remove");
+}
+
+Result<void> IFileSystem::rename(const VfsUri&, const VfsUri&)
+{
+    return notSupported("rename");
+}
+
+Result<std::unique_ptr<QIODevice>> IFileSystem::openRead(const VfsUri&)
+{
+    return VfsError::make(VfsError::NotSupported, QStringLiteral("openRead not supported"));
+}
+
+Result<std::unique_ptr<QIODevice>> IFileSystem::openWrite(const VfsUri&)
+{
+    return VfsError::make(VfsError::NotSupported, QStringLiteral("openWrite not supported"));
+}
+
+Result<SpaceInfo> IFileSystem::space(const VfsUri&)
+{
+    return VfsError::make(VfsError::NotSupported, QStringLiteral("capacity is unknown here"));
+}
+
+Result<AccessInfo> IFileSystem::access(const VfsUri&)
+{
+    return VfsError::make(VfsError::NotSupported, QStringLiteral("access is unknown here"));
+}
+
+Result<FileEntryList> IFileSystem::search(const VfsUri&, const QString&, const CancelToken&)
+{
+    return VfsError::make(VfsError::NotSupported, QStringLiteral("native search not supported"));
+}
+
+} // namespace mole

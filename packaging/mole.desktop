@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Mole
+GenericName=File Manager
+Comment=Browse local disks, network shares and archives
+Exec=mole %U
+Icon=mole
+Terminal=false
+Categories=Utility;FileTools;FileManager;
+Keywords=file;manager;browser;archive;search;
+StartupNotify=true

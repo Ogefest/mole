@@ -1,0 +1,287 @@
+#include "plugins/builtin/BulkRenameFeature.h"
+
+#include "core/events/EventBus.h"
+#include "core/rename/RenameTask.h"
+#include "core/tasks/TaskManager.h"
+#include "core/vfs/VfsManager.h"
+
+#include <QJsonArray>
+#include <QJsonDocument>
+
+namespace mole {
+
+BulkRenameController::BulkRenameController(PluginServices services, QObject* parent)
+    : FeatureController(QStringLiteral("Bulk rename"), parent)
+    , m_services(services)
+{
+}
+
+BulkRenameController::~BulkRenameController()
+{
+    if (m_task)
+        m_task->requestCancel();
+}
+
+QStringList BulkRenameController::sourceUris() const
+{
+    QStringList out;
+    out.reserve(m_sources.size());
+    for (const VfsUri& uri : m_sources)
+        out.append(uri.toString());
+    return out;
+}
+
+void BulkRenameController::setTargets(const QStringList& uris)
+{
+    m_sources.clear();
+    for (const QString& uri : uris) {
+        const VfsUri parsed = VfsUri::fromString(uri);
+        if (parsed.isValid())
+            m_sources.append(parsed);
+    }
+
+    setSubtitle(QStringLiteral("%1 files").arg(m_sources.size()));
+    refreshDirectoryContents();
+    emit sourcesChanged();
+    rebuildPreview();
+    emit stateChanged();
+}
+
+void BulkRenameController::refreshDirectoryContents()
+{
+    m_existing.clear();
+    if (!m_services.isValid())
+        return;
+
+    // Read once, when the targets are set. A listing per keystroke would make
+    // the preview stutter, and the directory is not going to change while
+    // somebody is composing rules -- and if it does, the rename itself reports
+    // the failure rather than silently overwriting.
+    QSet<QString> directories;
+    for (const VfsUri& source : std::as_const(m_sources))
+        directories.insert(source.parent().toString());
+
+    for (const QString& directory : directories) {
+        const VfsUri uri = VfsUri::fromString(directory);
+        FileSystemPtr fs = m_services.vfs->resolve(uri);
+        if (!fs)
+            continue;
+        if (Result<FileEntryList> listed = fs->list(uri, CancelToken()); listed.ok()) {
+            QStringList names;
+            for (const FileEntry& entry : listed.value())
+                names.append(entry.name);
+            m_existing.insert(directory, names);
+        }
+    }
+}
+
+QVariantList BulkRenameController::ruleKinds() const
+{
+    QVariantList out;
+    for (RenameRule::Kind kind : RenameRule::allKinds()) {
+        out.append(QVariantMap { { QStringLiteral("id"), RenameRule::kindToString(kind) },
+            { QStringLiteral("label"), RenameRule::kindLabel(kind) } });
+    }
+    return out;
+}
+
+QVariantList BulkRenameController::rules() const
+{
+    QVariantList out;
+    for (int i = 0; i < m_rules.size(); ++i) {
+        const RenameRule& rule = m_rules.at(i);
+        QVariantMap row = rule.toJson().toVariantMap();
+        row.insert(QStringLiteral("index"), i);
+        row.insert(QStringLiteral("label"), RenameRule::kindLabel(rule.kind));
+        row.insert(QStringLiteral("description"), rule.describe());
+        out.append(row);
+    }
+    return out;
+}
+
+QVariantList BulkRenameController::preview() const
+{
+    QVariantList out;
+    const QList<RenamePlan::Entry>& entries = m_plan.entries();
+    for (const RenamePlan::Entry& entry : entries) {
+        out.append(QVariantMap { { QStringLiteral("uri"), entry.source.toString() },
+            { QStringLiteral("from"), entry.originalName }, { QStringLiteral("to"), entry.newName },
+            { QStringLiteral("changed"), entry.changed() }, { QStringLiteral("blocked"), entry.isBlocked() },
+            { QStringLiteral("problem"), entry.problem } });
+    }
+    return out;
+}
+
+bool BulkRenameController::canApply() const
+{
+    return m_plan.canApply() && !m_task;
+}
+
+QString BulkRenameController::summary() const
+{
+    if (m_sources.isEmpty())
+        return {};
+    if (m_rules.isEmpty())
+        return QStringLiteral("%1 files · add a rule to see what would change").arg(m_sources.size());
+
+    QString text = QStringLiteral("%1 of %2 would change").arg(m_plan.changedCount()).arg(m_sources.size());
+    if (m_plan.blockedCount() > 0) {
+        text += QStringLiteral("  ·  %1 cannot be renamed").arg(m_plan.blockedCount());
+    }
+    return text;
+}
+
+void BulkRenameController::rebuildPreview()
+{
+    m_plan = RenamePlan::build(m_sources, m_rules, m_existing);
+    emit previewChanged();
+}
+
+void BulkRenameController::addRule(const QString& kind)
+{
+    RenameRule rule;
+    rule.kind = RenameRule::kindFromString(kind);
+    m_rules.append(rule);
+    emit rulesChanged();
+    rebuildPreview();
+    emit stateChanged();
+}
+
+void BulkRenameController::removeRule(int index)
+{
+    if (index < 0 || index >= m_rules.size())
+        return;
+    m_rules.removeAt(index);
+    emit rulesChanged();
+    rebuildPreview();
+    emit stateChanged();
+}
+
+void BulkRenameController::moveRule(int index, int delta)
+{
+    const int target = index + delta;
+    if (index < 0 || index >= m_rules.size() || target < 0 || target >= m_rules.size())
+        return;
+    // Order is meaning here: stripping digits before numbering is a different
+    // result from numbering before stripping, and both are legitimate.
+    m_rules.move(index, target);
+    emit rulesChanged();
+    rebuildPreview();
+    emit stateChanged();
+}
+
+void BulkRenameController::setRuleEnabled(int index, bool enabled)
+{
+    if (index < 0 || index >= m_rules.size())
+        return;
+    m_rules[index].enabled = enabled;
+    emit rulesChanged();
+    rebuildPreview();
+    emit stateChanged();
+}
+
+void BulkRenameController::setRuleField(int index, const QString& field, const QVariant& value)
+{
+    if (index < 0 || index >= m_rules.size())
+        return;
+
+    // Round-tripped through the rule's own serialisation, so the form needs no
+    // setter per field and a new field on a rule needs no code here at all.
+    QJsonObject json = m_rules.at(index).toJson();
+    json[field] = QJsonValue::fromVariant(value);
+    m_rules[index] = RenameRule::fromJson(json);
+
+    emit rulesChanged();
+    rebuildPreview();
+    emit stateChanged();
+}
+
+void BulkRenameController::apply()
+{
+    if (!canApply() || !m_services.isValid())
+        return;
+
+    QList<RenamePlan::Entry> doable;
+    for (const RenamePlan::Entry& entry : m_plan.entries()) {
+        if (entry.changed() && !entry.isBlocked())
+            doable.append(entry);
+    }
+    if (doable.isEmpty())
+        return;
+
+    auto* task = new RenameTask(m_services.vfs, doable);
+    m_task = task;
+    setBusy(true);
+
+    QSet<QString> touched;
+    for (const RenamePlan::Entry& entry : doable)
+        touched.insert(entry.source.parent().toString());
+
+    connect(task, &Task::finished, this, [this, task, touched] {
+        if (m_task != task)
+            return;
+        m_task.clear();
+        setBusy(false);
+
+        // The sources have new names now, so the old list is stale. Re-aiming at
+        // what actually exists beats leaving a preview that refers to files that
+        // are gone.
+        QStringList renamed;
+        for (const RenamePlan::Entry& entry : m_plan.entries()) {
+            renamed.append(entry.isBlocked() || !entry.changed()
+                    ? entry.source.toString()
+                    : entry.source.parent().child(entry.newName).toString());
+        }
+
+        if (m_services.events) {
+            for (const QString& directory : touched)
+                m_services.events->postDirectoryChanged(VfsUri::fromString(directory));
+        }
+
+        m_rules.clear();
+        emit rulesChanged();
+        setTargets(renamed);
+    });
+
+    m_services.tasks->submit(task);
+    emit previewChanged();
+}
+
+QVariantMap BulkRenameController::saveState() const
+{
+    QJsonArray rules;
+    for (const RenameRule& rule : m_rules)
+        rules.append(rule.toJson());
+
+    return { { QStringLiteral("sources"), sourceUris() },
+        { QStringLiteral("rules"), QString::fromUtf8(QJsonDocument(rules).toJson(QJsonDocument::Compact)) } };
+}
+
+void BulkRenameController::restoreState(const QVariantMap& state)
+{
+    const QJsonDocument document
+        = QJsonDocument::fromJson(state.value(QStringLiteral("rules")).toString().toUtf8());
+    const QJsonArray rules = document.array();
+    for (const QJsonValue& value : rules)
+        m_rules.append(RenameRule::fromJson(value.toObject()));
+
+    emit rulesChanged();
+    setTargets(state.value(QStringLiteral("sources")).toStringList());
+}
+
+BulkRenameFeature::BulkRenameFeature(PluginServices services)
+    : m_services(services)
+{
+}
+
+QUrl BulkRenameFeature::viewSource() const
+{
+    return QUrl(QStringLiteral("qrc:/qt/qml/Mole/ui/BulkRenameView.qml"));
+}
+
+FeatureController* BulkRenameFeature::createController(QObject* parent)
+{
+    return new BulkRenameController(m_services, parent);
+}
+
+} // namespace mole

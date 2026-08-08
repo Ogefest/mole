@@ -1,0 +1,213 @@
+#include "support/MoleTestMain.h"
+#include "support/TestSupport.h"
+
+#include "core/search/LiveSearchTask.h"
+#include "core/tasks/TaskManager.h"
+#include "core/vfs/backends/MemoryFileSystem.h"
+
+using namespace mole;
+using namespace mole::test;
+
+class TestLiveSearchTask : public QObject
+{
+    Q_OBJECT
+
+private slots:
+    void init();
+    void cleanup();
+
+    void findsMatchesByName();
+    void streamsResultsWhileRunning();
+    void filtersByExtension();
+    void filtersByKind();
+    void filtersBySize();
+    void caseInsensitiveByDefault();
+    void stopsAtResultLimit();
+    void cancellationStopsSearch();
+    void missingBackendFailsTask();
+
+private:
+    LiveSearchTask* start(LiveSearchTask::Criteria criteria, FileSystemPtr fs = nullptr);
+
+    std::unique_ptr<TaskManager> m_tasks;
+    std::shared_ptr<MemoryFileSystem> m_fs;
+    FileEntryList m_hits;
+};
+
+void TestLiveSearchTask::init()
+{
+    m_tasks = std::make_unique<TaskManager>();
+    m_fs = std::make_shared<MemoryFileSystem>();
+    m_hits.clear();
+}
+
+void TestLiveSearchTask::cleanup()
+{
+    m_tasks.reset();
+    m_fs.reset();
+}
+
+LiveSearchTask* TestLiveSearchTask::start(LiveSearchTask::Criteria criteria, FileSystemPtr fs)
+{
+    auto* task = new LiveSearchTask(
+        fs ? fs : m_fs, VfsUri::fromString(QStringLiteral("mem:///")), std::move(criteria));
+    connect(
+        task, &LiveSearchTask::hitsFound, this, [this](const FileEntryList& batch) { m_hits.append(batch); });
+    m_tasks->submit(task);
+    return task;
+}
+
+void TestLiveSearchTask::findsMatchesByName()
+{
+    m_fs->addFile(QStringLiteral("/a/report-q1.pdf"));
+    m_fs->addFile(QStringLiteral("/b/report-q2.pdf"));
+    m_fs->addFile(QStringLiteral("/b/unrelated.txt"));
+
+    LiveSearchTask::Criteria criteria;
+    criteria.text = QStringLiteral("report");
+
+    LiveSearchTask* task = start(criteria);
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(task->state(), Task::State::Succeeded);
+    QCOMPARE(task->hitCount(), 2);
+    QCOMPARE(m_hits.size(), 2);
+}
+
+void TestLiveSearchTask::streamsResultsWhileRunning()
+{
+    // More than one emit batch, so results must arrive in pieces rather than
+    // all at the very end.
+    for (int i = 0; i < 450; ++i)
+        m_fs->addFile(QStringLiteral("/bulk/match%1.txt").arg(i));
+
+    LiveSearchTask::Criteria criteria;
+    criteria.text = QStringLiteral("match");
+
+    LiveSearchTask* task = start(criteria);
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(task->hitCount(), 450);
+    QCOMPARE(m_hits.size(), 450);
+}
+
+void TestLiveSearchTask::filtersByExtension()
+{
+    m_fs->addFile(QStringLiteral("/x/data.csv"));
+    m_fs->addFile(QStringLiteral("/x/data.parquet"));
+
+    LiveSearchTask::Criteria criteria;
+    criteria.extension = QStringLiteral("PARQUET");
+
+    LiveSearchTask* task = start(criteria);
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(m_hits.size(), 1);
+    QCOMPARE(m_hits.first().name, QStringLiteral("data.parquet"));
+}
+
+void TestLiveSearchTask::filtersByKind()
+{
+    m_fs->addFile(QStringLiteral("/folder/file.txt"));
+
+    LiveSearchTask::Criteria dirsOnly;
+    dirsOnly.includeFiles = false;
+    LiveSearchTask* task = start(dirsOnly);
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(m_hits.size(), 1);
+    QCOMPARE(m_hits.first().name, QStringLiteral("folder"));
+    QVERIFY(m_hits.first().isDir);
+}
+
+void TestLiveSearchTask::filtersBySize()
+{
+    m_fs->addFile(QStringLiteral("/small.bin"), QByteArray(10, 'x'));
+    m_fs->addFile(QStringLiteral("/big.bin"), QByteArray(5000, 'x'));
+
+    LiveSearchTask::Criteria criteria;
+    criteria.minSize = 1000;
+    criteria.includeDirs = false;
+
+    LiveSearchTask* task = start(criteria);
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(m_hits.size(), 1);
+    QCOMPARE(m_hits.first().name, QStringLiteral("big.bin"));
+}
+
+void TestLiveSearchTask::caseInsensitiveByDefault()
+{
+    m_fs->addFile(QStringLiteral("/ŁÓDŹ.txt"));
+
+    LiveSearchTask::Criteria criteria;
+    criteria.text = QStringLiteral("łódź");
+
+    LiveSearchTask* task = start(criteria);
+    QVERIFY(waitForTask(task));
+    QCOMPARE(m_hits.size(), 1);
+
+    LiveSearchTask::Criteria sensitive = criteria;
+    sensitive.caseSensitive = true;
+    m_hits.clear();
+
+    LiveSearchTask* strict = start(sensitive);
+    QVERIFY(waitForTask(strict));
+    QVERIFY(m_hits.isEmpty());
+}
+
+void TestLiveSearchTask::stopsAtResultLimit()
+{
+    for (int i = 0; i < 100; ++i)
+        m_fs->addFile(QStringLiteral("/many/file%1.txt").arg(i));
+
+    LiveSearchTask::Criteria criteria;
+    criteria.text = QStringLiteral("file");
+    criteria.maxResults = 10;
+
+    LiveSearchTask* task = start(criteria);
+    QVERIFY(waitForTask(task));
+
+    // Truncation is a normal outcome and must be visible to the user, not an
+    // error and not silently presented as a complete result set.
+    QCOMPARE(task->state(), Task::State::Succeeded);
+    QVERIFY(task->truncated());
+    QCOMPARE(task->hitCount(), 10);
+    QCOMPARE(m_hits.size(), 10);
+    QVERIFY(task->statusText().contains(QStringLiteral("limit")));
+}
+
+void TestLiveSearchTask::cancellationStopsSearch()
+{
+    for (int i = 0; i < 40; ++i)
+        m_fs->addFile(QStringLiteral("/dir%1/file.txt").arg(i));
+    m_fs->setListDelayMs(50);
+
+    LiveSearchTask::Criteria criteria;
+    criteria.text = QStringLiteral("file");
+
+    LiveSearchTask* task = start(criteria);
+    QVERIFY(waitFor([task] { return task->state() == Task::State::Running; }));
+    task->requestCancel();
+
+    QVERIFY(waitForTask(task));
+    QCOMPARE(task->state(), Task::State::Cancelled);
+}
+
+void TestLiveSearchTask::missingBackendFailsTask()
+{
+    LiveSearchTask* task = start(LiveSearchTask::Criteria {}, FileSystemPtr {});
+    // start() substitutes m_fs when given null, so build this one directly.
+    QVERIFY(waitForTask(task));
+
+    auto* orphan = new LiveSearchTask(
+        nullptr, VfsUri::fromString(QStringLiteral("mem:///")), LiveSearchTask::Criteria {});
+    m_tasks->submit(orphan);
+    QVERIFY(waitForTask(orphan));
+
+    QCOMPARE(orphan->state(), Task::State::Failed);
+    QCOMPARE(orphan->error().code, VfsError::NotFound);
+}
+
+MOLE_TEST_MAIN(TestLiveSearchTask)
+#include "tst_LiveSearchTask.moc"

@@ -1,0 +1,119 @@
+#include "ui/SessionStore.h"
+
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSaveFile>
+#include <QStandardPaths>
+
+namespace mole {
+namespace {
+
+    constexpr int kSessionFormatVersion = 1;
+
+} // namespace
+
+SessionStore::SessionStore(QString filePath)
+    : m_filePath(std::move(filePath))
+{
+}
+
+QString SessionStore::defaultFilePath()
+{
+    const QByteArray override = qgetenv("MOLE_SESSION_PATH");
+    if (!override.isEmpty())
+        return QString::fromLocal8Bit(override);
+
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    return QDir(dir).filePath(QStringLiteral("session.json"));
+}
+
+bool SessionStore::save(const Session& session) const
+{
+    const QFileInfo info(m_filePath);
+    if (!info.dir().exists() && !QDir().mkpath(info.dir().absolutePath()))
+        return false;
+
+    QJsonArray tabs;
+    for (const TabSession& tab : session.tabs) {
+        QJsonObject entry;
+        entry[QStringLiteral("featureId")] = tab.featureId;
+        entry[QStringLiteral("state")] = QJsonObject::fromVariantMap(tab.state);
+        tabs.append(entry);
+    }
+
+    QJsonObject window;
+    window[QStringLiteral("x")] = session.window.x;
+    window[QStringLiteral("y")] = session.window.y;
+    window[QStringLiteral("width")] = session.window.width;
+    window[QStringLiteral("height")] = session.window.height;
+    window[QStringLiteral("maximized")] = session.window.maximized;
+
+    QJsonObject root;
+    root[QStringLiteral("window")] = window;
+    root[QStringLiteral("version")] = kSessionFormatVersion;
+    root[QStringLiteral("currentIndex")] = session.currentIndex;
+    root[QStringLiteral("tabs")] = tabs;
+
+    // QSaveFile writes to a temporary and renames, so a crash half way through
+    // leaves the previous session intact rather than an empty file.
+    QSaveFile file(m_filePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return false;
+    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    return file.commit();
+}
+
+Session SessionStore::load() const
+{
+    QFile file(m_filePath);
+    if (!file.open(QIODevice::ReadOnly))
+        return {};
+
+    QJsonParseError error {};
+    const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &error);
+    if (error.error != QJsonParseError::NoError || !document.isObject())
+        return {};
+
+    const QJsonObject root = document.object();
+    // An unknown version means a newer build wrote it; starting fresh beats
+    // guessing at a format we do not know.
+    if (root.value(QStringLiteral("version")).toInt() != kSessionFormatVersion)
+        return {};
+
+    Session session;
+    const QJsonArray tabs = root.value(QStringLiteral("tabs")).toArray();
+    for (const QJsonValue& value : tabs) {
+        if (!value.isObject())
+            continue;
+        const QJsonObject entry = value.toObject();
+        const QString featureId = entry.value(QStringLiteral("featureId")).toString();
+        if (featureId.isEmpty())
+            continue;
+        session.tabs.append(
+            TabSession { featureId, entry.value(QStringLiteral("state")).toObject().toVariantMap() });
+    }
+
+    const QJsonObject window = root.value(QStringLiteral("window")).toObject();
+    session.window.x = window.value(QStringLiteral("x")).toInt(-1);
+    session.window.y = window.value(QStringLiteral("y")).toInt(-1);
+    session.window.width = window.value(QStringLiteral("width")).toInt(0);
+    session.window.height = window.value(QStringLiteral("height")).toInt(0);
+    session.window.maximized = window.value(QStringLiteral("maximized")).toBool();
+
+    session.currentIndex = root.value(QStringLiteral("currentIndex")).toInt(-1);
+    if (session.currentIndex >= session.tabs.size())
+        session.currentIndex = session.tabs.isEmpty() ? -1 : 0;
+
+    return session;
+}
+
+void SessionStore::clear() const
+{
+    QFile::remove(m_filePath);
+}
+
+} // namespace mole

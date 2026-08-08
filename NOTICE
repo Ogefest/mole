@@ -1,0 +1,10 @@
+Mole
+Copyright 2026 The Mole Authors
+
+This product includes software developed by third parties.
+See THIRD-PARTY-NOTICES.md for the full list and their licences.
+
+This application uses the Qt framework (https://www.qt.io) under the terms of
+the GNU Lesser General Public License version 3. Qt is not part of this
+project and is dynamically linked; see docs/LICENSING.md for how to obtain,
+modify or replace it.

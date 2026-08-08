@@ -1,0 +1,134 @@
+#pragma once
+
+#include "sdk/PluginServices.h"
+#include "ui/models/FileListModel.h"
+
+#include "core/vfs/VfsUri.h"
+
+#include <QHash>
+#include <QObject>
+#include <QPointer>
+#include <QStringList>
+#include <QVariantList>
+
+namespace mole {
+
+class ListDirectoryTask;
+
+/// One navigable pane: current location, history, and the listing shown in it.
+///
+/// A split view is two of these side by side; a single view is one. Nothing
+/// here knows which, so adding a three-pane layout later is a QML change.
+class BrowserPaneController : public QObject
+{
+    Q_OBJECT
+    Q_PROPERTY(mole::FileListModel* files READ files CONSTANT)
+    Q_PROPERTY(QString currentUri READ currentUri NOTIFY locationChanged)
+    Q_PROPERTY(QString displayPath READ displayPath NOTIFY locationChanged)
+    Q_PROPERTY(QString locationName READ locationName NOTIFY locationChanged)
+    /// The path broken into clickable pieces, each with the uri it leads to.
+    /// Pressing Backspace three times to get up three levels is work the
+    /// interface can do for the user.
+    Q_PROPERTY(QVariantList pathSegments READ pathSegments NOTIFY locationChanged)
+    Q_PROPERTY(bool loading READ isLoading NOTIFY loadingChanged)
+    Q_PROPERTY(QString errorText READ errorText NOTIFY errorTextChanged)
+    Q_PROPERTY(bool canGoBack READ canGoBack NOTIFY historyChanged)
+    Q_PROPERTY(bool canGoForward READ canGoForward NOTIFY historyChanged)
+    Q_PROPERTY(bool canGoUp READ canGoUp NOTIFY locationChanged)
+    Q_PROPERTY(int currentIndex READ currentIndex WRITE setCurrentIndex NOTIFY currentIndexChanged)
+    Q_PROPERTY(QString currentName READ currentName NOTIFY currentIndexChanged)
+    Q_PROPERTY(bool writable READ isWritable NOTIFY locationChanged)
+
+public:
+    BrowserPaneController(PluginServices services, QObject* parent = nullptr);
+    ~BrowserPaneController() override;
+
+    FileListModel* files() const { return m_files; }
+    QString currentUri() const { return m_current.toString(); }
+    QString displayPath() const;
+    QString locationName() const;
+    QVariantList pathSegments() const;
+    bool isLoading() const { return m_loading; }
+    QString errorText() const { return m_errorText; }
+    bool canGoBack() const { return m_historyIndex > 0; }
+    bool canGoForward() const { return m_historyIndex + 1 < m_history.size(); }
+    bool canGoUp() const { return m_current.isValid() && !m_current.isRoot(); }
+
+    int currentIndex() const { return m_currentIndex; }
+    void setCurrentIndex(int index);
+    QString currentName() const;
+    /// False for read-only drives such as a mounted archive.
+    bool isWritable() const;
+
+    Q_INVOKABLE void navigateTo(const QString& uri);
+    /// Moves the cursor by `delta` rows, clamped to the listing.
+    Q_INVOKABLE void moveCursor(int delta);
+    Q_INVOKABLE void cursorToStart();
+    Q_INVOKABLE void cursorToEnd();
+    /// Ticks the row under the cursor and steps down, like Insert in a
+    /// commander-style manager.
+    Q_INVOKABLE void toggleSelectionAndAdvance();
+
+    // ---- operations on this pane ----------------------------------------
+    //
+    // Each queues a Task and announces the result on the event bus, so other
+    // panes showing the same directory refresh themselves.
+
+    Q_INVOKABLE void createDirectory(const QString& name);
+    Q_INVOKABLE void renameCurrent(const QString& newName);
+    Q_INVOKABLE void deleteTargets();
+    /// The selection, or the row under the cursor when nothing is ticked.
+    QList<VfsUri> targets() const;
+    Q_INVOKABLE int targetCount() const;
+    Q_INVOKABLE QString targetSummary() const;
+    /// Enters the row if it is a directory. Returns false for files, letting
+    /// the caller decide what "open" means for them.
+    Q_INVOKABLE bool activate(int row);
+    Q_INVOKABLE void goUp();
+    Q_INVOKABLE void goBack();
+    Q_INVOKABLE void goForward();
+    Q_INVOKABLE void refresh();
+
+signals:
+    void locationChanged();
+    void currentIndexChanged();
+    void operationFailed(const QString& message);
+    void loadingChanged();
+    void errorTextChanged();
+    void historyChanged();
+    /// A non-directory row was activated.
+    void fileActivated(const QString& uri);
+
+private:
+    void load(const VfsUri& uri, bool recordHistory);
+    /// Notes where the cursor is before leaving `from` for `to`, so coming back
+    /// -- or stepping up out of a folder -- lands where the user was rather
+    /// than at the top of the list.
+    void rememberCursor(const VfsUri& from, const VfsUri& to);
+    /// Marks rows that already have a report or an alert, so the listing shows
+    /// it without the user opening anything.
+    void annotateListing(const FileEntryList& entries);
+    /// The entry to select on arrival, or an empty string for "the first row".
+    QString rememberedCursor(const VfsUri& folder) const;
+    void setLoading(bool loading);
+
+    /// Folder uri to the entry uri the cursor was on. Bounded: walking a large
+    /// tree would otherwise accumulate an entry per folder visited, for a
+    /// convenience nobody would miss beyond the last few hundred.
+    static constexpr int kCursorMemoryLimit = 300;
+    QHash<QString, QString> m_cursorMemory;
+    QList<QString> m_cursorMemoryOrder;
+    void setErrorText(const QString& text);
+
+    PluginServices m_services;
+    FileListModel* m_files = nullptr;
+    VfsUri m_current;
+    QStringList m_history;
+    int m_historyIndex = -1;
+    int m_currentIndex = -1;
+    bool m_loading = false;
+    QString m_errorText;
+    QPointer<ListDirectoryTask> m_pending;
+};
+
+} // namespace mole

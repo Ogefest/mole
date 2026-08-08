@@ -1,0 +1,1030 @@
+#include "plugins/builtin/AnalysisFeature.h"
+#include "plugins/builtin/AutomationFeature.h"
+#include "plugins/builtin/BrowserFeature.h"
+#include "plugins/builtin/PreviewFeature.h"
+#include "plugins/builtin/previews/PreviewProviders.h"
+#include "support/QmlAppHarness.h"
+#include "ui/AppController.h"
+#include "ui/models/BrowserPaneController.h"
+#include "ui/models/FileListModel.h"
+#include "ui/models/TableModel.h"
+#include "ui/models/TabsModel.h"
+#include "ui/models/TaskListModel.h"
+#include "ui/models/TerminalController.h"
+
+#include "core/CoreMetaTypes.h"
+#include "core/alerts/AlertStore.h"
+#include "core/automation/ScheduleStore.h"
+#include "core/automation/Scheduler.h"
+#include "core/vfs/VfsManager.h"
+#include "core/vfs/backends/MemoryFileSystem.h"
+
+#include <QGuiApplication>
+#include <QQuickItem>
+#include <QQuickStyle>
+#include <QTest>
+
+using namespace mole;
+using namespace mole::test;
+
+/// Drives the real application through the things a person actually does, and
+/// photographs each one on the way.
+///
+/// Every screenshot here is taken immediately after the assertions that prove
+/// the state is what the name claims. That is the point: a picture from this
+/// suite cannot show something the tests did not verify, which is exactly the
+/// guarantee the old Xvfb harness could not give.
+class TestWalkthrough : public QObject
+{
+    Q_OBJECT
+
+private slots:
+    void initTestCase();
+    void init();
+    void cleanup();
+
+    void browsesAndPreviews();
+    void highlightsSourceAndPagesLargeFiles();
+    void breadcrumbsClimbTheTree();
+    void ctrlGRevealsTheEditablePath();
+    void aSlowFolderSaysSoInTheMiddleOfThePane();
+    void theListingMarksReportsAndAlerts();
+    void filtersByTyping();
+    void filtersAndCopiesTableCells();
+    void theFilterKeepsTheKeyboardWhileNarrowing();
+    void dualPaneAndGrid();
+    void f5CopiesTheSelectedFile();
+    void analysesAFolder();
+    void schedulesTheReportAndTracksIt();
+    void ctrlWClosesAPreviewTabWithTheTextFocused();
+    void theTerminalOpensInTheFolderYouAreLookingAt();
+    void theDrivesDialogOffersBackendsAndAForm();
+    void everyBackendBuildsAFormWithoutComplaint();
+    void aDriveWithAPasswordSavesAndConnects();
+    void typingIntoTheKindPickerFiltersIt();
+    void connectingFromTheListSurvivesTheListRebuilding();
+    void emptyWindowExplainsItself();
+
+private:
+    BrowserPaneController* pane() const;
+
+    std::unique_ptr<QmlAppHarness> m_harness;
+    QString m_shots;
+};
+
+void TestWalkthrough::initTestCase()
+{
+    m_shots = QString::fromLocal8Bit(qgetenv("MOLE_SCREENSHOT_DIR"));
+}
+
+void TestWalkthrough::init()
+{
+    m_harness = std::make_unique<QmlAppHarness>();
+
+    QmlAppHarness::Options options;
+    options.screenshotDirectory = m_shots;
+
+    QString error;
+    QVERIFY2(m_harness->start(options, &error), qPrintable(error));
+
+    QVERIFY(m_harness->makeDirs(QStringLiteral("media")));
+    QVERIFY(m_harness->makeDirs(QStringLiteral("documents")));
+    QVERIFY(m_harness->writeFile(QStringLiteral("media/film.mkv"), QByteArray(90000, 'x')));
+    QVERIFY(m_harness->writeFile(QStringLiteral("media/clip.mkv"), QByteArray(30000, 'x')));
+    QVERIFY(m_harness->writeFile(
+        QStringLiteral("documents/report.txt"), QByteArray("The quarterly report.\nSecond line.\n")));
+    QVERIFY(m_harness->writeFile(QStringLiteral("documents/prices.csv"),
+        QByteArray("name;price;qty\nwidget;1,50;3\nbolt;0,99;10\nnut;12,00;250\n")));
+    QVERIFY(m_harness->writeFile(QStringLiteral("settings.json"),
+        QByteArray("{\n  \"name\": \"example\",\n  \"count\": 42,\n  \"ok\": true\n}\n")));
+    QVERIFY(m_harness->writeFile(QStringLiteral("notes.txt"), QByteArray("plain notes")));
+
+    // Reload so the pane sees the fixture that was just written.
+    pane()->refresh();
+    QVERIFY(m_harness->until([this] { return !pane()->isLoading() && pane()->files()->rowCount() == 4; }));
+}
+
+void TestWalkthrough::cleanup()
+{
+    m_harness.reset();
+}
+
+BrowserPaneController* TestWalkthrough::pane() const
+{
+    auto* browser = qobject_cast<BrowserController*>(m_harness->app()->tabs()->currentController());
+    return browser ? browser->activePane() : nullptr;
+}
+
+void TestWalkthrough::browsesAndPreviews()
+{
+    QCOMPARE(pane()->files()->rowCount(), 4); // two folders, two files
+    m_harness->screenshot(QStringLiteral("01-browser"));
+
+    // Into a folder with the keyboard.
+    m_harness->key(Qt::Key_Return);
+    QVERIFY(m_harness->until([this] { return pane()->currentUri().endsWith(QStringLiteral("/documents")); }));
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 2; }));
+
+    // Preview the CSV: the table viewer must win over the text one.
+    const int row = pane()->files()->rowOfUri(pane()->currentUri() + QStringLiteral("/prices.csv"));
+    QVERIFY(row >= 0);
+    pane()->setCurrentIndex(row);
+    m_harness->settle();
+
+    m_harness->key(Qt::Key_F3);
+    auto* preview = qobject_cast<PreviewTabController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY2(preview, "F3 must open a preview tab");
+    QCOMPARE(preview->viewerName(), QStringLiteral("Table"));
+    QVERIFY(m_harness->until([preview] { return preview->siblingCount() > 0; }));
+    m_harness->settle();
+    m_harness->screenshot(QStringLiteral("02-preview-csv"));
+
+    // Right steps to the next file in the folder, and the viewer changes with it.
+    m_harness->key(Qt::Key_Right);
+    QVERIFY(m_harness->until([preview] { return preview->fileName() == QStringLiteral("report.txt"); }));
+    QCOMPARE(preview->viewerName(), QStringLiteral("Text"));
+    m_harness->screenshot(QStringLiteral("03-preview-text"));
+}
+
+void TestWalkthrough::highlightsSourceAndPagesLargeFiles()
+{
+    // A JSON file is coloured; a plain one is not, and neither is Markdown,
+    // which is rendered instead.
+    const int row = pane()->files()->rowOfUri(pane()->currentUri() + QStringLiteral("/settings.json"));
+    QVERIFY(row >= 0);
+    pane()->setCurrentIndex(row);
+    m_harness->settle();
+    m_harness->key(Qt::Key_F3);
+
+    auto* preview = qobject_cast<PreviewTabController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(m_harness->until([viewer] { return !viewer->text().isEmpty(); }));
+
+    QCOMPARE(viewer->languageName(), QStringLiteral("JSON"));
+    QVERIFY(viewer->isHighlighted());
+    QVERIFY2(!viewer->isMarkdown(), "JSON is coloured, not rendered");
+    // Small file: one window, so no paging strip to distract with.
+    QVERIFY(!viewer->isPaged());
+    m_harness->settle(6);
+    m_harness->screenshot(QStringLiteral("03b-preview-json"));
+
+    // Now a file bigger than one window. Paging appears, and stepping forward
+    // moves the window rather than loading more of the file into memory.
+    QByteArray big;
+    for (int i = 0; i < 40000; ++i)
+        big += QStringLiteral("line %1 of a rather long log file\n").arg(i, 6, 10, QLatin1Char('0')).toUtf8();
+    QVERIFY(big.size() > 512 * 1024);
+    QVERIFY(m_harness->writeFile(QStringLiteral("huge.log"), big));
+
+    FileEntry entry;
+    entry.uri = VfsUri::fromString(m_harness->fixtureUri() + QStringLiteral("/huge.log"));
+    entry.name = QStringLiteral("huge.log");
+    entry.size = big.size();
+    viewer->load(entry);
+
+    // Waited on the new file's own content: "text is not empty" would have been
+    // satisfied by the previous file and the assertions below would have run
+    // against it.
+    QVERIFY(m_harness->until(
+        [viewer] { return viewer->isPaged() && viewer->text().startsWith(QStringLiteral("line 000000")); }));
+    QCOMPARE(viewer->fileSize(), static_cast<qint64>(big.size()));
+    QVERIFY2(viewer->windowBytes() <= 512 * 1024, "only the window is held, never the file");
+    QVERIFY(viewer->isAtStart());
+    QVERIFY(!viewer->isAtEnd());
+
+    const qint64 firstOffset = viewer->windowOffset();
+    viewer->nextWindow();
+    QVERIFY(m_harness->until([viewer, firstOffset] { return viewer->windowOffset() > firstOffset; }));
+    QVERIFY2(!viewer->text().isEmpty(), "the next window has content");
+    QVERIFY2(viewer->text().startsWith(QStringLiteral("line ")),
+        "windows snap to whole lines, so no window opens mid-line");
+
+    viewer->lastWindow();
+    QVERIFY(m_harness->until([viewer] { return viewer->isAtEnd(); }));
+    m_harness->settle(6);
+    m_harness->screenshot(QStringLiteral("03c-preview-paging"));
+}
+
+void TestWalkthrough::ctrlGRevealsTheEditablePath()
+{
+    // The crumbs and the editable path share one slot, so exactly one of them
+    // has to be on screen at a time -- and the one with the keyboard is the one
+    // the user needs to see.
+    QQuickItem* crumbs = m_harness->item(QStringLiteral("pathCrumbs"));
+    QVERIFY(crumbs);
+    QVERIFY2(crumbs->isVisible(), "the crumbs show while not editing");
+
+    m_harness->key(Qt::Key_G, Qt::ControlModifier);
+    m_harness->settle(6);
+
+    QQuickItem* field = m_harness->item(QStringLiteral("pathField"));
+    QVERIFY(field);
+    QVERIFY2(field->hasActiveFocus(), "Ctrl+G puts the keyboard in the path field");
+    QVERIFY2(field->isVisible(), "and the field it puts it in has to be on screen");
+    QVERIFY2(field->width() > 0, "with a size");
+
+    // Room for all of itself. Squeezed into a shorter slot the text and the
+    // underline are clipped, which reads as the field being covered by
+    // something rather than as it being too small.
+    QVERIFY2(
+        field->height() >= field->implicitHeight(), "the path field has to fit in the space it is given");
+    QVERIFY2(!crumbs->isVisible(), "the crumbs step aside rather than covering it");
+
+    // The path is there to be edited, selected so typing replaces it.
+    QCOMPARE(field->property("text").toString(), pane()->displayPath());
+    QVERIFY(!field->property("selectedText").toString().isEmpty());
+
+    m_harness->key(Qt::Key_Escape);
+    QVERIFY(m_harness->until([crumbs] { return crumbs->isVisible(); }));
+}
+
+void TestWalkthrough::aSlowFolderSaysSoInTheMiddleOfThePane()
+{
+    // A drive that takes its time, so the one-second threshold is reached and
+    // the waiting view actually appears. Contrived, because the only honest way
+    // to test a slow listing is to have one.
+    auto slow = std::make_shared<MemoryFileSystem>();
+    slow->addFile(QStringLiteral("/a.txt"), QByteArray("a"));
+    slow->addFile(QStringLiteral("/b.txt"), QByteArray("b"));
+    // Long enough that the window in which the view is on screen -- from one
+    // second in until the listing lands -- cannot be missed on a loaded
+    // machine. The test cancels rather than waiting it out.
+    slow->setListDelayMs(8000);
+
+    Mount mount;
+    mount.id = QStringLiteral("slow");
+    mount.displayName = QStringLiteral("slow");
+    mount.root = VfsUri::fromString(QStringLiteral("mem://slow/"));
+    mount.fileSystem = slow;
+    m_harness->app()->services().vfs->addMount(mount);
+
+    pane()->navigateTo(QStringLiteral("mem://slow/"));
+
+    // Below a second a spinner is only a flash, so nothing is shown yet.
+    m_harness->settle(10);
+    QQuickItem* early = m_harness->item(QStringLiteral("loadingView"));
+    QVERIFY(early);
+    QVERIFY2(!early->isVisible(), "a fast listing must not flash a spinner");
+
+    // Both panes exist even in single mode, and the hidden one has zero size,
+    // so the visible one is the one to measure. Waited on the width as well as
+    // on visibility: becoming visible and being given a size are two separate
+    // passes, and asking in between gives zero.
+    const auto visibleLoadingView = [this]() -> QQuickItem* {
+        const QList<QQuickItem*> candidates = m_harness->items(QStringLiteral("loadingView"));
+        for (QQuickItem* candidate : candidates) {
+            if (candidate->isVisible() && candidate->width() > 0)
+                return candidate;
+        }
+        return nullptr;
+    };
+
+    QQuickItem* loading = nullptr;
+    const bool appeared = m_harness->until(
+        [&] {
+            loading = visibleLoadingView();
+            return loading != nullptr;
+        },
+        6000);
+
+    if (!appeared) {
+        for (QQuickItem* candidate : m_harness->items(QStringLiteral("loadingView")))
+            qWarning("  loadingView vis=%d w=%.0f", candidate->isVisible(), candidate->width());
+    }
+    QVERIFY2(appeared, "a listing still going after a second has to say so, across the pane");
+
+    // It has to span the pane. Centring inside a container only as wide as its
+    // widest child is what put the empty window against the left edge, and the
+    // same mistake here would read as a message stuck to the frame.
+    QQuickItem* fileList = m_harness->item(QStringLiteral("fileList"));
+    QVERIFY(fileList);
+    QVERIFY2(loading->width() >= fileList->width() - 1,
+        "the waiting view spans the pane rather than hugging one edge");
+
+    m_harness->screenshot(QStringLiteral("01d-slow-folder"));
+
+    // Stop rather than sit through the rest of the delay, which is also what
+    // the Stop button on that view does.
+    m_harness->app()->tasks()->cancelAll();
+    QVERIFY(m_harness->until([this] { return !pane()->isLoading(); }, 10000));
+}
+
+void TestWalkthrough::theListingMarksReportsAndAlerts()
+{
+    const QString documents = pane()->currentUri() + QStringLiteral("/documents");
+    const QString media = pane()->currentUri() + QStringLiteral("/media");
+
+    // Nothing is marked to begin with.
+    const int docRow = pane()->files()->rowOfUri(documents);
+    QVERIFY(docRow >= 0);
+    const auto flag
+        = [this](int row, int role) { return pane()->files()->index(row, 0).data(role).toBool(); };
+    QVERIFY(!flag(docRow, FileListModel::HasReportRole));
+    QVERIFY(!flag(docRow, FileListModel::HasAlertRole));
+
+    // A report on one folder and an alert on another. Both have to show on the
+    // listing without opening anything.
+    m_harness->app()->openReportFor(documents);
+    m_harness->settle();
+    auto* analysis = qobject_cast<AnalysisTabController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY(analysis);
+    QVERIFY(m_harness->until(
+        [analysis] { return analysis->current() && analysis->current()->hasReport(); }, 20000));
+
+    AlertRule rule;
+    rule.id = QStringLiteral("watch-media");
+    rule.label = QStringLiteral("Media grows");
+    rule.targetUri = media;
+    rule.state = AlertState::Triggered;
+    QVERIFY(m_harness->app()->alerts()->put(rule));
+
+    // Back to the listing, which re-reads the annotations as it loads.
+    m_harness->app()->tabs()->setCurrentIndex(0);
+    m_harness->settle();
+    pane()->refresh();
+    QVERIFY(m_harness->until([this] { return !pane()->isLoading(); }));
+
+    const int docRowAgain = pane()->files()->rowOfUri(documents);
+    const int mediaRow = pane()->files()->rowOfUri(media);
+    QVERIFY(docRowAgain >= 0);
+    QVERIFY(mediaRow >= 0);
+
+    QVERIFY2(flag(docRowAgain, FileListModel::HasReportRole), "the reported folder is marked");
+    QVERIFY2(!flag(docRowAgain, FileListModel::HasAlertRole), "and not marked for an alert it has not got");
+    QVERIFY2(flag(mediaRow, FileListModel::HasAlertRole), "the watched folder is marked");
+    QVERIFY2(flag(mediaRow, FileListModel::AlertTriggeredRole), "and a tripped alert reads differently");
+    QVERIFY2(!flag(mediaRow, FileListModel::HasReportRole), "a folder with no report is not marked");
+
+    m_harness->settle(6);
+    m_harness->screenshot(QStringLiteral("01c-listing-tags"));
+}
+
+void TestWalkthrough::breadcrumbsClimbTheTree()
+{
+    // Two levels down, then back up in one click rather than one Backspace per
+    // level -- which is what the plain text path amounted to.
+    m_harness->key(Qt::Key_Return); // documents
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 2; }));
+
+    const QVariantList deep = pane()->pathSegments();
+    QVERIFY2(deep.size() >= 2, "a nested folder has more than one crumb");
+    QCOMPARE(deep.last().toMap().value(QStringLiteral("label")).toString(), QStringLiteral("documents"));
+    QCOMPARE(deep.last().toMap().value(QStringLiteral("current")).toBool(), true);
+
+    // The first crumb is the drive itself, which has no name of its own.
+    QCOMPARE(deep.first().toMap().value(QStringLiteral("label")).toString(), QStringLiteral("/"));
+    QCOMPARE(deep.first().toMap().value(QStringLiteral("current")).toBool(), false);
+
+    // Every crumb but the last leads somewhere, and its uri is an ancestor.
+    const QString here = pane()->currentUri();
+    for (int i = 0; i < deep.size() - 1; ++i) {
+        const QString uri = deep.at(i).toMap().value(QStringLiteral("uri")).toString();
+        QVERIFY2(here.startsWith(uri), qPrintable(QStringLiteral("%1 is not above %2").arg(uri, here)));
+    }
+
+    QQuickItem* crumbRow = m_harness->item(QStringLiteral("pathCrumbs"));
+    QVERIFY2(crumbRow, "the crumbs are on screen, not merely in the model");
+
+    // Clicking the parent crumb goes there directly.
+    const QString parent = deep.at(deep.size() - 2).toMap().value(QStringLiteral("uri")).toString();
+    pane()->navigateTo(parent);
+    QVERIFY(m_harness->until([this, parent] { return pane()->currentUri() == parent; }));
+
+    m_harness->settle(4);
+    m_harness->screenshot(QStringLiteral("01b-breadcrumbs"));
+}
+
+void TestWalkthrough::filtersByTyping()
+{
+    // No shortcut: the first printable key opens the filter and goes into it.
+    // "j" appears only in settings.json -- "m" would also match "documents".
+    m_harness->key(Qt::Key_J);
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 1; }));
+    QCOMPARE(pane()->files()->nameAt(0), QStringLiteral("settings.json"));
+
+    QQuickItem* filter = m_harness->item(QStringLiteral("filterField"));
+    QVERIFY(filter);
+    QVERIFY2(filter->hasActiveFocus(), "the keyboard must move into the filter");
+    QCOMPARE(filter->property("text").toString(), QStringLiteral("j"));
+
+    // A filter is a substring match, not a prefix: "m" catches both folders.
+    m_harness->key(Qt::Key_Backspace);
+    m_harness->key(Qt::Key_M);
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 2; }));
+    m_harness->screenshot(QStringLiteral("04-filter"));
+
+    m_harness->key(Qt::Key_Escape);
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 4; }));
+}
+
+void TestWalkthrough::theFilterKeepsTheKeyboardWhileNarrowing()
+{
+    // Type to narrow, then act on the result -- without a detour to move the
+    // keyboard onto the list first. That detour costs a keystroke and, worse,
+    // swallows the one the user just spent.
+    // "doc", not "d": a filter is a substring match and "media" contains a d.
+    m_harness->key(Qt::Key_D);
+    m_harness->key(Qt::Key_O);
+    m_harness->key(Qt::Key_C);
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 1; }));
+
+    QQuickItem* filter = m_harness->item(QStringLiteral("filterField"));
+    QVERIFY(filter);
+    QVERIFY(filter->hasActiveFocus());
+
+    // Enter opens the row under the cursor rather than moving focus.
+    m_harness->key(Qt::Key_Return);
+    QVERIFY2(m_harness->until([this] { return pane()->currentUri().endsWith(QStringLiteral("/documents")); }),
+        "Enter in the filter must open the highlighted row");
+
+    // And arrows move the cursor while the field still has the keyboard, so
+    // typing more keeps narrowing instead of going somewhere else.
+    m_harness->key(Qt::Key_C); // "prices.csv"; "report.txt" has no c
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 1; }));
+
+    filter = m_harness->item(QStringLiteral("filterField"));
+    QVERIFY(filter);
+    QVERIFY2(filter->hasActiveFocus(), "the filter keeps the keyboard");
+
+    const int before = pane()->currentIndex();
+    m_harness->key(Qt::Key_Down);
+    QVERIFY2(filter->hasActiveFocus(), "an arrow moves the cursor, not the focus");
+    Q_UNUSED(before);
+
+    m_harness->key(Qt::Key_Escape);
+}
+
+void TestWalkthrough::filtersAndCopiesTableCells()
+{
+    m_harness->key(Qt::Key_Return); // into "documents"
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 2; }));
+
+    const int row = pane()->files()->rowOfUri(pane()->currentUri() + QStringLiteral("/prices.csv"));
+    QVERIFY(row >= 0);
+    pane()->setCurrentIndex(row);
+    m_harness->settle();
+    m_harness->key(Qt::Key_F3);
+
+    auto* preview = qobject_cast<PreviewTabController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TablePreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(m_harness->until(
+        [viewer] { return !viewer->isImporting() && viewer->table()->rowCount() == 3; }, 10000));
+
+    // The filter is a query over the imported file, not over what the view
+    // happens to have loaded.
+    viewer->table()->setFilter(QStringLiteral("bolt"));
+    QCOMPARE(viewer->table()->rowCount(), 1);
+    QCOMPARE(viewer->table()->matchingRows(), 1);
+    QCOMPARE(viewer->table()->totalRows(), 3);
+    QCOMPARE(viewer->table()->cellAt(0, 0), QStringLiteral("bolt"));
+
+    viewer->table()->setFilter(QString());
+    QCOMPARE(viewer->table()->rowCount(), 3);
+
+    // A block of cells leaves as tab-separated text, which is what every
+    // spreadsheet expects on paste.
+    const QString block = viewer->table()->blockAsText(0, 0, 1, 1);
+    QCOMPARE(block, QStringLiteral("widget\t1,50\nbolt\t0,99"));
+    viewer->copyBlock(0, 0, 1, 1);
+
+    // Columns are measured from the contents, so none is the same default
+    // width as the others.
+    const QVariantList widths = viewer->table()->columnWidths();
+    QCOMPARE(widths.size(), 3);
+    QCOMPARE(widths.at(0).toInt(), 6); // "widget"
+    QCOMPARE(widths.at(2).toInt(), 3); // "qty" beats "250" only by tying it
+
+    m_harness->settle(6);
+    m_harness->screenshot(QStringLiteral("04b-table-filter"));
+}
+
+void TestWalkthrough::dualPaneAndGrid()
+{
+    auto* browser = qobject_cast<BrowserController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY(browser);
+
+    browser->setViewMode(BrowserController::ViewMode::Dual);
+    m_harness->settle();
+    QVERIFY(browser->splitEnabled());
+
+    // The binding, not just the controller: this is where the bug was. Copy was
+    // bound to an invokable with no change signal, so switching to dual pane
+    // satisfied the condition without the button ever hearing about it.
+    browser->activePane()->setCurrentIndex(0);
+    browser->otherPane()->navigateTo(browser->activePane()->currentUri() + QStringLiteral("/documents"));
+    QVERIFY(m_harness->until([browser] { return browser->canTransfer(); }));
+
+    QQuickItem* copyButton = m_harness->item(QStringLiteral("copyButton"));
+    QVERIFY(copyButton);
+    QVERIFY2(m_harness->until([copyButton] { return copyButton->isEnabled(); }),
+        "Copy must enable itself once a transfer is possible");
+
+    m_harness->screenshot(QStringLiteral("05-dual-pane"));
+
+    browser->setViewMode(BrowserController::ViewMode::Grid);
+    m_harness->settle();
+    QVERIFY(browser->gridEnabled());
+    QVERIFY2(!browser->splitEnabled(), "grid is one pane, not two");
+    QVERIFY(m_harness->item(QStringLiteral("fileGrid")) != nullptr);
+    m_harness->screenshot(QStringLiteral("06-grid"));
+}
+
+void TestWalkthrough::f5CopiesTheSelectedFile()
+{
+    // Driven through the real key and the real dialog. The controller-level
+    // tests all passed while F5 did nothing at all: the view called a property
+    // as a method, the call threw, and the throw took the rest of the handler
+    // with it. Only a test that presses the key can see that.
+    auto* browser = qobject_cast<BrowserController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY(browser);
+    browser->setViewMode(BrowserController::ViewMode::Dual);
+    m_harness->settle();
+
+    const QString source = m_harness->fixtureUri();
+    const QString destination = source + QStringLiteral("/documents");
+    browser->otherPane()->navigateTo(destination);
+    QVERIFY(m_harness->until(
+        [browser, destination] { return browser->otherPane()->currentUri() == destination; }));
+    QVERIFY(m_harness->until([browser] { return browser->otherPane()->files()->rowCount() == 2; }));
+
+    const int row = browser->activePane()->files()->rowOfUri(source + QStringLiteral("/notes.txt"));
+    QVERIFY(row >= 0);
+    browser->activePane()->setCurrentIndex(row);
+    QVERIFY(m_harness->until([browser] { return browser->canTransfer(); }));
+
+    m_harness->key(Qt::Key_F5);
+
+    QObject* dialog = m_harness->object(QStringLiteral("transferDialog"));
+    QVERIFY(dialog);
+    QVERIFY2(dialog->property("visible").toBool(), "F5 must put up the confirmation, not fail quietly");
+    QVERIFY(QMetaObject::invokeMethod(dialog, "accept"));
+
+    QVERIFY2(m_harness->until(
+                 [browser] {
+                     return browser->otherPane()->files()->rowOfUri(
+                                browser->otherPane()->currentUri() + QStringLiteral("/notes.txt"))
+                         >= 0;
+                 },
+                 10000),
+        "the file has to arrive in the other pane");
+}
+
+void TestWalkthrough::analysesAFolder()
+{
+    m_harness->app()->analyseSelection();
+    m_harness->settle();
+
+    auto* analysis = qobject_cast<AnalysisTabController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY2(analysis, "Ctrl+Shift+A must open an analysis tab");
+    QCOMPARE(analysis->targetCount(), 1);
+
+    QVERIFY(m_harness->until(
+        [analysis] { return analysis->current() && analysis->current()->hasReport(); }, 20000));
+
+    // Six files, and the .mkv pair dominates by size.
+    const QVariantMap headline = analysis->current()->headline();
+    QCOMPARE(headline.value(QStringLiteral("files")).toLongLong(), 6);
+    QCOMPARE(analysis->current()->extensions()->index(0, 0).data(BreakdownModel::ExtensionRole).toString(),
+        QStringLiteral("mkv"));
+
+    m_harness->settle(10);
+    m_harness->screenshot(QStringLiteral("07-analysis"));
+}
+
+void TestWalkthrough::schedulesTheReportAndTracksIt()
+{
+    m_harness->app()->analyseSelection();
+    m_harness->settle();
+
+    auto* analysis = qobject_cast<AnalysisTabController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY(analysis);
+    QVERIFY(m_harness->until(
+        [analysis] { return analysis->current() && analysis->current()->hasReport(); }, 20000));
+
+    // Put it on a weekly clock from the report itself.
+    analysis->current()->setSchedule(604800);
+    QCOMPARE(analysis->current()->scheduleText(), QStringLiteral("Every week"));
+
+    // The clock starts from the report that already exists, so a folder just
+    // analysed by hand is not walked again a second later.
+    QCOMPARE(m_harness->app()->scheduler()->checkDue(), 0);
+
+    // "Run now" is what the user reaches for to check the job actually works
+    // rather than waiting a week to find out.
+    const QString ruleId = m_harness->app()->schedules()->rules().first().id;
+    QVERIFY(m_harness->app()->scheduler()->runNow(ruleId));
+    QVERIFY(
+        m_harness->until([this] { return m_harness->app()->scheduler()->runningRules().isEmpty(); }, 20000));
+
+    const int row = m_harness->app()->openFeatureTab(QStringLiteral("core.automation"));
+    QVERIFY(row >= 0);
+    auto* automation = qobject_cast<AutomationController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY(automation);
+    QCOMPARE(automation->failingCount(), 0);
+    QCOMPARE(automation->rules().size(), 1);
+    QCOMPARE(automation->history().size(), 1);
+    QCOMPARE(automation->history().first().toMap().value(QStringLiteral("statusText")).toString(),
+        QStringLiteral("OK"));
+
+    m_harness->settle(10);
+    m_harness->screenshot(QStringLiteral("08-automation"));
+}
+
+void TestWalkthrough::ctrlWClosesAPreviewTabWithTheTextFocused()
+{
+    m_harness->key(Qt::Key_Return); // into "documents"
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 2; }));
+
+    const int row = pane()->files()->rowOfUri(pane()->currentUri() + QStringLiteral("/report.txt"));
+    QVERIFY(row >= 0);
+    pane()->setCurrentIndex(row);
+    m_harness->settle();
+    m_harness->key(Qt::Key_F3);
+
+    QVERIFY(qobject_cast<PreviewTabController*>(m_harness->app()->tabs()->currentController()));
+    const int tabsBefore = m_harness->app()->tabs()->rowCount();
+
+    // Clicking in the body of the preview is what triggered this: the text
+    // area takes the keyboard, and Ctrl+W is DeleteStartOfWord in Qt's
+    // standard bindings, so the read-only editor claimed the key before the
+    // window shortcut was consulted.
+    QQuickItem* text = m_harness->item(QStringLiteral("previewText"));
+    QVERIFY(text);
+    text->forceActiveFocus();
+    m_harness->settle(4);
+    QVERIFY2(text->hasActiveFocus(), "the text area has to hold the keyboard for this to mean anything");
+
+    m_harness->key(Qt::Key_W, Qt::ControlModifier);
+    QVERIFY2(m_harness->until(
+                 [this, tabsBefore] { return m_harness->app()->tabs()->rowCount() == tabsBefore - 1; }),
+        "Ctrl+W must close the tab even when the preview body has the keyboard");
+}
+
+void TestWalkthrough::theTerminalOpensInTheFolderYouAreLookingAt()
+{
+    TerminalController* terminal = m_harness->app()->terminal();
+    QVERIFY(terminal);
+    if (!terminal->isAvailable())
+        QSKIP("no pseudo-terminal on this platform");
+
+    QVERIFY(!terminal->isVisible());
+
+    const QString here = pane()->currentUri();
+    m_harness->app()->triggerAction(QStringLiteral("mole.tools.terminal"));
+    m_harness->settle(6);
+
+    QVERIFY2(terminal->isVisible(), "the panel appears");
+    QVERIFY2(terminal->isRunning(), "with a shell in it");
+    // Opened from a folder, it starts there -- which is the whole reason for a
+    // panel rather than a separate terminal application.
+    QCOMPARE(terminal->workingDirectory(), VfsUri::fromString(here).path());
+
+    // A real shell on a real terminal: it answers.
+    terminal->sendText(QStringLiteral("echo mole-panel-marker\n"));
+    QVERIFY2(m_harness->until(
+                 [terminal] {
+                     for (int row = 0; row < terminal->rows(); ++row) {
+                         if (terminal->rowText(row).contains(QStringLiteral("mole-panel-marker")))
+                             return true;
+                     }
+                     return false;
+                 },
+                 10000),
+        "the shell's output reaches the screen");
+
+    m_harness->settle(6);
+    m_harness->screenshot(QStringLiteral("10-terminal"));
+
+    // The same key closes it, which is what makes it a panel rather than a tab.
+    m_harness->app()->triggerAction(QStringLiteral("mole.tools.terminal"));
+    m_harness->settle(4);
+    QVERIFY(!terminal->isVisible());
+}
+
+void TestWalkthrough::theDrivesDialogOffersBackendsAndAForm()
+{
+    m_harness->app()->triggerAction(QStringLiteral("mole.file.drives"));
+
+    QObject* dialog = m_harness->object(QStringLiteral("drivesDialog"));
+    QVERIFY(dialog);
+    // Waiting for `opened`, not for `visible`: the enter transition runs after
+    // the dialog appears and its completion resets the form.
+    QVERIFY(m_harness->until([dialog] { return dialog->property("opened").toBool(); }));
+
+    QVERIFY(m_harness->app()->unlockCredentials(QStringLiteral("test-passphrase")));
+
+    // The list of backends has to reach the picker. An empty picker leaves a
+    // dialog that looks finished and can do nothing.
+    QQuickItem* picker = m_harness->item(QStringLiteral("driveKindPicker"));
+    QVERIFY2(picker, "the kind picker is on screen");
+    const QVariantList kinds = picker->property("model").toList();
+    QVERIFY2(!kinds.isEmpty(), "the backends reach the picker");
+
+    // Pressing add must change something visible. It used to reset a dialog
+    // that already opened in exactly that state, so the screen stayed put.
+    QQuickItem* addButton = m_harness->item(QStringLiteral("addDriveButton"));
+    QVERIFY(addButton);
+    QVERIFY(QMetaObject::invokeMethod(addButton, "clicked"));
+    m_harness->settle(4);
+    QQuickItem* prompt = m_harness->item(QStringLiteral("drivePickPrompt"));
+    QVERIFY2(prompt && prompt->isVisible(), "the panel says what to do next");
+
+    int index = -1;
+    for (int i = 0; i < kinds.size(); ++i) {
+        const QVariantMap kind = kinds.at(i).toMap();
+        if (kind.value(QStringLiteral("available")).toBool()
+            && kind.value(QStringLiteral("variant")).toString() == QLatin1String("memory")) {
+            index = i;
+            break;
+        }
+    }
+    if (index < 0) {
+        for (int i = 0; i < kinds.size() && index < 0; ++i) {
+            if (kinds.at(i).toMap().value(QStringLiteral("available")).toBool())
+                index = i;
+        }
+    }
+    QVERIFY2(index >= 0, "at least one backend is usable");
+
+    picker->setProperty("currentIndex", index);
+    QVERIFY(QMetaObject::invokeMethod(picker, "activated", Q_ARG(int, index)));
+    QMetaObject::invokeMethod(picker->property("popup").value<QObject*>(), "close");
+    m_harness->settle(6);
+
+    // The form has to appear *with a size*. A layout Qt has given up on leaves
+    // its children present and zero pixels tall, which looks identical to a
+    // button that did nothing.
+    QQuickItem* nameField = m_harness->item(QStringLiteral("driveNameField"));
+    QVERIFY2(nameField, "the form exists once a kind is chosen");
+    QVERIFY2(nameField->isVisible(), "and it is on screen");
+    QVERIFY2(nameField->width() > 40 && nameField->height() > 10,
+        qPrintable(QStringLiteral("the name field has room to type in, got %1x%2")
+                       .arg(nameField->width())
+                       .arg(nameField->height())));
+
+    QQuickItem* saveButton = m_harness->item(QStringLiteral("saveDriveButton"));
+    QVERIFY(saveButton);
+    QVERIFY(saveButton->isVisible());
+    QVERIFY(saveButton->height() > 10);
+
+    // And saving has to put the drive in the list beside it. The list was bound
+    // to a plain method call, which QML evaluates once and never again, so a
+    // saved drive stayed invisible however well the save itself worked.
+    const int before = m_harness->app()->configuredDrives().size();
+    nameField->setProperty("text", QStringLiteral("Test drive"));
+    QVERIFY(QMetaObject::invokeMethod(saveButton, "clicked"));
+    QVERIFY(
+        m_harness->until([this, before] { return m_harness->app()->configuredDrives().size() > before; }));
+
+    QQuickItem* list = m_harness->item(QStringLiteral("configuredDriveList"));
+    QVERIFY(list);
+    QVERIFY2(m_harness->until([list] { return list->property("count").toInt() > 0; }),
+        "the new drive shows up in Your drives");
+
+    m_harness->settle(4);
+    m_harness->screenshot(QStringLiteral("11-drives"));
+}
+
+/// Every backend, not just the one that happened to be picked. The forms are
+/// built from field descriptions the backends supply, so a field of a kind no
+/// delegate handles -- or a default value of a type the delegate cannot take --
+/// only shows up on whichever provider happens to declare one.
+void TestWalkthrough::everyBackendBuildsAFormWithoutComplaint()
+{
+    m_harness->app()->triggerAction(QStringLiteral("mole.file.drives"));
+    QObject* dialog = m_harness->object(QStringLiteral("drivesDialog"));
+    QVERIFY(dialog);
+    QVERIFY(m_harness->until([dialog] { return dialog->property("opened").toBool(); }));
+
+    const QVariantList kinds = m_harness->app()->driveKinds();
+    QVERIFY(!kinds.isEmpty());
+
+    // Counted, not eyeballed. A form that builds but complains on every field
+    // is a form whose values never reached it, and the test that only checked
+    // the fields existed would have called that a pass.
+    static QStringList complaints;
+    complaints.clear();
+    QtMessageHandler previous
+        = qInstallMessageHandler([](QtMsgType type, const QMessageLogContext&, const QString& text) {
+              if (type == QtWarningMsg || type == QtCriticalMsg)
+                  complaints.append(text);
+          });
+
+    int built = 0;
+    int fieldsSeen = 0;
+    for (const QVariant& entry : kinds) {
+        const QVariantMap kind = entry.toMap();
+        if (!kind.value(QStringLiteral("available")).toBool())
+            continue;
+
+        dialog->setProperty("factory", kind.value(QStringLiteral("factory")));
+        dialog->setProperty("variant", kind.value(QStringLiteral("variant")));
+        m_harness->settle(2);
+
+        QQuickItem* fields = m_harness->item(QStringLiteral("driveFieldRepeater"));
+        if (fields) {
+            fieldsSeen += fields->property("count").toInt();
+            // With a size. A layout the engine has given up on leaves its
+            // children present and zero pixels wide, which counts the same as a
+            // form that works if all the test does is count.
+            if (fields->property("count").toInt() > 0) {
+                QVERIFY2(fields->width() > 40,
+                    qPrintable(QStringLiteral("%1 fields laid out %2 wide in %3")
+                                   .arg(fields->property("count").toInt())
+                                   .arg(fields->width())
+                                   .arg(kind.value(QStringLiteral("variant")).toString())));
+            }
+        }
+        ++built;
+    }
+
+    qInstallMessageHandler(previous);
+
+    qWarning("built %d forms, %d fields in total", built, fieldsSeen);
+    QVERIFY2(built > 10, "the backends are there to be built");
+    QVERIFY2(fieldsSeen > 0, "and they ask for something");
+    if (!complaints.isEmpty()) {
+        qWarning("%s", qPrintable(complaints.mid(0, 5).join(QLatin1Char('\n'))));
+        QFAIL(qPrintable(QStringLiteral("%1 complaints while building the forms").arg(complaints.size())));
+    }
+}
+
+/// The path with a secret on it. Saving a drive that needs no password never
+/// reaches the credential store at all, so a suite full of those says nothing
+/// about the case every real remote is.
+void TestWalkthrough::aDriveWithAPasswordSavesAndConnects()
+{
+    QVERIFY(m_harness->app()->unlockCredentials(QStringLiteral("test-passphrase")));
+
+    const QVariantList kinds = m_harness->app()->driveKinds();
+    QString factory;
+    QString variant;
+    QString secretKey;
+    for (const QVariant& entry : kinds) {
+        const QVariantMap kind = entry.toMap();
+        if (!kind.value(QStringLiteral("available")).toBool())
+            continue;
+        const QVariantList fields
+            = m_harness->app()->driveFields(kind.value(QStringLiteral("factory")).toString(),
+                kind.value(QStringLiteral("variant")).toString());
+        for (const QVariant& fieldValue : fields) {
+            const QVariantMap field = fieldValue.toMap();
+            if (field.value(QStringLiteral("secret")).toBool()) {
+                factory = kind.value(QStringLiteral("factory")).toString();
+                variant = kind.value(QStringLiteral("variant")).toString();
+                secretKey = field.value(QStringLiteral("key")).toString();
+                break;
+            }
+        }
+        if (!factory.isEmpty())
+            break;
+    }
+    QVERIFY2(!factory.isEmpty(), "some backend asks for a password");
+    qWarning("saving a %s drive with a secret %s", qPrintable(variant), qPrintable(secretKey));
+
+    QVariantMap values;
+    values.insert(secretKey, QStringLiteral("hunter2"));
+    QVERIFY(m_harness->app()->saveDrive(
+        QString(), QStringLiteral("Secret drive"), factory, variant, QString(), values));
+
+    const QVariantList saved = m_harness->app()->configuredDrives();
+    QVERIFY(!saved.isEmpty());
+    const QVariantMap drive = saved.last().toMap();
+    QCOMPARE(drive.value(QStringLiteral("name")).toString(), QStringLiteral("Secret drive"));
+
+    // The password must have gone into the store, not into the settings file
+    // beside it.
+    const QString remotes = QString::fromLocal8Bit(qgetenv("MOLE_REMOTES_PATH"));
+    QVERIFY(!remotes.isEmpty());
+    QFile file(remotes);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QByteArray onDisk = file.readAll();
+    QVERIFY2(!onDisk.contains("hunter2"), "the password is not written in the clear");
+}
+
+/// Pressing connect from inside a row of the drive list. The handler belongs to
+/// a delegate, and connecting tells the list its contents changed -- so the list
+/// can rebuild, and destroy the very delegate whose handler is still running.
+void TestWalkthrough::connectingFromTheListSurvivesTheListRebuilding()
+{
+    QVERIFY(m_harness->app()->unlockCredentials(QStringLiteral("test-passphrase")));
+    QVERIFY(m_harness->app()->saveDrive(QString(), QStringLiteral("Scratch"), QStringLiteral("rclone"),
+        QStringLiteral("memory"), QString(), QVariantMap()));
+
+    m_harness->app()->triggerAction(QStringLiteral("mole.file.drives"));
+    QObject* dialog = m_harness->object(QStringLiteral("drivesDialog"));
+    QVERIFY(dialog);
+    QVERIFY(m_harness->until([dialog] { return dialog->property("opened").toBool(); }));
+
+    QQuickItem* list = m_harness->item(QStringLiteral("configuredDriveList"));
+    QVERIFY(list);
+    QVERIFY(m_harness->until([list] { return list->property("count").toInt() > 0; }));
+
+    QList<QQuickItem*> buttons = m_harness->items(QStringLiteral("driveConnectButton"));
+    QVERIFY2(!buttons.isEmpty(), "the row has a connect button");
+
+    // Twice: connect, then disconnect. Each emits the change that rebuilds the
+    // list under the handler doing the emitting.
+    QVERIFY(QMetaObject::invokeMethod(buttons.first(), "clicked"));
+    m_harness->settle(8);
+
+    buttons = m_harness->items(QStringLiteral("driveConnectButton"));
+    QVERIFY(!buttons.isEmpty());
+    QVERIFY(QMetaObject::invokeMethod(buttons.first(), "clicked"));
+    m_harness->settle(8);
+
+    // Still here, still able to answer, and the row reflects what happened.
+    QVERIFY2(m_harness->item(QStringLiteral("configuredDriveList")), "still standing");
+    QCOMPARE(m_harness->app()->configuredDrives().size(), 1);
+}
+
+/// Typing in the kind picker to narrow sixty backends down to the one wanted.
+/// The picker is editable precisely so this works, and it is the first thing
+/// anybody does when the list is that long.
+void TestWalkthrough::typingIntoTheKindPickerFiltersIt()
+{
+    m_harness->app()->triggerAction(QStringLiteral("mole.file.drives"));
+    QObject* dialog = m_harness->object(QStringLiteral("drivesDialog"));
+    QVERIFY(dialog);
+    QVERIFY(m_harness->until([dialog] { return dialog->property("opened").toBool(); }));
+
+    QQuickItem* picker = m_harness->item(QStringLiteral("driveKindPicker"));
+    QVERIFY(picker);
+
+    // The state it is really done from: a backend already chosen, so a form of
+    // its fields exists, and a value already typed into one of them.
+    dialog->setProperty("factory", QStringLiteral("rclone"));
+    dialog->setProperty("variant", QStringLiteral("sftp"));
+    m_harness->settle(6);
+    QQuickItem* repeater = m_harness->item(QStringLiteral("driveFieldRepeater"));
+    QVERIFY(repeater);
+    qWarning("form has %d fields", repeater->property("count").toInt());
+    QVERIFY(QMetaObject::invokeMethod(dialog, "setFieldValue", Q_ARG(QVariant, QStringLiteral("host")),
+        Q_ARG(QVariant, QStringLiteral("abc"))));
+    m_harness->settle(4);
+
+    picker->forceActiveFocus();
+    m_harness->settle(2);
+
+    // Through the add button, so the dropdown is open -- that is the state the
+    // filtering is done in, and an open dropdown is a second view over the same
+    // model with its own navigation.
+    QQuickItem* addButton = m_harness->item(QStringLiteral("addDriveButton"));
+    QVERIFY(addButton);
+    QVERIFY(QMetaObject::invokeMethod(addButton, "clicked"));
+    m_harness->settle(4);
+
+    QObject* popup = picker->property("popup").value<QObject*>();
+    QVERIFY(popup);
+    QVERIFY2(popup->property("visible").toBool(), "the dropdown is open");
+    // Open is not enough. A dropdown capped against a height that is zero while
+    // it is shut opens at zero pixels and shows nothing, which is worse than
+    // the sixty-entry wall the cap was meant to prevent.
+    const qreal popupHeight = popup->property("height").toReal();
+    QVERIFY2(popupHeight > 100 && popupHeight <= 340,
+        qPrintable(QStringLiteral("the dropdown is %1 pixels tall").arg(popupHeight)));
+
+    // Real key events. Setting the text directly skips the completion, the key
+    // search and the popup navigation that typing actually drives.
+    m_harness->type(QStringLiteral("abc"));
+    m_harness->settle(4);
+    qWarning("after typing: editText='%s' focus=%s", qPrintable(picker->property("editText").toString()),
+        qPrintable(m_harness->focusChain()));
+    for (int i = 0; i < 3; ++i) {
+        m_harness->key(Qt::Key_Backspace);
+        m_harness->settle(2);
+    }
+    m_harness->type(QStringLiteral("sftp"));
+    m_harness->settle(4);
+
+    QVERIFY2(m_harness->item(QStringLiteral("driveKindPicker")), "still standing");
+}
+
+void TestWalkthrough::emptyWindowExplainsItself()
+{
+    while (m_harness->app()->tabs()->rowCount() > 0)
+        m_harness->app()->tabs()->closeTab(0);
+    m_harness->settle(6);
+
+    QCOMPARE(m_harness->app()->tabs()->rowCount(), 0);
+    m_harness->screenshot(QStringLiteral("09-no-tabs"));
+}
+
+int main(int argc, char** argv)
+{
+    QGuiApplication app(argc, argv);
+    app.setOrganizationName(QStringLiteral("Mole"));
+    app.setApplicationName(QStringLiteral("mole-tests"));
+    mole::registerCoreMetaTypes();
+    QQuickStyle::setStyle(QStringLiteral("Material"));
+
+    TestWalkthrough testObject;
+    QTEST_SET_MAIN_SOURCE_PATH
+    return QTest::qExec(&testObject, argc, argv);
+}
+
+#include "tst_Walkthrough.moc"
