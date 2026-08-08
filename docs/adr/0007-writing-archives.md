@@ -30,6 +30,11 @@ registered at all, so it cannot be offered and then fail.
 
 **It writes a new archive and nothing else.** Archive mounts stay read-only.
 
+**A password is offered only where the format can carry one.** Zip, encrypted with
+AES-256. A passphrase given for tar.gz or tar.xz is *refused* rather than ignored:
+those formats have no notion of one, and handing back an archive anybody can open to
+someone who typed a password is the worst answer available.
+
 **Both ends are drives.** Sources are read through `IFileSystem` and the archive is
 written through it too, so packing a selection on a remote drive is the same code as
 packing one on local disk.
@@ -56,6 +61,14 @@ and one obvious remedy.
   mistaken for a good one.
 - The format is chosen per operation rather than remembered, because unlike how a
   viewer shows a file, what to pack something as depends on who is going to open it.
+  The same goes for a password, which is never stored anywhere.
+- AES-256 rather than zip's original encryption, which is broken and known to be. A
+  build of libarchive that cannot do it fails the operation rather than falling back to
+  the weak scheme.
+- What is packed follows the rule every other operation here follows: the ticked
+  entries, or the row under the cursor when nothing is ticked, and the folder in view
+  only when there is no row at all. The dialog names it before anything happens, so
+  the rule is never something to be guessed at.
 - The test packs a tree and then reads it back through the archive *reading* backend,
   so the writer and the reader check each other rather than the writer being checked
   against its own idea of what it wrote.

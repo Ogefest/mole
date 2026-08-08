@@ -16,12 +16,17 @@ Everything in either is also reachable by typing — see [the palette](palette.m
 
 ![The compress dialog](images/13-compress.png)
 
-`Operations → Compress…` packs the ticked files and folders — or the folder you are in
-when nothing is ticked — into a new archive beside them. Two questions, a name and a
-kind, with the name suggested from what is selected.
+`Operations → Compress…` packs the ticked files and folders — or the row under the
+cursor when nothing is ticked, and the folder you are in when there is no row at all —
+into a new archive beside them. The dialog lists exactly what is going in, so it can be
+checked before anything happens, and suggests a name from what is selected.
 
 Zip, tar.gz or tar.xz. Zip is the default because it is the one anyone can open
 anywhere without being told how.
+
+A zip can also be protected with a password, encrypted with AES-256. The box is offered
+only for zip: a tar has no notion of a password and gzip and xz encrypt nothing, so
+rather than accepting one and quietly ignoring it, those formats say why they cannot.
 
 It runs in the background like every other job that takes time, and it can be
 cancelled. A cancelled or failed compression leaves nothing behind: an archive that

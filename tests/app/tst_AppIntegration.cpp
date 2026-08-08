@@ -58,6 +58,7 @@ private slots:
     void narrowingResultsDoesNotSearchAgain();
     void aSetCanBeBuiltFromWhatTheSearchFound();
     void revealingAFileOpensItsFolderWithTheCursorOnIt();
+    void compressActsOnTheCursorWhenNothingIsTicked();
     void textPreviewProviderClaimsTextFiles();
     void archivePluginMountsAZip();
     void dualPaneIsItsOwnFeature();
@@ -538,6 +539,41 @@ void TestAppIntegration::revealingAFileOpensItsFolderWithTheCursorOnIt()
     const QString other = m_tree->rootUri().child(QStringLiteral("reports/deep/haystack.txt")).toString();
     m_app->revealFile(other);
     QCOMPARE(pane->files()->uriAt(pane->currentIndex()), other);
+}
+
+void TestAppIntegration::compressActsOnTheCursorWhenNothingIsTicked()
+{
+    auto* browser = qobject_cast<BrowserController*>(m_app->tabs()->controllerAt(0));
+    QVERIFY(browser);
+    BrowserPaneController* pane = browser->activePane();
+    QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() == 3; }));
+
+    const QString notes = m_tree->rootUri().child(QStringLiteral("notes.txt")).toString();
+    const QString reports = m_tree->rootUri().child(QStringLiteral("reports")).toString();
+
+    // Ticked wins, and it says so before anything happens.
+    pane->files()->setSelected(pane->files()->rowOfUri(notes), true);
+    QCOMPARE(m_app->currentTargetsOrCursor(), QStringList { notes });
+    QCOMPARE(m_app->compressionSubject(), QStringLiteral("notes.txt"));
+    QVERIFY(m_app->suggestedArchiveName(QStringLiteral("zip")).endsWith(QStringLiteral("notes.zip")));
+
+    // Nothing ticked means the row under the cursor -- the rule F5, F8 and analysing
+    // already follow, and the one compressing used to be alone in ignoring.
+    pane->files()->clearSelection();
+    pane->setCurrentIndex(pane->files()->rowOfUri(reports));
+    QCOMPARE(m_app->currentTargetsOrCursor(), QStringList { reports });
+    QCOMPARE(m_app->compressionSubject(), QStringLiteral("reports"));
+
+    // Several ticked are counted rather than listed, because a dialog is not a
+    // listing.
+    pane->files()->selectAll();
+    QVERIFY(m_app->compressionSubject().contains(QStringLiteral("selected items")));
+
+    // Only zip can carry a password, and the interface is told so rather than
+    // offering a box that would be ignored.
+    QVERIFY(m_app->formatSupportsPassword(QStringLiteral("zip")));
+    QVERIFY(!m_app->formatSupportsPassword(QStringLiteral("tar.gz")));
+    QVERIFY(!m_app->formatSupportsPassword(QStringLiteral("tar.xz")));
 }
 
 void TestAppIntegration::textPreviewProviderClaimsTextFiles()

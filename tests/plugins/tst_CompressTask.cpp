@@ -31,6 +31,8 @@ private slots:
     void cancellingLeavesNoHalfWrittenArchive();
     void anUnreadableFileIsRecordedRatherThanFatal();
     void namesAndSuffixesMatchTheFormats();
+    void aPasswordEncryptsTheContents();
+    void aPasswordOnAFormatThatCannotCarryOneIsRefused();
 
 private:
     /// Runs a compression to completion and returns the task.
@@ -224,6 +226,69 @@ void TestCompressTask::namesAndSuffixesMatchTheFormats()
     // Anything unrecognised is zip, because that is the one anyone can open.
     QCOMPARE(CompressTask::formatFromName(QStringLiteral("nonsense")), CompressTask::Format::Zip);
     QCOMPARE(CompressTask::formatFromName(QString()), CompressTask::Format::Zip);
+}
+
+void TestCompressTask::aPasswordEncryptsTheContents()
+{
+    CompressTask::Request request;
+    request.sourceFileSystem = m_fs;
+    request.targetFileSystem = m_fs;
+    request.sources.append(m_tree->rootUri().child(QStringLiteral("notes.txt")));
+    request.target = m_tree->rootUri().child(QStringLiteral("secret.zip"));
+    request.passphrase = QStringLiteral("correct horse battery staple");
+
+    auto* task = new CompressTask(request);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task, 30000));
+    QCOMPARE(task->state(), Task::State::Succeeded);
+    QVERIFY(QFile::exists(QDir(m_tree->path()).filePath(QStringLiteral("secret.zip"))));
+
+    // The point of the password, checked rather than assumed: the plain text is not
+    // sitting in the file. An archive that accepted a password and wrote the
+    // contents in the clear would pass every other assertion here.
+    QFile written(QDir(m_tree->path()).filePath(QStringLiteral("secret.zip")));
+    QVERIFY(written.open(QIODevice::ReadOnly));
+    const QByteArray bytes = written.readAll();
+    QVERIFY2(!bytes.contains(QByteArray("plain notes")), "the contents must not be readable in the file");
+
+    // And the reader that browses archives cannot get at the contents without it --
+    // the names are still listed, because zip encrypts what is in the entries rather
+    // than the list of them.
+    auto archive
+        = std::make_shared<ArchiveFileSystem>(QDir(m_tree->path()).filePath(QStringLiteral("secret.zip")));
+    Result<std::unique_ptr<QIODevice>> opened
+        = archive->openRead(VfsUri::fromString(QStringLiteral("archive:///notes.txt")));
+    if (opened.ok()) {
+        const QByteArray got = opened.value()->readAll();
+        QVERIFY2(got != QByteArray("plain notes"),
+            "reading an encrypted entry without the password must not hand back the contents");
+    }
+}
+
+void TestCompressTask::aPasswordOnAFormatThatCannotCarryOneIsRefused()
+{
+    QVERIFY(!CompressTask::formatSupportsPassword(CompressTask::Format::TarGz));
+    QVERIFY(!CompressTask::formatSupportsPassword(CompressTask::Format::TarXz));
+    QVERIFY(CompressTask::formatSupportsPassword(CompressTask::Format::Zip));
+
+    CompressTask::Request request;
+    request.sourceFileSystem = m_fs;
+    request.targetFileSystem = m_fs;
+    request.sources.append(m_tree->rootUri().child(QStringLiteral("notes.txt")));
+    request.target = m_tree->rootUri().child(QStringLiteral("impossible.tar.gz"));
+    request.format = CompressTask::Format::TarGz;
+    request.passphrase = QStringLiteral("hunter2");
+
+    auto* task = new CompressTask(request);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task, 30000));
+
+    // Refused, not silently written in the clear. Someone who typed a password and
+    // got an archive anybody can open has been lied to.
+    QCOMPARE(task->state(), Task::State::Failed);
+    QVERIFY(task->error().message.contains(QStringLiteral("password")));
+    QVERIFY2(!QFile::exists(QDir(m_tree->path()).filePath(QStringLiteral("impossible.tar.gz"))),
+        "and nothing is left behind");
 }
 
 MOLE_TEST_MAIN(TestCompressTask)

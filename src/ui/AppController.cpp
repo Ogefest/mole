@@ -1248,6 +1248,27 @@ QStringList AppController::currentTargets() const
     return selected;
 }
 
+QStringList AppController::currentTargetsOrCursor() const
+{
+    QStringList ticked = currentTargets();
+    if (!ticked.isEmpty())
+        return ticked;
+
+    // Nothing ticked means "whatever the cursor is on", which is what every other
+    // operation here does and what a commander-style manager has always done.
+    QObject* pane = currentTabProperty("activePane").value<QObject*>();
+    QObject* files = pane ? pane->property("files").value<QObject*>() : nullptr;
+    if (!files)
+        return {};
+
+    const int row = pane->property("currentIndex").toInt();
+    QString uri;
+    QMetaObject::invokeMethod(files, "uriAt", Q_RETURN_ARG(QString, uri), Q_ARG(int, row));
+    if (!uri.isEmpty())
+        ticked.append(uri);
+    return ticked;
+}
+
 QStringList AppController::selectedFolders() const
 {
     QObject* pane = currentTabProperty("activePane").value<QObject*>();
@@ -1273,6 +1294,61 @@ QStringList AppController::selectedFolders() const
     return folders;
 }
 
+QString AppController::compressionSubject() const
+{
+    const QStringList targets = currentTargetsOrCursor();
+    if (targets.isEmpty()) {
+        const QString here = currentLocation();
+        return here.isEmpty() ? QString()
+                              : QStringLiteral("the folder %1").arg(VfsUri::fromString(here).fileName());
+    }
+    if (targets.size() == 1)
+        return VfsUri::fromString(targets.first()).fileName();
+    return QStringLiteral("%1 selected items").arg(targets.size());
+}
+
+QVariantList AppController::compressionTargets() const
+{
+    QStringList uris = currentTargetsOrCursor();
+    // The folder in view is what gets packed when there is no row at all, and it is
+    // as much a target as anything ticked -- so it is listed the same way.
+    if (uris.isEmpty() && !currentLocation().isEmpty())
+        uris.append(currentLocation());
+
+    QObject* pane = currentTabProperty("activePane").value<QObject*>();
+    QObject* files = pane ? pane->property("files").value<QObject*>() : nullptr;
+
+    QVariantList out;
+    out.reserve(uris.size());
+    for (const QString& uri : uris) {
+        bool isDir = false;
+        if (files) {
+            int row = -1;
+            QMetaObject::invokeMethod(files, "rowOfUri", Q_RETURN_ARG(int, row), Q_ARG(QString, uri));
+            if (row >= 0)
+                QMetaObject::invokeMethod(files, "isDirAt", Q_RETURN_ARG(bool, isDir), Q_ARG(int, row));
+            else
+                isDir = uri == currentLocation(); // the folder in view is not a row in it
+        }
+        out.append(QVariantMap { { QStringLiteral("name"), VfsUri::fromString(uri).fileName() },
+            { QStringLiteral("isDir"), isDir } });
+    }
+    return out;
+}
+
+bool AppController::formatSupportsPassword(const QString& format) const
+{
+#ifdef MOLE_HAVE_ARCHIVE
+    // Only zip carries a password. A tar is a container with no notion of one, and
+    // gzip and xz encrypt nothing -- so the box is not offered rather than being
+    // offered and ignored.
+    return CompressTask::formatSupportsPassword(CompressTask::formatFromName(format));
+#else
+    Q_UNUSED(format);
+    return false;
+#endif
+}
+
 bool AppController::canCompress() const
 {
 #ifdef MOLE_HAVE_ARCHIVE
@@ -1294,7 +1370,7 @@ QStringList AppController::compressionFormats() const
 QString AppController::suggestedArchiveName(const QString& format) const
 {
 #ifdef MOLE_HAVE_ARCHIVE
-    const QStringList targets = currentTargets();
+    const QStringList targets = currentTargetsOrCursor();
     const QString here = currentLocation();
     // One item takes its own name; several take the folder's, because "3 items.zip"
     // tells you nothing a month later.
@@ -1317,10 +1393,11 @@ QString AppController::suggestedArchiveName(const QString& format) const
 #endif
 }
 
-void AppController::compressSelection(const QString& archiveName, const QString& format)
+void AppController::compressSelection(
+    const QString& archiveName, const QString& format, const QString& passphrase)
 {
 #ifdef MOLE_HAVE_ARCHIVE
-    QStringList targets = currentTargets();
+    QStringList targets = currentTargetsOrCursor();
     const QString here = currentLocation();
     if (targets.isEmpty() && !here.isEmpty())
         targets.append(here);
@@ -1329,6 +1406,7 @@ void AppController::compressSelection(const QString& archiveName, const QString&
 
     CompressTask::Request request;
     request.format = CompressTask::formatFromName(format);
+    request.passphrase = passphrase;
     for (const QString& uri : targets)
         request.sources.append(VfsUri::fromString(uri));
 

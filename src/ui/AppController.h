@@ -189,6 +189,19 @@ public:
     /// same way, which is what lets every operation take a set without knowing
     /// what one is.
     Q_INVOKABLE QStringList currentTargets() const;
+    /// What an operation acts on: the ticked entries, or the row under the cursor
+    /// when nothing is ticked -- the rule F5, F8 and analysing already follow. Empty
+    /// only when there is no row at all, which is when "the folder in view" applies.
+    Q_INVOKABLE QStringList currentTargetsOrCursor() const;
+    /// A sentence naming what would be packed, for the dialog to show before
+    /// anything happens.
+    Q_INVOKABLE QString compressionSubject() const;
+    /// Exactly what would be packed, one entry per line: `name` and `isDir`, in the
+    /// order it would be written. A count is a summary; this is the answer.
+    Q_INVOKABLE QVariantList compressionTargets() const;
+    /// False for formats that cannot carry a password at all, so the interface can
+    /// say so rather than offering a box that would be quietly ignored.
+    Q_INVOKABLE bool formatSupportsPassword(const QString& format) const;
 
     /// Adds the current targets to a set, creating it when `setId` is empty.
     /// Returns how many were new.
@@ -225,7 +238,8 @@ public:
     Q_INVOKABLE QString suggestedArchiveName(const QString& format) const;
     /// Packs the selection, or the folder in view when nothing is selected, into a
     /// new archive beside it.
-    Q_INVOKABLE void compressSelection(const QString& archiveName, const QString& format);
+    Q_INVOKABLE void compressSelection(
+        const QString& archiveName, const QString& format, const QString& passphrase = {});
     Q_INVOKABLE void queueScan(const QString& uri, const QString& label);
 
     // ---- application menu -------------------------------------------------

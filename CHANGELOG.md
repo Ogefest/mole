@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- Compressing lists exactly what it is about to pack, acts on the row under the cursor
+  when nothing is ticked, and can protect a zip with a password.
 - A user guide in docs/guide/, illustrated with screenshots the test suite takes
   immediately after asserting what they show.
 - The selection can be compressed into a new zip, tar.gz or tar.xz beside it, packed

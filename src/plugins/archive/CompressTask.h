@@ -28,6 +28,10 @@ public:
     static Format formatFromName(const QString& name);
     /// The suffix a chosen format wants, so a name can be completed for the user.
     static QString suffixFor(Format format);
+    /// Only zip carries a password: a tar has no notion of one and gzip and xz
+    /// encrypt nothing. Asked rather than assumed, so the interface never offers a
+    /// box that would be quietly ignored.
+    static bool formatSupportsPassword(Format format);
 
     struct Request
     {
@@ -38,6 +42,11 @@ public:
         /// The archive to write. Must not already exist.
         VfsUri target;
         Format format = Format::Zip;
+        /// Empty for an archive anyone can open. Set, the contents are encrypted --
+        /// AES-256 for zip, and refused outright for a format that cannot carry it,
+        /// because writing something unencrypted when a password was asked for is
+        /// the worst possible answer.
+        QString passphrase;
     };
 
     explicit CompressTask(Request request, QObject* parent = nullptr);

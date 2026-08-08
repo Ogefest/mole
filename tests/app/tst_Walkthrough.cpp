@@ -1005,6 +1005,23 @@ void TestWalkthrough::compressingTheSelectionMakesAnArchiveBesideIt()
     QVERIFY2(name->property("text").toString().endsWith(QStringLiteral(".zip")),
         "zip by default, because it is the one anyone can open");
 
+    // Exactly what goes in, listed. A count is a summary; the point of a dialog before
+    // an operation is being able to see it is aimed at the right things.
+    QQuickItem* targets = m_harness->item(QStringLiteral("compressTargetList"));
+    QVERIFY2(targets, "the dialog lists what would be packed");
+    QCOMPARE(targets->property("count").toInt(), 2);
+    QCOMPARE(m_harness->app()->compressionTargets().size(), 2);
+    QStringList listed;
+    for (const QVariant& entry : m_harness->app()->compressionTargets())
+        listed.append(entry.toMap().value(QStringLiteral("name")).toString());
+    listed.sort();
+    QCOMPARE(listed, QStringList({ QStringLiteral("prices.csv"), QStringLiteral("report.txt") }));
+
+    // And a password is offered, since this is a zip.
+    QQuickItem* protect = m_harness->item(QStringLiteral("protectWithPassword"));
+    QVERIFY(protect);
+    QVERIFY2(protect->property("enabled").toBool(), "zip can carry one");
+
     m_harness->screenshot(QStringLiteral("13-compress"));
 
     name->setProperty("text", QStringLiteral("documents.zip"));

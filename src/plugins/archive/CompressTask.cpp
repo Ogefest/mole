@@ -70,6 +70,11 @@ QString CompressTask::suffixFor(Format format)
     return QStringLiteral(".zip");
 }
 
+bool CompressTask::formatSupportsPassword(Format format)
+{
+    return format == Format::Zip;
+}
+
 CompressTask::CompressTask(Request request, QObject* parent)
     : Task(request.sources.size() == 1 ? QStringLiteral("Compress %1").arg(request.sources.first().fileName())
                                        : QStringLiteral("Compress %1 items").arg(request.sources.size()),
@@ -137,6 +142,15 @@ void CompressTask::run()
         return;
     }
 
+    // Refused rather than written in the clear. Someone who typed a password and got
+    // an archive anybody can open has been quietly lied to.
+    if (!m_request.passphrase.isEmpty() && !formatSupportsPassword(m_request.format)) {
+        fail(VfsError::make(VfsError::NotSupported,
+            QStringLiteral("Only zip can carry a password; %1 cannot")
+                .arg(suffixFor(m_request.format).mid(1))));
+        return;
+    }
+
     QList<Item> items;
     if (!plan(items)) {
         if (isCancelRequested())
@@ -173,6 +187,21 @@ void CompressTask::run()
         archive_write_set_format_pax_restricted(writer);
         archive_write_add_filter_xz(writer);
         break;
+    }
+
+    if (!m_request.passphrase.isEmpty()) {
+        // AES-256 rather than zip's original scheme, which is broken and known to be.
+        if (archive_write_set_options(writer, "zip:encryption=aes256") != ARCHIVE_OK
+            || archive_write_set_passphrase(writer, m_request.passphrase.toUtf8().constData())
+                != ARCHIVE_OK) {
+            const QString reason = QString::fromLocal8Bit(archive_error_string(writer));
+            archive_write_free(writer);
+            device.reset();
+            discardPartialArchive();
+            fail(VfsError::make(VfsError::IoError,
+                reason.isEmpty() ? QStringLiteral("This libarchive cannot encrypt zip archives") : reason));
+            return;
+        }
     }
 
     if (archive_write_open(writer, &context, nullptr, writeToDevice, nullptr) != ARCHIVE_OK) {

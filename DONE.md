@@ -30,6 +30,37 @@ README.md gained a *Using it* section pointing at the guide, and its list of thi
 yet done lost PDF, SQLite and Parquet — all three are built, and leaving them on a wish
 list would have been the same kind of lie the screenshot rule exists to prevent.
 
+## Compressing: what it packs, and a password
+
+Two changes, and the first was not the one it looked like.
+
+The report was that a selection should be compressed rather than the folder. Measuring
+first: a *ticked* file already was — `currentTargets()` returned it and the suggested
+name followed it. What was empty was the case where a file is only **under the cursor**,
+unticked, which fell back to the whole folder. Compressing was the one operation here
+that ignored the cursor: copying with `F5`, deleting with `F8` and analysing all use the
+commander rule of "ticked entries, or the row under the cursor". It now does too, and
+the folder in view applies only when there is no row at all.
+
+Since a rule about what gets packed should not have to be inferred, the dialog now says
+what it is aimed at — *notes.txt*, *2 selected items*, *the folder documents* — and
+**lists the entries by name**, with folders marked as folders. A count is a summary; the
+point of a dialog before an operation is being able to see it is pointed at the right
+things. The list scrolls and stops growing at a sensible height, so ticking forty files
+does not produce a dialog taller than the window.
+
+A password protects a zip with AES-256, not zip's original scheme, which is broken and
+known to be. It is offered only where the format can carry one: a tar has no notion of a
+password and gzip and xz encrypt nothing, so the box is disabled with a line saying why.
+A passphrase handed to the task for such a format is **refused**, not ignored — someone
+who typed a password and received an archive anybody can open has been quietly lied to,
+which is worse than an error.
+
+The test for it checks the thing that matters rather than the thing that is easy: that
+the plain text is not sitting in the written file, and that the archive reader cannot
+hand the contents back without the password. An implementation that accepted a password
+and wrote everything in the clear would pass any assertion short of that.
+
 ## Compressing files and folders
 
 An operation on the selection — or on the folder in view when nothing is ticked —
