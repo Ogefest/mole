@@ -1,6 +1,7 @@
 #include "host/PreviewRegistry.h"
 #include "plugins/builtin/BuiltinPlugin.h"
 #include "plugins/builtin/PreviewFeature.h"
+#include "plugins/builtin/previews/MarkdownStyle.h"
 #include "plugins/builtin/previews/PreviewProviders.h"
 #include "plugins/builtin/previews/SyntaxHighlighter.h"
 #include "support/TestSupport.h"
@@ -9,11 +10,16 @@
 
 #include "core/CoreMetaTypes.h"
 
+#include <QAbstractTextDocumentLayout>
 #include <QDir>
 #include <QFile>
 #include <QGuiApplication>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTextBlock>
+#include <QTextDocument>
+#include <QTextFrame>
+#include <QTextTable>
 
 using namespace mole;
 using namespace mole::test;
@@ -39,6 +45,16 @@ private slots:
     // --- syntax highlighting ---
     void recognisesHighlightableLanguages_data();
     void recognisesHighlightableLanguages();
+
+    // --- markdown typography ---
+    void markdownHeadingsGetRoomAndScale();
+    void markdownProseIsNotSetSolid();
+    void markdownCodeBlocksGetAReadableSlab();
+    void markdownInlineCodeMatchesTheTextAroundIt();
+    void markdownQuotesKeepTheirNesting();
+    void markdownRulesAndTablesGetRoom();
+    void markdownStylingIsIdempotent();
+    void markdownStylingGivesThePageMoreRoomThanTheImporter();
 
     // --- the tab ---
     void loadsTextContent();
@@ -211,6 +227,263 @@ void TestPreview::recognisesHighlightableLanguages()
     QFETCH(QString, suffix);
     QFETCH(bool, highlighted);
     QCOMPARE(SourceHighlighter::isSupported(suffix), highlighted);
+}
+
+// ------------------------------------------------------ markdown typography
+
+namespace {
+
+MarkdownStyle::Metrics markdownMetrics()
+{
+    MarkdownStyle::Metrics metrics;
+    // A round number, so a ratio that lands on .5 cannot make a test look like
+    // it is asserting the wrong thing.
+    metrics.bodyPixelSize = 16;
+    return metrics;
+}
+
+/// Imports Markdown the way the viewer does and styles it. The text width is set
+/// because half of what these tests check is what the layout does afterwards.
+void loadStyledMarkdown(QTextDocument& document, const QString& markdown)
+{
+    QFont base;
+    base.setPixelSize(markdownMetrics().bodyPixelSize);
+    document.setDefaultFont(base);
+    document.setMarkdown(markdown);
+    document.setTextWidth(600);
+    MarkdownStyle::applyTo(&document, markdownMetrics());
+}
+
+QTextBlock blockSaying(const QTextDocument& document, const QString& text)
+{
+    for (QTextBlock block = document.begin(); block.isValid(); block = block.next()) {
+        if (block.text() == text)
+            return block;
+    }
+    return {};
+}
+
+/// The format of a block's first fragment, which is where a heading's size and a
+/// quote's colour actually live.
+QTextCharFormat firstFragmentFormat(const QTextBlock& block)
+{
+    for (QTextBlock::iterator it = block.begin(); it != block.end(); ++it) {
+        if (it.fragment().isValid())
+            return it.fragment().charFormat();
+    }
+    return {};
+}
+
+} // namespace
+
+void TestPreview::markdownHeadingsGetRoomAndScale()
+{
+    QTextDocument document;
+    loadStyledMarkdown(
+        document, QStringLiteral("# Title\n\nOpening paragraph.\n\n## Section\n\nMore prose.\n"));
+
+    const QTextBlock title = blockSaying(document, QStringLiteral("Title"));
+    const QTextBlock section = blockSaying(document, QStringLiteral("Section"));
+    const QTextBlock prose = blockSaying(document, QStringLiteral("Opening paragraph."));
+    QVERIFY(title.isValid() && section.isValid() && prose.isValid());
+
+    // What the importer leaves out entirely: a heading arrives with no space
+    // above or below it, flush against the paragraph it belongs to.
+    QVERIFY2(section.blockFormat().topMargin() > prose.blockFormat().bottomMargin(),
+        "a heading needs more space above it than an ordinary paragraph break");
+    QVERIFY2(section.blockFormat().topMargin() > section.blockFormat().bottomMargin(),
+        "a heading belongs to the text under it, and spacing is what says so");
+    // The first block has the view's own top padding above it already.
+    QCOMPARE(title.blockFormat().topMargin(), 0.0);
+
+    const int body = markdownMetrics().bodyPixelSize;
+    QVERIFY(firstFragmentFormat(title).font().pixelSize() > firstFragmentFormat(section).font().pixelSize());
+    QVERIFY(firstFragmentFormat(section).font().pixelSize() > body);
+    QVERIFY2(firstFragmentFormat(title).fontWeight() >= QFont::Bold,
+        "Qt leaves a level-one heading at normal weight, which reads as a mistake");
+    QVERIFY2(!firstFragmentFormat(prose).hasProperty(QTextFormat::FontPixelSize),
+        "prose keeps the size the view set, rather than one chosen here");
+}
+
+void TestPreview::markdownProseIsNotSetSolid()
+{
+    QTextDocument document;
+    loadStyledMarkdown(document, QStringLiteral("First paragraph.\n\nSecond paragraph.\n"));
+
+    const QTextBlock first = blockSaying(document, QStringLiteral("First paragraph."));
+    QVERIFY(first.isValid());
+
+    QCOMPARE(static_cast<int>(first.blockFormat().lineHeightType()),
+        static_cast<int>(QTextBlockFormat::ProportionalHeight));
+    QVERIFY2(first.blockFormat().lineHeight() >= 140, "prose set solid is what made this look cramped");
+    // The importer's own paragraph spacing is six pixels, at any text size.
+    QVERIFY2(first.blockFormat().bottomMargin() > 6.0, "a paragraph break has to be visible as one");
+}
+
+void TestPreview::markdownCodeBlocksGetAReadableSlab()
+{
+    QTextDocument document;
+    loadStyledMarkdown(
+        document, QStringLiteral("Before.\n\n```cpp\nint main()\n{\n    return 0;\n}\n```\n\nAfter.\n"));
+
+    const QTextBlock opening = blockSaying(document, QStringLiteral("int main()"));
+    const QTextBlock closing = blockSaying(document, QStringLiteral("}"));
+    QVERIFY(opening.isValid() && closing.isValid());
+
+    const MarkdownStyle::Metrics metrics = markdownMetrics();
+    const QTextCharFormat code = firstFragmentFormat(opening);
+    // Nine points is what the importer sets code to, whatever the body size is.
+    QVERIFY2(
+        !code.hasProperty(QTextFormat::FontPointSize), "the importer's point size has to go, or it wins");
+    QVERIFY2(code.font().pixelSize() >= metrics.bodyPixelSize * 0.8,
+        "code sized well under the prose around it reads as a mistake");
+    QCOMPARE(code.fontFamilies().toStringList().value(0), metrics.monospaceFamily);
+
+    // A fence arrives as one block per line, and the run is spaced as a whole:
+    // margins between the lines would break the band into stripes.
+    QCOMPARE(opening.blockFormat().background().color(), metrics.codeBackground);
+    QCOMPARE(closing.blockFormat().background().color(), metrics.codeBackground);
+    QVERIFY(opening.blockFormat().topMargin() > 0.0);
+    QCOMPARE(opening.blockFormat().bottomMargin(), 0.0);
+    QVERIFY(closing.blockFormat().bottomMargin() > 0.0);
+    QVERIFY2(opening.blockFormat().leftMargin() > 0.0, "the slab is inset from the prose around it");
+    // The slab is painted behind the glyphs, so leading between the lines would
+    // fall outside it and cut the band into stripes.
+    QVERIFY2(opening.blockFormat().lineHeight() <= 100, "code is set solid so its slab stays one band");
+    QCOMPARE(firstFragmentFormat(opening).background().color(), metrics.codeBackground);
+}
+
+void TestPreview::markdownInlineCodeMatchesTheTextAroundIt()
+{
+    QTextDocument document;
+    loadStyledMarkdown(
+        document, QStringLiteral("Run `mole --help` to see the options.\n\n`only a code span`\n"));
+
+    const QTextBlock prose = blockSaying(document, QStringLiteral("Run mole --help to see the options."));
+    QVERIFY(prose.isValid());
+
+    QTextCharFormat span;
+    for (QTextBlock::iterator it = prose.begin(); it != prose.end(); ++it) {
+        if (it.fragment().isValid() && it.fragment().text() == QStringLiteral("mole --help"))
+            span = it.fragment().charFormat();
+    }
+    QVERIFY2(span.isValid(), "the code span has to be found for the rest of this to mean anything");
+    QVERIFY(!span.hasProperty(QTextFormat::FontPointSize));
+    QVERIFY2(span.font().pixelSize() >= markdownMetrics().bodyPixelSize * 0.8,
+        "nine-point code in the middle of a sentence looks like a rendering fault");
+
+    // A paragraph that is nothing but a code span is still a paragraph. Deciding
+    // otherwise from the fragments would give it a slab of its own.
+    const QTextBlock alone = blockSaying(document, QStringLiteral("only a code span"));
+    QVERIFY(alone.isValid());
+    QCOMPARE(alone.blockFormat().background().style(), Qt::NoBrush);
+    QCOMPARE(alone.blockFormat().leftMargin(), 0.0);
+}
+
+void TestPreview::markdownQuotesKeepTheirNesting()
+{
+    QTextDocument document;
+    loadStyledMarkdown(document, QStringLiteral("Prose.\n\n> quoted line\n>\n> > deeper still\n\nAfter.\n"));
+
+    const QTextBlock quoted = blockSaying(document, QStringLiteral("quoted line"));
+    const QTextBlock deeper = blockSaying(document, QStringLiteral("deeper still"));
+    QVERIFY(quoted.isValid() && deeper.isValid());
+
+    QVERIFY(quoted.blockFormat().leftMargin() > 0.0);
+    QVERIFY2(deeper.blockFormat().leftMargin() > quoted.blockFormat().leftMargin(),
+        "a quote inside a quote has to stay further in");
+    // Nothing draws a border down the side of a block in Qt's rich text, so the
+    // indent and a quieter colour are what mark a quote as one.
+    QCOMPARE(firstFragmentFormat(quoted).foreground().color(), markdownMetrics().mutedText);
+}
+
+void TestPreview::markdownRulesAndTablesGetRoom()
+{
+    QTextDocument document;
+    loadStyledMarkdown(
+        document, QStringLiteral("Prose.\n\n---\n\n| name | price |\n|------|-------|\n| bolt | 0.99 |\n"));
+
+    bool foundRule = false;
+    for (QTextBlock block = document.begin(); block.isValid(); block = block.next()) {
+        if (!block.blockFormat().hasProperty(QTextFormat::BlockTrailingHorizontalRulerWidth))
+            continue;
+        foundRule = true;
+        QVERIFY2(block.blockFormat().topMargin() > 6.0, "a rule divides sections, so it needs room to do it");
+        QVERIFY(block.blockFormat().bottomMargin() > 6.0);
+    }
+    QVERIFY2(foundRule, "the rule has to be found for the assertions above to have run");
+
+    QTextTable* table = nullptr;
+    const QList<QTextFrame*> frames = document.rootFrame()->childFrames();
+    for (QTextFrame* frame : frames) {
+        if (auto* candidate = qobject_cast<QTextTable*>(frame))
+            table = candidate;
+    }
+    QVERIFY2(table, "the table has to be found for the assertions below to mean anything");
+    QVERIFY2(table->format().cellPadding() > 0.0, "the importer leaves cell text touching the rules");
+    QCOMPARE(table->format().cellSpacing(), 0.0);
+}
+
+void TestPreview::markdownStylingIsIdempotent()
+{
+    QTextDocument document;
+    loadStyledMarkdown(document,
+        QStringLiteral("# Title\n\nProse with `code`.\n\n## Section\n\n- one\n- two\n\n> quoted\n>\n"
+                       "> > deeper\n\n```\ncode line\n```\n\n---\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"));
+
+    const auto snapshot = [&document] {
+        QStringList out;
+        for (QTextBlock block = document.begin(); block.isValid(); block = block.next()) {
+            const QTextBlockFormat format = block.blockFormat();
+            out << QStringLiteral("%1/%2/%3/%4/%5/%6")
+                       .arg(format.topMargin())
+                       .arg(format.bottomMargin())
+                       .arg(format.leftMargin())
+                       .arg(format.lineHeight())
+                       .arg(block.charFormat().font().pixelSize())
+                       .arg(block.text());
+        }
+        return out;
+    };
+
+    const QStringList once = snapshot();
+    // This runs again on every change to the document, including the changes it
+    // makes itself, so a second pass has to be a no-op. Reading a quote's depth
+    // back out of the margin that the first pass replaced is how that goes wrong.
+    MarkdownStyle::applyTo(&document, markdownMetrics());
+    QCOMPARE(snapshot(), once);
+    MarkdownStyle::applyTo(&document, markdownMetrics());
+    QCOMPARE(snapshot(), once);
+}
+
+void TestPreview::markdownStylingGivesThePageMoreRoomThanTheImporter()
+{
+    const QString markdown
+        = QStringLiteral("# Title\n\nFirst paragraph.\n\n## Section\n\nSecond paragraph.\n");
+
+    QFont base;
+    base.setPixelSize(markdownMetrics().bodyPixelSize);
+
+    QTextDocument bare;
+    bare.setDefaultFont(base);
+    bare.setMarkdown(markdown);
+    bare.setTextWidth(600);
+
+    QTextDocument styled;
+    loadStyledMarkdown(styled, markdown);
+
+    // The whole point, measured rather than asserted: the same blocks, given
+    // room, take up more of the page than the importer gave them.
+    QCOMPARE(styled.blockCount(), bare.blockCount());
+    QVERIFY2(styled.size().height() > bare.size().height() * 1.2,
+        "the styled page has to be noticeably taller than the one the importer produced");
+
+    // And a title is now visibly a title rather than body text in bold.
+    const QTextBlock title = blockSaying(styled, QStringLiteral("Title"));
+    const QTextBlock prose = blockSaying(styled, QStringLiteral("First paragraph."));
+    QVERIFY(title.isValid() && prose.isValid());
+    QVERIFY(styled.documentLayout()->blockBoundingRect(title).height()
+        > styled.documentLayout()->blockBoundingRect(prose).height());
 }
 
 // -------------------------------------------------------------- the tab

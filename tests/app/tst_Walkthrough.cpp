@@ -19,10 +19,14 @@
 #include "core/vfs/VfsManager.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QQuickItem>
 #include <QQuickStyle>
+#include <QQuickTextDocument>
 #include <QTest>
+#include <QTextBlock>
+#include <QTextDocument>
 
 using namespace mole;
 using namespace mole::test;
@@ -45,6 +49,7 @@ private slots:
 
     void browsesAndPreviews();
     void highlightsSourceAndPagesLargeFiles();
+    void rendersMarkdownAsAPage();
     void breadcrumbsClimbTheTree();
     void ctrlGRevealsTheEditablePath();
     void aSlowFolderSaysSoInTheMiddleOfThePane();
@@ -359,6 +364,106 @@ void TestWalkthrough::theListingMarksReportsAndAlerts()
 
     m_harness->settle(6);
     m_harness->screenshot(QStringLiteral("01c-listing-tags"));
+}
+
+void TestWalkthrough::rendersMarkdownAsAPage()
+{
+    // Everything a page of Markdown can hold, because this is also where the
+    // picture of the rendered page comes from.
+    QVERIFY(m_harness->writeFile(QStringLiteral("guide.md"),
+        QByteArray("# Mole\n\nAn IDE, but for files. A paragraph of prose, which a viewer has to set as a\n"
+                   "page rather than as a wall of text: the measure is capped and the gutters take\n"
+                   "the surplus width.\n\n## Section\n\nMore prose, with `inline code` in it.\n\n"
+                   "- A list item.\n- A second one, which stays close to the first.\n\n"
+                   "| Drive | Free |\n|-------|------|\n| Home | 43 GiB |\n| nas | 5.8 TiB |\n\n"
+                   "```cpp\nint main()\n{\n    return 0;\n}\n```\n\n"
+                   "> A quoted line, indented and set a little quieter.\n\n"
+                   "### Smaller heading\n\nAnd the paragraph that belongs to it.\n")));
+    // The table comes before the code fence and the quote, not after either:
+    // Qt's importer ends both with a stray empty block that lands inside the
+    // first cell of a table that follows, which mangles its header. That happens
+    // before any of the styling runs, and a picture of this page should not be
+    // showing it off.
+    pane()->refresh();
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 5; }));
+
+    const int row = pane()->files()->rowOfUri(pane()->currentUri() + QStringLiteral("/guide.md"));
+    QVERIFY(row >= 0);
+    pane()->setCurrentIndex(row);
+    m_harness->settle();
+    m_harness->key(Qt::Key_F3);
+
+    auto* preview = qobject_cast<PreviewTabController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(m_harness->until([viewer] { return viewer->isMarkdown() && !viewer->text().isEmpty(); }));
+    m_harness->settle(6);
+
+    QQuickItem* text = m_harness->item(QStringLiteral("previewText"));
+    QVERIFY(text);
+    // Gutters rather than text against the frame: a page has margins, and on a
+    // wide window they grow so the line length stays readable.
+    QVERIFY2(text->property("leftPadding").toReal() > 20.0, "a rendered page keeps its margins");
+    QCOMPARE(text->property("leftPadding").toReal(), text->property("rightPadding").toReal());
+
+    auto* handle = text->property("textDocument").value<QQuickTextDocument*>();
+    QVERIFY(handle);
+    QTextDocument* document = handle->textDocument();
+    QVERIFY(document);
+
+    const auto blockSaying = [document](const QString& wanted) {
+        for (QTextBlock block = document->begin(); block.isValid(); block = block.next()) {
+            if (block.text() == wanted)
+                return block;
+        }
+        return QTextBlock();
+    };
+
+    // The styling has to reach the document the window is actually showing.
+    // Everything else about it is covered where it can be measured exactly, in
+    // tst_Preview; what only the real application can prove is the wiring.
+    QVERIFY(m_harness->until([&blockSaying] { return blockSaying(QStringLiteral("Section")).isValid(); }));
+    QVERIFY2(blockSaying(QStringLiteral("Section")).blockFormat().topMargin() > 0.0,
+        "a heading in the middle of the page has to have been given space above it");
+    // Checked on the text rather than the block: the scene graph behind a QML
+    // TextArea paints the character background and ignores the block's, so this
+    // is the one that decides whether anything is actually seen.
+    const QTextBlock code = blockSaying(QStringLiteral("int main()"));
+    QVERIFY(code.isValid());
+    QVERIFY2(code.begin().fragment().charFormat().background().style() != Qt::NoBrush,
+        "code has to have been given its slab");
+
+    m_harness->screenshot(QStringLiteral("03c-preview-markdown"));
+
+    // The same viewer, handed a plain file. Stepping between files in the tab
+    // builds a fresh viewer each time, so this -- one viewer told to show
+    // something else -- is the path where the document is reused, and where the
+    // styling has to come off with the file it belonged to. Left attached, it
+    // would answer the plain file's arrival by spacing its lines out like prose,
+    // and a text file is not prose: it is lines.
+    const auto entryFor = [this](const QString& name) {
+        FileEntry entry;
+        entry.uri = VfsUri::fromString(m_harness->fixtureUri() + QLatin1Char('/') + name);
+        entry.name = name;
+        entry.size = QFileInfo(m_harness->fixturePath() + QLatin1Char('/') + name).size();
+        return entry;
+    };
+
+    viewer->load(entryFor(QStringLiteral("notes.txt")));
+    QVERIFY(m_harness->until(
+        [viewer] { return !viewer->isMarkdown() && viewer->text() == QStringLiteral("plain notes"); }));
+    m_harness->settle(6);
+    QCOMPARE(document->firstBlock().blockFormat().bottomMargin(), 0.0);
+
+    // And back, because the switch has to work in both directions.
+    viewer->load(entryFor(QStringLiteral("guide.md")));
+    QVERIFY(m_harness->until([viewer] { return viewer->isMarkdown() && !viewer->text().isEmpty(); }));
+    QVERIFY2(m_harness->until([&blockSaying] {
+        const QTextBlock again = blockSaying(QStringLiteral("Section"));
+        return again.isValid() && again.blockFormat().topMargin() > 0.0;
+    }),
+        "coming back to a Markdown file has to style it again");
 }
 
 void TestWalkthrough::breadcrumbsClimbTheTree()

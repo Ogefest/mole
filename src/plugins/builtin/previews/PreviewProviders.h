@@ -1,5 +1,6 @@
 #pragma once
 
+#include "plugins/builtin/previews/MarkdownStyle.h"
 #include "plugins/builtin/previews/SyntaxHighlighter.h"
 #include "sdk/IPreviewProvider.h"
 #include "ui/models/TableModel.h"
@@ -105,9 +106,12 @@ public:
     /// Jumps to a point in the file, 0.0 .. 1.0. The window snaps to a line.
     Q_INVOKABLE void seekToFraction(double fraction);
 
-    /// Called by QML with a TextArea's textDocument. Colouring has to attach to
-    /// the real document; there is no way to do it from QML alone.
-    Q_INVOKABLE void attachHighlighter(QQuickTextDocument* document);
+    /// Called by QML with a TextArea's textDocument. Both colouring and Markdown
+    /// typography have to attach to the real document; there is no way to do
+    /// either from QML alone. The view also passes the two things it owns: the
+    /// size it sets prose at, and the family it uses for code.
+    Q_INVOKABLE void attachDocument(
+        QQuickTextDocument* document, int bodyPixelSize, const QString& monospaceFamily);
 
 signals:
     void textChanged();
@@ -115,6 +119,9 @@ signals:
 
 private:
     void readWindow(qint64 offset);
+    /// Points whichever of the two the current file needs at the document, and
+    /// takes the other one off it.
+    void applyViewers();
 
     /// 512 kB is roughly ten thousand lines of code -- more than anyone reads
     /// in one screen, and small enough that paging feels instant.
@@ -122,6 +129,8 @@ private:
 
     PluginServices m_services;
     SourceHighlighter* m_highlighter = nullptr;
+    MarkdownStyle* m_markdownStyle = nullptr;
+    QPointer<QQuickTextDocument> m_document;
     QString m_language;
     bool m_markdown = false;
     QString m_text;

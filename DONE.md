@@ -9,6 +9,43 @@ wrong.
 
 ---
 
+## Markdown previews were cramped
+
+Qt's Markdown importer gives a heading no space above or below it, sets every
+paragraph solid, and hands a fenced code block to the view as nine-point
+monospace with no margins and nothing behind it. Rendered, it read as a wall of
+text, which is the opposite of what a Markdown file is for.
+
+The document is now restyled after the import: headings get room and a size that
+shows the hierarchy, prose gets line spacing, code gets the application's
+monospace family at a size that matches the prose and a slab behind it, quotes
+keep their nesting and go quieter, tables get cell padding. The view stopped
+running the text edge to edge — it keeps margins, and on a wide window the
+gutters take the surplus so the line length stays readable.
+
+Two things had to be found out by measuring rather than by reading the
+documentation, and both are now written down in
+[ADR-0001](docs/adr/0001-markdown-preview-typography.md): a style sheet cannot do
+any of this, because `setMarkdown()` never consults one; and wrapping a code
+block in a padded frame — the only thing in Qt's rich text with real padding —
+injects blank lines into the document and mangles what the file says, so the rule
+is formats only, never structure.
+
+Two bugs the tests caught before they could ship. A paragraph that merely opens
+with an inline `code span` is given a monospace block font by the importer, so
+detecting code blocks that way handed such a paragraph a slab of its own; only
+unbreakable lines are a safe signal. And the styling read a quote's nesting depth
+out of the very margin it had just overwritten, which flattened every nested
+quote to one level — the depth is now recorded before it goes. Applying the
+styling twice is a no-op, and a test asserts it, because it runs again on every
+change the document makes, including its own.
+
+The one thing left alone is the importer itself: a blockquote and a fenced code
+block each end with a stray empty block, and a table placed straight after either
+one takes that block into its first cell, which loses its bold. It happens before
+any of this code runs, and correcting it would mean editing the document's
+structure.
+
 ## Terminal panel
 
 A shell for the folder you are looking at, split along the bottom of the window.

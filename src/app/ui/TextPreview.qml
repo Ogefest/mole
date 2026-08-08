@@ -14,15 +14,27 @@ Item {
 
     readonly property bool showsMarkdown: controller ? controller.markdown : false
 
-    // Colouring has to attach to the real QTextDocument behind the TextArea;
-    // there is no way to do it from QML alone.
-    function attachHighlighter() {
-        if (controller && controller.attachHighlighter && !view.showsMarkdown)
-            controller.attachHighlighter(area.textDocument)
+    // Prose is set larger than code: code is scanned a line at a time, prose is
+    // read by the paragraph.
+    readonly property int bodyPixelSize: showsMarkdown ? 15 : 12
+
+    // A page of prose needs a measure. Text that runs the full width of a wide
+    // window is tiring to read -- the eye loses the line coming back -- so the
+    // gutters take the surplus and the page stays centred at a readable width.
+    readonly property int readingWidth: 760
+    readonly property int gutter: showsMarkdown
+        ? Math.max(28, Math.round((scroll.availableWidth - readingWidth) / 2)) : 0
+
+    // Colouring and Markdown typography both have to attach to the real
+    // QTextDocument behind the TextArea; there is no way to do either from QML
+    // alone. The controller decides which of the two the current file gets.
+    function attachDocument() {
+        if (controller && controller.attachDocument)
+            controller.attachDocument(area.textDocument, view.bodyPixelSize, App.monospaceFont)
     }
 
-    onControllerChanged: Qt.callLater(attachHighlighter)
-    Component.onCompleted: Qt.callLater(attachHighlighter)
+    onControllerChanged: Qt.callLater(attachDocument)
+    Component.onCompleted: Qt.callLater(attachDocument)
 
     ViewerKeys {
         id: viewerKeys
@@ -103,6 +115,7 @@ Item {
         }
 
         ScrollView {
+            id: scroll
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
@@ -116,7 +129,13 @@ Item {
                 // One family for every code and data view, chosen once by the
                 // application rather than guessed per view.
                 font.family: view.showsMarkdown ? Qt.application.font.family : App.monospaceFont
-                font.pixelSize: view.showsMarkdown ? 14 : 12
+                font.pixelSize: view.bodyPixelSize
+                // A rendered page gets margins; a log or a source file does not,
+                // because there every column position is information.
+                leftPadding: view.showsMarkdown ? view.gutter : padding
+                rightPadding: view.showsMarkdown ? view.gutter : padding
+                topPadding: view.showsMarkdown ? 24 : padding
+                bottomPadding: view.showsMarkdown ? 40 : padding
                 // Markdown is rendered; everything else stays plain, because
                 // letting the TextArea parse markup would swallow the very
                 // tags an XML preview exists to show.

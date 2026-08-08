@@ -25,6 +25,13 @@ longer works.
 
 - Video preview is still a documented gap: it needs `qt6-multimedia-dev` and
   `qml6-module-qtmultimedia`, neither of which is installed here.
+- Qt's Markdown importer mangles a table placed directly after a blockquote or a
+  fenced code block: both end with a stray empty block that lands inside the
+  table's first cell, so its header loses the bold and gains an empty line. After
+  a paragraph, list, heading or rule it is fine. It happens before the preview
+  styling runs, and repairing it would mean editing the document's structure,
+  which [ADR-0001](docs/adr/0001-markdown-preview-typography.md) rules out. Left
+  as it is unless someone hits it in a real file.
 - Backends not yet written: SFTP, S3, WebDAV, NFS, SMB. The conformance suite is
   ready for them — a new backend's test file is a few lines that build a context
   and call `runFileSystemConformance()`, and it now also checks that a backend

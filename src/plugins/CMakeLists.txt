@@ -36,6 +36,8 @@ add_library(mole_builtin STATIC
     rclone/RcloneFactory.cpp
     builtin/previews/SyntaxHighlighter.h
     builtin/previews/SyntaxHighlighter.cpp
+    builtin/previews/MarkdownStyle.h
+    builtin/previews/MarkdownStyle.cpp
     builtin/previews/PreviewProviders.h
     builtin/previews/PreviewProviders.cpp
 )

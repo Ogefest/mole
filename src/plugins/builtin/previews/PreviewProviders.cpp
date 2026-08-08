@@ -109,6 +109,7 @@ TextPreviewController::TextPreviewController(PluginServices services, QObject* p
     : PreviewController(parent)
     , m_services(services)
     , m_highlighter(new SourceHighlighter(this))
+    , m_markdownStyle(new MarkdownStyle(this))
 {
 }
 
@@ -142,9 +143,38 @@ QString TextPreviewController::positionText() const
             locale.formattedDataSize(m_windowOffset + m_windowBytes), locale.formattedDataSize(m_fileSize));
 }
 
-void TextPreviewController::attachHighlighter(QQuickTextDocument* document)
+void TextPreviewController::attachDocument(
+    QQuickTextDocument* document, int bodyPixelSize, const QString& monospaceFamily)
 {
-    m_highlighter->attachTo(document);
+    m_document = document;
+
+    MarkdownStyle::Metrics metrics = m_markdownStyle->metrics();
+    if (bodyPixelSize > 0)
+        metrics.bodyPixelSize = bodyPixelSize;
+    if (!monospaceFamily.isEmpty())
+        metrics.monospaceFamily = monospaceFamily;
+    m_markdownStyle->setMetrics(metrics);
+
+    applyViewers();
+}
+
+void TextPreviewController::applyViewers()
+{
+    if (!m_document)
+        return;
+
+    // One or the other, never both. The highlighter reacts to every change by
+    // laying an overlay over the text, and the Markdown styling reacts to every
+    // change by rewriting the formats underneath it -- on one document they
+    // would spend the afternoon answering each other.
+    if (m_markdown) {
+        m_highlighter->attachTo(nullptr);
+        m_markdownStyle->attachTo(m_document);
+        return;
+    }
+
+    m_markdownStyle->attachTo(nullptr);
+    m_highlighter->attachTo(m_document);
     m_highlighter->setLanguage(m_language);
 }
 
@@ -165,6 +195,9 @@ void TextPreviewController::load(const FileEntry& entry)
         || suffix == QLatin1String("mdown") || suffix == QLatin1String("mkd");
     m_language = m_markdown ? QString() : SourceHighlighter::languageForSuffix(suffix);
     m_highlighter->setLanguage(m_language);
+    // Stepping from a Markdown file to a source file, or back, changes which of
+    // the two viewers the document needs.
+    applyViewers();
 
     m_fileSystem = m_services.vfs->resolve(entry.uri);
     if (!m_fileSystem) {
