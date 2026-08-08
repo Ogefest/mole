@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- Compressing offers 7z and a bare xz as well, and changing the kind no longer discards
+  the name that was typed.
 - Compressing lists exactly what it is about to pack, acts on the row under the cursor
   when nothing is ticked, and can protect a zip with a password.
 - A user guide in docs/guide/, illustrated with screenshots the test suite takes

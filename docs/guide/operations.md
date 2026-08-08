@@ -21,12 +21,17 @@ cursor when nothing is ticked, and the folder you are in when there is no row at
 into a new archive beside them. The dialog lists exactly what is going in, so it can be
 checked before anything happens, and suggests a name from what is selected.
 
-Zip, tar.gz or tar.xz. Zip is the default because it is the one anyone can open
-anywhere without being told how.
+Zip, tar.gz, tar.xz, 7z, or a bare xz. Zip is the default because it is the one anyone
+can open anywhere without being told how. A bare `.xz` is a single compressed stream
+with no container, so it takes one file and no folders — the dialog says so rather than
+failing when you press Ok.
+
+Changing the kind changes the suffix and keeps the name you typed.
 
 A zip can also be protected with a password, encrypted with AES-256. The box is offered
-only for zip: a tar has no notion of a password and gzip and xz encrypt nothing, so
-rather than accepting one and quietly ignoring it, those formats say why they cannot.
+only for zip: a tar has no notion of a password, gzip and xz encrypt nothing, and the
+7z writer here cannot encrypt either. Rather than accepting a password and quietly
+ignoring it, those formats say why they cannot take one.
 
 It runs in the background like every other job that takes time, and it can be
 cancelled. A cancelled or failed compression leaves nothing behind: an archive that

@@ -236,6 +236,13 @@ public:
     /// A name for the archive worked out from what is selected, so the dialog opens
     /// with something sensible in it.
     Q_INVOKABLE QString suggestedArchiveName(const QString& format) const;
+    /// The name already in the box, wearing the suffix a newly chosen format wants.
+    /// Changing the kind must not discard a name somebody typed -- which it did,
+    /// until a bug report said so.
+    Q_INVOKABLE QString archiveNameForFormat(const QString& currentName, const QString& format) const;
+    /// True for a format with no container: a bare `.xz` holds one file and no
+    /// folders, so the dialog can say so instead of failing on Ok.
+    Q_INVOKABLE bool formatTakesOneFileOnly(const QString& format) const;
     /// Packs the selection, or the folder in view when nothing is selected, into a
     /// new archive beside it.
     Q_INVOKABLE void compressSelection(

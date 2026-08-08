@@ -31,8 +31,11 @@ private slots:
     void cancellingLeavesNoHalfWrittenArchive();
     void anUnreadableFileIsRecordedRatherThanFatal();
     void namesAndSuffixesMatchTheFormats();
+    void changingTheFormatKeepsTheNameThatWasTyped();
     void aPasswordEncryptsTheContents();
     void aPasswordOnAFormatThatCannotCarryOneIsRefused();
+    void aBareXzHoldsOneFileAndSaysSoOtherwise();
+    void sevenZipCannotCarryAPasswordAndSaysSo();
 
 private:
     /// Runs a compression to completion and returns the task.
@@ -108,6 +111,7 @@ void TestCompressTask::packsFilesAndFoldersThatComeBackOut_data()
     QTest::newRow("zip") << int(CompressTask::Format::Zip) << "bundle.zip";
     QTest::newRow("tar.gz") << int(CompressTask::Format::TarGz) << "bundle.tar.gz";
     QTest::newRow("tar.xz") << int(CompressTask::Format::TarXz) << "bundle.tar.xz";
+    QTest::newRow("7z") << int(CompressTask::Format::SevenZip) << "bundle.7z";
 }
 
 void TestCompressTask::packsFilesAndFoldersThatComeBackOut()
@@ -228,6 +232,36 @@ void TestCompressTask::namesAndSuffixesMatchTheFormats()
     QCOMPARE(CompressTask::formatFromName(QString()), CompressTask::Format::Zip);
 }
 
+void TestCompressTask::changingTheFormatKeepsTheNameThatWasTyped()
+{
+    // The bug this exists for: choosing a different kind rebuilt the name from the
+    // selection, so a name somebody had typed was silently replaced and the archive
+    // was written under the suggested one.
+    QCOMPARE(CompressTask::nameWithSuffix(QStringLiteral("holiday.zip"), CompressTask::Format::TarGz),
+        QStringLiteral("holiday.tar.gz"));
+    QCOMPARE(CompressTask::nameWithSuffix(QStringLiteral("holiday.tar.gz"), CompressTask::Format::Zip),
+        QStringLiteral("holiday.zip"));
+
+    // The multi-part suffix has to go whole, or ".tar.gz" leaves "holiday.tar".
+    QCOMPARE(CompressTask::nameWithSuffix(QStringLiteral("holiday.tar.xz"), CompressTask::Format::SevenZip),
+        QStringLiteral("holiday.7z"));
+    QCOMPARE(CompressTask::nameWithSuffix(QStringLiteral("holiday.7z"), CompressTask::Format::TarXz),
+        QStringLiteral("holiday.tar.xz"));
+
+    // Dots in the name are part of the name.
+    QCOMPARE(CompressTask::nameWithSuffix(QStringLiteral("my.notes.v2.zip"), CompressTask::Format::Xz),
+        QStringLiteral("my.notes.v2.xz"));
+    // Nothing to strip means nothing is stripped.
+    QCOMPARE(CompressTask::nameWithSuffix(QStringLiteral("holiday"), CompressTask::Format::Zip),
+        QStringLiteral("holiday.zip"));
+    // Case does not save a suffix from being replaced.
+    QCOMPARE(CompressTask::nameWithSuffix(QStringLiteral("holiday.ZIP"), CompressTask::Format::TarGz),
+        QStringLiteral("holiday.tar.gz"));
+    // Nothing at all is nothing, rather than a file called ".zip".
+    QVERIFY(CompressTask::nameWithSuffix(QString(), CompressTask::Format::Zip).isEmpty());
+    QVERIFY(CompressTask::nameWithSuffix(QStringLiteral("  "), CompressTask::Format::Zip).isEmpty());
+}
+
 void TestCompressTask::aPasswordEncryptsTheContents()
 {
     CompressTask::Request request;
@@ -289,6 +323,91 @@ void TestCompressTask::aPasswordOnAFormatThatCannotCarryOneIsRefused()
     QVERIFY(task->error().message.contains(QStringLiteral("password")));
     QVERIFY2(!QFile::exists(QDir(m_tree->path()).filePath(QStringLiteral("impossible.tar.gz"))),
         "and nothing is left behind");
+}
+
+void TestCompressTask::aBareXzHoldsOneFileAndSaysSoOtherwise()
+{
+    // One file, no container: what a bare .xz is.
+    // Big and repetitive, because eleven bytes are not compressible: LZMA2 stores
+    // an input that small as an uncompressed chunk, and the plain text stays visible
+    // inside a perfectly valid .xz. Asserting on that would have been asserting on
+    // the size of the fixture.
+    const QByteArray payload = QByteArray("the same line over and over\n").repeated(2000);
+    QVERIFY(m_tree->writeFile(QStringLiteral("big-notes.txt"), payload));
+
+    CompressTask::Request one;
+    one.sourceFileSystem = m_fs;
+    one.targetFileSystem = m_fs;
+    one.format = CompressTask::Format::Xz;
+    one.sources.append(m_tree->rootUri().child(QStringLiteral("big-notes.txt")));
+    one.target = m_tree->rootUri().child(QStringLiteral("big-notes.xz"));
+
+    auto* single = new CompressTask(one);
+    m_tasks->submit(single);
+    QVERIFY(waitForTask(single, 30000));
+    QCOMPARE(single->state(), Task::State::Succeeded);
+
+    // A bare .xz carries no names -- there is no container to keep them in -- so
+    // there is no entry list to compare, which is a property of the format rather
+    // than a shortcoming of the writer. What can be checked is that it is an xz
+    // stream and that it really compressed rather than copied.
+    QFile written(QDir(m_tree->path()).filePath(QStringLiteral("big-notes.xz")));
+    QVERIFY(written.open(QIODevice::ReadOnly));
+    const QByteArray bytes = written.readAll();
+    QCOMPARE(bytes.left(6), QByteArray::fromHex("fd377a585a00"));
+    // Smaller, but not by as much as the payload suggests: libarchive pads its
+    // output to a ten-kilobyte block, so a highly compressible 56 kB file comes out
+    // at 10 kB of which most is padding. Checked with `xz -t` and `xz -dc` while
+    // writing this -- the stream is valid and gives back every original byte -- so
+    // the bound stays loose on purpose rather than being tightened into a flake.
+    QVERIFY2(bytes.size() < payload.size(),
+        qPrintable(QStringLiteral("%1 bytes from %2: the filter has to actually compress")
+                       .arg(bytes.size())
+                       .arg(payload.size())));
+
+    // Several items, or a folder, cannot fit in a format with no container -- said
+    // before a byte is written rather than failing on the second entry with "Raw
+    // format only supports one entry per archive", which is true and useless.
+    QVERIFY(CompressTask::takesOneFileOnly(CompressTask::Format::Xz));
+    QVERIFY(!CompressTask::takesOneFileOnly(CompressTask::Format::TarXz));
+
+    CompressTask::Request several = one;
+    several.sources.append(m_tree->rootUri().child(QStringLiteral("reports")));
+    several.target = m_tree->rootUri().child(QStringLiteral("several.xz"));
+
+    auto* many = new CompressTask(several);
+    m_tasks->submit(many);
+    QVERIFY(waitForTask(many, 30000));
+    QCOMPARE(many->state(), Task::State::Failed);
+    QVERIFY(many->error().message.contains(QStringLiteral("one file")));
+    QVERIFY(!QFile::exists(QDir(m_tree->path()).filePath(QStringLiteral("several.xz"))));
+}
+
+void TestCompressTask::sevenZipCannotCarryAPasswordAndSaysSo()
+{
+    // Measured, not assumed: this libarchive rejects "7zip:encryption" as an
+    // undefined option. The trap is that it accepts a passphrase anyway and the
+    // written file contains no plain text -- because LZMA2 compressed it, not
+    // because anything encrypted it. So the answer is a fact about the format.
+    QVERIFY(!CompressTask::formatSupportsPassword(CompressTask::Format::SevenZip));
+
+    CompressTask::Request request;
+    request.sourceFileSystem = m_fs;
+    request.targetFileSystem = m_fs;
+    request.format = CompressTask::Format::SevenZip;
+    request.passphrase = QStringLiteral("hunter2");
+    request.sources.append(m_tree->rootUri().child(QStringLiteral("notes.txt")));
+    request.target = m_tree->rootUri().child(QStringLiteral("secret.7z"));
+
+    auto* task = new CompressTask(request);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task, 30000));
+
+    // Refused rather than written unencrypted with a password box ticked, which
+    // would be the worst of both.
+    QCOMPARE(task->state(), Task::State::Failed);
+    QVERIFY(task->error().message.contains(QStringLiteral("password")));
+    QVERIFY(!QFile::exists(QDir(m_tree->path()).filePath(QStringLiteral("secret.7z"))));
 }
 
 MOLE_TEST_MAIN(TestCompressTask)

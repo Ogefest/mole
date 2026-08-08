@@ -145,7 +145,11 @@ Dialog {
                 // Changing the kind renames the suffix rather than leaving a .zip
                 // called .tar.gz, which is the sort of thing nobody notices until
                 // something refuses to open it.
-                onActivated: nameField.text = App.suggestedArchiveName(currentText)
+                // The suffix changes; the name does not. Regenerating it from the
+                // selection here threw away whatever had been typed, which is how a
+                // file came to be saved under the suggested name instead of the
+                // chosen one.
+                onActivated: nameField.text = App.archiveNameForFormat(nameField.text, currentText)
             }
             Item { Layout.fillWidth: true }
         }
@@ -173,6 +177,15 @@ Dialog {
                 placeholderText: "AES-256, for the contents"
                 font.pixelSize: App.textSize
             }
+        }
+
+        Label {
+            Layout.fillWidth: true
+            visible: App.formatTakesOneFileOnly(formatBox.currentText) && targets.model.length !== 1
+            text: "A bare .xz holds one file and no folders. Use tar.xz for anything else."
+            color: "#e5534b"
+            font.pixelSize: App.smallTextSize
+            wrapMode: Text.Wrap
         }
 
         Label {

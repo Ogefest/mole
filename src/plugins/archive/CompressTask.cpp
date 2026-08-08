@@ -6,6 +6,7 @@
 #include <QIODevice>
 #include <QLocale>
 
+#include <algorithm>
 #include <archive.h>
 #include <archive_entry.h>
 
@@ -42,7 +43,8 @@ namespace {
 
 QStringList CompressTask::formatNames()
 {
-    return { QStringLiteral("zip"), QStringLiteral("tar.gz"), QStringLiteral("tar.xz") };
+    return { QStringLiteral("zip"), QStringLiteral("tar.gz"), QStringLiteral("tar.xz"), QStringLiteral("7z"),
+        QStringLiteral("xz") };
 }
 
 CompressTask::Format CompressTask::formatFromName(const QString& name)
@@ -52,6 +54,11 @@ CompressTask::Format CompressTask::formatFromName(const QString& name)
         return Format::TarGz;
     if (lower == QLatin1String("tar.xz") || lower == QLatin1String("txz"))
         return Format::TarXz;
+    if (lower == QLatin1String("7z") || lower == QLatin1String("7zip"))
+        return Format::SevenZip;
+    // After tar.xz, or "tar.xz" would be read as a bare xz stream.
+    if (lower == QLatin1String("xz"))
+        return Format::Xz;
     // Zip for anything unrecognised: it is the one anyone can open anywhere, which
     // makes it the right thing to fall back to as well as the right default.
     return Format::Zip;
@@ -64,6 +71,10 @@ QString CompressTask::suffixFor(Format format)
         return QStringLiteral(".tar.gz");
     case Format::TarXz:
         return QStringLiteral(".tar.xz");
+    case Format::SevenZip:
+        return QStringLiteral(".7z");
+    case Format::Xz:
+        return QStringLiteral(".xz");
     case Format::Zip:
         break;
     }
@@ -72,7 +83,41 @@ QString CompressTask::suffixFor(Format format)
 
 bool CompressTask::formatSupportsPassword(Format format)
 {
+    // Zip only, and measured rather than assumed: this libarchive rejects
+    // "7zip:encryption" as an undefined option. Worse, it accepts a passphrase for
+    // 7z regardless and the written file contains no plain text -- because LZMA2
+    // compressed it, not because anything encrypted it. A test looking only for the
+    // plain bytes would call that success, which is why the answer is a fact about
+    // the format rather than an inference from the output.
     return format == Format::Zip;
+}
+
+bool CompressTask::takesOneFileOnly(Format format)
+{
+    return format == Format::Xz;
+}
+
+QString CompressTask::nameWithSuffix(const QString& name, Format format)
+{
+    QString base = name.trimmed();
+
+    // Longest first, or ".tar.gz" would lose only the ".gz" and leave "notes.tar".
+    QStringList known;
+    for (const QString& formatName : formatNames())
+        known.append(QLatin1Char('.') + formatName);
+    std::sort(
+        known.begin(), known.end(), [](const QString& a, const QString& b) { return a.size() > b.size(); });
+
+    for (const QString& suffix : known) {
+        if (base.endsWith(suffix, Qt::CaseInsensitive)) {
+            base.chop(suffix.size());
+            break;
+        }
+    }
+
+    if (base.isEmpty())
+        return {};
+    return base + suffixFor(format);
 }
 
 CompressTask::CompressTask(Request request, QObject* parent)
@@ -159,6 +204,20 @@ void CompressTask::run()
         return;
     }
 
+    // Refused before a byte is written rather than failing on the second entry with
+    // "Raw format only supports one entry per archive", which is true and useless.
+    if (takesOneFileOnly(m_request.format)) {
+        const int files = static_cast<int>(
+            std::count_if(items.cbegin(), items.cend(), [](const Item& item) { return !item.isDirectory; }));
+        if (items.size() != 1 || files != 1) {
+            fail(VfsError::make(VfsError::NotSupported,
+                QStringLiteral("A bare %1 holds one file and no folders; pack %2 as tar.xz instead")
+                    .arg(suffixFor(m_request.format).mid(1),
+                        items.size() == 1 ? QStringLiteral("a folder") : QStringLiteral("several items"))));
+            return;
+        }
+    }
+
     Result<std::unique_ptr<QIODevice>> opened = m_request.targetFileSystem->openWrite(m_request.target);
     if (!opened.ok()) {
         fail(opened.error());
@@ -185,6 +244,14 @@ void CompressTask::run()
         break;
     case Format::TarXz:
         archive_write_set_format_pax_restricted(writer);
+        archive_write_add_filter_xz(writer);
+        break;
+    case Format::SevenZip:
+        archive_write_set_format_7zip(writer);
+        break;
+    case Format::Xz:
+        // No container at all: one compressed stream, which is what a bare .xz is.
+        archive_write_set_format_raw(writer);
         archive_write_add_filter_xz(writer);
         break;
     }

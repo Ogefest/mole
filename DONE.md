@@ -30,6 +30,46 @@ README.md gained a *Using it* section pointing at the guide, and its list of thi
 yet done lost PDF, SQLite and Parquet — all three are built, and leaving them on a wish
 list would have been the same kind of lie the screenshot rule exists to prevent.
 
+## Compressing: 7z, bare xz, and a name that was being thrown away
+
+Two formats added and one bug fixed, and the bug was mine.
+
+**The name was being discarded.** Reported as: a name typed into the box, and the
+archive written under the original one. The cause was the *Kind* picker — changing the
+format rebuilt the whole name from the selection, silently replacing whatever had been
+typed, while the comment above it claimed it "renames the suffix". It does that now:
+the base is kept, including any dots in it, and only the suffix is swapped. The test
+covers the multi-part suffixes that make this easy to get wrong (`holiday.tar.gz` →
+`holiday.7z`, not `holiday.tar.7z`), case, dots in the middle, and an empty box giving
+nothing rather than a file called `.zip`.
+
+**7z is now offered**, which reverses the first version of ADR-0007. That exclusion
+rested on libarchive writing less of the format than it reads; measured on 3.7.2, a
+multi-entry 7z writes and reads back correctly, so the caveat did not apply to what is
+actually being done here.
+
+It cannot be encrypted, though, and that came with a trap worth recording. This
+libarchive rejects `7zip:encryption` as an undefined option — yet it accepts a
+passphrase anyway, returns success, and the written file contains no plain text,
+because LZMA2 compressed it rather than anything encrypting it. A test looking only for
+the plain bytes would have called that encryption. So a password is refused for 7z, and
+whether a format can carry one is a stated fact rather than an inference from the
+output.
+
+**A bare `.xz`** is one compressed stream with no container: one file, no folders.
+Asked for with more, it refuses before writing anything, rather than failing on the
+second entry with *"Raw format only supports one entry per archive"*.
+
+Its test took three attempts, each corrected by measurement rather than by guessing.
+Asserting an entry list found none — correctly, since a bare xz keeps no names.
+Asserting the plain text was absent failed, because eleven bytes are not compressible
+and LZMA2 stores an input that small uncompressed inside a perfectly valid stream.
+Asserting a tenfold reduction failed too: libarchive pads its output to a
+ten-kilobyte block, so 56 kB of repetitive text comes out at 10 kB of which most is
+padding. Checked with `xz -t` and `xz -dc` on the way through — the stream is valid and
+returns every original byte — and the bound in the test is deliberately loose so nobody
+tightens it into a flake.
+
 ## Compressing: what it packs, and a password
 
 Two changes, and the first was not the one it looked like.

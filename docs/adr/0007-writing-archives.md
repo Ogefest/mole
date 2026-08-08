@@ -16,12 +16,18 @@ today.
 
 ## Decision
 
-**Three formats: zip, tar.gz, tar.xz.** Zip is the default because it is the one
-anyone can open anywhere, on any platform, without being told how.
+**Five formats: zip, tar.gz, tar.xz, 7z and a bare xz.** Zip is the default because
+it is the one anyone can open anywhere, on any platform, without being told how.
 
-**7z is not offered.** libarchive's 7z writer supports a narrower set of the format
-than its reader does, so offering it would mean sometimes producing an archive that
-some other tool refuses. Reading 7z stays as it is.
+**7z is offered** (this supersedes the first version of this decision, which excluded
+it on the grounds that libarchive writes less of the format than it reads). Measured
+on libarchive 3.7.2: a multi-entry 7z writes and reads back correctly. What it cannot
+do is encrypt — see below.
+
+**A bare `.xz` is one compressed stream with no container**, so it holds exactly one
+file and no folders. Asked for with several items or a folder, the operation refuses
+before writing a byte rather than failing on the second entry with *"Raw format only
+supports one entry per archive"*, which is true and useless.
 
 **The task lives with the backend that already links libarchive.** `CompressTask`
 is part of `mole_archive_backend`, and `mole_builtin` links that library when it
@@ -30,10 +36,17 @@ registered at all, so it cannot be offered and then fail.
 
 **It writes a new archive and nothing else.** Archive mounts stay read-only.
 
-**A password is offered only where the format can carry one.** Zip, encrypted with
-AES-256. A passphrase given for tar.gz or tar.xz is *refused* rather than ignored:
-those formats have no notion of one, and handing back an archive anybody can open to
-someone who typed a password is the worst answer available.
+**A password is offered only where the format can carry one: zip**, encrypted with
+AES-256. A passphrase given for any other format is *refused* rather than ignored,
+including 7z: handing back an archive anybody can open to someone who typed a password
+is the worst answer available.
+
+7z deserves its own note, because it hides a trap. This libarchive rejects
+`7zip:encryption` as an undefined option — but it accepts a passphrase anyway and
+returns success, and the written file contains no plain text, because LZMA2 compressed
+it rather than anything encrypting it. A test that looked only for the plain bytes
+would report encryption working. Whether a format can carry a password is therefore a
+stated fact about the format, never an inference from the output.
 
 **Both ends are drives.** Sources are read through `IFileSystem` and the archive is
 written through it too, so packing a selection on a remote drive is the same code as

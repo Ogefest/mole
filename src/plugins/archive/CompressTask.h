@@ -19,9 +19,9 @@ class CompressTask final : public Task
 
 public:
     /// What the archive is. Zip first because it is the one anyone can open
-    /// anywhere; 7z is deliberately absent, because libarchive writes less of that
-    /// format than it reads.
-    enum class Format { Zip, TarGz, TarXz };
+    /// anywhere. `Xz` is a bare xz stream with no container, which is why it holds
+    /// exactly one file and nothing else -- see takesOneFileOnly().
+    enum class Format { Zip, TarGz, TarXz, SevenZip, Xz };
 
     /// The names as the interface offers them, in the order it offers them.
     static QStringList formatNames();
@@ -32,6 +32,14 @@ public:
     /// encrypt nothing. Asked rather than assumed, so the interface never offers a
     /// box that would be quietly ignored.
     static bool formatSupportsPassword(Format format);
+    /// True for a format with no container to put a second thing in: a bare `.xz`
+    /// is one compressed stream, so it can carry one file and not a folder. Asked
+    /// rather than discovered halfway through writing.
+    static bool takesOneFileOnly(Format format);
+    /// The same name with the suffix this format wants. Keeps the base -- including
+    /// any dots in it -- because changing the kind must not throw away a name
+    /// somebody typed.
+    static QString nameWithSuffix(const QString& name, Format format);
 
     struct Request
     {

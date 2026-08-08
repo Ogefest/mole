@@ -1393,6 +1393,29 @@ QString AppController::suggestedArchiveName(const QString& format) const
 #endif
 }
 
+QString AppController::archiveNameForFormat(const QString& currentName, const QString& format) const
+{
+#ifdef MOLE_HAVE_ARCHIVE
+    const QString renamed = CompressTask::nameWithSuffix(currentName, CompressTask::formatFromName(format));
+    // Only when there is nothing to keep does it fall back to suggesting one.
+    return renamed.isEmpty() ? suggestedArchiveName(format) : renamed;
+#else
+    Q_UNUSED(currentName);
+    Q_UNUSED(format);
+    return {};
+#endif
+}
+
+bool AppController::formatTakesOneFileOnly(const QString& format) const
+{
+#ifdef MOLE_HAVE_ARCHIVE
+    return CompressTask::takesOneFileOnly(CompressTask::formatFromName(format));
+#else
+    Q_UNUSED(format);
+    return false;
+#endif
+}
+
 void AppController::compressSelection(
     const QString& archiveName, const QString& format, const QString& passphrase)
 {
