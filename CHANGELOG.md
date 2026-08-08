@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- Bulk rename shows the result as you type, and the preview is no longer squeezed
+  out by the form.
 - The + and × buttons, and every other icon-only control that was smaller, are big
   enough to hit, with the glyph sized to match.
 - Text in the listing, the previews and the sidebar is larger and comes from one

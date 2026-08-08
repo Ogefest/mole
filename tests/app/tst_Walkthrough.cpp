@@ -1,6 +1,7 @@
 #include "plugins/builtin/AnalysisFeature.h"
 #include "plugins/builtin/AutomationFeature.h"
 #include "plugins/builtin/BrowserFeature.h"
+#include "plugins/builtin/BulkRenameFeature.h"
 #include "plugins/builtin/PreviewFeature.h"
 #include "plugins/builtin/previews/PreviewProviders.h"
 #include "support/QmlAppHarness.h"
@@ -55,6 +56,7 @@ private slots:
     void folderSizesLandInTheListing();
     void theListingTakesItsTypeSizeFromTheScale();
     void theIconOnlyControlsAreBigEnoughToHit();
+    void bulkRenameShowsThePreviewAsYouType();
     void breadcrumbsClimbTheTree();
     void ctrlGRevealsTheEditablePath();
     void aSlowFolderSaysSoInTheMiddleOfThePane();
@@ -587,6 +589,50 @@ void TestWalkthrough::theIconOnlyControlsAreBigEnoughToHit()
         const QFont font = control->property("font").value<QFont>();
         QCOMPARE(font.pixelSize(), m_harness->app()->textSize());
     }
+}
+
+void TestWalkthrough::bulkRenameShowsThePreviewAsYouType()
+{
+    m_harness->key(Qt::Key_Return); // into "documents"
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 2; }));
+    pane()->files()->selectAll();
+    m_harness->settle();
+
+    m_harness->app()->triggerAction(QStringLiteral("mole.tools.bulkRename"));
+    auto* rename = qobject_cast<BulkRenameController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY(rename);
+    QCOMPARE(rename->sourceCount(), 2);
+
+    rename->addRule(QStringLiteral("affix"));
+    m_harness->settle(6);
+
+    // The form is capped and the preview keeps a floor, so the thing this view
+    // calls its own feature is not squeezed into what the rules leave over.
+    QQuickItem* preview = m_harness->item(QStringLiteral("renamePreviewList"));
+    QVERIFY(preview);
+    QVERIFY2(preview->width() >= 320, "the preview keeps a usable width");
+
+    // Typed into, not set through the controller: what was wrong was that nothing
+    // happened until the field lost the keyboard, so the keyboard has to stay in
+    // it for this to mean anything.
+    QQuickItem* prefix = m_harness->item(QStringLiteral("rulePrefixField"));
+    QVERIFY(prefix);
+    prefix->forceActiveFocus();
+    m_harness->settle(4);
+    QVERIFY(prefix->hasActiveFocus());
+
+    m_harness->type(QStringLiteral("2024_"));
+    QVERIFY2(m_harness->until(
+                 [rename] {
+                     return rename->changedCount() == 2
+                         && rename->preview().first().toMap().value(QStringLiteral("to")).toString()
+                         == QStringLiteral("2024_prices.csv");
+                 },
+                 4000),
+        "the preview has to follow what is typed, without leaving the field");
+
+    m_harness->settle(8);
+    m_harness->screenshot(QStringLiteral("07b-bulk-rename"));
 }
 
 void TestWalkthrough::breadcrumbsClimbTheTree()

@@ -9,6 +9,44 @@ wrong.
 
 ---
 
+## Bulk rename hid the thing it calls its own feature
+
+`BulkRenameView.qml` opens by stating its own priority — *"The preview is the
+feature"* — and then laid itself out as though the form were. The rules column asked
+for 40% of the window and there was no minimum width anywhere in the view, so the
+grids of full-width text boxes inside it stretched a two-character prefix across a
+third of the screen and the before-and-after list took what was left. The form is
+now capped, and the preview keeps a floor of its own, so no arrangement of rules can
+crowd it out.
+
+The other half was that nothing happened while you typed: the fields were wired to
+`onEditingFinished`, so a prefix showed no effect until Enter was pressed or the
+focus moved elsewhere — while the dropdowns and spin boxes in the same form updated
+at once. Two behaviours in one panel, and the fields carrying the interesting part
+were the ones that felt dead.
+
+The first attempt at this was wrong and worth recording. Measuring `RenamePlan::build`
+first — 2 ms for a thousand files, 15 ms for five thousand, 63 ms for twenty thousand
+— it looked like live updates needed coalescing, so a debounce went in. That was
+solving a problem nobody had: the complaint was about not seeing the changes, and a
+debounce delays exactly the feedback being asked for. It also made the preview
+asynchronous, which broke a test that reasonably expected the plan to be current. It
+came out again.
+
+The real cause was elsewhere and would have survived any amount of debouncing. Every
+keystroke made `setRuleField` emit `rulesChanged()`, the form's `Repeater` rebuilt its
+delegates, and the field being typed into was destroyed and replaced. Typing "2024_"
+left "2": the first character round-tripped through the model, the field was
+recreated, and the rest went nowhere. `setRuleField` no longer announces that the
+rules changed — the form is the only thing that reads them and it is where the change
+came from; what has to follow the keystroke is the preview, and `previewChanged()`
+says so.
+
+The test types into the field rather than calling the controller, and keeps the
+keyboard there while it asserts, because the whole bug lived in the difference
+between those two things. It also holds the layout: the preview list must keep at
+least 320 pixels.
+
 ## The small controls were too small to hit
 
 Adding a bookmark and closing a tab — the two things anyone does most — were

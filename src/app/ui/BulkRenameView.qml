@@ -83,8 +83,14 @@ Item {
 
                 // ---- the rules, in the order they apply ----------------------
 
+                // The rules are a form, and a form only needs the width its fields
+                // need. Left to fill, the grids of full-width text boxes inside it
+                // stretched a two-character prefix across a third of the window and
+                // squeezed the preview -- which this view's own opening line calls
+                // the feature -- into whatever was left.
                 ColumnLayout {
-                    Layout.preferredWidth: Math.max(340, view.width * 0.4)
+                    Layout.preferredWidth: 360
+                    Layout.maximumWidth: Math.max(360, Math.round(view.width * 0.38))
                     Layout.fillHeight: true
                     spacing: 6
 
@@ -98,7 +104,7 @@ Item {
                         ComboBox {
                             objectName: "addRulePicker"
                             implicitContentWidthPolicy: ComboBox.WidestText
-                            font.pixelSize: 12
+                            font.pixelSize: App.secondaryTextSize
                             textRole: "label"
                             valueRole: "id"
                             model: controller ? controller.ruleKinds : []
@@ -112,7 +118,7 @@ Item {
                         visible: controller && controller.rules.length === 0
                         color: view.mutedColor
                         wrapMode: Text.WordWrap
-                        font.pixelSize: 11
+                        font.pixelSize: App.smallTextSize
                         text: "Rules apply in order, each to the result of the last. Stripping "
                               + "digits before numbering is a different result from numbering "
                               + "first, and both are useful."
@@ -149,13 +155,13 @@ Item {
                                     Label {
                                         text: (modelData.index + 1) + "."
                                         color: view.mutedColor
-                                        font.pixelSize: 11
+                                        font.pixelSize: App.smallTextSize
                                     }
                                     Label {
                                         Layout.fillWidth: true
                                         text: modelData.label
                                         font.bold: true
-                                        font.pixelSize: 12
+                                        font.pixelSize: App.secondaryTextSize
                                     }
                                     ToolButton {
                                         text: "▲"
@@ -197,25 +203,25 @@ Item {
                                     TextField {
                                         visible: modelData.kind === "replace"
                                         Layout.fillWidth: true
-                                        font.pixelSize: 12
+                                        font.pixelSize: App.secondaryTextSize
                                         placeholderText: "Find"
                                         text: modelData.find
-                                        onEditingFinished: controller.setRuleField(
+                                        onTextEdited: controller.setRuleField(
                                             modelData.index, "find", text)
                                     }
                                     TextField {
                                         visible: modelData.kind === "replace"
                                         Layout.fillWidth: true
-                                        font.pixelSize: 12
+                                        font.pixelSize: App.secondaryTextSize
                                         placeholderText: "Replace with"
                                         text: modelData.replaceWith
-                                        onEditingFinished: controller.setRuleField(
+                                        onTextEdited: controller.setRuleField(
                                             modelData.index, "replaceWith", text)
                                     }
                                     CheckBox {
                                         visible: modelData.kind === "replace"
                                         text: "Pattern"
-                                        font.pixelSize: 11
+                                        font.pixelSize: App.smallTextSize
                                         checked: modelData.useRegex
                                         onToggled: controller.setRuleField(
                                             modelData.index, "useRegex", checked)
@@ -223,7 +229,7 @@ Item {
                                     CheckBox {
                                         visible: modelData.kind === "replace"
                                         text: "Match case"
-                                        font.pixelSize: 11
+                                        font.pixelSize: App.smallTextSize
                                         checked: modelData.caseSensitive
                                         onToggled: controller.setRuleField(
                                             modelData.index, "caseSensitive", checked)
@@ -234,7 +240,7 @@ Item {
                                         visible: modelData.kind === "case"
                                         Layout.columnSpan: 2
                                         Layout.fillWidth: true
-                                        font.pixelSize: 12
+                                        font.pixelSize: App.secondaryTextSize
                                         model: ["UPPER CASE", "lower case", "Title Case",
                                                 "Sentence case"]
                                         currentIndex: modelData.caseStyle
@@ -246,10 +252,10 @@ Item {
                                     TextField {
                                         visible: modelData.kind === "insert"
                                         Layout.fillWidth: true
-                                        font.pixelSize: 12
+                                        font.pixelSize: App.secondaryTextSize
                                         placeholderText: "Text"
                                         text: modelData.text
-                                        onEditingFinished: controller.setRuleField(
+                                        onTextEdited: controller.setRuleField(
                                             modelData.index, "text", text)
                                     }
                                     SpinBox {
@@ -277,7 +283,7 @@ Item {
                                         visible: modelData.kind === "strip"
                                         Layout.columnSpan: 2
                                         Layout.fillWidth: true
-                                        font.pixelSize: 12
+                                        font.pixelSize: App.secondaryTextSize
                                         model: ["Digits", "Punctuation", "Spaces", "Accents",
                                                 "Non-ASCII"]
                                         currentIndex: modelData.stripClass
@@ -316,30 +322,31 @@ Item {
                                     TextField {
                                         visible: modelData.kind === "number"
                                         Layout.fillWidth: true
-                                        font.pixelSize: 12
+                                        font.pixelSize: App.secondaryTextSize
                                         placeholderText: "Separator"
                                         text: modelData.numberSeparator
-                                        onEditingFinished: controller.setRuleField(
+                                        onTextEdited: controller.setRuleField(
                                             modelData.index, "numberSeparator", text)
                                     }
 
                                     // --- affix ---
                                     TextField {
+                                        objectName: "rulePrefixField"
                                         visible: modelData.kind === "affix"
                                         Layout.fillWidth: true
-                                        font.pixelSize: 12
+                                        font.pixelSize: App.secondaryTextSize
                                         placeholderText: "Prefix"
                                         text: modelData.prefix
-                                        onEditingFinished: controller.setRuleField(
+                                        onTextEdited: controller.setRuleField(
                                             modelData.index, "prefix", text)
                                     }
                                     TextField {
                                         visible: modelData.kind === "affix"
                                         Layout.fillWidth: true
-                                        font.pixelSize: 12
+                                        font.pixelSize: App.secondaryTextSize
                                         placeholderText: "Suffix"
                                         text: modelData.suffix
-                                        onEditingFinished: controller.setRuleField(
+                                        onTextEdited: controller.setRuleField(
                                             modelData.index, "suffix", text)
                                     }
 
@@ -348,10 +355,10 @@ Item {
                                         visible: modelData.kind === "extension"
                                         Layout.columnSpan: 2
                                         Layout.fillWidth: true
-                                        font.pixelSize: 12
+                                        font.pixelSize: App.secondaryTextSize
                                         placeholderText: "New extension (empty lower-cases it)"
                                         text: modelData.newExtension
-                                        onEditingFinished: controller.setRuleField(
+                                        onTextEdited: controller.setRuleField(
                                             modelData.index, "newExtension", text)
                                     }
 
@@ -362,7 +369,7 @@ Item {
                                         visible: modelData.kind !== "extension"
                                         Layout.columnSpan: 2
                                         Layout.fillWidth: true
-                                        font.pixelSize: 11
+                                        font.pixelSize: App.smallTextSize
                                         model: ["Name only", "Extension only", "Whole filename"]
                                         currentIndex: modelData.scope
                                         onActivated: controller.setRuleField(
@@ -376,14 +383,18 @@ Item {
 
                 // ---- what it would do ---------------------------------------
 
+                // And the preview keeps a floor of its own, so no arrangement of
+                // rules can crowd it out.
                 ColumnLayout {
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 320
                     Layout.fillHeight: true
                     spacing: 6
 
                     Label {
                         text: "Preview"
                         font.bold: true
+                        font.pixelSize: App.textSize
                     }
 
                     ListView {
@@ -414,20 +425,20 @@ Item {
                                         text: modelData.from
                                         elide: Text.ElideMiddle
                                         font.family: App.monospaceFont
-                                        font.pixelSize: 11
+                                        font.pixelSize: App.smallTextSize
                                         color: modelData.changed ? view.mutedColor : "#5c6472"
                                     }
                                     Label {
                                         text: modelData.changed ? "→" : "="
                                         color: "#4a5364"
-                                        font.pixelSize: 11
+                                        font.pixelSize: App.smallTextSize
                                     }
                                     Label {
                                         Layout.fillWidth: true
                                         text: modelData.to
                                         elide: Text.ElideMiddle
                                         font.family: App.monospaceFont
-                                        font.pixelSize: 11
+                                        font.pixelSize: App.smallTextSize
                                         color: modelData.blocked ? view.badColor
                                              : modelData.changed ? "#a5d6a7" : "#5c6472"
                                     }
@@ -438,7 +449,7 @@ Item {
                                     visible: modelData.blocked
                                     text: modelData.problem
                                     color: view.badColor
-                                    font.pixelSize: 10
+                                    font.pixelSize: App.smallTextSize
                                 }
                             }
                         }

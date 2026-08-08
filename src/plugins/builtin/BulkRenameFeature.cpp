@@ -191,7 +191,13 @@ void BulkRenameController::setRuleField(int index, const QString& field, const Q
     json[field] = QJsonValue::fromVariant(value);
     m_rules[index] = RenameRule::fromJson(json);
 
-    emit rulesChanged();
+    // Deliberately not emitting rulesChanged(). The form is the only thing that
+    // reads the rules, and it is where this change came from -- telling it that
+    // the list has changed makes its Repeater rebuild the delegates, which
+    // destroys the very field being typed into. With the notification in place,
+    // typing "2024_" into a prefix left "2": the first character round-tripped,
+    // the field was replaced, and the rest went nowhere. The preview is what
+    // needs to follow the keystroke, and previewChanged() says so.
     rebuildPreview();
     emit stateChanged();
 }
