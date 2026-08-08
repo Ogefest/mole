@@ -38,6 +38,8 @@ private slots:
     void cursorStaysInsideTheListing();
     void cursorResetsWhenTheListingChanges();
     void insertTicksAndAdvances();
+    void targetsAreListedByNameAndNotJustCounted();
+    void targetDetailsFollowTheCursorWhenNothingIsTicked();
     void createDirectoryAnnouncesItself();
     void renameMovesTheEntry();
     void deleteRemovesTheTargets();
@@ -319,6 +321,59 @@ void TestBrowserPaneController::insertTicksAndAdvances()
     pane->toggleSelectionAndAdvance();
     QCOMPARE(pane->files()->selectionCount(), 2);
     QCOMPARE(pane->targetSummary(), QStringLiteral("2 items"));
+}
+
+// A count answers "how many". Before something is deleted the question is "which
+// ones", and until this landed there was no way for a dialog to ask it.
+void TestBrowserPaneController::targetsAreListedByNameAndNotJustCounted()
+{
+    BrowserPaneController* pane = makePane();
+    pane->navigateTo(QStringLiteral("mem:///docs"));
+    QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() == 2; }));
+
+    pane->files()->selectAll();
+    const QVariantList details = pane->targetDetails();
+    QCOMPARE(details.size(), 2);
+
+    QStringList named;
+    for (const QVariant& row : details)
+        named.append(row.toMap().value(QStringLiteral("name")).toString());
+    named.sort();
+    QCOMPARE(named, QStringList({ QStringLiteral("a.txt"), QStringLiteral("deep") }));
+
+    // Which of them is a folder, because a folder goes with everything inside it
+    // and that is the difference between deleting one file and deleting a tree.
+    QVariantMap folder;
+    QVariantMap file;
+    for (const QVariant& row : details) {
+        if (row.toMap().value(QStringLiteral("name")).toString() == QStringLiteral("deep"))
+            folder = row.toMap();
+        else
+            file = row.toMap();
+    }
+    QVERIFY2(folder.value(QStringLiteral("isDir")).toBool(), "a folder says so");
+    QVERIFY2(!file.value(QStringLiteral("isDir")).toBool(), "a file says so");
+
+    QCOMPARE(file.value(QStringLiteral("detail")).toString(), QStringLiteral("3 B"));
+    // A folder's own size says nothing about what is inside it, so it claims nothing.
+    QCOMPARE(folder.value(QStringLiteral("detail")).toString(), QString());
+
+    // The list and the deletion read the same rule, rather than being two opinions
+    // about what is selected that could drift apart.
+    QCOMPARE(details.size(), pane->targetCount());
+}
+
+void TestBrowserPaneController::targetDetailsFollowTheCursorWhenNothingIsTicked()
+{
+    BrowserPaneController* pane = makePane();
+    pane->navigateTo(QStringLiteral("mem:///docs"));
+    QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() == 2; }));
+
+    QCOMPARE(pane->files()->selectionCount(), 0);
+    const QVariantList details = pane->targetDetails();
+    QCOMPARE(details.size(), 1);
+    QCOMPARE(details.first().toMap().value(QStringLiteral("name")).toString(),
+        pane->files()->nameAt(pane->currentIndex()));
 }
 
 void TestBrowserPaneController::createDirectoryAnnouncesItself()

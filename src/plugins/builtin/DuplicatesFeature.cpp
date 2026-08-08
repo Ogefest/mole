@@ -143,6 +143,22 @@ QStringList DuplicatesController::selectedUris() const
     return out;
 }
 
+QVariantList DuplicatesController::selectedDetails() const
+{
+    QVariantList out;
+    const QLocale locale;
+    for (const DuplicateGroup& group : m_groups) {
+        for (const FileEntry& entry : group.files) {
+            if (!m_selected.contains(entry.uri.toString()))
+                continue;
+            out.append(QVariantMap { { QStringLiteral("name"), entry.uri.toString() },
+                { QStringLiteral("isDir"), false },
+                { QStringLiteral("detail"), locale.formattedDataSize(entry.size) } });
+        }
+    }
+    return out;
+}
+
 QString DuplicatesController::selectedSizeText() const
 {
     qint64 bytes = 0;

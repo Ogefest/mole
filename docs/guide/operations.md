@@ -33,12 +33,31 @@ only for zip: a tar has no notion of a password, gzip and xz encrypt nothing, an
 7z writer here cannot encrypt either. Rather than accepting a password and quietly
 ignoring it, those formats say why they cannot take one.
 
+**Delete the originals when finished** does the second half of "archive this and get
+it off my disk". It happens after the archive is written and closed, so there is never
+a moment with the files gone and no archive; if anything could not be read the
+originals are kept, because the archive is not a complete copy of them. The box is off
+every time the dialog opens — archiving something once is not a standing instruction.
+
 It runs in the background like every other job that takes time, and it can be
 cancelled. A cancelled or failed compression leaves nothing behind: an archive that
 exists is one that finished. One unreadable file is recorded and skipped rather than
 sinking the whole archive.
 
 It writes a new archive and nothing else — archive mounts stay read-only.
+
+## What an operation is aimed at
+
+Every dialog that deletes, overwrites or packs lists the files by name rather than
+counting them, and the list is taken at the moment the question is asked:
+
+![The delete confirmation](images/14-delete.png)
+
+A count only confirms what you already believed. The list is there to catch the case
+the dialog exists for — that ticks left over from another folder, or a cursor that is
+not where you think it is, have aimed the operation at something else. Deleting
+duplicates lists full locations instead of names, because inside a duplicate group
+every name is the same.
 
 ## Renaming in bulk
 

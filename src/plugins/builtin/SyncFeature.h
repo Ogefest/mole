@@ -87,6 +87,11 @@ public:
     QString errorText() const { return m_errorText; }
 
     /// Works out what would happen and stops.
+    /// The deletions in the plan, listed for the confirmation. Only the deletions:
+    /// a plan can be thousands of steps, and the one being agreed to here is the
+    /// part that destroys something.
+    Q_INVOKABLE QVariantList deletions() const;
+
     Q_INVOKABLE void preview();
     /// Does it. Deliberately a separate act from previewing.
     Q_INVOKABLE void apply();

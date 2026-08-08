@@ -54,43 +54,11 @@ Dialog {
         // Exactly what goes in, not just how many. A count is a summary; the point of
         // a dialog before an operation is to be able to see that it is aimed at the
         // right things.
-        Rectangle {
+        TargetList {
+            objectName: "compressTargetList"
             Layout.fillWidth: true
-            implicitHeight: Math.min(140, Math.max(App.listRowHeight, list.contentHeight + 2))
-            color: "#151922"
-            border.color: "#2a3140"
-            border.width: 1
-            radius: 3
-
-            ListView {
-                id: list
-                objectName: "compressTargetList"
-                anchors.fill: parent
-                anchors.margins: 1
-                clip: true
-                model: targets.model
-                ScrollBar.vertical: ScrollBar {}
-
-                delegate: RowLayout {
-                    required property var modelData
-                    width: ListView.view.width
-                    height: App.listRowHeight
-                    spacing: 6
-
-                    Label {
-                        Layout.leftMargin: 8
-                        text: modelData.isDir ? "📁" : "📄"
-                        font.pixelSize: App.secondaryTextSize
-                    }
-                    Label {
-                        Layout.fillWidth: true
-                        Layout.rightMargin: 8
-                        text: modelData.isDir ? modelData.name + "/" : modelData.name
-                        elide: Text.ElideMiddle
-                        font.pixelSize: App.secondaryTextSize
-                    }
-                }
-            }
+            maximumRows: 5
+            model: targets.model
         }
 
         // Holds the model, so onAboutToShow can refill it without the ListView

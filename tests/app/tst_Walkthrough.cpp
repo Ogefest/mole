@@ -65,6 +65,7 @@ private slots:
     void htmlCanBeSwitchedBetweenSourceAndPage();
     void folderSizesLandInTheListing();
     void compressingTheSelectionMakesAnArchiveBesideIt();
+    void deletingAsksWithTheFilesNamed();
     void theListingTakesItsTypeSizeFromTheScale();
     void theIconOnlyControlsAreBigEnoughToHit();
     void theCommandPaletteFindsAndRunsThings();
@@ -1046,6 +1047,40 @@ void TestWalkthrough::compressingTheSelectionMakesAnArchiveBesideIt()
     QVERIFY(written.open(QIODevice::ReadOnly));
     QCOMPARE(written.read(2), QByteArray("PK"));
     QVERIFY(written.size() > 2);
+}
+
+// The dialog with no second chance behind it. It used to ask "delete 2 items?", which
+// is exactly what somebody already knew before pressing the key -- and says nothing
+// about whether the two are the two they meant.
+void TestWalkthrough::deletingAsksWithTheFilesNamed()
+{
+    m_harness->key(Qt::Key_Return); // into "documents"
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 2; }));
+    pane()->files()->selectAll();
+    m_harness->settle();
+
+    m_harness->key(Qt::Key_Delete);
+
+    QQuickItem* listed = nullptr;
+    QVERIFY2(m_harness->until([this, &listed] {
+        listed = m_harness->item(QStringLiteral("deleteTargetList"));
+        return listed != nullptr;
+    }),
+        "the dialog lists what it would delete");
+    m_harness->settle();
+
+    QCOMPARE(listed->property("count").toInt(), 2);
+    QStringList named;
+    for (const QVariant& row : listed->property("model").toList())
+        named.append(row.toMap().value(QStringLiteral("name")).toString());
+    named.sort();
+    QCOMPARE(named, QStringList({ QStringLiteral("prices.csv"), QStringLiteral("report.txt") }));
+
+    m_harness->screenshot(QStringLiteral("14-delete"));
+
+    // Left as it was found: this test is about the question, not the answer.
+    m_harness->key(Qt::Key_Escape);
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 2; }));
 }
 
 void TestWalkthrough::breadcrumbsClimbTheTree()

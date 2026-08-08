@@ -189,6 +189,21 @@ int SyncController::deleteCount() const
     return m_plan.countOf(SyncPlan::Action::Delete);
 }
 
+QVariantList SyncController::deletions() const
+{
+    QVariantList out;
+    const QLocale locale;
+    for (const SyncPlan::Step& step : m_plan.steps()) {
+        if (step.action != SyncPlan::Action::Delete)
+            continue;
+        out.append(
+            QVariantMap { { QStringLiteral("name"), step.relativePath }, { QStringLiteral("isDir"), false },
+                { QStringLiteral("detail"),
+                    step.bytes > 0 ? locale.formattedDataSize(step.bytes) : QString() } });
+    }
+    return out;
+}
+
 QVariantList SyncController::steps() const
 {
     QVariantList out;

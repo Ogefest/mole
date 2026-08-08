@@ -86,6 +86,10 @@ public:
     QList<VfsUri> targets() const;
     Q_INVOKABLE int targetCount() const;
     Q_INVOKABLE QString targetSummary() const;
+    /// Exactly what an operation would act on -- name, folder or not, and size --
+    /// so a dialog can show it instead of a count. Same source as targets(), so
+    /// what is listed is what would happen and not a second opinion about it.
+    Q_INVOKABLE QVariantList targetDetails() const;
     /// Enters the row if it is a directory. Returns false for files, letting
     /// the caller decide what "open" means for them.
     Q_INVOKABLE bool activate(int row);

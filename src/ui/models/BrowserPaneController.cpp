@@ -207,6 +207,20 @@ QString BrowserPaneController::targetSummary() const
     return QStringLiteral("%1 items").arg(selected.size());
 }
 
+QVariantList BrowserPaneController::targetDetails() const
+{
+    QVariantList out;
+    for (const FileEntry& entry : m_files->targetEntries(m_currentIndex)) {
+        out.append(QVariantMap { { QStringLiteral("name"), entry.name },
+            { QStringLiteral("isDir"), entry.isDir },
+            // A folder's own size says nothing about what is inside it, and a
+            // dialog that showed "4 kB" next to a tree of ten thousand files
+            // would be worse than showing nothing.
+            { QStringLiteral("detail"), entry.isDir ? QString() : FileListModel::formatSize(entry.size) } });
+    }
+    return out;
+}
+
 void BrowserPaneController::createDirectory(const QString& name)
 {
     if (name.trimmed().isEmpty() || !m_current.isValid())

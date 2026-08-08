@@ -474,15 +474,23 @@ QStringList FileListModel::selectedUris() const
 QList<VfsUri> FileListModel::targets(int fallbackRow) const
 {
     QList<VfsUri> out;
+    for (const FileEntry& entry : targetEntries(fallbackRow))
+        out.append(entry.uri);
+    return out;
+}
+
+FileEntryList FileListModel::targetEntries(int fallbackRow) const
+{
+    FileEntryList out;
     for (const FileEntry& entry : m_visible) {
         if (m_selected.contains(entry.uri.toString()))
-            out.append(entry.uri);
+            out.append(entry);
     }
 
     // Nothing ticked means "act on whatever the cursor is on", which is what
     // every commander-style manager does.
     if (out.isEmpty() && fallbackRow >= 0 && fallbackRow < m_visible.size())
-        out.append(m_visible.at(fallbackRow).uri);
+        out.append(m_visible.at(fallbackRow));
 
     return out;
 }

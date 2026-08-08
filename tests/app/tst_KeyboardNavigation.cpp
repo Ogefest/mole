@@ -58,6 +58,7 @@ private slots:
     void cursorStaysInStepAfterAClick();
     void enterOpensTheRightRowAfterNavigating();
     void ctrlArrowsNavigateHistory();
+    void deleteAsksWithTheFilesNamed();
     void typingStartsFilteringWithoutAShortcut();
     void modifiedKeysDoNotStartFiltering();
     void f3OpensAPreviewAndReusesTheTab();
@@ -755,6 +756,48 @@ void TestKeyboardNavigation::f4MenuWalksIntoSubmenusWithTheKeyboard()
     pressKey(Qt::Key_Escape);
     pressKey(Qt::Key_Escape);
     QVERIFY2(isClosed(menu), "Escape gets out of the menu entirely");
+}
+
+// The dialog that destroys things has to say what it is about to destroy. Delete
+// is the one operation with no second chance, and it used to ask "delete 2 items?"
+// -- which is exactly as much as somebody already knew before pressing the key.
+void TestKeyboardNavigation::deleteAsksWithTheFilesNamed()
+{
+    // Two files ticked, and neither of them the one under the cursor when the
+    // question is finally asked -- so a dialog reading the cursor rather than the
+    // selection would list the wrong thing and be caught here.
+    pane()->cursorToEnd();
+    pressKey(Qt::Key_Insert);
+    pressKey(Qt::Key_Up);
+    pressKey(Qt::Key_Insert);
+    QCOMPARE(pane()->files()->selectionCount(), 2);
+
+    pressKey(Qt::Key_Delete);
+    // Through the visual tree: a Popup is not a child of the window in the object
+    // sense, but its contents are in the overlay once it is up.
+    QQuickItem* listed = nullptr;
+    QVERIFY2(waitFor(
+                 [this, &listed] {
+                     listed = findItem(QStringLiteral("deleteTargetList"));
+                     return listed != nullptr;
+                 },
+                 3000),
+        "the dialog lists what it would delete");
+    settle();
+
+    QCOMPARE(listed->property("count").toInt(), 2);
+
+    QStringList named;
+    for (const QVariant& row : listed->property("model").toList())
+        named.append(row.toMap().value(QStringLiteral("name")).toString());
+    named.sort();
+    QCOMPARE(named, QStringList({ QStringLiteral("one.txt"), QStringLiteral("two.txt") }));
+
+    // Taken when the question was asked. Whatever happens in the listing behind
+    // the dialog, the rows agreed to are the rows that were shown.
+    pane()->files()->clearSelection();
+    settle();
+    QCOMPARE(listed->property("count").toInt(), 2);
 }
 
 int main(int argc, char** argv)

@@ -30,6 +30,45 @@ README.md gained a *Using it* section pointing at the guide, and its list of thi
 yet done lost PDF, SQLite and Parquet — all three are built, and leaving them on a wish
 list would have been the same kind of lie the screenshot rule exists to prevent.
 
+## Dialogs that destroy something say what they are aimed at
+
+Reported plainly: the delete popup does not show which files it is about to delete,
+"and that could be a problem in a moment".
+
+It could. Four dialogs stood in front of something irreversible and all four asked
+with a number — *"Permanently delete 2 items?"*, *"7 files, 2.4 GB"*, *"12 files at
+the destination will be removed"*. A number only confirms what somebody already
+believes. It cannot catch the case the dialog exists for: that the operation is aimed
+at something other than what they think.
+
+That case is not hypothetical here. Ticks survive navigating away and coming back, the
+cursor is a target when nothing is ticked, and a selection made in one folder is easy
+to still be carrying in another. Each of those is a route to a correct-looking count
+over the wrong files.
+
+So every one of them now lists the entries by name, through one shared component
+rather than four hand-rolled copies. Compressing had grown its own list first; a
+second copy would have been the point where the two started saying the same thing
+differently. Deleting duplicates lists full locations instead of names, because inside
+a duplicate group every name is identical and the location is the only thing that
+tells them apart. Syncing lists only the deletions, since a plan can be thousands of
+steps and what is being agreed to here is the part that destroys something.
+
+Two details that are the whole point. The list comes from the same call that performs
+the operation — `FileListModel::targetEntries()`, which `targets()` is now built from
+— because two functions answering "what is selected" is exactly how a list and an
+action drift apart. And it is taken when the dialog opens rather than bound live: a
+refresh landing or a watcher firing behind an open dialog must not change what
+pressing Yes means. That second one is tested by mutation — binding it live instead
+makes the test fail.
+
+One correction on the way through: I read a scaled-down screenshot as a clipped
+warning line and "fixed" the dialog's height for it. Measuring said the content was
+114 pixels in a 209-pixel space and had never been clipped; the change was reverted
+rather than left in as a fix for nothing.
+
+See [ADR-0008](docs/adr/0008-naming-what-an-operation-touches.md).
+
 ## Compressing: 7z, bare xz, and a name that was being thrown away
 
 Two formats added and one bug fixed, and the bug was mine.

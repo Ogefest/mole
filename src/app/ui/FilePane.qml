@@ -928,21 +928,49 @@ FocusScope {
 
     Dialog {
         id: deleteDialog
+        objectName: "deleteDialog"
         title: "Delete"
         modal: true
         anchors.centerIn: Overlay.overlay
         width: 440
         standardButtons: Dialog.Yes | Dialog.No
 
+        // Taken once, when the question is asked. Binding it live would mean the
+        // list could change under the dialog -- a refresh landing, a watcher
+        // firing -- between reading it and pressing Yes, so what was agreed to
+        // and what happens are the same rows by construction.
+        property var doomed: []
+
+        onAboutToShow: doomed = paneController ? paneController.targetDetails() : []
         onAccepted: { paneController.deleteTargets(); pane.takeFocus() }
         onRejected: pane.takeFocus()
 
-        Label {
+        ColumnLayout {
             anchors.fill: parent
-            wrapMode: Text.Wrap
-            text: paneController
-                  ? "Permanently delete " + paneController.targetSummary() + "?"
-                  : ""
+            spacing: 10
+
+            Label {
+                objectName: "deleteQuestion"
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                font.pixelSize: App.textSize
+                text: "Permanently delete " + deleteDialog.doomed.length
+                      + (deleteDialog.doomed.length === 1 ? " item?" : " items?")
+            }
+            // Which ones, not just how many. Deleting is the operation with no
+            // second chance, so it is the one that must not be guessed at.
+            TargetList {
+                objectName: "deleteTargetList"
+                Layout.fillWidth: true
+                model: deleteDialog.doomed
+            }
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                text: "A folder goes with everything inside it. This cannot be undone."
+                color: "#d9a441"
+                font.pixelSize: App.smallTextSize
+            }
         }
     }
 }

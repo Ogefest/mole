@@ -122,6 +122,11 @@ public:
     /// The selection, or the single row at `fallbackRow` when nothing is
     /// selected -- the way a commander-style pane behaves.
     QList<VfsUri> targets(int fallbackRow) const;
+    /// The same rows, whole. What an operation is aimed at gets *shown* before it
+    /// runs, and a list of bare uris cannot say whether something is a folder or
+    /// how big it is -- so both come from here rather than the caller looking the
+    /// rows up again and risking a different answer.
+    FileEntryList targetEntries(int fallbackRow) const;
     Q_INVOKABLE QStringList selectedUris() const;
     /// Total bytes of the visible files, for the status line.
     Q_INVOKABLE qint64 totalSize() const;

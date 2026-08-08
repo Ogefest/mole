@@ -349,15 +349,38 @@ Item {
         modal: true
         title: "This will delete files"
         standardButtons: Dialog.Ok | Dialog.Cancel
+        width: 520
+
+        property var doomed: []
+
+        onAboutToShow: doomed = controller ? controller.deletions() : []
         onAccepted: controller.apply()
 
-        Label {
-            width: 420
-            wrapMode: Text.Wrap
-            text: controller
-                  ? controller.deleteCount + " files at the destination are not in the source "
-                    + "and will be removed. This cannot be undone."
-                  : ""
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 10
+
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                font.pixelSize: App.textSize
+                text: controller
+                      ? controller.deleteCount + " files at the destination are not in the source "
+                        + "and will be removed:"
+                      : ""
+            }
+            TargetList {
+                objectName: "syncDeleteList"
+                Layout.fillWidth: true
+                model: confirmDelete.doomed
+            }
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                text: "This cannot be undone."
+                color: "#d9a441"
+                font.pixelSize: App.smallTextSize
+            }
         }
     }
 }

@@ -57,6 +57,10 @@ public:
     int selectedCount() const { return static_cast<int>(m_selected.size()); }
     QString selectedSizeText() const;
     Q_INVOKABLE QStringList selectedUris() const;
+    /// The ticked copies, listed for the confirmation: full location rather than
+    /// name, because in a duplicate group every name is the same and the location
+    /// is the only thing that tells one from another.
+    Q_INVOKABLE QVariantList selectedDetails() const;
     /// The same name every other operation uses, so a chosen pile of duplicates
     /// can be added to a set, renamed or reported on without this tab knowing
     /// how any of that works.

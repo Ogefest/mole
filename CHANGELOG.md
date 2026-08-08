@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- The dialogs that delete, sync or pack now list the files by name instead of counting
+  them.
 - Compressing offers 7z and a bare xz as well, and changing the kind no longer discards
   the name that was typed.
 - Compressing lists exactly what it is about to pack, acts on the row under the cursor

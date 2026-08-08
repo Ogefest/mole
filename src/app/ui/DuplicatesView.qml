@@ -315,15 +315,41 @@ Item {
         modal: true
         title: "Delete these files?"
         standardButtons: Dialog.Ok | Dialog.Cancel
+        width: 520
+
+        // Snapshotted when the question is asked, so a tick landing behind the
+        // dialog cannot change what pressing Ok means.
+        property var doomed: []
+
+        onAboutToShow: doomed = controller ? controller.selectedDetails() : []
         onAccepted: controller.deleteSelected()
 
-        Label {
-            width: 420
-            wrapMode: Text.Wrap
-            text: controller
-                  ? controller.selectedCount + " files, " + controller.selectedSizeText
-                    + ". This cannot be undone, and the copies you did not tick are left alone."
-                  : ""
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 10
+
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                font.pixelSize: App.textSize
+                text: controller
+                      ? controller.selectedCount + " files, " + controller.selectedSizeText + "."
+                      : ""
+            }
+            // By location, not by name: in a duplicate group every name is the
+            // same, so a list of names would be no help at all.
+            TargetList {
+                objectName: "duplicateDeleteList"
+                Layout.fillWidth: true
+                model: confirmDelete.doomed
+            }
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                text: "This cannot be undone, and the copies you did not tick are left alone."
+                color: "#d9a441"
+                font.pixelSize: App.smallTextSize
+            }
         }
     }
 }
