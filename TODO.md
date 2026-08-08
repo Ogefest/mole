@@ -19,19 +19,6 @@ screenshots come from `make screenshots`, which photographs states the tests hav
 just asserted — so the documentation cannot drift into showing something that no
 longer works.
 
-### F3 on a folder should open it
-
-`F3` previews the file under the cursor, and a folder has nothing to preview, so
-pressing it there does nothing at all -- which is indistinguishable from a key that
-is broken. When the cursor is on a folder, `F3` should simply open it: the same
-thing `Enter` does.
-
-Cheap to build and cheap to get subtly wrong, so the test says which of the two
-paths ran: `F3` on a file opens a preview tab and does not navigate, `F3` on a
-folder navigates and opens no tab. `previewArrowsStepThroughTheFolder` and
-`f3OpensAPreviewAndReusesTheTab` are next door to it in
-`tst_KeyboardNavigation` and are the shape to follow.
-
 ### How big is this folder, answered in the listing
 
 There is no quick way to see what a folder contains. Analysing it gives the answer
@@ -94,6 +81,27 @@ disk is the point. That means the two search features stop being separate strang
 which is an architectural change and wants an ADR: which one owns the form, how a
 path is matched to an index, what the toggle is called, and what happens when the
 index covers only part of what was asked for.
+
+### Search results need to arrive sooner, and be worth something once they do
+
+Two halves, and the first is about latency rather than features. A tree walk finds
+matches early and the view should show them early: results as they are found, the
+same way the table preview now fills as it reads, rather than a wait followed by a
+list. Whether that is already happening or the view is batching them is the first
+thing to measure.
+
+The second half is what you can then do with them. A search over a large tree
+returns more than anyone wants to read, so the results need filtering in place --
+narrowing what is already found, without walking the disk again. And they need a way
+out: building a file set from the results, so the work continues over that set
+instead of ending when the tab is closed. The sets feature already exists and its
+view is the place that work continues, so this is a bridge between two features
+rather than a new one.
+
+Design question worth settling before the code: whether the set is a snapshot of the
+matches at that moment or something that re-runs the query. A snapshot is what "build
+a set from this" means to anyone reading it, and it is the one that cannot surprise
+you later, but say so explicitly rather than leaving it implied.
 
 ### Compressing files and folders
 

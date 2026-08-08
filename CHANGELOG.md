@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- F3 on a folder opens it, instead of doing nothing because there is nothing to
+  preview.
 - The F4 menu separates what acts on the files in front of you (Operations) from
   what opens a tool to work in (Workflows), instead of one Tools heap.
 - The F4 menu can be walked entirely from the keyboard: arrows move, Right or

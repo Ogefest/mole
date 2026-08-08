@@ -138,7 +138,16 @@ FocusScope {
             // where the file under the cursor is known, and a key that only
             // works when a shortcut happens to fire is a key that will one day
             // stop working.
-            App.triggerAction("mole.tools.preview")
+            //
+            // A folder has nothing to preview, and a key that does nothing is
+            // indistinguishable from one that is broken -- so on a folder F3
+            // opens it, which is the same thing Return does. The menu entry
+            // stays literally "Preview this file" and stays disabled here,
+            // because that is what it says it does.
+            if (paneController && paneController.files.isDirAt(paneController.currentIndex))
+                pane.openRow(paneController.currentIndex)
+            else
+                App.triggerAction("mole.tools.preview")
             event.accepted = true
             break
         case Qt.Key_F2:

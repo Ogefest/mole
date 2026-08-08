@@ -61,6 +61,7 @@ private slots:
     void typingStartsFilteringWithoutAShortcut();
     void modifiedKeysDoNotStartFiltering();
     void f3OpensAPreviewAndReusesTheTab();
+    void f3OnAFolderOpensItInstead();
     void previewArrowsStepThroughTheFolder();
     void newTabShortcutOpensATab();
     void f4MenuWalksIntoSubmenusWithTheKeyboard();
@@ -624,6 +625,34 @@ void TestKeyboardNavigation::f3OpensAPreviewAndReusesTheTab()
     QCOMPARE(m_app->tabs()->rowCount(), before + 1);
     QCOMPARE(m_app->tabs()->currentController()->property("currentUri").toString(),
         m_tree->rootUri().child(QStringLiteral("two.txt")).toString());
+}
+
+void TestKeyboardNavigation::f3OnAFolderOpensItInstead()
+{
+    // Held onto, because pane() asks the *current* tab for its pane and the
+    // second half of this test opens a preview -- at which point the current tab
+    // is not a browser and pane() is null.
+    BrowserPaneController* browser = pane();
+    QVERIFY(browser);
+
+    // Folders sort first, so row 0 is one. Nothing to preview there, and a key
+    // that does nothing cannot be told apart from a key that is broken.
+    QCOMPARE(browser->currentIndex(), 0);
+    QVERIFY(browser->files()->isDirAt(0));
+
+    const int tabsBefore = m_app->tabs()->rowCount();
+    pressKey(Qt::Key_F3);
+
+    QVERIFY2(waitFor([browser] { return browser->currentUri().endsWith(QStringLiteral("/alpha")); }, 5000),
+        "F3 on a folder opens it, the same as Return");
+    QCOMPARE(m_app->tabs()->rowCount(), tabsBefore);
+
+    // And on a file it is still a preview: a tab opens and the listing stays put.
+    QVERIFY(waitFor([browser] { return browser->files()->rowCount() == 1; }, 5000));
+    const QString here = browser->currentUri();
+    pressKey(Qt::Key_F3);
+    QCOMPARE(m_app->tabs()->rowCount(), tabsBefore + 1);
+    QCOMPARE(browser->currentUri(), here);
 }
 
 void TestKeyboardNavigation::previewArrowsStepThroughTheFolder()

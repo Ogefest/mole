@@ -9,6 +9,25 @@ wrong.
 
 ---
 
+## F3 did nothing on a folder
+
+`F3` previews the file under the cursor, `currentFile()` returns nothing for a
+directory, so the action was disabled and the key did nothing at all — which is
+indistinguishable from a key that is broken. On a folder it now opens it, the same
+thing `Return` does, through the same `openRow()` the pane already uses.
+
+Handled in the pane rather than in the action, deliberately. The menu entry says
+"Preview this file" and stays disabled on a folder, because that is what it says it
+does; it is the *key* that carries the second meaning, which is how function keys
+have always worked in a commander.
+
+The test asserts which of the two paths ran, since both are one keypress and easy to
+confuse: on a folder the listing navigates and no tab appears, on a file a tab
+appears and the listing stays put. It holds the pane pointer from the start, because
+`pane()` asks the current tab for its pane and the current tab is a preview by the
+end — the first version of the test dereferenced that null and took the whole binary
+down with it.
+
 ## The menu had one heap called Tools
 
 Eleven entries under one heading, of two entirely different kinds. *Preview this
