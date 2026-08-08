@@ -9,6 +9,27 @@ wrong.
 
 ---
 
+## User documentation
+
+A guide in [docs/guide/](docs/guide/README.md): an index, then browsing, looking inside
+files, finding things, the operations, and the command palette. Written for someone
+using Mole rather than someone building it, which is why it is separate from
+ARCHITECTURE.md and from the ADRs.
+
+The part worth having is the rule about its pictures. Every screenshot comes from
+`make screenshots`, which drives the real application headlessly and photographs each
+state the walkthrough test has *just asserted* — so a picture cannot outlive the feature
+it documents. Twenty-eight of them exist because twenty-eight states are checked;
+`make guide-images` regenerates them and copies them in, so refreshing the guide after a
+change is one command rather than an afternoon with a screenshot tool.
+
+A script checks that every image and every internal link in the guide resolves, because
+a guide with a broken picture is worse than one with no pictures: it looks maintained.
+
+README.md gained a *Using it* section pointing at the guide, and its list of things not
+yet done lost PDF, SQLite and Parquet — all three are built, and leaving them on a wish
+list would have been the same kind of lie the screenshot rule exists to prevent.
+
 ## Compressing files and folders
 
 An operation on the selection — or on the folder in view when nothing is ticked —

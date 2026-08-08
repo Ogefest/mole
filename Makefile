@@ -8,7 +8,7 @@ JOBS ?= $(shell nproc)
 PREFIX ?= /usr/local
 DESTDIR ?=
 
-.PHONY: all build configure release run test test-verbose clean distclean format tidy help \
+.PHONY: all build configure release run test test-verbose clean distclean format tidy help guide-images \
         install uninstall bundle licence-check screenshots librclone
 
 all: build
@@ -103,6 +103,12 @@ screenshots: build
 		$(BUILD_DIR)/tests/tst_Walkthrough
 	@echo ""
 	@echo "  screenshots: $(BUILD_DIR)/screenshots"
+
+## guide-images: refresh the user guide's screenshots from the test suite
+guide-images: screenshots
+	@mkdir -p docs/guide/images
+	@cp $(BUILD_DIR)/screenshots/*.png docs/guide/images/
+	@echo "  guide images: docs/guide/images ($(shell ls $(BUILD_DIR)/screenshots/*.png 2>/dev/null | wc -l) files)"
 
 ## librclone: build rclone as a shared library, for cloud and network drives
 librclone:

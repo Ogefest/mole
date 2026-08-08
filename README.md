@@ -146,6 +146,7 @@ Check a packaged build without a display:
 | `make test` | build and run the whole suite in parallel |
 | `make asan` | build and test under AddressSanitizer + UBSan + leak detection |
 | `make screenshots` | drive the real interface headlessly and photograph each verified state |
+| `make guide-images` | the same, copied into the user guide |
 | `make librclone` | build rclone as a shared library, for cloud and network drives |
 | `make release` | optimised build with debug info |
 | `make format` | apply `.clang-format` across the tree |
@@ -186,6 +187,13 @@ src/app        main() and the QML shell
 tests          one binary per unit, plus an integration suite
 ```
 
+## Using it
+
+- [`docs/guide/`](docs/guide/README.md) — the user guide: browsing, previewing,
+  searching, and the operations. Every picture in it was taken by the test suite
+  immediately after asserting that what it shows is real, so it cannot document a
+  feature that has stopped working.
+
 ## Extending it
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — how the pieces fit and why.
@@ -224,10 +232,9 @@ that third-party code uses, so the API cannot quietly rot.
 ## Roadmap
 
 Backends: all of rclone's, through `make librclone`.
-Previews: video (needs `qt6-multimedia-dev`, not yet installed here), PDF
-(`poppler-qt6`), audio tags (`taglib`), image metadata (`exiv2`),
-SQLite/DuckDB/Parquet tables.
-Features: user documentation with screenshots.
+Previews: video (needs `qt6-multimedia-dev`, not yet installed here), audio tags
+(`taglib`), image metadata (`exiv2`), DuckDB tables. PDF, SQLite and Parquet are
+done.
 
 Cross-platform: nothing in the codebase is Linux-specific, but Windows and
 macOS have not been built or tested yet.

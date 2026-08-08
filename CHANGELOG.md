@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- A user guide in docs/guide/, illustrated with screenshots the test suite takes
+  immediately after asserting what they show.
 - The selection can be compressed into a new zip, tar.gz or tar.xz beside it, packed
   in the background.
 - Search results can be walked with the arrows, opened in their folder with Enter, and

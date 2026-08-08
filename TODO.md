@@ -11,13 +11,12 @@ project, and a contributor should never hit a wall of text they cannot read.
 
 ## Features
 
-### User documentation
+## Features
 
-A directory of user-facing documentation, kept up to date: what this is, what it
-does, and the main features, with screenshots so it is worth looking at. The
-screenshots come from `make screenshots`, which photographs states the tests have
-just asserted — so the documentation cannot drift into showing something that no
-longer works.
+Nothing agreed and unbuilt at the moment. What is next comes from
+[README.md](README.md)'s extension points: video, audio-tag and image-metadata
+previews, the backends listed below, and adding to an existing archive rather than
+only writing a new one.
 
 ---
 
