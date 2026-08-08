@@ -226,7 +226,8 @@ QStringList PluginManager::defaultSearchPaths()
         paths.append(QDir(dataDir).filePath(QStringLiteral("plugins")));
 
     // An escape hatch for development and for testing an unreleased plugin.
-    const QString fromEnv = QProcessEnvironment::systemEnvironment().value(QStringLiteral("MOLE_PLUGIN_PATH"));
+    const QString fromEnv
+        = QProcessEnvironment::systemEnvironment().value(QStringLiteral("MOLE_PLUGIN_PATH"));
     if (!fromEnv.isEmpty())
         paths.append(fromEnv.split(QDir::listSeparator(), Qt::SkipEmptyParts));
 
