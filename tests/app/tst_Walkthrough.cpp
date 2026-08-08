@@ -5,6 +5,7 @@
 #include "plugins/builtin/previews/PreviewProviders.h"
 #include "support/QmlAppHarness.h"
 #include "ui/AppController.h"
+#include "ui/models/BookmarkModel.h"
 #include "ui/models/BrowserPaneController.h"
 #include "ui/models/FileListModel.h"
 #include "ui/models/TableModel.h"
@@ -64,6 +65,7 @@ private slots:
     void schedulesTheReportAndTracksIt();
     void ctrlWClosesAPreviewTabWithTheTextFocused();
     void theTerminalOpensInTheFolderYouAreLookingAt();
+    void theTerminalTakesTheKeyboardAndCtrlDEndsIt();
     void theDrivesDialogOffersBackendsAndAForm();
     void everyBackendBuildsAFormWithoutComplaint();
     void aDriveWithAPasswordSavesAndConnects();
@@ -872,6 +874,54 @@ void TestWalkthrough::theTerminalOpensInTheFolderYouAreLookingAt()
     m_harness->app()->triggerAction(QStringLiteral("mole.tools.terminal"));
     m_harness->settle(4);
     QVERIFY(!terminal->isVisible());
+}
+
+void TestWalkthrough::theTerminalTakesTheKeyboardAndCtrlDEndsIt()
+{
+    TerminalController* terminal = m_harness->app()->terminal();
+    QVERIFY(terminal);
+    if (!terminal->isAvailable())
+        QSKIP("no pseudo-terminal on this platform");
+
+    // Ctrl+D on the listing is what it has always been: the folder is bookmarked.
+    // Asserted first, because the point of the rest is that the panel takes the
+    // key away without this behaviour being lost.
+    const int bookmarksBefore = m_harness->app()->bookmarks()->rowCount();
+    m_harness->key(Qt::Key_D, Qt::ControlModifier);
+    QVERIFY(m_harness->until([this, bookmarksBefore] {
+        return m_harness->app()->bookmarks()->rowCount() == bookmarksBefore + 1;
+    }));
+    const int bookmarksWithFolder = m_harness->app()->bookmarks()->rowCount();
+
+    m_harness->key(Qt::Key_QuoteLeft, Qt::ControlModifier);
+    QVERIFY(m_harness->until([terminal] { return terminal->isVisible() && terminal->isRunning(); }));
+    m_harness->settle(6);
+
+    // Typed, not sent through the controller. Every other assertion about the
+    // shell could pass with the keyboard on the file list behind it; this one is
+    // the whole point -- opening the panel and starting to type has to work.
+    m_harness->type(QStringLiteral("echo mole-typed-marker"));
+    m_harness->key(Qt::Key_Return);
+    QVERIFY2(m_harness->until(
+                 [terminal] {
+                     for (int row = 0; row < terminal->rows(); ++row) {
+                         if (terminal->rowText(row).contains(QStringLiteral("mole-typed-marker")))
+                             return true;
+                     }
+                     return false;
+                 },
+                 10000),
+        "what is typed after the panel opens has to reach the shell, with no click first");
+
+    // And Ctrl+D means end of input, as it does in any terminal: the shell ends
+    // and the panel goes with it. It must not reach the bookmarks, which is where
+    // the window shortcut had been sending it.
+    m_harness->key(Qt::Key_D, Qt::ControlModifier);
+    QVERIFY2(m_harness->until([terminal] { return !terminal->isRunning(); }, 10000),
+        "Ctrl+D has to reach the shell as end of input");
+    QVERIFY2(m_harness->until([terminal] { return !terminal->isVisible(); }, 6000),
+        "a shell that ended takes its panel with it");
+    QCOMPARE(m_harness->app()->bookmarks()->rowCount(), bookmarksWithFolder);
 }
 
 void TestWalkthrough::theDrivesDialogOffersBackendsAndAForm()

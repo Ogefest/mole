@@ -10,8 +10,21 @@ TerminalController::TerminalController(QObject* parent)
     : QObject(parent)
 {
     connect(&m_pty, &Pty::output, this, [this](const QByteArray& data) { m_screen.feed(data); });
-    connect(&m_pty, &Pty::finished, this, [this](int) {
-        m_errorText = QStringLiteral("The shell exited. Press Enter to start another.");
+    connect(&m_pty, &Pty::finished, this, [this](int exitCode) {
+        // A shell that ended on its own -- Ctrl+D, or `exit` -- takes the panel
+        // with it, because that is what closing a terminal means everywhere
+        // else. Reopening starts a fresh one in the current folder.
+        if (exitCode == 0) {
+            m_errorText.clear();
+            emit runningChanged();
+            setVisible(false);
+            return;
+        }
+
+        // A shell that died of something keeps the panel open, or the reason
+        // would disappear along with it.
+        m_errorText
+            = QStringLiteral("The shell exited with code %1. Press Enter to start another.").arg(exitCode);
         emit runningChanged();
     });
     connect(&m_screen, &TerminalScreen::changed, this, &TerminalController::screenChanged);

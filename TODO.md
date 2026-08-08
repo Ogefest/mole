@@ -53,45 +53,6 @@ fight back. None of it is covered: `tst_KeyboardNavigation` does not touch the
 menu at all, so the tests come with the fix, driven through `QmlAppHarness` like
 the rest of the keyboard coverage.
 
-### The terminal does not get the keyboard, and Ctrl+D bookmarks instead of closing
-
-Two faults in the terminal panel, and neither is subtle once found.
-
-Opening it leaves the keyboard on the file list, so the shell is on screen and
-typing goes somewhere else; it takes a click in the panel before it answers.
-`TerminalPanel.qml` declares `FocusScope { focus: true }`, but the panel is
-revealed by a visibility change and nothing ever calls `forceActiveFocus()` — the
-only thing that does is the `MouseArea`. `AppMenu.qml` already had this exact
-problem and states the fix in a comment: opened from a key there is no mouse
-involved, so it takes the keyboard itself. `Ctrl+\`` is the same situation.
-
-Then `Ctrl+D`, which in a shell means end of input: the shell exits, and the panel
-should go with it. Instead the current folder is added to the bookmarks. `Ctrl+D`
-is a window-level `Shortcut` in `Main.qml` bound to `mole.bookmarks.add`, and a
-window shortcut is resolved before the key is ever delivered to the focused item —
-so the panel's own handler, the one whose comment insists that every key goes to
-the shell because "a terminal that swallowed Ctrl+C would be useless, and one that
-let the window take it worse", never sees it. Worth being precise about the fix:
-the key has to arrive at the shell as end-of-input and the panel close because its
-shell ended, rather than growing a private "Ctrl+D closes the panel" binding.
-Bookmarking on `Ctrl+D` is right and stays — it belongs to the listing, which is
-where the user asked for it.
-
-That is the third time a window shortcut and a focused view have fought over a
-key. `F5` was swallowed by `Ctrl+R`'s `StandardKey.Refresh` until the sequence was
-narrowed, and `Ctrl+W` stopped closing a tab once a preview had the keyboard,
-which is what `ViewerKeys.qml` exists for. Note that the terminal needs the
-opposite direction from `ViewerKeys`: not a view handing a shortcut back to the
-window, but the window standing down while a view holds the keyboard — Qt's
-`ShortcutOverride`, or gating those shortcuts on where the focus is. One answer
-covering all three beats a third private arrangement, and it is the kind of thing
-that earns an ADR.
-
-`ctrlWClosesAPreviewTabWithTheTextFocused` is the shape the tests should copy.
-Three of them: after `Ctrl+\`` a typed key reaches the shell with no click
-anywhere; `Ctrl+D` with the panel focused ends the shell, closes the panel, and
-adds no bookmark; `Ctrl+D` on the listing still adds one.
-
 ### Compressing files and folders
 
 An action on the selection — one file, one folder, or several of each — that opens

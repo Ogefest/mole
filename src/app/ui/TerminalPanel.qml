@@ -15,6 +15,25 @@ Rectangle {
 
     color: panelColor
 
+    // Opened with a key, so there is no mouse involved and the panel has to take
+    // the keyboard itself -- exactly the reason the menu does the same when F4
+    // opens it. Without this the shell sits there while what you type goes to the
+    // file list behind it.
+    function takeTheKeyboardIfShown() {
+        if (terminal && terminal.visible)
+            keyboard.forceActiveFocus()
+    }
+
+    // Both paths, because the panel may be revealed after this component exists
+    // or exist only once it is already being revealed.
+    onVisibleChanged: if (visible) Qt.callLater(takeTheKeyboardIfShown)
+    Component.onCompleted: Qt.callLater(takeTheKeyboardIfShown)
+
+    Connections {
+        target: terminal
+        function onVisibleChanged() { Qt.callLater(panel.takeTheKeyboardIfShown) }
+    }
+
     // The xterm palette. Terminals refer to colours by index, so the mapping has
     // to live somewhere, and matching what everything else uses means output
     // looks the way its author intended.
@@ -140,6 +159,18 @@ Rectangle {
                 id: keyboard
                 anchors.fill: parent
                 focus: true
+
+                // Claims every key before Qt resolves it as a window shortcut,
+                // which is the only way a key the window has bound can reach the
+                // shell at all: shortcuts are matched before the focused item is
+                // ever offered the key. Ctrl+D was going to the bookmarks instead
+                // of ending the shell for exactly this reason.
+                //
+                // Accepting everything is deliberate rather than a broad brush.
+                // While this panel holds the keyboard it is a terminal, and the
+                // handler below sends the lot onward; Ctrl+` is handled there too,
+                // so there is always a way back out to the window.
+                Keys.onShortcutOverride: function(event) { event.accepted = true }
 
                 // Everything goes to the shell, including keys the window would
                 // otherwise claim -- a terminal that swallowed Ctrl+C would be

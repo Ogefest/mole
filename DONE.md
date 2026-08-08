@@ -9,6 +9,45 @@ wrong.
 
 ---
 
+## The terminal did not get the keyboard, and Ctrl+D bookmarked instead of closing
+
+Opening the panel left the keyboard on the file list, so the shell was on screen
+while what you typed went somewhere else, and it took a click before it answered.
+`focus: true` declares an intention, not a fact — something has to call
+`forceActiveFocus()` when the panel is revealed, which is what the menu already
+does when F4 opens it. The panel now does it too, on both paths: when it is
+revealed after it exists, and when it exists only once it is already being
+revealed.
+
+`Ctrl+D` was the more interesting one. In a shell it means end of input, and the
+encoding for it was already correct — `Ctrl+A`..`Ctrl+_` become control characters,
+which is how `Ctrl+C` reaches the shell as an interrupt. The key simply never
+arrived: it is a window `Shortcut` bound to `mole.bookmarks.add`, and Qt matches
+shortcuts before offering the key to whatever has the keyboard, so the panel's own
+handler — the one whose comment insists that every key goes to the shell — was
+never consulted. The panel now accepts `ShortcutOverride` for everything, which is
+Qt's own way for a focused item to say the key is its business.
+
+A shell that ends should take its panel with it, which is what closing a terminal
+means everywhere else, so a clean exit hides the panel. A shell that died of
+something keeps it open along with the exit code, because otherwise the reason
+disappears with the window.
+
+This was the third collision of the same kind, after `F5` being swallowed by
+`StandardKey.Refresh` and `Ctrl+W` being claimed by a read-only editor, so the rule
+for all three is written down in
+[ADR-0002](docs/adr/0002-window-shortcuts-versus-focused-views.md) rather than
+being rediscovered a fourth time. Note that the terminal needed the opposite of
+`ViewerKeys`: not a view handing a shortcut back to the window, but a view taking
+one away from it.
+
+Three assertions, and each was checked against its own bug by putting the bug back.
+Typing after the panel opens reaches the shell — typed on the keyboard, not sent
+through the controller, because every other assertion about the shell would pass
+with the keyboard on the list behind it. `Ctrl+D` ends the shell, closes the panel
+and adds no bookmark. And `Ctrl+D` on the listing still bookmarks the folder, which
+is where that behaviour belongs.
+
 ## A slow table preview looked like a hang
 
 Opening a large CSV showed an empty grid until the whole file had been imported,
