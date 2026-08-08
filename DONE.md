@@ -9,6 +9,44 @@ wrong.
 
 ---
 
+## A long search froze the interface
+
+Reported as: a search that runs for a while eats so much CPU that the window stops
+responding — and, tellingly, a folder analysis running alongside it took *longer*
+and did nothing of the kind.
+
+That comparison was the clue that mattered, because it ruled out the walk. The
+analysis walks the same trees through the same `DirectoryWalker` and reports its
+status just as often. What it never does is put anything into a model the interface
+is watching.
+
+`FileListModel::appendEntries()` reset the model and called `rebuildVisible()`,
+which copies every entry found so far, filters it, and `stable_sort`s the lot. On
+every batch. A search returning forty thousand results in batches of two hundred
+therefore sorted a growing list two hundred times, on the thread that draws the
+window. Measured before touching anything: **9,670 ms** of pure CPU for that case.
+
+The batch is now filtered and sorted on its own and `std::inplace_merge`d into what
+is already in order — both halves share the comparator, so the result is sorted
+without looking at the earlier entries again. The same case now takes **246 ms**,
+which is thirty-nine times less work in front of the person waiting.
+
+Worth saying plainly: the time-based flushing added an hour earlier made this worse
+in exactly the case reported. Before it, batches only went out every two hundred
+matches; after it, also every hundred and twenty milliseconds — so a long search
+produced more batches, and each batch cost a full re-sort. The latency fix was right
+and the quadratic append underneath it was the bug; together they were the freeze.
+
+The test states the case rather than the mechanism — forty thousand results in two
+hundred batches, and a ceiling generous enough for a debug build on any machine —
+and it fails with the number in the message, which is how the 9,670 ms above was
+measured in the first place.
+
+One thing deliberately left: a reset still discards the view's scroll position and
+selection, so scrolling through results while they arrive is unsatisfying. Fixing that
+means proper insert semantics rather than a reset, which is a bigger change than the
+freeze warranted; it is recorded in TODO.md.
+
 ## Search results arrived late, and led nowhere
 
 Two halves, and the first turned out to be one number.

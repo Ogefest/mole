@@ -2,6 +2,7 @@
 #include "ui/models/FileListModel.h"
 
 #include <QAbstractItemModelTester>
+#include <QElapsedTimer>
 #include <QSignalSpy>
 
 using namespace mole;
@@ -43,6 +44,7 @@ private slots:
     void sortsNamesNaturally();
     void sortsBySizeAndDate();
     void appendKeepsEarlierResults();
+    void streamingManyResultsStaysCheap();
     void clearEmptiesTheModel();
     void exposesRolesQmlNeeds();
     void uriAndKindLookupsAreBoundsChecked();
@@ -160,6 +162,44 @@ void TestFileListModel::appendKeepsEarlierResults()
 
     model.appendEntries({});
     QCOMPARE(model.rowCount(), 2);
+}
+
+void TestFileListModel::streamingManyResultsStaysCheap()
+{
+    // What a search over a large tree does: batch after batch into a model the
+    // interface is watching. Re-sorting everything found so far on every batch is
+    // quadratic, and it runs on the thread that draws the window -- which is how a
+    // long search made the whole interface stop responding while a longer analysis,
+    // which never touches a visible model, stayed smooth.
+    FileListModel model;
+
+    FileEntryList batch;
+    const int batchSize = 200;
+    const int batches = 200; // 40 000 results, an ordinary answer on a big disk
+
+    QElapsedTimer clock;
+    clock.start();
+    for (int b = 0; b < batches; ++b) {
+        batch.clear();
+        for (int i = 0; i < batchSize; ++i)
+            batch.append(makeEntry(QStringLiteral("result-%1-%2.txt").arg(b).arg(i), false, 10));
+        model.appendEntries(batch);
+    }
+    const qint64 elapsed = clock.elapsed();
+
+    QCOMPARE(model.rowCount(), batchSize * batches);
+    // Generous, because this is a debug build on whatever machine happens to run
+    // it. Quadratic behaviour does not come close to fitting inside it.
+    QVERIFY2(elapsed < 3000,
+        qPrintable(QStringLiteral("streaming %1 results in %2 batches took %3 ms; it has to stay near "
+                                  "linear or the window stops answering during a search")
+                       .arg(batchSize * batches)
+                       .arg(batches)
+                       .arg(elapsed)));
+
+    // And the order is still right, which is the thing the sorting was for.
+    QVERIFY(
+        model.data(model.index(0, 0), FileListModel::UriRole).toString().contains(QStringLiteral("-0-0")));
 }
 
 void TestFileListModel::clearEmptiesTheModel()
