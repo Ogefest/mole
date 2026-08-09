@@ -514,8 +514,11 @@ Tier 1 in `make test` inside two minutes and under ThreadSanitizer inside ten.
 Tier 2 in one command against the Proxmox machine, green, with every skip
 accounted for. Tier 3 documented, reproducible, and run before any release.
 
-And one standing rule that outlives this project: **a fault found anywhere
-becomes a tier 1 test first, and is fixed second.**
+The standing rule this project argued for now lives in
+[CLAUDE.md](../../CLAUDE.md), where it governs every change rather than only
+this one: a fault becomes a test first and is fixed second, the test goes in the
+cheapest tier that can hold it, and a test for a race waits for a condition
+rather than for a clock.
 
 ### Phase 6 — automation, if it earns it
 

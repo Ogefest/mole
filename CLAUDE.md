@@ -61,9 +61,28 @@ Tests are a first-class part of this project, not an afterthought. Every
 feature is covered — a change that adds behaviour adds tests for it in the same
 commit, and coverage of existing functionality is not allowed to regress.
 
-**Every bug fix ships with a test that reproduces the bug.** Write the test
-first, watch it fail for the reported reason, then fix it. A fix with no test is
-not finished, because nothing stops the bug coming back.
+**Every fault becomes a test first, and is fixed second.** Write the test, watch
+it fail for the reported reason, then fix it. A fix with no test is not
+finished, because nothing stops the fault coming back.
+
+"Fault" means any of them, not only the ones somebody reported. A stall found by
+hand against a live server, a wrong answer noticed while looking at something
+else, a race that only shows up under load — each one costs a day to find and a
+second to keep, and the difference between a project that accumulates coverage
+and one that keeps rediscovering the same bugs is entirely this rule.
+
+**Put the test in the cheapest place that can hold it.** A fault found against a
+real server should usually leave behind a test that does not need one: reproduce
+the *behaviour* — a read that stops early, a listing that answers differently, a
+write that is acknowledged and lost — through a fake or a wrapper, so it is
+checked on every change rather than on the days somebody has a server to hand.
+Keep the live test as well when the server is what is being doubted; the two
+answer different questions.
+
+**A test for a race waits for a condition, never for a clock.** Trigger on the
+thing itself — a byte offset reached, a state entered — because a test that
+sleeps for 200 ms passes on one machine and fails on another, and an
+intermittent test is worse than no test: it teaches everyone to ignore red.
 
 Test layout mirrors `src/` under [tests/](tests/), with shared fixtures in
 `tests/support/` — the backend conformance suite, the QML harness and the temp
