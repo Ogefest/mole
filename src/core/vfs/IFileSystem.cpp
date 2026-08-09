@@ -48,4 +48,19 @@ Result<FileEntryList> IFileSystem::search(const VfsUri&, const QString&, const C
     return VfsError::make(VfsError::NotSupported, QStringLiteral("native search not supported"));
 }
 
+Result<void> closeAndReport(QIODevice& device)
+{
+    device.close();
+
+    // Asked by interface rather than by inspecting errorString(): a QFile that
+    // never failed still answers "Unknown error" there, so reading it would turn
+    // every local write into a reported failure.
+    if (auto* buffered = dynamic_cast<ICommitsOnClose*>(&device)) {
+        const VfsError error = buffered->commitError();
+        if (error.isError())
+            return Result<void>(error);
+    }
+    return {};
+}
+
 } // namespace mole

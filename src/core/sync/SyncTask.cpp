@@ -54,9 +54,14 @@ bool SyncTask::copyOne(const SyncPlan::Step& step)
     }
 
     // Closing is where a buffered backend actually commits, so it happens before
-    // anything stats the result.
-    to->close();
+    // anything stats the result -- and it is where a remote write reports that it
+    // failed, which is why the outcome is collected rather than assumed.
+    const Result<void> committed = closeAndReport(*to);
     from->close();
+    if (!committed.ok()) {
+        m_failures.append(QStringLiteral("%1: %2").arg(step.relativePath, committed.error().message));
+        return false;
+    }
     return true;
 }
 

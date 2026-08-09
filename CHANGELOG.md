@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- A copy onto a remote drive that fails while being sent is now reported as a
+  failure instead of quietly looking like it worked.
 - The command palette offers the drives again, so a drive can be reached by typing
   instead of clicking the list on the left.
 - Dialog buttons say what they do, the one that acts is filled — red when it cannot be

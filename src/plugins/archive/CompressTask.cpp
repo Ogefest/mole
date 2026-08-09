@@ -368,7 +368,19 @@ void CompressTask::run()
         return;
     }
     archive_write_free(writer);
+
+    // A buffered backend only sends the archive when the stream is closed, so
+    // until this succeeds nothing has been written to a remote target at all.
+    // The failure paths above reset the device instead, which abandons the
+    // payload on purpose -- they go on to discard the partial archive anyway.
+    const Result<void> committed = closeAndReport(*device);
     device.reset();
+
+    if (!committed.ok()) {
+        discardPartialArchive();
+        fail(committed.error());
+        return;
+    }
 
     if (!context.error.isEmpty()) {
         discardPartialArchive();

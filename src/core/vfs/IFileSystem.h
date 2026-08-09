@@ -74,4 +74,26 @@ protected:
 
 using FileSystemPtr = std::shared_ptr<IFileSystem>;
 
+/// Implemented by write streams that only commit when they are closed.
+///
+/// Every remote backend is one of these: it stages the payload and sends it in
+/// close(), because a signature needs the length up front and a half-sent object
+/// is worse than none. QIODevice::close() returns void and cannot report that
+/// the send failed, so the outcome is left here to be collected.
+class ICommitsOnClose
+{
+public:
+    virtual ~ICommitsOnClose() = default;
+    /// Meaningful only after close(). ok() when the payload really landed.
+    virtual VfsError commitError() const = 0;
+};
+
+/// Closes a write stream and says whether committing it actually worked.
+///
+/// Anything that writes through IFileSystem must finish with this rather than a
+/// bare close(). On a buffered backend the bare call cannot fail, which means a
+/// failed upload and a successful one look exactly alike -- and a copy that
+/// silently did not happen is the worst outcome available.
+Result<void> closeAndReport(QIODevice& device);
+
 } // namespace mole

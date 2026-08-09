@@ -12,6 +12,76 @@
 using namespace mole;
 using namespace mole::test;
 
+namespace {
+
+/// A write stream that accepts everything and only fails when it is closed.
+///
+/// That is what every remote backend looks like: it stages the payload locally and
+/// sends it in close(), because a signature needs the length up front. The failure
+/// therefore arrives after the last successful write() -- and QIODevice::close()
+/// returns void, so it can only be found by asking.
+class FailsOnCloseDevice
+    : public QIODevice
+    , public ICommitsOnClose
+{
+public:
+    bool open(OpenMode mode) override { return QIODevice::open(mode | QIODevice::Unbuffered); }
+    VfsError commitError() const override
+    {
+        return VfsError::make(VfsError::NetworkError, QStringLiteral("the server hung up"));
+    }
+
+protected:
+    qint64 readData(char*, qint64) override { return -1; }
+    // Every write succeeds, which is the point: nothing before close() knows.
+    qint64 writeData(const char*, qint64 size) override { return size; }
+};
+
+/// A backend that behaves like the memory one in every way except that its write
+/// streams fail when closed. By delegation rather than inheritance, because
+/// MemoryFileSystem is final.
+class CommitFailingFileSystem final : public IFileSystem
+{
+public:
+    explicit CommitFailingFileSystem(std::shared_ptr<MemoryFileSystem> inner)
+        : m_inner(std::move(inner))
+    {
+    }
+
+    QString scheme() const override { return m_inner->scheme(); }
+    VfsCapabilities capabilities() const override { return m_inner->capabilities(); }
+    Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) override
+    {
+        return m_inner->list(dir, cancel);
+    }
+    Result<FileEntry> stat(const VfsUri& target) override { return m_inner->stat(target); }
+    Result<void> makeDirectory(const VfsUri& target) override { return m_inner->makeDirectory(target); }
+    Result<void> remove(const VfsUri& target, bool recursive) override
+    {
+        return m_inner->remove(target, recursive);
+    }
+    Result<void> rename(const VfsUri& from, const VfsUri& to) override
+    {
+        return m_inner->rename(from, to);
+    }
+    Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target) override
+    {
+        return m_inner->openRead(target);
+    }
+
+    Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri&) override
+    {
+        auto device = std::make_unique<FailsOnCloseDevice>();
+        device->open(QIODevice::WriteOnly);
+        return Result<std::unique_ptr<QIODevice>>(std::unique_ptr<QIODevice>(device.release()));
+    }
+
+private:
+    std::shared_ptr<MemoryFileSystem> m_inner;
+};
+
+} // namespace
+
 class TestTransferTask : public QObject
 {
     Q_OBJECT
@@ -32,6 +102,7 @@ private slots:
     void mergesIntoAnExistingDirectory();
     void missingSourceIsRecordedNotFatal();
     void readOnlyTargetFails();
+    void aWriteThatFailsOnlyWhenClosedIsStillAFailure();
     void cancellationStopsMidway();
     void emptyRequestSucceeds();
 
@@ -332,6 +403,32 @@ void TestTransferTask::missingSourceIsRecordedNotFatal()
     QCOMPARE(task->failedCount(), 1);
     QCOMPARE(task->copiedCount(), 1);
     QVERIFY(m_mem->stat(VfsUri::fromString(QStringLiteral("mem:///b/real.txt"))).ok());
+}
+
+void TestTransferTask::aWriteThatFailsOnlyWhenClosedIsStillAFailure()
+{
+    // Regression. The copy loop called close() on the target and ignored it, and
+    // every remote backend commits in close() -- so an upload that failed was
+    // reported as a file successfully copied. A copy that silently did not happen
+    // is the worst outcome available, because nothing later looks wrong.
+    m_mem->addFile(QStringLiteral("/a/file.txt"), QByteArray("payload"));
+
+    auto inner = std::make_shared<MemoryFileSystem>();
+    inner->addDirectory(QStringLiteral("/target"));
+    auto target = std::make_shared<CommitFailingFileSystem>(inner);
+
+    TransferTask::Request request;
+    request.sourceFileSystem = m_mem;
+    request.targetFileSystem = target;
+    request.sources = { VfsUri::fromString(QStringLiteral("mem:///a/file.txt")) };
+    request.targetDirectory = VfsUri::fromString(QStringLiteral("mem:///target"));
+
+    auto* task = new TransferTask(request);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(task->failedCount(), 1);
+    QCOMPARE(task->copiedCount(), 0);
 }
 
 void TestTransferTask::readOnlyTargetFails()

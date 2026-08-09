@@ -145,9 +145,14 @@ bool TransferTask::copyStream(const VfsUri& from, const VfsUri& to)
     }
 
     // Closing is where a buffered backend actually commits, so it must happen
-    // before anyone stats the result.
-    target->close();
+    // before anyone stats the result -- and it is where a remote write reports
+    // that it failed, which is why the outcome is collected rather than assumed.
+    const Result<void> committed = closeAndReport(*target);
     source->close();
+    if (!committed.ok()) {
+        recordFailure(to, committed.error());
+        return false;
+    }
     return true;
 }
 
