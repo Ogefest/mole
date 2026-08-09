@@ -60,7 +60,12 @@ void Task::execute()
 
     // A task that failed is worth a line whether anyone asked for logging or
     // not: it is the thing the user will be asking about later.
-    if (m_error.isError()) {
+    //
+    // Cancellation is not that. The browser cancels a listing every time the
+    // folder changes or a keystroke narrows a filter, so a warning apiece
+    // buries the lines somebody opened the log to find. It is already accounted
+    // for in the debug line above, along with the rest of what the task did.
+    if (m_error.isError() && m_error.code != VfsError::Cancelled) {
         qCWarning(taskLog, "%s failed: %s", qPrintable(m_title), qPrintable(m_error.message));
     }
 

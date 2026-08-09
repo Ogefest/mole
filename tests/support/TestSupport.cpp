@@ -5,7 +5,10 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QMutex>
 #include <QThread>
+
+#include <utility>
 
 namespace mole::test {
 namespace {
@@ -135,6 +138,73 @@ bool TempTree::writeFile(const QString& relativePath, const QByteArray& contents
 QString errorTextOf(const Task& task)
 {
     return task.error().message;
+}
+
+namespace {
+
+    // Qt's message handler is a free function with no room for context, so the
+    // collected lines live here. Guarded because a task logs from the pool
+    // thread while the test reads from its own.
+    QMutex g_captureMutex;
+    QStringList g_captured;
+    QtMessageHandler g_capturePrevious = nullptr;
+    bool g_capturing = false;
+
+    void captureHandler(QtMsgType type, const QMessageLogContext& context, const QString& text)
+    {
+        if (type == QtWarningMsg || type == QtCriticalMsg) {
+            const QMutexLocker lock(&g_captureMutex);
+            g_captured.append(text);
+            return;
+        }
+        // Fatal messages are passed on so the process still dies on one, and
+        // debug and info go through so a test run stays readable.
+        if (g_capturePrevious)
+            g_capturePrevious(type, context, text);
+    }
+
+} // namespace
+
+CapturedWarnings::CapturedWarnings()
+{
+    // Nesting two of these would leave the inner one's handler installed when
+    // the outer one restored, so say so rather than mislead a later test.
+    Q_ASSERT_X(!g_capturing, "CapturedWarnings", "already capturing warnings in this test");
+    {
+        const QMutexLocker lock(&g_captureMutex);
+        g_captured.clear();
+    }
+    g_capturing = true;
+    m_previous = qInstallMessageHandler(captureHandler);
+    g_capturePrevious = m_previous;
+}
+
+CapturedWarnings::~CapturedWarnings()
+{
+    qInstallMessageHandler(m_previous);
+    g_capturePrevious = nullptr;
+    g_capturing = false;
+}
+
+QStringList CapturedWarnings::messages() const
+{
+    const QMutexLocker lock(&g_captureMutex);
+    return g_captured;
+}
+
+bool CapturedWarnings::contains(const QString& needle) const
+{
+    const QMutexLocker lock(&g_captureMutex);
+    for (const QString& line : std::as_const(g_captured)) {
+        if (line.contains(needle))
+            return true;
+    }
+    return false;
+}
+
+QString CapturedWarnings::joined() const
+{
+    return messages().join(QStringLiteral(" | "));
 }
 
 } // namespace mole::test

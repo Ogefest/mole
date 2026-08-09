@@ -4,7 +4,9 @@
 #include "core/vfs/IFileSystem.h"
 
 #include <QString>
+#include <QStringList>
 #include <QTemporaryDir>
+#include <QtGlobal>
 
 #include <memory>
 
@@ -70,5 +72,37 @@ private:
 
 /// Collects a task's error without the test having to reach into internals.
 QString errorTextOf(const Task& task);
+
+/// Collects the warnings the code under test logs, so a test can assert on
+/// them.
+///
+/// Two kinds of claim need this. One is that something noisy has gone quiet --
+/// a routine event that used to leave a warning behind, where the only evidence
+/// is the absence of a line. The other is the opposite: that a real failure
+/// still says so, which is what stops the first fix from being "log nothing".
+///
+/// Warnings and worse are captured; everything below goes on to the handler
+/// that was installed before, so ordinary test output is unaffected. The
+/// handler is removed in the destructor, and messages logged from a pool thread
+/// are counted safely.
+class CapturedWarnings
+{
+public:
+    CapturedWarnings();
+    ~CapturedWarnings();
+
+    CapturedWarnings(const CapturedWarnings&) = delete;
+    CapturedWarnings& operator=(const CapturedWarnings&) = delete;
+
+    /// Everything captured since construction, in the order it was logged.
+    QStringList messages() const;
+    /// Whether any captured line contains `needle`.
+    bool contains(const QString& needle) const;
+    /// The captured lines joined for a failure message.
+    QString joined() const;
+
+private:
+    QtMessageHandler m_previous = nullptr;
+};
 
 } // namespace mole::test
