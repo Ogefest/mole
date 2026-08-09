@@ -433,8 +433,15 @@ void BrowserPaneController::load(const VfsUri& uri, bool recordHistory)
             return;
         m_pending.clear();
         setLoading(false);
-        if (task->state() == Task::State::Failed)
+        if (task->state() == Task::State::Failed) {
             setErrorText(task->error().message);
+            // Announced as well as shown. A listing that failed is the plainest
+            // evidence there is that a drive is not answering, and the pane is
+            // the only thing that sees it -- the sidebar has no idea a listing
+            // was even attempted.
+            if (m_services.events)
+                m_services.events->postOperationFailed(task->directory(), task->error());
+        }
     });
 
     m_services.tasks->submit(task);

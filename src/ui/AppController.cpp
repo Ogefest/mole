@@ -265,6 +265,17 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     connect(m_launcher, &FileLauncher::failed, this, [this](const QString& uri, const QString& reason) {
         emit notification(static_cast<int>(EventBus::Severity::Warning),
             QStringLiteral("Cannot open %1").arg(VfsUri::fromString(uri).fileName()), reason);
+        if (m_drives) {
+            m_drives->noteFailureAt(VfsUri::fromString(uri), VfsError::make(VfsError::IoError, reason));
+        }
+    });
+
+    // Whatever failed, wherever it was tried from. A listing that came back
+    // with an error is the plainest evidence there is that a drive is not
+    // answering, and it happens in a tab that has never heard of the sidebar.
+    connect(m_events, &EventBus::operationFailed, this, [this](const VfsUri& target, const VfsError& error) {
+        if (m_drives)
+            m_drives->noteFailureAt(target, error);
     });
 
     m_taskModel = new TaskListModel(m_taskManager, this);
@@ -569,6 +580,8 @@ void AppController::checkDrive(const QString& id)
         return;
 
     const auto report = [this, id, name = drive.name](bool reachable, const QString& message) {
+        if (m_drives)
+            m_drives->noteCheckResult(id, reachable, message);
         emit driveChecked(id, reachable, message);
         emit notification(
             static_cast<int>(reachable ? EventBus::Severity::Info : EventBus::Severity::Warning),
@@ -658,10 +671,20 @@ QString AppController::connectDrive(const QString& id)
     mount.displayName = drive.name;
     mount.root = drive.rootUri();
     mount.fileSystem = std::move(fs);
+    // Before the mount, not after. Mounted is not answered: building a backend
+    // performs no I/O, so a drive pointed at a host that has been switched off
+    // gets this far exactly as successfully as one that works. Marking the
+    // question as out first means the row never reads Connected on its way to
+    // reading Unreachable -- not even for the moment between two statements.
+    if (m_drives)
+        m_drives->noteCheckStarted(drive.id);
+
     m_vfs->addMount(mount);
 
     emit credentialsChanged();
     emit drivesChanged();
+
+    checkDrive(drive.id);
     return {};
 }
 

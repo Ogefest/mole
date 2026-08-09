@@ -100,11 +100,104 @@ DriveListModel::State DriveListModel::stateOf(const Row& row) const
     // sidebar has always treated it that way.
     if (!row.isConfigured())
         return State::Local;
-    if (row.isMounted())
+
+    if (row.isMounted()) {
+        // value(), not operator[]: this is a const method, and the const
+        // overload of operator[] hands back a copy through a reference that
+        // reads as though it were the stored one.
+        const Reachability known = m_reach.value(row.drive.id);
+        // Connecting rather than Connected while the question is out. Building
+        // a backend performs no I/O, so a drive pointed at a server that has
+        // been switched off is mounted exactly as successfully as one that
+        // works -- and must not show green on its way to showing red.
+        if (known.pending)
+            return State::Connecting;
+        if (known.asked && !known.reachable)
+            return State::Unreachable;
         return State::Connected;
+    }
+
     if (m_remotes && m_remotes->needsUnlocking(row.drive))
         return State::Locked;
     return State::Disconnected;
+}
+
+void DriveListModel::noteCheckStarted(const QString& driveId)
+{
+    Reachability& known = m_reach[driveId];
+    known.pending = true;
+    refreshRowFor(driveId);
+}
+
+void DriveListModel::noteCheckResult(const QString& driveId, bool reachable, const QString& message)
+{
+    Reachability& known = m_reach[driveId];
+    known.pending = false;
+    known.asked = true;
+    known.reachable = reachable;
+    known.message = message;
+    known.at = QDateTime::currentDateTime();
+    refreshRowFor(driveId);
+}
+
+bool DriveListModel::saysTheDriveIsUnreachable(const VfsError& error)
+{
+    switch (error.code) {
+    case VfsError::NetworkError:
+    case VfsError::IoError:
+        return true;
+    default:
+        break;
+    }
+    // Everything else is about what was asked for, not about whether anyone was
+    // there to ask. NotFound and AccessDenied in particular arrive constantly
+    // from ordinary browsing.
+    return false;
+}
+
+void DriveListModel::noteFailureAt(const VfsUri& target, const VfsError& error)
+{
+    if (!m_vfs || !saysTheDriveIsUnreachable(error))
+        return;
+    const Mount mount = m_vfs->mountForUri(target);
+    if (mount.id.isEmpty())
+        return;
+
+    // Only a configured drive has a state to move. A local disk that refused a
+    // listing has a permission problem, not a reachability one, and calling it
+    // unreachable would send the reader looking at their network.
+    bool configured = false;
+    for (const Row& row : std::as_const(m_rows)) {
+        if (row.isConfigured() && row.drive.id == mount.id) {
+            configured = true;
+            break;
+        }
+    }
+    if (!configured)
+        return;
+
+    Reachability& known = m_reach[mount.id];
+    // A failure answers the question a pending check was asking, and answers it
+    // the same way, so it is not left hanging at Connecting.
+    known.pending = false;
+    known.asked = true;
+    known.reachable = false;
+    known.message = error.message;
+    known.at = QDateTime::currentDateTime();
+    refreshRowFor(mount.id);
+}
+
+void DriveListModel::refreshRowFor(const QString& driveId)
+{
+    for (int row = 0; row < m_rows.size(); ++row) {
+        if (!m_rows.at(row).isConfigured() || m_rows.at(row).drive.id != driveId)
+            continue;
+        const QModelIndex index = this->index(row, 0);
+        emit dataChanged(index, index,
+            { StateRole, StateTextRole, StateSeverityRole, CanConnectRole, CanEjectRole, CheckMessageRole,
+                CheckedAtRole });
+        return;
+    }
 }
 
 QString DriveListModel::stateText(State state)
@@ -232,6 +325,14 @@ QVariant DriveListModel::data(const QModelIndex& index, int role) const
         return state == State::Disconnected;
     case CanEjectRole:
         return row.isMounted();
+    case CheckMessageRole:
+        return row.isConfigured() ? m_reach.value(row.drive.id).message : QString();
+    case CheckedAtRole: {
+        if (!row.isConfigured())
+            return QString();
+        const QDateTime at = m_reach.value(row.drive.id).at;
+        return at.isValid() ? QLocale().toString(at.time(), QLocale::ShortFormat) : QString();
+    }
     default:
         break;
     }
@@ -272,6 +373,8 @@ QHash<int, QByteArray> DriveListModel::roleNames() const
         { ConfiguredIdRole, "configuredId" },
         { CanConnectRole, "canConnect" },
         { CanEjectRole, "canEject" },
+        { CheckMessageRole, "checkMessage" },
+        { CheckedAtRole, "checkedAt" },
     };
 }
 

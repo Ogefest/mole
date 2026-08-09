@@ -64,6 +64,11 @@ void EventBus::postIndexUpdated(qint64 volumeId, qint64 entryCount)
     dispatch([this, volumeId, entryCount] { emit indexUpdated(volumeId, entryCount); });
 }
 
+void EventBus::postOperationFailed(const VfsUri& target, const VfsError& error)
+{
+    dispatch([this, target, error] { emit operationFailed(target, error); });
+}
+
 void EventBus::postNotification(Severity severity, const QString& title, const QString& detail)
 {
     dispatch([this, severity, title, detail] { emit notificationPosted(severity, title, detail); });

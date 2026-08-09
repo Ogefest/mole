@@ -89,6 +89,13 @@ private slots:
     void aShutCredentialStoreShowsAsLocked();
     void aMountNobodyConfiguredIsLocalAndUnchanged();
 
+    void aDriveIsConnectingUntilSomethingHasActuallyAsked();
+    void aDriveThatCannotBeReachedKeepsItsMountAndSaysWhy();
+    void aFailedOperationMovesAConnectedDriveToUnreachable();
+    void aFailureOnALocalDiskIsNotADriveProblem();
+    void nothingSchedulesARepeatingCheck();
+    void aMissingFolderIsNotAnUnreachableDrive();
+
 private:
     /// Adds a mount and waits for its space answer to arrive, if one is coming.
     void mountSized(const QString& id, std::shared_ptr<SizedFileSystem> fs);
@@ -386,6 +393,149 @@ void TestDriveListModel::aMountNobodyConfiguredIsLocalAndUnchanged()
     QVERIFY(waitFor([&] { return row.data(DriveListModel::HasSpaceRole).toBool(); }));
     m_model->unmount(0);
     QCOMPARE(m_model->rowCount(), 0);
+}
+
+// ------------------------------------------- reachable, not merely mounted
+
+/// connectDrive() returns as soon as the backend object is built, and building
+/// one performs no I/O -- so a drive pointed at a host that has been switched
+/// off is mounted exactly as successfully as one that works. A dot that means
+/// "we have an object" while looking like it means "the server answered" is
+/// worse than no dot, because it is believed.
+void TestDriveListModel::aDriveIsConnectingUntilSomethingHasActuallyAsked()
+{
+    const QString id = configure(QStringLiteral("Office NAS"));
+    QVERIFY(!id.isEmpty());
+
+    // The order the application uses: the question goes out before the mount
+    // goes in, so there is no moment at all when the row reads Connected.
+    m_model->noteCheckStarted(id);
+    connectConfigured(id);
+    QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Connecting);
+
+    m_model->noteCheckResult(id, true, QStringLiteral("Listed 4 entries"));
+    QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Connected);
+    QCOMPARE(m_model->index(0, 0).data(DriveListModel::CheckMessageRole).toString(),
+        QStringLiteral("Listed 4 entries"));
+    QVERIFY2(!m_model->index(0, 0).data(DriveListModel::CheckedAtRole).toString().isEmpty(),
+        "\"reachable\" with no when is not something anyone can act on");
+}
+
+/// The failing half, and the one the dot exists for. Every state the row passes
+/// through is recorded, because "ends Unreachable" would also be true of a row
+/// that flashed green first -- and green is the thing that gets believed.
+void TestDriveListModel::aDriveThatCannotBeReachedKeepsItsMountAndSaysWhy()
+{
+    const QString id = configure(QStringLiteral("Office NAS"));
+
+    QList<DriveListModel::State> seen;
+    const auto record = [this, &seen] { seen.append(stateAt(m_model->index(0, 0))); };
+    connect(m_model.get(), &QAbstractItemModel::dataChanged, this, record);
+    connect(m_model.get(), &QAbstractItemModel::modelReset, this, record);
+
+    m_model->noteCheckStarted(id);
+    connectConfigured(id);
+    m_model->noteCheckResult(id, false, QStringLiteral("No route to the server"));
+
+    QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Unreachable);
+    QVERIFY2(!seen.contains(DriveListModel::State::Connected),
+        "a drive that cannot be reached must never have shown as connected");
+    QVERIFY(seen.contains(DriveListModel::State::Connecting));
+
+    QCOMPARE(m_model->index(0, 0).data(DriveListModel::CheckMessageRole).toString(),
+        QStringLiteral("No route to the server"));
+    QCOMPARE(
+        m_model->index(0, 0).data(DriveListModel::StateSeverityRole).toString(), QStringLiteral("broken"));
+
+    // Still mounted, and still ejectable. The backend is there and a later
+    // operation may well work; what failed was a question, and the row says so
+    // rather than pretending the drive has gone.
+    QVERIFY2(m_model->index(0, 0).data(DriveListModel::CanEjectRole).toBool(),
+        "an unreachable drive keeps its mount and can still be browsed");
+    QCOMPARE(m_model->index(0, 0).data(DriveListModel::CanConnectRole).toBool(), false);
+}
+
+/// A check is not the only thing that finds out. A listing that came back with
+/// an error is the plainest evidence there is, and it happens in a tab that has
+/// never heard of the sidebar.
+void TestDriveListModel::aFailedOperationMovesAConnectedDriveToUnreachable()
+{
+    const QString id = configure(QStringLiteral("Office NAS"));
+    m_model->noteCheckStarted(id);
+    connectConfigured(id);
+    m_model->noteCheckResult(id, true, QStringLiteral("Listed 4 entries"));
+    QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Connected);
+
+    const VfsUri somewhereOnIt = m_registry->drive(id).rootUri().child(QStringLiteral("reports"));
+    m_model->noteFailureAt(somewhereOnIt,
+        VfsError::make(VfsError::NetworkError, QStringLiteral("The server stopped answering")));
+
+    QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Unreachable);
+    QCOMPARE(m_model->index(0, 0).data(DriveListModel::CheckMessageRole).toString(),
+        QStringLiteral("The server stopped answering"));
+}
+
+/// A local disk that refused a listing has a permission problem, not a
+/// reachability one, and calling it unreachable would send the reader looking
+/// at their network.
+void TestDriveListModel::aFailureOnALocalDiskIsNotADriveProblem()
+{
+    mountSized(QStringLiteral("disk"), std::make_shared<SizedFileSystem>());
+    QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Local);
+
+    m_model->noteFailureAt(VfsUri::fromString(QStringLiteral("sized://disk/somewhere")),
+        VfsError::make(VfsError::NetworkError, QStringLiteral("The server stopped answering")));
+
+    QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Local);
+}
+
+/// The capacity refresh runs against every mount on a timer, and is the obvious
+/// thing to reuse for liveness -- and the wrong one. It deliberately says
+/// nothing when a backend cannot answer, because unknown capacity is normal for
+/// a bucket, so its silence cannot be read as unreachable. Nor does anything
+/// else here poll: state changes when something is actually learned.
+void TestDriveListModel::nothingSchedulesARepeatingCheck()
+{
+    const QString id = configure(QStringLiteral("Office NAS"));
+    m_model->noteCheckStarted(id);
+    connectConfigured(id);
+    m_model->noteCheckResult(id, false, QStringLiteral("No route to the server"));
+
+    for (int round = 0; round < 5; ++round) {
+        m_model->refreshSpace();
+        QVERIFY(waitFor([this] { return m_tasks->activeCount() == 0; }));
+    }
+
+    // Unchanged. Nothing asked again, so nothing has been learned, so the row
+    // still shows what was last true.
+    QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Unreachable);
+    QCOMPARE(m_model->index(0, 0).data(DriveListModel::CheckMessageRole).toString(),
+        QStringLiteral("No route to the server"));
+}
+
+/// Not every failure is about the drive. Browsing produces NotFound and
+/// AccessDenied constantly -- a typed path, a folder somebody else deleted, a
+/// directory the account cannot read -- and none of them says the server has
+/// gone. Marking the drive unreachable for those would send somebody to look at
+/// their network because they mistyped a name, which is worse than saying
+/// nothing.
+void TestDriveListModel::aMissingFolderIsNotAnUnreachableDrive()
+{
+    const QString id = configure(QStringLiteral("Office NAS"));
+    m_model->noteCheckStarted(id);
+    connectConfigured(id);
+    m_model->noteCheckResult(id, true, QStringLiteral("Listed 4 entries"));
+
+    const VfsUri onIt = m_registry->drive(id).rootUri().child(QStringLiteral("typo"));
+    for (VfsError::Code code : { VfsError::NotFound, VfsError::AccessDenied, VfsError::NotSupported,
+             VfsError::Cancelled, VfsError::NotADirectory }) {
+        m_model->noteFailureAt(onIt, VfsError::make(code, QStringLiteral("no")));
+        QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Connected);
+    }
+
+    // What does count: the drive itself stopped answering.
+    m_model->noteFailureAt(onIt, VfsError::make(VfsError::NetworkError, QStringLiteral("gone")));
+    QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Unreachable);
 }
 
 MOLE_TEST_MAIN(TestDriveListModel)
