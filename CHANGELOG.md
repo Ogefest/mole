@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- Cancelling a job no longer leaves a warning in the log calling it a failure, so what
+  is left there is the trouble worth reading about.
 - Every copied file is weighed at the destination afterwards, and a copy that landed
   short now fails instead of being counted as done — a move keeps the original.
 - Objects larger than 5 GB can be written to S3, which now uploads in parts, and a

@@ -75,6 +75,9 @@ private slots:
     void byteProgressDrivesThePercentageAndTheRate();
     void aCancelledTaskIsNotStillInProgress();
     void elapsedTimeStopsWhenTheTaskDoes();
+
+    void aCancelledTaskIsNotLoggedAsAFailure();
+    void aFailedTaskIsStillLoggedAsOne();
 };
 
 void TestTaskManager::runsTaskOffTheCallingThread()
@@ -352,6 +355,55 @@ void TestTaskManager::elapsedTimeStopsWhenTheTaskDoes()
     // finished is not a measurement of anything.
     QThread::msleep(80);
     QCOMPARE(task->elapsedMs(), took);
+}
+
+/// The browser cancels a listing every time the folder changes or a filter
+/// narrows, and each one used to leave a warning in the session log -- four in
+/// fifteen milliseconds from an ordinary startup. The log is the one file
+/// somebody opens when something has gone wrong, so a decision the application
+/// took on purpose must not read like a fault there.
+void TestTaskManager::aCancelledTaskIsNotLoggedAsAFailure()
+{
+    TaskManager manager;
+    std::atomic_bool started { false };
+
+    auto* task = new ScriptedTask(QStringLiteral("List somewhere"), [&started](ScriptedTask& self) {
+        started = true;
+        while (!self.isCancelRequested())
+            QThread::msleep(1);
+        // What every backend does when the token it was handed goes: it stops
+        // where it is and reports Cancelled, which the task then carries.
+        self.fail(VfsError::make(VfsError::Cancelled, QStringLiteral("Listing cancelled")));
+    });
+
+    CapturedWarnings warnings;
+    manager.submit(task);
+    QVERIFY(waitFor([&started] { return started.load(); }));
+    task->requestCancel();
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(task->state(), Task::State::Cancelled);
+    QVERIFY2(warnings.messages().isEmpty(),
+        qPrintable(QStringLiteral("cancelling logged: %1").arg(warnings.joined())));
+}
+
+/// The other half of the same claim, and the reason the fix above cannot be
+/// "stop logging": a task that failed because something went wrong still has to
+/// leave the line that somebody will be asking about later.
+void TestTaskManager::aFailedTaskIsStillLoggedAsOne()
+{
+    TaskManager manager;
+    auto* task = new ScriptedTask(QStringLiteral("Copy"), [](ScriptedTask& self) {
+        self.fail(VfsError::make(VfsError::NetworkError, QStringLiteral("the server stopped answering")));
+    });
+
+    CapturedWarnings warnings;
+    manager.submit(task);
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(task->state(), Task::State::Failed);
+    QVERIFY2(warnings.contains(QStringLiteral("the server stopped answering")),
+        qPrintable(QStringLiteral("a real failure left no warning; captured: %1").arg(warnings.joined())));
 }
 
 MOLE_TEST_MAIN(TestTaskManager)
