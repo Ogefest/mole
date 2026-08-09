@@ -251,11 +251,11 @@ void TestS3FileSystem::aBucketWithADotInItAlwaysGoesInThePath()
 
     // A name that fits still goes in the host, so nothing changes for the ordinary
     // case.
-    config.insert(QStringLiteral("bucket"), QStringLiteral("testbucket2312"));
+    config.insert(QStringLiteral("bucket"), QStringLiteral("example-bucket"));
     const S3Settings plain = S3FileSystemFactory::settingsFrom(config);
     QVERIFY(plain.bucketFitsInHostName());
     QVERIFY(!plain.usesPathStyle());
-    QCOMPARE(plain.hostName(), QStringLiteral("testbucket2312.s3.us-east-005.backblazeb2.com"));
+    QCOMPARE(plain.hostName(), QStringLiteral("example-bucket.s3.us-east-005.backblazeb2.com"));
 }
 
 void TestS3FileSystem::anEndpointThatAlreadyCarriesTheBucketIsNotDoubled()
@@ -264,11 +264,11 @@ void TestS3FileSystem::anEndpointThatAlreadyCarriesTheBucketIsNotDoubled()
     // the endpoint field. Prepending the bucket again gave
     // "bucket.bucket.s3.…" and failed TLS for the same reason.
     const QVariantMap config { { QStringLiteral("endpoint"),
-                                   QStringLiteral("testbucket2312.s3.us-east-005.backblazeb2.com") },
-        { QStringLiteral("bucket"), QStringLiteral("testbucket2312") } };
+                                   QStringLiteral("example-bucket.s3.us-east-005.backblazeb2.com") },
+        { QStringLiteral("bucket"), QStringLiteral("example-bucket") } };
 
     const S3Settings settings = S3FileSystemFactory::settingsFrom(config);
-    QCOMPARE(settings.hostName(), QStringLiteral("testbucket2312.s3.us-east-005.backblazeb2.com"));
+    QCOMPARE(settings.hostName(), QStringLiteral("example-bucket.s3.us-east-005.backblazeb2.com"));
     // Still host-style, so the bucket must not appear in the path either.
     QVERIFY(!settings.usesPathStyle());
 }
