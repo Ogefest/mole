@@ -9,6 +9,20 @@ project, and a contributor should never hit a wall of text they cannot read.
 
 ---
 
+## Projects
+
+Too large for a line here; each has a file of its own in
+[docs/projects/](docs/projects/).
+
+- **[Testing tasks away from the interface](docs/projects/testing-tasks-away-from-the-interface.md)**
+  — equipment for testing what a task does under size and hostility rather than in
+  a quiet room: a fault-injecting filesystem for races that need no network, a
+  Proxmox machine running the servers the backends actually talk to and that can be
+  interfered with while they do, and a headless runner for reproducing something by
+  hand. Written after a day in which five faults were found under a green suite.
+
+---
+
 ## Features
 
 - **A task that knows its speed and its size should say how long is left.** Every
