@@ -28,6 +28,7 @@ Rectangle {
     // the name it replaced.
     component PlaceRow: ItemDelegate {
         id: row
+        objectName: "placeRow"
         required property string label
         required property string target
         property bool removable: false
@@ -41,8 +42,30 @@ Rectangle {
         signal removeRequested()
 
         width: ListView.view ? ListView.view.width : parent.width
-        height: capacityKnown ? 46 : 30
+
+        // A row is a button, so it gets a button's height. Thirty pixels read as
+        // cramped and left no room around the × it has to contain, which is
+        // App.minimumTarget tall on its own.
+        //
+        // Derived rather than typed in: the floor comes from the same target size
+        // the button uses, and the rest from what the content actually needs, so
+        // changing the type scale cannot leave a row too short for what is in it.
+        readonly property int comfortableHeight: Math.max(App.minimumTarget + 8, App.listRowHeight)
+        height: Math.max(rowContent.implicitHeight + topPadding + bottomPadding, comfortableHeight)
+
+        // Tighter than the style's default 8, which on top of a row already tall
+        // enough to hold a target-sized button made the list needlessly airy.
+        topPadding: 4
+        bottomPadding: 4
+
         onClicked: App.goTo(target)
+
+        // Stated rather than inherited. Control.hoverEnabled follows a platform
+        // style hint, so the highlight, the tooltip and the × all depended on
+        // whatever the platform felt about hover effects -- and simply did not
+        // happen where that hint is off.
+        hoverEnabled: true
+
         ToolTip.visible: hovered
         ToolTip.text: capacityKnown
                       ? target + "\n" + Math.round(capacityUsed * 100) + "% used · "
@@ -57,25 +80,44 @@ Rectangle {
         }
 
         contentItem: ColumnLayout {
+            id: rowContent
             spacing: 2
 
             RowLayout {
                 Layout.fillWidth: true
+                // Fixed to the target size so a row is exactly as tall whether or
+                // not it has a × in it. The drives list is mixed -- a local disk
+                // cannot be ejected and an archive can -- and rows of two
+                // different heights in one list read as a bug.
+                Layout.preferredHeight: App.minimumTarget
                 spacing: 4
                 Label {
+                    objectName: "placeRowLabel"
                     Layout.fillWidth: true
                     text: row.label
                     elide: Text.ElideMiddle
                     font.pixelSize: App.textSize
                 }
                 Label {
-                    visible: row.capacityKnown && !row.hovered
+                    // Shown whether or not the pointer is here. It used to be
+                    // hidden on hover to make room for the × -- but the × now
+                    // keeps its place at all times, so there is nothing to make
+                    // room for and nothing left to move.
+                    visible: row.capacityKnown
                     text: row.capacityFree + " free"
                     color: sidebar.mutedText
                     font.pixelSize: App.smallTextSize
                 }
                 ToolButton {
-                    visible: row.removable && row.hovered
+                    objectName: "placeRemoveButton"
+                    // Always in the layout on a row that has one, and only faded
+                    // in and out. Appearing on hover took its width out of the
+                    // name beside it, so the name re-elided and visibly jumped
+                    // as the pointer crossed the row -- twice, since the free
+                    // caption was leaving at the same moment.
+                    visible: row.removable
+                    opacity: row.hovered ? 1 : 0
+                    enabled: row.hovered
                     text: "×"
                     font.pixelSize: App.textSize
                     implicitWidth: App.minimumTarget

@@ -9,6 +9,38 @@ wrong.
 
 ---
 
+## Sidebar rows stopped being cramped and stopped twitching
+
+**Asked for:** drive and bookmark rows are low for something that behaves like a
+button, and the label shifts when the pointer crosses the row -- a jumping label
+that looks bad.
+
+**What it turned out to be:** two separate faults with one appearance.
+
+The name label fills whatever space its siblings leave, and both siblings were
+bound to hover: the "free" caption was hidden on hover and the × was shown on
+hover. So crossing a row changed the label's width twice, and it re-elided in
+place. The × now keeps its place at all times and only fades in and out, and the
+caption stays put -- so nothing beside the name moves and the name has nothing to
+move for. The test hovers a real row with a real mouse event and asserts the
+label's x and width are unchanged.
+
+The heights were worse than "low". A plain row was 30 pixels around a button that
+is 28 on its own, and a drive row with a capacity bar was fixed at 46 while the
+content inside it wanted 54 -- it was being squeezed, which is its own share of why
+the rows looked wrong. Heights now come from the content with a floor of
+`minimumTarget + 8`: 36 for a bookmark, 57 for a drive with a capacity bar. The
+row that holds the name is pinned to the target size so it measures the same with
+or without a ×, because the drives list is mixed -- a local disk cannot be ejected
+and an archive can -- and two row heights in one list read as a bug.
+
+Found while writing the test: `hovered` never became true under it, because
+`Control.hoverEnabled` follows a platform style hint. The highlight, the tooltip
+and the × all quietly depended on how the platform felt about hover effects, so it
+is now stated outright.
+
+---
+
 ## A drive is checked where it is configured
 
 **Asked for:** verify the configuration when it is saved. The complaint was

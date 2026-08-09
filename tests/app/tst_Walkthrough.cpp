@@ -71,6 +71,7 @@ private slots:
     void theDrivesAreInThePaletteToo();
     void theListingTakesItsTypeSizeFromTheScale();
     void theIconOnlyControlsAreBigEnoughToHit();
+    void theSidebarRowsAreEvenlyTallAndHoldStill();
     void theCommandPaletteFindsAndRunsThings();
     void theHeaderAdvertisesTheCommandPalette();
     void ctrlFIsASearchBoxYouCanTypeInto();
@@ -609,6 +610,79 @@ void TestWalkthrough::theIconOnlyControlsAreBigEnoughToHit()
         const QFont font = control->property("font").value<QFont>();
         QCOMPARE(font.pixelSize(), m_harness->app()->textSize());
     }
+}
+
+void TestWalkthrough::theSidebarRowsAreEvenlyTallAndHoldStill()
+{
+    // A bookmark, so that a removable row is on screen: the × is the part that
+    // used to shove the name aside.
+    m_harness->app()->triggerAction(QStringLiteral("mole.bookmarks.add"));
+    QVERIFY(m_harness->until([this] { return m_harness->app()->bookmarks()->rowCount() > 0; }));
+    m_harness->settle(4);
+
+    const QList<QQuickItem*> rows = m_harness->items(QStringLiteral("placeRow"));
+    QVERIFY2(!rows.isEmpty(), "the sidebar has rows to measure");
+
+    const int floor = m_harness->app()->minimumTarget();
+
+    // One height per list. The drives list is mixed -- a local disk cannot be
+    // ejected, an archive can -- so a height that followed the × would make two
+    // kinds of row in one list.
+    QHash<QQuickItem*, double> heightPerList;
+    for (QQuickItem* row : rows) {
+        QVERIFY2(row->height() >= floor + 4,
+            qPrintable(
+                QStringLiteral("a row is only %1 tall, floor is %2").arg(row->height()).arg(floor + 4)));
+
+        QQuickItem* list = row->parentItem();
+        if (!heightPerList.contains(list))
+            heightPerList.insert(list, row->height());
+        QVERIFY2(qFuzzyCompare(heightPerList.value(list), row->height()),
+            qPrintable(QStringLiteral("rows in one list are %1 and %2 tall")
+                           .arg(heightPerList.value(list))
+                           .arg(row->height())));
+
+        // And the content fits, rather than being compressed into a row that was
+        // given a smaller number than it needs.
+        QQuickItem* content = row->property("contentItem").value<QQuickItem*>();
+        QVERIFY(content);
+        QVERIFY2(row->height() >= content->property("implicitHeight").toDouble(),
+            qPrintable(QStringLiteral("a %1 tall row is squeezing %2 of content")
+                           .arg(row->height())
+                           .arg(content->property("implicitHeight").toDouble())));
+    }
+
+    // Find a row that has a × in it, and check the button holds its place while
+    // nothing is hovering it. Reserving the width is the whole fix.
+    QQuickItem* removable = nullptr;
+    for (QQuickItem* row : rows) {
+        QQuickItem* button = row->findChild<QQuickItem*>(QStringLiteral("placeRemoveButton"));
+        if (button && button->isVisible()) {
+            removable = row;
+            break;
+        }
+    }
+    QVERIFY2(removable, "a bookmark row has a remove button");
+
+    QQuickItem* button = removable->findChild<QQuickItem*>(QStringLiteral("placeRemoveButton"));
+    QQuickItem* label = removable->findChild<QQuickItem*>(QStringLiteral("placeRowLabel"));
+    QVERIFY(button);
+    QVERIFY(label);
+    QVERIFY2(button->width() >= floor, "the remove button is big enough to hit");
+    QVERIFY2(button->opacity() < 0.5, "and is faded out until the pointer arrives");
+
+    const double labelXBefore = label->x();
+    const double labelWidthBefore = label->width();
+
+    // Now hover it for real.
+    const QPointF centre = removable->mapToScene(QPointF(removable->width() / 2, removable->height() / 2));
+    QTest::mouseMove(m_harness->window(), centre.toPoint());
+    QVERIFY(m_harness->until([removable] { return removable->property("hovered").toBool(); }));
+    m_harness->settle(4);
+
+    QVERIFY2(button->opacity() > 0.5, "the remove button appears under the pointer");
+    QCOMPARE(label->x(), labelXBefore);
+    QCOMPARE(label->width(), labelWidthBefore);
 }
 
 void TestWalkthrough::bulkRenameShowsThePreviewAsYouType()

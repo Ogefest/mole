@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- Drive and bookmark rows in the sidebar are taller, evenly sized, and their names
+  no longer shift sideways when the mouse passes over them.
 - Saving a drive now checks whether it can actually be reached and says so, instead
   of leaving a wrong endpoint or a refused password to surface later in the middle
   of browsing.
