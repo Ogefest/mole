@@ -12,6 +12,7 @@
 #include "core/CoreMetaTypes.h"
 
 #include <QAbstractTextDocumentLayout>
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QGuiApplication>
@@ -65,6 +66,8 @@ private slots:
     void markdownRulesAndTablesGetRoom();
     void markdownStylingIsIdempotent();
     void markdownStylingGivesThePageMoreRoomThanTheImporter();
+    void markdownRestylingWaitsForTheImporterToFinish();
+    void markdownRestylingIsDroppedWhenTheDocumentChanges();
 
     // --- the tab ---
     void loadsTextContent();
@@ -706,6 +709,111 @@ void TestPreview::markdownStylingGivesThePageMoreRoomThanTheImporter()
     QVERIFY(title.isValid() && prose.isValid());
     QVERIFY(styled.documentLayout()->blockBoundingRect(title).height()
         > styled.documentLayout()->blockBoundingRect(prose).height());
+}
+
+namespace {
+
+/// Enough of everything that the importer builds it in a great many separate
+/// insertions -- headings, prose, a fence, a quote, a list and a table -- which
+/// is what turns "styles too early" from a wasted pass into a crash.
+QString markdownWithSomethingOfEverything(int sections)
+{
+    QString out;
+    for (int i = 0; i < sections; ++i) {
+        out += QStringLiteral("# Heading %1\n\nProse with `inline code` and **bold** in it.\n\n").arg(i);
+        out += QStringLiteral("```\nfenced line one\nfenced line two\n```\n\n");
+        out += QStringLiteral("> quoted line\n>\n> second quoted line\n\n");
+        out += QStringLiteral("- item one\n- item two\n\n");
+        out += QStringLiteral("| left | right |\n|---|---|\n| 1 | 2 |\n\n");
+    }
+    return out;
+}
+
+/// Whether the styling has been over this block. The importer leaves the line
+/// height alone, and every branch of applyTo() sets one, so this says
+/// "styled or not" without depending on any particular measurement.
+bool looksStyled(const QTextBlock& block)
+{
+    return block.isValid() && block.blockFormat().lineHeight() > 0.0;
+}
+
+} // namespace
+
+/// The preview used to segfault on opening a Markdown file. `contentsChanged`
+/// is emitted by QTextDocumentPrivate::finishEdit(), and QTextMarkdownImporter
+/// makes an edit for every piece of text it parses -- so restyling on that
+/// signal walked blocks and fragments of a document that was still being built,
+/// and died dereferencing one that was not there yet.
+///
+/// It was a performance fault too: the whole styling pass ran once per
+/// insertion, so previewing a file cost the document walk multiplied by the
+/// number of edits the import took.
+void TestPreview::markdownRestylingWaitsForTheImporterToFinish()
+{
+    QTextDocument document;
+    QFont base;
+    base.setPixelSize(markdownMetrics().bodyPixelSize);
+    document.setDefaultFont(base);
+
+    MarkdownStyle style;
+    style.setMetrics(markdownMetrics());
+    style.attachTo(&document);
+
+    document.setMarkdown(markdownWithSomethingOfEverything(40));
+    document.setTextWidth(600);
+
+    // Nothing yet: the pass is waiting for the loop to turn, which is the whole
+    // fix. Reaching the assertion at all is most of the test -- without it the
+    // process is gone by here.
+    QVERIFY2(!looksStyled(blockSaying(document, QStringLiteral("Heading 3"))),
+        "restyling during the import is what the crash was");
+
+    int passes = 0;
+    const QMetaObject::Connection counter
+        = QObject::connect(&document, &QTextDocument::contentsChanged, [&passes] { ++passes; });
+    QCoreApplication::processEvents();
+    QObject::disconnect(counter);
+
+    // One pass, however many edits the import took: the queued restyle
+    // coalesces, so a document of a thousand blocks is walked once.
+    QCOMPARE(passes, 1);
+    QVERIFY2(looksStyled(blockSaying(document, QStringLiteral("Heading 3"))),
+        "the styling still has to happen, just not during the import");
+}
+
+/// A queued pass outlives the document it was asked for. The viewer moves the
+/// styling from one file's document to the next one's -- and off it entirely
+/// when the next file is not Markdown -- so a pass left over from the last file
+/// must not land afterwards.
+void TestPreview::markdownRestylingIsDroppedWhenTheDocumentChanges()
+{
+    QFont base;
+    base.setPixelSize(markdownMetrics().bodyPixelSize);
+
+    QTextDocument first;
+    first.setDefaultFont(base);
+    QTextDocument second;
+    second.setDefaultFont(base);
+
+    MarkdownStyle style;
+    style.setMetrics(markdownMetrics());
+    style.attachTo(&first);
+
+    first.setMarkdown(QStringLiteral("# One\n\nProse.\n"));
+    // The next file arrives before the loop turns, which is exactly what
+    // happens when somebody holds a cursor key down in the file list.
+    style.attachTo(&second);
+    second.setMarkdown(QStringLiteral("# Two\n\nProse.\n"));
+
+    int firstChanged = 0;
+    const QMetaObject::Connection counter
+        = QObject::connect(&first, &QTextDocument::contentsChanged, [&firstChanged] { ++firstChanged; });
+    QCoreApplication::processEvents();
+    QObject::disconnect(counter);
+
+    QCOMPARE(firstChanged, 0);
+    QVERIFY2(looksStyled(blockSaying(second, QStringLiteral("Two"))), "the document in front of the reader");
+    QVERIFY2(!looksStyled(blockSaying(first, QStringLiteral("One"))), "the one that was left behind");
 }
 
 // -------------------------------------------------------------- the tab

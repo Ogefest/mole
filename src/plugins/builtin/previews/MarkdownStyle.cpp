@@ -197,21 +197,57 @@ void MarkdownStyle::setMetrics(const Metrics& metrics)
 
 void MarkdownStyle::attachTo(QQuickTextDocument* document)
 {
-    QTextDocument* target = document ? document->textDocument() : nullptr;
+    attachTo(document ? document->textDocument() : nullptr);
+}
+
+void MarkdownStyle::detach()
+{
+    attachTo(static_cast<QTextDocument*>(nullptr));
+}
+
+void MarkdownStyle::attachTo(QTextDocument* target)
+{
     // Guarded, because attaching restyles, which changes the document, which is
     // exactly what a caller reacting to "the text changed" is responding to.
     if (target == m_document)
         return;
 
     if (m_document)
-        disconnect(m_document, &QTextDocument::contentsChanged, this, &MarkdownStyle::reapply);
+        disconnect(m_document, &QTextDocument::contentsChanged, this, &MarkdownStyle::scheduleReapply);
+
+    // Whatever the last document asked for is no longer wanted: a pass that
+    // arrived after the file changed would style this one on the last one's
+    // behalf, and if it were detached entirely it would style nothing at all.
+    m_restylePending = false;
 
     m_document = target;
     if (!m_document)
         return;
 
-    connect(m_document, &QTextDocument::contentsChanged, this, &MarkdownStyle::reapply);
+    connect(m_document, &QTextDocument::contentsChanged, this, &MarkdownStyle::scheduleReapply);
+    // Directly, not queued: whatever is in the document now is finished, and
+    // there is no reason for the reader to see one frame of it unstyled.
     reapply();
+}
+
+void MarkdownStyle::scheduleReapply()
+{
+    if (m_applying || m_restylePending || !m_document)
+        return;
+
+    m_restylePending = true;
+    // Queued, so it runs once the event loop turns and whoever was editing the
+    // document has finished with it -- the importer included, which announces
+    // each of its own insertions from inside the edit that made it.
+    QMetaObject::invokeMethod(
+        this,
+        [this] {
+            if (!m_restylePending)
+                return;
+            m_restylePending = false;
+            reapply();
+        },
+        Qt::QueuedConnection);
 }
 
 void MarkdownStyle::reapply()
