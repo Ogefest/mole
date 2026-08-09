@@ -45,15 +45,35 @@ for the template.
 
 Small changes — a bug fix, a rename, a test, a tidy-up — do not need one.
 
-## Changelog
+## Where work is tracked
 
-[CHANGELOG.md](CHANGELOG.md) is the short, user-facing list: **one sentence** per
-new feature or visible change, newest first. No design discussion, no internals,
-no restating the ADR — anyone who wants the reasoning can follow the link.
+**Work lives in [GitHub issues](https://github.com/Ogefest/mole/issues).** A bug,
+a feature, a test that is owed — each is an issue, and each should carry enough
+for somebody to pick it up without asking a question: what is wrong or wanted,
+where in the code it lives, and how anyone will know it is finished. Larger
+efforts are milestones over those issues, with a file in
+[docs/projects/](docs/projects/) for the reasoning that will not fit in one.
 
-It is deliberately lighter than the other two records, which stay as they are:
-[DONE.md](DONE.md) keeps the long account of what was asked for and what the
-answer turned out to be, and [TODO.md](TODO.md) keeps what is left.
+A change that closes an issue says so in its commit message, in GitHub's own
+words — `Closes #12` — so the issue shuts when the work lands rather than when
+somebody remembers.
+
+**The repository is public, and so is every issue.** No host names, no account
+names, no bucket names, no credentials — not in an issue, not in a comment, not
+in a test fixture, however local the work felt while it was being done. When a
+fault is reproduced against a real server, the issue describes the *behaviour*,
+not the address it was found at.
+
+The three files alongside it keep what a tracker holds badly:
+
+- [CHANGELOG.md](CHANGELOG.md) — the short, user-facing list: **one sentence** per
+  new feature or visible change, newest first. No design discussion, no
+  internals, no restating the ADR.
+- [DONE.md](DONE.md) — the long account of what was asked for and what the answer
+  turned out to be, including the times the first answer was wrong.
+- [TODO.md](TODO.md) — context that is *not* a task: behaviour we have decided to
+  live with, conventions to follow, gaps that are documented rather than
+  scheduled.
 
 ## Tests are part of the work
 
