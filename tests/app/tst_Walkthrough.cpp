@@ -8,6 +8,7 @@
 #include "plugins/builtin/previews/PreviewProviders.h"
 #include "support/QmlAppHarness.h"
 #include "ui/AppController.h"
+#include "ui/models/DriveListModel.h"
 #include "ui/models/BookmarkModel.h"
 #include "ui/models/BrowserPaneController.h"
 #include "ui/models/CommandPaletteModel.h"
@@ -99,6 +100,8 @@ private slots:
     void savingThroughTheFormShowsWhatTheCheckFound();
     void typingIntoTheKindPickerFiltersIt();
     void connectingFromTheListSurvivesTheListRebuilding();
+    void theSidebarListsADriveAndConnectsIt();
+    void theWindowAsksForThePassphraseADriveIsWaitingOn();
     void emptyWindowExplainsItself();
 
 private:
@@ -1771,6 +1774,13 @@ void TestWalkthrough::theDrivesDialogOffersBackendsAndAForm()
     QVERIFY(saveButton->isVisible());
     QVERIFY(saveButton->height() > 10);
 
+    // Photographed here rather than after the save below. The kind chosen is
+    // whichever the picker offers first, and saving it with an empty form now
+    // runs a check that fails and says so -- correct behaviour, and a poor
+    // picture of "this is the form you fill in".
+    m_harness->settle(4);
+    m_harness->screenshot(QStringLiteral("11-drives"));
+
     // And saving has to put the drive in the list beside it. The list was bound
     // to a plain method call, which QML evaluates once and never again, so a
     // saved drive stayed invisible however well the save itself worked.
@@ -1784,9 +1794,6 @@ void TestWalkthrough::theDrivesDialogOffersBackendsAndAForm()
     QVERIFY(list);
     QVERIFY2(m_harness->until([list] { return list->property("count").toInt() > 0; }),
         "the new drive shows up in Your drives");
-
-    m_harness->settle(4);
-    m_harness->screenshot(QStringLiteral("11-drives"));
 }
 
 /// Every backend, not just the one that happened to be picked. The forms are
@@ -2004,6 +2011,83 @@ void TestWalkthrough::connectingFromTheListSurvivesTheListRebuilding()
     // Still here, still able to answer, and the row reflects what happened.
     QVERIFY2(m_harness->item(QStringLiteral("configuredDriveList")), "still standing");
     QCOMPARE(m_harness->app()->configuredDrives()->rowCount(), 1);
+}
+
+/// A configured drive in the sidebar, before and after connecting: the row is
+/// the drive rather than the mount, so it is there either way, and the dot and
+/// the button say which. Photographed for the guide, which is why both states
+/// are reached rather than only the interesting one.
+void TestWalkthrough::theSidebarListsADriveAndConnectsIt()
+{
+    QVERIFY(m_harness->app()->saveDrive(
+        QString(), QStringLiteral("Archive box"), QStringLiteral("mem"), QString(), QString(), {}));
+    m_harness->settle(4);
+
+    DriveListModel* drives = m_harness->app()->drives();
+    const auto rowOfArchiveBox = [drives] {
+        for (int row = 0; row < drives->rowCount(); ++row) {
+            if (drives->data(drives->index(row, 0), DriveListModel::DisplayNameRole).toString()
+                == QLatin1String("Archive box")) {
+                return row;
+            }
+        }
+        return -1;
+    };
+    QVERIFY(m_harness->until([&] { return rowOfArchiveBox() >= 0; }));
+
+    const auto stateNow = [drives, &rowOfArchiveBox] {
+        return static_cast<DriveListModel::State>(
+            drives->data(drives->index(rowOfArchiveBox(), 0), DriveListModel::StateRole).toInt());
+    };
+    QCOMPARE(stateNow(), DriveListModel::State::Disconnected);
+
+    // Nothing is known about how full it is, so the row is a name and a dot
+    // rather than a bar standing behind no measurement.
+    QCOMPARE(drives->data(drives->index(rowOfArchiveBox(), 0), DriveListModel::HasSpaceRole).toBool(),
+        false);
+    m_harness->settle(4);
+    m_harness->screenshot(QStringLiteral("11b-drive-not-connected"));
+
+    const QString id
+        = drives->data(drives->index(rowOfArchiveBox(), 0), DriveListModel::ConfiguredIdRole).toString();
+    QVERIFY(!id.isEmpty());
+    QVERIFY(m_harness->app()->connectDrive(id).isEmpty());
+
+    QVERIFY(m_harness->until([&] { return stateNow() == DriveListModel::State::Connected; }));
+    QVERIFY(drives->data(drives->index(rowOfArchiveBox(), 0), DriveListModel::CanEjectRole).toBool());
+    m_harness->settle(4);
+    m_harness->screenshot(QStringLiteral("11c-drive-connected"));
+}
+
+/// The band, and the state it exists for. A drive whose password lives in a
+/// shut store used to wait at startup in silence; the window says so now, and
+/// the guide shows what that looks like.
+void TestWalkthrough::theWindowAsksForThePassphraseADriveIsWaitingOn()
+{
+    if (!m_harness->app()->credentialsAvailable())
+        QSKIP("this build cannot encrypt");
+
+    QVERIFY(m_harness->app()->unlockCredentials(QStringLiteral("test-passphrase")));
+    QVariantMap values;
+    values.insert(QStringLiteral("host"), QStringLiteral("nas.local"));
+    values.insert(QStringLiteral("password"), QStringLiteral("not-a-real-password"));
+    QVERIFY(m_harness->app()->saveDrive(QString(), QStringLiteral("Office NAS"),
+        QStringLiteral("sftp"), QStringLiteral("sftp"), QString(), values));
+    m_harness->settle(4);
+
+    // Started again, because a store that is shut at startup is what somebody
+    // actually meets and is not a state a running application can be talked
+    // into.
+    QString error;
+    QVERIFY2(m_harness->restart(&error), qPrintable(error));
+
+    QVERIFY(m_harness->until([this] { return m_harness->app()->credentialsNeeded(); }));
+    QQuickItem* band = m_harness->item(QStringLiteral("sidebarUnlockBand"));
+    QVERIFY2(band, "the window has to say so without a dialog being opened");
+    QVERIFY(m_harness->until([band] { return band->isVisible(); }));
+
+    m_harness->settle(4);
+    m_harness->screenshot(QStringLiteral("11d-drive-locked"));
 }
 
 /// Typing in the kind picker to narrow sixty backends down to the one wanted.
