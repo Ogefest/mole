@@ -15,6 +15,7 @@ picture is here, something checks it.
 | [Looking inside files](previews.md) | text, code, Markdown, tables, PDFs, HTML |
 | [Finding things](searching.md) | searching a tree, the index, doing something with the results |
 | [Operations](operations.md) | compressing, renaming in bulk, the terminal, analysis |
+| [Network drives](drives.md) | SFTP, FTP, S3, WebDAV, and the passphrase that opens them |
 | [One key for everything](palette.md) | the command palette |
 
 ## Getting it running
