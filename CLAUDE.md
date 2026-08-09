@@ -103,9 +103,17 @@ gh project item-list 1 --owner Ogefest --format json --limit 200 \
   | sort -n | head
 ```
 
-Move the card when the work moves: to `In Progress` on starting it, and to
-`Done` once the commit has landed and closed the issue. A board that says
-something different from the repository is worse than no board.
+**Move the card to `In Progress` before writing a line of code** — not after the
+first commit, not when the branch is pushed. It is the first step of picking an
+issue up, because it is the only signal anybody else has that the work is taken,
+and a branch on one machine is not visible to anyone.
+
+Move it to `Done` once the change is on `main` and the issue is closed. The
+project's own workflows already do that for anything that goes through a pull
+request; the case that needs you is a change merged without one.
+
+A board that disagrees with the repository is worse than no board, because it is
+believed.
 
 ```sh
 board() {   # board <issue-number> <column>
