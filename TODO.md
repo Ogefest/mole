@@ -11,10 +11,25 @@ project, and a contributor should never hit a wall of text they cannot read.
 
 ## Features
 
-Nothing agreed and unbuilt at the moment. What is next comes from
-[README.md](README.md)'s extension points: video, audio-tag and image-metadata
-previews, the backends listed below, and adding to an existing archive rather than
-only writing a new one.
+- **A task that knows its speed and its size should say how long is left.** Every
+  ingredient is already there and already published: `Task::setBytesDone()` keeps a
+  smoothed rate in `TaskMetrics::kRate`, the total is in `TaskMetrics::kBytesTotal`,
+  and `TaskMetric::Kind::Duration` exists precisely so the interface can format a
+  time without parsing text. So the remaining work is the arithmetic —
+  `(total - done) / rate` — published as a metric next to the rate in
+  `Task::setBytesDone()`, which means every task that measures bytes gets it at
+  once rather than each one growing its own. Points worth deciding before writing
+  it: say nothing until the rate has settled, because an estimate from the first
+  half-second is worse than no estimate; keep the smoothed rate rather than the
+  instantaneous one, or the figure jumps around unreadably; and hold the last
+  estimate through a stall instead of showing infinity. `TaskStrip.qml` already
+  lays out `activeRateText`, so the strip needs one more field beside it, and
+  `TaskListModel` one more property. A copy that has ten thousand files but only
+  measures bytes still works — that is what makes bytes the right thing to count.
+
+What is next after that comes from [README.md](README.md)'s extension points: video,
+audio-tag and image-metadata previews, the backends listed below, and adding to an
+existing archive rather than only writing a new one.
 
 ---
 
