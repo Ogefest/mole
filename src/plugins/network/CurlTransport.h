@@ -63,6 +63,14 @@ struct Response
     /// curl's own error buffer, which says far more than the code alone.
     QString detail;
 
+    /// How long the payload was said to be and how much of it arrived. Both are
+    /// filled in only for a download into a device -- see CurlPool::perform --
+    /// and `expectedBytes` stays -1 when the other end never said. A transfer
+    /// that ends short of a length the server itself announced is a truncated
+    /// file, whatever the protocol thought of it.
+    qint64 expectedBytes = -1;
+    qint64 receivedBytes = -1;
+
     /// Case-insensitive lookup; empty when absent.
     QByteArray header(const char* name) const;
     bool httpOk() const { return status >= 200 && status < 300; }
@@ -93,7 +101,9 @@ public:
     class Lease
     {
     public:
-        Lease(CurlPool* pool, CURL* handle);
+        /// `pooled` false means the handle is closed when the lease ends
+        /// rather than handed to the next caller.
+        Lease(CurlPool* pool, CURL* handle, bool pooled = true);
         ~Lease();
         Lease(Lease&& other) noexcept;
         Lease& operator=(Lease&& other) noexcept;
@@ -103,9 +113,28 @@ public:
         CURL* get() const { return m_handle; }
         explicit operator bool() const { return m_handle != nullptr; }
 
+        /// Points the request at an address, and remembers it. Every backend
+        /// goes through here rather than setting CURLOPT_URL itself, because a
+        /// log line about a transfer that cannot say which file it was is not
+        /// worth writing -- and curl's own idea of the "effective URL" is the
+        /// previous transfer's on a handle that has been reused.
+        void setUrl(const QByteArray& url);
+        const QByteArray& url() const { return m_url; }
+
+        /// Gives this one transfer a connection nobody else has touched, and
+        /// closes it afterwards rather than returning it to the cache.
+        ///
+        /// The pool exists to avoid exactly this, so it is asked for only where
+        /// reuse is known to break: a large SFTP payload over a connection that
+        /// has already carried an operation stops dead partway through. See
+        /// SftpFileSystem for what was measured.
+        void useOwnConnection();
+
     private:
         CurlPool* m_pool = nullptr;
         CURL* m_handle = nullptr;
+        QByteArray m_url;
+        bool m_pooled = true;
     };
 
     /// Enough to keep every TaskManager worker warm. Past that a handle is
@@ -119,6 +148,10 @@ public:
 
     /// Never fails to a null lease unless libcurl itself cannot allocate.
     Lease take();
+
+    /// A handle nobody has used, thrown away rather than pooled when the lease
+    /// ends. For transfers that must not inherit anything from an earlier one.
+    Lease takeFresh();
 
     /// Runs the request on a leased handle and returns when it is done.
     /// `cancel` is polled throughout, so a slow transfer stops promptly.

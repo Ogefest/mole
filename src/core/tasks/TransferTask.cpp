@@ -1,7 +1,9 @@
 #include "core/tasks/TransferTask.h"
 
+#include "core/diagnostics/Diagnostics.h"
 #include "core/vfs/DirectoryWalker.h"
 
+#include <QElapsedTimer>
 #include <QLocale>
 
 namespace mole {
@@ -108,9 +110,15 @@ bool TransferTask::resolveConflict(const VfsUri& target, bool isDirectory, bool*
     return false;
 }
 
-bool TransferTask::copyStream(const VfsUri& from, const VfsUri& to)
+bool TransferTask::copyStream(const VfsUri& from, const VfsUri& to, qint64 expectedSize)
 {
-    Result<std::unique_ptr<QIODevice>> input = m_request.sourceFileSystem->openRead(from);
+    QElapsedTimer clock;
+    clock.start();
+
+    // The size from the plan goes with the request: a remote backend cannot set
+    // up a transfer sensibly without knowing whether it is fetching kilobytes or
+    // gigabytes, and this is the one caller that always knows.
+    Result<std::unique_ptr<QIODevice>> input = m_request.sourceFileSystem->openRead(from, expectedSize);
     if (!input.ok()) {
         recordFailure(from, input.error());
         return false;
@@ -131,8 +139,20 @@ bool TransferTask::copyStream(const VfsUri& from, const VfsUri& to)
             return false;
 
         const QByteArray chunk = source->read(kChunkSize);
-        if (chunk.isEmpty())
+        if (chunk.isEmpty()) {
+            // Nothing read is either the end of the file or a read that failed,
+            // and only the device knows which. Taking the second for the first
+            // is how half a file gets written and then reported as copied.
+            if (!source->atEnd()) {
+                recordFailure(from,
+                    VfsError::make(VfsError::IoError,
+                        QStringLiteral("the source stopped after %1 bytes: %2")
+                            .arg(written)
+                            .arg(source->errorString())));
+                return false;
+            }
             break;
+        }
         if (target->write(chunk) != chunk.size()) {
             recordFailure(to, VfsError::make(VfsError::IoError, QStringLiteral("short write")));
             return false;
@@ -152,6 +172,19 @@ bool TransferTask::copyStream(const VfsUri& from, const VfsUri& to)
     if (!committed.ok()) {
         recordFailure(to, committed.error());
         return false;
+    }
+
+    qCDebug(taskLog, "%s -> %s: %lld of %lld bytes in %lld ms", qPrintable(from.toString()),
+        qPrintable(to.toString()), static_cast<long long>(written), static_cast<long long>(expectedSize),
+        clock.elapsed());
+
+    // Said rather than enforced: the size comes from a listing taken earlier, so
+    // a file that legitimately grew or shrank in between would be failed for it.
+    // The backend is the one that can prove a transfer was cut short, and it does
+    // -- see net::errorFor. This is the line that says so in the log.
+    if (expectedSize > 0 && written != expectedSize) {
+        qCWarning(taskLog, "%s: copied %lld bytes where the listing said %lld", qPrintable(from.toString()),
+            static_cast<long long>(written), static_cast<long long>(expectedSize));
     }
     return true;
 }
@@ -173,7 +206,7 @@ TransferTask::Outcome TransferTask::transferOne(const Job& job)
         return Outcome::Transferred;
     }
 
-    return copyStream(job.source, job.target) ? Outcome::Transferred : Outcome::Failed;
+    return copyStream(job.source, job.target, job.size) ? Outcome::Transferred : Outcome::Failed;
 }
 
 void TransferTask::run()

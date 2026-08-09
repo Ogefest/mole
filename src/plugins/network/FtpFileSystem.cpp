@@ -78,7 +78,7 @@ Result<FileEntryList> FtpFileSystem::listRaw(const VfsUri& dir, const CancelToke
     }
 
     const QByteArray url = urlFor(dir, true);
-    curl_easy_setopt(lease.get(), CURLOPT_URL, url.constData());
+    lease.setUrl(url);
     applySettings(lease);
 
     const net::Response response = m_pool->perform(lease, cancel);
@@ -180,7 +180,7 @@ Result<void> FtpFileSystem::runCommands(
     for (const QByteArray& command : commands)
         list = curl_slist_append(list, command.constData());
 
-    curl_easy_setopt(lease.get(), CURLOPT_URL, url.constData());
+    lease.setUrl(url);
     curl_easy_setopt(lease.get(), CURLOPT_QUOTE, list);
     curl_easy_setopt(lease.get(), CURLOPT_NOBODY, 1L);
     applySettings(lease);
@@ -247,7 +247,7 @@ Result<void> FtpFileSystem::rename(const VfsUri& from, const VfsUri& to)
         QStringLiteral("Renaming %1").arg(from.path()));
 }
 
-Result<std::unique_ptr<QIODevice>> FtpFileSystem::openRead(const VfsUri& target)
+Result<std::unique_ptr<QIODevice>> FtpFileSystem::openRead(const VfsUri& target, qint64)
 {
     auto scratch = std::make_unique<QTemporaryFile>();
     if (!scratch->open()) {
@@ -262,7 +262,7 @@ Result<std::unique_ptr<QIODevice>> FtpFileSystem::openRead(const VfsUri& target)
     }
 
     const QByteArray url = urlFor(target, false);
-    curl_easy_setopt(lease.get(), CURLOPT_URL, url.constData());
+    lease.setUrl(url);
     applySettings(lease);
 
     const net::Response response = m_pool->perform(lease, CancelToken(), scratch.get());
@@ -281,7 +281,7 @@ Result<void> FtpFileSystem::uploadTo(const VfsUri& target, QIODevice& payload, q
         return Result<void>::failure(VfsError::IoError, QStringLiteral("Could not start an FTP transfer"));
 
     const QByteArray url = urlFor(target, false);
-    curl_easy_setopt(lease.get(), CURLOPT_URL, url.constData());
+    lease.setUrl(url);
     applySettings(lease);
     net::CurlPool::sendFrom(lease, payload, size);
 

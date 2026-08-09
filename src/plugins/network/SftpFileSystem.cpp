@@ -25,6 +25,24 @@ namespace {
         return QDir::homePath() + QStringLiteral("/.ssh/known_hosts");
     }
 
+    /// How much of a large file one connection is asked to carry.
+    ///
+    /// An SFTP transfer stops dead a little short of a gibibyte: the bytes
+    /// arrive at full speed and then simply cease, with the connection open, the
+    /// server there, and libcurl reporting nothing at all until the stall guard
+    /// gives up two minutes later. It happens to plain `curl` with no Mole
+    /// involved, on a connection nothing else has touched, and always around the
+    /// same place -- which is where an OpenSSH server with a small-block cipher
+    /// re-keys the session. OpenSSH's own client and `scp` carry any size, so it
+    /// is the pairing rather than either end alone.
+    ///
+    /// Fetching in spans keeps every connection well clear of it, at the cost of
+    /// an SSH handshake per span -- about half a second per quarter gigabyte,
+    /// which is nothing next to the transfer it carries. A file that fits in one
+    /// span is fetched over a pooled connection exactly as before, because a
+    /// handshake for each of ten thousand small files is not nothing at all.
+    constexpr qint64 kSpanBytes = 256LL * 1024 * 1024;
+
 } // namespace
 
 SftpFileSystem::SftpFileSystem(QString scheme, SftpSettings settings)
@@ -77,7 +95,7 @@ Result<FileEntryList> SftpFileSystem::listRaw(const VfsUri& dir, const CancelTok
     }
 
     const QByteArray url = urlFor(dir, true);
-    curl_easy_setopt(lease.get(), CURLOPT_URL, url.constData());
+    lease.setUrl(url);
     if (!m_settings.privateKeyPath.isEmpty()) {
         curl_easy_setopt(
             lease.get(), CURLOPT_SSH_PRIVATE_KEYFILE, m_settings.privateKeyPath.toUtf8().constData());
@@ -198,7 +216,7 @@ Result<void> SftpFileSystem::runCommand(const QByteArray& command, const VfsUri&
     const QByteArray url = urlFor(context.isRoot() ? context : context.parent(), true);
     curl_slist* commands = curl_slist_append(nullptr, command.constData());
 
-    curl_easy_setopt(lease.get(), CURLOPT_URL, url.constData());
+    lease.setUrl(url);
     curl_easy_setopt(lease.get(), CURLOPT_QUOTE, commands);
     curl_easy_setopt(lease.get(), CURLOPT_NOBODY, 1L);
 
@@ -262,7 +280,7 @@ Result<void> SftpFileSystem::rename(const VfsUri& from, const VfsUri& to)
     return runCommand(command, from, QStringLiteral("Renaming %1").arg(from.path()));
 }
 
-Result<std::unique_ptr<QIODevice>> SftpFileSystem::openRead(const VfsUri& target)
+Result<std::unique_ptr<QIODevice>> SftpFileSystem::openRead(const VfsUri& target, qint64 expectedSize)
 {
     auto scratch = std::make_unique<QTemporaryFile>();
     if (!scratch->open()) {
@@ -270,20 +288,60 @@ Result<std::unique_ptr<QIODevice>> SftpFileSystem::openRead(const VfsUri& target
             VfsError::IoError, QStringLiteral("Could not open a local copy for %1").arg(target.path()));
     }
 
-    auto lease = m_pool->take();
-    if (!lease) {
-        return Result<std::unique_ptr<QIODevice>>::failure(
-            VfsError::IoError, QStringLiteral("Could not start an SFTP transfer"));
+    const QByteArray url = urlFor(target, false);
+    const QString what = QStringLiteral("Reading %1").arg(target.path());
+
+    // Small and measured: one transfer over a warm connection, as it always was.
+    // Unknown counts as large -- a caller that did not say is reading one file
+    // for a preview or a checksum, where a handshake costs nothing worth saving.
+    if (expectedSize >= 0 && expectedSize <= kSpanBytes) {
+        auto lease = m_pool->take();
+        if (!lease) {
+            return Result<std::unique_ptr<QIODevice>>::failure(
+                VfsError::IoError, QStringLiteral("Could not start an SFTP transfer"));
+        }
+        lease.setUrl(url);
+
+        const net::Response response = m_pool->perform(lease, CancelToken(), scratch.get());
+        const VfsError error = net::errorFor(response, what, net::StatusMeaning::ProtocolReply);
+        if (error.isError())
+            return Result<std::unique_ptr<QIODevice>>(error);
+
+        return net::openDownloadedFile(std::move(scratch));
     }
 
-    const QByteArray url = urlFor(target, false);
-    curl_easy_setopt(lease.get(), CURLOPT_URL, url.constData());
+    // Anything larger arrives a span at a time, each over a connection of its
+    // own, appended to the same local copy.
+    qint64 offset = 0;
+    for (;;) {
+        auto lease = m_pool->takeFresh();
+        if (!lease) {
+            return Result<std::unique_ptr<QIODevice>>::failure(
+                VfsError::IoError, QStringLiteral("Could not start an SFTP transfer"));
+        }
+        lease.setUrl(url);
 
-    const net::Response response = m_pool->perform(lease, CancelToken(), scratch.get());
-    const VfsError error = net::errorFor(
-        response, QStringLiteral("Reading %1").arg(target.path()), net::StatusMeaning::ProtocolReply);
-    if (error.isError())
-        return Result<std::unique_ptr<QIODevice>>(error);
+        const QByteArray range
+            = QByteArray::number(offset) + '-' + QByteArray::number(offset + kSpanBytes - 1);
+        curl_easy_setopt(lease.get(), CURLOPT_RANGE, range.constData());
+
+        const net::Response response = m_pool->perform(lease, CancelToken(), scratch.get());
+        const VfsError error = net::errorFor(response, what, net::StatusMeaning::ProtocolReply);
+        if (error.isError())
+            return Result<std::unique_ptr<QIODevice>>(error);
+
+        const qint64 arrived = response.receivedBytes < 0 ? 0 : response.receivedBytes;
+        offset += arrived;
+
+        // A span that comes back short is the end of the file: a server clamps a
+        // range that runs past the end rather than refusing it. One that comes
+        // back long is a server that ignored the range and sent everything,
+        // which means the file is already here.
+        if (arrived < kSpanBytes || arrived > kSpanBytes)
+            break;
+        if (expectedSize > 0 && offset >= expectedSize)
+            break;
+    }
 
     return net::openDownloadedFile(std::move(scratch));
 }
@@ -295,7 +353,13 @@ Result<void> SftpFileSystem::uploadTo(const VfsUri& target, QIODevice& payload, 
         return Result<void>::failure(VfsError::IoError, QStringLiteral("Could not start an SFTP transfer"));
 
     const QByteArray url = urlFor(target, false);
-    curl_easy_setopt(lease.get(), CURLOPT_URL, url.constData());
+    lease.setUrl(url);
+    // Going the other way there is no equivalent of a range, so all that can be
+    // done is to keep the transfer off a connection that has already been used.
+    // An upload past the point where the session re-keys is still unfinished
+    // business -- see TODO.md.
+    if (size > kSpanBytes)
+        lease.useOwnConnection();
     net::CurlPool::sendFrom(lease, payload, size);
 
     const net::Response response = m_pool->perform(lease, CancelToken());

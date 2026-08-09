@@ -176,6 +176,12 @@ if(MOLE_HAVE_NETWORK_PLUGIN)
     mole_add_test(tst_S3Signer         SOURCES plugins/tst_S3Signer.cpp
                                        LIBS mole_network_backends)
 
+    # What the transport makes of a finished transfer, including the one thing a
+    # backend cannot work out for itself: whether the file it was handed is whole.
+    # Offline -- it judges responses, it does not fetch them.
+    mole_add_test(tst_CurlTransport    SOURCES plugins/tst_CurlTransport.cpp
+                                       LIBS mole_network_backends CURL::libcurl)
+
     mole_add_test(tst_SftpFileSystem   SOURCES plugins/tst_SftpFileSystem.cpp
                                        LIBS mole_network_backends CURL::libcurl)
 

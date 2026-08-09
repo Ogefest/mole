@@ -160,7 +160,7 @@ net::Response S3FileSystem::send(const Call& call, const CancelToken& cancel, QI
     // which several S3 implementations answer badly.
     headerList = curl_slist_append(headerList, "Expect:");
 
-    curl_easy_setopt(lease.get(), CURLOPT_URL, url.constData());
+    lease.setUrl(url);
     curl_easy_setopt(lease.get(), CURLOPT_HTTPHEADER, headerList);
 
     if (call.method == "HEAD") {
@@ -520,7 +520,7 @@ Result<void> S3FileSystem::rename(const VfsUri& from, const VfsUri& to)
     return deleteObject(fromPrefix);
 }
 
-Result<std::unique_ptr<QIODevice>> S3FileSystem::openRead(const VfsUri& target)
+Result<std::unique_ptr<QIODevice>> S3FileSystem::openRead(const VfsUri& target, qint64)
 {
     auto scratch = std::make_unique<QTemporaryFile>();
     if (!scratch->open()) {

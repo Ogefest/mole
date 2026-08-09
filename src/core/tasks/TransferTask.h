@@ -70,7 +70,10 @@ private:
     /// Expands directories into the full list of entries to create and copy.
     bool planJobs(QList<Job>& jobsOut);
     Outcome transferOne(const Job& job);
-    bool copyStream(const VfsUri& from, const VfsUri& to);
+    /// `expectedSize` is what the plan was told the file is, and is used for the
+    /// log rather than for a decision -- a listing can be out of date, and the
+    /// backend is what proves a transfer was cut short.
+    bool copyStream(const VfsUri& from, const VfsUri& to, qint64 expectedSize);
 
     /// Bytes already accounted for by completed jobs. The chunk loop adds its
     /// own progress on top, so a large file advances while it is copying.

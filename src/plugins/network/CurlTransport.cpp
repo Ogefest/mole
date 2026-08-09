@@ -1,13 +1,75 @@
 #include "plugins/network/CurlTransport.h"
 
+#include "core/diagnostics/Diagnostics.h"
+
+#include <QElapsedTimer>
 #include <QUrl>
 
+#include <atomic>
 #include <cstring>
 
 namespace mole::net {
 namespace {
 
     std::once_flag g_initOnce;
+
+    /// Numbers the transfers so interleaved lines from several worker threads
+    /// can be told apart. Only ever read by the log.
+    std::atomic<quint64> g_transferCounter { 0 };
+
+    /// What the trace callback needs to know about the transfer it is narrating.
+    struct Trace
+    {
+        quint64 id = 0;
+    };
+
+    /// A header that would put a credential in the log, replaced by its name.
+    /// The session log lives on disk and gets sent to whoever is helping; a
+    /// signature or a Basic password has no business travelling with it.
+    QByteArray withoutSecrets(const QByteArray& line)
+    {
+        const int colon = line.indexOf(':');
+        if (colon <= 0)
+            return line;
+        const QByteArray name = line.left(colon).toLower();
+        if (name == "authorization" || name == "proxy-authorization" || name == "x-amz-security-token")
+            return line.left(colon) + ": <redacted>";
+        return line;
+    }
+
+    /// libcurl's own commentary, forwarded into the log rather than to stderr.
+    int traceCurl(CURL*, curl_infotype type, char* data, size_t size, void* userData)
+    {
+        const auto* trace = static_cast<const Trace*>(userData);
+
+        const char* marker = nullptr;
+        switch (type) {
+        case CURLINFO_TEXT:
+            marker = "*";
+            break;
+        case CURLINFO_HEADER_IN:
+            marker = "<";
+            break;
+        case CURLINFO_HEADER_OUT:
+            marker = ">";
+            break;
+        default:
+            // The payload itself. How much of it arrived is in the line perform()
+            // writes at the end; repeating it for every block would bury the
+            // state changes that are the reason to read a trace at all.
+            return 0;
+        }
+
+        const QByteArray text = QByteArray(data, static_cast<int>(size));
+        for (const QByteArray& line : text.split('\n')) {
+            const QByteArray trimmed = line.trimmed();
+            if (trimmed.isEmpty())
+                continue;
+            qCDebug(curlLog, "#%llu %s %s", static_cast<unsigned long long>(trace->id), marker,
+                withoutSecrets(trimmed).constData());
+        }
+        return 0;
+    }
 
     size_t writeToBuffer(char* data, size_t size, size_t count, void* userData)
     {
@@ -90,21 +152,28 @@ QByteArray Response::header(const char* name) const
 
 // ---- Lease -----------------------------------------------------------------
 
-CurlPool::Lease::Lease(CurlPool* pool, CURL* handle)
+CurlPool::Lease::Lease(CurlPool* pool, CURL* handle, bool pooled)
     : m_pool(pool)
     , m_handle(handle)
+    , m_pooled(pooled)
 {
 }
 
 CurlPool::Lease::~Lease()
 {
-    if (m_pool && m_handle)
+    if (!m_handle)
+        return;
+    if (m_pool && m_pooled)
         m_pool->give(m_handle);
+    else
+        curl_easy_cleanup(m_handle);
 }
 
 CurlPool::Lease::Lease(Lease&& other) noexcept
     : m_pool(other.m_pool)
     , m_handle(other.m_handle)
+    , m_url(std::move(other.m_url))
+    , m_pooled(other.m_pooled)
 {
     other.m_pool = nullptr;
     other.m_handle = nullptr;
@@ -117,10 +186,31 @@ CurlPool::Lease& CurlPool::Lease::operator=(Lease&& other) noexcept
             m_pool->give(m_handle);
         m_pool = other.m_pool;
         m_handle = other.m_handle;
+        m_url = std::move(other.m_url);
+        m_pooled = other.m_pooled;
         other.m_pool = nullptr;
         other.m_handle = nullptr;
     }
     return *this;
+}
+
+void CurlPool::Lease::setUrl(const QByteArray& url)
+{
+    m_url = url;
+    if (m_handle)
+        curl_easy_setopt(m_handle, CURLOPT_URL, m_url.constData());
+}
+
+void CurlPool::Lease::useOwnConnection()
+{
+    if (!m_handle)
+        return;
+    // Both halves matter. The first says "do not pick up the warm connection
+    // this handle is holding"; the second says "and do not leave this one behind
+    // for the next caller either", because a connection that has carried a large
+    // transfer is exactly what the next one must not inherit.
+    curl_easy_setopt(m_handle, CURLOPT_FRESH_CONNECT, 1L);
+    curl_easy_setopt(m_handle, CURLOPT_FORBID_REUSE, 1L);
 }
 
 // ---- CurlPool --------------------------------------------------------------
@@ -152,6 +242,14 @@ CurlPool::Lease CurlPool::take()
     if (handle)
         prepare(handle);
     return Lease(this, handle);
+}
+
+CurlPool::Lease CurlPool::takeFresh()
+{
+    CURL* handle = curl_easy_init();
+    if (handle)
+        prepare(handle);
+    return Lease(this, handle, false);
 }
 
 void CurlPool::give(CURL* handle)
@@ -224,6 +322,14 @@ Response CurlPool::perform(const Lease& lease, const CancelToken& cancel, QIODev
     CURL* handle = lease.get();
     char errorBuffer[CURL_ERROR_SIZE] = { 0 };
 
+    const quint64 id = ++g_transferCounter;
+    Trace trace { id };
+    if (curlLog().isDebugEnabled()) {
+        curl_easy_setopt(handle, CURLOPT_VERBOSE, 1L);
+        curl_easy_setopt(handle, CURLOPT_DEBUGFUNCTION, traceCurl);
+        curl_easy_setopt(handle, CURLOPT_DEBUGDATA, &trace);
+    }
+
     curl_easy_setopt(handle, CURLOPT_ERRORBUFFER, errorBuffer);
     if (sink) {
         curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, writeToDevice);
@@ -238,16 +344,54 @@ Response CurlPool::perform(const Lease& lease, const CancelToken& cancel, QIODev
     curl_easy_setopt(handle, CURLOPT_XFERINFOFUNCTION, reportProgress);
     curl_easy_setopt(handle, CURLOPT_XFERINFODATA, &cancel);
 
+    qCDebug(networkLog, "#%llu start %s%s", static_cast<unsigned long long>(id),
+        lease.url().isEmpty() ? "(no address)" : lease.url().constData(), sink ? " -> file" : "");
+
+    QElapsedTimer clock;
+    clock.start();
     response.code = curl_easy_perform(handle);
+    const qint64 elapsed = clock.elapsed();
+
     curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &response.status);
 
     // Detached before the handle goes back to the pool: the buffer is on our
     // stack and must not outlive this call.
     curl_easy_setopt(handle, CURLOPT_ERRORBUFFER, nullptr);
+    curl_easy_setopt(handle, CURLOPT_DEBUGDATA, nullptr);
+
+    curl_off_t received = 0;
+    curl_off_t announced = -1;
+    curl_off_t sent = 0;
+    long connects = 0;
+    curl_easy_getinfo(handle, CURLINFO_SIZE_DOWNLOAD_T, &received);
+    curl_easy_getinfo(handle, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &announced);
+    curl_easy_getinfo(handle, CURLINFO_SIZE_UPLOAD_T, &sent);
+    curl_easy_getinfo(handle, CURLINFO_NUM_CONNECTS, &connects);
+
+    if (sink) {
+        // Only for a download into a device, which is the one case where both
+        // numbers mean the same thing. A HEAD -- runCommand's NOBODY, S3's
+        // stat -- is told the length and asks for none of it, and comparing the
+        // two there would call every one of them truncated.
+        response.expectedBytes = announced;
+        response.receivedBytes = received;
+    }
 
     if (response.code != CURLE_OK) {
         response.detail = errorBuffer[0] != 0 ? QString::fromUtf8(errorBuffer)
                                               : QString::fromUtf8(curl_easy_strerror(response.code));
+    }
+
+    qCDebug(networkLog, "#%llu %s in %lld ms: %lld of %lld bytes down, %lld up, status %ld, %s%s%s",
+        static_cast<unsigned long long>(id), response.code == CURLE_OK ? "done" : "failed", elapsed,
+        static_cast<long long>(received), static_cast<long long>(announced), static_cast<long long>(sent),
+        response.status, connects > 0 ? "new connection" : "connection reused",
+        response.code == CURLE_OK ? "" : ", ", qPrintable(response.detail));
+
+    if (response.code == CURLE_OK && announced > 0 && received < announced) {
+        qCWarning(networkLog, "#%llu %s ended after %lld of the %lld bytes it was promised",
+            static_cast<unsigned long long>(id), lease.url().constData(), static_cast<long long>(received),
+            static_cast<long long>(announced));
     }
     return response;
 }
@@ -300,6 +444,21 @@ VfsError errorFor(const Response& response, const QString& what, StatusMeaning m
         return fail(VfsError::NetworkError, detail);
     default:
         return fail(VfsError::Unknown, detail);
+    }
+
+    // A transfer curl called successful can still be short. libssh2 reports a
+    // dropped SFTP channel as a clean end of file, so curl believes the download
+    // finished and hands back whatever arrived; the same is true of an HTTP
+    // response cut off after its Content-Length was read. Both look exactly like
+    // a complete file to everything above, which is the worst possible outcome
+    // of a copy -- so the one number that disproves it is checked here, for
+    // every protocol, before anybody is told the file is good.
+    if (response.expectedBytes > 0 && response.receivedBytes >= 0
+        && response.receivedBytes < response.expectedBytes) {
+        return fail(VfsError::IoError,
+            QStringLiteral("the transfer stopped after %1 of %2 bytes")
+                .arg(response.receivedBytes)
+                .arg(response.expectedBytes));
     }
 
     // The transfer itself worked. For SFTP and FTP that is the whole answer.

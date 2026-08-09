@@ -86,7 +86,7 @@ net::Response WebdavFileSystem::send(const Call& call, const CancelToken& cancel
         headers = curl_slist_append(headers, "Content-Type: application/xml; charset=utf-8");
     headers = curl_slist_append(headers, "Expect:");
 
-    curl_easy_setopt(lease.get(), CURLOPT_URL, call.url.constData());
+    lease.setUrl(call.url);
     curl_easy_setopt(lease.get(), CURLOPT_HTTPHEADER, headers);
     // Whatever the server asks for -- Nextcloud wants Basic, some appliances
     // insist on Digest, and there is no reason to make the user care.
@@ -271,7 +271,7 @@ Result<void> WebdavFileSystem::rename(const VfsUri& from, const VfsUri& to)
     return {};
 }
 
-Result<std::unique_ptr<QIODevice>> WebdavFileSystem::openRead(const VfsUri& target)
+Result<std::unique_ptr<QIODevice>> WebdavFileSystem::openRead(const VfsUri& target, qint64)
 {
     auto scratch = std::make_unique<QTemporaryFile>();
     if (!scratch->open()) {

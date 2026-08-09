@@ -9,6 +9,8 @@
 #include <QDir>
 #include <QFile>
 
+#include <cstring>
+
 using namespace mole;
 using namespace mole::test;
 
@@ -20,9 +22,7 @@ namespace {
 /// sends it in close(), because a signature needs the length up front. The failure
 /// therefore arrives after the last successful write() -- and QIODevice::close()
 /// returns void, so it can only be found by asking.
-class FailsOnCloseDevice
-    : public QIODevice
-    , public ICommitsOnClose
+class FailsOnCloseDevice : public QIODevice, public ICommitsOnClose
 {
 public:
     bool open(OpenMode mode) override { return QIODevice::open(mode | QIODevice::Unbuffered); }
@@ -60,19 +60,97 @@ public:
     {
         return m_inner->remove(target, recursive);
     }
-    Result<void> rename(const VfsUri& from, const VfsUri& to) override
+    Result<void> rename(const VfsUri& from, const VfsUri& to) override { return m_inner->rename(from, to); }
+    Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override
     {
-        return m_inner->rename(from, to);
-    }
-    Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target) override
-    {
-        return m_inner->openRead(target);
+        return m_inner->openRead(target, expectedSize);
     }
 
     Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri&) override
     {
         auto device = std::make_unique<FailsOnCloseDevice>();
         device->open(QIODevice::WriteOnly);
+        return Result<std::unique_ptr<QIODevice>>(std::unique_ptr<QIODevice>(device.release()));
+    }
+
+private:
+    std::shared_ptr<MemoryFileSystem> m_inner;
+};
+
+/// Hands over the beginning of a file and then fails.
+///
+/// This is what a remote read looks like when the connection dies half way: the
+/// device knows how long the file is, has delivered part of it, and can deliver
+/// no more. Crucially it reports the failure the way QIODevice does -- by
+/// reading nothing -- which is indistinguishable from the end of the file unless
+/// the position is checked as well.
+class HalfReadableDevice final : public QIODevice
+{
+public:
+    HalfReadableDevice(QByteArray head, qint64 wholeSize)
+        : m_head(std::move(head))
+        , m_wholeSize(wholeSize)
+    {
+    }
+
+    bool open(OpenMode mode) override { return QIODevice::open(mode | QIODevice::Unbuffered); }
+    qint64 size() const override { return m_wholeSize; }
+
+protected:
+    qint64 readData(char* data, qint64 maxSize) override
+    {
+        if (m_served >= m_head.size()) {
+            setErrorString(QStringLiteral("the connection went away"));
+            return -1;
+        }
+        const qint64 bytes = qMin(maxSize, static_cast<qint64>(m_head.size()) - m_served);
+        std::memcpy(data, m_head.constData() + m_served, static_cast<size_t>(bytes));
+        m_served += bytes;
+        return bytes;
+    }
+    qint64 writeData(const char*, qint64) override { return -1; }
+
+private:
+    QByteArray m_head;
+    qint64 m_wholeSize = 0;
+    qint64 m_served = 0;
+};
+
+/// A backend whose reads stop half way, by delegation as above.
+class HalfReadingFileSystem final : public IFileSystem
+{
+public:
+    explicit HalfReadingFileSystem(std::shared_ptr<MemoryFileSystem> inner)
+        : m_inner(std::move(inner))
+    {
+    }
+
+    QString scheme() const override { return m_inner->scheme(); }
+    VfsCapabilities capabilities() const override { return m_inner->capabilities(); }
+    Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) override
+    {
+        return m_inner->list(dir, cancel);
+    }
+    Result<FileEntry> stat(const VfsUri& target) override { return m_inner->stat(target); }
+    Result<void> makeDirectory(const VfsUri& target) override { return m_inner->makeDirectory(target); }
+    Result<void> remove(const VfsUri& target, bool recursive) override
+    {
+        return m_inner->remove(target, recursive);
+    }
+    Result<void> rename(const VfsUri& from, const VfsUri& to) override { return m_inner->rename(from, to); }
+    Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target) override
+    {
+        return m_inner->openWrite(target);
+    }
+
+    Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 = -1) override
+    {
+        const Result<FileEntry> what = m_inner->stat(target);
+        if (!what.ok())
+            return Result<std::unique_ptr<QIODevice>>(what.error());
+
+        auto device = std::make_unique<HalfReadableDevice>(QByteArray("head"), what.value().size);
+        device->open(QIODevice::ReadOnly);
         return Result<std::unique_ptr<QIODevice>>(std::unique_ptr<QIODevice>(device.release()));
     }
 
@@ -103,6 +181,7 @@ private slots:
     void missingSourceIsRecordedNotFatal();
     void readOnlyTargetFails();
     void aWriteThatFailsOnlyWhenClosedIsStillAFailure();
+    void aReadThatStopsHalfWayIsNotAnEndOfFile();
     void cancellationStopsMidway();
     void emptyRequestSucceeds();
 
@@ -453,6 +532,34 @@ void TestTransferTask::readOnlyTargetFails()
 
     QCOMPARE(task->failedCount(), 1);
     QCOMPARE(task->copiedCount(), 0);
+}
+
+void TestTransferTask::aReadThatStopsHalfWayIsNotAnEndOfFile()
+{
+    // Regression, and the mirror image of the one above. The copy loop stopped
+    // as soon as a read returned nothing and then reported success, so a source
+    // that died half way left a truncated file behind and said the copy was
+    // fine. Truncated and reported as good is worse than not copied at all: the
+    // original then gets deleted by a move, or trusted by whoever reads it.
+    m_mem->addFile(QStringLiteral("/a/big.bin"), QByteArray("head and then some more"));
+
+    auto source = std::make_shared<HalfReadingFileSystem>(m_mem);
+    auto target = std::make_shared<MemoryFileSystem>();
+    target->addDirectory(QStringLiteral("/target"));
+
+    TransferTask::Request request;
+    request.sourceFileSystem = source;
+    request.targetFileSystem = target;
+    request.sources = { VfsUri::fromString(QStringLiteral("mem:///a/big.bin")) };
+    request.targetDirectory = VfsUri::fromString(QStringLiteral("mem:///target"));
+
+    auto* task = new TransferTask(request);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(task->failedCount(), 1);
+    QCOMPARE(task->copiedCount(), 0);
+    QVERIFY(task->failures().first().contains(QStringLiteral("stopped after 4 bytes")));
 }
 
 void TestTransferTask::cancellationStopsMidway()
