@@ -327,6 +327,10 @@ signals:
     /// The shell should show the drives dialog. A signal rather than a direct
     /// call, because this layer has no business knowing what a dialog is.
     void drivesRequested();
+    /// The shell should put the cursor where the passphrase is typed. Same
+    /// reasoning: this layer does not know there is a band, only that somebody
+    /// asked to do something that needs the store open.
+    void credentialsRequested();
     void notification(int severity, const QString& title, const QString& detail);
     /// The shell asks for the little dialog: a name and a format are the user's to
     /// choose, and a controller has no business owning a window.

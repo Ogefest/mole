@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- Drives can be connected, ejected and checked from the command palette on `Ctrl+R`,
+  by name, without reaching for the pointer.
 - A drive whose password is in a locked store now says so in the window, with one place
   to type the passphrase, instead of waiting in silence until somebody opens a dialog.
 - A drive is shown as connected only once something has actually reached it, and turns

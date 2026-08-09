@@ -3,7 +3,14 @@
 #include "support/TestSupport.h"
 #include "ui/models/BookmarkModel.h"
 #include "ui/models/CommandPaletteModel.h"
+#include "ui/models/DriveListModel.h"
 
+#include "core/credentials/SecretStore.h"
+#include "core/vfs/RemoteRegistry.h"
+#include "core/vfs/VfsManager.h"
+#include "core/vfs/backends/MemoryFileSystem.h"
+
+#include <QDir>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 
@@ -62,11 +69,68 @@ private slots:
     void choosingABookmarkAsksForThatPlace();
     void refreshingPicksUpWhatHasChangedSince();
 
+    void aDriveOffersWhatCanBeDoneToItAndNotOnlyWhereItGoes();
+    void theVerbFollowsTheDriveRatherThanASecondList();
+    void aLockedDriveIsOfferedThePassphraseRatherThanAFailure();
+    void aLocalDiskIsAPlaceAndNothingElse();
+
 private:
+    /// A drive list with a registry behind it, so the palette sees the same
+    /// rows the sidebar does rather than a fixture of its own.
+    void buildDrives();
+    QString configure(const QString& name, bool withSecret = false);
+    void connectConfigured(const QString& driveId);
+
     std::unique_ptr<ActionRegistry> m_actions;
     std::unique_ptr<BookmarkModel> m_bookmarks;
     std::unique_ptr<QTemporaryDir> m_profile;
+    std::unique_ptr<SecretStore> m_secrets;
+    std::unique_ptr<RemoteRegistry> m_registry;
+    std::unique_ptr<VfsManager> m_vfs;
+    std::unique_ptr<DriveListModel> m_drives;
 };
+
+void TestCommandPalette::buildDrives()
+{
+    m_secrets
+        = std::make_unique<SecretStore>(QDir(m_profile->path()).filePath(QStringLiteral("credentials.enc")));
+    m_registry = std::make_unique<RemoteRegistry>(
+        QDir(m_profile->path()).filePath(QStringLiteral("drives.json")), m_secrets.get());
+    m_vfs = std::make_unique<VfsManager>();
+    m_drives = std::make_unique<DriveListModel>(m_vfs.get(), m_registry.get());
+}
+
+QString TestCommandPalette::configure(const QString& name, bool withSecret)
+{
+    RemoteDrive drive;
+    drive.name = name;
+    drive.factoryScheme = QStringLiteral("sftp");
+    drive.variant = QStringLiteral("sftp");
+    drive.root = QStringLiteral("/data");
+    if (withSecret)
+        drive.secretFields.append(QStringLiteral("pass"));
+
+    QVariantMap secretValues;
+    if (withSecret)
+        secretValues.insert(QStringLiteral("pass"), QStringLiteral("not-a-real-password"));
+
+    QString id;
+    QString error;
+    if (!m_registry->put(drive, secretValues, &error, &id))
+        return {};
+    return id;
+}
+
+void TestCommandPalette::connectConfigured(const QString& driveId)
+{
+    const RemoteDrive drive = m_registry->drive(driveId);
+    Mount mount;
+    mount.id = drive.id;
+    mount.displayName = drive.name;
+    mount.root = drive.rootUri();
+    mount.fileSystem = std::make_shared<MemoryFileSystem>();
+    m_vfs->addMount(mount);
+}
 
 void TestCommandPalette::init()
 {
@@ -88,6 +152,10 @@ void TestCommandPalette::init()
 
 void TestCommandPalette::cleanup()
 {
+    m_drives.reset();
+    m_vfs.reset();
+    m_registry.reset();
+    m_secrets.reset();
     m_bookmarks.reset();
     m_profile.reset();
     m_actions.reset();
@@ -256,6 +324,113 @@ void TestCommandPalette::refreshingPicksUpWhatHasChangedSince()
     QCOMPARE(palette.rowCount(), before + 2);
     QVERIFY(titlesOf(palette).contains(QStringLiteral("A plugin thing")));
     QVERIFY(titlesOf(palette).contains(QStringLiteral("Work")));
+}
+
+// ----------------------------------------------- doing things to a drive
+
+/// A drive you can only connect by finding a small button with the pointer is
+/// half-built in an application whose palette is described as the one key that
+/// reaches everything. What the palette offered for a drive was somewhere to
+/// go; it now also offers what can be done to it.
+void TestCommandPalette::aDriveOffersWhatCanBeDoneToItAndNotOnlyWhereItGoes()
+{
+    buildDrives();
+    QVERIFY(!configure(QStringLiteral("Office NAS")).isEmpty());
+
+    CommandPaletteModel palette(nullptr, nullptr, m_drives.get());
+    palette.refresh();
+
+    const QStringList titles = titlesOf(palette);
+    QVERIFY2(titles.contains(QStringLiteral("Office NAS")), "somewhere to go, as before");
+    QVERIFY(titles.contains(QStringLiteral("Connect Office NAS")));
+    QVERIFY(titles.contains(QStringLiteral("Check Office NAS")));
+    QVERIFY2(!titles.contains(QStringLiteral("Eject Office NAS")),
+        "nothing to eject: offering it would be offering something that cannot run");
+}
+
+/// The entries are read from the drive list every time, so a drive that has
+/// just connected offers Eject and not Connect without anything keeping a
+/// second list of verbs in step -- the same reason the palette reads the menu
+/// rather than copying it.
+void TestCommandPalette::theVerbFollowsTheDriveRatherThanASecondList()
+{
+    buildDrives();
+    const QString id = configure(QStringLiteral("Office NAS"));
+    QVERIFY(!id.isEmpty());
+
+    CommandPaletteModel palette(nullptr, nullptr, m_drives.get());
+    palette.refresh();
+    QVERIFY(titlesOf(palette).contains(QStringLiteral("Connect Office NAS")));
+
+    connectConfigured(id);
+    palette.refresh();
+
+    const QStringList titles = titlesOf(palette);
+    QVERIFY(titles.contains(QStringLiteral("Eject Office NAS")));
+    QVERIFY(!titles.contains(QStringLiteral("Connect Office NAS")));
+    QVERIFY2(titles.contains(QStringLiteral("Check Office NAS")),
+        "is it actually there is a fair question whatever the row claims");
+
+    // Choosing it asks for the same thing the sidebar button asks for, by id,
+    // rather than this model knowing how to eject anything.
+    QSignalSpy asked(&palette, &CommandPaletteModel::driveCommandRequested);
+    palette.setFilter(QStringLiteral("Eject Office"));
+    QVERIFY(palette.rowCount() > 0);
+    palette.activate(0);
+
+    QCOMPARE(asked.count(), 1);
+    QCOMPARE(asked.first().at(0).value<CommandPaletteModel::DriveCommand>(),
+        CommandPaletteModel::DriveCommand::Eject);
+    QCOMPARE(asked.first().at(1).toString(), id);
+}
+
+/// "Connect" would fail every time, and silence would be worse. The entry names
+/// the thing that is actually in the way.
+void TestCommandPalette::aLockedDriveIsOfferedThePassphraseRatherThanAFailure()
+{
+    if (!SecretStore::isAvailable())
+        QSKIP("this build cannot encrypt");
+
+    buildDrives();
+    QVERIFY(m_secrets->create(QStringLiteral("phrase")));
+    const QString id = configure(QStringLiteral("Office NAS"), true);
+    QVERIFY(!id.isEmpty());
+    m_secrets->lock();
+
+    CommandPaletteModel palette(nullptr, nullptr, m_drives.get());
+    palette.refresh();
+
+    const QStringList titles = titlesOf(palette);
+    QVERIFY(titles.contains(QStringLiteral("Unlock the credential store for Office NAS")));
+    QVERIFY2(!titles.contains(QStringLiteral("Connect Office NAS")),
+        "offering connect here would fail every time instead of saying what is wrong");
+
+    QSignalSpy asked(&palette, &CommandPaletteModel::driveCommandRequested);
+    palette.setFilter(QStringLiteral("Unlock"));
+    QVERIFY(palette.rowCount() > 0);
+    palette.activate(0);
+    QCOMPARE(asked.count(), 1);
+    QCOMPARE(asked.first().at(0).value<CommandPaletteModel::DriveCommand>(),
+        CommandPaletteModel::DriveCommand::Unlock);
+}
+
+/// A local disk is somewhere to go and nothing else: there is no connecting or
+/// ejecting to be done to it, and no check that being there does not answer.
+void TestCommandPalette::aLocalDiskIsAPlaceAndNothingElse()
+{
+    buildDrives();
+    Mount mount;
+    mount.id = QStringLiteral("scratch");
+    mount.displayName = QStringLiteral("Scratch");
+    mount.root = VfsUri::fromString(QStringLiteral("mem://scratch/"));
+    mount.fileSystem = std::make_shared<MemoryFileSystem>();
+    m_vfs->addMount(mount);
+
+    CommandPaletteModel palette(nullptr, nullptr, m_drives.get());
+    palette.refresh();
+
+    const QStringList titles = titlesOf(palette);
+    QCOMPARE(titles, QStringList { QStringLiteral("Scratch") });
 }
 
 MOLE_TEST_MAIN(TestCommandPalette)

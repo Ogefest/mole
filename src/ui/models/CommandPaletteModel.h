@@ -29,6 +29,13 @@ class CommandPaletteModel : public QAbstractListModel
     Q_PROPERTY(QString filter READ filter WRITE setFilter NOTIFY filterChanged)
 
 public:
+    /// What the palette can do to a drive, as opposed to where it can take you.
+    /// A drive you can only connect by finding a small button with the pointer
+    /// is half-built in an application whose palette is described as the one
+    /// key that reaches everything.
+    enum class DriveCommand { Connect, Eject, Check, Unlock };
+    Q_ENUM(DriveCommand)
+
     enum Role {
         /// What to show: "Terminal here".
         TitleRole = Qt::UserRole + 1,
@@ -68,6 +75,10 @@ signals:
     void actionRequested(const QString& actionId);
     /// A bookmark or a drive was chosen.
     void locationRequested(const QString& uri);
+    /// Something is to be *done* to a drive rather than gone to. Emitted rather
+    /// than acted on, like everything else here: this model knows what can be
+    /// done and nothing about how.
+    void driveCommandRequested(mole::CommandPaletteModel::DriveCommand what, const QString& driveId);
 
 private:
     struct Command
@@ -76,9 +87,12 @@ private:
         QString group;
         QString shortcut;
         QString iconText;
-        /// One of the two is set, never both.
+        /// Exactly one of the three is set: a menu entry, a place to go, or
+        /// something to do to a drive.
         QString actionId;
         QString uri;
+        QString driveId;
+        DriveCommand verb = DriveCommand::Check;
 
         QString path() const { return group + QStringLiteral(" → ") + title; }
     };
