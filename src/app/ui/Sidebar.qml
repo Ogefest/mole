@@ -14,6 +14,34 @@ Rectangle {
 
     color: panelColor
 
+    // What a drive's state means, in the sidebar's own colours. The model says
+    // what a state means -- "good", "attention", "broken", "idle" -- and the
+    // palette lives here, so neither has to know the other's vocabulary.
+    function stateColor(severity) {
+        if (severity === "good")
+            return "#57ab5a"
+        if (severity === "attention")
+            return "#d9a441"
+        if (severity === "broken")
+            return "#e5534b"
+        return sidebar.mutedText
+    }
+
+    // The last thing a check said about a drive, keyed by its configured id.
+    // Held here rather than in the model because it is what this window has
+    // been told since it opened, not a property of the drive.
+    property var lastCheck: ({})
+
+    Connections {
+        target: App
+        function onDriveChecked(id, reachable, message) {
+            var seen = sidebar.lastCheck
+            seen[id] = { reachable: reachable, message: message,
+                         at: Qt.formatTime(new Date(), "HH:mm") }
+            sidebar.lastCheck = seen
+        }
+    }
+
     // Amber from about three quarters, red from about nine tenths: the point
     // of the colour is to be noticed before the disk is actually full.
     function fillColor(fraction) {
@@ -41,6 +69,21 @@ Rectangle {
         property string capacityTotal: ""
         signal removeRequested()
 
+        // --- the drive rows use these; the bookmark rows leave them alone ---
+        //
+        // `actionable` rather than "connectable or ejectable", because those two
+        // swap over the moment a drive connects. A control that comes and goes
+        // takes its width out of the name beside it, and the name re-elides and
+        // jumps -- the same fault the × was already fixed for.
+        property bool actionable: false
+        property bool connectable: false
+        property bool ejectable: false
+        property string severity: ""
+        property string stateCaption: ""
+        property string checkCaption: ""
+        signal connectRequested()
+        signal checkRequested()
+
         width: ListView.view ? ListView.view.width : parent.width
 
         // A row is a button, so it gets a button's height. Thirty pixels read as
@@ -67,10 +110,17 @@ Rectangle {
         hoverEnabled: true
 
         ToolTip.visible: hovered
-        ToolTip.text: capacityKnown
-                      ? target + "\n" + Math.round(capacityUsed * 100) + "% used · "
-                        + capacityFree + " free of " + capacityTotal
-                      : target
+        ToolTip.text: {
+            var lines = [target]
+            if (row.stateCaption !== "")
+                lines.push(row.stateCaption)
+            if (capacityKnown)
+                lines.push(Math.round(capacityUsed * 100) + "% used · "
+                           + capacityFree + " free of " + capacityTotal)
+            if (row.checkCaption !== "")
+                lines.push(row.checkCaption)
+            return lines.join("\n")
+        }
         ToolTip.delay: 600
 
         // Flat, instant hover. The style's default fades in over ~200ms, which
@@ -91,12 +141,26 @@ Rectangle {
                 // different heights in one list read as a bug.
                 Layout.preferredHeight: App.minimumTarget
                 spacing: 4
+                Rectangle {
+                    objectName: "placeStateDot"
+                    visible: row.severity !== ""
+                    implicitWidth: 8
+                    implicitHeight: 8
+                    radius: 4
+                    color: sidebar.stateColor(row.severity)
+                    Layout.alignment: Qt.AlignVCenter
+                }
                 Label {
                     objectName: "placeRowLabel"
                     Layout.fillWidth: true
                     text: row.label
                     elide: Text.ElideMiddle
                     font.pixelSize: App.textSize
+                    // A drive nobody has connected is still a drive, and still
+                    // worth listing -- but it is not somewhere you can go right
+                    // now, and the row should not read as though it were.
+                    color: row.actionable && row.connectable ? sidebar.mutedText
+                                                             : Material.foreground
                 }
                 Label {
                     // Shown whether or not the pointer is here. It used to be
@@ -109,20 +173,36 @@ Rectangle {
                     font.pixelSize: App.smallTextSize
                 }
                 ToolButton {
+                    objectName: "placeCheckButton"
+                    // Only a configured drive can be checked: there is nothing
+                    // to ask a local disk that the disk is not already
+                    // answering by being there.
+                    visible: row.actionable
+                    opacity: row.hovered ? 1 : 0
+                    enabled: row.hovered
+                    text: "?"
+                    font.pixelSize: App.textSize
+                    implicitWidth: App.minimumTarget
+                    implicitHeight: App.minimumTarget
+                    onClicked: row.checkRequested()
+                }
+                ToolButton {
                     objectName: "placeRemoveButton"
                     // Always in the layout on a row that has one, and only faded
                     // in and out. Appearing on hover took its width out of the
                     // name beside it, so the name re-elided and visibly jumped
                     // as the pointer crossed the row -- twice, since the free
                     // caption was leaving at the same moment.
-                    visible: row.removable
+                    visible: row.removable || row.actionable
                     opacity: row.hovered ? 1 : 0
-                    enabled: row.hovered
-                    text: "×"
+                    // A locked drive has a row and a state and no action: the
+                    // answer is a passphrase, not a button that would fail.
+                    enabled: row.hovered && (row.removable || row.connectable || row.ejectable)
+                    text: row.connectable ? "\u25b6" : (row.actionable ? "\u23cf" : "×")
                     font.pixelSize: App.textSize
                     implicitWidth: App.minimumTarget
                     implicitHeight: App.minimumTarget
-                    onClicked: row.removeRequested()
+                    onClicked: row.connectable ? row.connectRequested() : row.removeRequested()
                 }
             }
 
@@ -186,6 +266,10 @@ Rectangle {
                 required property string freeText
                 required property string totalText
                 required property bool canEject
+                required property bool canConnect
+                required property string configuredId
+                required property string stateText
+                required property string stateSeverity
 
                 label: displayName
                 target: rootUri
@@ -193,11 +277,28 @@ Rectangle {
                 capacityUsed: usedFraction
                 capacityFree: freeText
                 capacityTotal: totalText
-                // Archives and other file-backed drives can be ejected; the
-                // real disks stay, and a configured drive that is not connected
-                // has nothing to eject yet.
+                severity: stateSeverity
+                stateCaption: stateText
+
+                // A drive somebody configured always has the slot, whatever it
+                // is currently doing, so connecting one does not move anything.
+                actionable: configuredId !== ""
+                connectable: canConnect
+                ejectable: canEject
+                // Archives and other file-backed drives eject with the ×, as
+                // they always have; the real disks stay.
                 removable: canEject && scheme !== "file"
-                onRemoveRequested: App.drives.unmount(index)
+
+                readonly property var check: sidebar.lastCheck[configuredId]
+                checkCaption: check
+                              ? (check.reachable ? "Reachable" : "Not reachable")
+                                + " at " + check.at + " · " + check.message
+                              : ""
+
+                onConnectRequested: App.connectDrive(configuredId)
+                onCheckRequested: App.checkDrive(configuredId)
+                onRemoveRequested: configuredId !== "" ? App.disconnectDrive(configuredId)
+                                                       : App.drives.unmount(index)
             }
         }
 

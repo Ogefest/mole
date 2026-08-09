@@ -126,6 +126,25 @@ QString DriveListModel::stateText(State state)
     return {};
 }
 
+QString DriveListModel::stateSeverity(State state)
+{
+    switch (state) {
+    case State::Connected:
+        return QStringLiteral("good");
+    case State::Locked:
+    case State::Connecting:
+        return QStringLiteral("attention");
+    case State::Unreachable:
+        return QStringLiteral("broken");
+    case State::Local:
+    case State::Disconnected:
+        break;
+    }
+    // Nothing to report, which is what a local disk and a drive nobody has
+    // connected yet have in common. Not a problem, and not a success either.
+    return QStringLiteral("idle");
+}
+
 void DriveListModel::refreshSpace()
 {
     if (!m_tasks)
@@ -196,9 +215,14 @@ QVariant DriveListModel::data(const QModelIndex& index, int role) const
     case IconTextRole:
         return row.mount.iconName;
     case StateRole:
-        return QVariant::fromValue(state);
+        // A plain int. The enum is not registered with QML, so handing the
+        // enumerator out would give a delegate a value it could only compare
+        // against numbers.
+        return static_cast<int>(state);
     case StateTextRole:
         return stateText(state);
+    case StateSeverityRole:
+        return stateSeverity(state);
     case ConfiguredIdRole:
         return row.isConfigured() ? row.drive.id : QString();
     case CanConnectRole:
@@ -244,6 +268,7 @@ QHash<int, QByteArray> DriveListModel::roleNames() const
         { UsedTextRole, "usedText" },
         { StateRole, "driveState" },
         { StateTextRole, "stateText" },
+        { StateSeverityRole, "stateSeverity" },
         { ConfiguredIdRole, "configuredId" },
         { CanConnectRole, "canConnect" },
         { CanEjectRole, "canEject" },

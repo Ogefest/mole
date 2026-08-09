@@ -67,6 +67,15 @@ public:
         StateRole,
         /// The state in words, for a row that has room to say it.
         StateTextRole,
+        /// The state reduced to what it means: "idle", "good", "attention" or
+        /// "broken". The view turns that into a colour from its own palette.
+        ///
+        /// A role rather than the view reading the enum, because nothing
+        /// registers this type with QML -- a delegate could only compare the
+        /// state against bare numbers, and reordering the enum would silently
+        /// recolour every row. Where the line falls: the model knows what a
+        /// state means, the view knows what the palette calls that meaning.
+        StateSeverityRole,
         /// The configured drive behind this row, or empty when there is none.
         /// What an action needs in order to name what it is acting on.
         ConfiguredIdRole,
@@ -98,6 +107,8 @@ public:
     /// The words shown for a state. Here rather than in QML so the list and any
     /// dialog cannot end up calling the same state two different things.
     static QString stateText(State state);
+    /// What a state means, for a view that has to pick a colour for it.
+    static QString stateSeverity(State state);
 
 signals:
     void countChanged();

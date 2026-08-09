@@ -117,6 +117,11 @@ mole_add_test(tst_FileSets          SOURCES app/tst_FileSets.cpp        LIBS mol
 # does that. No X server, no window manager, no input lottery.
 mole_add_test(tst_Walkthrough       SOURCES app/tst_Walkthrough.cpp     LIBS mole_qml_harness)
 
+# The drive rows in the sidebar. Their own binary rather than more of the
+# walkthrough: this one configures drives and connects them, which is state the
+# walkthrough's narrative would have to step around.
+mole_add_test(tst_Sidebar           SOURCES app/tst_Sidebar.cpp         LIBS mole_qml_harness)
+
 # The session log lives in the application target rather than a library, so the
 # test compiles the one file it is about. Exported symbols, so the backtrace it
 # checks for carries names.
@@ -139,6 +144,7 @@ qt_add_resources(tst_KeyboardNavigation "app_qml"
 # After both are registered: set_tests_properties needs the test to exist.
 mole_mark_qml_test(tst_KeyboardNavigation)
 mole_mark_qml_test(tst_Walkthrough)
+mole_mark_qml_test(tst_Sidebar)
 if(MOLE_HAVE_ARCHIVE_PLUGIN)
     add_dependencies(tst_AppIntegration mole_plugin_archive)
     add_dependencies(tst_PluginManager mole_plugin_archive)
