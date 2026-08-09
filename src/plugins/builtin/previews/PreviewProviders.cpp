@@ -219,7 +219,7 @@ void TextPreviewController::applyViewers()
         return;
     }
 
-    m_markdownStyle->attachTo(nullptr);
+    m_markdownStyle->detach();
     m_highlighter->attachTo(m_document);
     m_highlighter->setLanguage(m_language);
 }

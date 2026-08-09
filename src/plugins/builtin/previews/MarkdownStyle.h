@@ -53,15 +53,33 @@ public:
 
     /// Styles this document now, and again whenever its contents change.
     /// Restyling is not optional: setting a TextArea's text re-imports the
-    /// Markdown, which throws away everything done here. Pass nullptr to
-    /// detach, which the viewer does when the next file is not Markdown.
+    /// Markdown, which throws away everything done here.
+    ///
+    /// The restyling that follows a change is deferred to the next turn of the
+    /// event loop rather than done where the change was announced. Qt's
+    /// Markdown importer emits `contentsChanged` from inside its own
+    /// `insertText`, many times, while the document is still being built --
+    /// walking it there means reading blocks and fragments that do not exist
+    /// yet.
     void attachTo(QQuickTextDocument* document);
+    /// The same, on the document itself. What the class actually works on, and
+    /// what a test can hand it without a window.
+    void attachTo(QTextDocument* document);
+    /// Leaves the document it was on alone from here, which the viewer does
+    /// when the next file is not Markdown. A named call rather than a null
+    /// argument, because with two overloads a bare nullptr means neither.
+    void detach();
 
     /// Idempotent: applying it twice leaves the same document, so it can run on
     /// every change without margins piling up.
     static void applyTo(QTextDocument* document, const Metrics& metrics);
 
 private:
+    /// Asks for a restyle on the next turn of the event loop, at most one
+    /// pending at a time. The importer makes an edit per piece of text it
+    /// parses, so an immediate pass would run hundreds of times over a document
+    /// that is not finished -- and the first of them can be fatal.
+    void scheduleReapply();
     void reapply();
 
     Metrics m_metrics;
@@ -69,6 +87,9 @@ private:
     /// Styling changes the document, which is what brought us here. Without
     /// this the first change would recurse.
     bool m_applying = false;
+    /// A restyle is queued. Cleared when the document is detached or replaced,
+    /// so a pass asked for by the last file never lands on the next one.
+    bool m_restylePending = false;
 };
 
 } // namespace mole
