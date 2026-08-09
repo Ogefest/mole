@@ -82,6 +82,8 @@ public:
         ConfiguredIdRole,
         CanConnectRole,
         CanEjectRole,
+        /// This drive is waiting on the credential store, not on a button.
+        CanUnlockRole,
         /// What the last check said, and when it was taken. Empty until
         /// something has asked. "Not reachable" with no when is not something
         /// anyone can act on.

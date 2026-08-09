@@ -54,6 +54,11 @@ public:
     /// Returns false with `errorOut` set rather than asserting, so a test can
     /// report the failure itself.
     bool start(const Options& options, QString* errorOut = nullptr);
+    /// Tears the application down and builds it again on the same profile and
+    /// the same fixture -- what a restart looks like to whatever was written to
+    /// disk, which is the only way to see a credential store that starts shut.
+    /// Every pointer from item(), object() or app() is stale afterwards.
+    bool restart(QString* errorOut = nullptr);
     void stop();
 
     AppController* app() const { return m_app.get(); }
@@ -100,6 +105,12 @@ public:
     QString screenshot(const QString& name);
 
 private:
+    /// Everything from building the controller to the window being exposed.
+    /// Shared by start() and restart(), which differ only in whether the
+    /// profile underneath is a new one.
+    bool build(QString* errorOut);
+
+    Options m_options;
     std::unique_ptr<PrivateProfile> m_profile;
     std::unique_ptr<QTemporaryDir> m_fixture;
     std::unique_ptr<AppController> m_app;

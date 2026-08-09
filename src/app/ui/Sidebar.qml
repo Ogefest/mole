@@ -63,11 +63,13 @@ Rectangle {
         property bool actionable: false
         property bool connectable: false
         property bool ejectable: false
+        property bool unlockable: false
         property string severity: ""
         property string stateCaption: ""
         property string checkCaption: ""
         signal connectRequested()
         signal checkRequested()
+        signal unlockRequested()
 
         width: ListView.view ? ListView.view.width : parent.width
 
@@ -182,12 +184,25 @@ Rectangle {
                     opacity: row.hovered ? 1 : 0
                     // A locked drive has a row and a state and no action: the
                     // answer is a passphrase, not a button that would fail.
-                    enabled: row.hovered && (row.removable || row.connectable || row.ejectable)
-                    text: row.connectable ? "\u25b6" : (row.actionable ? "\u23cf" : "×")
+                    enabled: row.hovered
+                             && (row.removable || row.connectable || row.ejectable || row.unlockable)
+                    // A locked drive gets a key rather than a play button: the
+                    // thing standing between it and connecting is a passphrase,
+                    // and pressing it goes to where that is typed rather than
+                    // opening a second way to do the same thing.
+                    text: row.unlockable ? "\u26bf"
+                                         : (row.connectable ? "\u25b6" : (row.actionable ? "\u23cf" : "×"))
                     font.pixelSize: App.textSize
                     implicitWidth: App.minimumTarget
                     implicitHeight: App.minimumTarget
-                    onClicked: row.connectable ? row.connectRequested() : row.removeRequested()
+                    onClicked: {
+                        if (row.unlockable)
+                            row.unlockRequested()
+                        else if (row.connectable)
+                            row.connectRequested()
+                        else
+                            row.removeRequested()
+                    }
                 }
             }
 
@@ -231,6 +246,17 @@ Rectangle {
             color: sidebar.mutedText
         }
 
+        // Said here, in the window, rather than behind a dialog nobody has a
+        // reason to open. A drive whose password is in a shut store used to
+        // wait at startup in complete silence -- no prompt, no badge, no
+        // failure -- and the only way to find out why was to go looking.
+        UnlockBand {
+            id: sidebarUnlock
+            objectName: "sidebarUnlockBand"
+            Layout.fillWidth: true
+            visible: App.credentialsNeeded
+        }
+
         // Local disks, network shares and mounted archives are the same kind
         // of row -- that uniformity is the point of the VFS layer.
         ListView {
@@ -252,6 +278,7 @@ Rectangle {
                 required property string totalText
                 required property bool canEject
                 required property bool canConnect
+                required property bool canUnlock
                 required property string configuredId
                 required property string stateText
                 required property string stateSeverity
@@ -272,6 +299,7 @@ Rectangle {
                 actionable: configuredId !== ""
                 connectable: canConnect
                 ejectable: canEject
+                unlockable: canUnlock
                 // Archives and other file-backed drives eject with the ×, as
                 // they always have; the real disks stay.
                 removable: canEject && scheme !== "file"
@@ -279,6 +307,7 @@ Rectangle {
                 checkCaption: checkedAt !== "" ? checkMessage + " · " + checkedAt : ""
 
                 onConnectRequested: App.connectDrive(configuredId)
+                onUnlockRequested: sidebarUnlock.focusField()
                 onCheckRequested: App.checkDrive(configuredId)
                 onRemoveRequested: configuredId !== "" ? App.disconnectDrive(configuredId)
                                                        : App.drives.unmount(index)
