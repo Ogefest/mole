@@ -9,6 +9,46 @@ wrong.
 
 ---
 
+## Copying a location to the clipboard
+
+**Asked for:** copy the path of the open folder, of the selected file, or of the
+drive root.
+
+**What it turned out to be:** three separate menu entries rather than one that
+guesses. They copy three different things, and a single action that sometimes took
+the file and sometimes the folder would be a coin toss whose result is only visible
+after it has been pasted somewhere. The file entry is disabled when a folder is
+under the cursor instead of quietly copying that folder.
+
+What gets copied is the **native path** for anything on local disk and the **uri**
+for anything else. A remote drive has no native path, and handing out the path part
+alone would produce something that looks local and is not: `/reports/2026` pasted
+into a terminal means a directory that does not exist rather than a folder in a
+bucket.
+
+`Ctrl+Shift+F` for the file, not the `Ctrl+Alt+C` some file managers use: Ctrl+Alt
+is AltGr on Polish and many other layouts, where AltGr+C is a letter people type.
+
+The methods return the text they copied, so the tests assert what would be copied
+without needing a clipboard, and the ones that do have a QGuiApplication check the
+real clipboard as well.
+
+**Two faults found on the way, both of which made the feature look broken:**
+
+- **The menu can advertise a key that does nothing.** A `MenuAction`'s `shortcut`
+  is only what the menu prints beside the title; the binding is a separate `Shortcut`
+  in Main.qml. Naming the key without declaring it would have shipped a menu entry
+  that lied. The walkthrough test presses the keys rather than trusting the field.
+- **A notification stopped every shortcut in the application.** The toast was a
+  `Popup`, whose default close policy includes Escape -- so it wanted key events, and
+  while it had them no window shortcut fired for the five seconds it was up. It
+  looked exactly like the second copy key being unbound, and it was not: the first
+  press always worked and every press after it did nothing, whichever key it was.
+  The toast now closes on a click outside and on its timer, and asks for no keys.
+  Pressing a shortcut twice in a row is what catches this, so the test does.
+
+---
+
 ## Sidebar rows stopped being cramped and stopped twitching
 
 **Asked for:** drive and bookmark rows are low for something that behaves like a

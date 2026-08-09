@@ -10,6 +10,7 @@
 #include "core/CoreMetaTypes.h"
 #include "core/sets/FileSetStore.h"
 
+#include <QClipboard>
 #include <QDir>
 #include <QGuiApplication>
 #include <QSignalSpy>
@@ -43,6 +44,11 @@ private slots:
     void addsADriveThroughTheSameFormEveryBackendDeclares();
     void aSavedPasswordIsNeverInTheSettingsFile();
     void savingADriveChecksItStraightAway();
+    void copyingThisFoldersPathGivesANativePath();
+    void copyingTheSelectedFilesPathUsesTheRowUnderTheCursor();
+    void copyingAFilePathDoesNothingWhenAFolderIsUnderTheCursor();
+    void copyingTheDrivesPathGivesTheMountRoot();
+    void aRemoteLocationIsCopiedAsAUriNotAsAPathThatLooksLocal();
     void verifyFindsMembersThatHaveGone();
     void forgettingMissingLeavesTheRestAlone();
 
@@ -400,6 +406,94 @@ void TestFileSets::addsADriveThroughTheSameFormEveryBackendDeclares()
     // recognises rather than as an opaque id.
     QCOMPARE(configured.first().toMap().value(QStringLiteral("uri")).toString(),
         QStringLiteral("testnas://Test NAS/"));
+}
+
+void TestFileSets::copyingThisFoldersPathGivesANativePath()
+{
+    auto* browser = qobject_cast<BrowserController*>(m_app->tabs()->controllerAt(0));
+    QVERIFY(browser);
+    QVERIFY(waitFor([browser] { return browser->activePane()->files()->rowCount() > 0; }));
+
+    const QString copied = m_app->copyCurrentFolderPath();
+
+    // A native path, not a file:// uri: this is meant to be pasted into a
+    // terminal or a file dialog.
+    QCOMPARE(copied, m_tree->path());
+    QVERIFY2(!copied.startsWith(QStringLiteral("file:")), qPrintable(copied));
+    QCOMPARE(QGuiApplication::clipboard()->text(), copied);
+}
+
+void TestFileSets::copyingTheSelectedFilesPathUsesTheRowUnderTheCursor()
+{
+    auto* browser = qobject_cast<BrowserController*>(m_app->tabs()->controllerAt(0));
+    QVERIFY(browser);
+    QVERIFY(waitFor([browser] { return browser->activePane()->files()->rowCount() > 0; }));
+
+    const int row = browser->activePane()->files()->rowOfUri(
+        m_tree->rootUri().child(QStringLiteral("a.txt")).toString());
+    QVERIFY(row >= 0);
+    browser->activePane()->setCurrentIndex(row);
+
+    const QString copied = m_app->copySelectedFilePath();
+
+    QCOMPARE(copied, QDir(m_tree->path()).filePath(QStringLiteral("a.txt")));
+    QCOMPARE(QGuiApplication::clipboard()->text(), copied);
+}
+
+void TestFileSets::copyingAFilePathDoesNothingWhenAFolderIsUnderTheCursor()
+{
+    auto* browser = qobject_cast<BrowserController*>(m_app->tabs()->controllerAt(0));
+    QVERIFY(browser);
+    QVERIFY(waitFor([browser] { return browser->activePane()->files()->rowCount() > 0; }));
+
+    const int row = browser->activePane()->files()->rowOfUri(
+        m_tree->rootUri().child(QStringLiteral("docs")).toString());
+    QVERIFY(row >= 0);
+    browser->activePane()->setCurrentIndex(row);
+
+    QGuiApplication::clipboard()->setText(QStringLiteral("left alone"));
+
+    // Refused rather than quietly copying the folder instead. Copying something
+    // other than what was asked for is worse than copying nothing, because the
+    // difference only shows up after it has been pasted somewhere.
+    QVERIFY(m_app->copySelectedFilePath().isEmpty());
+    QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("left alone"));
+}
+
+void TestFileSets::copyingTheDrivesPathGivesTheMountRoot()
+{
+    auto* browser = qobject_cast<BrowserController*>(m_app->tabs()->controllerAt(0));
+    QVERIFY(browser);
+    QVERIFY(waitFor([browser] { return browser->activePane()->files()->rowCount() > 0; }));
+
+    // Into a subfolder, so the drive root and the open folder are not the same
+    // thing and the test can tell which one was copied.
+    const QString subfolder = m_tree->rootUri().child(QStringLiteral("docs")).toString();
+    browser->activePane()->navigateTo(subfolder);
+    QVERIFY(waitFor([browser, &subfolder] { return browser->activePane()->currentUri() == subfolder; }));
+
+    const QString folder = m_app->copyCurrentFolderPath();
+    const QString drive = m_app->copyDriveRootPath();
+
+    QVERIFY2(!drive.isEmpty(), "the pane is on a mounted drive");
+    QVERIFY2(folder != drive, qPrintable(QStringLiteral("folder %1, drive %2").arg(folder, drive)));
+    QVERIFY2(folder.startsWith(drive), qPrintable(QStringLiteral("%1 is not under %2").arg(folder, drive)));
+    QCOMPARE(QGuiApplication::clipboard()->text(), drive);
+}
+
+void TestFileSets::aRemoteLocationIsCopiedAsAUriNotAsAPathThatLooksLocal()
+{
+    // The path part on its own would read as local and would not be: pasting
+    // "/reports/2026" into a terminal means a directory that does not exist,
+    // rather than a folder on a drive. Only a uri says where it actually is.
+    const QString remote = QStringLiteral("s3://my-bucket/reports/2026");
+    QCOMPARE(m_app->pathTextFor(remote), remote);
+
+    const QString local = m_app->pathTextFor(m_tree->rootUri().toString());
+    QCOMPARE(local, m_tree->path());
+
+    QVERIFY(m_app->pathTextFor(QString()).isEmpty());
+    QVERIFY(m_app->pathTextFor(QStringLiteral("not a uri at all")).isEmpty());
 }
 
 void TestFileSets::savingADriveChecksItStraightAway()

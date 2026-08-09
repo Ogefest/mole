@@ -166,6 +166,7 @@ Check a packaged build without a display:
 | *just start typing* | filter this folder |
 | `F3` | preview the file under the cursor |
 | `Ctrl+F` / `Ctrl+Shift+I` | search a tree / search the index (new tab) |
+| `Ctrl+Shift+C` / `Ctrl+Shift+F` | copy this folder's path / the selected file's path |
 | `Ctrl+D` | bookmark this folder |
 | `Ctrl+G` or `Ctrl+L` | type a destination in the path bar |
 | `Ctrl+←` / `Ctrl+→` / `Ctrl+↑` | back / forward / up |

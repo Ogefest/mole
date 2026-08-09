@@ -26,6 +26,7 @@
 #include "core/vfs/VfsManager.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
+#include <QClipboard>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QPageSize>
@@ -72,6 +73,7 @@ private slots:
     void theListingTakesItsTypeSizeFromTheScale();
     void theIconOnlyControlsAreBigEnoughToHit();
     void theSidebarRowsAreEvenlyTallAndHoldStill();
+    void theCopyPathKeysActuallyCopyAPath();
     void theCommandPaletteFindsAndRunsThings();
     void theHeaderAdvertisesTheCommandPalette();
     void ctrlFIsASearchBoxYouCanTypeInto();
@@ -612,6 +614,67 @@ void TestWalkthrough::theIconOnlyControlsAreBigEnoughToHit()
     }
 }
 
+/// The advertised keys really copy a path.
+///
+/// An action's `shortcut` is only what the menu prints beside it -- the binding is
+/// a separate declaration in Main.qml -- so a key can be named in the menu and do
+/// nothing at all. This presses the keys.
+/// The advertised keys really copy a path, and go on working afterwards.
+///
+/// Two things are pinned here. An action's `shortcut` is only what the menu prints
+/// beside it -- the binding is a separate declaration in Main.qml -- so a key can
+/// be named in the menu and do nothing at all.
+///
+/// And the second press matters as much as the first. Copying shows a notification,
+/// the notification was a Popup that closed on Escape, and a popup that wants key
+/// events took them from the whole window: every shortcut in the application went
+/// dead for the five seconds the toast was up. Pressing twice is what catches that.
+void TestWalkthrough::theCopyPathKeysActuallyCopyAPath()
+{
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() > 0; }));
+
+    QClipboard* clipboard = QGuiApplication::clipboard();
+    QVERIFY(clipboard);
+
+    clipboard->setText(QStringLiteral("nothing yet"));
+    m_harness->key(Qt::Key_C, Qt::ControlModifier | Qt::ShiftModifier);
+    const QString folder = clipboard->text();
+    QVERIFY2(folder != QLatin1String("nothing yet"), "Ctrl+Shift+C has to copy the folder");
+    // Native, so it can be pasted into a terminal or a file dialog.
+    QVERIFY2(!folder.startsWith(QLatin1String("file:")), qPrintable(folder));
+    QCOMPARE(folder, m_harness->fixturePath());
+
+    // Onto a file, since the fixture's first rows are folders.
+    const int row = pane()->files()->rowOfUri(
+        VfsUri::fromLocalPath(m_harness->fixturePath()).child(QStringLiteral("notes.txt")).toString());
+    QVERIFY(row >= 0);
+    pane()->setCurrentIndex(row);
+    m_harness->settle(2);
+
+    // The second press, with the first one's notification still on screen.
+    clipboard->setText(QStringLiteral("nothing yet"));
+    m_harness->key(Qt::Key_F, Qt::ControlModifier | Qt::ShiftModifier);
+    const QString file = clipboard->text();
+    QVERIFY2(
+        file != QLatin1String("nothing yet"), "a shortcut has to keep working while a notification is up");
+    QVERIFY2(file.endsWith(QLatin1String("notes.txt")), qPrintable(file));
+    QVERIFY2(file.startsWith(folder), qPrintable(QStringLiteral("%1 is not inside %2").arg(file, folder)));
+
+    // And a third, to be sure the first one was not simply the only one.
+    clipboard->setText(QStringLiteral("nothing yet"));
+    m_harness->key(Qt::Key_C, Qt::ControlModifier | Qt::ShiftModifier);
+    QCOMPARE(clipboard->text(), folder);
+}
+
+/// Drive and bookmark rows are buttons, and have to behave like buttons: one
+/// height per list, tall enough to hit, and nothing that moves when the pointer
+/// arrives.
+///
+/// Both halves were wrong. The rows were 30 and 46 pixels tall, and 46 was less
+/// than the content inside it actually needed, so it was being squeezed. And the
+/// × appeared on hover while the "free" caption disappeared -- two width changes
+/// either side of a name label that fills the space left over, so the name
+/// re-elided and visibly jumped as the pointer crossed the row.
 void TestWalkthrough::theSidebarRowsAreEvenlyTallAndHoldStill()
 {
     // A bookmark, so that a removable row is on screen: the × is the part that

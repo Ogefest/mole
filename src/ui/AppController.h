@@ -166,6 +166,26 @@ public:
     /// steps later when something finally tries to read from it.
     Q_INVOKABLE void checkDrive(const QString& id);
 
+    // ---- putting a location on the clipboard -------------------------------
+
+    /// A location as text worth pasting: the native path for something on local
+    /// disk, and the uri for anything else.
+    ///
+    /// A remote drive has no native path, and handing out the path part alone
+    /// would produce something that looks local and is not -- "/reports/2026"
+    /// pasted into a terminal means a directory that does not exist rather than a
+    /// folder in a bucket. The uri says where it is.
+    Q_INVOKABLE QString pathTextFor(const QString& uri) const;
+
+    /// Copies the folder currently open in the active pane. Returns what was
+    /// copied, or an empty string when there was nothing to copy.
+    Q_INVOKABLE QString copyCurrentFolderPath();
+    /// Copies the file under the cursor. Empty when a directory is there instead:
+    /// the folder actions already cover that, and silently copying something else
+    /// than what was asked for is worse than doing nothing.
+    Q_INVOKABLE QString copySelectedFilePath();
+    /// Copies the root of the drive the active pane is looking at.
+    Q_INVOKABLE QString copyDriveRootPath();
     const PluginServices& services() const { return m_services; }
 
     QString monospaceFont() const;
@@ -321,6 +341,9 @@ private:
     QString currentLocation() const;
     /// The file under the cursor in the current tab, if it has one.
     QString currentFile() const;
+    /// Copies one location and says which one, so the three copy actions are
+    /// distinguishable from each other. Returns the copied text.
+    QString copyPathAndSay(const QString& uri, const QString& title);
     /// Ticked folders in the current tab; empty when none are.
     QStringList selectedFolders() const;
     /// Reads a property off the current tab's controller, or `fallback` when

@@ -32,6 +32,7 @@
 #include "core/vfs/SystemVolumes.h"
 #include "core/vfs/VfsManager.h"
 
+#include <QClipboard>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
@@ -981,6 +982,50 @@ void AppController::registerShellActions()
         m_actions->addAction(std::move(action));
     }
 
+    // --- Copying a location -------------------------------------------
+    //
+    // Three separate entries rather than one that guesses. They copy three
+    // different things, and a single action that sometimes copied the file and
+    // sometimes the folder would be a coin toss with no way to see the result
+    // before pasting it.
+    {
+        MenuAction action;
+        action.id = QStringLiteral("mole.path.copyFolder");
+        action.section = MenuAction::Section::Operations;
+        action.title = QStringLiteral("Copy path of this folder");
+        action.shortcut = QStringLiteral("Ctrl+Shift+C");
+        action.sortOrder = 60;
+        action.enabled = [this] { return !currentLocation().isEmpty(); };
+        action.trigger = [this] { copyCurrentFolderPath(); };
+        m_actions->addAction(std::move(action));
+    }
+    {
+        MenuAction action;
+        action.id = QStringLiteral("mole.path.copyFile");
+        action.section = MenuAction::Section::Operations;
+        action.title = QStringLiteral("Copy path of the selected file");
+        // Ctrl+Shift+F rather than the Ctrl+Alt+C other file managers use: Ctrl+Alt
+        // is AltGr on Polish and many other layouts, where AltGr+C is a letter
+        // people type.
+        action.shortcut = QStringLiteral("Ctrl+Shift+F");
+        action.sortOrder = 61;
+        // Off when a folder is under the cursor rather than quietly copying that
+        // folder: the entry above is what does folders.
+        action.enabled = [this] { return !currentFile().isEmpty(); };
+        action.trigger = [this] { copySelectedFilePath(); };
+        m_actions->addAction(std::move(action));
+    }
+    {
+        MenuAction action;
+        action.id = QStringLiteral("mole.path.copyDriveRoot");
+        action.section = MenuAction::Section::Operations;
+        action.title = QStringLiteral("Copy path of the drive");
+        action.sortOrder = 62;
+        action.enabled = [this] { return !currentLocation().isEmpty(); };
+        action.trigger = [this] { copyDriveRootPath(); };
+        m_actions->addAction(std::move(action));
+    }
+
     // --- Bookmarks ----------------------------------------------------
     //
     // The saved places themselves are appended below, rebuilt whenever the
@@ -1270,6 +1315,63 @@ QString AppController::currentFile() const
     bool isDir = false;
     QMetaObject::invokeMethod(files, "isDirAt", Q_RETURN_ARG(bool, isDir), Q_ARG(int, row));
     return isDir ? QString() : uri;
+}
+
+QString AppController::pathTextFor(const QString& uri) const
+{
+    const VfsUri parsed = VfsUri::fromString(uri);
+    if (!parsed.isValid())
+        return {};
+
+    // Native where there is one, so it can be pasted into a terminal or a file
+    // dialog; the whole uri otherwise, because the path on its own would read as
+    // local and would not be.
+    const QString local = parsed.toLocalPath();
+    return local.isEmpty() ? parsed.toString() : local;
+}
+
+QString AppController::copyCurrentFolderPath()
+{
+    return copyPathAndSay(currentLocation(), QStringLiteral("Folder path copied"));
+}
+
+QString AppController::copySelectedFilePath()
+{
+    return copyPathAndSay(currentFile(), QStringLiteral("File path copied"));
+}
+
+QString AppController::copyDriveRootPath()
+{
+    if (!m_vfs)
+        return {};
+
+    const VfsUri here = VfsUri::fromString(currentLocation());
+    if (!here.isValid())
+        return {};
+
+    const Mount mount = m_vfs->mountForUri(here);
+    if (!mount.isValid())
+        return {};
+
+    return copyPathAndSay(mount.root.toString(), QStringLiteral("Drive path copied"));
+}
+
+QString AppController::copyPathAndSay(const QString& uri, const QString& title)
+{
+    const QString text = pathTextFor(uri);
+    if (text.isEmpty())
+        return {};
+
+    // Guarded rather than assumed: there is no clipboard without a QGuiApplication,
+    // and the headless tests run without one. The text is returned either way, so
+    // what would have been copied is still testable.
+    if (QClipboard* clipboard = QGuiApplication::clipboard())
+        clipboard->setText(text);
+
+    // Said out loud, because a clipboard gives no feedback of its own and three
+    // actions that all copy "a path" are easy to confuse.
+    emit notification(static_cast<int>(EventBus::Severity::Info), title, text);
+    return text;
 }
 
 void AppController::previewFile(const QString& uri)

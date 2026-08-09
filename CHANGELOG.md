@@ -6,20 +6,24 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- The path of the open folder, of the selected file, or of the drive can be copied to
+  the clipboard — `Ctrl+Shift+C` and `Ctrl+Shift+F`, or from the Operations menu.
+- A notification no longer stops every keyboard shortcut from working for as long as
+  it is on screen.
 - Drive and bookmark rows in the sidebar are taller, evenly sized, and their names
   no longer shift sideways when the mouse passes over them.
 - Saving a drive now checks whether it can actually be reached and says so, instead
   of leaving a wrong endpoint or a refused password to surface later in the middle
   of browsing.
 - Any configured drive can be checked on demand from the drives dialog.
+- A bucket whose name contains a dot no longer fails with a certificate error: it
+  goes in the path, because a wildcard certificate cannot cover it in the host name.
 - Network drives are now SFTP, FTP, S3 and WebDAV, asking only what each protocol
   needs instead of the eighty questions rclone's generated form could put on screen.
 - One S3 drive type covers AWS, Backblaze B2, MinIO, Ceph, Wasabi and R2, because
   the endpoint and the addressing style are ordinary fields.
 - rclone is gone, and with it 115 MB of Go and the `make librclone` step — along
   with Google Drive, Dropbox and OneDrive, which no open protocol reaches.
-- A bucket whose name contains a dot no longer fails with a certificate error: it
-  goes in the path, because a wildcard certificate cannot cover it in the host name.
 - A copy onto a remote drive that fails while being sent is now reported as a
   failure instead of quietly looking like it worked.
 - The command palette offers the drives again, so a drive can be reached by typing

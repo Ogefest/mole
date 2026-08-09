@@ -135,6 +135,17 @@ ApplicationWindow {
         sequence: "Ctrl+Shift+I"
         onActivated: root.openFeature("mole.indexsearch")
     }
+    // The two copy-a-location keys. Bound here rather than left to the menu: an
+    // action's `shortcut` is only what the menu prints beside it, so a key named
+    // there and not declared here would be advertised and do nothing.
+    Shortcut {
+        sequence: "Ctrl+Shift+C"
+        onActivated: App.triggerAction("mole.path.copyFolder")
+    }
+    Shortcut {
+        sequence: "Ctrl+Shift+F"
+        onActivated: App.triggerAction("mole.path.copyFile")
+    }
     Shortcut {
         sequences: [StandardKey.NextChild, "Ctrl+PgDown"]
         onActivated: root.cycleTab(1)
@@ -702,7 +713,9 @@ ApplicationWindow {
                 ["F2", "Rename"],
                 ["F5 / F6", "Copy / move to the other pane"],
                 ["F7", "New folder"],
-                ["F8 or Delete", "Delete"]]}
+                ["F8 or Delete", "Delete"],
+                ["Ctrl+Shift+C", "Copy this folder's path"],
+                ["Ctrl+Shift+F", "Copy the selected file's path"]]}
         ]
 
         ColumnLayout {
@@ -774,6 +787,13 @@ ApplicationWindow {
         width: Math.min(600, root.width - 100)
         padding: 14
         Material.background: root.panelColor
+
+        // A notification is something to read, not something to operate, and it
+        // must not take the keyboard. With the default policy it closes on Escape,
+        // which means it wants key events -- and while it had them every window
+        // shortcut in the application stopped working for the five seconds the
+        // toast was up. Dismissing it by clicking outside still works.
+        closePolicy: Popup.CloseOnPressOutside
 
         Timer {
             running: notificationPopup.opened
