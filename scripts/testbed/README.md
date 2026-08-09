@@ -86,11 +86,41 @@ script asks the guest agent, and failing that nudges the bridge's subnet and
 reads the hypervisor's neighbour table — which works, but is a lot of machinery
 to answer a question you already know the answer to.
 
+## The servers
+
+`provision.sh` builds the machine and stops. `services.sh` puts the four
+protocols on it, and `check-services.sh` asks each one whether it is actually
+there:
+
+```sh
+export MOLE_TESTBED_ADDRESS=…
+export MOLE_TESTBED_PASSWORD=…
+scripts/testbed/services.sh
+scripts/testbed/check-services.sh
+```
+
+| | | |
+|---|---|---|
+| SFTP | port 22 | OpenSSH, `aes256-gcm` — a sixteen-byte block, so it does not re-key at 2^30 |
+| SFTP | port 2222 | a second OpenSSH, `chacha20-poly1305` and `RekeyLimit 256M` |
+| WebDAV | `/dav` | Apache `mod_dav`, root on the small disk |
+| FTP | port 21 | vsftpd, root on the small disk, passive 30000–30020 |
+| S3 | port 9000 | MinIO, store on the system disk |
+
+The two sshds exist to be **different**. The stall in
+[ADR-0013](../../docs/adr/0013-a-large-sftp-read-arrives-in-spans.md) is a
+property of a server's configuration, so the fix has to be held against a server
+that provokes it and one that does not. `check-services.sh` compares what the
+two actually negotiate and fails if they match — which it did, immediately, the
+first time it was run: OpenSSH prefers `chacha20-poly1305` by default, so both
+servers had ended up identical and the "second server" was a second port.
+
+The WebDAV and FTP roots are on the small disk so that *the destination filled
+up* is a condition a test can create. MinIO's store is not: a bucket has no
+business filling the disk that condition is measured on.
+
 ## Not here yet
 
-This script builds the machine and stops. What runs on it comes next:
-
-- the four servers, and a second sshd that re-keys — issue #20
 - the control channel for interfering with a running transfer — #21
 - the snapshot to roll back to, and its name — #22
 - `make test-live`, and a skip that says so — #23
