@@ -325,6 +325,8 @@ QVariant DriveListModel::data(const QModelIndex& index, int role) const
         return state == State::Disconnected;
     case CanEjectRole:
         return row.isMounted();
+    case CanUnlockRole:
+        return state == State::Locked;
     case CheckMessageRole:
         return row.isConfigured() ? m_reach.value(row.drive.id).message : QString();
     case CheckedAtRole: {
@@ -373,6 +375,7 @@ QHash<int, QByteArray> DriveListModel::roleNames() const
         { ConfiguredIdRole, "configuredId" },
         { CanConnectRole, "canConnect" },
         { CanEjectRole, "canEject" },
+        { CanUnlockRole, "canUnlock" },
         { CheckMessageRole, "checkMessage" },
         { CheckedAtRole, "checkedAt" },
     };

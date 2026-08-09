@@ -117,68 +117,10 @@ Dialog {
 
         // ---- the credential store -------------------------------------------
 
-        Rectangle {
+        UnlockBand {
+            objectName: "drivesUnlockBand"
             Layout.fillWidth: true
             visible: App.credentialsAvailable && !App.credentialsUnlocked
-            radius: 4
-            color: "#2a2418"
-            border.color: "#d9a441"
-            implicitHeight: unlockRow.implicitHeight + 18
-
-            ColumnLayout {
-                id: unlockRow
-                anchors.fill: parent
-                anchors.margins: 9
-                spacing: 6
-
-                Label {
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                    color: "#e8c07d"
-                    font.pixelSize: 11
-                    text: App.credentialsExist
-                          ? "Passwords are encrypted with a passphrase you choose. Enter it to "
-                            + "use drives that need one."
-                          : "Passwords are encrypted with a passphrase you choose. It is not "
-                            + "stored anywhere, and it is not tied to this computer — back up "
-                            + "the configuration and the same passphrase opens it on a fresh "
-                            + "install."
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    TextField {
-                        id: passphraseField
-                        objectName: "passphraseField"
-                        Layout.fillWidth: true
-                        echoMode: TextInput.Password
-                        placeholderText: App.credentialsExist ? "Passphrase"
-                                                              : "Choose a passphrase"
-                        onAccepted: unlockButton.clicked()
-                    }
-                    Button {
-                        id: unlockButton
-                        objectName: "unlockButton"
-                        text: App.credentialsExist ? "Unlock" : "Set"
-                        enabled: passphraseField.text.length > 0
-                        onClicked: {
-                            if (App.unlockCredentials(passphraseField.text))
-                                passphraseField.text = ""
-                            else
-                                unlockError.text = App.credentialsError()
-                        }
-                    }
-                }
-
-                Label {
-                    id: unlockError
-                    Layout.fillWidth: true
-                    visible: text.length > 0
-                    color: "#e5534b"
-                    font.pixelSize: 11
-                    wrapMode: Text.WordWrap
-                }
-            }
         }
 
         // ---- what the last check found ---------------------------------------

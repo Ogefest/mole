@@ -53,6 +53,27 @@ bool QmlAppHarness::start(const Options& options, QString* errorOut)
     if (!m_screenshotDirectory.isEmpty())
         QDir().mkpath(m_screenshotDirectory);
 
+    m_options = options;
+    return build(errorOut);
+}
+
+bool QmlAppHarness::restart(QString* errorOut)
+{
+    m_engine.reset();
+    m_window = nullptr;
+    m_app.reset();
+    return build(errorOut);
+}
+
+bool QmlAppHarness::build(QString* errorOut)
+{
+    const auto fail = [errorOut](const QString& message) {
+        if (errorOut)
+            *errorOut = message;
+        return false;
+    };
+
+    const Options& options = m_options;
     const QString startUri = options.startUri.isEmpty() ? fixtureUri() : options.startUri;
 
     // Point the host at the plugins this build produced, so a harness test sees
