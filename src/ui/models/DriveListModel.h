@@ -4,6 +4,7 @@
 #include "core/vfs/VfsManager.h"
 
 #include <QAbstractListModel>
+#include <QDateTime>
 #include <QHash>
 #include <QTimer>
 
@@ -81,6 +82,11 @@ public:
         ConfiguredIdRole,
         CanConnectRole,
         CanEjectRole,
+        /// What the last check said, and when it was taken. Empty until
+        /// something has asked. "Not reachable" with no when is not something
+        /// anyone can act on.
+        CheckMessageRole,
+        CheckedAtRole,
     };
 
     /// `remotes` may be null in tests that only care about mounts, and `tasks`
@@ -97,6 +103,36 @@ public:
     /// The configured drive at this row, or empty for a plain mount.
     Q_INVOKABLE QString configuredIdAt(int row) const;
     Q_INVOKABLE void unmount(int row);
+
+    // ---- what is known about reaching a drive ----------------------------
+    //
+    // Told to the model rather than found out by it. Nothing here polls: a
+    // repeating check would be steady network traffic against every configured
+    // drive whether or not anyone is looking at the sidebar, and QuerySpaceTask
+    // cannot stand in for one because it deliberately says nothing when a
+    // backend cannot answer -- unknown capacity is normal for a bucket, so its
+    // silence cannot be read as unreachable. See
+    // docs/adr/0018-connected-is-not-reachable.md.
+
+    /// A check has been asked for and has not answered yet. Until it does, a
+    /// drive that has just been connected reads as Connecting rather than
+    /// Connected -- so a drive pointed at a server that is switched off never
+    /// shows green on its way to showing red.
+    void noteCheckStarted(const QString& driveId);
+    /// What a check found, with the moment it was taken.
+    void noteCheckResult(const QString& driveId, bool reachable, const QString& message);
+    /// An operation against this location failed. Whatever the drive said when
+    /// it was connected, something has just tried and been refused.
+    ///
+    /// Only errors that are about the drive count. A file that is not there, a
+    /// permission that was refused, an operation the backend does not support:
+    /// none of those says the server has gone, and marking the drive
+    /// unreachable for them would send the reader looking at their network
+    /// because they typed a name wrong.
+    void noteFailureAt(const VfsUri& target, const VfsError& error);
+    /// Whether this error says something about the drive rather than about the
+    /// thing that was asked for.
+    static bool saysTheDriveIsUnreachable(const VfsError& error);
 
     /// Re-asks every drive how full it is. Called on a timer and whenever the
     /// mount table changes; exposed so a test does not have to wait a minute.
@@ -128,6 +164,20 @@ private:
 
     void reload();
     State stateOf(const Row& row) const;
+    /// Redraws one drive's row after what is known about it changed.
+    void refreshRowFor(const QString& driveId);
+
+    /// The last thing anything learned about reaching a drive.
+    struct Reachability
+    {
+        /// A check is out and has not come back.
+        bool pending = false;
+        /// Meaningless while `pending` and before anything has asked.
+        bool reachable = true;
+        bool asked = false;
+        QString message;
+        QDateTime at;
+    };
 
     void onSpaceReady(const QString& mountId, const SpaceInfo& info);
     int rowOfMount(const QString& mountId) const;
@@ -139,6 +189,10 @@ private:
     /// Keyed by mount id, so a drive keeps its figure across a reload of the
     /// table and the bar does not flicker away every time a mount is added.
     QHash<QString, SpaceInfo> m_space;
+    /// Keyed by configured drive id, and kept across a reload of the mount
+    /// table: what a check found does not stop being true because something
+    /// else was mounted.
+    QHash<QString, Reachability> m_reach;
     QTimer m_refreshTimer;
 };
 

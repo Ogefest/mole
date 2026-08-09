@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/vfs/VfsTypes.h"
 #include "core/vfs/VfsUri.h"
 
 #include <QObject>
@@ -47,6 +48,15 @@ public:
     void postEntryRenamed(const VfsUri& from, const VfsUri& to);
     /// A scan finished writing to the index.
     void postIndexUpdated(qint64 volumeId, qint64 entryCount);
+    /// An operation against `target` failed. Separate from a notification: a
+    /// notification is words for a person, and this is the fact underneath, for
+    /// anything that has to stop believing a drive is well -- whoever was doing
+    /// the operation and whatever they told the user about it.
+    ///
+    /// The error travels whole rather than as its message, because what went
+    /// wrong decides who should care: a file that is not there says nothing
+    /// about the drive it is not on.
+    void postOperationFailed(const VfsUri& target, const VfsError& error);
     /// Something worth telling the user about.
     void postNotification(Severity severity, const QString& title, const QString& detail = {});
     /// A plugin-defined event. `topic` should be namespaced, e.g.
@@ -60,6 +70,7 @@ signals:
     void entryRemoved(const mole::VfsUri& entry);
     void entryRenamed(const mole::VfsUri& from, const mole::VfsUri& to);
     void indexUpdated(qint64 volumeId, qint64 entryCount);
+    void operationFailed(const mole::VfsUri& target, const mole::VfsError& error);
     void notificationPosted(mole::EventBus::Severity severity, const QString& title, const QString& detail);
     void customEvent(const QString& topic, const QVariantMap& payload);
 

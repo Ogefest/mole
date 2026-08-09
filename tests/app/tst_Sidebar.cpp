@@ -35,6 +35,7 @@ private slots:
     void pressingConnectMountsItAndTheRowStaysPut();
     void ejectingLeavesTheRowBehind();
     void aLocalDiskOffersNeitherButton();
+    void connectingAsksWhetherTheDriveIsThere();
 
 private:
     /// The sidebar row showing this name, from either list.
@@ -199,6 +200,38 @@ void TestSidebar::aLocalDiskOffersNeitherButton()
     QQuickItem* check = buttonIn(row, QStringLiteral("placeCheckButton"));
     QVERIFY(check);
     QVERIFY2(!check->isVisible(), "and there is nothing to ask it that being there does not answer");
+}
+
+/// The wiring, end to end. connectDrive() returns as soon as the backend is
+/// built, and building one performs no I/O -- so the row must not say Connected
+/// on the strength of that alone. Every state the row passes through is
+/// recorded, because "ends Connected" would also be true of a row that never
+/// asked anything.
+void TestSidebar::connectingAsksWhetherTheDriveIsThere()
+{
+    QVERIFY(configureScratchDrive(QStringLiteral("Scratch")));
+
+    DriveListModel* model = m_harness->app()->drives();
+    QList<DriveListModel::State> seen;
+    const auto record = [this, &seen] { seen.append(stateOfDrive(QStringLiteral("Scratch"))); };
+    connect(model, &QAbstractItemModel::dataChanged, this, record);
+    connect(model, &QAbstractItemModel::modelReset, this, record);
+
+    press(buttonIn(rowNamed(QStringLiteral("Scratch")), QStringLiteral("placeRemoveButton")));
+
+    QVERIFY(m_harness->until(
+        [this] { return stateOfDrive(QStringLiteral("Scratch")) == DriveListModel::State::Connected; }));
+
+    // The in-memory backend answers, so this one ends connected -- but only
+    // after passing through the state that says nobody has asked yet.
+    QVERIFY2(seen.contains(DriveListModel::State::Connecting),
+        "a drive must be marked as unanswered-for before anything claims it is connected");
+
+    // And the answer is on the row, with the moment it was taken.
+    QQuickItem* row = rowNamed(QStringLiteral("Scratch"));
+    QVERIFY(row);
+    QVERIFY2(
+        !row->property("checkCaption").toString().isEmpty(), "the row carries what the check found and when");
 }
 
 int main(int argc, char** argv)

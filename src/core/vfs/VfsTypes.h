@@ -189,5 +189,6 @@ private:
 
 } // namespace mole
 
+Q_DECLARE_METATYPE(mole::VfsError)
 Q_DECLARE_METATYPE(mole::SpaceInfo)
 Q_DECLARE_METATYPE(mole::AccessInfo)

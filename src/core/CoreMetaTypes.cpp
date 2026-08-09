@@ -15,6 +15,9 @@ void registerCoreMetaTypes()
     qRegisterMetaType<VfsUri>("mole::VfsUri");
     qRegisterMetaType<FileEntry>("mole::FileEntry");
     qRegisterMetaType<FileEntryList>("mole::FileEntryList");
+    // Crosses a thread boundary: an operation fails on whichever thread was
+    // running it, and what failed decides who should care.
+    qRegisterMetaType<VfsError>("mole::VfsError");
     // Crosses a thread boundary: the space query answers from a pool thread.
     qRegisterMetaType<SpaceInfo>("mole::SpaceInfo");
     qRegisterMetaType<AccessInfo>("mole::AccessInfo");

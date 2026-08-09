@@ -27,21 +27,6 @@ Rectangle {
         return sidebar.mutedText
     }
 
-    // The last thing a check said about a drive, keyed by its configured id.
-    // Held here rather than in the model because it is what this window has
-    // been told since it opened, not a property of the drive.
-    property var lastCheck: ({})
-
-    Connections {
-        target: App
-        function onDriveChecked(id, reachable, message) {
-            var seen = sidebar.lastCheck
-            seen[id] = { reachable: reachable, message: message,
-                         at: Qt.formatTime(new Date(), "HH:mm") }
-            sidebar.lastCheck = seen
-        }
-    }
-
     // Amber from about three quarters, red from about nine tenths: the point
     // of the colour is to be noticed before the disk is actually full.
     function fillColor(fraction) {
@@ -270,6 +255,8 @@ Rectangle {
                 required property string configuredId
                 required property string stateText
                 required property string stateSeverity
+                required property string checkMessage
+                required property string checkedAt
 
                 label: displayName
                 target: rootUri
@@ -289,11 +276,7 @@ Rectangle {
                 // they always have; the real disks stay.
                 removable: canEject && scheme !== "file"
 
-                readonly property var check: sidebar.lastCheck[configuredId]
-                checkCaption: check
-                              ? (check.reachable ? "Reachable" : "Not reachable")
-                                + " at " + check.at + " · " + check.message
-                              : ""
+                checkCaption: checkedAt !== "" ? checkMessage + " · " + checkedAt : ""
 
                 onConnectRequested: App.connectDrive(configuredId)
                 onCheckRequested: App.checkDrive(configuredId)
