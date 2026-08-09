@@ -16,6 +16,8 @@
 #include <QVariantList>
 
 class QTimer;
+class QAbstractItemModel;
+class QSortFilterProxyModel;
 
 #include <memory>
 #include <vector>
@@ -100,7 +102,11 @@ class AppController : public QObject
     /// binding it went stale -- so a drive saved through this dialog would
     /// never appear in its own list.
     Q_PROPERTY(QVariantList driveKinds READ driveKinds NOTIFY drivesChanged)
-    Q_PROPERTY(QVariantList configuredDrives READ configuredDrives NOTIFY drivesChanged)
+    /// A view over the drive list, narrowed to the ones somebody configured.
+    /// A model rather than a list of maps, and CONSTANT rather than notifying:
+    /// the pointer never changes and the model announces its own rows, so a
+    /// binding cannot go stale the way a rebuilt list of maps could.
+    Q_PROPERTY(QAbstractItemModel* configuredDrives READ configuredDrives CONSTANT)
 
 public:
     explicit AppController(QObject* parent = nullptr);
@@ -146,8 +152,14 @@ public:
     QVariantList driveKinds() const;
     /// The form for one kind, as field descriptions.
     Q_INVOKABLE QVariantList driveFields(const QString& factoryScheme, const QString& variant) const;
-    /// The drives already configured.
-    QVariantList configuredDrives() const;
+    /// The drives already configured, as rows of the one drive model rather
+    /// than a second list carrying its own copy of what state each is in. Two
+    /// implementations of one piece of state is how the two drift apart.
+    QAbstractItemModel* configuredDrives() const;
+    /// What was typed to make this drive: the factory, the variant, the root
+    /// and the settings, with no secrets and no state. Asked for by id when a
+    /// row is opened, rather than carried on every row all the time.
+    Q_INVOKABLE QVariantMap driveConfiguration(const QString& id) const;
     /// Adds or updates one. `values` holds every field; the secret ones are
     /// separated here rather than by the caller, so a view cannot get it wrong.
     Q_INVOKABLE bool saveDrive(const QString& id, const QString& name, const QString& factoryScheme,
@@ -394,6 +406,7 @@ private:
     bool m_restoring = false;
     TabsModel* m_tabs = nullptr;
     DriveListModel* m_drives = nullptr;
+    QSortFilterProxyModel* m_configuredDrives = nullptr;
     TaskListModel* m_taskModel = nullptr;
     PluginServices m_services;
 };

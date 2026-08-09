@@ -196,18 +196,29 @@ Dialog {
                     model: App.configuredDrives
 
                     delegate: Rectangle {
-                        required property var modelData
+                        // Roles of the one drive model, not fields of a list
+                        // built for this dialog. The state shown here and the
+                        // state shown in the sidebar are now the same answer.
+                        required property string configuredId
+                        required property string displayName
+                        required property string stateText
+                        required property string stateSeverity
+                        required property bool canConnect
+                        required property bool canEject
+
                         width: ListView.view.width
                         implicitHeight: 40
                         radius: 4
-                        color: modelData.id === dialog.editingId ? "#26303f"
+                        color: configuredId === dialog.editingId ? "#26303f"
                              : driveMouse.containsMouse ? "#20262f" : "transparent"
 
                         MouseArea {
                             id: driveMouse
                             anchors.fill: parent
                             hoverEnabled: true
-                            onClicked: dialog.startEditing(modelData)
+                            // The configuration is fetched when a row is opened
+                            // rather than carried on every row all the time.
+                            onClicked: dialog.startEditing(App.driveConfiguration(configuredId))
                         }
 
                         RowLayout {
@@ -219,16 +230,16 @@ Dialog {
                                 Layout.fillWidth: true
                                 spacing: 0
                                 Label {
-                                    text: modelData.name
+                                    text: displayName
                                     font.pixelSize: 12
                                     elide: Text.ElideMiddle
                                 }
                                 Label {
-                                    text: modelData.variant
-                                          + (modelData.connected ? " · connected"
-                                             : modelData.needsUnlock ? " · locked" : "")
-                                    color: modelData.connected ? "#57ab5a"
-                                         : modelData.needsUnlock ? "#d9a441" : dialog.mutedColor
+                                    text: stateText
+                                    color: stateSeverity === "good" ? "#57ab5a"
+                                         : stateSeverity === "attention" ? "#d9a441"
+                                         : stateSeverity === "broken" ? "#e5534b"
+                                         : dialog.mutedColor
                                     font.pixelSize: 10
                                 }
                             }
@@ -243,22 +254,26 @@ Dialog {
                                 // Asking is cheap and the answer is the thing a
                                 // configuration cannot tell you by looking at it.
                                 onClicked: {
-                                    dialog.checkMessage = "Checking " + modelData.name + "…"
+                                    dialog.checkMessage = "Checking " + displayName + "…"
                                     dialog.checkOk = false
-                                    App.checkDrive(modelData.id)
+                                    App.checkDrive(configuredId)
                                 }
                             }
 
                             ToolButton {
                                 objectName: "driveConnectButton"
-                                text: modelData.connected ? "⏏" : "▶"
+                                text: canEject ? "⏏" : "▶"
                                 implicitWidth: 24
                                 implicitHeight: 24
+                                // Redundant with the sidebar, and harmless now
+                                // that it is not the only way. What mattered was
+                                // that it was the only way.
+                                enabled: canEject || canConnect
                                 onClicked: {
-                                    if (modelData.connected) {
-                                        App.disconnectDrive(modelData.id)
+                                    if (canEject) {
+                                        App.disconnectDrive(configuredId)
                                     } else {
-                                        const problem = App.connectDrive(modelData.id)
+                                        const problem = App.connectDrive(configuredId)
                                         if (problem.length > 0)
                                             saveError.text = problem
                                     }

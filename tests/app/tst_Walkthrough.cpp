@@ -1774,11 +1774,11 @@ void TestWalkthrough::theDrivesDialogOffersBackendsAndAForm()
     // And saving has to put the drive in the list beside it. The list was bound
     // to a plain method call, which QML evaluates once and never again, so a
     // saved drive stayed invisible however well the save itself worked.
-    const int before = m_harness->app()->configuredDrives().size();
+    const int before = m_harness->app()->configuredDrives()->rowCount();
     nameField->setProperty("text", QStringLiteral("Test drive"));
     QVERIFY(QMetaObject::invokeMethod(saveButton, "clicked"));
-    QVERIFY(
-        m_harness->until([this, before] { return m_harness->app()->configuredDrives().size() > before; }));
+    QVERIFY(m_harness->until(
+        [this, before] { return m_harness->app()->configuredDrives()->rowCount() > before; }));
 
     QQuickItem* list = m_harness->item(QStringLiteral("configuredDriveList"));
     QVERIFY(list);
@@ -1901,10 +1901,10 @@ void TestWalkthrough::aDriveWithAPasswordSavesAndConnects()
     QVERIFY(m_harness->app()->saveDrive(
         QString(), QStringLiteral("Secret drive"), factory, variant, QString(), values));
 
-    const QVariantList saved = m_harness->app()->configuredDrives();
-    QVERIFY(!saved.isEmpty());
-    const QVariantMap drive = saved.last().toMap();
-    QCOMPARE(drive.value(QStringLiteral("name")).toString(), QStringLiteral("Secret drive"));
+    QAbstractItemModel* saved = m_harness->app()->configuredDrives();
+    QVERIFY(saved->rowCount() > 0);
+    QCOMPARE(saved->data(saved->index(saved->rowCount() - 1, 0), DriveListModel::DisplayNameRole).toString(),
+        QStringLiteral("Secret drive"));
 
     // The password must have gone into the store, not into the settings file
     // beside it.
@@ -2003,7 +2003,7 @@ void TestWalkthrough::connectingFromTheListSurvivesTheListRebuilding()
 
     // Still here, still able to answer, and the row reflects what happened.
     QVERIFY2(m_harness->item(QStringLiteral("configuredDriveList")), "still standing");
-    QCOMPARE(m_harness->app()->configuredDrives().size(), 1);
+    QCOMPARE(m_harness->app()->configuredDrives()->rowCount(), 1);
 }
 
 /// Typing in the kind picker to narrow sixty backends down to the one wanted.

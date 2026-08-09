@@ -38,7 +38,9 @@
 #include <QFileInfo>
 #include <QFontDatabase>
 #include <QGuiApplication>
+#include <QRegularExpression>
 #include <QScreen>
+#include <QSortFilterProxyModel>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QWindow>
@@ -253,6 +255,15 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     // held a null one for the lifetime of the application and quietly offered no
     // drives at all -- everything else about it worked, which is why nobody noticed.
     m_drives = new DriveListModel(m_vfs, m_remotes, m_taskManager, this);
+
+    // The dialog lists what somebody set up; the sidebar lists everything. One
+    // model underneath both, filtered rather than rebuilt, so there is a single
+    // answer to what state a drive is in.
+    m_configuredDrives = new QSortFilterProxyModel(this);
+    m_configuredDrives->setSourceModel(m_drives);
+    m_configuredDrives->setFilterRole(DriveListModel::ConfiguredIdRole);
+    // Any non-empty id: a mount nobody configured has none.
+    m_configuredDrives->setFilterRegularExpression(QRegularExpression(QStringLiteral(".+")));
 
     // The palette knows nothing about tabs or navigation: it says what was chosen
     // and the shell does it, which is why the model can be a plain view over the
@@ -503,23 +514,27 @@ QVariantList AppController::driveFields(const QString& factoryScheme, const QStr
     return out;
 }
 
-QVariantList AppController::configuredDrives() const
+QAbstractItemModel* AppController::configuredDrives() const
 {
-    QVariantList out;
-    if (!m_remotes)
-        return out;
+    return m_configuredDrives;
+}
 
-    for (const RemoteDrive& drive : m_remotes->drives()) {
-        const bool mounted = m_vfs && m_vfs->resolve(drive.rootUri()) != nullptr;
-        out.append(QVariantMap { { QStringLiteral("id"), drive.id }, { QStringLiteral("name"), drive.name },
-            { QStringLiteral("factory"), drive.factoryScheme }, { QStringLiteral("variant"), drive.variant },
-            { QStringLiteral("root"), drive.root }, { QStringLiteral("uri"), drive.rootUri().toString() },
-            { QStringLiteral("settings"), drive.settings },
-            { QStringLiteral("secretFields"), drive.secretFields },
-            { QStringLiteral("needsUnlock"), !drive.secretFields.isEmpty() && !credentialsUnlocked() },
-            { QStringLiteral("connected"), mounted } });
-    }
-    return out;
+QVariantMap AppController::driveConfiguration(const QString& id) const
+{
+    if (!m_remotes)
+        return {};
+    const RemoteDrive drive = m_remotes->drive(id);
+    if (!drive.isValid())
+        return {};
+
+    // Deliberately no "connected" and no "needsUnlock". What state a drive is
+    // in has one answer and it is the drive model's; a second copy here is how
+    // the two come to disagree.
+    return QVariantMap { { QStringLiteral("id"), drive.id }, { QStringLiteral("name"), drive.name },
+        { QStringLiteral("factory"), drive.factoryScheme }, { QStringLiteral("variant"), drive.variant },
+        { QStringLiteral("root"), drive.root }, { QStringLiteral("uri"), drive.rootUri().toString() },
+        { QStringLiteral("settings"), drive.settings },
+        { QStringLiteral("secretFields"), drive.secretFields } };
 }
 
 bool AppController::saveDrive(const QString& id, const QString& name, const QString& factoryScheme,
