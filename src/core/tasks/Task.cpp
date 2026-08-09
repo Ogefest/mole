@@ -1,6 +1,9 @@
 #include "core/tasks/Task.h"
 
+#include "core/diagnostics/Diagnostics.h"
+
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QLocale>
 #include <QUuid>
 
@@ -31,14 +34,35 @@ void Task::execute()
 {
     setState(State::Running);
 
-    run();
+    // Here rather than in each task, so a scan, a copy, a rename and whatever is
+    // written next all announce themselves the same way and a log can be read
+    // without knowing which task wrote which line.
+    qCDebug(taskLog, "%s [%s]: started", qPrintable(m_title), qPrintable(m_id.left(8)));
 
-    if (m_cancel.isCancelled())
+    QElapsedTimer clock;
+    clock.start();
+    run();
+    const qint64 elapsed = clock.elapsed();
+
+    const char* outcome = "finished";
+    if (m_cancel.isCancelled()) {
         setState(State::Cancelled);
-    else if (m_error.isError())
+        outcome = "cancelled";
+    } else if (m_error.isError()) {
         setState(State::Failed);
-    else
+        outcome = "failed";
+    } else {
         setState(State::Succeeded);
+    }
+
+    qCDebug(taskLog, "%s [%s]: %s after %lld ms -- %s", qPrintable(m_title), qPrintable(m_id.left(8)),
+        outcome, elapsed, qPrintable(m_lastPostedStatus));
+
+    // A task that failed is worth a line whether anyone asked for logging or
+    // not: it is the thing the user will be asking about later.
+    if (m_error.isError()) {
+        qCWarning(taskLog, "%s failed: %s", qPrintable(m_title), qPrintable(m_error.message));
+    }
 
     // Queued so the UI observes finished() after the final state change.
     QMetaObject::invokeMethod(this, [this] { emit finished(); }, Qt::QueuedConnection);

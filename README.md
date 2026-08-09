@@ -231,7 +231,26 @@ that third-party code uses, so the API cannot quietly rot.
 | `MOLE_SECRETS_PATH` | where encrypted credentials live, instead of the user profile |
 | `MOLE_REMOTES_PATH` | where configured drives live, instead of the user profile |
 | `MOLE_PLUGIN_PATH` | extra directories to load plugins from |
+| `MOLE_LOG_PATH` | where the session log is written, instead of the user profile |
+| `MOLE_LOG` | what to record in detail: `task`, `drive`, `net`, `curl`, or `all` |
 | `MOLE_SCREENSHOT_DIR` | where `tst_Walkthrough` writes its pictures |
+
+### When something goes wrong
+
+Every run writes a session log next to the rest of the profile, keeping the previous
+run alongside it, and a crash puts its backtrace in the same file. It records what
+the application said, which for an operation that misbehaved is usually not enough —
+so `MOLE_LOG` turns up the detail by subject, into the same file:
+
+```sh
+MOLE_LOG=net,curl mole      # every network transfer, and libcurl's own account of it
+MOLE_LOG=task,drive mole    # what every job did, and every operation on every drive
+MOLE_LOG=all mole           # all four
+```
+
+`task` and `drive` are written in one place each and so cover every job and every
+drive, including ones a plugin brings. Credentials in header lines are redacted: a
+log is a thing people send to each other.
 
 ### Testing the network backends against a real server
 
@@ -254,6 +273,11 @@ afterwards, so it is safe to point at a bucket or share that holds real files.
 `MOLE_TEST_SFTP_BASE`, `MOLE_TEST_FTP_BASE` and `MOLE_TEST_FTP_PORT` override where
 it works and how it connects. Use a throwaway account: these are test credentials
 in a shell history.
+
+The SFTP suite also carries a large-file test, because that is where transfers break
+and a few kilobytes prove nothing. By default it puts 64 MB on the server and reads
+it back; `MOLE_TEST_SFTP_LARGE_MB` changes the size, and `MOLE_TEST_SFTP_LARGE_PATH`
+points it at a file that is already there, which writes nothing at all.
 
 ## Roadmap
 

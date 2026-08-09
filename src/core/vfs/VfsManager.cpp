@@ -1,5 +1,7 @@
 #include "core/vfs/VfsManager.h"
 
+#include "core/diagnostics/LoggingFileSystem.h"
+
 #include <QMutexLocker>
 
 namespace mole {
@@ -76,6 +78,11 @@ QString VfsManager::addMount(Mount mount)
 {
     if (!mount.fileSystem)
         return {};
+
+    // Every drive gets the same wrapper on the way in, whatever built it and
+    // whichever overload it arrived through -- that is what makes the log the
+    // same for local disk, for a plugin's backend, and for one written later.
+    mount.fileSystem = withLogging(std::move(mount.fileSystem), mount.displayName);
 
     QString id;
     {

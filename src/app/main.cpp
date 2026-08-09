@@ -4,6 +4,7 @@
 #include "ui/AppController.h"
 
 #include "core/CoreMetaTypes.h"
+#include "core/diagnostics/Diagnostics.h"
 
 #include <QDir>
 #include <QGuiApplication>
@@ -58,6 +59,12 @@ int main(int argc, char* argv[])
     const QString logPath = mole::sessionLog::install();
     if (!logPath.isEmpty())
         qInfo("Logging this session to %s", qPrintable(logPath));
+
+    // Extra detail only when it was asked for. What it records goes to the same
+    // file, so a report about a copy that went wrong is one file to send.
+    const QStringList loud = mole::diagnostics::applyEnvironment();
+    if (!loud.isEmpty())
+        qInfo("Recording in detail: %s", qPrintable(loud.join(QStringLiteral(", "))));
 
     // Value types have to be known to the meta-object system before any task
     // can ship one across a thread boundary.

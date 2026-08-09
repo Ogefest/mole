@@ -25,6 +25,11 @@ add_library(mole_core STATIC
     vfs/backends/MemoryFileSystem.h
     vfs/backends/MemoryFileSystem.cpp
 
+    diagnostics/Diagnostics.h
+    diagnostics/Diagnostics.cpp
+    diagnostics/LoggingFileSystem.h
+    diagnostics/LoggingFileSystem.cpp
+
     events/EventBus.h
     events/EventBus.cpp
 
