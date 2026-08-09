@@ -19,7 +19,9 @@ Too large for a line here; each has a file of its own in
   a quiet room: a fault-injecting filesystem for races that need no network, a
   Proxmox machine running the servers the backends actually talk to and that can be
   interfered with while they do, and a headless runner for reproducing something by
-  hand. Written after a day in which five faults were found under a green suite.
+  hand. Written after a day in which five faults were found under a green suite. It
+  carries a catalogue of about two hundred scenarios to implement once that
+  equipment works, weighted towards the tasks that can destroy data.
 
 ---
 
