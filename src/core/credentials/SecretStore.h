@@ -74,6 +74,12 @@ signals:
     void changed();
 
 private:
+    /// Clears the key, the salt and everything decrypted from the file, and
+    /// says whether there was anything to clear. Silent: lock() announces it,
+    /// the destructor does not, because a signal from a destructor reaches a
+    /// slot that has no way of knowing what else is already gone.
+    bool wipe();
+
     bool writeTo(const QString& path, const QByteArray& key, QString* errorOut) const;
 
     QString m_path;

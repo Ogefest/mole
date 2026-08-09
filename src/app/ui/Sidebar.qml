@@ -173,7 +173,7 @@ Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: Math.min(contentHeight, sidebar.height * 0.45)
             clip: true
-            model: App.mounts
+            model: App.drives
             boundsBehavior: Flickable.StopAtBounds
 
             delegate: PlaceRow {
@@ -185,6 +185,7 @@ Rectangle {
                 required property real usedFraction
                 required property string freeText
                 required property string totalText
+                required property bool canEject
 
                 label: displayName
                 target: rootUri
@@ -193,9 +194,10 @@ Rectangle {
                 capacityFree: freeText
                 capacityTotal: totalText
                 // Archives and other file-backed drives can be ejected; the
-                // real disks stay.
-                removable: scheme !== "file"
-                onRemoveRequested: App.mounts.unmount(index)
+                // real disks stay, and a configured drive that is not connected
+                // has nothing to eject yet.
+                removable: canEject && scheme !== "file"
+                onRemoveRequested: App.drives.unmount(index)
             }
         }
 

@@ -7,7 +7,7 @@
 #include "ui/FileLauncher.h"
 #include "ui/SessionStore.h"
 #include "ui/models/CommandPaletteModel.h"
-#include "ui/models/MountListModel.h"
+#include "ui/models/DriveListModel.h"
 #include "ui/models/TabsModel.h"
 #include "ui/models/TaskListModel.h"
 
@@ -252,12 +252,12 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     // Before the palette, which is handed a pointer to it. Built after, the palette
     // held a null one for the lifetime of the application and quietly offered no
     // drives at all -- everything else about it worked, which is why nobody noticed.
-    m_mounts = new MountListModel(m_vfs, m_taskManager, this);
+    m_drives = new DriveListModel(m_vfs, m_remotes, m_taskManager, this);
 
     // The palette knows nothing about tabs or navigation: it says what was chosen
     // and the shell does it, which is why the model can be a plain view over the
     // registries.
-    m_commands = new CommandPaletteModel(m_actions, m_bookmarks, m_mounts, this);
+    m_commands = new CommandPaletteModel(m_actions, m_bookmarks, m_drives, this);
     connect(m_commands, &CommandPaletteModel::actionRequested, this, &AppController::triggerAction);
     connect(m_commands, &CommandPaletteModel::locationRequested, this, &AppController::goTo);
 

@@ -2,18 +2,18 @@
 
 #include "host/ActionRegistry.h"
 #include "ui/models/BookmarkModel.h"
-#include "ui/models/MountListModel.h"
+#include "ui/models/DriveListModel.h"
 
 #include <algorithm>
 
 namespace mole {
 
 CommandPaletteModel::CommandPaletteModel(
-    ActionRegistry* actions, BookmarkModel* bookmarks, MountListModel* mounts, QObject* parent)
+    ActionRegistry* actions, BookmarkModel* bookmarks, DriveListModel* drives, QObject* parent)
     : QAbstractListModel(parent)
     , m_actions(actions)
     , m_bookmarks(bookmarks)
-    , m_mounts(mounts)
+    , m_drives(drives)
 {
 }
 
@@ -101,13 +101,13 @@ void CommandPaletteModel::refresh()
         }
     }
 
-    if (m_mounts) {
-        for (int row = 0; row < m_mounts->rowCount(); ++row) {
-            const QModelIndex index = m_mounts->index(row, 0);
-            m_all.append(Command { m_mounts->data(index, MountListModel::DisplayNameRole).toString(),
+    if (m_drives) {
+        for (int row = 0; row < m_drives->rowCount(); ++row) {
+            const QModelIndex index = m_drives->index(row, 0);
+            m_all.append(Command { m_drives->data(index, DriveListModel::DisplayNameRole).toString(),
                 QStringLiteral("Drives"), QString(),
-                m_mounts->data(index, MountListModel::IconTextRole).toString(), QString(),
-                m_mounts->data(index, MountListModel::RootUriRole).toString() });
+                m_drives->data(index, DriveListModel::IconTextRole).toString(), QString(),
+                m_drives->data(index, DriveListModel::RootUriRole).toString() });
         }
     }
 

@@ -7,13 +7,13 @@ namespace mole {
 
 class ActionRegistry;
 class BookmarkModel;
-class MountListModel;
+class DriveListModel;
 
 /// Everything that can be done right now, as one filterable list.
 ///
 /// Deliberately a *view* over the registries that already exist rather than a
 /// list of its own: the menu entries come from ActionRegistry, the places from
-/// BookmarkModel and MountListModel. A second list maintained by hand would drift
+/// BookmarkModel and DriveListModel. A second list maintained by hand would drift
 /// out of step with the menu the first time somebody added an action, and the
 /// whole value of this is that it can be trusted to hold everything.
 ///
@@ -44,7 +44,7 @@ public:
     /// Any of these may be null; the palette then simply has less in it, which is
     /// what a test that only cares about menu entries wants.
     CommandPaletteModel(
-        ActionRegistry* actions, BookmarkModel* bookmarks, MountListModel* mounts, QObject* parent = nullptr);
+        ActionRegistry* actions, BookmarkModel* bookmarks, DriveListModel* drives, QObject* parent = nullptr);
 
     int rowCount(const QModelIndex& parent = {}) const override;
     QVariant data(const QModelIndex& index, int role) const override;
@@ -89,7 +89,7 @@ private:
 
     ActionRegistry* m_actions = nullptr;
     BookmarkModel* m_bookmarks = nullptr;
-    MountListModel* m_mounts = nullptr;
+    DriveListModel* m_drives = nullptr;
 
     QList<Command> m_all;
     QList<Command> m_visible;

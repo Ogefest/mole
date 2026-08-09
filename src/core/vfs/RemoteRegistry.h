@@ -76,6 +76,10 @@ public:
 
     /// Whether every drive's secrets are reachable right now.
     bool needsUnlocking() const;
+    /// The same question about one drive: it has secrets and the store is shut.
+    /// Asked by anything that has to say why a drive cannot be connected
+    /// without decrypting a credential to find out.
+    bool needsUnlocking(const RemoteDrive& drive) const;
 
 signals:
     void drivesChanged();

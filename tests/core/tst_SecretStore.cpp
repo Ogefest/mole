@@ -4,6 +4,7 @@
 #include "core/credentials/SecretStore.h"
 
 #include <QFile>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 
 using namespace mole;
@@ -34,6 +35,7 @@ private slots:
     void changingThePassphraseKeepsTheSecrets();
     void removesSecretsByPrefix();
     void reportsWhetherItCanEncryptAtAll();
+    void beingDestroyedIsNotAStateChange();
 
 private:
     QString path() const;
@@ -305,6 +307,28 @@ void TestSecretStore::reportsWhetherItCanEncryptAtAll()
         QVERIFY(!store.create(QStringLiteral("phrase"), &error));
         QVERIFY(!error.isEmpty());
     }
+}
+
+/// The destructor wipes the key by calling lock(), and lock() announces that
+/// the store has shut. Announcing it from a destructor hands control to a slot
+/// at a point where the object emitting is half gone -- and, in the
+/// application, where whatever else was being torn down alongside it may be
+/// too. It crashed exactly there: the drive list reacted by asking a
+/// part-destroyed task manager for a capacity check.
+///
+/// Wiping the key is the part that matters and it still happens. What must not
+/// happen is anyone being told about it.
+void TestSecretStore::beingDestroyedIsNotAStateChange()
+{
+    if (!SecretStore::isAvailable())
+        QSKIP("this build cannot encrypt");
+
+    auto store = std::make_unique<SecretStore>(path());
+    QVERIFY(store->create(QStringLiteral("a passphrase")));
+
+    QSignalSpy shut(store.get(), &SecretStore::unlockedChanged);
+    store.reset();
+    QCOMPARE(shut.count(), 0);
 }
 
 MOLE_TEST_MAIN(TestSecretStore)

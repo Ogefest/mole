@@ -96,7 +96,7 @@ mole_add_test(tst_ActionRegistry    SOURCES host/tst_ActionRegistry.cpp LIBS mol
 
 # --- ui: models and controllers ---------------------------------------------
 mole_add_test(tst_FileListModel        SOURCES ui/tst_FileListModel.cpp        LIBS mole_ui)
-mole_add_test(tst_MountListModel       SOURCES ui/tst_MountListModel.cpp       LIBS mole_ui)
+mole_add_test(tst_DriveListModel       SOURCES ui/tst_DriveListModel.cpp       LIBS mole_ui)
 mole_add_test(tst_TaskListModel        SOURCES ui/tst_TaskListModel.cpp        LIBS mole_ui)
 mole_add_test(tst_TabsModel            SOURCES ui/tst_TabsModel.cpp            LIBS mole_ui)
 mole_add_test(tst_BrowserPaneController SOURCES ui/tst_BrowserPaneController.cpp LIBS mole_ui)
