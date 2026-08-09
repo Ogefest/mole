@@ -107,7 +107,7 @@ QString SystemVolumes::displayName(const QString& rootPath, const QString& volum
     if (!volumeName.isEmpty())
         return volumeName;
 
-    // Mount points like /media/lg/BACKUP or /mnt/data already carry the name
+    // Mount points like /media/user/BACKUP or /mnt/data already carry the name
     // the user gave the disk.
     const QString leaf = QFileInfo(rootPath).fileName();
     if (!leaf.isEmpty())

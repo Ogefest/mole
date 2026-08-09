@@ -45,13 +45,13 @@ void TestEventBus::entryCreatedAlsoAnnouncesItsDirectory()
     QSignalSpy created(&bus, &EventBus::entryCreated);
     QSignalSpy changed(&bus, &EventBus::directoryChanged);
 
-    bus.postEntryCreated(VfsUri::fromString(QStringLiteral("file:///home/lg/new.txt")));
+    bus.postEntryCreated(VfsUri::fromString(QStringLiteral("file:///home/user/new.txt")));
 
     QCOMPARE(created.count(), 1);
     // An open pane listens for directoryChanged, not entryCreated, so the
     // derived event has to be emitted too or nothing would refresh.
     QCOMPARE(changed.count(), 1);
-    QCOMPARE(changed.first().first().value<VfsUri>(), VfsUri::fromString(QStringLiteral("file:///home/lg")));
+    QCOMPARE(changed.first().first().value<VfsUri>(), VfsUri::fromString(QStringLiteral("file:///home/user")));
 }
 
 void TestEventBus::entryRenamedAnnouncesBothDirectories()

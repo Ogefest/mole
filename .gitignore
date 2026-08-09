@@ -11,3 +11,8 @@ CMakeUserPresets.json
 
 # Editor session notes, not part of the project.
 claude.session
+
+# Assistant settings, which carry absolute paths from whichever machine wrote
+# them. Nothing has committed this yet; one `git add -A` would, and the first
+# anyone would know is when it turned up in a clone.
+.claude/

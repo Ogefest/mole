@@ -42,13 +42,13 @@ void TestVfsUri::parses_data()
     QTest::addColumn<QString>("authority");
     QTest::addColumn<QString>("path");
 
-    QTest::newRow("local file") << "file:///home/lg/a.txt" << true << "file" << "" << "/home/lg/a.txt";
-    QTest::newRow("sftp with user") << "sftp://lg@nas.local/volume1/photos" << true << "sftp"
-                                    << "lg@nas.local" << "/volume1/photos";
+    QTest::newRow("local file") << "file:///home/user/a.txt" << true << "file" << "" << "/home/user/a.txt";
+    QTest::newRow("sftp with user") << "sftp://user@nas.local/volume1/photos" << true << "sftp"
+                                    << "user@nas.local" << "/volume1/photos";
     QTest::newRow("s3 bucket") << "s3://my-bucket/reports" << true << "s3" << "my-bucket" << "/reports";
     QTest::newRow("authority only") << "s3://my-bucket" << true << "s3" << "my-bucket" << "/";
     QTest::newRow("uppercase scheme") << "FILE:///tmp" << true << "file" << "" << "/tmp";
-    QTest::newRow("no scheme") << "/home/lg" << false << "" << "" << "";
+    QTest::newRow("no scheme") << "/home/user" << false << "" << "" << "";
     QTest::newRow("empty") << "" << false << "" << "" << "";
 }
 
@@ -75,12 +75,12 @@ void TestVfsUri::normalisesPath_data()
     QTest::addColumn<QString>("input");
     QTest::addColumn<QString>("expected");
 
-    QTest::newRow("trailing slash") << "/home/lg/" << "/home/lg";
-    QTest::newRow("double slash") << "/home//lg" << "/home/lg";
-    QTest::newRow("dot segment") << "/home/./lg" << "/home/lg";
-    QTest::newRow("dotdot segment") << "/home/lg/../root" << "/home/root";
+    QTest::newRow("trailing slash") << "/home/user/" << "/home/user";
+    QTest::newRow("double slash") << "/home//user" << "/home/user";
+    QTest::newRow("dot segment") << "/home/./user" << "/home/user";
+    QTest::newRow("dotdot segment") << "/home/user/../root" << "/home/root";
     QTest::newRow("dotdot past root") << "/../../etc" << "/etc";
-    QTest::newRow("backslashes") << "\\home\\lg" << "/home/lg";
+    QTest::newRow("backslashes") << "\\home\\user" << "/home/user";
     QTest::newRow("bare root") << "/" << "/";
     QTest::newRow("empty becomes root") << "" << "/";
 }
@@ -95,10 +95,10 @@ void TestVfsUri::normalisesPath()
 void TestVfsUri::childAndParent()
 {
     const VfsUri root = VfsUri::fromString(QStringLiteral("file:///home"));
-    const VfsUri child = root.child(QStringLiteral("lg"));
+    const VfsUri child = root.child(QStringLiteral("user"));
 
-    QCOMPARE(child.toString(), QStringLiteral("file:///home/lg"));
-    QCOMPARE(child.fileName(), QStringLiteral("lg"));
+    QCOMPARE(child.toString(), QStringLiteral("file:///home/user"));
+    QCOMPARE(child.fileName(), QStringLiteral("user"));
     QCOMPARE(child.parent(), root);
 
     // Chaining from the root must not produce a doubled slash.
@@ -136,22 +136,22 @@ void TestVfsUri::suffix()
 void TestVfsUri::isWithin()
 {
     const VfsUri root = VfsUri::fromString(QStringLiteral("file:///home"));
-    QVERIFY(VfsUri::fromString(QStringLiteral("file:///home/lg/a.txt")).isWithin(root));
+    QVERIFY(VfsUri::fromString(QStringLiteral("file:///home/user/a.txt")).isWithin(root));
     QVERIFY(root.isWithin(root));
 
     // A shared prefix is not containment.
     QVERIFY(!VfsUri::fromString(QStringLiteral("file:///homeless")).isWithin(root));
     // Different scheme or authority never matches.
-    QVERIFY(!VfsUri::fromString(QStringLiteral("sftp://h/home/lg")).isWithin(root));
+    QVERIFY(!VfsUri::fromString(QStringLiteral("sftp://h/home/user")).isWithin(root));
     QVERIFY(VfsUri::fromString(QStringLiteral("file:///anything"))
                 .isWithin(VfsUri::fromString(QStringLiteral("file:///"))));
 }
 
 void TestVfsUri::localPathRoundTrip()
 {
-    const VfsUri uri = VfsUri::fromLocalPath(QStringLiteral("/home/lg/notes.txt"));
+    const VfsUri uri = VfsUri::fromLocalPath(QStringLiteral("/home/user/notes.txt"));
     QCOMPARE(uri.scheme(), QStringLiteral("file"));
-    QCOMPARE(uri.toLocalPath(), QStringLiteral("/home/lg/notes.txt"));
+    QCOMPARE(uri.toLocalPath(), QStringLiteral("/home/user/notes.txt"));
 }
 
 void TestVfsUri::nonLocalHasNoLocalPath()
@@ -161,8 +161,8 @@ void TestVfsUri::nonLocalHasNoLocalPath()
 
 void TestVfsUri::equalityAndHashing()
 {
-    const VfsUri a = VfsUri::fromString(QStringLiteral("file:///home/lg/"));
-    const VfsUri b = VfsUri::fromString(QStringLiteral("file:///home/./lg"));
+    const VfsUri a = VfsUri::fromString(QStringLiteral("file:///home/user/"));
+    const VfsUri b = VfsUri::fromString(QStringLiteral("file:///home/./user"));
     QCOMPARE(a, b);
     QCOMPARE(qHash(a), qHash(b));
 
