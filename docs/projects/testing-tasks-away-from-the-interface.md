@@ -2,6 +2,10 @@
 
 - **Started:** 2026-08-09
 - **Status:** planned, not begun
+- **Tracked as:** [milestones](https://github.com/Ogefest/mole/milestones) —
+  one per phase — over the issues on the
+  [board](https://github.com/users/Ogefest/projects/1). This file holds the
+  reasoning; the issues hold the work.
 
 ## Why
 

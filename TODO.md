@@ -3,8 +3,9 @@
 **Work is tracked in [GitHub issues](https://github.com/Ogefest/mole/issues).**
 Anything actionable lives there: bugs, features, and the tests that are owed.
 Larger efforts are [milestones](https://github.com/Ogefest/mole/milestones) over
-those issues, with a file in [docs/projects/](docs/projects/) for the reasoning
-that does not fit in an issue.
+those issues, all of it on one
+[board](https://github.com/users/Ogefest/projects/1), with a file in
+[docs/projects/](docs/projects/) for the reasoning that does not fit in an issue.
 
 What stays in this file is the other thing — **context that is not a task**.
 Behaviour we know about and have decided to live with, conventions a change

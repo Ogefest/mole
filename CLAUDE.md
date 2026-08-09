@@ -51,8 +51,13 @@ Small changes — a bug fix, a rename, a test, a tidy-up — do not need one.
 a feature, a test that is owed — each is an issue, and each should carry enough
 for somebody to pick it up without asking a question: what is wrong or wanted,
 where in the code it lives, and how anyone will know it is finished. Larger
-efforts are milestones over those issues, with a file in
-[docs/projects/](docs/projects/) for the reasoning that will not fit in one.
+efforts are milestones over those issues, all of it on one
+[board](https://github.com/users/Ogefest/projects/1), with a file in
+[docs/projects/](docs/projects/) for the reasoning that will not fit in an issue.
+
+Before starting anything, look for the issue. If there is not one, open it first
+— an issue written after the fact is a summary, and the point of writing it
+first is that somebody else can see the work is taken.
 
 A change that closes an issue says so in its commit message, in GitHub's own
 words — `Closes #12` — so the issue shuts when the work lands rather than when
