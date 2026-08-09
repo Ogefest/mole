@@ -73,6 +73,25 @@ in a test fixture, however local the work felt while it was being done. When a
 fault is reproduced against a real server, the issue describes the *behaviour*,
 not the address it was found at.
 
+**Those facts are kept, just not here.** What machine exists, how it is reached,
+which account, where the credentials are — all of it lives outside this
+repository, in `~/dev/workspace/mole-pm/environment/`. An issue labelled
+`needs-server` is one whose work depends on them, and that directory is the
+first thing to read before starting one. Reading a path outside this checkout
+may ask for permission the first time; that is the mechanism working.
+
+Nothing comes back the other way. Not into a commit message, a code comment, a
+test fixture, an issue, a pull request, or a log attached to one. Anything the
+code needs from there is a **parameter read at run time** — the way the
+`MOLE_TEST_*` suites already take theirs from the environment. A host name typed
+into a tracked file is not a small lapse to be tidied up later; it is the signal
+that the code wanted a parameter and got a constant instead.
+
+Outside the repository rather than in an ignored file inside it, because an
+ignored file is one `git add -f`, or one careless edit to `.gitignore`, away
+from being published. A directory that is in no git repository at all cannot be
+pushed by any mistake.
+
 The three files alongside it keep what a tracker holds badly:
 
 - [CHANGELOG.md](CHANGELOG.md) — the short, user-facing list: **one sentence** per
