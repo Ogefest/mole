@@ -43,6 +43,18 @@ namespace {
     /// handshake for each of ten thousand small files is not nothing at all.
     constexpr qint64 kSpanBytes = 256LL * 1024 * 1024;
 
+    /// Up to this, the file is fetched whole into a temporary file before the
+    /// caller sees any of it.
+    ///
+    /// Doing that to a large file is what makes a hundred-gigabyte copy
+    /// impossible: it wants a hundred gigabytes of local scratch space for a
+    /// copy whose destination has room to spare, and the progress bar sits at
+    /// nothing until it is finished. Above this size the file is streamed
+    /// instead. Below it, the local copy costs a few tens of megabytes of
+    /// temporary space and hands the preview layer free random access, which is
+    /// a better trade than a stream that re-fetches every time something seeks.
+    constexpr qint64 kFetchWholeBelow = 64LL * 1024 * 1024;
+
 } // namespace
 
 SftpFileSystem::SftpFileSystem(QString scheme, SftpSettings settings)
@@ -280,21 +292,44 @@ Result<void> SftpFileSystem::rename(const VfsUri& from, const VfsUri& to)
     return runCommand(command, from, QStringLiteral("Renaming %1").arg(from.path()));
 }
 
+VfsError SftpFileSystem::fetchSpan(const QByteArray& url, const QString& what, QIODevice& sink, qint64 offset,
+    qint64 span, const CancelToken& cancel)
+{
+    auto lease = m_pool->takeFresh();
+    if (!lease)
+        return VfsError::make(VfsError::IoError, QStringLiteral("Could not start an SFTP transfer"));
+
+    lease.setUrl(url);
+    const QByteArray range = QByteArray::number(offset) + '-' + QByteArray::number(offset + span - 1);
+    curl_easy_setopt(lease.get(), CURLOPT_RANGE, range.constData());
+
+    const net::Response response = m_pool->perform(lease, cancel, &sink);
+    return net::errorFor(response, what, net::StatusMeaning::ProtocolReply);
+}
+
 Result<std::unique_ptr<QIODevice>> SftpFileSystem::openRead(const VfsUri& target, qint64 expectedSize)
 {
-    auto scratch = std::make_unique<QTemporaryFile>();
-    if (!scratch->open()) {
-        return Result<std::unique_ptr<QIODevice>>::failure(
-            VfsError::IoError, QStringLiteral("Could not open a local copy for %1").arg(target.path()));
-    }
-
     const QByteArray url = urlFor(target, false);
     const QString what = QStringLiteral("Reading %1").arg(target.path());
 
-    // Small and measured: one transfer over a warm connection, as it always was.
-    // Unknown counts as large -- a caller that did not say is reading one file
-    // for a preview or a checksum, where a handshake costs nothing worth saving.
-    if (expectedSize >= 0 && expectedSize <= kSpanBytes) {
+    // Nobody said how big it is, so ask. A stream has to know where the file
+    // ends before it starts, and everything else here wants the answer too.
+    qint64 length = expectedSize;
+    if (length < 0) {
+        const Result<FileEntry> entry = stat(target);
+        if (!entry.ok())
+            return Result<std::unique_ptr<QIODevice>>(entry.error());
+        length = entry.value().size;
+    }
+
+    // Small enough to hold: fetched whole, over a warm connection, as before.
+    if (length <= kFetchWholeBelow) {
+        auto scratch = std::make_unique<QTemporaryFile>();
+        if (!scratch->open()) {
+            return Result<std::unique_ptr<QIODevice>>::failure(
+                VfsError::IoError, QStringLiteral("Could not open a local copy for %1").arg(target.path()));
+        }
+
         auto lease = m_pool->take();
         if (!lease) {
             return Result<std::unique_ptr<QIODevice>>::failure(
@@ -310,70 +345,59 @@ Result<std::unique_ptr<QIODevice>> SftpFileSystem::openRead(const VfsUri& target
         return net::openDownloadedFile(std::move(scratch));
     }
 
-    // Anything larger arrives a span at a time, each over a connection of its
-    // own, appended to the same local copy.
-    qint64 offset = 0;
-    for (;;) {
-        auto lease = m_pool->takeFresh();
-        if (!lease) {
-            return Result<std::unique_ptr<QIODevice>>::failure(
-                VfsError::IoError, QStringLiteral("Could not start an SFTP transfer"));
-        }
-        lease.setUrl(url);
+    // Anything larger is streamed a span at a time, so a hundred-gigabyte file
+    // costs a buffer rather than a hundred gigabytes of temporary space. The
+    // stream holds this backend for as long as it lives, which is safe because
+    // whoever opened it is holding the drive it came from.
+    auto fetch = [this, url, what](QIODevice& sink, qint64 offset, qint64 span, const CancelToken& cancel) {
+        return fetchSpan(url, what, sink, offset, span, cancel);
+    };
 
-        const QByteArray range
-            = QByteArray::number(offset) + '-' + QByteArray::number(offset + kSpanBytes - 1);
-        curl_easy_setopt(lease.get(), CURLOPT_RANGE, range.constData());
-
-        const net::Response response = m_pool->perform(lease, CancelToken(), scratch.get());
-        const VfsError error = net::errorFor(response, what, net::StatusMeaning::ProtocolReply);
-        if (error.isError())
-            return Result<std::unique_ptr<QIODevice>>(error);
-
-        const qint64 arrived = response.receivedBytes < 0 ? 0 : response.receivedBytes;
-        offset += arrived;
-
-        // A span that comes back short is the end of the file: a server clamps a
-        // range that runs past the end rather than refusing it. One that comes
-        // back long is a server that ignored the range and sent everything,
-        // which means the file is already here.
-        if (arrived < kSpanBytes || arrived > kSpanBytes)
-            break;
-        if (expectedSize > 0 && offset >= expectedSize)
-            break;
+    auto stream = std::make_unique<net::StreamingDownload>(std::move(fetch), length, kSpanBytes);
+    if (!stream->open(QIODevice::ReadOnly)) {
+        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, stream->errorString());
     }
-
-    return net::openDownloadedFile(std::move(scratch));
+    return Result<std::unique_ptr<QIODevice>>(std::unique_ptr<QIODevice>(stream.release()));
 }
 
-Result<void> SftpFileSystem::uploadTo(const VfsUri& target, QIODevice& payload, qint64 size)
+VfsError SftpFileSystem::sendSpan(
+    const VfsUri& target, QIODevice& source, bool append, const CancelToken& cancel)
 {
-    auto lease = m_pool->take();
+    auto lease = m_pool->takeFresh();
     if (!lease)
-        return Result<void>::failure(VfsError::IoError, QStringLiteral("Could not start an SFTP transfer"));
+        return VfsError::make(VfsError::IoError, QStringLiteral("Could not start an SFTP transfer"));
 
-    const QByteArray url = urlFor(target, false);
-    lease.setUrl(url);
-    // Going the other way there is no equivalent of a range, so all that can be
-    // done is to keep the transfer off a connection that has already been used.
-    // An upload past the point where the session re-keys is still unfinished
-    // business -- see TODO.md.
-    if (size > kSpanBytes)
-        lease.useOwnConnection();
-    net::CurlPool::sendFrom(lease, payload, size);
+    lease.setUrl(urlFor(target, false));
+    if (append)
+        curl_easy_setopt(lease.get(), CURLOPT_APPEND, 1L);
+    // No length: a stream being written as it is sent does not know one, and
+    // SFTP does not need it.
+    net::CurlPool::sendFrom(lease, source, -1);
 
-    const net::Response response = m_pool->perform(lease, CancelToken());
+    const net::Response response = m_pool->perform(lease, cancel);
     const VfsError error = net::errorFor(
         response, QStringLiteral("Writing %1").arg(target.path()), net::StatusMeaning::ProtocolReply);
-    if (error.isError())
-        return Result<void>(error);
-    return {};
+
+    if (error.isError()) {
+        // What has been written so far is part of a file, and a partial file
+        // that looks finished is the thing worth avoiding above all. The target
+        // is always one this write created -- a copy clears the way before it
+        // starts -- so removing it takes nothing that was not ours.
+        remove(target, false);
+    }
+    return error;
 }
 
 Result<std::unique_ptr<QIODevice>> SftpFileSystem::openWrite(const VfsUri& target)
 {
-    auto stream = std::make_unique<net::BufferedUpload>(
-        [this, target](QIODevice& payload, qint64 size) { return uploadTo(target, payload, size); });
+    // Streamed rather than staged: a copy of a hundred-gigabyte file must not
+    // need a hundred gigabytes of local scratch space to send it, and the span
+    // loop keeps each transfer clear of the fault a long one runs into.
+    auto send = [this, target](QIODevice& source, qint64, bool append, const CancelToken& cancel) {
+        return sendSpan(target, source, append, cancel);
+    };
+
+    auto stream = std::make_unique<net::StreamingUpload>(std::move(send), kSpanBytes);
     if (!stream->open(QIODevice::WriteOnly)) {
         return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, stream->errorString());
     }

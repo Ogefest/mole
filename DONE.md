@@ -80,10 +80,26 @@ short download or a failed job leaves a line whether anyone asked for logging or
 Credentials in header lines are redacted, because a log gets sent to other people.
 See [ADR-0012](docs/adr/0012-a-log-you-can-turn-up.md).
 
-**What is not fixed** and is now in TODO.md: uploads have no equivalent of a byte
-range, so a large write to an SFTP drive is expected to stall the same way; and
-`openRead()` still stages the whole file in the temporary directory first, so copying
-a 94 GB file needs 94 GB free locally whatever the destination is.
+**Then the staging, which was the other half of it.** Every network backend read a
+file by downloading all of it into a temporary file first, and wrote one by
+collecting all of it before sending any. For the files this was about -- 94 GB, 20
+GB, several at 4 GB -- that is not slow, it is impossible: a copy to a drive with
+room to spare needed 94 GB of local scratch space on a machine with 84 GB free, and
+twice that between two remote drives. So SFTP now streams in both directions, in the
+same spans, with a bounded buffer between the transfer and the caller: about 8 MiB
+per direction whatever the file weighs. Measured on a 1.2 GB read: not one byte of
+temporary space. A 1.5 GB upload through the new write stream came back byte for
+byte. Progress also moves from the first second now, because bytes go through the
+copy rather than into a temporary file first, and a preview of a huge remote file
+reads its first page instead of fetching the lot. Files up to 64 MiB are still
+fetched whole, where random access is free and the preview layer wants it. See
+[ADR-0014](docs/adr/0014-remote-files-stream-rather-than-stage.md).
+
+**What is not fixed** and is now in TODO.md: an upload interrupted by the process
+being killed leaves a partial file that looks finished -- writing to a temporary name
+and renaming on success would close that -- and S3 and WebDAV still stage their
+uploads, because one has to sign a length up front and the other cannot be trusted
+with chunked PUT.
 
 ---
 

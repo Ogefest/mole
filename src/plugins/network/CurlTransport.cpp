@@ -301,7 +301,11 @@ void CurlPool::sendFrom(const Lease& lease, QIODevice& payload, qint64 size)
     curl_easy_setopt(handle, CURLOPT_UPLOAD, 1L);
     curl_easy_setopt(handle, CURLOPT_READFUNCTION, readFromDevice);
     curl_easy_setopt(handle, CURLOPT_READDATA, &payload);
-    curl_easy_setopt(handle, CURLOPT_INFILESIZE_LARGE, static_cast<curl_off_t>(size));
+    // A negative size means the length is not known in advance, which a stream
+    // being written as it is sent cannot know. Protocols that need it up front
+    // do not use this path -- see StreamingUpload.
+    if (size >= 0)
+        curl_easy_setopt(handle, CURLOPT_INFILESIZE_LARGE, static_cast<curl_off_t>(size));
 }
 
 Response CurlPool::perform(const Lease& lease, const CancelToken& cancel, QIODevice* sink)

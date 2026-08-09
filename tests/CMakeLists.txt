@@ -182,6 +182,12 @@ if(MOLE_HAVE_NETWORK_PLUGIN)
     mole_add_test(tst_CurlTransport    SOURCES plugins/tst_CurlTransport.cpp
                                        LIBS mole_network_backends CURL::libcurl)
 
+    # The read stream that makes a file larger than the local disk copyable.
+    # Offline: it is driven by a fake server in memory, which is also the only
+    # way to test what happens when a transfer dies half way through.
+    mole_add_test(tst_StreamingDownload SOURCES plugins/tst_StreamingDownload.cpp
+                                       LIBS mole_network_backends CURL::libcurl)
+
     mole_add_test(tst_SftpFileSystem   SOURCES plugins/tst_SftpFileSystem.cpp
                                        LIBS mole_network_backends CURL::libcurl)
 

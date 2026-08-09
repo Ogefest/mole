@@ -209,6 +209,7 @@ private slots:
     void theFormAsksOnlyWhatSftpNeeds();
     void itSatisfiesTheConformanceSuite();
     void aLargeFileArrivesWhole();
+    void aLargeFileGoesUpWhole();
 };
 
 void TestSftpFileSystem::aFormWithoutAHostIsRefused()
@@ -354,6 +355,84 @@ void TestSftpFileSystem::aLargeFileArrivesWhole()
     // it were the real one.
     QCOMPARE(read, announced);
     QVERIFY2(contentsMatch, "the bytes that arrived are not the bytes that were sent");
+}
+
+void TestSftpFileSystem::aLargeFileGoesUpWhole()
+{
+    const Account account = accountFromEnvironment();
+    if (!account.isConfigured()) {
+        QSKIP("No SFTP account in the environment; set MOLE_TEST_SFTP_HOST, "
+              "MOLE_TEST_SFTP_USER and MOLE_TEST_SFTP_PASS to run this against a real server.");
+    }
+
+    // The other direction, and the one that decides whether a backup can be put
+    // somewhere rather than only fetched. Large enough to pass the point where a
+    // long transfer stops -- and written block by block, never held whole, which
+    // is the property being tested: a file bigger than this machine's memory or
+    // its free disk has to be sendable all the same.
+    int megabytes = qEnvironmentVariableIntValue("MOLE_TEST_SFTP_LARGE_MB");
+    if (megabytes <= 0)
+        megabytes = 1500;
+
+    SftpSettings settings;
+    settings.host = account.host;
+    settings.port = account.port;
+    settings.username = account.user;
+    settings.password = account.password;
+    settings.remoteRoot = account.base;
+
+    auto fileSystem = std::make_shared<SftpFileSystem>(QStringLiteral("sftp"), settings);
+    const QString name = QStringLiteral("/mole-upload-%1.bin").arg(QCoreApplication::applicationPid());
+    const VfsUri target = VfsUri(QStringLiteral("sftp"), QString(), name);
+
+    Result<std::unique_ptr<QIODevice>> stream = fileSystem->openWrite(target);
+    QVERIFY2(stream.ok(), qPrintable(stream.error().message));
+
+    bool wroteEverything = true;
+    for (int block = 0; block < megabytes && wroteEverything; ++block) {
+        const QByteArray content = blockAt(block);
+        wroteEverything = stream.value()->write(content) == content.size();
+    }
+    const Result<void> committed = closeAndReport(*stream.value());
+
+    const RawSftp raw(account);
+    const auto cleanUp = [&raw, &account, &name] {
+        raw.command(QStringLiteral("rm \"%1\"").arg(account.base + name), account.base);
+    };
+
+    if (!wroteEverything || !committed.ok()) {
+        cleanUp();
+        QVERIFY2(wroteEverything, "the stream stopped accepting bytes part way through");
+        QVERIFY2(committed.ok(), qPrintable(committed.error().message));
+    }
+
+    // The server's own account of what it now holds, which is the only opinion
+    // that counts about an upload.
+    const Result<FileEntry> what = fileSystem->stat(target);
+    if (!what.ok())
+        cleanUp();
+    QVERIFY2(what.ok(), qPrintable(what.error().message));
+    const qint64 announced = what.value().size;
+
+    const Result<std::unique_ptr<QIODevice>> back = fileSystem->openRead(target, announced);
+    bool contentsMatch = back.ok();
+    qint64 read = 0;
+    if (back.ok()) {
+        for (int block = 0; block < megabytes; ++block) {
+            const QByteArray chunk = back.value()->read(kBlockSize);
+            read += chunk.size();
+            if (chunk != blockAt(block)) {
+                contentsMatch = false;
+                break;
+            }
+        }
+    }
+
+    cleanUp();
+
+    QCOMPARE(announced, static_cast<qint64>(megabytes) * kBlockSize);
+    QCOMPARE(read, static_cast<qint64>(megabytes) * kBlockSize);
+    QVERIFY2(contentsMatch, "what came back is not what was sent");
 }
 
 void TestSftpFileSystem::itSatisfiesTheConformanceSuite()

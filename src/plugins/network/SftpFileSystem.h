@@ -68,7 +68,15 @@ private:
     /// work is in the command.
     Result<void> runCommand(const QByteArray& command, const VfsUri& context, const QString& what);
 
-    Result<void> uploadTo(const VfsUri& target, QIODevice& payload, qint64 size);
+    /// Sends one span of a file, appending to what the last one left. Called
+    /// from a stream's own thread, like fetchSpan below.
+    VfsError sendSpan(const VfsUri& target, QIODevice& source, bool append, const CancelToken& cancel);
+
+    /// Fetches one span of a file into `sink`. Called from a stream's own
+    /// thread, which is why it takes everything it needs as arguments and
+    /// touches nothing but the connection pool, which is guarded.
+    VfsError fetchSpan(const QByteArray& url, const QString& what, QIODevice& sink, qint64 offset,
+        qint64 span, const CancelToken& cancel);
 
     QString m_scheme;
     SftpSettings m_settings;

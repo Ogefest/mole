@@ -6,8 +6,13 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- A file of any size can be copied to or from an SFTP drive without needing room for
+  a second copy of it locally: transfers now stream instead of being downloaded or
+  collected in full first, so a 100 GB backup costs a few megabytes of memory.
 - Large files can be copied from an SFTP drive: a transfer used to stop dead a little
   short of a gigabyte and either time out or leave part of a file behind.
+- A large copy shows progress from the first second, and a preview of a huge remote
+  file reads the first page instead of fetching the whole thing.
 - A download that ends short of the length the server announced is now reported as a
   failure instead of being handed over as a complete file.
 - A copy whose source stops responding half way is reported as a failure rather than

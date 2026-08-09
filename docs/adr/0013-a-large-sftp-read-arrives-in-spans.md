@@ -98,3 +98,7 @@ this file" is "wait for the next Ubuntu" is not a file manager.
   to a temporary file before the copy begins, so copying a 94 GB file needs 94 GB
   of free space in the temporary directory whatever the destination is. The span
   loop makes that staging survivable, not unnecessary. Also in TODO.md.
+
+Both of those were taken up immediately afterwards, in
+[ADR-0014](0014-remote-files-stream-rather-than-stage.md): reads and writes now
+stream, and the span loop is how each of them fetches and sends.

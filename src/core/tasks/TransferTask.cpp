@@ -133,34 +133,37 @@ bool TransferTask::copyStream(const VfsUri& from, const VfsUri& to, qint64 expec
     QIODevice* source = input.value().get();
     QIODevice* target = output.value().get();
 
+    // Read into a buffer rather than through the QByteArray overload, because
+    // that one answers "the file ended" and "the read failed" with the same
+    // empty result. A device that is being filled from a network as it is read
+    // has no other way to say which happened, and taking the second for the
+    // first is how half a file gets written and then reported as copied.
+    QByteArray chunk(kChunkSize, Qt::Uninitialized);
     qint64 written = 0;
-    while (!source->atEnd()) {
+    for (;;) {
         if (isCancelRequested())
             return false;
 
-        const QByteArray chunk = source->read(kChunkSize);
-        if (chunk.isEmpty()) {
-            // Nothing read is either the end of the file or a read that failed,
-            // and only the device knows which. Taking the second for the first
-            // is how half a file gets written and then reported as copied.
-            if (!source->atEnd()) {
-                recordFailure(from,
-                    VfsError::make(VfsError::IoError,
-                        QStringLiteral("the source stopped after %1 bytes: %2")
-                            .arg(written)
-                            .arg(source->errorString())));
-                return false;
-            }
-            break;
+        const qint64 got = source->read(chunk.data(), kChunkSize);
+        if (got < 0) {
+            recordFailure(from,
+                VfsError::make(VfsError::IoError,
+                    QStringLiteral("the source stopped after %1 bytes: %2")
+                        .arg(written)
+                        .arg(source->errorString())));
+            return false;
         }
-        if (target->write(chunk) != chunk.size()) {
+        if (got == 0)
+            break;
+
+        if (target->write(chunk.constData(), got) != got) {
             recordFailure(to, VfsError::make(VfsError::IoError, QStringLiteral("short write")));
             return false;
         }
 
         // Reported per chunk, not per file: this is what makes a single large
         // copy show a moving bar and a throughput figure at all.
-        written += chunk.size();
+        written += got;
         setBytesDone(m_bytesCompleted + written);
     }
 
