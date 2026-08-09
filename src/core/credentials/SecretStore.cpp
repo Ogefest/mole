@@ -236,7 +236,12 @@ SecretStore::SecretStore(QString path, QObject* parent)
 
 SecretStore::~SecretStore()
 {
-    lock();
+    // Wiped, but not announced. A signal from a destructor hands control to a
+    // slot at the point where this object is half gone -- and in the
+    // application, where whatever is being torn down alongside it may be too.
+    // The drive list took that as an invitation to ask a part-destroyed task
+    // manager for a capacity check, and the process died there.
+    wipe();
 }
 
 QString SecretStore::defaultPath()
@@ -265,8 +270,15 @@ bool SecretStore::exists() const
 
 void SecretStore::lock()
 {
-    if (!m_unlocked && m_key.isEmpty())
+    if (!wipe())
         return;
+    emit unlockedChanged();
+}
+
+bool SecretStore::wipe()
+{
+    if (!m_unlocked && m_key.isEmpty())
+        return false;
 
     // Overwritten before release. Not a guarantee -- a copy may have been made
     // when the buffer grew -- but leaving the key sitting in freed memory for
@@ -276,7 +288,7 @@ void SecretStore::lock()
     m_salt.clear();
     m_secrets.clear();
     m_unlocked = false;
-    emit unlockedChanged();
+    return true;
 }
 
 bool SecretStore::create(const QString& passphrase, QString* errorOut)

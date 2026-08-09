@@ -20,8 +20,8 @@ add_library(mole_ui STATIC
     models/BreakdownModel.cpp
     models/BrowserPaneController.h
     models/BrowserPaneController.cpp
-    models/MountListModel.h
-    models/MountListModel.cpp
+    models/DriveListModel.h
+    models/DriveListModel.cpp
     models/TerminalController.h
     models/TerminalController.cpp
     models/TaskListModel.h

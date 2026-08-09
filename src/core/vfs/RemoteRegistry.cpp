@@ -46,6 +46,12 @@ RemoteRegistry::RemoteRegistry(QString path, SecretStore* secrets, QObject* pare
     , m_path(std::move(path))
     , m_secrets(secrets)
 {
+    // Opening or shutting the credential store does not change a drive, but it
+    // changes every answer this gives about one: whether it can be connected,
+    // and whether its settings can be handed to a factory. Anything watching
+    // the drives is watching for that too, and has no way to see it otherwise.
+    if (m_secrets)
+        connect(m_secrets, &SecretStore::unlockedChanged, this, &RemoteRegistry::drivesChanged);
 }
 
 QString RemoteRegistry::defaultPath()
@@ -259,10 +265,15 @@ QVariantMap RemoteRegistry::configFor(const RemoteDrive& drive, QString* errorOu
 
 bool RemoteRegistry::needsUnlocking() const
 {
-    if (m_secrets && m_secrets->isUnlocked())
+    return std::any_of(
+        m_drives.begin(), m_drives.end(), [this](const RemoteDrive& drive) { return needsUnlocking(drive); });
+}
+
+bool RemoteRegistry::needsUnlocking(const RemoteDrive& drive) const
+{
+    if (drive.secretFields.isEmpty())
         return false;
-    return std::any_of(m_drives.begin(), m_drives.end(),
-        [](const RemoteDrive& drive) { return !drive.secretFields.isEmpty(); });
+    return !m_secrets || !m_secrets->isUnlocked();
 }
 
 } // namespace mole

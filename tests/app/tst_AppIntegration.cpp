@@ -7,7 +7,7 @@
 #include "support/TestSupport.h"
 #include "ui/AppController.h"
 #include "ui/FileLauncher.h"
-#include "ui/models/MountListModel.h"
+#include "ui/models/DriveListModel.h"
 #include "ui/models/TabsModel.h"
 #include "ui/models/TaskListModel.h"
 
@@ -141,7 +141,7 @@ void TestAppIntegration::startsWithBuiltinFeaturesAndDrives()
     QVERIFY(m_app->features()->feature(QStringLiteral("mole.indexsearch")) != nullptr);
 
     // Home and Filesystem are always there.
-    QVERIFY(m_app->mounts()->rowCount() >= 2);
+    QVERIFY(m_app->drives()->rowCount() >= 2);
     QVERIFY(m_app->services().isValid());
 }
 
@@ -612,16 +612,16 @@ void TestAppIntegration::archivePluginMountsAZip()
     QVERIFY2(m_app->isMountableArchive(archiveUri),
         "the loaded plugin must make .tar.gz mountable without the host knowing about archives");
 
-    const int mountsBefore = m_app->mounts()->rowCount();
+    const int mountsBefore = m_app->drives()->rowCount();
     const QString root = m_app->openArchive(archiveUri);
 
     QVERIFY2(!root.isEmpty(), "mounting the archive should have produced a root uri");
-    QCOMPARE(m_app->mounts()->rowCount(), mountsBefore + 1);
+    QCOMPARE(m_app->drives()->rowCount(), mountsBefore + 1);
     QVERIFY(root.startsWith(QStringLiteral("archive://")));
 
     // Mounting the same archive again must reuse the existing drive.
     QCOMPARE(m_app->openArchive(archiveUri), root);
-    QCOMPARE(m_app->mounts()->rowCount(), mountsBefore + 1);
+    QCOMPARE(m_app->drives()->rowCount(), mountsBefore + 1);
 }
 
 void TestAppIntegration::dualPaneIsItsOwnFeature()

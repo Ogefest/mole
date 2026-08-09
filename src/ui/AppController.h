@@ -4,7 +4,7 @@
 #include "sdk/PluginApi.h"
 #include "ui/models/BookmarkModel.h"
 #include "ui/models/CommandPaletteModel.h"
-#include "ui/models/MountListModel.h"
+#include "ui/models/DriveListModel.h"
 #include "ui/models/TabsModel.h"
 #include "ui/models/TaskListModel.h"
 #include "ui/models/TerminalController.h"
@@ -46,7 +46,7 @@ class AppController : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(mole::TabsModel* tabs READ tabs CONSTANT)
-    Q_PROPERTY(mole::MountListModel* mounts READ mounts CONSTANT)
+    Q_PROPERTY(mole::DriveListModel* drives READ drives CONSTANT)
     Q_PROPERTY(mole::TaskListModel* tasks READ tasks CONSTANT)
     Q_PROPERTY(mole::FeatureRegistry* features READ features CONSTANT)
     Q_PROPERTY(mole::BookmarkModel* bookmarks READ bookmarks CONSTANT)
@@ -116,7 +116,7 @@ public:
     bool initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, QString* errorOut = nullptr);
 
     TabsModel* tabs() const { return m_tabs; }
-    MountListModel* mounts() const { return m_mounts; }
+    DriveListModel* drives() const { return m_drives; }
     TaskListModel* tasks() const { return m_taskModel; }
     TerminalController* terminal() const { return m_terminal; }
     FeatureRegistry* features() const { return m_features; }
@@ -389,7 +389,7 @@ private:
     /// Restoring opens tabs, which would immediately mark the session dirty.
     bool m_restoring = false;
     TabsModel* m_tabs = nullptr;
-    MountListModel* m_mounts = nullptr;
+    DriveListModel* m_drives = nullptr;
     TaskListModel* m_taskModel = nullptr;
     PluginServices m_services;
 };

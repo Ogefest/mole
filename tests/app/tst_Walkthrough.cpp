@@ -1272,17 +1272,17 @@ void TestWalkthrough::theDrivesAreInThePaletteToo()
 
     // Every one of them, not merely one: the palette holds no list of its own, so
     // anything missing here is something the sidebar can reach and typing cannot.
-    MountListModel* mounts = m_harness->app()->mounts();
-    QVERIFY(mounts->rowCount() > 0);
-    QCOMPARE(drives.size(), mounts->rowCount());
-    for (int row = 0; row < mounts->rowCount(); ++row) {
-        QVERIFY2(
-            drives.contains(mounts->data(mounts->index(row, 0), MountListModel::DisplayNameRole).toString()),
+    DriveListModel* sidebar = m_harness->app()->drives();
+    QVERIFY(sidebar->rowCount() > 0);
+    QCOMPARE(drives.size(), sidebar->rowCount());
+    for (int row = 0; row < sidebar->rowCount(); ++row) {
+        QVERIFY2(drives.contains(
+                     sidebar->data(sidebar->index(row, 0), DriveListModel::DisplayNameRole).toString()),
             "a drive on the left that cannot be typed for");
     }
 
     // And by name, which is the point -- the drive is reached without the mouse.
-    const QString wanted = mounts->data(mounts->index(0, 0), MountListModel::DisplayNameRole).toString();
+    const QString wanted = sidebar->data(sidebar->index(0, 0), DriveListModel::DisplayNameRole).toString();
     palette->setProperty("filter", wanted);
     QVERIFY(model->rowCount() > 0);
     int found = -1;
@@ -1297,7 +1297,7 @@ void TestWalkthrough::theDrivesAreInThePaletteToo()
     QSignalSpy went(qobject_cast<CommandPaletteModel*>(palette), &CommandPaletteModel::locationRequested);
     QVERIFY(QMetaObject::invokeMethod(palette, "activate", Q_ARG(int, found)));
     QCOMPARE(went.size(), 1);
-    QCOMPARE(went.first().first().toString(), mounts->rootUriAt(0));
+    QCOMPARE(went.first().first().toString(), sidebar->rootUriAt(0));
 }
 
 void TestWalkthrough::breadcrumbsClimbTheTree()

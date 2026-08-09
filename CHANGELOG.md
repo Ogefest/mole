@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- The sidebar lists every drive that has been set up, not only the ones connected
+  right now, and says which each one is: connected, not connected, or locked.
 - A window left full-screen comes back full-screen, and keeps the size it had before
   instead of reopening as a plain window the size of the screen.
 - Search results can be scrolled through while the search is still running: arriving
