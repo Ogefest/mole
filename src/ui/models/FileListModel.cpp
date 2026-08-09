@@ -98,35 +98,81 @@ void FileListModel::appendEntries(const FileEntryList& entries)
     if (entries.isEmpty())
         return;
 
-    // Sorting means a new batch can land anywhere, so this is a reset rather than
-    // an append. What it must not be is a re-sort of everything found so far:
-    // doing that on every batch is quadratic, on the thread that draws the window,
-    // and it is what made a long search freeze the interface while a longer
-    // analysis -- which never touches a visible model -- stayed smooth. Measured
-    // at forty thousand results in batches of two hundred: 9.7 seconds re-sorting,
-    // a fraction of a second merging.
-    FileEntryList fresh;
+    // What this must not be is a re-sort of everything found so far: doing that
+    // on every batch is quadratic, on the thread that draws the window, and it
+    // is what made a long search freeze the interface while a longer analysis --
+    // which never touches a visible model -- stayed smooth. Measured at forty
+    // thousand results in batches of two hundred: 9.7 seconds re-sorting, a
+    // fraction of a second merging.
+    const int base = static_cast<int>(m_all.size());
+    m_all.append(entries);
+
+    QList<int> fresh;
     fresh.reserve(entries.size());
-    for (const FileEntry& entry : entries) {
+    for (qsizetype offset = 0; offset < entries.size(); ++offset) {
+        const FileEntry& entry = entries.at(offset);
         if (entry.isHidden && !m_showHidden)
             continue;
         if (!m_filterFolded.isEmpty() && !entry.name.toLower().contains(m_filterFolded))
             continue;
-        fresh.append(entry);
+        fresh.append(base + static_cast<int>(offset));
     }
 
-    beginResetModel();
-    m_all.append(entries);
-    if (!fresh.isEmpty()) {
-        const auto order = [this](const FileEntry& a, const FileEntry& b) { return lessThan(a, b); };
-        std::stable_sort(fresh.begin(), fresh.end(), order);
-        // Sort the batch, then merge it into what is already in order. Both halves
-        // are sorted by the same comparator, so the result is too.
-        const qsizetype pivot = m_visible.size();
-        m_visible.append(fresh);
-        std::inplace_merge(m_visible.begin(), m_visible.begin() + pivot, m_visible.end(), order);
+    if (fresh.isEmpty()) {
+        // Nothing new to show, but "12 of 340" counts what was found, not what
+        // got past the filter.
+        emit countChanged();
+        return;
     }
-    endResetModel();
+
+    const auto order = [this](int a, int b) { return lessThan(m_all.at(a), m_all.at(b)); };
+    std::stable_sort(fresh.begin(), fresh.end(), order);
+
+    // Sorting means a new batch lands all over the list rather than at the end,
+    // which is why this used to be a reset. A reset throws away the view's
+    // scroll position and the row under the cursor, so results that arrive
+    // while somebody is reading them pull the page out from under them.
+    //
+    // Each stretch of new rows is announced as an insertion instead. Stretches
+    // rather than single rows because a sorted batch mostly lands in runs, and
+    // the signals are what the view pays for.
+    //
+    // Applied one stretch at a time, rather than built to one side and swapped
+    // in at the end: between one beginInsertRows and the next, what the model
+    // reports has to be what it actually holds, or the view is counting rows
+    // nobody told it about.
+    m_visible.reserve(m_visible.size() + fresh.size());
+
+    qsizetype at = 0;
+    qsizetype incoming = 0;
+    while (incoming < fresh.size()) {
+        // Where this one goes, found by bisection rather than by walking. A
+        // merge walks because it is rewriting every row anyway; here almost
+        // every row keeps its place, and comparing names means asking the
+        // collator, which is the expensive part. Searching from `at` rather
+        // than from the start keeps the whole batch to one pass of the list.
+        //
+        // upper_bound, not lower_bound: an equal name lands after the row
+        // already on screen, which is what a stable sort of the two together
+        // would do.
+        at = std::upper_bound(m_visible.cbegin() + at, m_visible.cend(), fresh.at(incoming), order)
+            - m_visible.cbegin();
+
+        qsizetype count = 0;
+        while (incoming + count < fresh.size()
+            && (at == m_visible.size() || order(fresh.at(incoming + count), m_visible.at(at))))
+            ++count;
+
+        beginInsertRows(QModelIndex(), static_cast<int>(at), static_cast<int>(at + count - 1));
+        m_visible.insert(at, count, 0);
+        for (qsizetype k = 0; k < count; ++k)
+            m_visible[at + k] = fresh.at(incoming + k);
+        endInsertRows();
+
+        incoming += count;
+        at += count;
+    }
+
     emit countChanged();
 }
 
@@ -239,16 +285,17 @@ void FileListModel::rebuildVisible()
 {
     m_visible.clear();
     m_visible.reserve(m_all.size());
-    for (const FileEntry& entry : std::as_const(m_all)) {
+    for (qsizetype row = 0; row < m_all.size(); ++row) {
+        const FileEntry& entry = m_all.at(row);
         if (entry.isHidden && !m_showHidden)
             continue;
         if (!m_filterFolded.isEmpty() && !entry.name.toLower().contains(m_filterFolded))
             continue;
-        m_visible.append(entry);
+        m_visible.append(static_cast<int>(row));
     }
 
     std::stable_sort(m_visible.begin(), m_visible.end(),
-        [this](const FileEntry& a, const FileEntry& b) { return lessThan(a, b); });
+        [this](int a, int b) { return lessThan(m_all.at(a), m_all.at(b)); });
 }
 
 int FileListModel::rowCount(const QModelIndex& parent) const
@@ -261,7 +308,7 @@ QVariant FileListModel::data(const QModelIndex& index, int role) const
     if (!index.isValid() || index.row() < 0 || index.row() >= m_visible.size())
         return {};
 
-    const FileEntry& entry = m_visible.at(index.row());
+    const FileEntry& entry = entryAt(index.row());
     switch (role) {
     case NameRole:
     case Qt::DisplayRole:
@@ -335,20 +382,20 @@ QString FileListModel::uriAt(int row) const
 {
     if (row < 0 || row >= m_visible.size())
         return {};
-    return m_visible.at(row).uri.toString();
+    return entryAt(row).uri.toString();
 }
 
 QString FileListModel::nameAt(int row) const
 {
     if (row < 0 || row >= m_visible.size())
         return {};
-    return m_visible.at(row).name;
+    return entryAt(row).name;
 }
 
 int FileListModel::rowOfUri(const QString& uri) const
 {
     for (int row = 0; row < m_visible.size(); ++row) {
-        if (m_visible.at(row).uri.toString() == uri)
+        if (entryAt(row).uri.toString() == uri)
             return row;
     }
     return -1;
@@ -375,7 +422,8 @@ qint64 FileListModel::measuredSize(const QString& uri) const
 QStringList FileListModel::folderUris() const
 {
     QStringList out;
-    for (const FileEntry& entry : m_visible) {
+    for (int row = 0; row < m_visible.size(); ++row) {
+        const FileEntry& entry = entryAt(row);
         if (entry.isDir)
             out.append(entry.uri.toString());
     }
@@ -399,7 +447,7 @@ bool FileListModel::isSelected(int row) const
 {
     if (row < 0 || row >= m_visible.size())
         return false;
-    return m_selected.contains(m_visible.at(row).uri.toString());
+    return m_selected.contains(entryAt(row).uri.toString());
 }
 
 void FileListModel::setSelected(int row, bool selected)
@@ -407,7 +455,7 @@ void FileListModel::setSelected(int row, bool selected)
     if (row < 0 || row >= m_visible.size())
         return;
 
-    const QString uri = m_visible.at(row).uri.toString();
+    const QString uri = entryAt(row).uri.toString();
     const bool changed = selected ? !m_selected.contains(uri) : m_selected.remove(uri);
     if (selected)
         m_selected.insert(uri);
@@ -428,8 +476,8 @@ void FileListModel::selectAll()
 {
     if (m_visible.isEmpty())
         return;
-    for (const FileEntry& entry : std::as_const(m_visible))
-        m_selected.insert(entry.uri.toString());
+    for (int row = 0; row < m_visible.size(); ++row)
+        m_selected.insert(entryAt(row).uri.toString());
 
     emit dataChanged(index(0, 0), index(static_cast<int>(m_visible.size()) - 1, 0), { SelectedRole });
     emit selectionChanged();
@@ -450,8 +498,8 @@ void FileListModel::invertSelection()
 {
     if (m_visible.isEmpty())
         return;
-    for (const FileEntry& entry : std::as_const(m_visible)) {
-        const QString uri = entry.uri.toString();
+    for (int row = 0; row < m_visible.size(); ++row) {
+        const QString uri = entryAt(row).uri.toString();
         if (!m_selected.remove(uri))
             m_selected.insert(uri);
     }
@@ -463,8 +511,8 @@ void FileListModel::invertSelection()
 QStringList FileListModel::selectedUris() const
 {
     QStringList out;
-    for (const FileEntry& entry : m_visible) {
-        const QString uri = entry.uri.toString();
+    for (int row = 0; row < m_visible.size(); ++row) {
+        const QString uri = entryAt(row).uri.toString();
         if (m_selected.contains(uri))
             out.append(uri);
     }
@@ -482,7 +530,8 @@ QList<VfsUri> FileListModel::targets(int fallbackRow) const
 FileEntryList FileListModel::targetEntries(int fallbackRow) const
 {
     FileEntryList out;
-    for (const FileEntry& entry : m_visible) {
+    for (int row = 0; row < m_visible.size(); ++row) {
+        const FileEntry& entry = entryAt(row);
         if (m_selected.contains(entry.uri.toString()))
             out.append(entry);
     }
@@ -490,7 +539,7 @@ FileEntryList FileListModel::targetEntries(int fallbackRow) const
     // Nothing ticked means "act on whatever the cursor is on", which is what
     // every commander-style manager does.
     if (out.isEmpty() && fallbackRow >= 0 && fallbackRow < m_visible.size())
-        out.append(m_visible.at(fallbackRow));
+        out.append(entryAt(fallbackRow));
 
     return out;
 }
@@ -499,13 +548,14 @@ bool FileListModel::isDirAt(int row) const
 {
     if (row < 0 || row >= m_visible.size())
         return false;
-    return m_visible.at(row).isDir;
+    return entryAt(row).isDir;
 }
 
 qint64 FileListModel::totalSize() const
 {
     qint64 total = 0;
-    for (const FileEntry& entry : m_visible) {
+    for (int row = 0; row < m_visible.size(); ++row) {
+        const FileEntry& entry = entryAt(row);
         if (!entry.isDir)
             total += entry.size;
     }

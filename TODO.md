@@ -44,6 +44,6 @@ project, and a contributor should never hit a wall of text they cannot read.
   and the same goes for the SQLite viewer, which opens read-only.
 
 Tracked as issues rather than kept here: the full-screen window geometry (#31),
-the search model reset (#32), an SFTP upload killed mid-flight (#33), FTP staging
-(#34), WebDAV against a real server (#35), NFS and SMB (#36), video preview (#37)
-and the terminal on Windows (#38).
+an SFTP upload killed mid-flight (#33), FTP staging (#34), WebDAV against a real
+server (#35), NFS and SMB (#36), video preview (#37) and the terminal on Windows
+(#38).
