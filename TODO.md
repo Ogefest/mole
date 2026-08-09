@@ -2,10 +2,10 @@
 
 **Work is tracked in [GitHub issues](https://github.com/Ogefest/mole/issues).**
 Anything actionable lives there: bugs, features, and the tests that are owed.
-Larger efforts are [milestones](https://github.com/Ogefest/mole/milestones) over
-those issues, all of it on one
-[board](https://github.com/users/Ogefest/projects/1), with a file in
-[docs/projects/](docs/projects/) for the reasoning that does not fit in an issue.
+A larger effort is a [milestone](https://github.com/Ogefest/mole/milestones) over
+those issues, which names what they add up to; all of it sits on one
+[board](https://github.com/users/Ogefest/projects/1). The reasoning behind an
+effort is not kept in the repository — an issue carries what a builder needs.
 
 What stays in this file is the other thing — **context that is not a task**.
 Behaviour we know about and have decided to live with, conventions a change

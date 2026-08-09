@@ -50,10 +50,14 @@ Small changes — a bug fix, a rename, a test, a tidy-up — do not need one.
 **Work lives in [GitHub issues](https://github.com/Ogefest/mole/issues).** A bug,
 a feature, a test that is owed — each is an issue, and each should carry enough
 for somebody to pick it up without asking a question: what is wrong or wanted,
-where in the code it lives, and how anyone will know it is finished. Larger
-efforts are milestones over those issues, all of it on one
-[board](https://github.com/users/Ogefest/projects/1), with a file in
-[docs/projects/](docs/projects/) for the reasoning that will not fit in an issue.
+where in the code it lives, and how anyone will know it is finished. A larger
+effort is a milestone over those issues, which names what they add up to; all of
+it sits on one [board](https://github.com/users/Ogefest/projects/1).
+
+There is no planning document in the repository. An issue carries what a builder
+needs and a milestone names the effort it belongs to, and the reasoning that
+produced either is planning work rather than engineering work — it happens
+before an issue is written, not beside it.
 
 Before starting anything, look for the issue. If there is not one, open it first
 — an issue written after the fact is a summary, and the point of writing it
