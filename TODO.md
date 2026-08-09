@@ -11,8 +11,6 @@ project, and a contributor should never hit a wall of text they cannot read.
 
 ## Features
 
-## Features
-
 Nothing agreed and unbuilt at the moment. What is next comes from
 [README.md](README.md)'s extension points: video, audio-tag and image-metadata
 previews, the backends listed below, and adding to an existing archive rather than
@@ -22,6 +20,19 @@ only writing a new one.
 
 ## Notes
 
+- A window left full-screen comes back as an ordinary window, and the size it had
+  before going full-screen is lost with it. `Main.qml` reports the state to
+  `rememberWindowGeometry()` as one boolean, `root.visibility === Window.Maximized`,
+  which is false while full-screen; `AppController` therefore treats the window as
+  normal and overwrites the remembered x/y/width/height with the full-screen
+  metrics, so the next start opens a plain window the size of the screen. The fix is
+  a tri-state — normal, maximised, full-screen — carried through
+  `WindowGeometry::maximized` in `SessionStore.h`, its JSON either side of
+  `SessionStore.cpp`, and the `savedWindowGeometry()` map, with the "keep the
+  pre-maximise size" guard in `rememberWindowGeometry()` extended to full-screen as
+  well. `tst_Session.cpp` already has the maximised pair to extend. Note that
+  nothing in the app enters full-screen itself — the state arrives from the window
+  manager, so `onVisibilityChanged` is the only thing that notices it.
 - Streaming search results still resets the model on every batch, which throws away
   the view's scroll position and the highlighted row. It is no longer slow (see
   DONE.md, "A long search froze the interface") but it is unsatisfying to scroll
