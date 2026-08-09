@@ -8,8 +8,8 @@ namespace mole {
 
 /// Addresses a node in any mounted filesystem: <scheme>://<authority>/<path>.
 ///
-///   file:///home/lg/notes.txt
-///   sftp://lg@nas.local/volume1/photos
+///   file:///home/user/notes.txt
+///   sftp://user@nas.local/volume1/photos
 ///   s3://my-bucket/reports/2026
 ///
 /// The path is always normalised: it starts with '/', uses '/' as separator

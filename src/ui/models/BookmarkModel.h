@@ -55,7 +55,7 @@ signals:
     void countChanged();
 
 private:
-    /// "photos" out of "file:///home/lg/photos"; the scheme for a root.
+    /// "photos" out of "file:///home/user/photos"; the scheme for a root.
     static QString defaultNameFor(const QString& uri);
 
     QString m_filePath;

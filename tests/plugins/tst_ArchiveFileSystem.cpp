@@ -89,7 +89,7 @@ void TestArchiveFileSystem::initTestCase()
 
 void TestArchiveFileSystem::authorityRoundTripsThePath()
 {
-    const QString path = QStringLiteral("/home/lg/My Archives/backup 2026.zip");
+    const QString path = QStringLiteral("/home/user/My Archives/backup 2026.zip");
     const QString authority = ArchiveFileSystem::authorityFor(path);
 
     // The host path is percent-encoded so it cannot be confused with the path

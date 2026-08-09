@@ -68,7 +68,7 @@ void TestBookmarks::obeysTheModelContract()
 {
     QAbstractItemModelTester tester(m_model.get(), QAbstractItemModelTester::FailureReportingMode::Warning);
 
-    m_model->add(QStringLiteral("file:///home/lg/photos"));
+    m_model->add(QStringLiteral("file:///home/user/photos"));
     m_model->add(QStringLiteral("file:///mnt/nas/media"));
     m_model->rename(0, QStringLiteral("Pictures"));
     m_model->removeAt(0);
@@ -78,7 +78,7 @@ void TestBookmarks::obeysTheModelContract()
 void TestBookmarks::addsWithADerivedName()
 {
     QSignalSpy countSpy(m_model.get(), &BookmarkModel::countChanged);
-    QVERIFY(m_model->add(QStringLiteral("file:///home/lg/photos")));
+    QVERIFY(m_model->add(QStringLiteral("file:///home/user/photos")));
 
     QCOMPARE(m_model->rowCount(), 1);
     QCOMPARE(m_model->index(0, 0).data(BookmarkModel::NameRole).toString(), QStringLiteral("photos"));
@@ -102,12 +102,12 @@ void TestBookmarks::namesTheRootOfADriveSensibly()
 
 void TestBookmarks::refusesDuplicatesAndEmptyUris()
 {
-    QVERIFY(m_model->add(QStringLiteral("file:///home/lg")));
+    QVERIFY(m_model->add(QStringLiteral("file:///home/user")));
     // Pressing Ctrl+D twice must be harmless rather than produce two rows.
-    QVERIFY(!m_model->add(QStringLiteral("file:///home/lg")));
+    QVERIFY(!m_model->add(QStringLiteral("file:///home/user")));
     QVERIFY(!m_model->add(QString()));
     QCOMPARE(m_model->rowCount(), 1);
-    QVERIFY(m_model->contains(QStringLiteral("file:///home/lg")));
+    QVERIFY(m_model->contains(QStringLiteral("file:///home/user")));
     QVERIFY(!m_model->contains(QStringLiteral("file:///elsewhere")));
 }
 
@@ -136,7 +136,7 @@ void TestBookmarks::renamesAnEntry()
 
 void TestBookmarks::survivesAReload()
 {
-    m_model->add(QStringLiteral("file:///home/lg/photos"), QStringLiteral("Pictures"));
+    m_model->add(QStringLiteral("file:///home/user/photos"), QStringLiteral("Pictures"));
     m_model->add(QStringLiteral("file:///mnt/nas"));
 
     // Adding writes through immediately: bookmarks are few and losing one to a
@@ -189,12 +189,12 @@ void TestBookmarks::keepsRealDrives_data()
     QTest::addColumn<bool>("expected");
 
     QTest::newRow("root") << "/" << "ext4" << "/dev/sda2" << true;
-    QTest::newRow("usb stick") << "/media/lg/BACKUP" << "vfat" << "/dev/sdb1" << true;
-    QTest::newRow("run media") << "/run/media/lg/STICK" << "exfat" << "/dev/sdc1" << true;
+    QTest::newRow("usb stick") << "/media/user/BACKUP" << "vfat" << "/dev/sdb1" << true;
+    QTest::newRow("run media") << "/run/media/user/STICK" << "exfat" << "/dev/sdc1" << true;
     QTest::newRow("manual mount") << "/mnt/SG4T" << "ext4" << "/dev/sdd1" << true;
     QTest::newRow("nfs share") << "/mnt/nas" << "nfs4" << "nas:/export" << true;
     QTest::newRow("nfs anywhere") << "/srv/shared" << "nfs" << "nas:/export" << true;
-    QTest::newRow("sshfs anywhere") << "/home/lg/remote" << "fuse.sshfs" << "user@host:" << true;
+    QTest::newRow("sshfs anywhere") << "/home/user/remote" << "fuse.sshfs" << "user@host:" << true;
 
     // The cases that made the naive filter useless on a ZFS or Btrfs machine:
     // every one of these is a real, separate filesystem, and none is a drive.
@@ -203,7 +203,7 @@ void TestBookmarks::keepsRealDrives_data()
     QTest::newRow("separate boot") << "/boot" << "zfs" << "bpool/BOOT" << false;
     QTest::newRow("efi partition") << "/boot/grub" << "vfat" << "/dev/sda1" << false;
     QTest::newRow("usr local") << "/usr/local" << "zfs" << "rpool/usr/local" << false;
-    QTest::newRow("separate home") << "/home/lg" << "zfs" << "rpool/home/lg" << false;
+    QTest::newRow("separate home") << "/home/user" << "zfs" << "rpool/home/user" << false;
 
     QTest::newRow("proc") << "/proc" << "proc" << "proc" << false;
     QTest::newRow("cgroup") << "/sys/fs/cgroup" << "cgroup2" << "cgroup2" << false;
@@ -240,7 +240,7 @@ void TestBookmarks::namesVolumes_data()
 
     QTest::newRow("root") << "/" << "" << "/dev/sda2" << "Root";
     QTest::newRow("label wins") << "/mnt/x" << "Backup Disk" << "/dev/sdb1" << "Backup Disk";
-    QTest::newRow("mount point") << "/media/lg/PHOTOS" << "" << "/dev/sdc1" << "PHOTOS";
+    QTest::newRow("mount point") << "/media/user/PHOTOS" << "" << "/dev/sdc1" << "PHOTOS";
     QTest::newRow("device fallback") << "/" << "" << "" << "Root";
 }
 
