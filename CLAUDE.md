@@ -10,7 +10,8 @@ previewing anything, and running long jobs in the background, all under one
 keyboard. Native and desktop-first, C++20 and Qt 6 / QML, with drives and tabs as
 plugin extension points.
 
-Always call it *Mole*. `superfilemanager` is only the directory name.
+Always call it *Mole* — the name of the project and of its directory. The old
+name `superfilemanager` survives only in older records, never in new work.
 
 See [README.md](README.md) for what works today, [ARCHITECTURE.md](ARCHITECTURE.md)
 for how it is put together, and [spec.md](spec.md) for the original intent.
