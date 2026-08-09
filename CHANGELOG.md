@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- Search results can be scrolled through while the search is still running: arriving
+  results no longer throw away the position or the row under the cursor.
 - Previewing a Markdown file no longer risks taking the application down with it, and
   a long one is now styled once rather than once per piece of text Qt parses.
 - Cancelling a job no longer leaves a warning in the log calling it a failure, so what

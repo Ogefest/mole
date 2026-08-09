@@ -148,6 +148,9 @@ signals:
 
 private:
     void rebuildVisible();
+    /// What a row is showing. Rows are offsets into m_all, so every reader goes
+    /// through here rather than remembering which list it is holding.
+    const FileEntry& entryAt(int row) const { return m_all.at(m_visible.at(row)); }
     int annotationFor(const QString& uri) const { return m_annotations.value(uri, NoAnnotation); }
     bool lessThan(const FileEntry& a, const FileEntry& b) const;
 
@@ -157,7 +160,20 @@ private:
     void pruneSelection();
 
     FileEntryList m_all;
-    FileEntryList m_visible;
+    /// The rows, as offsets into m_all rather than copies of what is in it.
+    ///
+    /// Copies were simpler, and were what this held, until streaming search
+    /// results had to arrive as insertions rather than a reset. An insertion
+    /// into the middle of a list shifts everything after it, and a batch of two
+    /// hundred results scattered through forty thousand does that two hundred
+    /// times -- so what gets shifted matters. An offset is four bytes moved by
+    /// memmove; a FileEntry is a name, a URI and a date moved one at a time.
+    /// Measured over the same forty thousand results in two hundred batches:
+    /// 29 seconds holding copies, a fraction of a second holding offsets.
+    ///
+    /// Safe because m_all only ever grows or is replaced wholesale -- nothing
+    /// removes a single entry from it, which is what would strand an offset.
+    QList<int> m_visible;
     QSet<QString> m_selected;
     /// Dropped whenever the listing is replaced: a measurement belongs to the
     /// tree as it was when it was taken.

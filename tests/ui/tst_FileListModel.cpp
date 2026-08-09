@@ -45,6 +45,8 @@ private slots:
     void sortsBySizeAndDate();
     void appendKeepsEarlierResults();
     void streamingManyResultsStaysCheap();
+    void streamingScatteredResultsStaysCheap();
+    void streamingInsertsRowsInsteadOfResetting();
     void clearEmptiesTheModel();
     void exposesRolesQmlNeeds();
     void uriAndKindLookupsAreBoundsChecked();
@@ -200,6 +202,83 @@ void TestFileListModel::streamingManyResultsStaysCheap()
     // And the order is still right, which is the thing the sorting was for.
     QVERIFY(
         model.data(model.index(0, 0), FileListModel::UriRole).toString().contains(QStringLiteral("-0-0")));
+}
+
+/// The case above is kind to the model without meaning to be: every name in a
+/// batch shares a prefix, so the batch lands as one stretch and one insertion.
+/// A real search sorts by the base name while walking a tree, so a batch is two
+/// hundred names scattered the length of the alphabet -- two hundred separate
+/// insertions into a list of forty thousand, which is the shape that turns
+/// "insert rather than reset" back into quadratic work.
+void TestFileListModel::streamingScatteredResultsStaysCheap()
+{
+    FileListModel model;
+
+    const int batchSize = 200;
+    const int batches = 200;
+
+    FileEntryList batch;
+    QElapsedTimer clock;
+    clock.start();
+    for (int b = 0; b < batches; ++b) {
+        batch.clear();
+        for (int i = 0; i < batchSize; ++i) {
+            // Interleaved on purpose: batch b holds every (batches)th name, so
+            // each one lands between two rows that are already there.
+            batch.append(
+                makeEntry(QStringLiteral("file-%1.txt").arg(i * batches + b, 8, 10, QLatin1Char('0'))));
+        }
+        model.appendEntries(batch);
+    }
+    const qint64 elapsed = clock.elapsed();
+
+    QCOMPARE(model.rowCount(), batchSize * batches);
+    QVERIFY2(elapsed < 3000,
+        qPrintable(QStringLiteral("streaming %1 scattered results in %2 batches took %3 ms; keeping the "
+                                  "view's place must not cost what the re-sort used to")
+                       .arg(batchSize * batches)
+                       .arg(batches)
+                       .arg(elapsed)));
+
+    const QStringList names = namesOf(model);
+    QCOMPARE(names.first(), QStringLiteral("file-00000000.txt"));
+    QCOMPARE(names.at(1), QStringLiteral("file-00000001.txt"));
+}
+
+/// The point of the whole thing. A reset tells the view "everything you knew is
+/// gone", and it answers by dropping the scroll position and the row under the
+/// cursor -- so results arriving while somebody reads them pull the page away.
+void TestFileListModel::streamingInsertsRowsInsteadOfResetting()
+{
+    FileListModel model;
+    model.setEntries({ makeEntry(QStringLiteral("b.txt")), makeEntry(QStringLiteral("d.txt")) });
+
+    QSignalSpy reset(&model, &QAbstractItemModel::modelReset);
+    QSignalSpy inserted(&model, &QAbstractItemModel::rowsInserted);
+
+    // One before, one between, one after: three separate stretches, and the
+    // rows already there must keep their identity through all of it.
+    model.appendEntries({ makeEntry(QStringLiteral("a.txt")), makeEntry(QStringLiteral("c.txt")),
+        makeEntry(QStringLiteral("e.txt")) });
+
+    QCOMPARE(reset.count(), 0);
+    QCOMPARE(inserted.count(), 3);
+    QCOMPARE(namesOf(model),
+        QStringList({ QStringLiteral("a.txt"), QStringLiteral("b.txt"), QStringLiteral("c.txt"),
+            QStringLiteral("d.txt"), QStringLiteral("e.txt") }));
+
+    // Each stretch named where it actually went, or the view moves the wrong
+    // rows out of the way.
+    QCOMPARE(inserted.at(0).at(1).toInt(), 0);
+    QCOMPARE(inserted.at(1).at(1).toInt(), 2);
+    QCOMPARE(inserted.at(2).at(1).toInt(), 4);
+
+    // A batch that lands together is one insertion, not one per row.
+    QSignalSpy more(&model, &QAbstractItemModel::rowsInserted);
+    model.appendEntries({ makeEntry(QStringLiteral("f.txt")), makeEntry(QStringLiteral("g.txt")) });
+    QCOMPARE(more.count(), 1);
+    QCOMPARE(more.at(0).at(1).toInt(), 5);
+    QCOMPARE(more.at(0).at(2).toInt(), 6);
 }
 
 void TestFileListModel::clearEmptiesTheModel()
