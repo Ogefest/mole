@@ -6,6 +6,14 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- Large files can be copied from an SFTP drive: a transfer used to stop dead a little
+  short of a gigabyte and either time out or leave part of a file behind.
+- A download that ends short of the length the server announced is now reported as a
+  failure instead of being handed over as a complete file.
+- A copy whose source stops responding half way is reported as a failure rather than
+  finishing quietly with a truncated file.
+- `MOLE_LOG=task,drive,net,curl` records what every job and every drive did into the
+  session log, for working out why something went wrong.
 - The path of the open folder, of the selected file, or of the drive can be copied to
   the clipboard — `Ctrl+Shift+C` and `Ctrl+Shift+F`, or from the Operations menu.
 - A notification no longer stops every keyboard shortcut from working for as long as

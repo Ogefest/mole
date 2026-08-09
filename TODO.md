@@ -68,6 +68,29 @@ only writing a new one.
   was written. Its PROPFIND parsing is covered offline against Nextcloud- and
   Apache-shaped answers, and `tst_WebdavFileSystem` has a conformance run that waits
   on `MOLE_TEST_WEBDAV_URL`. Point it at a real Nextcloud before trusting it.
+- **A large SFTP upload has no equivalent of the span loop that fixed reads.** An
+  SFTP transfer stops dead a little short of a gibibyte, where an OpenSSH server
+  re-keys the session -- see
+  [ADR-0013](docs/adr/0013-a-large-sftp-read-arrives-in-spans.md). Reads now arrive
+  by byte range, a span per connection, so nothing reaches the fault. There is no
+  range for a write: `uploadTo()` gives a large payload a connection nobody has used
+  and can do no more, so writing a file over about a gigabyte to an SFTP drive is
+  expected to stall the same way. The shape of a fix is `CURLOPT_APPEND` with
+  `CURLOPT_RESUME_FROM_LARGE`, a span at a time, and the awkward part is what to do
+  when the process dies half way and the server is left holding a partial file that
+  looks finished. Untested against a real server; do that first, with
+  `MOLE_TEST_SFTP_*` and a file over a gigabyte.
+- **`openRead()` stages the whole remote file in the temporary directory before a
+  copy writes a single byte.** Every network backend does it -- see
+  `net::openDownloadedFile` -- which buys random access for the preview layer at the
+  price of needing as much free local space as the file is big, whatever the
+  destination. Copying a 94 GB backup off a NAS therefore needs 94 GB free in
+  `/tmp` even when the target is a different drive with room to spare, and an
+  SFTP-to-SFTP copy stages it twice: once by `openRead`, once again by
+  `BufferedUpload`. Nothing reports how far along the staging is either, so a
+  multi-gigabyte copy sits at 0% and then jumps. The fix is a streaming read for the
+  callers that only ever go forwards -- a copy, a hash, a sync -- keeping the staged
+  copy for the ones that genuinely seek.
 - S3 multipart upload is not implemented, so a single object is held to whatever the
   provider accepts in one PUT (5 GB on AWS). Anything larger needs the multipart
   API, which is a different shape: begin, N parts, complete, and something sensible

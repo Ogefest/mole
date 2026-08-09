@@ -181,6 +181,21 @@ private:
     Account m_account;
 };
 
+/// A megabyte of content that depends on where it sits in the file.
+///
+/// A file of repeated zeroes would prove only that the right number of bytes
+/// arrived; content that differs block by block also proves they arrived in the
+/// right order and none was skipped over.
+constexpr int kBlockSize = 1024 * 1024;
+
+QByteArray blockAt(int index)
+{
+    QByteArray block(kBlockSize, Qt::Uninitialized);
+    for (int i = 0; i < kBlockSize; ++i)
+        block[i] = static_cast<char>((i * 31 + index * 17) & 0xff);
+    return block;
+}
+
 } // namespace
 
 class TestSftpFileSystem : public QObject
@@ -193,6 +208,7 @@ private slots:
     void theSchemeAndRootComeFromTheDrive();
     void theFormAsksOnlyWhatSftpNeeds();
     void itSatisfiesTheConformanceSuite();
+    void aLargeFileArrivesWhole();
 };
 
 void TestSftpFileSystem::aFormWithoutAHostIsRefused()
@@ -261,6 +277,83 @@ void TestSftpFileSystem::theFormAsksOnlyWhatSftpNeeds()
     }
     QCOMPARE(required, 2); // host and user, and nothing else
     QVERIFY2(hasPasswordField, "a password field is what routes the secret to the credential store");
+}
+
+void TestSftpFileSystem::aLargeFileArrivesWhole()
+{
+    const Account account = accountFromEnvironment();
+    if (!account.isConfigured()) {
+        QSKIP("No SFTP account in the environment; set MOLE_TEST_SFTP_HOST, "
+              "MOLE_TEST_SFTP_USER and MOLE_TEST_SFTP_PASS to run this against a real server.");
+    }
+
+    // Reported from a real drive: copying from an SFTP server to local disk left
+    // files that were only part of what was on the server, and nothing said so.
+    // The conformance suite works in kilobytes, where a read never has time to be
+    // interrupted; this one is large enough that the transfer takes seconds and
+    // spans many SFTP reads, which is the only place the fault appears.
+    int megabytes = qEnvironmentVariableIntValue("MOLE_TEST_SFTP_LARGE_MB");
+    if (megabytes <= 0)
+        megabytes = 64;
+
+    // A file already on the server, when one is named -- the closest thing to
+    // the case as reported, and it writes nothing.
+    const QString existing = QString::fromLocal8Bit(qgetenv("MOLE_TEST_SFTP_LARGE_PATH"));
+
+    SftpSettings settings;
+    settings.host = account.host;
+    settings.port = account.port;
+    settings.username = account.user;
+    settings.password = account.password;
+    settings.remoteRoot = QStringLiteral("/");
+
+    auto fileSystem = std::make_shared<SftpFileSystem>(QStringLiteral("sftp"), settings);
+    const RawSftp raw(account);
+
+    QString remotePath = existing;
+    const QString scratch
+        = account.base + QStringLiteral("/mole-large-%1.bin").arg(QCoreApplication::applicationPid());
+    QByteArray payload;
+
+    if (remotePath.isEmpty()) {
+        payload.reserve(megabytes * kBlockSize);
+        for (int block = 0; block < megabytes; ++block)
+            payload.append(blockAt(block));
+        QVERIFY2(raw.putFile(scratch, payload), "could not put a large file on the server");
+        remotePath = scratch;
+    }
+
+    const VfsUri target = VfsUri(QStringLiteral("sftp"), QString(), remotePath);
+
+    const Result<FileEntry> what = fileSystem->stat(target);
+    QVERIFY2(what.ok(), qPrintable(what.error().message));
+    const qint64 announced = what.value().size;
+    QVERIFY2(announced > 0, "the server reported an empty file, so there is nothing to prove here");
+
+    const Result<std::unique_ptr<QIODevice>> stream = fileSystem->openRead(target);
+    QVERIFY2(stream.ok(), qPrintable(stream.error().message));
+
+    qint64 read = 0;
+    int block = 0;
+    bool contentsMatch = true;
+    while (!stream.value()->atEnd()) {
+        const QByteArray chunk = stream.value()->read(kBlockSize);
+        if (chunk.isEmpty())
+            break;
+        if (!payload.isEmpty() && chunk.size() == kBlockSize && chunk != blockAt(block))
+            contentsMatch = false;
+        read += chunk.size();
+        ++block;
+    }
+
+    if (!scratch.isEmpty() && existing.isEmpty())
+        raw.command(QStringLiteral("rm \"%1\"").arg(scratch), RawSftp::parentOf(scratch));
+
+    // The whole point: as many bytes as the server said the file has. A read
+    // that stops early has to be an error, never a short file handed over as if
+    // it were the real one.
+    QCOMPARE(read, announced);
+    QVERIFY2(contentsMatch, "the bytes that arrived are not the bytes that were sent");
 }
 
 void TestSftpFileSystem::itSatisfiesTheConformanceSuite()

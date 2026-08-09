@@ -32,7 +32,7 @@ public:
 
     Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) override;
     Result<FileEntry> stat(const VfsUri& target) override;
-    Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target) override;
+    Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override;
 
     QString archivePath() const { return m_archivePath; }
 

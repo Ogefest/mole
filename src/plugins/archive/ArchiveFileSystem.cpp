@@ -201,7 +201,7 @@ Result<FileEntry> ArchiveFileSystem::stat(const VfsUri& target)
     return entry;
 }
 
-Result<std::unique_ptr<QIODevice>> ArchiveFileSystem::openRead(const VfsUri& target)
+Result<std::unique_ptr<QIODevice>> ArchiveFileSystem::openRead(const VfsUri& target, qint64)
 {
     {
         QMutexLocker lock(&m_mutex);

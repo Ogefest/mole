@@ -51,7 +51,19 @@ public:
     virtual Result<void> rename(const VfsUri& from, const VfsUri& to);
 
     /// Opens a stream for reading. Caller owns the device and must close it.
-    virtual Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target);
+    ///
+    /// `expectedSize` is how many bytes the caller believes the file has, or -1
+    /// when it does not know. It is a hint about how to fetch, never a limit on
+    /// what is returned, and a backend is free to ignore it -- most do. A caller
+    /// that has just listed the directory should pass what the listing said,
+    /// because for a remote drive the difference between "a few kilobytes" and
+    /// "twenty gigabytes" decides how the transfer has to be set up. Passing -1
+    /// is always correct and always safe; it only costs speed.
+    ///
+    /// Every override repeats the default. A default argument binds to the
+    /// static type, so an override that leaves it out compiles everywhere except
+    /// at a call through the concrete class -- which is most of the test suite.
+    virtual Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1);
     virtual Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target);
 
     /// How much room this drive has. Only meaningful when ReportsSpace is

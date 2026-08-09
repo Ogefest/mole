@@ -24,7 +24,9 @@ SyncTask::SyncTask(FileSystemPtr sourceFs, VfsUri source, FileSystemPtr targetFs
 
 bool SyncTask::copyOne(const SyncPlan::Step& step)
 {
-    Result<std::unique_ptr<QIODevice>> input = m_sourceFs->openRead(step.source);
+    // The plan measured the file already; passing that on is what lets a remote
+    // backend fetch a large one differently from a small one.
+    Result<std::unique_ptr<QIODevice>> input = m_sourceFs->openRead(step.source, step.bytes);
     if (!input.ok()) {
         m_failures.append(QStringLiteral("%1: %2").arg(step.relativePath, input.error().message));
         return false;

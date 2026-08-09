@@ -23,7 +23,7 @@ Result<void> IFileSystem::rename(const VfsUri&, const VfsUri&)
     return notSupported("rename");
 }
 
-Result<std::unique_ptr<QIODevice>> IFileSystem::openRead(const VfsUri&)
+Result<std::unique_ptr<QIODevice>> IFileSystem::openRead(const VfsUri&, qint64)
 {
     return VfsError::make(VfsError::NotSupported, QStringLiteral("openRead not supported"));
 }

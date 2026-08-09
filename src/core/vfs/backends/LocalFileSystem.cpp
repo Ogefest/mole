@@ -218,7 +218,7 @@ Result<void> LocalFileSystem::rename(const VfsUri& from, const VfsUri& to)
     return {};
 }
 
-Result<std::unique_ptr<QIODevice>> LocalFileSystem::openRead(const VfsUri& target)
+Result<std::unique_ptr<QIODevice>> LocalFileSystem::openRead(const VfsUri& target, qint64)
 {
     const QString path = target.toLocalPath();
     auto file = std::make_unique<QFile>(path);

@@ -225,7 +225,7 @@ Result<void> MemoryFileSystem::rename(const VfsUri& from, const VfsUri& to)
     return {};
 }
 
-Result<std::unique_ptr<QIODevice>> MemoryFileSystem::openRead(const VfsUri& target)
+Result<std::unique_ptr<QIODevice>> MemoryFileSystem::openRead(const VfsUri& target, qint64)
 {
     // Slept before the lock is taken, so a delayed read does not block every
     // other caller of this drive for the duration.

@@ -9,6 +9,84 @@ wrong.
 
 ---
 
+## Only part of a large file arrived from an SFTP drive
+
+**Asked for:** work out why files copied from an SFTP server to local disk came back
+as fragments, and why large files threw timeouts. A log to diagnose it with was
+asked for alongside, and then broadened: every task and every drive should report
+itself the same way, whatever the question being chased.
+
+**What it turned out to be:** an SFTP transfer stops dead a little short of a
+gibibyte. The bytes arrive at full speed and then simply cease, with the connection
+open and the server still there; two minutes later the stall guard gives up. Whether
+that presented as "a timeout" or as "half a file" depended only on which layer the
+caller was watching.
+
+It is not ours. Plain `curl` does it with no Mole involved, and every attempt to
+place the blame closer to home was disproved by measurement:
+
+| what was done | result |
+|---|---|
+| `curl`, one transfer, fresh process | 1,211,049,311 bytes, complete, 53 MB/s |
+| `curl`, a listing and then the file | stops at 1,072,635,904 |
+| `curl`, a small file and then the file | stops at 1,072,635,904, the same byte |
+| Mole, pooled connection | stops at 1,071,513,600 |
+| Mole, `CURLOPT_FRESH_CONNECT` | stops at 1,071,529,984 |
+| Mole, a brand-new easy handle | stops at 1,071,529,984 |
+| `scp`, any size | fine, always |
+
+Two wrong answers were held on the way, and both were killed by the table above. The
+first was connection reuse -- the pool hands out warm connections, and the failures
+all happened to follow a listing. A fresh connection stops in the same place. The
+second was handle reuse, since curl's own failures shared an easy handle across two
+URLs. A brand-new handle stops in the same place too.
+
+What survives is the byte offset. Every failure lands just short of 2^30, which is
+where an OpenSSH server re-keys the session when the negotiated cipher has a block
+size under sixteen bytes -- `chacha20-poly1305` here. `libssh`, which this
+distribution's curl is built against, says nothing at all when it happens: the trace
+ends mid-transfer and resumes with the stall guard firing. OpenSSH's own client
+re-keys without trouble, which is why `scp` is untroubled, and why this belongs to
+the pairing of the two rather than to either end.
+
+**The answer:** a read larger than 256 MiB arrives a span at a time, by byte range,
+each span over a connection of its own, appended to the same local copy. No
+connection carries enough for the re-key to arrive. A file that fits in one span is
+fetched exactly as before, over a pooled connection -- an SSH handshake costs 0.58 s
+here, measured, which is ruinous across ten thousand small files. Telling those two
+cases apart is what `expectedSize` on `openRead()` is for: `TransferTask` and
+`SyncTask` pass what their plan already measured, everything else says nothing and
+gets the careful path. See
+[ADR-0013](docs/adr/0013-a-large-sftp-read-arrives-in-spans.md). The 1.2 GB file that
+could not be read at all now arrives in five spans in 65 seconds.
+
+**Two ways the same fault was being hidden, both fixed:**
+
+- **A short transfer was handed over as a whole file.** `net::errorFor` now compares
+  what the server announced against what arrived, for every protocol, and fails the
+  read with both numbers in the message. It fires only when the server itself stated
+  a length and the request asked for a body, so a `HEAD` is unaffected.
+- **A source that stopped responding looked like the end of the file.** The copy loop
+  read until a read returned nothing, which `QIODevice` also does when a read fails,
+  and then reported success. It now checks whether the device is actually at its end.
+
+**The log**, since none of this could be seen from outside: four categories by
+subject -- `mole.task`, `mole.drive`, `mole.net`, `mole.curl` -- turned on with
+`MOLE_LOG=net,curl` or `MOLE_LOG=all`, writing into the session log that already
+exists. Two of them are written in one place each and cover everything by
+construction: `Task::execute` for every job, and a `LoggingFileSystem` wrapper that
+every mount goes behind for every drive. Silent at debug and audible at warning, so a
+short download or a failed job leaves a line whether anyone asked for logging or not.
+Credentials in header lines are redacted, because a log gets sent to other people.
+See [ADR-0012](docs/adr/0012-a-log-you-can-turn-up.md).
+
+**What is not fixed** and is now in TODO.md: uploads have no equivalent of a byte
+range, so a large write to an SFTP drive is expected to stall the same way; and
+`openRead()` still stages the whole file in the temporary directory first, so copying
+a 94 GB file needs 94 GB free locally whatever the destination is.
+
+---
+
 ## Copying a location to the clipboard
 
 **Asked for:** copy the path of the open folder, of the selected file, or of the
