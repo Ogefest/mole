@@ -80,6 +80,55 @@ The three files alongside it keep what a tracker holds badly:
   live with, conventions to follow, gaps that are documented rather than
   scheduled.
 
+## Which issue to take next
+
+The board has five columns, and the one that matters is **Ready**: it holds
+everything that can be picked up right now, in the order it should be picked up.
+**Take the lowest `Rank` in `Ready`.** There is no choosing to do.
+
+| Column | Holds |
+|---|---|
+| `Backlog` | not planned, or the brief is not complete enough to work from |
+| `Ready` | planned and dispatchable, lowest `Rank` first |
+| `In Progress` | being worked on now — one at a time |
+| `Blocked` | waiting on something outside the repository, usually the live test environment |
+| `Done` | landed and verified |
+
+`Backlog` and `Blocked` are not a queue to dip into. An issue leaves them in a
+planning session, not because it looked convenient on the day.
+
+```sh
+gh project item-list 1 --owner Ogefest --format json --limit 200 \
+  | jq -r '.items[] | select(.status=="Ready") | [.rank, .content.number, .title] | @tsv' \
+  | sort -n | head
+```
+
+Move the card when the work moves: to `In Progress` on starting it, and to
+`Done` once the commit has landed and closed the issue. A board that says
+something different from the repository is worse than no board.
+
+```sh
+board() {   # board <issue-number> <column>
+  local proj fid oid iid
+  proj=$(gh project view 1 --owner Ogefest --format json | jq -r .id)
+  fid=$(gh project field-list 1 --owner Ogefest --format json \
+        | jq -r '.fields[] | select(.name=="Status") | .id')
+  oid=$(gh project field-list 1 --owner Ogefest --format json \
+        | jq -r --arg c "$2" '.fields[] | select(.name=="Status") | .options[] | select(.name==$c) | .id')
+  iid=$(gh project item-list 1 --owner Ogefest --format json --limit 200 \
+        | jq -r --argjson n "$1" '.items[] | select(.content.number==$n) | .id')
+  gh project item-edit --id "$iid" --project-id "$proj" --field-id "$fid" \
+    --single-select-option-id "$oid"
+}
+```
+
+The order in `Ready` is deliberate rather than obvious. It is planned separately,
+weighing what unblocks the most against what is losing data today, and the
+reasoning does not fit on the card. If the top of the queue looks wrong from
+inside the code — a dependency nobody saw, a fix that is three lines rather than
+three days — say so rather than quietly taking something else. Being wrong about
+the order is useful; working around it in silence is not.
+
 ## Tests are part of the work
 
 Tests are a first-class part of this project, not an afterthought. Every
