@@ -5,8 +5,15 @@
 #include <QTemporaryFile>
 #include <QUrl>
 
+#include <limits>
+
 namespace mole {
 namespace {
+
+    /// Above this a write is streamed rather than staged, because staging it is
+    /// what would make it impossible. See openWrite for why the small case is
+    /// left exactly as it was.
+    constexpr qint64 kStreamAbove = 64LL * 1024 * 1024;
 
     /// Asks for exactly the four properties a listing needs. Sending a body
     /// rather than relying on allprop keeps the answer small on a server that
@@ -289,7 +296,8 @@ Result<std::unique_ptr<QIODevice>> WebdavFileSystem::openRead(const VfsUri& targ
     return net::openDownloadedFile(std::move(scratch));
 }
 
-Result<void> WebdavFileSystem::uploadTo(const VfsUri& target, QIODevice& payload, qint64 size)
+Result<void> WebdavFileSystem::uploadFrom(
+    const VfsUri& target, QIODevice& payload, qint64 size, const CancelToken& cancel)
 {
     Call call;
     call.method = "PUT";
@@ -297,17 +305,41 @@ Result<void> WebdavFileSystem::uploadTo(const VfsUri& target, QIODevice& payload
     call.payload = &payload;
     call.payloadSize = size;
 
-    const net::Response response = send(call, CancelToken());
+    const net::Response response = send(call, cancel);
     const VfsError error = net::errorFor(response, QStringLiteral("Writing %1").arg(target.path()));
     if (error.isError())
         return Result<void>(error);
     return {};
 }
 
-Result<std::unique_ptr<QIODevice>> WebdavFileSystem::openWrite(const VfsUri& target)
+Result<std::unique_ptr<QIODevice>> WebdavFileSystem::openWrite(const VfsUri& target, qint64 expectedSize)
 {
-    auto stream = std::make_unique<net::BufferedUpload>(
-        [this, target](QIODevice& payload, qint64 size) { return uploadTo(target, payload, size); });
+    // Big enough that staging it locally is the problem rather than the answer,
+    // so it goes as it is written, with a chunked transfer encoding.
+    //
+    // Only for the large case, deliberately. WebDAV servers are not uniformly
+    // happy with a chunked PUT -- some answer 411 and demand a length -- and a
+    // small file has nothing to gain by finding that out. So a write whose size
+    // is known and modest, or not known at all, keeps the staged PUT with an
+    // exact Content-Length that has always worked; a write too large to stage
+    // takes the only route there is.
+    if (expectedSize > kStreamAbove) {
+        auto send = [this, target](QIODevice& source, qint64, bool, const CancelToken& cancel) {
+            const Result<void> sent = uploadFrom(target, source, -1, cancel);
+            return sent.ok() ? VfsError::ok() : sent.error();
+        };
+        // One span: HTTP has no way to append to what a previous request wrote,
+        // so the whole object goes in a single PUT however long it takes.
+        auto stream
+            = std::make_unique<net::StreamingUpload>(std::move(send), std::numeric_limits<qint64>::max());
+        if (!stream->open(QIODevice::WriteOnly))
+            return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, stream->errorString());
+        return Result<std::unique_ptr<QIODevice>>(std::unique_ptr<QIODevice>(stream.release()));
+    }
+
+    auto stream = std::make_unique<net::BufferedUpload>([this, target](QIODevice& payload, qint64 size) {
+        return uploadFrom(target, payload, size, CancelToken());
+    });
     if (!stream->open(QIODevice::WriteOnly))
         return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, stream->errorString());
     return Result<std::unique_ptr<QIODevice>>(std::unique_ptr<QIODevice>(stream.release()));

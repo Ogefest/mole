@@ -165,12 +165,17 @@ Result<FileEntryList> SftpFileSystem::list(const VfsUri& dir, const CancelToken&
     switch (listing.error().code) {
     case VfsError::Cancelled:
     case VfsError::NotADirectory:
-    case VfsError::NotFound:
         // Already unambiguous; asking again would only cost a round trip.
         return listing;
     default:
         break;
     }
+
+    // "No such file" is not on that list, however much it sounds like it. Asked
+    // to list a path with a trailing slash, some servers answer with a "." row
+    // describing the file, and others say the file does not exist -- which is
+    // true of the directory that was asked for and false of the file that is
+    // there. Only the check below can tell those apart.
 
     // Otherwise the protocol has said "that did not work" without saying why, so
     // the reason is established here: a file rather than a directory, or nothing
@@ -388,7 +393,7 @@ VfsError SftpFileSystem::sendSpan(
     return error;
 }
 
-Result<std::unique_ptr<QIODevice>> SftpFileSystem::openWrite(const VfsUri& target)
+Result<std::unique_ptr<QIODevice>> SftpFileSystem::openWrite(const VfsUri& target, qint64)
 {
     // Streamed rather than staged: a copy of a hundred-gigabyte file must not
     // need a hundred gigabytes of local scratch space to send it, and the span

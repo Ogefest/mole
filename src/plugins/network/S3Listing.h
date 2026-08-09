@@ -43,4 +43,8 @@ QString parseS3Error(const QByteArray& xml);
 /// Names of the buckets in a ListAllMyBuckets response.
 QStringList parseBucketList(const QByteArray& xml);
 
+/// The upload id out of an InitiateMultipartUpload answer. Empty when the
+/// document is not one, which is how an error document arrives.
+QString parseMultipartUploadId(const QByteArray& xml);
+
 } // namespace mole::net

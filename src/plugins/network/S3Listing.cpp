@@ -136,4 +136,16 @@ QStringList parseBucketList(const QByteArray& xml)
     return buckets;
 }
 
+QString parseMultipartUploadId(const QByteArray& xml)
+{
+    QXmlStreamReader reader(xml);
+    while (!reader.atEnd()) {
+        if (reader.readNext() == QXmlStreamReader::StartElement
+            && reader.name() == QLatin1String("UploadId")) {
+            return reader.readElementText();
+        }
+    }
+    return {};
+}
+
 } // namespace mole::net

@@ -102,9 +102,10 @@ Result<std::unique_ptr<QIODevice>> LoggingFileSystem::openRead(const VfsUri& tar
     return watch(m_name, "read", target.toString(), [&] { return m_inner->openRead(target, expectedSize); });
 }
 
-Result<std::unique_ptr<QIODevice>> LoggingFileSystem::openWrite(const VfsUri& target)
+Result<std::unique_ptr<QIODevice>> LoggingFileSystem::openWrite(const VfsUri& target, qint64 expectedSize)
 {
-    return watch(m_name, "write", target.toString(), [&] { return m_inner->openWrite(target); });
+    return watch(
+        m_name, "write", target.toString(), [&] { return m_inner->openWrite(target, expectedSize); });
 }
 
 Result<SpaceInfo> LoggingFileSystem::space(const VfsUri& target)

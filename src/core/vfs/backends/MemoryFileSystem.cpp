@@ -289,7 +289,7 @@ namespace {
 
 } // namespace
 
-Result<std::unique_ptr<QIODevice>> MemoryFileSystem::openWrite(const VfsUri& target)
+Result<std::unique_ptr<QIODevice>> MemoryFileSystem::openWrite(const VfsUri& target, qint64)
 {
     // A stack-allocated MemoryFileSystem has no owning shared_ptr, and a device
     // that outlives its filesystem would be a dangling write.

@@ -195,6 +195,7 @@ private slots:
     void theFormAsksOnlyWhatS3Needs();
     void spaceAndAccessAreRefusedRatherThanInvented();
     void itSatisfiesTheConformanceSuite();
+    void anObjectTooBigForOneRequestGoesUpInParts();
 };
 
 void TestS3FileSystem::anEndpointIsDerivedFromTheRegionWhenNotGiven()
@@ -325,6 +326,86 @@ void TestS3FileSystem::spaceAndAccessAreRefusedRatherThanInvented()
     const VfsUri root(QStringLiteral("s3"), QString(), QStringLiteral("/"));
     QCOMPARE(fs.space(root).error().code, VfsError::NotSupported);
     QCOMPARE(fs.access(root).error().code, VfsError::NotSupported);
+}
+
+void TestS3FileSystem::anObjectTooBigForOneRequestGoesUpInParts()
+{
+    const Account account = accountFromEnvironment();
+    if (!account.isConfigured()) {
+        QSKIP("No S3 account in the environment; set MOLE_TEST_S3_KEY_ID, MOLE_TEST_S3_SECRET "
+              "and MOLE_TEST_S3_BUCKET to run this against a real bucket.");
+    }
+
+    // Past the part size, so this is a multipart upload: begin, several parts,
+    // complete. Written block by block and never held whole, because the point
+    // of the exercise is an object bigger than the machine sending it.
+    int megabytes = qEnvironmentVariableIntValue("MOLE_TEST_S3_LARGE_MB");
+    if (megabytes <= 0)
+        megabytes = 150;
+
+    S3Settings settings;
+    settings.accessKeyId = account.keyId;
+    settings.secretAccessKey = account.secret;
+    settings.region = account.region;
+    settings.endpoint = account.endpoint;
+    settings.bucket = account.bucket;
+    settings.prefix = QStringLiteral("mole-multipart-%1").arg(QCoreApplication::applicationPid());
+
+    auto fileSystem = std::make_shared<S3FileSystem>(QStringLiteral("s3"), settings);
+    const VfsUri target(QStringLiteral("s3"), QString(), QStringLiteral("/big.bin"));
+
+    constexpr int kBlockSize = 1024 * 1024;
+    const auto blockAt = [](int index) {
+        QByteArray block(kBlockSize, Qt::Uninitialized);
+        for (int i = 0; i < kBlockSize; ++i)
+            block[i] = static_cast<char>((i * 31 + index * 17) & 0xff);
+        return block;
+    };
+
+    Result<std::unique_ptr<QIODevice>> stream = fileSystem->openWrite(target);
+    QVERIFY2(stream.ok(), qPrintable(stream.error().message));
+
+    bool wroteEverything = true;
+    for (int block = 0; block < megabytes && wroteEverything; ++block) {
+        const QByteArray content = blockAt(block);
+        wroteEverything = stream.value()->write(content) == content.size();
+    }
+    const Result<void> committed = closeAndReport(*stream.value());
+
+    const auto cleanUp = [&fileSystem, &target] { fileSystem->remove(target, false); };
+
+    if (!wroteEverything || !committed.ok()) {
+        cleanUp();
+        QVERIFY2(wroteEverything, "the stream stopped accepting bytes part way through");
+        QVERIFY2(committed.ok(), qPrintable(committed.error().message));
+    }
+
+    // What the bucket says it now holds, which is the only opinion that counts.
+    const Result<FileEntry> what = fileSystem->stat(target);
+    if (!what.ok())
+        cleanUp();
+    QVERIFY2(what.ok(), qPrintable(what.error().message));
+    const qint64 announced = what.value().size;
+
+    const Result<std::unique_ptr<QIODevice>> back = fileSystem->openRead(target, announced);
+    bool contentsMatch = back.ok();
+    qint64 read = 0;
+    if (back.ok()) {
+        for (int block = 0; block < megabytes; ++block) {
+            const QByteArray chunk = back.value()->read(kBlockSize);
+            read += chunk.size();
+            if (chunk != blockAt(block)) {
+                contentsMatch = false;
+                break;
+            }
+        }
+    }
+
+    cleanUp();
+
+    QCOMPARE(announced, static_cast<qint64>(megabytes) * kBlockSize);
+    QCOMPARE(read, static_cast<qint64>(megabytes) * kBlockSize);
+    QVERIFY2(contentsMatch, "what came back is not what was sent");
 }
 
 void TestS3FileSystem::itSatisfiesTheConformanceSuite()

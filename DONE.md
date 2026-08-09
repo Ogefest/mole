@@ -95,11 +95,51 @@ reads its first page instead of fetching the lot. Files up to 64 MiB are still
 fetched whole, where random access is free and the preview layer wants it. See
 [ADR-0014](docs/adr/0014-remote-files-stream-rather-than-stage.md).
 
+**Then S3 and WebDAV, which had been left staging on the grounds that their
+protocols require it.** Both reasons are real and neither survives a file larger than
+the local disk. S3 now sends an object it cannot measure as a multipart upload --
+begin, 64 MiB parts, complete -- staging one part at a time so each can be signed,
+and dropping back to a single PUT when the payload turns out to fit in the first
+part. That also lifts the 5 GB ceiling a single PUT imposed: the new one is 640 GB.
+A failed upload is abandoned rather than left to be charged for, and completion is
+read out of the response body, because S3 answers that request with 200 and puts the
+failure inside the document. WebDAV streams a large write with a chunked transfer
+encoding and keeps the staged PUT for everything else, so the servers that refuse
+chunked are only met in the case that has no alternative. Verified against Backblaze
+B2: a 150 MB object goes up in parts and comes back byte for byte, with the
+conformance suite still green for everything smaller. See
+[ADR-0015](docs/adr/0015-s3-uploads-in-parts-webdav-in-chunks.md).
+
+**And then the question of who says a copy worked.** Everything up to here was our
+own account of what we sent: bytes handed to a backend, no complaint, stream closed.
+So now every copied file is weighed where it landed -- one listing per destination
+directory rather than a stat per file, because on SFTP a stat *is* a listing of the
+parent -- and a file whose size there is not the number of bytes that went into it
+fails the copy. It runs before a move deletes anything, so a move to a destination
+that lost bytes no longer destroys the only good copy. A check that cannot be run is
+logged rather than treated as a failure. See
+[ADR-0016](docs/adr/0016-a-copy-is-weighed-at-the-destination.md).
+
+**Two more faults found by running the suite against the real server**, neither
+related to the above:
+
+- **Listing a file reported "not found" on this server rather than "not a
+  directory".** Asked to list a path with a trailing slash, some servers answer with
+  a "." row describing the file and others say it does not exist -- which is true of
+  the directory asked for and false of the file that is there. `list()` treated "not
+  found" as unambiguous and returned it; it now falls through to the same check that
+  handles the other answer. The live conformance suite passes against this server for
+  the first time.
+- **A forward seek on a stream raced the transfer filling it.** Whether a short hop
+  forwards was answered from the buffer or started a new connection depended on how
+  much had arrived, which made the behaviour a matter of network timing. A hop within
+  the buffer's length now waits for those bytes and skips them; further than that
+  still starts again.
+
 **What is not fixed** and is now in TODO.md: an upload interrupted by the process
 being killed leaves a partial file that looks finished -- writing to a temporary name
-and renaming on success would close that -- and S3 and WebDAV still stage their
-uploads, because one has to sign a length up front and the other cannot be trusted
-with chunked PUT.
+and renaming on success would close that; the WebDAV write path has still never met a
+real server; and FTP still stages, which nobody is blocked on.
 
 ---
 

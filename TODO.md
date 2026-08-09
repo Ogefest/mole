@@ -76,16 +76,19 @@ only writing a new one.
   close it: the rename is atomic on the server, and a leftover
   `name.mole-partial` is obviously not the real thing. The same treatment would
   suit FTP and WebDAV.
-- S3 and WebDAV still stage a whole upload in a temporary file before sending it,
-  because S3 has to sign a length it does not know until the payload is complete
-  and WebDAV servers are unreliable about chunked PUT. Writing a file bigger than
-  the local scratch space to either one is therefore still impossible. S3's answer
-  is the multipart API below; WebDAV's would be `Transfer-Encoding: chunked` for
-  the servers known to handle it.
-- S3 multipart upload is not implemented, so a single object is held to whatever the
-  provider accepts in one PUT (5 GB on AWS). Anything larger needs the multipart
-  API, which is a different shape: begin, N parts, complete, and something sensible
-  to do when the process dies half way.
+- The WebDAV streaming write has never been run against a server, like the rest of
+  that backend -- see the note above. A large write now goes out with a chunked
+  transfer encoding, which is the only way to send something too big to stage, and
+  a server that answers 411 will refuse it. Small writes keep the staged PUT with an
+  exact length, so the risk is confined to the case that has no alternative. Point
+  it at a real Nextcloud along with everything else.
+- FTP still stages a whole upload in a temporary file before sending it, so a file
+  larger than the local scratch space cannot be written to an FTP drive. SFTP, S3
+  and WebDAV no longer do -- see
+  [ADR-0014](docs/adr/0014-remote-files-stream-rather-than-stage.md) and
+  [ADR-0015](docs/adr/0015-s3-uploads-in-parts-webdav-in-chunks.md). FTP would take
+  the same treatment as SFTP: it has `APPEND` and `REST`, so spans and resumption
+  both exist. Nobody has been blocked on it yet.
 - The terminal panel is Unix-only. Windows needs ConPTY, which is a different API
   entirely; `Pty` reports itself unavailable there rather than pretending.
 - Parquet writing is out of scope. Reading a file is not a licence to rewrite it,

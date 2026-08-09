@@ -64,7 +64,11 @@ public:
     /// static type, so an override that leaves it out compiles everywhere except
     /// at a call through the concrete class -- which is most of the test suite.
     virtual Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1);
-    virtual Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target);
+    /// Opens a stream for writing. `expectedSize` is the same kind of hint as
+    /// above and carries the same caveat about defaults in overrides: a backend
+    /// that has to choose between one request and many needs to know roughly how
+    /// much is coming, and -1 means the caller cannot say.
+    virtual Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1);
 
     /// How much room this drive has. Only meaningful when ReportsSpace is
     /// advertised; everything else returns NotSupported and the interface

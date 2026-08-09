@@ -31,7 +31,7 @@ bool SyncTask::copyOne(const SyncPlan::Step& step)
         m_failures.append(QStringLiteral("%1: %2").arg(step.relativePath, input.error().message));
         return false;
     }
-    Result<std::unique_ptr<QIODevice>> output = m_targetFs->openWrite(step.target);
+    Result<std::unique_ptr<QIODevice>> output = m_targetFs->openWrite(step.target, step.bytes);
     if (!output.ok()) {
         m_failures.append(QStringLiteral("%1: %2").arg(step.relativePath, output.error().message));
         return false;

@@ -76,7 +76,7 @@ public:
     Result<void> rename(const VfsUri& from, const VfsUri& to) override;
 
     Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override;
-    Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target) override;
+    Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1) override;
 
 private:
     /// One signed request, described before it is sent.
@@ -92,6 +92,27 @@ private:
     };
 
     net::Response send(const Call& call, const CancelToken& cancel, QIODevice* sink = nullptr);
+
+    // ---- multipart upload ------------------------------------------------
+    //
+    // How an object larger than one request gets there. It is also the only way
+    // to send an object without knowing its length first: each part is a request
+    // of its own, so only one part has to be measured and signed at a time, and
+    // the local cost of writing a hundred-gigabyte object is one part.
+
+    /// Starts one, and returns the id every later request has to carry.
+    Result<QString> beginMultipart(const QString& key);
+    /// Sends one part, and returns the tag the server gives it -- completing the
+    /// upload means handing all of them back in order.
+    Result<QByteArray> uploadPart(
+        const QString& key, const QString& uploadId, int partNumber, QIODevice& body, qint64 size);
+    /// Assembles the parts into the object.
+    Result<void> completeMultipart(
+        const QString& key, const QString& uploadId, const QList<QByteArray>& tags);
+    /// Throws away an upload that cannot be finished. Best effort: it is
+    /// housekeeping, and the failure that led here is the one worth reporting.
+    /// Without it the parts sit in the bucket being charged for.
+    void abandonMultipart(const QString& key, const QString& uploadId);
     /// The VFS error for a finished call, preferring the server's own words.
     VfsError errorFor(const net::Response& response, const QString& what) const;
 

@@ -53,7 +53,7 @@ public:
     Result<void> rename(const VfsUri& from, const VfsUri& to) override;
 
     Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override;
-    Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target) override;
+    Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1) override;
 
 private:
     QString remotePath(const VfsUri& uri) const;

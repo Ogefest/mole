@@ -66,7 +66,7 @@ public:
         return m_inner->openRead(target, expectedSize);
     }
 
-    Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri&) override
+    Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri&, qint64 = -1) override
     {
         auto device = std::make_unique<FailsOnCloseDevice>();
         device->open(QIODevice::WriteOnly);
@@ -138,9 +138,9 @@ public:
         return m_inner->remove(target, recursive);
     }
     Result<void> rename(const VfsUri& from, const VfsUri& to) override { return m_inner->rename(from, to); }
-    Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target) override
+    Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1) override
     {
-        return m_inner->openWrite(target);
+        return m_inner->openWrite(target, expectedSize);
     }
 
     Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 = -1) override
@@ -156,6 +156,89 @@ public:
 
 private:
     std::shared_ptr<MemoryFileSystem> m_inner;
+};
+
+/// A drive that accepts every byte and quietly keeps only some of them.
+///
+/// Servers do this. Not often, and not on purpose, but a write that is
+/// acknowledged and then lands short is exactly the failure that leaves a backup
+/// looking like a backup, and nothing before the destination is weighed can tell
+/// the difference.
+class ForgetfulFileSystem final : public IFileSystem
+{
+public:
+    ForgetfulFileSystem(std::shared_ptr<MemoryFileSystem> inner, int keepEvery)
+        : m_inner(std::move(inner))
+        , m_keepEvery(keepEvery)
+    {
+    }
+
+    QString scheme() const override { return m_inner->scheme(); }
+    VfsCapabilities capabilities() const override { return m_inner->capabilities(); }
+    Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) override
+    {
+        return m_inner->list(dir, cancel);
+    }
+    Result<FileEntry> stat(const VfsUri& target) override { return m_inner->stat(target); }
+    Result<void> makeDirectory(const VfsUri& target) override { return m_inner->makeDirectory(target); }
+    Result<void> remove(const VfsUri& target, bool recursive) override
+    {
+        return m_inner->remove(target, recursive);
+    }
+    Result<void> rename(const VfsUri& from, const VfsUri& to) override { return m_inner->rename(from, to); }
+    Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override
+    {
+        return m_inner->openRead(target, expectedSize);
+    }
+
+    Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1) override
+    {
+        Result<std::unique_ptr<QIODevice>> inner = m_inner->openWrite(target, expectedSize);
+        if (!inner.ok())
+            return inner;
+        return Result<std::unique_ptr<QIODevice>>(
+            std::unique_ptr<QIODevice>(new LosingDevice(std::move(inner.value()), m_keepEvery)));
+    }
+
+private:
+    /// Reports every byte as written and passes on only every Nth one.
+    class LosingDevice final : public QIODevice
+    {
+    public:
+        LosingDevice(std::unique_ptr<QIODevice> inner, int keepEvery)
+            : m_inner(std::move(inner))
+            , m_keepEvery(keepEvery)
+        {
+            QIODevice::open(QIODevice::WriteOnly | QIODevice::Unbuffered);
+        }
+        void close() override
+        {
+            m_inner->close();
+            QIODevice::close();
+        }
+
+    protected:
+        qint64 readData(char*, qint64) override { return -1; }
+        qint64 writeData(const char* data, qint64 size) override
+        {
+            QByteArray kept;
+            for (qint64 i = 0; i < size; ++i) {
+                if ((m_seen + i) % m_keepEvery == 0)
+                    kept.append(data[i]);
+            }
+            m_seen += size;
+            m_inner->write(kept);
+            return size; // the lie
+        }
+
+    private:
+        std::unique_ptr<QIODevice> m_inner;
+        int m_keepEvery = 1;
+        qint64 m_seen = 0;
+    };
+
+    std::shared_ptr<MemoryFileSystem> m_inner;
+    int m_keepEvery = 1;
 };
 
 } // namespace
@@ -182,6 +265,8 @@ private slots:
     void readOnlyTargetFails();
     void aWriteThatFailsOnlyWhenClosedIsStillAFailure();
     void aReadThatStopsHalfWayIsNotAnEndOfFile();
+    void aFileThatLandedShortIsCaughtAfterwards();
+    void aMoveKeepsTheSourceWhenTheCheckFails();
     void cancellationStopsMidway();
     void emptyRequestSucceeds();
 
@@ -560,6 +645,58 @@ void TestTransferTask::aReadThatStopsHalfWayIsNotAnEndOfFile()
     QCOMPARE(task->failedCount(), 1);
     QCOMPARE(task->copiedCount(), 0);
     QVERIFY(task->failures().first().contains(QStringLiteral("stopped after 4 bytes")));
+}
+
+void TestTransferTask::aFileThatLandedShortIsCaughtAfterwards()
+{
+    // Every byte was accepted, every close succeeded, and the file on the other
+    // side is a quarter of the size. Nothing in the copy itself can know that,
+    // which is the whole reason for weighing the result afterwards.
+    m_mem->addFile(QStringLiteral("/a/backup.bin"), QByteArray(4000, 'x'));
+
+    auto inner = std::make_shared<MemoryFileSystem>();
+    inner->addDirectory(QStringLiteral("/target"));
+    auto target = std::make_shared<ForgetfulFileSystem>(inner, 4);
+
+    TransferTask::Request request;
+    request.sourceFileSystem = m_mem;
+    request.targetFileSystem = target;
+    request.sources = { VfsUri::fromString(QStringLiteral("mem:///a/backup.bin")) };
+    request.targetDirectory = VfsUri::fromString(QStringLiteral("mem:///target"));
+
+    auto* task = new TransferTask(request);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(task->failedCount(), 1);
+    QVERIFY2(task->failures().first().contains(QStringLiteral("4000 bytes were sent but 1000 arrived")),
+        qPrintable(task->failures().first()));
+}
+
+void TestTransferTask::aMoveKeepsTheSourceWhenTheCheckFails()
+{
+    // The check has to happen before the move deletes anything, or a move to a
+    // destination that lost half the file destroys the only good copy.
+    m_mem->addFile(QStringLiteral("/a/backup.bin"), QByteArray(4000, 'x'));
+
+    auto inner = std::make_shared<MemoryFileSystem>();
+    inner->addDirectory(QStringLiteral("/target"));
+    auto target = std::make_shared<ForgetfulFileSystem>(inner, 4);
+
+    TransferTask::Request request;
+    request.mode = TransferTask::Mode::Move;
+    request.sourceFileSystem = m_mem;
+    request.targetFileSystem = target;
+    request.sources = { VfsUri::fromString(QStringLiteral("mem:///a/backup.bin")) };
+    request.targetDirectory = VfsUri::fromString(QStringLiteral("mem:///target"));
+
+    auto* task = new TransferTask(request);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(task->failedCount(), 1);
+    QVERIFY2(m_mem->stat(VfsUri::fromString(QStringLiteral("mem:///a/backup.bin"))).ok(),
+        "the original was deleted after a move whose destination lost bytes");
 }
 
 void TestTransferTask::cancellationStopsMidway()

@@ -227,7 +227,7 @@ Result<std::unique_ptr<QIODevice>> LocalFileSystem::openRead(const VfsUri& targe
     return Result<std::unique_ptr<QIODevice>>(std::move(file));
 }
 
-Result<std::unique_ptr<QIODevice>> LocalFileSystem::openWrite(const VfsUri& target)
+Result<std::unique_ptr<QIODevice>> LocalFileSystem::openWrite(const VfsUri& target, qint64)
 {
     const QString path = target.toLocalPath();
     auto file = std::make_unique<QFile>(path);

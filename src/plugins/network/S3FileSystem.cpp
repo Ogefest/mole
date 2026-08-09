@@ -5,12 +5,24 @@
 #include <QBuffer>
 #include <QTemporaryFile>
 
+#include <algorithm>
+
 namespace mole {
 namespace {
 
     /// A directory is a key ending in '/'. Written out as a named idea because it
     /// is the one convention the whole backend rests on.
     constexpr QLatin1Char kSeparator('/');
+
+    /// How much of an object one request carries when it takes more than one.
+    ///
+    /// S3 puts a floor of 5 MiB under every part but the last and a ceiling of
+    /// ten thousand parts on an object, so this size decides both how much local
+    /// scratch space a write costs -- one part, never the object -- and how large
+    /// an object can be at all. At 64 MiB that ceiling is 640 GB, which is past
+    /// anything a file manager will be handed, and the staging cost stays small
+    /// enough to be beneath notice.
+    constexpr qint64 kPartBytes = 64LL * 1024 * 1024;
 
     QString withTrailingSlash(const QString& key)
     {
@@ -538,11 +550,180 @@ Result<std::unique_ptr<QIODevice>> S3FileSystem::openRead(const VfsUri& target, 
     return net::openDownloadedFile(std::move(scratch));
 }
 
-Result<std::unique_ptr<QIODevice>> S3FileSystem::openWrite(const VfsUri& target)
+Result<QString> S3FileSystem::beginMultipart(const QString& key)
+{
+    Call call;
+    call.method = "POST";
+    call.key = key;
+    call.query.append({ QStringLiteral("uploads"), QString() });
+
+    const net::Response response = send(call, CancelToken());
+    const VfsError error = errorFor(response, QStringLiteral("Starting the upload of %1").arg(key));
+    if (error.isError())
+        return Result<QString>(error);
+
+    const QString uploadId = net::parseMultipartUploadId(response.body);
+    if (uploadId.isEmpty()) {
+        return Result<QString>::failure(VfsError::IoError,
+            QStringLiteral("Starting the upload of %1: the server did not give an upload id").arg(key));
+    }
+    return Result<QString>(uploadId);
+}
+
+Result<QByteArray> S3FileSystem::uploadPart(
+    const QString& key, const QString& uploadId, int partNumber, QIODevice& body, qint64 size)
+{
+    Call call;
+    call.method = "PUT";
+    call.key = key;
+    call.query.append({ QStringLiteral("partNumber"), QString::number(partNumber) });
+    call.query.append({ QStringLiteral("uploadId"), uploadId });
+    call.body = &body;
+    call.bodySize = size;
+
+    const net::Response response = send(call, CancelToken());
+    const VfsError error
+        = errorFor(response, QStringLiteral("Writing part %1 of %2").arg(partNumber).arg(key));
+    if (error.isError())
+        return Result<QByteArray>(error);
+
+    const QByteArray tag = response.header("etag");
+    if (tag.isEmpty()) {
+        return Result<QByteArray>::failure(VfsError::IoError,
+            QStringLiteral("Writing part %1 of %2: the server did not acknowledge it")
+                .arg(partNumber)
+                .arg(key));
+    }
+    return Result<QByteArray>(tag);
+}
+
+Result<void> S3FileSystem::completeMultipart(
+    const QString& key, const QString& uploadId, const QList<QByteArray>& tags)
+{
+    QByteArray xml = "<CompleteMultipartUpload>";
+    for (int i = 0; i < tags.size(); ++i) {
+        xml += "<Part><PartNumber>" + QByteArray::number(i + 1) + "</PartNumber><ETag>" + tags.at(i)
+            + "</ETag></Part>";
+    }
+    xml += "</CompleteMultipartUpload>";
+
+    QBuffer body(&xml);
+    body.open(QIODevice::ReadOnly);
+
+    Call call;
+    call.method = "POST";
+    call.key = key;
+    call.query.append({ QStringLiteral("uploadId"), uploadId });
+    call.body = &body;
+    call.bodySize = xml.size();
+
+    const net::Response response = send(call, CancelToken());
+    const VfsError error = errorFor(response, QStringLiteral("Finishing %1").arg(key));
+    if (error.isError())
+        return Result<void>(error);
+
+    // S3 answers this one with 200 and puts the failure in the body, which is
+    // the one place a status code cannot be trusted. Believing it would report a
+    // finished upload that does not exist.
+    const QString said = net::parseS3Error(response.body);
+    if (!said.isEmpty())
+        return Result<void>::failure(VfsError::IoError, QStringLiteral("Finishing %1: %2").arg(key, said));
+    return {};
+}
+
+void S3FileSystem::abandonMultipart(const QString& key, const QString& uploadId)
+{
+    Call call;
+    call.method = "DELETE";
+    call.key = key;
+    call.query.append({ QStringLiteral("uploadId"), uploadId });
+    send(call, CancelToken());
+}
+
+Result<std::unique_ptr<QIODevice>> S3FileSystem::openWrite(const VfsUri& target, qint64 expectedSize)
 {
     const QString key = keyFor(target);
-    auto stream = std::make_unique<net::BufferedUpload>(
-        [this, key](QIODevice& payload, qint64 size) { return putObject(key, &payload, size); });
+
+    // Small and measured: one signed PUT, which is cheaper than three requests
+    // and is what most writes are.
+    if (expectedSize >= 0 && expectedSize <= kPartBytes) {
+        auto stream = std::make_unique<net::BufferedUpload>(
+            [this, key](QIODevice& payload, qint64 size) { return putObject(key, &payload, size); });
+        if (!stream->open(QIODevice::WriteOnly)) {
+            return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, stream->errorString());
+        }
+        return Result<std::unique_ptr<QIODevice>>(std::unique_ptr<QIODevice>(stream.release()));
+    }
+
+    // Anything else goes up a part at a time. Each part is staged locally so it
+    // can be measured and signed -- S3 signs a payload hash, and there is no
+    // getting round knowing the length of what is being signed -- but only one
+    // part is ever staged, so the cost is the part size and not the object.
+    struct Upload
+    {
+        QString uploadId;
+        QList<QByteArray> tags;
+    };
+    auto upload = std::make_shared<Upload>();
+
+    auto send = [this, key, upload](QIODevice& source, qint64 span, bool append, const CancelToken&) {
+        QTemporaryFile part;
+        if (!part.open())
+            return VfsError::make(VfsError::IoError, QStringLiteral("Could not stage a part of %1").arg(key));
+
+        QByteArray buffer(256 * 1024, Qt::Uninitialized);
+        qint64 staged = 0;
+        while (staged < span) {
+            const qint64 got = source.read(buffer.data(), std::min<qint64>(buffer.size(), span - staged));
+            if (got < 0)
+                return VfsError::make(
+                    VfsError::IoError, QStringLiteral("Writing %1: %2").arg(key, source.errorString()));
+            if (got == 0)
+                break;
+            if (part.write(buffer.constData(), got) != got) {
+                return VfsError::make(
+                    VfsError::IoError, QStringLiteral("Could not stage a part of %1").arg(key));
+            }
+            staged += got;
+        }
+        const bool last = staged < span;
+        part.seek(0);
+
+        // It all fitted in the first part after all, so it never needed to be a
+        // multipart upload. Whoever asked simply did not know how much there was.
+        if (!append && last) {
+            const Result<void> put = putObject(key, &part, staged);
+            return put.ok() ? VfsError::ok() : put.error();
+        }
+
+        if (upload->uploadId.isEmpty()) {
+            const Result<QString> begun = beginMultipart(key);
+            if (!begun.ok())
+                return begun.error();
+            upload->uploadId = begun.value();
+        }
+
+        if (staged > 0) {
+            const Result<QByteArray> tag
+                = uploadPart(key, upload->uploadId, static_cast<int>(upload->tags.size()) + 1, part, staged);
+            if (!tag.ok()) {
+                abandonMultipart(key, upload->uploadId);
+                return tag.error();
+            }
+            upload->tags.append(tag.value());
+        }
+
+        if (last) {
+            const Result<void> finished = completeMultipart(key, upload->uploadId, upload->tags);
+            if (!finished.ok()) {
+                abandonMultipart(key, upload->uploadId);
+                return finished.error();
+            }
+        }
+        return VfsError::ok();
+    };
+
+    auto stream = std::make_unique<net::StreamingUpload>(std::move(send), kPartBytes);
     if (!stream->open(QIODevice::WriteOnly)) {
         return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, stream->errorString());
     }

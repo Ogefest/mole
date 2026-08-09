@@ -67,6 +67,18 @@ private:
     /// it had.
     enum class Outcome { Transferred, Skipped, Failed };
 
+    /// One file that was copied, and how many bytes went into it.
+    struct Arrival
+    {
+        VfsUri target;
+        qint64 bytes = 0;
+    };
+
+    /// Weighs every copied file on the destination and fails the ones that do
+    /// not match what was sent. One listing per directory, not one stat per
+    /// file.
+    void verifyArrivals();
+
     /// Expands directories into the full list of entries to create and copy.
     bool planJobs(QList<Job>& jobsOut);
     Outcome transferOne(const Job& job);
@@ -83,6 +95,7 @@ private:
     void recordFailure(const VfsUri& uri, const VfsError& error);
 
     Request m_request;
+    QList<Arrival> m_arrivals;
     int m_copied = 0;
     int m_skipped = 0;
     QStringList m_failures;

@@ -45,7 +45,7 @@ public:
     Result<void> rename(const VfsUri& from, const VfsUri& to) override;
 
     Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override;
-    Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target) override;
+    Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1) override;
 
 private:
     /// Server path for a uri: the base path plus the drive root plus the uri.
@@ -59,13 +59,17 @@ private:
         QByteArray body;
         net::HeaderList headers;
         QIODevice* payload = nullptr;
+        /// -1 sends without a length, which curl does as chunked transfer
+        /// encoding. Only for a payload whose size genuinely is not known yet.
         qint64 payloadSize = 0;
     };
     net::Response send(const Call& call, const CancelToken& cancel, QIODevice* sink = nullptr);
 
     /// One PROPFIND, at the given depth.
     Result<QList<net::WebdavEntry>> propfind(const VfsUri& target, int depth, const CancelToken& cancel);
-    Result<void> uploadTo(const VfsUri& target, QIODevice& payload, qint64 size);
+    /// Sends a payload as the body of a PUT. A `size` of -1 means the length is
+    /// not known and the request goes out chunked.
+    Result<void> uploadFrom(const VfsUri& target, QIODevice& payload, qint64 size, const CancelToken& cancel);
 
     QString m_scheme;
     WebdavSettings m_settings;

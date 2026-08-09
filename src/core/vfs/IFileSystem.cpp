@@ -28,7 +28,7 @@ Result<std::unique_ptr<QIODevice>> IFileSystem::openRead(const VfsUri&, qint64)
     return VfsError::make(VfsError::NotSupported, QStringLiteral("openRead not supported"));
 }
 
-Result<std::unique_ptr<QIODevice>> IFileSystem::openWrite(const VfsUri&)
+Result<std::unique_ptr<QIODevice>> IFileSystem::openWrite(const VfsUri&, qint64)
 {
     return VfsError::make(VfsError::NotSupported, QStringLiteral("openWrite not supported"));
 }

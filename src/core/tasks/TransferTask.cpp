@@ -124,7 +124,7 @@ bool TransferTask::copyStream(const VfsUri& from, const VfsUri& to, qint64 expec
         return false;
     }
 
-    Result<std::unique_ptr<QIODevice>> output = m_request.targetFileSystem->openWrite(to);
+    Result<std::unique_ptr<QIODevice>> output = m_request.targetFileSystem->openWrite(to, expectedSize);
     if (!output.ok()) {
         recordFailure(to, output.error());
         return false;
@@ -183,13 +183,74 @@ bool TransferTask::copyStream(const VfsUri& from, const VfsUri& to, qint64 expec
 
     // Said rather than enforced: the size comes from a listing taken earlier, so
     // a file that legitimately grew or shrank in between would be failed for it.
-    // The backend is the one that can prove a transfer was cut short, and it does
-    // -- see net::errorFor. This is the line that says so in the log.
+    // What the destination now holds is checked separately, once everything has
+    // been written -- see verifyArrivals().
     if (expectedSize > 0 && written != expectedSize) {
         qCWarning(taskLog, "%s: copied %lld bytes where the listing said %lld", qPrintable(from.toString()),
             static_cast<long long>(written), static_cast<long long>(expectedSize));
     }
+
+    m_arrivals.append(Arrival { to, written });
     return true;
+}
+
+void TransferTask::verifyArrivals()
+{
+    if (m_arrivals.isEmpty())
+        return;
+
+    // By directory rather than by file: asking about one file at a time is a
+    // round trip each, and on SFTP a stat *is* a listing of the parent -- ten
+    // thousand files would mean ten thousand listings of the same directory.
+    // One listing per directory answers for everything that landed in it.
+    QHash<QString, QList<const Arrival*>> byDirectory;
+    for (const Arrival& arrival : std::as_const(m_arrivals))
+        byDirectory[arrival.target.parent().toString()].append(&arrival);
+
+    int verified = 0;
+    for (auto it = byDirectory.constBegin(); it != byDirectory.constEnd(); ++it) {
+        if (isCancelRequested())
+            return;
+
+        const VfsUri directory = VfsUri::fromString(it.key());
+        const Result<FileEntryList> listing = m_request.targetFileSystem->list(directory, cancelToken());
+        if (!listing.ok()) {
+            // Not being able to look is not the same as finding something wrong,
+            // and calling a copy failed because the check could not run would be
+            // its own kind of lie.
+            qCWarning(taskLog, "could not check what arrived in %s: %s", qPrintable(it.key()),
+                qPrintable(listing.error().message));
+            continue;
+        }
+
+        QHash<QString, qint64> sizes;
+        for (const FileEntry& entry : listing.value()) {
+            if (!entry.isDir)
+                sizes.insert(entry.name, entry.size);
+        }
+
+        for (const Arrival* arrival : it.value()) {
+            const QString name = arrival->target.fileName();
+            if (!sizes.contains(name)) {
+                recordFailure(arrival->target,
+                    VfsError::make(
+                        VfsError::IoError, QStringLiteral("was copied but is not there afterwards")));
+                continue;
+            }
+            const qint64 landed = sizes.value(name);
+            if (landed != arrival->bytes) {
+                recordFailure(arrival->target,
+                    VfsError::make(VfsError::IoError,
+                        QStringLiteral("%1 bytes were sent but %2 arrived").arg(arrival->bytes).arg(landed)));
+                continue;
+            }
+            ++verified;
+        }
+    }
+
+    qCDebug(taskLog, "checked %d of %lld copied files against the destination", verified,
+        static_cast<long long>(m_arrivals.size()));
+    reportCount(QStringLiteral("verified"), QStringLiteral("Verified"), verified, 45);
 }
 
 TransferTask::Outcome TransferTask::transferOne(const Job& job)
@@ -304,6 +365,14 @@ void TransferTask::run()
                 static_cast<double>(m_failures.size()), 60);
         }
     }
+
+    // Every file that was copied is now weighed on the destination itself. Up to
+    // here the only word for it is our own -- bytes were handed to a backend and
+    // it did not complain -- and the one thing worth knowing about a copy is
+    // whether what arrived is what was sent. It is deliberately the last thing
+    // before a move deletes anything.
+    setStatusText(QStringLiteral("checking what arrived…"));
+    verifyArrivals();
 
     // A move only deletes the source once every byte arrived. Losing data
     // because a copy half-failed is not an acceptable trade for tidiness.

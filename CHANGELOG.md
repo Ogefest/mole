@@ -6,6 +6,10 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- Every copied file is weighed at the destination afterwards, and a copy that landed
+  short now fails instead of being counted as done — a move keeps the original.
+- Objects larger than 5 GB can be written to S3, which now uploads in parts, and a
+  large WebDAV write is sent as it is produced rather than collected first.
 - A file of any size can be copied to or from an SFTP drive without needing room for
   a second copy of it locally: transfers now stream instead of being downloaded or
   collected in full first, so a 100 GB backup costs a few megabytes of memory.

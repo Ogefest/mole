@@ -465,31 +465,45 @@ bool StreamingDownload::seek(qint64 position)
         return false;
     if (!QIODevice::seek(position))
         return false;
-    if (position == m_bufferedFrom)
-        return true;
 
     {
-        // Forwards, into bytes that have already arrived: throw them away and
-        // carry on rather than paying for another connection.
         std::unique_lock<std::mutex> lock(m_mutex);
-        if (position > m_bufferedFrom && position <= m_bufferedFrom + m_buffered) {
-            qint64 skip = position - m_bufferedFrom;
-            while (skip > 0 && !m_chunks.empty()) {
+        if (position == m_bufferedFrom)
+            return true;
+
+        // Forwards, and not far: skip over those bytes rather than starting
+        // another transfer. They are on their way whether they are wanted or
+        // not, and waiting for them costs a fraction of a handshake. Waiting
+        // rather than checking what has already arrived is deliberate -- whether
+        // it has is a matter of timing, and a device whose behaviour depends on
+        // how fast the network was is a device nothing can be tested against.
+        const bool worthSkipping = position > m_bufferedFrom && position - m_bufferedFrom <= kBufferBytes;
+        if (worthSkipping && m_thread.joinable()) {
+            while (m_bufferedFrom < position) {
+                if (m_chunks.empty()) {
+                    if (m_finished || m_error.isError())
+                        break;
+                    m_filled.wait(lock, [this] { return !m_chunks.empty() || m_finished; });
+                    continue;
+                }
+
                 QByteArray& front = m_chunks.front();
-                const qint64 wanted = std::min<qint64>(skip, front.size());
-                skip -= wanted;
-                m_buffered -= wanted;
-                m_bufferedFrom += wanted;
-                if (wanted == front.size())
+                const qint64 skip = std::min<qint64>(position - m_bufferedFrom, front.size());
+                m_buffered -= skip;
+                m_bufferedFrom += skip;
+                if (skip == front.size())
                     m_chunks.pop_front();
                 else
-                    front.remove(0, static_cast<int>(wanted));
+                    front.remove(0, static_cast<int>(skip));
             }
             m_drained.notify_all();
-            return true;
+            if (m_bufferedFrom == position)
+                return true;
         }
     }
 
+    // Backwards, or far enough ahead that fetching the gap would cost more than
+    // starting again.
     startFetching(position);
     return true;
 }

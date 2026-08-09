@@ -293,7 +293,7 @@ Result<void> FtpFileSystem::uploadTo(const VfsUri& target, QIODevice& payload, q
     return {};
 }
 
-Result<std::unique_ptr<QIODevice>> FtpFileSystem::openWrite(const VfsUri& target)
+Result<std::unique_ptr<QIODevice>> FtpFileSystem::openWrite(const VfsUri& target, qint64)
 {
     auto stream = std::make_unique<net::BufferedUpload>(
         [this, target](QIODevice& payload, qint64 size) { return uploadTo(target, payload, size); });

@@ -274,10 +274,12 @@ afterwards, so it is safe to point at a bucket or share that holds real files.
 it works and how it connects. Use a throwaway account: these are test credentials
 in a shell history.
 
-The SFTP suite also carries a large-file test, because that is where transfers break
-and a few kilobytes prove nothing. By default it puts 64 MB on the server and reads
-it back; `MOLE_TEST_SFTP_LARGE_MB` changes the size, and `MOLE_TEST_SFTP_LARGE_PATH`
-points it at a file that is already there, which writes nothing at all.
+The SFTP and S3 suites also carry large-file tests, because that is where transfers
+break and a few kilobytes prove nothing. SFTP puts 64 MB on the server and reads it
+back; `MOLE_TEST_SFTP_LARGE_MB` changes the size, and `MOLE_TEST_SFTP_LARGE_PATH`
+points it at a file that is already there, which writes nothing at all. S3 writes an
+object past the part size so the upload is a multipart one, sized by
+`MOLE_TEST_S3_LARGE_MB`.
 
 ## Roadmap
 

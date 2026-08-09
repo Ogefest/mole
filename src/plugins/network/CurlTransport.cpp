@@ -392,7 +392,10 @@ Response CurlPool::perform(const Lease& lease, const CancelToken& cancel, QIODev
         response.status, connects > 0 ? "new connection" : "connection reused",
         response.code == CURLE_OK ? "" : ", ", qPrintable(response.detail));
 
-    if (response.code == CURLE_OK && announced > 0 && received < announced) {
+    // Gated on `sink` for the same reason the error is: a HEAD is told the length
+    // and asks for none of it, so without this every stat on an object store
+    // announces a truncated download that never happened.
+    if (sink && response.code == CURLE_OK && announced > 0 && received < announced) {
         qCWarning(networkLog, "#%llu %s ended after %lld of the %lld bytes it was promised",
             static_cast<unsigned long long>(id), lease.url().constData(), static_cast<long long>(received),
             static_cast<long long>(announced));
