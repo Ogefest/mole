@@ -6,6 +6,10 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- Saving a drive now checks whether it can actually be reached and says so, instead
+  of leaving a wrong endpoint or a refused password to surface later in the middle
+  of browsing.
+- Any configured drive can be checked on demand from the drives dialog.
 - Network drives are now SFTP, FTP, S3 and WebDAV, asking only what each protocol
   needs instead of the eighty questions rclone's generated form could put on screen.
 - One S3 drive type covers AWS, Backblaze B2, MinIO, Ceph, Wasabi and R2, because

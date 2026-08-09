@@ -93,6 +93,7 @@ private slots:
     void theDrivesDialogOffersBackendsAndAForm();
     void everyBackendBuildsAFormWithoutComplaint();
     void aDriveWithAPasswordSavesAndConnects();
+    void savingThroughTheFormShowsWhatTheCheckFound();
     void typingIntoTheKindPickerFiltersIt();
     void connectingFromTheListSurvivesTheListRebuilding();
     void emptyWindowExplainsItself();
@@ -1765,6 +1766,63 @@ void TestWalkthrough::aDriveWithAPasswordSavesAndConnects()
     QVERIFY2(!onDisk.contains("hunter2"), "the password is not written in the clear");
 }
 
+/// Pressing Save in the real form, and reading the verdict it comes back with.
+///
+/// Saving a drive used to tell you nothing about whether it works, and neither
+/// did connecting it -- so a wrong endpoint or a refused password surfaced far
+/// away from the form that caused it, in the middle of browsing. The check now
+/// runs on save, and its answer gets its own band across the dialog: the form is
+/// cleared by saving, so a line inside it would disappear at the moment it became
+/// worth reading.
+void TestWalkthrough::savingThroughTheFormShowsWhatTheCheckFound()
+{
+    QVERIFY(m_harness->app()->unlockCredentials(QStringLiteral("test-passphrase")));
+
+    m_harness->app()->triggerAction(QStringLiteral("mole.file.drives"));
+    QObject* dialog = m_harness->object(QStringLiteral("drivesDialog"));
+    QVERIFY(dialog);
+    QVERIFY(m_harness->until([dialog] { return dialog->property("opened").toBool(); }));
+
+    dialog->setProperty("factory", QStringLiteral("sftp"));
+    dialog->setProperty("variant", QString());
+    m_harness->settle(4);
+
+    QQuickItem* nameField = m_harness->item(QStringLiteral("driveNameField"));
+    QVERIFY(nameField);
+    nameField->setProperty("text", QStringLiteral("Points nowhere"));
+    m_harness->settle(2);
+
+    QQuickItem* save = m_harness->item(QStringLiteral("saveDriveButton"));
+    QVERIFY(save);
+    QVERIFY2(save->property("enabled").toBool(), "a named drive of a known kind can be saved");
+    QVERIFY(QMetaObject::invokeMethod(save, "clicked"));
+
+    // No host was filled in, so the honest verdict is that it cannot be reached.
+    // What is being tested is that a verdict arrives here at all.
+    QQuickItem* banner = nullptr;
+    QVERIFY2(m_harness->until([this, &banner] {
+        banner = m_harness->item(QStringLiteral("driveCheckBanner"));
+        return banner && banner->isVisible();
+    }),
+        "saving a drive has to show what the check found");
+
+    // The band appears, then the layout gives it a size on a later frame.
+    m_harness->settle(6);
+
+    QQuickItem* result = m_harness->item(QStringLiteral("driveCheckResult"));
+    QVERIFY(result);
+    QVERIFY2(!result->property("text").toString().isEmpty(), "the banner says nothing");
+    qWarning("banner %.0fx%.0f, label %.0fx%.0f, text '%s'", banner->width(), banner->height(),
+        result->width(), result->height(), qPrintable(result->property("text").toString()));
+    // A band the engine has given up laying out is present and zero pixels wide,
+    // which counts the same as a working one if all the test does is find it.
+    QVERIFY2(banner->width() > 40,
+        qPrintable(QStringLiteral("the banner is %1 pixels wide").arg(banner->width())));
+}
+
+/// Pressing connect from inside a row of the drive list. The handler belongs to
+/// a delegate, and connecting tells the list its contents changed -- so the list
+/// can rebuild, and destroy the very delegate whose handler is still running.
 void TestWalkthrough::connectingFromTheListSurvivesTheListRebuilding()
 {
     QVERIFY(m_harness->app()->unlockCredentials(QStringLiteral("test-passphrase")));

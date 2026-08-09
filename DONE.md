@@ -9,6 +9,50 @@ wrong.
 
 ---
 
+## A drive is checked where it is configured
+
+**Asked for:** verify the configuration when it is saved. The complaint was
+precise — with a wrong parameter the road to finding out was far too long — and it
+came from hitting it: an S3 drive against Backblaze B2 failed with *"SSL: no
+alternative certificate subject name matches target host name"*, several steps
+away from the form that caused it.
+
+**What it turned out to be:** nothing in the application ever asked the far end
+anything. `connectDrive()` only built the backend, and building one performs no
+I/O, so a drive that could not work looked exactly like one that could until
+something tried to read from it. Saving now runs a `DriveCheckTask` that lists the
+drive's root — the cheapest request that proves name resolution, TLS, credentials
+and the path all at once — and reports either what it found or why it could not.
+The answer arrives as a notification and as a band across the drives dialog, and
+every configured drive has a button to ask again.
+
+A Task rather than a call, because `IFileSystem` is synchronous and worker-thread
+only: a blocking check against a host that is not answering would freeze the
+window for the whole timeout. The drive is saved either way, so a failed check
+never costs what was typed.
+
+Two details worth keeping:
+
+- **The verdict is a band across the dialog, not a line in the form.** Saving
+  clears the form, so a line inside it vanished at the exact moment it became
+  worth reading.
+- **It reports a count, not "connected".** An empty answer from the wrong place
+  looks identical to an empty answer from the right one, and the number is what
+  lets someone tell them apart.
+
+Found while writing the walkthrough test for it: the band appeared, carried the
+right text, and was zero pixels wide, because it was measured on the frame it
+became visible rather than after the layout had run.
+
+**Also fixed, from the same report:** a bucket whose name contains a dot cannot be
+addressed through the host name at all — a wildcard certificate covers exactly one
+name part, so `my.backups.s3.…` fails TLS however it is configured. Such a bucket
+now always goes in the path, and an endpoint that already carries the bucket is not
+given it a second time. Both were verified against B2's real certificate rather
+than reasoned about.
+
+---
+
 ## rclone out, four network backends in
 
 **Asked for:** drop rclone — too much ballast for what it gave, and its

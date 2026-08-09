@@ -19,6 +19,20 @@ Dialog {
     property var values: ({})
     property bool showAdvanced: false
 
+    // The outcome of the last reachability check. A configuration cannot be told
+    // apart from a wrong one by looking at it, so the answer is kept in front of
+    // whoever typed it instead of only going to the notification area.
+    property string checkMessage: ""
+    property bool checkOk: false
+
+    Connections {
+        target: App
+        function onDriveChecked(id, reachable, message) {
+            dialog.checkOk = reachable
+            dialog.checkMessage = message
+        }
+    }
+
     title: "Drives"
     modal: true
     anchors.centerIn: Overlay.overlay
@@ -167,6 +181,41 @@ Dialog {
             }
         }
 
+        // ---- what the last check found ---------------------------------------
+        //
+        // Its own band across the top rather than a line inside the form, because
+        // saving clears the form: the answer would vanish at the exact moment it
+        // became worth reading.
+        Rectangle {
+            objectName: "driveCheckBanner"
+            Layout.fillWidth: true
+            visible: dialog.checkMessage.length > 0
+            radius: 4
+            color: dialog.checkOk ? "#18241a" : "#2a1a1a"
+            border.color: dialog.checkOk ? "#57ab5a" : "#e5534b"
+            // Sized from an inner layout rather than straight from the wrapped
+            // label. Taking the height from a label whose own height depends on
+            // its width closes a binding loop, and Qt answers a loop by
+            // abandoning the layout -- which leaves the band present, correct and
+            // zero pixels wide. Same shape as the unlock banner above.
+            implicitHeight: checkRow.implicitHeight + 16
+
+            ColumnLayout {
+                id: checkRow
+                anchors.fill: parent
+                anchors.margins: 8
+
+                Label {
+                    objectName: "driveCheckResult"
+                    Layout.fillWidth: true
+                    text: (dialog.checkOk ? "✓  " : "✕  ") + dialog.checkMessage
+                    color: dialog.checkOk ? "#8ddc93" : "#f0a0a0"
+                    font.pixelSize: 11
+                    wrapMode: Text.WordWrap
+                }
+            }
+        }
+
         RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -239,6 +288,22 @@ Dialog {
                                     color: modelData.connected ? "#57ab5a"
                                          : modelData.needsUnlock ? "#d9a441" : dialog.mutedColor
                                     font.pixelSize: 10
+                                }
+                            }
+
+                            ToolButton {
+                                objectName: "driveCheckButton"
+                                text: "?"
+                                implicitWidth: 24
+                                implicitHeight: 24
+                                ToolTip.text: "Check that this drive can be reached"
+                                ToolTip.visible: hovered
+                                // Asking is cheap and the answer is the thing a
+                                // configuration cannot tell you by looking at it.
+                                onClicked: {
+                                    dialog.checkMessage = "Checking " + modelData.name + "…"
+                                    dialog.checkOk = false
+                                    App.checkDrive(modelData.id)
                                 }
                             }
 
@@ -489,9 +554,16 @@ Dialog {
                         enabled: nameField.text.trim().length > 0 && dialog.factory.length > 0
                         onClicked: {
                             saveError.text = ""
+                            // Saying so before the answer arrives, because the
+                            // check does real network I/O and can take a moment
+                            // against a host that is not answering.
+                            dialog.checkOk = false
+                            dialog.checkMessage = "Checking " + nameField.text.trim() + "…"
                             if (App.saveDrive(dialog.editingId, nameField.text, dialog.factory,
                                               dialog.variant, rootField.text, dialog.values)) {
                                 dialog.startNew()
+                            } else {
+                                dialog.checkMessage = ""
                             }
                         }
                     }

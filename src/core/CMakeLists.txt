@@ -64,6 +64,8 @@ add_library(mole_core STATIC
     settings/Preferences.cpp
     tasks/FolderSizesTask.h
     tasks/FolderSizesTask.cpp
+    tasks/DriveCheckTask.h
+    tasks/DriveCheckTask.cpp
 
     index/IndexDatabase.h
     index/IndexDatabase.cpp

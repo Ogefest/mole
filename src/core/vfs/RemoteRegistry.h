@@ -60,7 +60,12 @@ public:
     /// Adds or replaces by id, storing `secrets` in the credential store rather
     /// than in the settings file. Returns false when a secret was given but the
     /// store is locked -- writing it in the clear instead is not an option.
-    bool put(const RemoteDrive& drive, const QVariantMap& secretValues, QString* errorOut = nullptr);
+    ///
+    /// A drive saved without an id is given one here, and `storedIdOut` reports
+    /// it. Callers need it: a new drive cannot be looked up again by anything but
+    /// its id, and the caller is the only one that knows it just made it.
+    bool put(const RemoteDrive& drive, const QVariantMap& secretValues, QString* errorOut = nullptr,
+        QString* storedIdOut = nullptr);
     /// Removes the drive and its credentials together.
     bool remove(const QString& id);
 

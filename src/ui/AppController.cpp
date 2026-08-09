@@ -24,6 +24,7 @@
 #endif
 
 #include "core/settings/Preferences.h"
+#include "core/tasks/DriveCheckTask.h"
 #include "core/tasks/FolderSizesTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/IFileSystemFactory.h"
@@ -518,13 +519,75 @@ bool AppController::saveDrive(const QString& id, const QString& name, const QStr
     drive.settings = settings;
 
     m_credentialsError.clear();
-    if (!m_remotes->put(drive, secrets, &m_credentialsError)) {
+    QString storedId;
+    if (!m_remotes->put(drive, secrets, &m_credentialsError, &storedId)) {
         emit notification(static_cast<int>(EventBus::Severity::Warning),
             QStringLiteral("Could not save the drive"), m_credentialsError);
         return false;
     }
     emit drivesChanged();
+
+    // Verified here, where it was typed. Nothing in saving a drive tests it, and
+    // nothing in connecting one does either -- so a wrong endpoint or a refused
+    // password used to surface much later, as an error about a certificate in the
+    // middle of browsing. The check runs in the background because it does real
+    // I/O; the drive is saved either way, so a failure costs nothing that was
+    // typed.
+    checkDrive(storedId);
     return true;
+}
+
+void AppController::checkDrive(const QString& id)
+{
+    if (!m_remotes || !m_vfs || !m_taskManager)
+        return;
+
+    const RemoteDrive drive = m_remotes->drive(id);
+    if (!drive.isValid())
+        return;
+
+    const auto report = [this, id, name = drive.name](bool reachable, const QString& message) {
+        emit driveChecked(id, reachable, message);
+        emit notification(
+            static_cast<int>(reachable ? EventBus::Severity::Info : EventBus::Severity::Warning),
+            reachable ? QStringLiteral("%1 is reachable").arg(name)
+                      : QStringLiteral("%1 cannot be reached").arg(name),
+            message);
+    };
+
+    QString error;
+    const QVariantMap config = m_remotes->configFor(drive, &error);
+    if (config.isEmpty()) {
+        report(false, error.isEmpty() ? QStringLiteral("This drive has no configuration") : error);
+        return;
+    }
+
+    IFileSystemFactory* factory = nullptr;
+    for (IFileSystemFactory* candidate : m_vfs->factories()) {
+        if (candidate->scheme() == drive.factoryScheme) {
+            factory = candidate;
+            break;
+        }
+    }
+    if (!factory) {
+        report(false, QStringLiteral("Nothing here can serve a %1 drive").arg(drive.factoryScheme));
+        return;
+    }
+
+    // Built on this thread, which performs no I/O; only the listing does, and that
+    // happens inside the task.
+    FileSystemPtr fs = factory->create(config, &error);
+    if (!fs) {
+        report(false, error.isEmpty() ? QStringLiteral("That configuration is not usable") : error);
+        return;
+    }
+
+    // Not marked background: it is short, it was asked for by saving, and seeing
+    // it in the task strip is part of the point.
+    auto* task = new DriveCheckTask(drive.name, std::move(fs), drive.rootUri());
+    connect(task, &DriveCheckTask::checked, this,
+        [report](bool reachable, const QString& message) { report(reachable, message); });
+    m_taskManager->submit(task);
 }
 
 bool AppController::removeDrive(const QString& id)

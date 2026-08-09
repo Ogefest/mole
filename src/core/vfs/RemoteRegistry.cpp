@@ -142,7 +142,8 @@ RemoteDrive RemoteRegistry::drive(const QString& id) const
     return {};
 }
 
-bool RemoteRegistry::put(const RemoteDrive& drive, const QVariantMap& secretValues, QString* errorOut)
+bool RemoteRegistry::put(
+    const RemoteDrive& drive, const QVariantMap& secretValues, QString* errorOut, QString* storedIdOut)
 {
     const auto fail = [errorOut](const QString& message) {
         if (errorOut)
@@ -200,6 +201,8 @@ bool RemoteRegistry::put(const RemoteDrive& drive, const QVariantMap& secretValu
     if (!save())
         return fail(QStringLiteral("Could not write the drive list"));
 
+    if (storedIdOut)
+        *storedIdOut = stored.id;
     emit drivesChanged();
     return true;
 }

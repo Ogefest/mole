@@ -12,6 +12,7 @@
 
 #include <QDir>
 #include <QGuiApplication>
+#include <QSignalSpy>
 #include <QTest>
 
 using namespace mole;
@@ -41,6 +42,7 @@ private slots:
     void bulkRenameRefusesABatchThatWouldCollide();
     void addsADriveThroughTheSameFormEveryBackendDeclares();
     void aSavedPasswordIsNeverInTheSettingsFile();
+    void savingADriveChecksItStraightAway();
     void verifyFindsMembersThatHaveGone();
     void forgettingMissingLeavesTheRestAlone();
 
@@ -398,6 +400,47 @@ void TestFileSets::addsADriveThroughTheSameFormEveryBackendDeclares()
     // recognises rather than as an opaque id.
     QCOMPARE(configured.first().toMap().value(QStringLiteral("uri")).toString(),
         QStringLiteral("testnas://Test NAS/"));
+}
+
+void TestFileSets::savingADriveChecksItStraightAway()
+{
+    // The point of checking at save time: nothing about saving a drive used to
+    // touch the far end, and neither did connecting it, so a wrong endpoint or a
+    // refused password only surfaced once something tried to read -- several
+    // steps away from the form that caused it.
+    const QVariantList kinds = m_app->driveKinds();
+    QString factory;
+    QString variant;
+    for (const QVariant& value : kinds) {
+        const QVariantMap kind = value.toMap();
+        if (kind.value(QStringLiteral("factory")).toString() == QLatin1String("sftp")
+            || kind.value(QStringLiteral("variant")).toString() == QLatin1String("sftp")) {
+            factory = kind.value(QStringLiteral("factory")).toString();
+            variant = kind.value(QStringLiteral("variant")).toString();
+            break;
+        }
+    }
+    if (factory.isEmpty())
+        QSKIP("no sftp backend in this build; the network plugin was not built");
+
+    QSignalSpy checked(m_app.get(), &AppController::driveChecked);
+
+    QVariantMap values;
+    // A host that cannot exist: the check has to report a verdict either way, and
+    // a reserved name gives a fast, offline answer.
+    values.insert(QStringLiteral("host"), QStringLiteral("nothing.invalid"));
+    values.insert(QStringLiteral("user"), QStringLiteral("someone"));
+    values.insert(QStringLiteral("password"), QStringLiteral("whatever"));
+    QVERIFY(m_app->unlockCredentials(QStringLiteral("a passphrase")));
+    QVERIFY(m_app->saveDrive({}, QStringLiteral("Nowhere"), factory, variant, {}, values));
+
+    // Saving succeeds regardless -- a failed check must not throw away what was
+    // typed -- but the verdict has to arrive on its own, without anyone asking.
+    QVERIFY2(checked.wait(60000), "saving a drive has to check it");
+    QCOMPARE(checked.count(), 1);
+    QVERIFY2(!checked.first().at(1).toBool(), "a host that does not exist is not reachable");
+    QVERIFY2(!checked.first().at(2).toString().isEmpty(),
+        "and the reason has to be something a reader can act on");
 }
 
 void TestFileSets::aSavedPasswordIsNeverInTheSettingsFile()

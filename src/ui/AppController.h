@@ -154,8 +154,17 @@ public:
         const QString& variant, const QString& root, const QVariantMap& values);
     Q_INVOKABLE bool removeDrive(const QString& id);
     /// Connects one now. Returns an empty string on success, else the reason.
+    ///
+    /// "Connected" here means the backend was built, not that the far end
+    /// answered — building one performs no I/O. checkDrive() is what asks.
     Q_INVOKABLE QString connectDrive(const QString& id);
     Q_INVOKABLE void disconnectDrive(const QString& id);
+
+    /// Asks whether a saved drive can actually be reached, in the background,
+    /// and reports through driveChecked(). Runs automatically after saveDrive(),
+    /// so a configuration is verified where it was entered rather than several
+    /// steps later when something finally tries to read from it.
+    Q_INVOKABLE void checkDrive(const QString& id);
 
     const PluginServices& services() const { return m_services; }
 
@@ -285,6 +294,9 @@ public:
 signals:
     void credentialsChanged();
     void drivesChanged();
+    /// A checkDrive() finished. `message` is ready to show as it stands: what was
+    /// found, or why the drive could not be reached.
+    void driveChecked(const QString& id, bool reachable, const QString& message);
     /// The shell should show the drives dialog. A signal rather than a direct
     /// call, because this layer has no business knowing what a dialog is.
     void drivesRequested();
