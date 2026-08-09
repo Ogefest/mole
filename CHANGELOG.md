@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- A drive connects, ejects and can be checked from its own row in the sidebar, with a
+  coloured dot for what it is doing, instead of through the drives dialog.
 - The sidebar lists every drive that has been set up, not only the ones connected
   right now, and says which each one is: connected, not connected, or locked.
 - A window left full-screen comes back full-screen, and keeps the size it had before

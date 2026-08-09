@@ -51,7 +51,8 @@ void TestEventBus::entryCreatedAlsoAnnouncesItsDirectory()
     // An open pane listens for directoryChanged, not entryCreated, so the
     // derived event has to be emitted too or nothing would refresh.
     QCOMPARE(changed.count(), 1);
-    QCOMPARE(changed.first().first().value<VfsUri>(), VfsUri::fromString(QStringLiteral("file:///home/user")));
+    QCOMPARE(
+        changed.first().first().value<VfsUri>(), VfsUri::fromString(QStringLiteral("file:///home/user")));
 }
 
 void TestEventBus::entryRenamedAnnouncesBothDirectories()

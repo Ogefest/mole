@@ -58,6 +58,14 @@ public:
     bool fail = false;
 };
 
+/// The state a row reports. The role carries a plain int -- the enum is not
+/// registered with QML and the model hands out something a delegate can use --
+/// so the cast lives here rather than at every assertion.
+DriveListModel::State stateAt(const QModelIndex& index)
+{
+    return static_cast<DriveListModel::State>(index.data(DriveListModel::StateRole).toInt());
+}
+
 } // namespace
 
 class TestDriveListModel : public QObject
@@ -270,8 +278,7 @@ void TestDriveListModel::aConfiguredDriveIsOneRowWhetherOrNotItIsConnected()
     QCOMPARE(m_model->rowCount(), 1);
     const QModelIndex row = m_model->index(0, 0);
     QCOMPARE(row.data(DriveListModel::DisplayNameRole).toString(), QStringLiteral("Office NAS"));
-    QCOMPARE(row.data(DriveListModel::StateRole).value<DriveListModel::State>(),
-        DriveListModel::State::Disconnected);
+    QCOMPARE(stateAt(row), DriveListModel::State::Disconnected);
     QCOMPARE(row.data(DriveListModel::ConfiguredIdRole).toString(), id);
     QVERIFY(row.data(DriveListModel::CanConnectRole).toBool());
     QVERIFY(!row.data(DriveListModel::CanEjectRole).toBool());
@@ -303,8 +310,7 @@ void TestDriveListModel::connectingDoesNotMoveTheRow()
     QCOMPARE(m_model->rowCount(), 3);
     const QModelIndex beta = m_model->index(rowOfBeta, 0);
     QCOMPARE(beta.data(DriveListModel::ConfiguredIdRole).toString(), second);
-    QCOMPARE(beta.data(DriveListModel::StateRole).value<DriveListModel::State>(),
-        DriveListModel::State::Connected);
+    QCOMPARE(stateAt(beta), DriveListModel::State::Connected);
     QVERIFY(beta.data(DriveListModel::CanEjectRole).toBool());
     QVERIFY(!beta.data(DriveListModel::CanConnectRole).toBool());
 
@@ -319,14 +325,12 @@ void TestDriveListModel::disconnectingReturnsTheRowRatherThanRemovingIt()
     const QString id = configure(QStringLiteral("Office NAS"));
     connectConfigured(id);
     QCOMPARE(m_model->rowCount(), 1);
-    QCOMPARE(m_model->index(0, 0).data(DriveListModel::StateRole).value<DriveListModel::State>(),
-        DriveListModel::State::Connected);
+    QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Connected);
 
     m_model->unmount(0);
 
     QCOMPARE(m_model->rowCount(), 1);
-    QCOMPARE(m_model->index(0, 0).data(DriveListModel::StateRole).value<DriveListModel::State>(),
-        DriveListModel::State::Disconnected);
+    QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Disconnected);
     QCOMPARE(m_model->index(0, 0).data(DriveListModel::ConfiguredIdRole).toString(), id);
 }
 
@@ -342,8 +346,7 @@ void TestDriveListModel::aShutCredentialStoreShowsAsLocked()
     QVERIFY(!id.isEmpty());
 
     // Open store: it is merely not connected yet.
-    QCOMPARE(m_model->index(0, 0).data(DriveListModel::StateRole).value<DriveListModel::State>(),
-        DriveListModel::State::Disconnected);
+    QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Disconnected);
 
     // Shutting the store is not a change to any drive, but it changes what can
     // be said about one -- so the list has to hear about it rather than wait for
@@ -352,16 +355,14 @@ void TestDriveListModel::aShutCredentialStoreShowsAsLocked()
     m_secrets->lock();
     QCOMPARE(relisted.count(), 1);
 
-    QCOMPARE(m_model->index(0, 0).data(DriveListModel::StateRole).value<DriveListModel::State>(),
-        DriveListModel::State::Locked);
+    QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Locked);
     QCOMPARE(m_model->index(0, 0).data(DriveListModel::StateTextRole).toString(), QStringLiteral("Locked"));
     QVERIFY2(!m_model->index(0, 0).data(DriveListModel::CanConnectRole).toBool(),
         "offering connect here would fail every time instead of saying what is wrong");
 
     QVERIFY(m_secrets->unlock(QStringLiteral("phrase")));
     QCOMPARE(relisted.count(), 2);
-    QCOMPARE(m_model->index(0, 0).data(DriveListModel::StateRole).value<DriveListModel::State>(),
-        DriveListModel::State::Disconnected);
+    QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Disconnected);
     QVERIFY(m_model->index(0, 0).data(DriveListModel::CanConnectRole).toBool());
 }
 
@@ -374,8 +375,7 @@ void TestDriveListModel::aMountNobodyConfiguredIsLocalAndUnchanged()
     mountSized(QStringLiteral("disk"), fs);
 
     const QModelIndex row = m_model->index(0, 0);
-    QCOMPARE(
-        row.data(DriveListModel::StateRole).value<DriveListModel::State>(), DriveListModel::State::Local);
+    QCOMPARE(stateAt(row), DriveListModel::State::Local);
     QCOMPARE(row.data(DriveListModel::ConfiguredIdRole).toString(), QString());
     QVERIFY(!row.data(DriveListModel::CanConnectRole).toBool());
     QVERIFY(row.data(DriveListModel::CanEjectRole).toBool());
