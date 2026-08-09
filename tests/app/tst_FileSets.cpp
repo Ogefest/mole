@@ -5,6 +5,7 @@
 #include "plugins/builtin/FileSetsFeature.h"
 #include "support/TestSupport.h"
 #include "ui/AppController.h"
+#include "ui/models/DriveListModel.h"
 #include "ui/models/TabsModel.h"
 
 #include "core/CoreMetaTypes.h"
@@ -399,12 +400,14 @@ void TestFileSets::addsADriveThroughTheSameFormEveryBackendDeclares()
     QVERIFY(
         m_app->saveDrive({}, QStringLiteral("Test NAS"), factory, variant, QStringLiteral("/data"), values));
 
-    const QVariantList configured = m_app->configuredDrives();
-    QCOMPARE(configured.size(), 1);
-    QCOMPARE(configured.first().toMap().value(QStringLiteral("name")).toString(), QStringLiteral("Test NAS"));
+    QAbstractItemModel* configured = m_app->configuredDrives();
+    QCOMPARE(configured->rowCount(), 1);
+    const QString id = configured->data(configured->index(0, 0), DriveListModel::ConfiguredIdRole).toString();
+    QCOMPARE(configured->data(configured->index(0, 0), DriveListModel::DisplayNameRole).toString(),
+        QStringLiteral("Test NAS"));
     // The uri scheme comes from the name, so it reads as something a person
     // recognises rather than as an opaque id.
-    QCOMPARE(configured.first().toMap().value(QStringLiteral("uri")).toString(),
+    QCOMPARE(m_app->driveConfiguration(id).value(QStringLiteral("uri")).toString(),
         QStringLiteral("testnas://Test NAS/"));
 }
 
