@@ -29,8 +29,13 @@ NODE="${PROXMOX_HOST:+$PROXMOX_USER@$PROXMOX_HOST}"
 # allowed to have other work on it, and this script must never touch it.
 VMID="${MOLE_TESTBED_VMID:-200}"
 NAME="${MOLE_TESTBED_NAME:-mole-testbed}"
-# A Proxmox template with cloud-init and an ssh key already in it.
-TEMPLATE="${MOLE_TESTBED_TEMPLATE:-9000}"
+# The Debian cloud image to build from. A path on the hypervisor, because that
+# is where the machine gets made. Built from the image rather than cloned from
+# somebody's template: a template is a machine whose history nobody can see, and
+# the point of this script is that the history is the script.
+IMAGE="${MOLE_TESTBED_IMAGE:-/var/lib/vz/template/iso/debian-12-genericcloud-amd64.qcow2}"
+# Public keys to put on the machine, as a file on the hypervisor.
+SSHKEYS="${MOLE_TESTBED_SSHKEYS:-/root/.ssh/authorized_keys}"
 STORAGE="${MOLE_TESTBED_STORAGE:-local-lvm}"
 BRIDGE="${MOLE_TESTBED_BRIDGE:-vmbr0}"
 CORES="${MOLE_TESTBED_CORES:-4}"
@@ -48,10 +53,24 @@ ACCOUNT="${MOLE_TESTBED_ACCOUNT:-moletest}"
 # way round -- the suite needs a stable address anyway, and an address that is
 # a parameter is one nobody has to discover twice.
 ADDRESS="${MOLE_TESTBED_ADDRESS:-}"
+PASSWORD="${MOLE_TESTBED_PASSWORD:-}"
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 note() { printf '  %s\n' "$*"; }
 die() { printf '\n%s\n' "$*" >&2; exit 1; }
+
+# Derived from the id, in Proxmox's own address block, so a machine keeps its
+# identity across every run of this script. See the note where it is used.
+MAC="$(printf 'BC:24:11:00:%02X:%02X' $(( (VMID / 256) % 256 )) $(( VMID % 256 )))"
+
+[ -n "$PASSWORD" ] || die "Set MOLE_TESTBED_PASSWORD. It is a throwaway on a
+disposable machine, which is exactly why it is not in this repository: a
+password in a public file is a password, whatever it protects."
+case "$PASSWORD" in
+    *\'*) die "MOLE_TESTBED_PASSWORD cannot contain a single quote: it is carried
+into a shell on the far side, and quoting it correctly through two shells is a
+trick nobody should have to read. Any other character is fine." ;;
+esac
 
 [ -n "$NODE" ] || die "Set MOLE_PROXMOX_HOST to the hypervisor, and
 MOLE_PROXMOX_USER if it is not root.
@@ -78,37 +97,46 @@ REMOTE
 then
     note "already exists -- leaving it where it is"
 else
-    on_node <<REMOTE || die "could not clone $TEMPLATE"
+    on_node <<REMOTE || die "could not create $VMID"
 set -euo pipefail
-test -f /etc/pve/qemu-server/$TEMPLATE.conf || { echo "no template $TEMPLATE"; exit 1; }
-qm clone $TEMPLATE $VMID --name $NAME --full 1 --storage $STORAGE
+test -f "$IMAGE" || { echo "no image at $IMAGE"; exit 1; }
+test -f "$SSHKEYS" || { echo "no public keys at $SSHKEYS"; exit 1; }
+
+# The MAC is derived from the id rather than left to Proxmox to invent, and
+# serial is the console rather than an extra -- without one there is no way to
+# watch a machine that will not come up, which is exactly the state this script
+# has to be able to get somebody out of.
+#
+# The MAC is the whole reason the first version of this script produced a machine
+# that answered once and then went silent: re-applying "--net0 virtio,bridge=..."
+# without a MAC makes Proxmox generate a new one every time, so each supposedly
+# idempotent run gave the machine a new identity and threw away its DHCP lease.
+# A setting that is re-applied must not change what it is applied to.
+qm create $VMID --name $NAME --ostype l26 \
+  --memory $MEMORY_MB --cores $CORES --cpu host \
+  --scsihw virtio-scsi-single \
+  --net0 virtio=$MAC,bridge=$BRIDGE \
+  --serial0 socket --vga serial0 \
+  --agent enabled=1 --onboot 0 \
+  --description 'Mole live test server. Disposable: rebuilt by scripts/testbed/provision.sh.'
+
+qm disk import $VMID "$IMAGE" $STORAGE --format raw >/dev/null 2>&1 \
+  || qm importdisk $VMID "$IMAGE" $STORAGE >/dev/null
+qm set $VMID --scsi0 $STORAGE:vm-$VMID-disk-0 >/dev/null
+qm set $VMID --ide2 $STORAGE:cloudinit >/dev/null
+qm set $VMID --boot order=scsi0 >/dev/null
+qm resize $VMID scsi0 ${SYSTEM_GB}G >/dev/null
+
+# The small disk. Its size is the point of it, so it is only ever created here.
+qm set $VMID --scsi1 $STORAGE:$DATA_GB >/dev/null
+
+qm set $VMID --ipconfig0 ip=dhcp >/dev/null
+qm set $VMID --ciuser $ACCOUNT --cipassword '$PASSWORD' >/dev/null
+qm set $VMID --sshkeys "$SSHKEYS" >/dev/null
+qm cloudinit update $VMID >/dev/null 2>&1 || true
 REMOTE
-    note "cloned from template $TEMPLATE"
+    note "built from $IMAGE"
 fi
-
-# Applied every run rather than only at creation, so a machine that has drifted
-# comes back to what this script says it is. All of these are no-ops when they
-# already hold.
-on_node <<REMOTE || die "could not configure $VMID"
-set -euo pipefail
-qm set $VMID --cores $CORES --memory $MEMORY_MB >/dev/null
-qm set $VMID --net0 virtio,bridge=$BRIDGE >/dev/null
-qm set $VMID --agent enabled=1 >/dev/null
-qm set $VMID --onboot 0 >/dev/null
-qm set $VMID --description 'Mole live test server. Disposable: rebuilt by scripts/testbed/provision.sh.' >/dev/null
-
-# Grown, never shrunk -- Proxmox refuses to shrink and so should we.
-current=\$(qm config $VMID | sed -n 's/^scsi0:.*size=\([0-9]*\)G.*/\1/p')
-if [ -n "\$current" ] && [ "\$current" -lt "$SYSTEM_GB" ]; then
-    qm resize $VMID scsi0 ${SYSTEM_GB}G >/dev/null
-fi
-
-# The small disk. Its size is the point of it, so it is only ever created here
-# and never resized afterwards.
-if ! qm config $VMID | grep -q '^scsi1:'; then
-    qm set $VMID --scsi1 $STORAGE:$DATA_GB >/dev/null
-fi
-REMOTE
 note "cores $CORES, memory ${MEMORY_MB}M, system ${SYSTEM_GB}G, data disk ${DATA_GB}G"
 
 say "Starting"
@@ -120,9 +148,8 @@ fi
 REMOTE
 
 # The address comes from DHCP on the hypervisor's bridge, so it is discovered
-# rather than assumed. Asked of the guest agent first, and read out of the
-# neighbour table if the agent is not up yet -- a machine that has only just
-# booted has answered an ARP long before it has a working agent.
+# rather than assumed -- unless it was given, in which case there is nothing to
+# discover and the machine is simply where it was said to be.
 say "Address"
 if [ -n "$ADDRESS" ]; then
     note "$ADDRESS (given, not discovered)"
@@ -166,24 +193,10 @@ note "$address"
 # Made through the hypervisor rather than over ssh, so this works before the
 # machine will accept a connection from anybody but the template's own key.
 
-say "Account $ACCOUNT"
-if [ -z "${MOLE_TESTBED_PASSWORD:-}" ]; then
-    die "Set MOLE_TESTBED_PASSWORD. It is a throwaway on a disposable machine,
-which is exactly why it is not in this repository: a password in a public file
-is a password, whatever it protects."
-fi
-case "$MOLE_TESTBED_PASSWORD" in
-    *\'*) die "MOLE_TESTBED_PASSWORD cannot contain a single quote: it is carried
-into a shell on the far side, and quoting it correctly through two shells is a
-trick nobody should have to read. Any other character is fine." ;;
-esac
-
-ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new "debian@$address" \
-    "sudo bash -s" <<REMOTE || die "could not set the account up"
+say "Finishing the machine off"
+ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$ACCOUNT@$address" \
+    "sudo bash -s" <<'REMOTE' || die "could not finish the machine off"
 set -euo pipefail
-id $ACCOUNT >/dev/null 2>&1 || useradd --create-home --shell /bin/bash $ACCOUNT
-echo '$ACCOUNT:$(printf '%s' "${MOLE_TESTBED_PASSWORD}")' | chpasswd
-
 # The small disk, mounted where the servers that need to fill it will put their
 # roots. Formatted once; a second run finds a filesystem and leaves it alone.
 if ! blkid /dev/sdb >/dev/null 2>&1; then
@@ -192,7 +205,7 @@ fi
 mkdir -p /srv/moledata
 grep -q '^LABEL=moledata' /etc/fstab || echo 'LABEL=moledata /srv/moledata ext4 defaults 0 2' >> /etc/fstab
 mountpoint -q /srv/moledata || mount /srv/moledata
-chown $ACCOUNT:$ACCOUNT /srv/moledata
+chown "$(logname 2>/dev/null || echo moletest)": /srv/moledata 2>/dev/null || true
 
 # The guest agent, so the next run can simply ask the machine where it is
 # instead of nudging a whole subnet to make it show up in a table. Installed
