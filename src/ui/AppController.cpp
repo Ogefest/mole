@@ -260,6 +260,25 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     m_commands = new CommandPaletteModel(m_actions, m_bookmarks, m_drives, this);
     connect(m_commands, &CommandPaletteModel::actionRequested, this, &AppController::triggerAction);
     connect(m_commands, &CommandPaletteModel::locationRequested, this, &AppController::goTo);
+    // The same calls the sidebar buttons make, so the two cannot drift into
+    // doing subtly different things to the same drive.
+    connect(m_commands, &CommandPaletteModel::driveCommandRequested, this,
+        [this](CommandPaletteModel::DriveCommand what, const QString& driveId) {
+            switch (what) {
+            case CommandPaletteModel::DriveCommand::Connect:
+                connectDrive(driveId);
+                return;
+            case CommandPaletteModel::DriveCommand::Eject:
+                disconnectDrive(driveId);
+                return;
+            case CommandPaletteModel::DriveCommand::Check:
+                checkDrive(driveId);
+                return;
+            case CommandPaletteModel::DriveCommand::Unlock:
+                emit credentialsRequested();
+                return;
+            }
+        });
 
     m_launcher = new FileLauncher(m_services, this);
     connect(m_launcher, &FileLauncher::failed, this, [this](const QString& uri, const QString& reason) {

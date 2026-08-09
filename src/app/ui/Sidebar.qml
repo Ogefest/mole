@@ -255,6 +255,13 @@ Rectangle {
             objectName: "sidebarUnlockBand"
             Layout.fillWidth: true
             visible: App.credentialsNeeded
+
+            // Asked for from somewhere else -- the command palette, which has
+            // no more business knowing about this band than the controller does.
+            Connections {
+                target: App
+                function onCredentialsRequested() { sidebarUnlock.focusField() }
+            }
         }
 
         // Local disks, network shares and mounted archives are the same kind

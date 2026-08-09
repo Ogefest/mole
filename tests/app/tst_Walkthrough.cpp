@@ -1274,7 +1274,20 @@ void TestWalkthrough::theDrivesAreInThePaletteToo()
     // anything missing here is something the sidebar can reach and typing cannot.
     DriveListModel* sidebar = m_harness->app()->drives();
     QVERIFY(sidebar->rowCount() > 0);
-    QCOMPARE(drives.size(), sidebar->rowCount());
+    // Counted by name rather than by rows in the group: a configured drive
+    // also contributes "Connect ...", "Eject ..." and "Check ..." there, and
+    // the claim being made is that every drive on the left can be typed for,
+    // not that the group holds one line each.
+    int places = 0;
+    for (const QString& title : std::as_const(drives)) {
+        for (int row = 0; row < sidebar->rowCount(); ++row) {
+            if (title == sidebar->data(sidebar->index(row, 0), DriveListModel::DisplayNameRole).toString()) {
+                ++places;
+                break;
+            }
+        }
+    }
+    QCOMPARE(places, sidebar->rowCount());
     for (int row = 0; row < sidebar->rowCount(); ++row) {
         QVERIFY2(drives.contains(
                      sidebar->data(sidebar->index(row, 0), DriveListModel::DisplayNameRole).toString()),

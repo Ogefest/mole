@@ -87,7 +87,7 @@ void CommandPaletteModel::refresh()
                 m_all.append(Command { action.value(QStringLiteral("title")).toString(), group,
                     action.value(QStringLiteral("shortcut")).toString(),
                     action.value(QStringLiteral("iconText")).toString(),
-                    action.value(QStringLiteral("id")).toString(), QString() });
+                    action.value(QStringLiteral("id")).toString(), QString(), QString() });
             }
         }
     }
@@ -97,17 +97,44 @@ void CommandPaletteModel::refresh()
             const QModelIndex index = m_bookmarks->index(row, 0);
             m_all.append(Command { m_bookmarks->data(index, BookmarkModel::NameRole).toString(),
                 QStringLiteral("Bookmarks"), QString(), QStringLiteral("☆"), QString(),
-                m_bookmarks->data(index, BookmarkModel::UriRole).toString() });
+                m_bookmarks->data(index, BookmarkModel::UriRole).toString(), QString() });
         }
     }
 
     if (m_drives) {
         for (int row = 0; row < m_drives->rowCount(); ++row) {
             const QModelIndex index = m_drives->index(row, 0);
-            m_all.append(Command { m_drives->data(index, DriveListModel::DisplayNameRole).toString(),
-                QStringLiteral("Drives"), QString(),
-                m_drives->data(index, DriveListModel::IconTextRole).toString(), QString(),
-                m_drives->data(index, DriveListModel::RootUriRole).toString() });
+            const QString name = m_drives->data(index, DriveListModel::DisplayNameRole).toString();
+            const QString icon = m_drives->data(index, DriveListModel::IconTextRole).toString();
+            m_all.append(Command { name, QStringLiteral("Drives"), QString(), icon, QString(),
+                m_drives->data(index, DriveListModel::RootUriRole).toString(), QString() });
+
+            // What can be done to it, as against where it goes. Read from the
+            // drive list every time, so a drive that has just connected offers
+            // Eject and not Connect without anything keeping a second list of
+            // verbs in step.
+            const QString driveId = m_drives->data(index, DriveListModel::ConfiguredIdRole).toString();
+            if (driveId.isEmpty())
+                continue; // a local disk has nothing to connect or eject
+
+            const auto offer = [&](const QString& title, DriveCommand verb) {
+                m_all.append(Command {
+                    title, QStringLiteral("Drives"), QString(), icon, QString(), QString(), driveId, verb });
+            };
+
+            if (m_drives->data(index, DriveListModel::CanUnlockRole).toBool()) {
+                // Not "Connect", which would fail, and not silence either: the
+                // thing in the way is a passphrase and the entry says so.
+                offer(QStringLiteral("Unlock the credential store for %1").arg(name), DriveCommand::Unlock);
+            } else if (m_drives->data(index, DriveListModel::CanConnectRole).toBool()) {
+                offer(QStringLiteral("Connect %1").arg(name), DriveCommand::Connect);
+            } else if (m_drives->data(index, DriveListModel::CanEjectRole).toBool()) {
+                offer(QStringLiteral("Eject %1").arg(name), DriveCommand::Eject);
+            }
+
+            // Always. "Is it actually there" is a fair question whatever the
+            // row currently claims -- that is the whole point of the check.
+            offer(QStringLiteral("Check %1").arg(name), DriveCommand::Check);
         }
     }
 
@@ -180,8 +207,12 @@ void CommandPaletteModel::activate(int row)
         emit actionRequested(command.actionId);
         return;
     }
-    if (!command.uri.isEmpty())
+    if (!command.uri.isEmpty()) {
         emit locationRequested(command.uri);
+        return;
+    }
+    if (!command.driveId.isEmpty())
+        emit driveCommandRequested(command.verb, command.driveId);
 }
 
 } // namespace mole
