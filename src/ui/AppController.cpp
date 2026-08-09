@@ -486,11 +486,14 @@ bool AppController::saveDrive(const QString& id, const QString& name, const QStr
     // descriptions, rather than by whoever filled in the form. A view that had
     // to remember would eventually forget.
     QSet<QString> secretKeys;
+    QSet<QString> knownKeys;
     const QVariantList fields = driveFields(factoryScheme, variant);
     for (const QVariant& value : fields) {
         const QVariantMap field = value.toMap();
+        const QString key = field.value(QStringLiteral("key")).toString();
+        knownKeys.insert(key);
         if (field.value(QStringLiteral("secret")).toBool())
-            secretKeys.insert(field.value(QStringLiteral("key")).toString());
+            secretKeys.insert(key);
     }
 
     QVariantMap settings;
@@ -498,10 +501,19 @@ bool AppController::saveDrive(const QString& id, const QString& name, const QStr
     for (auto it = values.constBegin(); it != values.constEnd(); ++it) {
         if (it.value().toString().isEmpty())
             continue;
-        if (secretKeys.contains(it.key()))
+        if (secretKeys.contains(it.key())) {
             secrets.insert(it.key(), it.value());
-        else
-            settings.insert(it.key(), it.value());
+            continue;
+        }
+        // A value the backend never asked for is dropped rather than written.
+        // Anything else means a caller can put a key of its own choosing into a
+        // file meant to be readable -- and if that value happened to be a
+        // password, it would sit there in the clear precisely because no field
+        // declared it secret. The safe reading of an unrecognised key is that it
+        // does not belong in the settings at all.
+        if (!knownKeys.contains(it.key()))
+            continue;
+        settings.insert(it.key(), it.value());
     }
     drive.settings = settings;
 

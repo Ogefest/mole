@@ -9,7 +9,7 @@ PREFIX ?= /usr/local
 DESTDIR ?=
 
 .PHONY: all build configure release run test test-verbose clean distclean format tidy help guide-images \
-        install uninstall bundle licence-check screenshots librclone
+        install uninstall bundle licence-check screenshots
 
 all: build
 
@@ -42,9 +42,9 @@ run: build
 	exit $$code
 
 ## run-gdb: launch under gdb and print every thread's stack if it crashes
-##          Use when the log's own backtrace stops short -- rclone brings a Go
-##          runtime that forwards signals, and no in-process unwinder can walk
-##          past that. gdb can.
+##          Use when the log's own backtrace stops short: a signal that arrives
+##          on an alternate stack can defeat an in-process unwinder. gdb can walk
+##          past it.
 run-gdb: build
 	@command -v gdb >/dev/null || { echo "gdb is not installed"; exit 1; }
 	@gdb -q -batch -ex "set confirm off" -ex run -ex "thread apply all bt" \
@@ -109,10 +109,6 @@ guide-images: screenshots
 	@mkdir -p docs/guide/images
 	@cp $(BUILD_DIR)/screenshots/*.png docs/guide/images/
 	@echo "  guide images: docs/guide/images ($(shell ls $(BUILD_DIR)/screenshots/*.png 2>/dev/null | wc -l) files)"
-
-## librclone: build rclone as a shared library, for cloud and network drives
-librclone:
-	@scripts/build-librclone.sh
 
 ## licence-check: verify the Qt LGPL conditions still hold
 licence-check:

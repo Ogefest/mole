@@ -28,12 +28,6 @@ add_library(mole_builtin STATIC
     builtin/SyncFeature.h
     builtin/SyncFeature.cpp
 
-    rclone/RcloneLibrary.h
-    rclone/RcloneLibrary.cpp
-    rclone/RcloneFileSystem.h
-    rclone/RcloneFileSystem.cpp
-    rclone/RcloneFactory.h
-    rclone/RcloneFactory.cpp
     builtin/previews/SyntaxHighlighter.h
     builtin/previews/SyntaxHighlighter.cpp
     builtin/previews/MarkdownStyle.h
@@ -123,15 +117,73 @@ else()
     set(MOLE_HAVE_ARCHIVE_PLUGIN OFF CACHE INTERNAL "")
 endif()
 
-# librclone is rclone built as a shared library: no binary, no daemon, no child
-# process. It is 115 MB of Go, so it is not vendored -- `make librclone` builds
-# it from source, and without it the factory reports itself unavailable and the
-# application runs exactly as before.
-set(MOLE_LIBRCLONE_DIR "${CMAKE_SOURCE_DIR}/third_party/librclone")
-if(EXISTS "${MOLE_LIBRCLONE_DIR}/librclone.so")
-    target_compile_definitions(mole_builtin PRIVATE
-        MOLE_LIBRCLONE_BUILD_PATH="${MOLE_LIBRCLONE_DIR}/librclone.so")
-    message(STATUS "rclone drives: enabled")
+# --- Standard network drives: sftp, ftp, s3, webdav -------------------------
+#
+# One libcurl covers all four protocols, and its blocking interface is what
+# IFileSystem's threading contract asks for. See
+# docs/adr/0011-network-drives-without-rclone.md.
+# Both are asked for here rather than relied on from src/core: find_package
+# results do not cross between sibling directories, so a variable set there is
+# simply empty by the time this runs.
+find_package(CURL QUIET)
+find_package(OpenSSL QUIET)
+
+if(CURL_FOUND AND OpenSSL_FOUND)
+    # A plain library first, so the test suite can hold each backend to the same
+    # conformance contract as local disk. The loadable plugin below is only the
+    # thin wrapper that publishes them.
+    add_library(mole_network_backends STATIC
+        network/CurlTransport.h
+        network/CurlTransport.cpp
+        network/TransferStreams.h
+        network/TransferStreams.cpp
+        network/UnixListing.h
+        network/UnixListing.cpp
+        network/SftpFileSystem.h
+        network/SftpFileSystem.cpp
+        network/S3Signer.h
+        network/S3Signer.cpp
+        network/S3Listing.h
+        network/S3Listing.cpp
+        network/S3FileSystem.h
+        network/S3FileSystem.cpp
+        network/FtpFileSystem.h
+        network/FtpFileSystem.cpp
+        network/WebdavListing.h
+        network/WebdavListing.cpp
+        network/WebdavFileSystem.h
+        network/WebdavFileSystem.cpp
+    )
+    target_include_directories(mole_network_backends PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    target_link_libraries(mole_network_backends
+        PUBLIC mole_core
+        PRIVATE CURL::libcurl OpenSSL::Crypto mole_flags)
+
+    qt_add_plugin(mole_plugin_network
+        SHARED
+        CLASS_NAME mole::NetworkPlugin
+    )
+
+    # Qt 6.4's qt_add_plugin() ignores trailing source arguments, exactly as it
+    # does for the archive plugin.
+    target_sources(mole_plugin_network PRIVATE network/NetworkPlugin.cpp)
+
+    target_include_directories(mole_plugin_network PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    target_link_libraries(mole_plugin_network
+        PRIVATE mole_sdk mole_network_backends mole_flags)
+
+    set_target_properties(mole_plugin_network PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
+
+    set(MOLE_HAVE_NETWORK_PLUGIN ON CACHE INTERNAL "")
+    message(STATUS "Network drives: sftp, ftp, s3, webdav (libcurl ${CURL_VERSION_STRING})")
 else()
-    message(STATUS "rclone drives: disabled (run `make librclone`)")
+    message(WARNING
+        "libcurl or OpenSSL not found -- network drives will not be built. "
+        "Install libcurl4-openssl-dev and libssl-dev (Debian/Ubuntu) to enable them.")
+    set(MOLE_HAVE_NETWORK_PLUGIN OFF CACHE INTERNAL "")
 endif()
+
+# Network drives used to be rclone, linked straight into mole_builtin as 115 MB of
+# Go. They are now the loadable plugin above. See
+# docs/adr/0011-network-drives-without-rclone.md.

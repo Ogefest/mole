@@ -156,6 +156,7 @@ public:
     /// Connects one now. Returns an empty string on success, else the reason.
     Q_INVOKABLE QString connectDrive(const QString& id);
     Q_INVOKABLE void disconnectDrive(const QString& id);
+
     const PluginServices& services() const { return m_services; }
 
     QString monospaceFont() const;

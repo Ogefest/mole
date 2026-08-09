@@ -157,11 +157,12 @@ namespace {
         struct sigaction action;
         sigemptyset(&action.sa_mask);
         action.sa_sigaction = crashHandler;
-        // SA_ONSTACK is not optional here. rclone brings a Go runtime into the
-        // process, and Go forwards signals to handlers installed before it started
-        // -- on its own small signal stack. A handler without this flag runs there
-        // and can fault a second time, turning a diagnosable crash into a silent
-        // one. SA_SIGINFO is what carries the faulting address.
+        // SA_ONSTACK asks for the handler to run on its own signal stack. That
+        // matters when the crash is a stack overflow, and it matters whenever a
+        // library in the process has installed a small alternate stack of its own:
+        // without the flag the handler can fault a second time, turning a
+        // diagnosable crash into a silent one. SA_SIGINFO carries the faulting
+        // address.
         action.sa_flags = SA_ONSTACK | SA_SIGINFO;
 
         for (int number : { SIGSEGV, SIGABRT, SIGBUS, SIGFPE, SIGILL })

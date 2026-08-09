@@ -57,10 +57,21 @@ only writing a new one.
   styling runs, and repairing it would mean editing the document's structure,
   which [ADR-0001](docs/adr/0001-markdown-preview-typography.md) rules out. Left
   as it is unless someone hits it in a real file.
-- Backends not yet written: SFTP, S3, WebDAV, NFS, SMB. The conformance suite is
-  ready for them — a new backend's test file is a few lines that build a context
-  and call `runFileSystemConformance()`, and it now also checks that a backend
-  either reports access properly or admits it cannot.
+- Backends not yet written: NFS and SMB. SFTP, FTP, S3 and WebDAV ship in the
+  network plugin; SSHFS was dropped rather than written, because a Mole drive is
+  virtual and in-application and FUSE would not port to Windows -- see
+  [ADR-0011](docs/adr/0011-network-drives-without-rclone.md). The conformance suite
+  is ready for the remaining two: a new backend's test file is a few lines that
+  build a context and call `runFileSystemConformance()`, and it also checks that a
+  backend either reports access properly or admits it cannot.
+- WebDAV has never been run against a live server -- there was none to hand when it
+  was written. Its PROPFIND parsing is covered offline against Nextcloud- and
+  Apache-shaped answers, and `tst_WebdavFileSystem` has a conformance run that waits
+  on `MOLE_TEST_WEBDAV_URL`. Point it at a real Nextcloud before trusting it.
+- S3 multipart upload is not implemented, so a single object is held to whatever the
+  provider accepts in one PUT (5 GB on AWS). Anything larger needs the multipart
+  API, which is a different shape: begin, N parts, complete, and something sensible
+  to do when the process dies half way.
 - The terminal panel is Unix-only. Windows needs ConPTY, which is a different API
   entirely; `Pty` reports itself unavailable there rather than pretending.
 - Parquet writing is out of scope. Reading a file is not a licence to rewrite it,

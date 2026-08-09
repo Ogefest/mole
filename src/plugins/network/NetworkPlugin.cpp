@@ -1,0 +1,46 @@
+#include "plugins/network/FtpFileSystem.h"
+#include "plugins/network/S3FileSystem.h"
+#include "plugins/network/SftpFileSystem.h"
+#include "plugins/network/WebdavFileSystem.h"
+#include "sdk/PluginApi.h"
+
+namespace mole {
+
+/// The standard network drives, as one loadable plugin.
+///
+/// Deliberately a real shared library rather than something compiled into the
+/// application. rclone, which this replaces, lived under src/plugins/ and was
+/// linked straight into mole_builtin -- so the published plugin API was carrying
+/// exactly one shipped user, the archive plugin. Now it carries two, and the
+/// second one is the piece most likely to be copied by somebody adding a backend
+/// of their own. See docs/adr/0011-network-drives-without-rclone.md.
+class NetworkPlugin : public QObject, public IPlugin
+{
+    Q_OBJECT
+    Q_PLUGIN_METADATA(IID MOLE_PLUGIN_IID FILE "network.json")
+    Q_INTERFACES(mole::IPlugin)
+
+public:
+    PluginMetadata metadata() const override
+    {
+        PluginMetadata data;
+        data.id = QStringLiteral("mole.network");
+        data.name = QStringLiteral("Standard network drives");
+        data.version = QStringLiteral("0.1.0");
+        data.author = QStringLiteral("Mole");
+        data.description = QStringLiteral("Connect to SFTP, FTP, S3-compatible object stores and WebDAV.");
+        return data;
+    }
+
+    void registerExtensions(PluginRegistry& registry) override
+    {
+        registry.addFileSystemFactory(std::make_unique<SftpFileSystemFactory>());
+        registry.addFileSystemFactory(std::make_unique<FtpFileSystemFactory>());
+        registry.addFileSystemFactory(std::make_unique<S3FileSystemFactory>());
+        registry.addFileSystemFactory(std::make_unique<WebdavFileSystemFactory>());
+    }
+};
+
+} // namespace mole
+
+#include "NetworkPlugin.moc"

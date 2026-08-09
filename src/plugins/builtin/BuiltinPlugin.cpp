@@ -14,7 +14,6 @@
 #include "plugins/builtin/SyncFeature.h"
 #include "plugins/builtin/previews/PdfPreview.h"
 #include "plugins/builtin/previews/PreviewProviders.h"
-#include "plugins/rclone/RcloneFactory.h"
 
 #include "core/automation/ScheduleStore.h"
 #include "core/automation/Scheduler.h"
@@ -47,10 +46,9 @@ void BuiltinPlugin::registerExtensions(PluginRegistry& registry)
 
     registry.addFileSystemFactory(std::make_unique<LocalFileSystemFactory>());
     registry.addFileSystemFactory(std::make_unique<MemoryFileSystemFactory>());
-    // Every cloud and network backend rclone can reach. Registered even when
-    // librclone is absent: the factory reports itself unavailable and the
-    // interface leaves those drives out, which is more useful than a silent gap.
-    registry.addFileSystemFactory(std::make_unique<RcloneFactory>());
+    // Network drives are not here. SFTP, FTP, S3 and WebDAV arrive through the
+    // network plugin, which is loaded like any other shared library rather than
+    // compiled in -- see docs/adr/0011-network-drives-without-rclone.md.
 
     // The same workflow registered twice: single pane and dual pane are
     // separate contexts in the new-tab menu but share every line of behaviour.

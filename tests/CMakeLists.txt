@@ -143,10 +143,16 @@ if(MOLE_HAVE_ARCHIVE_PLUGIN)
     add_dependencies(tst_PluginManager mole_plugin_archive)
 endif()
 
+# These load the shipped plugins out of the build tree, so the plugins have to
+# exist before they run: the drives dialog has nothing to offer without them.
+if(MOLE_HAVE_NETWORK_PLUGIN)
+    add_dependencies(tst_FileSets mole_plugin_network)
+    add_dependencies(tst_Walkthrough mole_plugin_network)
+    add_dependencies(tst_AppIntegration mole_plugin_network)
+endif()
+
 # --- plugins ------------------------------------------------------------------
 if(MOLE_HAVE_ARCHIVE_PLUGIN)
-    mole_add_test(tst_Rclone            SOURCES plugins/tst_Rclone.cpp LIBS mole_builtin)
-
     mole_add_test(tst_ArchiveFileSystem SOURCES plugins/tst_ArchiveFileSystem.cpp
                                        LIBS mole_archive_backend)
 
@@ -154,4 +160,32 @@ if(MOLE_HAVE_ARCHIVE_PLUGIN)
                                        LIBS mole_archive_backend)
 else()
     message(STATUS "Archive tests skipped: the archive plugin was not built")
+endif()
+
+if(MOLE_HAVE_NETWORK_PLUGIN)
+    # The parser tests are offline and always run. The backend tests reach a real
+    # server and skip themselves when no account is in the environment, so the
+    # suite is green on a machine that has none -- see ADR-0011.
+    mole_add_test(tst_UnixListing      SOURCES plugins/tst_UnixListing.cpp
+                                       LIBS mole_network_backends)
+
+    # libcurl directly, because these seed their fixtures through a channel that
+    # is not the backend under test.
+    find_package(CURL QUIET)
+    mole_add_test(tst_S3Signer         SOURCES plugins/tst_S3Signer.cpp
+                                       LIBS mole_network_backends)
+
+    mole_add_test(tst_SftpFileSystem   SOURCES plugins/tst_SftpFileSystem.cpp
+                                       LIBS mole_network_backends CURL::libcurl)
+
+    mole_add_test(tst_S3FileSystem     SOURCES plugins/tst_S3FileSystem.cpp
+                                       LIBS mole_network_backends CURL::libcurl)
+
+    mole_add_test(tst_FtpFileSystem    SOURCES plugins/tst_FtpFileSystem.cpp
+                                       LIBS mole_network_backends CURL::libcurl)
+
+    mole_add_test(tst_WebdavFileSystem SOURCES plugins/tst_WebdavFileSystem.cpp
+                                       LIBS mole_network_backends CURL::libcurl)
+else()
+    message(STATUS "Network drive tests skipped: the network plugin was not built")
 endif()

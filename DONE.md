@@ -9,6 +9,80 @@ wrong.
 
 ---
 
+## rclone out, four network backends in
+
+**Asked for:** drop rclone — too much ballast for what it gave, and its
+configuration had become far too complicated — and put SSHFS, SFTP, FTP, S3 and
+WebDAV in its place as a plugin, with room for more backend plugins later. The S3
+one had to work against AWS, Backblaze B2 and anything else S3-compatible.
+
+**What it turned out to be:** four backends, not five. SSHFS was dropped on the
+author's decision once it was pointed out that it is SFTP over FUSE: the files
+should be reachable from inside Mole and not mounted into the operating system,
+and FUSE would not port to Windows anyway. So a drive stays virtual and
+in-application, and SFTP covers talking to an SSH server.
+[ADR-0011](docs/adr/0011-network-drives-without-rclone.md) records the whole
+decision, including what is genuinely lost: Google Drive, Dropbox, OneDrive and
+Mega speak proprietary APIs that none of these protocols reach.
+
+One dependency serves all four: **libcurl**, which speaks sftp, ftp, ftps and
+https. The deciding argument was not its feature list but the threading contract —
+`IFileSystem` is synchronous and worker-thread-only, and libcurl's easy interface
+is blocking, where `QNetworkAccessManager` would have needed an event loop pumped
+on every worker. aws-sdk-cpp was rejected for repeating rclone's mistake at a
+different scale; what was wanted from it was SigV4, and that is a page of
+HMAC-SHA256 over the OpenSSL already required for the credential store.
+
+Verified against real servers rather than only in principle: SFTP, FTPS and S3 all
+pass the full conformance suite live — SFTP and FTPS against an Egnyte account, S3
+against Backblaze B2 — with the fixtures seeded through plain libcurl rather than
+through the backend under test, so a bug could not cancel itself out. The live
+tests are driven by `MOLE_TEST_*` variables and skip when there are none, so the
+suite is green on a machine with no account and no credential is committed. WebDAV
+has no live server to hand and is covered by parser tests against Nextcloud- and
+Apache-shaped answers, with the conformance run waiting on
+`MOLE_TEST_WEBDAV_URL`.
+
+Five things went wrong on the way, and each one is now a test:
+
+- **A file listed as a directory read as an empty folder.** Asked to list a regular
+  file, an SFTP server does not refuse — it answers with a `.` entry describing the
+  file. The parser was dropping dot entries, so browsing into a file showed an
+  empty directory instead of an error.
+- **The signer did not sign the headers it produced.** `x-amz-date` and
+  `x-amz-content-sha256` were sent but left out of the signed set, which worked in
+  a test harness that passed them by hand and was refused by B2 with "header must
+  be included in signature". The signer adds them itself now.
+- **Signing took a pre-encoded, pre-sorted query.** The first thing to get that
+  wrong was this project's own cross-check harness, which is a fair verdict on the
+  interface. The signer now owns the encoding, and the url that is sent is built
+  from the same encoder.
+- **FTP's success code read as a failure.** A finished listing ends with 226
+  "Transfer complete"; interpreted as an HTTP status that is an error. Protocols
+  that report through the transfer result now say so explicitly.
+- **Every WebDAV timestamp came back empty.** `getlastmodified` is an HTTP date
+  ending in `GMT`, which Qt's RFC 2822 reader rejects, and it starts with a weekday,
+  which Qt validates — so a server whose weekday arithmetic is a day out would have
+  its timestamps thrown away. The weekday is now dropped before parsing.
+
+Two problems found in existing code while wiring the backends up, both invisible
+until a backend buffered its writes:
+
+- **A failed upload looked like a successful copy.** `TransferTask` and `SyncTask`
+  called `close()` on the write stream and ignored the outcome, and every remote
+  backend commits in `close()`. `closeAndReport()` now collects it through a small
+  `ICommitsOnClose` interface, and a failed send is reported as a failed transfer.
+- **`CompressTask` never closed its stream at all**, resetting the device instead,
+  so packing an archive onto a remote drive would have written nothing while
+  reporting success.
+
+Also hardened on the way past: `saveDrive` used to write any value it was handed
+into the readable settings file, including keys no backend had declared. An
+undeclared key is now dropped, so nothing can smuggle a secret into a file that is
+meant to be read — no field would have marked it secret.
+
+---
+
 ## User documentation
 
 A guide in [docs/guide/](docs/guide/README.md): an index, then browsing, looking inside

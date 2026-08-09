@@ -63,15 +63,16 @@ being added on top of it.
   every operation accepts exactly as it accepts a selection.
 - **A terminal panel.** A shell for the folder you are looking at, along the
   bottom of the window.
-- **Cloud and network drives.** Every backend rclone supports — S3, SFTP, WebDAV,
-  Drive, Dropbox, Backblaze and forty more — configured from a form the backend
-  itself describes. rclone is linked as a library, not run as a program.
+- **Network drives.** SFTP, FTP and FTPS, S3 and WebDAV, each configured from a
+  short form the backend itself describes. One S3 engine serves AWS, Backblaze B2,
+  MinIO, Ceph, Wasabi and R2 — the endpoint and the addressing style are just
+  fields. They ship as a loadable plugin, and further backends arrive the same way.
 - **Credentials encrypted and portable.** Passwords live in an AES-256-GCM store
-  keyed by a passphrase you choose, never in the settings file and never in
-  `rclone.conf`. It is not tied to this machine: back up the configuration and
-  the same passphrase opens it on a fresh install.
+  keyed by a passphrase you choose, never in the settings file. It is not tied to
+  this machine: back up the configuration and the same passphrase opens it on a
+  fresh install.
 - **A plugin API** with a loadable-shared-library path, used by the shipped
-  archive plugin.
+  archive and network plugins.
 
 ## Building
 
@@ -86,7 +87,7 @@ sudo apt install -y build-essential ninja-build ccache pkg-config git \
   qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts \
   qml6-module-qtquick-templates qml6-module-qtquick-window \
   qml6-module-qtqml-workerscript qml6-module-qtquick-shapes \
-  libarchive-dev
+  libarchive-dev libcurl4-openssl-dev libssl-dev
 
 make build      # binary lands in build/debug/mole
 make run
@@ -100,7 +101,10 @@ sudo apt install -y clang-format clang-tidy cppcheck valgrind
 ```
 
 `libarchive-dev` is optional: without it the archive plugin is skipped and the
-rest of the application builds normally.
+rest of the application builds normally. The same goes for `libcurl4-openssl-dev`
+and `libssl-dev`, without which the network plugin is skipped and there are no
+SFTP, FTP, S3 or WebDAV drives — configure says so, rather than offering drives
+that cannot connect.
 
 ### Getting a binary
 
@@ -147,7 +151,6 @@ Check a packaged build without a display:
 | `make asan` | build and test under AddressSanitizer + UBSan + leak detection |
 | `make screenshots` | drive the real interface headlessly and photograph each verified state |
 | `make guide-images` | the same, copied into the user guide |
-| `make librclone` | build rclone as a shared library, for cloud and network drives |
 | `make release` | optimised build with debug info |
 | `make format` | apply `.clang-format` across the tree |
 | `make tidy` | run `clang-tidy` over the compilation database |
@@ -226,12 +229,36 @@ that third-party code uses, so the API cannot quietly rot.
 | `MOLE_SETS_PATH` | where file sets live, instead of the user profile |
 | `MOLE_SECRETS_PATH` | where encrypted credentials live, instead of the user profile |
 | `MOLE_REMOTES_PATH` | where configured drives live, instead of the user profile |
-| `MOLE_LIBRCLONE_PATH` | an explicit librclone.so to load |
+| `MOLE_PLUGIN_PATH` | extra directories to load plugins from |
 | `MOLE_SCREENSHOT_DIR` | where `tst_Walkthrough` writes its pictures |
+
+### Testing the network backends against a real server
+
+The network backends carry conformance tests that talk to an actual server, and
+they skip themselves when there is nothing to talk to — so `make test` is green on
+a machine with no account, and no credential is ever committed. To run them, put
+an account in the environment:
+
+```sh
+export MOLE_TEST_SFTP_HOST=… MOLE_TEST_SFTP_USER=… MOLE_TEST_SFTP_PASS=…
+export MOLE_TEST_FTP_HOST=…  MOLE_TEST_FTP_USER=…  MOLE_TEST_FTP_PASS=…
+export MOLE_TEST_S3_KEY_ID=… MOLE_TEST_S3_SECRET=… MOLE_TEST_S3_BUCKET=…
+export MOLE_TEST_S3_REGION=… MOLE_TEST_S3_ENDPOINT=…
+export MOLE_TEST_WEBDAV_URL=… MOLE_TEST_WEBDAV_USER=… MOLE_TEST_WEBDAV_PASS=…
+make test
+```
+
+Each suite works under a uniquely named directory or key prefix and removes it
+afterwards, so it is safe to point at a bucket or share that holds real files.
+`MOLE_TEST_SFTP_BASE`, `MOLE_TEST_FTP_BASE` and `MOLE_TEST_FTP_PORT` override where
+it works and how it connects. Use a throwaway account: these are test credentials
+in a shell history.
 
 ## Roadmap
 
-Backends: all of rclone's, through `make librclone`.
+Backends: SFTP, FTP, S3 and WebDAV ship today; NFS and SMB are not written yet.
+Google Drive, Dropbox and OneDrive speak proprietary APIs and would each need a
+plugin of their own — see [ADR-0011](docs/adr/0011-network-drives-without-rclone.md).
 Previews: video (needs `qt6-multimedia-dev`, not yet installed here), audio tags
 (`taglib`), image metadata (`exiv2`), DuckDB tables. PDF, SQLite and Parquet are
 done.

@@ -55,6 +55,11 @@ private:
 void TestFileSets::initTestCase()
 {
     QVERIFY(m_profile.isValid());
+
+    // The drives this build offers come from loadable plugins now -- the network
+    // backends are no longer compiled into the application -- so the host has to
+    // be pointed at them or there would be nothing to configure.
+    qputenv("MOLE_PLUGIN_PATH", QByteArray(MOLE_TEST_PLUGIN_DIR));
 }
 
 void TestFileSets::init()
@@ -356,14 +361,18 @@ void TestFileSets::addsADriveThroughTheSameFormEveryBackendDeclares()
     QString variant;
     for (const QVariant& value : kinds) {
         const QVariantMap kind = value.toMap();
-        if (kind.value(QStringLiteral("variant")).toString() == QLatin1String("sftp")) {
+        // Matched on either, because how a backend names itself is its own
+        // business: SFTP is a factory of its own with no variants, where a
+        // factory wrapping several providers would offer it as a variant.
+        if (kind.value(QStringLiteral("factory")).toString() == QLatin1String("sftp")
+            || kind.value(QStringLiteral("variant")).toString() == QLatin1String("sftp")) {
             factory = kind.value(QStringLiteral("factory")).toString();
-            variant = QStringLiteral("sftp");
+            variant = kind.value(QStringLiteral("variant")).toString();
             break;
         }
     }
     if (factory.isEmpty())
-        QSKIP("no sftp backend in this build; run `make librclone`");
+        QSKIP("no sftp backend in this build; the network plugin was not built");
 
     const QVariantList fields = m_app->driveFields(factory, variant);
     QVERIFY(!fields.isEmpty());
@@ -401,20 +410,30 @@ void TestFileSets::aSavedPasswordIsNeverInTheSettingsFile()
     QString variant;
     for (const QVariant& value : kinds) {
         const QVariantMap kind = value.toMap();
-        if (kind.value(QStringLiteral("variant")).toString() == QLatin1String("sftp")) {
+        // Matched on either, because how a backend names itself is its own
+        // business: SFTP is a factory of its own with no variants, where a
+        // factory wrapping several providers would offer it as a variant.
+        if (kind.value(QStringLiteral("factory")).toString() == QLatin1String("sftp")
+            || kind.value(QStringLiteral("variant")).toString() == QLatin1String("sftp")) {
             factory = kind.value(QStringLiteral("factory")).toString();
-            variant = QStringLiteral("sftp");
+            variant = kind.value(QStringLiteral("variant")).toString();
             break;
         }
     }
     if (factory.isEmpty())
-        QSKIP("no sftp backend in this build; run `make librclone`");
+        QSKIP("no sftp backend in this build; the network plugin was not built");
 
     QVERIFY(m_app->unlockCredentials(QStringLiteral("a passphrase")));
 
+    // The field names are the backend's own: "password" is what the SFTP form
+    // declares, and using anything else would be testing a form nobody offers.
     QVariantMap values;
     values.insert(QStringLiteral("host"), QStringLiteral("nas.example.org"));
-    values.insert(QStringLiteral("pass"), QStringLiteral("hunter2-not-in-the-file"));
+    values.insert(QStringLiteral("password"), QStringLiteral("hunter2-not-in-the-file"));
+    // A key no backend declared. It must not reach the settings file either: a
+    // caller that could add keys of its own choosing could put a secret in a file
+    // meant to be readable, and no field would have marked it secret.
+    values.insert(QStringLiteral("smuggled"), QStringLiteral("hunter2-not-in-the-file"));
     QVERIFY(m_app->saveDrive({}, QStringLiteral("Secret NAS"), factory, variant, {}, values));
 
     // The settings file is meant to be read, diffed and backed up. The password
@@ -423,8 +442,9 @@ void TestFileSets::aSavedPasswordIsNeverInTheSettingsFile()
     QVERIFY(settings.open(QIODevice::ReadOnly));
     const QByteArray plain = settings.readAll();
     QVERIFY2(!plain.contains("hunter2-not-in-the-file"), "the password must not be here");
+    QVERIFY2(!plain.contains("smuggled"), "and neither must a key no backend declared");
     QVERIFY(plain.contains("nas.example.org"));
-    QVERIFY(plain.contains("pass"));
+    QVERIFY(plain.contains("password"));
 
     // Nor in the encrypted one, in readable form.
     QFile encrypted(m_profile.filePath(QStringLiteral("credentials.enc")));

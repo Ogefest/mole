@@ -9,8 +9,5 @@ vcpkg_installed/
 .idea/
 CMakeUserPresets.json
 
-# librclone is 115 MB of built Go; `make librclone` produces it from source.
-third_party/librclone/
-
 # Editor session notes, not part of the project.
 claude.session

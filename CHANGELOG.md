@@ -6,6 +6,14 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- Network drives are now SFTP, FTP, S3 and WebDAV, asking only what each protocol
+  needs instead of the eighty questions rclone's generated form could put on screen.
+- One S3 drive type covers AWS, Backblaze B2, MinIO, Ceph, Wasabi and R2, because
+  the endpoint and the addressing style are ordinary fields.
+- rclone is gone, and with it 115 MB of Go and the `make librclone` step — along
+  with Google Drive, Dropbox and OneDrive, which no open protocol reaches.
+- A bucket whose name contains a dot no longer fails with a certificate error: it
+  goes in the path, because a wildcard certificate cannot cover it in the host name.
 - A copy onto a remote drive that fails while being sent is now reported as a
   failure instead of quietly looking like it worked.
 - The command palette offers the drives again, so a drive can be reached by typing

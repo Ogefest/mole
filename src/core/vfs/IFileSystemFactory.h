@@ -47,8 +47,9 @@ struct ConnectionField
 
 /// One kind of drive a factory can make.
 ///
-/// A factory usually offers exactly one. An rclone-backed factory offers dozens,
-/// and the host must not have to know which is which -- so the list is data.
+/// A factory usually offers exactly one, and every backend written by hand does.
+/// The mechanism exists for a factory that wraps something with many providers of
+/// its own: the host must not have to know which is which, so the list is data.
 struct BackendVariant
 {
     QString id;

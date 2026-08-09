@@ -11,8 +11,6 @@
 #include "ui/models/BookmarkModel.h"
 #include "ui/models/BrowserPaneController.h"
 #include "ui/models/CommandPaletteModel.h"
-
-#include <QSignalSpy>
 #include "ui/models/FileListModel.h"
 #include "ui/models/TableModel.h"
 #include "ui/models/TabsModel.h"
@@ -37,6 +35,7 @@
 #include <QQuickStyle>
 #include <QQuickTextDocument>
 #include <QQuickWindow>
+#include <QSignalSpy>
 #include <QTest>
 #include <QTextBlock>
 #include <QTextDocument>
@@ -1139,8 +1138,8 @@ void TestWalkthrough::theDrivesAreInThePaletteToo()
     QVERIFY(mounts->rowCount() > 0);
     QCOMPARE(drives.size(), mounts->rowCount());
     for (int row = 0; row < mounts->rowCount(); ++row) {
-        QVERIFY2(drives.contains(mounts->data(mounts->index(row, 0), MountListModel::DisplayNameRole)
-                                     .toString()),
+        QVERIFY2(
+            drives.contains(mounts->data(mounts->index(row, 0), MountListModel::DisplayNameRole).toString()),
             "a drive on the left that cannot be typed for");
     }
 
@@ -1695,7 +1694,17 @@ void TestWalkthrough::everyBackendBuildsAFormWithoutComplaint()
     qInstallMessageHandler(previous);
 
     qWarning("built %d forms, %d fields in total", built, fieldsSeen);
-    QVERIFY2(built > 10, "the backends are there to be built");
+    // Every backend on offer built a form -- which is the actual claim, and it
+    // does not rot when the list changes. The floor is the four network backends
+    // this build ships; it used to be "more than ten", from the days when one
+    // generated factory offered forty providers of its own.
+    int available = 0;
+    for (const QVariant& entry : kinds) {
+        if (entry.toMap().value(QStringLiteral("available")).toBool())
+            ++available;
+    }
+    QCOMPARE(built, available);
+    QVERIFY2(built >= 4, "the backends are there to be built");
     QVERIFY2(fieldsSeen > 0, "and they ask for something");
     if (!complaints.isEmpty()) {
         qWarning("%s", qPrintable(complaints.mid(0, 5).join(QLatin1Char('\n'))));
@@ -1756,13 +1765,10 @@ void TestWalkthrough::aDriveWithAPasswordSavesAndConnects()
     QVERIFY2(!onDisk.contains("hunter2"), "the password is not written in the clear");
 }
 
-/// Pressing connect from inside a row of the drive list. The handler belongs to
-/// a delegate, and connecting tells the list its contents changed -- so the list
-/// can rebuild, and destroy the very delegate whose handler is still running.
 void TestWalkthrough::connectingFromTheListSurvivesTheListRebuilding()
 {
     QVERIFY(m_harness->app()->unlockCredentials(QStringLiteral("test-passphrase")));
-    QVERIFY(m_harness->app()->saveDrive(QString(), QStringLiteral("Scratch"), QStringLiteral("rclone"),
+    QVERIFY(m_harness->app()->saveDrive(QString(), QStringLiteral("Scratch"), QStringLiteral("sftp"),
         QStringLiteral("memory"), QString(), QVariantMap()));
 
     m_harness->app()->triggerAction(QStringLiteral("mole.file.drives"));
@@ -1807,7 +1813,7 @@ void TestWalkthrough::typingIntoTheKindPickerFiltersIt()
 
     // The state it is really done from: a backend already chosen, so a form of
     // its fields exists, and a value already typed into one of them.
-    dialog->setProperty("factory", QStringLiteral("rclone"));
+    dialog->setProperty("factory", QStringLiteral("sftp"));
     dialog->setProperty("variant", QStringLiteral("sftp"));
     m_harness->settle(6);
     QQuickItem* repeater = m_harness->item(QStringLiteral("driveFieldRepeater"));

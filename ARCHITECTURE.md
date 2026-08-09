@@ -294,20 +294,37 @@ a password, whether it is advanced, which provider it applies to — and the
 configuration dialog is built from that. Adding a backend means implementing the
 interface. It never means touching the interface layer.
 
-`RcloneFactory` is the first user of that and the reason the seam grew. It offers
-every backend rclone knows, and every field on every one of them comes from
-rclone at run time — so this codebase does not know what S3 needs, cannot be
-wrong about it, and gains a new provider without a line changing.
+The network drives are the worked example: **SFTP, FTP, S3 and WebDAV**, in
+`src/plugins/network/`, built as the loadable `mole_plugin_network` rather than
+compiled into the application. They replaced rclone, which bought forty providers
+for 115 MB of Go and a form nobody could fill in —
+[ADR-0011](docs/adr/0011-network-drives-without-rclone.md) records why that trade
+was reversed.
 
-rclone is linked as a library, not run as a program. `librclone` is rclone's own
-C interface, built from source with Go; there is no child process to supervise,
-no port to secure and nothing on the machine for another program to talk to. One
-entry point, `RcloneRPC(method, json)`, covers every backend.
+All four sit on one dependency, **libcurl**, which speaks sftp, ftp, ftps and
+https between them. That choice follows from the threading contract above rather
+than from a feature list: `IFileSystem` is synchronous and called only on worker
+threads, and libcurl's easy interface is blocking. `QNetworkAccessManager` would
+have needed an event loop pumped on every worker — async plumbing in the one place
+the design went out of its way to forbid it.
 
-Remotes are addressed by *connection string* — `:sftp,host=…,user=…:` — and never
-by a name in `rclone.conf`. That is deliberate: rclone stores config passwords in
-a reversible obfuscation it calls "obscure", which is not encryption. Nothing is
-ever written there.
+A curl handle is not thread-safe and `IFileSystem` must tolerate concurrent calls,
+so each backend keeps a small pool and lends one out per call. That satisfies the
+contract and keeps libcurl's connection cache, which is what stops an SFTP drive
+renegotiating SSH for every listing.
+
+S3 request signing (AWS SigV4) is implemented here, in about a hundred and fifty
+lines of HMAC-SHA256 over the OpenSSL that the credential store already required.
+The signer owns the encoding of the path and the query, and the url that is sent is
+built from the same encoder — a request signed for one path and sent to another is
+the classic way this goes wrong. It is checked against curl's own `--aws-sigv4` for
+a set of request shapes, because a signing bug is otherwise indistinguishable from
+a wrong password.
+
+There is no FUSE anywhere. A drive is virtual and lives inside the application; it
+is never a mount the rest of the system can see. That is one code path on every
+platform, and it is why there is no SSHFS backend — SFTP is the same protocol
+without the kernel.
 
 ### Credentials
 
@@ -343,9 +360,9 @@ reporting themselves unavailable at runtime rather than failing to build.
 - **The terminal** prefers libvterm. Without it a built-in parser handles
   line-oriented output and the panel says "basic mode" instead of drawing a
   full-screen program wrongly.
-- **Cloud and network drives** need librclone, built by `make librclone`. Without
-  it the factory reports itself unavailable and those drives are left out of the
-  list rather than offered and failing.
+- **Network drives** need libcurl and OpenSSL. Without either, the network plugin
+  is not built and those drives are absent from the list rather than offered and
+  failing — the same pattern as libarchive for archives.
 - **Credential encryption** needs OpenSSL. Without it the store refuses to hold
   anything rather than falling back to writing secrets in the clear.
 - **Everything else** is Qt, which is not optional.

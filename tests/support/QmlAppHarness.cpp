@@ -55,6 +55,13 @@ bool QmlAppHarness::start(const Options& options, QString* errorOut)
 
     const QString startUri = options.startUri.isEmpty() ? fixtureUri() : options.startUri;
 
+    // Point the host at the plugins this build produced, so a harness test sees
+    // the same drives a real run does. It matters more than it looks: the network
+    // backends are a loadable plugin rather than compiled in, so without this the
+    // drives dialog would come up with nothing to offer and the tests that check
+    // it would be checking an empty application.
+    qputenv("MOLE_PLUGIN_PATH", QByteArray(MOLE_TEST_PLUGIN_DIR));
+
     m_app = std::make_unique<AppController>();
     std::vector<std::unique_ptr<IPlugin>> builtIns;
     builtIns.push_back(std::make_unique<BuiltinPlugin>(startUri));

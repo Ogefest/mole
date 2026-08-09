@@ -62,7 +62,7 @@ RemoteDrive TestRemoteRegistry::sampleDrive() const
 {
     RemoteDrive drive;
     drive.name = QStringLiteral("Office NAS");
-    drive.factoryScheme = QStringLiteral("rclone");
+    drive.factoryScheme = QStringLiteral("sftp");
     drive.variant = QStringLiteral("sftp");
     drive.root = QStringLiteral("/data");
     drive.settings.insert(QStringLiteral("host"), QStringLiteral("nas.example.org"));
