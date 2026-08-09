@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- A window left full-screen comes back full-screen, and keeps the size it had before
+  instead of reopening as a plain window the size of the screen.
 - Search results can be scrolled through while the search is still running: arriving
   results no longer throw away the position or the row under the cursor.
 - Previewing a Markdown file no longer risks taking the application down with it, and

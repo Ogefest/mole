@@ -297,15 +297,22 @@ public:
 
     // ---- window geometry --------------------------------------------------
 
-    /// Geometry to restore, as `{ width, height, x, y, maximized }`. Empty
-    /// when there is nothing usable to restore.
+    /// Geometry to restore, as `{ width, height, x, y, windowState }`, where the
+    /// state is "normal", "maximized" or "fullscreen". Empty when there is
+    /// nothing usable to restore.
     Q_INVOKABLE QVariantMap savedWindowGeometry() const;
-    /// Called by the shell whenever the window is moved, resized or maximised.
-    Q_INVOKABLE void rememberWindowGeometry(int x, int y, int width, int height, bool maximized);
+    /// Called by the shell whenever the window is moved, resized, maximised or
+    /// taken full-screen. `visibility` is the window's own `QWindow::Visibility`
+    /// -- passed through rather than reduced to a flag by the caller, because
+    /// reducing it is exactly how full-screen came to be recorded as "not
+    /// maximised, so this must be the size the user chose".
+    Q_INVOKABLE void rememberWindowGeometry(int x, int y, int width, int height, int visibility);
 
     /// True when this rectangle still overlaps a screen that exists. A window
     /// restored onto an unplugged monitor is invisible and unrecoverable.
     static bool geometryIsOnScreen(int x, int y, int width, int height);
+    /// Qt's `QWindow::Visibility` reduced to the three states worth restoring.
+    static WindowState windowStateOf(int visibility);
 
     /// Writes the open tabs out now, rather than waiting for the debounce.
     /// Called on shutdown; exposed so tests do not have to wait either.

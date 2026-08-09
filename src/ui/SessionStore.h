@@ -13,6 +13,23 @@ struct TabSession
     QVariantMap state;
 };
 
+/// How the window was showing.
+///
+/// Three states rather than "maximised or not", because only `Normal` carries a
+/// size worth keeping: a maximised window and a full-screen one both report the
+/// screen's metrics, and writing either of those over the remembered size is
+/// how a window somebody had sized by hand comes back the size of the display.
+enum class WindowState { Normal, Maximized, FullScreen };
+
+/// The name a state is written under, in the session file and on the way to
+/// QML. One spelling for both, so what is written and what is read cannot drift
+/// apart.
+QString windowStateName(WindowState state);
+/// Unknown names read as Normal: a session file is allowed to be from a later
+/// version, or hand-edited, and starting in an ordinary window is the answer
+/// that is never wrong.
+WindowState windowStateFromName(const QString& name);
+
 /// Where the window was and how big. Restored only when it still lands on a
 /// screen that exists -- monitors get unplugged between sessions.
 struct WindowGeometry
@@ -21,7 +38,7 @@ struct WindowGeometry
     int y = -1;
     int width = 0;
     int height = 0;
-    bool maximized = false;
+    WindowState state = WindowState::Normal;
 
     bool isValid() const { return width > 0 && height > 0; }
     bool hasPosition() const { return x > -1 && y > -1; }

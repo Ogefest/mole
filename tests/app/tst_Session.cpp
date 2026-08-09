@@ -12,8 +12,11 @@
 #include <QDir>
 #include <QFile>
 #include <QGuiApplication>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QWindow>
 
 using namespace mole;
 using namespace mole::test;
@@ -52,6 +55,8 @@ private slots:
 
     void windowSizeIsRemembered();
     void maximisedStateIsRemembered();
+    void fullScreenKeepsTheSizeItHadBefore();
+    void aSessionFromBeforeTheTriStateStillRestoresMaximised();
     void offscreenPositionIsNotRestored();
 
 private:
@@ -412,7 +417,7 @@ void TestSession::unreachableFolderStillRestoresTheTab()
 void TestSession::windowSizeIsRemembered()
 {
     startApp();
-    m_app->rememberWindowGeometry(120, 80, 1000, 700, false);
+    m_app->rememberWindowGeometry(120, 80, 1000, 700, QWindow::Windowed);
     m_app->saveSessionNow();
 
     restartApp();
@@ -420,24 +425,83 @@ void TestSession::windowSizeIsRemembered()
     const QVariantMap geometry = m_app->savedWindowGeometry();
     QCOMPARE(geometry.value(QStringLiteral("width")).toInt(), 1000);
     QCOMPARE(geometry.value(QStringLiteral("height")).toInt(), 700);
-    QVERIFY(!geometry.value(QStringLiteral("maximized")).toBool());
+    QCOMPARE(geometry.value(QStringLiteral("windowState")).toString(), QStringLiteral("normal"));
 }
 
 void TestSession::maximisedStateIsRemembered()
 {
     startApp();
-    m_app->rememberWindowGeometry(0, 0, 900, 600, false);
-    m_app->rememberWindowGeometry(0, 0, 1920, 1080, true);
+    m_app->rememberWindowGeometry(0, 0, 900, 600, QWindow::Windowed);
+    m_app->rememberWindowGeometry(0, 0, 1920, 1080, QWindow::Maximized);
     m_app->saveSessionNow();
 
     restartApp();
 
     const QVariantMap geometry = m_app->savedWindowGeometry();
-    QVERIFY(geometry.value(QStringLiteral("maximized")).toBool());
+    QCOMPARE(geometry.value(QStringLiteral("windowState")).toString(), QStringLiteral("maximized"));
     // The size from before maximising is kept, so un-maximising lands
     // somewhere sensible instead of filling the screen twice.
     QCOMPARE(geometry.value(QStringLiteral("width")).toInt(), 900);
     QCOMPARE(geometry.value(QStringLiteral("height")).toInt(), 600);
+}
+
+/// The same claim for full-screen, which is the one that was broken. The state
+/// used to reach the application as a single boolean -- "is it maximised" --
+/// and a full-screen window is not maximised, so its screen-sized metrics were
+/// taken for the size somebody had chosen and written over the real one. The
+/// next start then opened a plain window the size of the display.
+void TestSession::fullScreenKeepsTheSizeItHadBefore()
+{
+    startApp();
+    m_app->rememberWindowGeometry(40, 30, 900, 600, QWindow::Windowed);
+    m_app->rememberWindowGeometry(0, 0, 1920, 1080, QWindow::FullScreen);
+    m_app->saveSessionNow();
+
+    restartApp();
+
+    const QVariantMap geometry = m_app->savedWindowGeometry();
+    QCOMPARE(geometry.value(QStringLiteral("windowState")).toString(), QStringLiteral("fullscreen"));
+    QCOMPARE(geometry.value(QStringLiteral("width")).toInt(), 900);
+    QCOMPARE(geometry.value(QStringLiteral("height")).toInt(), 600);
+    QCOMPARE(geometry.value(QStringLiteral("x")).toInt(), 40);
+    QCOMPARE(geometry.value(QStringLiteral("y")).toInt(), 30);
+}
+
+/// Somebody upgrading has a session file with a "maximized" boolean in it, and
+/// should not have to maximise the window again to teach the new build what it
+/// already knew.
+void TestSession::aSessionFromBeforeTheTriStateStillRestoresMaximised()
+{
+    startApp();
+    m_app->rememberWindowGeometry(10, 20, 800, 640, QWindow::Windowed);
+    m_app->saveSessionNow();
+    // Gone before the file is edited, not restarted around it: the destructor
+    // flushes what it still holds, which would write straight over the edit.
+    m_app.reset();
+    drainEvents();
+
+    // The file as the previous version wrote it: no windowState, a boolean
+    // instead.
+    const QString path = QString::fromLocal8Bit(qgetenv("MOLE_SESSION_PATH"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
+    file.close();
+
+    QJsonObject window = root.value(QStringLiteral("window")).toObject();
+    window.remove(QStringLiteral("windowState"));
+    window[QStringLiteral("maximized")] = true;
+    root[QStringLiteral("window")] = window;
+
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    file.write(QJsonDocument(root).toJson());
+    file.close();
+
+    startApp();
+
+    const QVariantMap geometry = m_app->savedWindowGeometry();
+    QCOMPARE(geometry.value(QStringLiteral("windowState")).toString(), QStringLiteral("maximized"));
+    QCOMPARE(geometry.value(QStringLiteral("width")).toInt(), 800);
 }
 
 void TestSession::offscreenPositionIsNotRestored()
@@ -449,7 +513,7 @@ void TestSession::offscreenPositionIsNotRestored()
     QVERIFY(!AppController::geometryIsOnScreen(0, 0, 0, 0));
 
     startApp();
-    m_app->rememberWindowGeometry(-9000, -9000, 800, 600, false);
+    m_app->rememberWindowGeometry(-9000, -9000, 800, 600, QWindow::Windowed);
     m_app->saveSessionNow();
     restartApp();
 

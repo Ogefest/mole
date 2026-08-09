@@ -26,8 +26,10 @@ ApplicationWindow {
             root.x = saved.x
             root.y = saved.y
         }
-        if (saved.maximized)
+        if (saved.windowState === "maximized")
             root.visibility = Window.Maximized
+        else if (saved.windowState === "fullscreen")
+            root.visibility = Window.FullScreen
         geometryWatcher.armed = true
     }
 
@@ -36,8 +38,15 @@ ApplicationWindow {
         id: geometryWatcher
         property bool armed: false
         interval: 400
+        // The visibility itself, not a flag derived from it. Reducing it here to
+        // "is it maximised" is what lost a full-screen window its size:
+        // full-screen is not maximised, so the screen-sized metrics were taken
+        // for the ones the user had chosen and written over the real ones.
+        // Nothing in the application enters full-screen itself -- the state
+        // arrives from the window manager, and this is the only thing that
+        // notices it.
         onTriggered: App.rememberWindowGeometry(root.x, root.y, root.width, root.height,
-                                                root.visibility === Window.Maximized)
+                                                root.visibility)
     }
 
     onWidthChanged: if (geometryWatcher.armed) geometryWatcher.restart()

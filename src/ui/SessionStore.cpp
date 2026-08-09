@@ -10,6 +10,29 @@
 #include <QStandardPaths>
 
 namespace mole {
+
+QString windowStateName(WindowState state)
+{
+    switch (state) {
+    case WindowState::Maximized:
+        return QStringLiteral("maximized");
+    case WindowState::FullScreen:
+        return QStringLiteral("fullscreen");
+    case WindowState::Normal:
+        break;
+    }
+    return QStringLiteral("normal");
+}
+
+WindowState windowStateFromName(const QString& name)
+{
+    if (name == QLatin1String("maximized"))
+        return WindowState::Maximized;
+    if (name == QLatin1String("fullscreen"))
+        return WindowState::FullScreen;
+    return WindowState::Normal;
+}
+
 namespace {
 
     constexpr int kSessionFormatVersion = 1;
@@ -50,7 +73,7 @@ bool SessionStore::save(const Session& session) const
     window[QStringLiteral("y")] = session.window.y;
     window[QStringLiteral("width")] = session.window.width;
     window[QStringLiteral("height")] = session.window.height;
-    window[QStringLiteral("maximized")] = session.window.maximized;
+    window[QStringLiteral("windowState")] = windowStateName(session.window.state);
 
     QJsonObject root;
     root[QStringLiteral("window")] = window;
@@ -102,7 +125,15 @@ Session SessionStore::load() const
     session.window.y = window.value(QStringLiteral("y")).toInt(-1);
     session.window.width = window.value(QStringLiteral("width")).toInt(0);
     session.window.height = window.value(QStringLiteral("height")).toInt(0);
-    session.window.maximized = window.value(QStringLiteral("maximized")).toBool();
+    // The tri-state replaced a "maximized" boolean, and a session written by an
+    // older build is still worth reading -- somebody upgrading should not lose
+    // the window they left maximised. The old key is only consulted when the new
+    // one is absent, so a file carrying both is not ambiguous.
+    if (window.contains(QStringLiteral("windowState"))) {
+        session.window.state = windowStateFromName(window.value(QStringLiteral("windowState")).toString());
+    } else if (window.value(QStringLiteral("maximized")).toBool()) {
+        session.window.state = WindowState::Maximized;
+    }
 
     session.currentIndex = root.value(QStringLiteral("currentIndex")).toInt(-1);
     if (session.currentIndex >= session.tabs.size())

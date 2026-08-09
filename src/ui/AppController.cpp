@@ -41,6 +41,7 @@
 #include <QScreen>
 #include <QStandardPaths>
 #include <QTimer>
+#include <QWindow>
 
 namespace mole {
 
@@ -100,6 +101,24 @@ bool AppController::geometryIsOnScreen(int x, int y, int width, int height)
     return false;
 }
 
+/// Qt's own visibility, reduced to the three states worth restoring.
+///
+/// Minimized deliberately reads as Normal, which is what it did when this was a
+/// boolean: a minimised window is not a state to come back in, and the metrics
+/// it reports are the ones it will be restored to anyway.
+WindowState AppController::windowStateOf(int visibility)
+{
+    switch (static_cast<QWindow::Visibility>(visibility)) {
+    case QWindow::Maximized:
+        return WindowState::Maximized;
+    case QWindow::FullScreen:
+        return WindowState::FullScreen;
+    default:
+        break;
+    }
+    return WindowState::Normal;
+}
+
 QVariantMap AppController::savedWindowGeometry() const
 {
     if (!m_window.isValid())
@@ -108,7 +127,7 @@ QVariantMap AppController::savedWindowGeometry() const
     QVariantMap out;
     out[QStringLiteral("width")] = m_window.width;
     out[QStringLiteral("height")] = m_window.height;
-    out[QStringLiteral("maximized")] = m_window.maximized;
+    out[QStringLiteral("windowState")] = windowStateName(m_window.state);
 
     // The size is always safe to restore; the position only when it still
     // lands somewhere visible.
@@ -120,13 +139,15 @@ QVariantMap AppController::savedWindowGeometry() const
     return out;
 }
 
-void AppController::rememberWindowGeometry(int x, int y, int width, int height, bool maximized)
+void AppController::rememberWindowGeometry(int x, int y, int width, int height, int visibility)
 {
-    // A maximised window reports the screen size; keeping the size it had
-    // before is what makes un-maximising return somewhere sensible.
     WindowGeometry updated = m_window;
-    updated.maximized = maximized;
-    if (!maximized) {
+    updated.state = windowStateOf(visibility);
+
+    // A maximised window reports the screen size, and so does a full-screen
+    // one; keeping the size it had before is what makes coming back out of
+    // either return somewhere sensible rather than filling the display again.
+    if (updated.state == WindowState::Normal) {
         updated.x = x;
         updated.y = y;
         updated.width = width;
@@ -134,7 +155,7 @@ void AppController::rememberWindowGeometry(int x, int y, int width, int height, 
     }
 
     if (updated.x == m_window.x && updated.y == m_window.y && updated.width == m_window.width
-        && updated.height == m_window.height && updated.maximized == m_window.maximized) {
+        && updated.height == m_window.height && updated.state == m_window.state) {
         return;
     }
 
