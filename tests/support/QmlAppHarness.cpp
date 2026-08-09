@@ -46,7 +46,8 @@ bool QmlAppHarness::start(const Options& options, QString* errorOut)
     // scheduler starts on its own, and it would run their jobs.
     m_profile = std::make_unique<PrivateProfile>();
     m_fixture = std::make_unique<QTemporaryDir>();
-    if (!m_profile->isValid() || !m_fixture->isValid())
+    m_drives = std::make_unique<QTemporaryDir>();
+    if (!m_profile->isValid() || !m_fixture->isValid() || !m_drives->isValid())
         return fail(QStringLiteral("could not create temporary directories"));
 
     m_screenshotDirectory = options.screenshotDirectory;
@@ -83,6 +84,18 @@ bool QmlAppHarness::build(QString* errorOut)
     // it would be checking an empty application.
     qputenv("MOLE_PLUGIN_PATH", QByteArray(MOLE_TEST_PLUGIN_DIR));
 
+    // A drive list that came from the fixture rather than from whichever desk
+    // this is running on. Every picture in the user guide is one of these
+    // windows photographed, and the sidebar used to show the machine's own
+    // volumes by name and capacity -- see the note in mountDefaultDrives().
+    // Home is the fixture itself: the application starts there, so something
+    // has to be mounted over it, and that is exactly what a home directory is.
+    // Media is a second, empty drive so the list is not one row long.
+    const QString media = QDir(m_drives->path()).filePath(QStringLiteral("media"));
+    QDir().mkpath(media);
+    qputenv("MOLE_DRIVES",
+        QStringLiteral("Home=%1;Media=%2").arg(fixturePath(), media).toLocal8Bit());
+
     m_app = std::make_unique<AppController>();
     std::vector<std::unique_ptr<IPlugin>> builtIns;
     builtIns.push_back(std::make_unique<BuiltinPlugin>(startUri));
@@ -113,10 +126,14 @@ bool QmlAppHarness::build(QString* errorOut)
 
 void QmlAppHarness::stop()
 {
+    // Unset rather than left pointing at a directory that is about to go: a
+    // stale value would send the next application in this process to nowhere.
+    qunsetenv("MOLE_DRIVES");
     m_engine.reset();
     m_window = nullptr;
     m_app.reset();
     m_fixture.reset();
+    m_drives.reset();
     m_profile.reset();
 }
 

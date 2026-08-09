@@ -383,6 +383,27 @@ void AppController::mountDefaultDrives()
         m_vfs->addMount(std::move(mount));
     };
 
+    // A fixed list, when one is given, instead of whatever this machine has
+    // mounted. Written as "Name=/path;Other=/path".
+    //
+    // For the screenshots, and for any test that photographs the window. The
+    // sidebar otherwise lists the volumes of whoever ran it, by their own names
+    // and with their own capacities -- which then went into a public repository
+    // as an illustration of what the application looks like. A picture of the
+    // fixture says the same thing about the software and nothing about a desk.
+    const QByteArray fixed = qgetenv("MOLE_DRIVES");
+    if (!fixed.isEmpty()) {
+        const QStringList entries
+            = QString::fromLocal8Bit(fixed).split(QLatin1Char(';'), Qt::SkipEmptyParts);
+        for (const QString& entry : entries) {
+            const qsizetype split = entry.indexOf(QLatin1Char('='));
+            if (split <= 0)
+                continue;
+            mountLocal(entry.left(split), entry.mid(split + 1));
+        }
+        return;
+    }
+
     // Home first: it is where the user actually keeps things, whatever the
     // partition layout underneath happens to be.
     mountLocal(QStringLiteral("Home"), QDir::homePath());

@@ -113,6 +113,9 @@ private:
     Options m_options;
     std::unique_ptr<PrivateProfile> m_profile;
     std::unique_ptr<QTemporaryDir> m_fixture;
+    /// Where the sidebar's drives point. Its own directory rather than a corner
+    /// of the fixture, because the fixture is what the listing tests count.
+    std::unique_ptr<QTemporaryDir> m_drives;
     std::unique_ptr<AppController> m_app;
     std::unique_ptr<QQmlApplicationEngine> m_engine;
     QQuickWindow* m_window = nullptr;
