@@ -42,6 +42,10 @@ public:
     /// order anybody clearing space wants them in.
     QList<DuplicateGroup> groups() const { return m_groups; }
     qint64 reclaimableBytes() const { return m_reclaimable; }
+    /// Files that changed while they were being compared, and were therefore
+    /// left out of every group. Reported rather than hidden: a scan that quietly
+    /// ignored a file is a scan whose answer is smaller than the truth.
+    int changedDuringTheScan() const { return m_movedUnderfoot; }
 
 signals:
     void groupsReady(const QList<mole::DuplicateGroup>& groups);
@@ -56,6 +60,7 @@ private:
     qint64 m_minimumSize = 1;
     QList<DuplicateGroup> m_groups;
     qint64 m_reclaimable = 0;
+    int m_movedUnderfoot = 0;
 };
 
 } // namespace mole

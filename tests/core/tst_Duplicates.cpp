@@ -7,6 +7,7 @@
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/VfsManager.h"
 #include "core/vfs/backends/LocalFileSystem.h"
+#include "core/vfs/backends/MemoryFileSystem.h"
 
 using namespace mole;
 using namespace mole::test;
@@ -35,6 +36,7 @@ private slots:
     void groupsAreOrderedByTheSavingTheyOffer();
     void aTreeWithNoDuplicatesReportsNone();
     void theExpensiveStageOnlySeesWhatSurvivedTheCheapOnes();
+    void aFileThatChangesWhileItIsBeingComparedIsLeftOutOfEveryGroup();
 
 private:
     QList<DuplicateGroup> find(std::unique_ptr<IDuplicateStrategy> strategy, qint64 minimumSize = 1);
@@ -64,6 +66,93 @@ void TestDuplicates::cleanup()
     m_tasks.reset();
     m_vfs.reset();
     m_tree.reset();
+}
+
+void TestDuplicates::aFileThatChangesWhileItIsBeingComparedIsLeftOutOfEveryGroup()
+{
+    // A scan of a large tree takes minutes, and something else is writing while
+    // it runs. A key taken from content that has since changed puts the file in
+    // a group it does not belong to -- and the next thing that happens to a
+    // group is that all but one of it is deleted.
+    class DriveThatChangesAFileWhileItIsRead final : public IFileSystem
+    {
+    public:
+        DriveThatChangesAFileWhileItIsRead(FileSystemPtr inner, QString path)
+            : m_inner(std::move(inner))
+            , m_path(std::move(path))
+        {
+        }
+
+        QString scheme() const override { return m_inner->scheme(); }
+        VfsCapabilities capabilities() const override { return m_inner->capabilities(); }
+        Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) override
+        {
+            return m_inner->list(dir, cancel);
+        }
+        Result<FileEntry> stat(const VfsUri& target) override { return m_inner->stat(target); }
+        Result<void> makeDirectory(const VfsUri& target) override { return m_inner->makeDirectory(target); }
+        Result<void> remove(const VfsUri& target, bool recursive) override
+        {
+            return m_inner->remove(target, recursive);
+        }
+        Result<void> rename(const VfsUri& from, const VfsUri& to) override
+        {
+            return m_inner->rename(from, to);
+        }
+        Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override
+        {
+            Result<std::unique_ptr<QIODevice>> reader = m_inner->openRead(target, expectedSize);
+            // Rewritten after the reader has its copy, so what was hashed really
+            // is the old content and the file really is the new one.
+            if (target.path() == m_path && !m_changed) {
+                m_changed = true;
+                if (Result<std::unique_ptr<QIODevice>> writer = m_inner->openWrite(target); writer.ok()) {
+                    writer.value()->write(QByteArray(9000, 'z'));
+                    closeAndReport(*writer.value());
+                }
+            }
+            return reader;
+        }
+        Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1) override
+        {
+            return m_inner->openWrite(target, expectedSize);
+        }
+
+    private:
+        FileSystemPtr m_inner;
+        QString m_path;
+        bool m_changed = false;
+    };
+
+    const QByteArray payload(8000, 'p');
+    auto memory = std::make_shared<MemoryFileSystem>();
+    memory->addFile(QStringLiteral("/one.bin"), payload);
+    memory->addFile(QStringLiteral("/two.bin"), payload);
+    memory->addFile(QStringLiteral("/three.bin"), payload);
+
+    VfsManager vfs;
+    Mount mount;
+    mount.id = QStringLiteral("mem");
+    mount.root = VfsUri::fromString(QStringLiteral("mem:///"));
+    mount.fileSystem
+        = std::make_shared<DriveThatChangesAFileWhileItIsRead>(memory, QStringLiteral("/two.bin"));
+    vfs.addMount(mount);
+
+    auto* task = new FindDuplicatesTask(
+        &vfs, { VfsUri::fromString(QStringLiteral("mem:///")) }, std::make_unique<SameContentStrategy>());
+    task->setMinimumSize(1);
+    m_tasks->submit(task);
+    QVERIFY(waitFor([task] { return task->isFinished(); }, 30000));
+
+    QCOMPARE(task->changedDuringTheScan(), 1);
+    QCOMPARE(task->groups().size(), 1);
+
+    const QList<FileEntry>& files = task->groups().first().files;
+    QCOMPARE(files.size(), 2);
+    for (const FileEntry& entry : files) {
+        QVERIFY2(entry.name != QLatin1String("two.bin"),
+            "a file that changed while it was being read must not be offered as a copy of anything");
+    }
 }
 
 QList<DuplicateGroup> TestDuplicates::find(std::unique_ptr<IDuplicateStrategy> strategy, qint64 minimumSize)

@@ -21,6 +21,27 @@ FindDuplicatesTask::FindDuplicatesTask(
 
 FindDuplicatesTask::~FindDuplicatesTask() = default;
 
+namespace {
+
+    /// Whether the file is no longer the one the listing described.
+    ///
+    /// Size and modification time, which is all a listing gives and enough for the
+    /// case that matters: something wrote to the file between the walk and the read.
+    bool changedUnderTheScan(const FileEntry& entry, IFileSystem* fs)
+    {
+        if (!fs)
+            return false;
+        const Result<FileEntry> now = fs->stat(entry.uri);
+        if (!now.ok())
+            return true; // gone, or unreachable: either way not a candidate
+        if (now.value().size != entry.size)
+            return true;
+        return entry.modified.isValid() && now.value().modified.isValid()
+            && entry.modified != now.value().modified;
+    }
+
+} // namespace
+
 void FindDuplicatesTask::run()
 {
     if (!m_vfs || !m_strategy || m_roots.isEmpty()) {
@@ -93,8 +114,21 @@ void FindDuplicatesTask::run()
                 // An empty key means the file could not be compared. Dropping it
                 // beats grouping it with everything else that failed for its own
                 // unrelated reason.
-                if (!key.isEmpty())
-                    split[key].append(entry);
+                //
+                // A stage that read the file is also asked whether the file is
+                // still the one it read. A scan takes minutes and something else
+                // is writing: a key taken from content that has since changed
+                // would put this file in a group it does not belong to, and the
+                // next thing that happens to a group is that all but one of it
+                // is deleted. Dropped rather than re-read, because re-reading
+                // races the same writer again.
+                if (key.isEmpty())
+                    continue;
+                if (reads && changedUnderTheScan(entry, driveFor(entry))) {
+                    ++m_movedUnderfoot;
+                    continue;
+                }
+                split[key].append(entry);
 
                 setProgress(total > 0 ? static_cast<int>(100.0 * ++examined / total) : -1);
             }
