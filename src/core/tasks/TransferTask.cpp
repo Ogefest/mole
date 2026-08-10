@@ -9,7 +9,7 @@
 namespace mole {
 namespace {
 
-    constexpr qint64 kChunkSize = 256 * 1024;
+    constexpr qint64 kChunkSize = TransferTask::kCopyChunkBytes;
 
     QString describe(TransferTask::Mode mode, int count)
     {

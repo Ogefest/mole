@@ -10,9 +10,11 @@
 #include "core/tasks/TransferTask.h"
 #include "core/vfs/backends/LocalFileSystem.h"
 
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QLocale>
+#include <QStorageInfo>
 #include <QTemporaryDir>
 
 using namespace mole;
@@ -186,6 +188,8 @@ private slots:
     void cleanup();
 
     void aLargeLocalCopyKeepsItsResources();
+    void aFileAcrossAThirtyTwoBitBoundaryArrivesWhole_data();
+    void aFileAcrossAThirtyTwoBitBoundaryArrivesWhole();
     void aLargeFileMakesTheRoundTrip_data();
     void aLargeFileMakesTheRoundTrip();
 
@@ -310,6 +314,73 @@ void TestHeavyTransfers::aLargeLocalCopyKeepsItsResources()
         qPrintable(QStringLiteral("descriptors went from %1 to %2")
                        .arg(watch.baselineDescriptors())
                        .arg(ResourceWatch::openDescriptors())));
+}
+
+void TestHeavyTransfers::aFileAcrossAThirtyTwoBitBoundaryArrivesWhole_data()
+{
+    QTest::addColumn<qint64>("bytes");
+
+    // The sizes where somebody's arithmetic overflows: ours, Qt's, libcurl's, or
+    // the server's. One byte past each is the whole point -- a length that fits
+    // exactly proves nothing about the code that adds one to it.
+    QTest::newRow("a gibibyte and one") << (1LL << 30) + 1;
+    QTest::newRow("two gibibytes and one") << (1LL << 31) + 1;
+    QTest::newRow("four gibibytes and one") << (1LL << 32) + 1;
+}
+
+void TestHeavyTransfers::aFileAcrossAThirtyTwoBitBoundaryArrivesWhole()
+{
+    QFETCH(qint64, bytes);
+
+    // Local disk only. These are about integer widths rather than about a
+    // protocol, and asking a test server for eight gigabytes of room to prove
+    // something arithmetic would be a poor trade -- the remote sizes are the
+    // round trip above.
+    const qint64 needed = 2 * bytes + 256LL * 1024 * 1024;
+    const qint64 room = QStorageInfo(m_dir->path()).bytesAvailable();
+    if (room < needed) {
+        QSKIP(qPrintable(QStringLiteral("needs %1 free and there is %2")
+                             .arg(QLocale().formattedDataSize(needed), QLocale().formattedDataSize(room))));
+    }
+
+    const qint64 previous = m_payloadBytes;
+    m_payloadBytes = bytes;
+    const VfsUri source = makeSource(QStringLiteral("boundary.bin"));
+    m_payloadBytes = previous;
+    QVERIFY(source.isValid());
+    QVERIFY(QDir(m_dir->path()).mkpath(QStringLiteral("dst")));
+
+    TransferTask::Request request;
+    request.sourceFileSystem = m_disk;
+    request.targetFileSystem = m_disk;
+    request.sources = { source };
+    request.targetDirectory = VfsUri::fromLocalPath(QDir(m_dir->path()).filePath(QStringLiteral("dst")));
+
+    QElapsedTimer clock;
+    ResourceWatch watch;
+    clock.start();
+
+    auto* task = new TransferTask(request);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task, 7200000));
+    const qint64 elapsed = clock.elapsed();
+    watch.stop();
+
+    QVERIFY2(task->failures().isEmpty(), qPrintable(task->failures().join(QLatin1Char(' '))));
+    QCOMPARE(task->copiedCount(), 1);
+    record(QStringLiteral("local -> local, %1 bytes").arg(bytes), bytes, elapsed, watch);
+
+    // Every byte against what belongs at that offset, because the failure this
+    // is looking for is a length that wrapped -- which leaves a file of exactly
+    // the right size with the wrong bytes at the far end.
+    QFile copy(QDir(m_dir->path()).filePath(QStringLiteral("dst/boundary.bin")));
+    QVERIFY(copy.open(QIODevice::ReadOnly));
+    QCOMPARE(copy.size(), bytes);
+    QString problem;
+    QVERIFY2(HeavyPayload::verify(copy, bytes, &problem), qPrintable(problem));
+
+    QFile::remove(QDir(m_dir->path()).filePath(QStringLiteral("boundary.bin")));
+    QFile::remove(QDir(m_dir->path()).filePath(QStringLiteral("dst/boundary.bin")));
 }
 
 void TestHeavyTransfers::aLargeFileMakesTheRoundTrip_data()

@@ -17,6 +17,14 @@ class TransferTask final : public Task
     Q_OBJECT
 
 public:
+    /// How much of a file the copy loop moves at a time.
+    ///
+    /// Named here rather than kept inside the loop because it is a boundary:
+    /// a file one byte either side of it, or an exact multiple of it, takes a
+    /// different path through the last read, and that is where a byte goes
+    /// missing.
+    static constexpr qint64 kCopyChunkBytes = 256 * 1024;
+
     enum class Mode { Copy, Move };
 
     /// What to do when the destination name is taken.
