@@ -11,6 +11,8 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-10 #MOLE-2 A backslash in a file name is part of the name, not a folder separator
+2026-08-10 #MOLE-2 A file with a name at the length limit can be copied
 2026-08-10 #MOLE-16 A progress bar can no longer read past 100% or slide backwards
 2026-08-10 #MOLE-16 A task that throws is reported as failed instead of ending the process
 2026-08-10 #MOLE-10 An archive entry named `../` can no longer address anything outside the archive

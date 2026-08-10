@@ -80,7 +80,10 @@ void TestVfsUri::normalisesPath_data()
     QTest::newRow("dot segment") << "/home/./user" << "/home/user";
     QTest::newRow("dotdot segment") << "/home/user/../root" << "/home/root";
     QTest::newRow("dotdot past root") << "/../../etc" << "/etc";
-    QTest::newRow("backslashes") << "\\home\\user" << "/home/user";
+    // A backslash is an ordinary character in a name everywhere except Windows,
+    // and a uri is not a native path: turning one into a separator here made
+    // "back\\slash.txt" into a file in a directory nobody has.
+    QTest::newRow("a backslash is part of the name") << "/home/back\\slash.txt" << "/home/back\\slash.txt";
     QTest::newRow("bare root") << "/" << "/";
     QTest::newRow("empty becomes root") << "" << "/";
 }

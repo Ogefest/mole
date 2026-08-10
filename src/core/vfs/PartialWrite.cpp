@@ -4,7 +4,19 @@ namespace mole {
 
 VfsUri partialWriteOf(const VfsUri& target)
 {
-    return target.parent().child(target.fileName() + kPartialWriteSuffix);
+    QString name = target.fileName();
+
+    // Almost every filesystem stops a name at 255 bytes, so a file already at
+    // the limit cannot wear the suffix as well -- and a copy of it would fail
+    // with "file name too long" against a name the user never typed. The base
+    // gives way instead, on whole characters so the result is still text, and
+    // the suffix stays whole because the suffix is what the name is *for*.
+    constexpr int kNameLimit = 255;
+    const int room = kNameLimit - kPartialWriteSuffix.size();
+    while (name.toUtf8().size() > room && !name.isEmpty())
+        name.chop(1);
+
+    return target.parent().child(name + kPartialWriteSuffix);
 }
 
 bool isPartialWrite(const QString& name)

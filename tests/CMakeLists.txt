@@ -101,6 +101,9 @@ mole_add_test(tst_TransferTask      SOURCES core/tst_TransferTask.cpp)
 # that need no server, at every boundary size the copy loop has.
 mole_add_test(tst_FilesArriveWhole  SOURCES core/tst_FilesArriveWhole.cpp)
 
+# Names people really have, and shapes a filesystem really holds.
+mole_add_test(tst_AwkwardNames      SOURCES core/tst_AwkwardNames.cpp)
+
 # Several jobs over the same files at once: what must never appear is a file
 # that is half of one and half of the other.
 mole_add_test(tst_ManyAtOnce        SOURCES core/tst_ManyAtOnce.cpp)

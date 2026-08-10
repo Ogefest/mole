@@ -10,8 +10,6 @@ namespace {
     /// trailing slash. Always returns something starting with '/'.
     QString normalisePath(QString path)
     {
-        path.replace(QLatin1Char('\\'), QLatin1Char('/'));
-
         QStringList out;
         for (const QString& part : path.split(QLatin1Char('/'), Qt::SkipEmptyParts)) {
             if (part == QLatin1String("."))
