@@ -136,6 +136,12 @@ public:
     /// listing is built from a claim.
     FaultyFileSystem& listingOverstatesSizeBy(qint64 bytes);
 
+    /// The drive stops advertising RandomAccessRead: it can be read from the
+    /// beginning and nowhere else. Not an exotic fault -- it is what a backend
+    /// streaming over a socket really is, and every caller that asks for a window
+    /// in the middle of a file has to answer for what it does when refused.
+    FaultyFileSystem& cannotSeek();
+
     // ---- what went through it ---------------------------------------------
     //
     // The wrapper already counts every byte through every stream to fire its
@@ -147,6 +153,10 @@ public:
     int openReadCount() const;
     /// Every byte handed to a reader through this wrapper, over all streams.
     qint64 bytesRead() const;
+    /// What each of those streams delivered, in the order they were opened.
+    /// One read of one page followed by one of a window is a different fact
+    /// from one read of the two together, and only this can tell them apart.
+    QList<qint64> readSizes() const;
 
     // ---- the stall, from the test's side ----------------------------------
 

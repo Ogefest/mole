@@ -36,6 +36,7 @@ set(MOLE_QML_FILES
     ui/IndexSearchView.qml
     ui/SearchResultList.qml
     ui/TextPreview.qml
+    ui/HexPreview.qml
     ui/PreviewView.qml
     ui/ImagePreview.qml
     ui/PdfPreview.qml

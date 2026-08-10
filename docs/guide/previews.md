@@ -107,8 +107,20 @@ a file of millions of rows opens as fast as one of ten.
 
 ## Anything else
 
+![The bytes of a file](images/25-preview-hex.png)
+
+A file whose format nothing here knows is shown as what it actually is: bytes. The offset,
+sixteen bytes in hex, and the same sixteen as text with a dot for everything that has no
+printable form. Dragging across either column selects a run of bytes; `Ctrl+C` copies it as
+hex and `Ctrl+Shift+C` as text, which is often the whole reason for opening such a file.
+
+It is read-only, like every other preview, and windowed like the text viewer — 64 kB at a
+time, with the same paging keys — so a firmware image or a 100 GB disk image opens as fast
+as anything else.
+
 ![A file nothing else claims](images/23-preview-file-info.png)
 
-A file no viewer can show gets described instead — its size, its kind, what is known
-about it. "Nothing happens" is never the answer, and this is the reason: something always
-claims the file, even when all it can say is what the filesystem knows.
+What is left is a file with nothing to show at all — an empty one, or one that cannot be
+read. It gets described instead: its size, its kind, what is known about it. "Nothing
+happens" is never the answer, and this is the reason: something always claims the file,
+even when all it can say is what the filesystem knows.

@@ -58,6 +58,9 @@ public:
     QString fileName() const { return m_current.name; }
     QString folderPath() const;
     QString viewerName() const { return m_viewerName; }
+    /// Which provider is showing the file. The display name is what the strip
+    /// shows; this is the stable id, for whoever needs to know exactly.
+    QString providerId() const { return m_providerId; }
     QVariantList viewerOptions() const { return m_viewerOptions; }
     /// Chooses one, remembers it for this file type, and shows the result now.
     Q_INVOKABLE void chooseViewerOption(const QString& key, const QString& value);

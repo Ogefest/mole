@@ -88,9 +88,25 @@ struct FaultyFileSystem::Policy
     std::atomic_bool revoked { false };
     /// What went through, for a test that is about how much was read rather than
     /// about what came back. Atomic because the streams run on worker threads.
-    std::atomic_int reads { 0 };
-    std::atomic<qint64> bytesRead { 0 };
+    /// One entry per stream opened, holding what it delivered. Guarded by the
+    /// mutex rather than atomic, because a list is not one word.
+    QList<qint64> readSizes;
+
+    int openedForRead()
+    {
+        QMutexLocker lock(&mutex);
+        readSizes.append(0);
+        return static_cast<int>(readSizes.size()) - 1;
+    }
+
+    void delivered(int stream, qint64 bytes)
+    {
+        QMutexLocker lock(&mutex);
+        if (stream >= 0 && stream < readSizes.size())
+            readSizes[stream] += bytes;
+    }
     qint64 listingSizeDelta = 0;
+    std::atomic_bool noRandomAccess { false };
     bool failOnClose = false;
     QString closeMessage;
 };
@@ -109,11 +125,12 @@ namespace {
     {
     public:
         FaultyReadDevice(std::unique_ptr<QIODevice> inner, std::shared_ptr<Policy> policy,
-            QList<Policy::Fault> faults, VfsUri target)
+            QList<Policy::Fault> faults, VfsUri target, int stream)
             : m_inner(std::move(inner))
             , m_policy(std::move(policy))
             , m_faults(std::move(faults))
             , m_target(std::move(target))
+            , m_stream(stream)
         {
         }
 
@@ -181,7 +198,7 @@ namespace {
             const qint64 got = m_inner->read(data, permitted);
             if (got > 0) {
                 m_delivered += got;
-                m_policy->bytesRead += got;
+                m_policy->delivered(m_stream, got);
             }
             return got;
         }
@@ -193,6 +210,7 @@ namespace {
         std::shared_ptr<Policy> m_policy;
         QList<Policy::Fault> m_faults;
         VfsUri m_target;
+        int m_stream = -1;
         qint64 m_delivered = 0;
         qint64 m_shortChunk = 0;
         qint64 m_endsAt = -1;
@@ -488,14 +506,31 @@ FaultyFileSystem& FaultyFileSystem::listingOverstatesSizeBy(qint64 bytes)
     return *this;
 }
 
+FaultyFileSystem& FaultyFileSystem::cannotSeek()
+{
+    m_policy->noRandomAccess.store(true);
+    return *this;
+}
+
 int FaultyFileSystem::openReadCount() const
 {
-    return m_policy->reads.load();
+    QMutexLocker lock(&m_policy->mutex);
+    return static_cast<int>(m_policy->readSizes.size());
 }
 
 qint64 FaultyFileSystem::bytesRead() const
 {
-    return m_policy->bytesRead.load();
+    QMutexLocker lock(&m_policy->mutex);
+    qint64 total = 0;
+    for (const qint64 bytes : m_policy->readSizes)
+        total += bytes;
+    return total;
+}
+
+QList<qint64> FaultyFileSystem::readSizes() const
+{
+    QMutexLocker lock(&m_policy->mutex);
+    return m_policy->readSizes;
 }
 
 bool FaultyFileSystem::isStalled() const
@@ -520,7 +555,10 @@ QString FaultyFileSystem::scheme() const
 
 VfsCapabilities FaultyFileSystem::capabilities() const
 {
-    return m_inner->capabilities();
+    VfsCapabilities capabilities = m_inner->capabilities();
+    if (m_policy->noRandomAccess.load())
+        capabilities.setFlag(VfsCapability::RandomAccessRead, false);
+    return capabilities;
 }
 
 Result<FileEntryList> FaultyFileSystem::list(const VfsUri& dir, const CancelToken& cancel)
@@ -605,10 +643,8 @@ Result<std::unique_ptr<QIODevice>> FaultyFileSystem::openRead(const VfsUri& targ
     Result<std::unique_ptr<QIODevice>> inner = m_inner->openRead(target, expectedSize);
     if (!inner.ok())
         return inner;
-    ++m_policy->reads;
-
-    auto device = std::make_unique<FaultyReadDevice>(
-        std::move(inner.value()), m_policy, m_policy->forStream(Policy::Side::Read, target), target);
+    auto device = std::make_unique<FaultyReadDevice>(std::move(inner.value()), m_policy,
+        m_policy->forStream(Policy::Side::Read, target), target, m_policy->openedForRead());
     device->open(QIODevice::ReadOnly);
     return Result<std::unique_ptr<QIODevice>>(std::unique_ptr<QIODevice>(device.release()));
 }

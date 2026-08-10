@@ -98,6 +98,7 @@ void BuiltinPlugin::registerExtensions(PluginRegistry& registry)
     registry.addPreviewProvider(std::make_unique<TablePreviewProvider>(services));
     registry.addPreviewProvider(std::make_unique<ImagePreviewProvider>(services));
     registry.addPreviewProvider(std::make_unique<TextPreviewProvider>(services));
+    registry.addPreviewProvider(std::make_unique<HexPreviewProvider>(services));
     registry.addPreviewProvider(std::make_unique<FileInfoPreviewProvider>(services));
 }
 

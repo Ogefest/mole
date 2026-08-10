@@ -27,6 +27,13 @@ project, and a contributor should never hit a wall of text they cannot read.
 
 ## Notes
 
+- **`make guide-images` rewrites all forty-five pictures, whatever changed.** The
+  sidebar shows the machine's real free space, so every window in the guide carries
+  a number that is different on every run and on every machine. Copy in the pictures
+  that changed for a reason and `git checkout` the rest — committing the lot means
+  committing forty-odd pictures of your own disk. If this ever becomes worth fixing,
+  the fix is a harness option that gives the walkthrough fixed drive figures rather
+  than the machine's.
 - Hit targets: `App.minimumTarget` is the floor for anything that is only an icon,
   and the twenty-four such controls that were below it have been raised. The
   spinners left at 16-20 are deliberate — a `BusyIndicator` is not a click target.

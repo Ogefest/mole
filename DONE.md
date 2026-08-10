@@ -9,6 +9,48 @@ wrong.
 
 ---
 
+## There was nothing in Mole that would show you the bytes of a file
+
+**Asked for:** MOLE-131 — a stripped `.so`, a firmware image, a `.dat` nobody documented:
+all of them reached the fact list, which reports nine numbers from `stat()` and nothing
+whatsoever from inside the file. Build a hex viewer: read-only, windowed, with a selection
+that can be copied as hex or as text.
+
+**What it turned out to be:** `HexPreviewController`, `HexPreviewProvider` and
+`HexPreview.qml`, in the shape the extension point already existed for — no change to the
+SDK, no change to the registry. It claims at priority -500, below every viewer that
+understands a format and above the fact list, and only on the content pass: `canPreview()`
+is true when the type MOLE-129 found is set and is not text. A viewer for the files nobody
+can name is the last place that should be guessing from a suffix.
+
+**The consequence is that the fact list stops being the last resort**, which is what the
+epic said would happen, and it is a bigger change than one more provider. Every readable
+non-empty file that is not text now reaches the hex viewer, so what is left for the fact
+list is a file with nothing in it, or one that could not be read. Two tests had to be
+rewritten rather than retargeted, and one of them — the fact list naming a sniffed type —
+is now asked of the viewer directly, because nothing routes an identified file there any
+more.
+
+**Selection is arithmetic, not a hit test.** Every column is fixed width, so the byte under
+the pointer is worked out from the position and the two measurements the delegate and the
+hit test share are declared once at the top of the view. Dragging lives in one MouseArea
+above the rows rather than in each delegate, so a drag that leaves the row it started in
+keeps going — the mouse grab stays put and the row is arithmetic on the y position.
+
+**The 100 GB claim is tested at 100 GB.** A sparse file that size opens on its first
+window, `lastWindow()` jumps to the tail, and the drive counts what it handed over: one
+page to identify the file and two windows, out of a hundred gigabytes. The drive that
+cannot seek is tested too, because a backend that streams is a real thing and the answer
+has to be the error rather than an empty grid — `FaultyFileSystem` grew `cannotSeek()` for
+it, and per-stream byte counts so "one read of one page and then one window" can be told
+apart from "one read of both".
+
+**Regenerating the guide's pictures rewrites all forty-five of them**, because the sidebar
+shows the machine's real free space and it is never the same twice. Only the two that
+changed for a reason are committed: the new hex window, and the fact list now showing an
+empty file instead of `dump.bin`. This is in [TODO.md](TODO.md) so the next person does not
+commit forty-three pictures of their own disk.
+
 ## Three languages the highlighter has always known were unreachable
 
 **Asked for:** MOLE-130 — `Dockerfile`, `.gitignore`, `.bashrc`, `Jenkinsfile` and

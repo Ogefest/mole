@@ -529,6 +529,313 @@ PreviewController* TextPreviewProvider::createController(QObject* parent)
     return new TextPreviewController(m_services, parent);
 }
 
+// ------------------------------------------------------------------- hex
+
+HexPreviewController::HexPreviewController(PluginServices services, QObject* parent)
+    : PreviewController(parent)
+    , m_services(services)
+{
+}
+
+HexPreviewController::~HexPreviewController()
+{
+    if (m_task)
+        m_task->requestCancel();
+}
+
+int HexPreviewController::offsetDigits() const
+{
+    // Eight is right up to 4 GB and the width every hex dump has always been.
+    // Past that the column widens rather than the offsets running into each
+    // other, in pairs so the digits stay readable.
+    int digits = 8;
+    for (qint64 limit = 0xffffffffLL; m_fileSize > limit && digits < 16; limit <<= 8)
+        digits += 2;
+    return digits;
+}
+
+QString HexPreviewController::sizeText() const
+{
+    return m_fileSize >= 0 ? QLocale().formattedDataSize(m_fileSize) : QString();
+}
+
+QString HexPreviewController::positionText() const
+{
+    if (m_fileSize <= 0)
+        return {};
+    if (!isPaged())
+        return sizeText();
+
+    const QLocale locale;
+    return QStringLiteral("%1 – %2 of %3")
+        .arg(locale.formattedDataSize(m_windowOffset),
+            locale.formattedDataSize(m_windowOffset + windowBytes()), locale.formattedDataSize(m_fileSize));
+}
+
+QString HexPreviewController::selectionSummary() const
+{
+    if (m_selectionLength <= 0)
+        return {};
+    const QLocale locale;
+    return QStringLiteral("%1 bytes selected from %2")
+        .arg(locale.toString(m_selectionLength))
+        .arg(m_selectionStart, offsetDigits(), 16, QLatin1Char('0'));
+}
+
+void HexPreviewController::load(const FileEntry& entry)
+{
+    if (!m_services.isValid()) {
+        setErrorText(QStringLiteral("Application services are not available"));
+        return;
+    }
+    if (m_task)
+        m_task->requestCancel();
+
+    m_entry = entry;
+    m_fileSystem = m_services.vfs->resolve(entry.uri);
+    if (!m_fileSystem) {
+        setErrorText(QStringLiteral("No drive is mounted for this file"));
+        return;
+    }
+
+    m_fileSize = entry.size;
+    m_windowOffset = 0;
+    m_window.clear();
+    clearSelection();
+    rebuildRows();
+    emit windowChanged();
+
+    // An empty file is not read: there is nothing to read, and the view says so
+    // rather than showing a grid with no rows in it.
+    if (m_fileSize == 0)
+        return;
+
+    readWindow(0);
+}
+
+void HexPreviewController::readWindow(qint64 offset)
+{
+    if (!m_fileSystem || !m_services.isValid())
+        return;
+
+    if (m_task)
+        m_task->requestCancel();
+
+    setErrorText({});
+    setLoading(true);
+
+    // Snapped down to a row, so the offset column reads in sixteens whatever the
+    // slider was dragged to, and never aligned to lines: these are bytes.
+    const qint64 aligned = offset - offset % kBytesPerRow;
+    auto* task = new ReadRangeTask(m_fileSystem, m_entry.uri, aligned, kWindowBytes);
+    task->setAlignToLines(false);
+    m_task = task;
+
+    connect(task, &Task::finished, this, [this, task] {
+        if (m_task != task)
+            return;
+        m_task.clear();
+        setLoading(false);
+
+        if (task->state() == Task::State::Failed) {
+            // The grid is emptied as well as the error shown: rows from the last
+            // window under a message about this one would be a lie about both.
+            m_window.clear();
+            m_rows.clear();
+            clearSelection();
+            setErrorText(task->error().message);
+            emit windowChanged();
+            return;
+        }
+        if (task->state() != Task::State::Succeeded)
+            return;
+
+        m_window = task->contents();
+        m_windowOffset = task->actualOffset();
+        m_hasMore = task->hasMore();
+        if (task->fileSize() >= 0)
+            m_fileSize = task->fileSize();
+
+        // The selection belongs to the bytes on screen, so paging drops it.
+        clearSelection();
+        rebuildRows();
+        emit windowChanged();
+    });
+
+    m_services.tasks->submit(task);
+}
+
+void HexPreviewController::rebuildRows()
+{
+    m_rows.clear();
+    const int digits = offsetDigits();
+    const qsizetype rowCount = (m_window.size() + kBytesPerRow - 1) / kBytesPerRow;
+    m_rows.reserve(rowCount);
+
+    for (qsizetype row = 0; row < rowCount; ++row) {
+        const qsizetype start = row * kBytesPerRow;
+        const qsizetype length = std::min<qsizetype>(kBytesPerRow, m_window.size() - start);
+
+        QString hex;
+        hex.reserve(kBytesPerRow * 3 + 1);
+        QString text;
+        text.reserve(kBytesPerRow);
+        for (qsizetype i = 0; i < kBytesPerRow; ++i) {
+            // A short final row is padded rather than ragged: the text column
+            // has to stay where it is or the last line of every file jumps.
+            if (i == kBytesPerRow / 2)
+                hex += QLatin1Char(' ');
+            if (i >= length) {
+                hex += QStringLiteral("   ");
+                continue;
+            }
+            const auto byte = static_cast<unsigned char>(m_window.at(start + i));
+            hex += QStringLiteral("%1 ").arg(byte, 2, 16, QLatin1Char('0'));
+            text += byte >= 0x20 && byte < 0x7f ? QChar::fromLatin1(static_cast<char>(byte))
+                                                : QLatin1Char('.');
+        }
+
+        m_rows.append(QVariantMap {
+            { QStringLiteral("offset"),
+                QStringLiteral("%1").arg(m_windowOffset + start, digits, 16, QLatin1Char('0')) },
+            { QStringLiteral("hex"), hex },
+            { QStringLiteral("text"), text },
+        });
+    }
+}
+
+void HexPreviewController::nextWindow()
+{
+    if (!m_hasMore)
+        return;
+    readWindow(m_windowOffset + m_window.size());
+}
+
+void HexPreviewController::previousWindow()
+{
+    if (m_windowOffset <= 0)
+        return;
+    readWindow(std::max<qint64>(0, m_windowOffset - kWindowBytes));
+}
+
+void HexPreviewController::firstWindow()
+{
+    if (m_windowOffset > 0)
+        readWindow(0);
+}
+
+void HexPreviewController::lastWindow()
+{
+    if (m_fileSize <= kWindowBytes)
+        return;
+    readWindow(std::max<qint64>(0, m_fileSize - kWindowBytes));
+}
+
+void HexPreviewController::seekToFraction(double fraction)
+{
+    if (m_fileSize <= 0)
+        return;
+    const double clamped = std::clamp(fraction, 0.0, 1.0);
+    readWindow(static_cast<qint64>(clamped * static_cast<double>(m_fileSize)));
+}
+
+void HexPreviewController::selectRange(qint64 fromByte, qint64 toByte)
+{
+    if (m_window.isEmpty())
+        return;
+
+    const qint64 windowEnd = m_windowOffset + m_window.size() - 1;
+    const qint64 first = std::clamp(std::min(fromByte, toByte), m_windowOffset, windowEnd);
+    const qint64 last = std::clamp(std::max(fromByte, toByte), m_windowOffset, windowEnd);
+
+    m_selectionStart = first;
+    m_selectionLength = last - first + 1;
+    emit selectionChanged();
+}
+
+void HexPreviewController::clearSelection()
+{
+    if (m_selectionLength == 0 && m_selectionStart < 0)
+        return;
+    m_selectionStart = -1;
+    m_selectionLength = 0;
+    emit selectionChanged();
+}
+
+QByteArray HexPreviewController::selectedBytes() const
+{
+    if (m_selectionLength <= 0)
+        return {};
+    return m_window.mid(
+        static_cast<qsizetype>(m_selectionStart - m_windowOffset), static_cast<qsizetype>(m_selectionLength));
+}
+
+QString HexPreviewController::selectionAsHex() const
+{
+    const QByteArray bytes = selectedBytes();
+    QStringList out;
+    out.reserve(bytes.size());
+    for (const char raw : bytes)
+        out.append(QStringLiteral("%1").arg(static_cast<unsigned char>(raw), 2, 16, QLatin1Char('0')));
+    return out.join(QLatin1Char(' '));
+}
+
+QString HexPreviewController::selectionAsText() const
+{
+    const QByteArray bytes = selectedBytes();
+    QString out;
+    out.reserve(bytes.size());
+    for (const char raw : bytes) {
+        const auto byte = static_cast<unsigned char>(raw);
+        out += byte >= 0x20 && byte < 0x7f ? QChar::fromLatin1(raw) : QLatin1Char('.');
+    }
+    return out;
+}
+
+void HexPreviewController::copySelectionAsHex()
+{
+    const QString hex = selectionAsHex();
+    if (!hex.isEmpty())
+        QGuiApplication::clipboard()->setText(hex);
+}
+
+void HexPreviewController::copySelectionAsText()
+{
+    const QString text = selectionAsText();
+    if (!text.isEmpty())
+        QGuiApplication::clipboard()->setText(text);
+}
+
+HexPreviewProvider::HexPreviewProvider(PluginServices services)
+    : m_services(services)
+{
+}
+
+bool HexPreviewProvider::canPreview(const FileEntry& entry) const
+{
+    if (entry.isDir)
+        return false;
+
+    // Claims on the content pass and never on the name pass: this viewer exists
+    // for the files nobody can name, so a guess from a suffix is exactly what it
+    // must not make. No I/O either -- the type arrived in the entry. See ADR-0033.
+    if (entry.mimeType.isEmpty())
+        return false;
+
+    static const QMimeDatabase mimeDatabase;
+    return !mimeDatabase.mimeTypeForName(entry.mimeType).inherits(QStringLiteral("text/plain"));
+}
+
+QUrl HexPreviewProvider::viewSource() const
+{
+    return qmlView("HexPreview.qml");
+}
+
+PreviewController* HexPreviewProvider::createController(QObject* parent)
+{
+    return new HexPreviewController(m_services, parent);
+}
+
 // ----------------------------------------------------------------- image
 
 ImagePreviewController::ImagePreviewController(PluginServices services, QObject* parent)

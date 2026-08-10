@@ -160,6 +160,7 @@ private slots:
     void aSqliteFileOpensItsTables();
     void aParquetFileOpensItsColumns();
     void aFileNothingClaimsStillReportsItself();
+    void theBytesOfAFileNothingElseCanShow();
     void aTransferInFlightShowsASpeedAndABar();
     void everyFeatureAndPreviewHasAPictureInTheGuide();
 
@@ -377,8 +378,18 @@ void TestWalkthrough::buildFixture()
         QVERIFY(fixtures::writeParquet(
             QDir(m_harness->fixturePath()).filePath(QStringLiteral("exports/rows.parquet"))));
     }
-    // A file nothing claims, which is what the file-info viewer is for.
-    QVERIFY(m_harness->writeFile(QStringLiteral("exports/dump.bin"), QByteArray(4096, '\x01')));
+    // A file no format knows: a header, a name in the middle of it, and bytes.
+    // The same 4096 as before, so every listing that shows its size is unchanged;
+    // what it holds now is worth photographing, because the hex viewer is what
+    // shows it.
+    {
+        QByteArray dump("\x7f\x01\x02\x03MOLE-FIRMWARE\0\0", 19);
+        while (dump.size() < 4096) {
+            dump += QByteArray::number(dump.size(), 16).repeated(2) + QByteArray("\0\x11\x22\xa7\xff", 5);
+        }
+        dump.truncate(4096);
+        QVERIFY(m_harness->writeFile(QStringLiteral("exports/dump.bin"), dump));
+    }
 
     // --- and then spread over time, so the date column says something --------
     const QList<QPair<QString, QDateTime>> dates {
@@ -2975,14 +2986,39 @@ void TestWalkthrough::aParquetFileOpensItsColumns()
 
 void TestWalkthrough::aFileNothingClaimsStillReportsItself()
 {
-    // The viewer of last resort. Every other provider refused this file, and what
-    // is left to say about it -- its size, its kind, when it was touched -- is
-    // still worth saying rather than showing an empty pane.
-    PreviewTabController* preview = previewOf(QStringLiteral("exports/dump.bin"));
+    // What is left for the fact list now that the bytes have a viewer of their
+    // own: a file with nothing in it. Nothing read it, so nothing identified it,
+    // and its size and its dates are all there is to say -- which is still worth
+    // saying rather than showing an empty pane.
+    QVERIFY(m_harness->writeFile(QStringLiteral("exports/nothing-in-it.dat"), QByteArray()));
+
+    PreviewTabController* preview = previewOf(QStringLiteral("exports/nothing-in-it.dat"));
     QCOMPARE(preview->viewerName(), QStringLiteral("File information"));
     QVERIFY(m_harness->until(
         [preview] { return preview->viewer() && !preview->viewer()->property("facts").toList().isEmpty(); }));
     m_harness->screenshot(QStringLiteral("23-preview-file-info"));
+}
+
+void TestWalkthrough::theBytesOfAFileNothingElseCanShow()
+{
+    // The viewer of last resort, and the only one that always works. Nothing
+    // knows this format, so what is honest to show is what is in the file.
+    PreviewTabController* preview = previewOf(QStringLiteral("exports/dump.bin"));
+    QCOMPARE(preview->viewerName(), QStringLiteral("Bytes"));
+
+    auto* viewer = qobject_cast<HexPreviewController*>(viewerOf(preview));
+    QVERIFY(viewer);
+    QVERIFY(m_harness->until([viewer] { return !viewer->rows().isEmpty(); }));
+
+    // The string in the header, selected the way a reader would drag across it,
+    // so the picture shows what selecting is for.
+    viewer->selectRange(4, 16);
+    QCOMPARE(viewer->selectionAsText(), QStringLiteral("MOLE-FIRMWARE"));
+    m_harness->settle(6);
+
+    QQuickItem* rows = m_harness->item(QStringLiteral("hexRows"));
+    QVERIFY2(rows && rows->isVisible(), "the grid of bytes has to be on screen");
+    m_harness->screenshot(QStringLiteral("25-preview-hex"));
 }
 
 void TestWalkthrough::aTransferInFlightShowsASpeedAndABar()
@@ -3079,6 +3115,7 @@ void TestWalkthrough::everyFeatureAndPreviewHasAPictureInTheGuide()
         { QStringLiteral("mole.preview.sqlite"), QStringLiteral("21-preview-sqlite") },
         { QStringLiteral("mole.preview.parquet"), QStringLiteral("22-preview-parquet") },
         { QStringLiteral("mole.preview.fileinfo"), QStringLiteral("23-preview-file-info") },
+        { QStringLiteral("mole.preview.hex"), QStringLiteral("25-preview-hex") },
     };
 
     // Deliberately without one, each with the reason. An entry here is a decision;

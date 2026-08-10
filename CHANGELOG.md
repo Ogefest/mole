@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-11 #MOLE-131 A file no viewer understands is shown as bytes — offsets, hex and text, paged, with a selection that copies as either
 2026-08-11 #MOLE-130 A text file whose name Mole does not recognise now opens as text, and Dockerfiles, makefiles and CMakeLists.txt are coloured
 2026-08-11 #MOLE-129 The preview layer identifies a file by what is in it rather than by what it is called, so a Dockerfile opens as text and a zip renamed notes.txt does not
 2026-08-10 #MOLE-34 A file bigger than the local disk can be written to an FTP drive, which was the last backend that staged the whole upload first

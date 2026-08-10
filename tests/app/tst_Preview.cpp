@@ -103,6 +103,16 @@ private slots:
     void everyFileKeepsTheViewerItAlreadyHad();
     void theFactListNamesWhatTheFileTurnedOutToBe();
 
+    // ---- the bytes of a file, for the files nothing else can show ---------
+    void bytesAreShownForWhatNothingElseClaims_data();
+    void bytesAreShownForWhatNothingElseClaims();
+    void theHexWindowIsOnePageOfSixtyFourKilobytes();
+    void ahugeFileIsPagedAndItsTailIsReachable();
+    void theOffsetColumnWidensPastFourGigabytes();
+    void aSelectionCopiesAsHexAndAsText();
+    void anEmptyFileSaysSoRatherThanShowingAnEmptyGrid();
+    void aWindowADriveCannotSeekToReportsTheError();
+
     void tableOutranksTextForCsv();
     void directoriesGetNothing();
     void imageProviderOnlyClaimsWhatQtCanDecode();
@@ -286,15 +296,15 @@ void TestPreview::contentsOutrankAMisleadingName()
     QVERIFY(preview->viewer());
     QVERIFY2(!qobject_cast<TextPreviewController*>(preview->viewer()),
         "a zip called notes.txt must not open in the text viewer");
-    QCOMPARE(preview->viewerName(), QStringLiteral("File information"));
+    QCOMPARE(preview->viewerName(), QStringLiteral("Bytes"));
 }
 
 void TestPreview::identifyingAFileIsOneReadOfOnePage()
 {
-    // A file far larger than anything that gets read, on a drive that counts.
-    // The fact list reads nothing at all, so every byte counted here is the
-    // sniff's, and the bound on it is the whole promise: a 100 GB file with no
-    // extension has to open as fast as a 100 byte one.
+    // A file far larger than anything that gets read, on a drive that counts
+    // each stream separately -- the first one is the sniff, and the bound on it
+    // is the whole promise: a 100 GB file with no extension has to open as fast
+    // as a 100 byte one.
     auto memory = std::make_shared<MemoryFileSystem>();
     memory->addFile(QStringLiteral("/blob8842"), QByteArray(4 * 1024 * 1024, '\x01'));
     auto counted = std::make_shared<FaultyFileSystem>(memory);
@@ -311,12 +321,16 @@ void TestPreview::identifyingAFileIsOneReadOfOnePage()
     QVERIFY(preview);
     QVERIFY(waitFor([preview] { return preview->viewer() != nullptr; }, 5000));
 
-    QCOMPARE(preview->viewerName(), QStringLiteral("File information"));
-    QCOMPARE(counted->openReadCount(), 1);
+    QCOMPARE(preview->viewerName(), QStringLiteral("Bytes"));
+
     // One page, and the byte ReadRangeTask reads past the end of every window to
     // learn whether anything follows it.
-    QVERIFY2(counted->bytesRead() <= FileType::kSampleBytes + 1,
-        qPrintable(QStringLiteral("read %1 bytes to identify a file").arg(counted->bytesRead())));
+    QVERIFY(!counted->readSizes().isEmpty());
+    QVERIFY2(counted->readSizes().first() <= FileType::kSampleBytes + 1,
+        qPrintable(QStringLiteral("read %1 bytes to identify a file").arg(counted->readSizes().first())));
+    // And what the viewer then read is its own one window, not the file.
+    QVERIFY2(counted->bytesRead() <= FileType::kSampleBytes + HexPreviewController::kWindowBytes + 2,
+        qPrintable(QStringLiteral("read %1 bytes of a 4 MB file").arg(counted->bytesRead())));
 }
 
 void TestPreview::everyFileKeepsTheViewerItAlreadyHad_data()
@@ -328,7 +342,6 @@ void TestPreview::everyFileKeepsTheViewerItAlreadyHad_data()
     QTest::newRow("json") << "config.json" << "Text";
     QTest::newRow("csv") << "prices.csv" << "Table";
     QTest::newRow("tsv") << "data.tsv" << "Table";
-    QTest::newRow("unknown binary") << "mystery.bin" << "File information";
     // Nothing to read, so nothing is read: an empty file keeps the answer its
     // name has always given.
     QTest::newRow("empty, named") << "empty.txt" << "Text";
@@ -357,15 +370,20 @@ void TestPreview::everyFileKeepsTheViewerItAlreadyHad()
 
 void TestPreview::theFactListNamesWhatTheFileTurnedOutToBe()
 {
-    // A database with no suffix: no viewer claims it either way, but the file
-    // has a name for what it is and the fact list used to say "Unknown".
-    QVERIFY(m_tree->writeFile(
-        QStringLiteral("store"), QByteArray("SQLite format 3\0", 16) + QByteArray(400, '\x02')));
+    // Asked of the viewer rather than through the tab, because the tab no longer
+    // sends an identified file here: the hex viewer outranks the fact list for
+    // everything that is not text. What is held is that this viewer, given a file
+    // somebody has looked inside, says what the file is -- it used to answer
+    // "Unknown" for everything whose name the database had no glob for.
+    FileEntry entry;
+    entry.name = QStringLiteral("store");
+    entry.uri = m_tree->rootUri().child(QStringLiteral("store"));
+    entry.size = 416;
+    entry.mimeType = QStringLiteral("application/vnd.sqlite3");
 
-    PreviewTabController* preview = openPreview(QStringLiteral("store"));
-    QVERIFY(preview);
-    auto* viewer = qobject_cast<FileInfoPreviewController*>(preview->viewer());
-    QVERIFY(viewer);
+    FileInfoPreviewController controller(m_app->services());
+    controller.load(entry);
+    auto* viewer = &controller;
 
     const auto factNamed = [viewer](const QString& label) {
         for (const QVariant& entry : viewer->facts()) {
@@ -379,6 +397,256 @@ void TestPreview::theFactListNamesWhatTheFileTurnedOutToBe()
     QCOMPARE(factNamed(QStringLiteral("MIME type")), QStringLiteral("application/vnd.sqlite3"));
     QVERIFY2(factNamed(QStringLiteral("Type")) != QStringLiteral("Unknown"),
         qPrintable(factNamed(QStringLiteral("Type"))));
+}
+
+// ------------------------------------------------- the bytes themselves
+
+namespace {
+
+/// A file with no format anybody knows, and one recognisable string in it so a
+/// selection has something to be about.
+QByteArray unknownBinary(qsizetype bytes)
+{
+    QByteArray out("\x7f\x01\x02\x03MOLE-FIRMWARE\0\0", 19);
+    while (out.size() < bytes)
+        out += QByteArray::number(out.size(), 16).repeated(3) + QByteArray(5, static_cast<char>(0xa7));
+    out.truncate(bytes);
+    return out;
+}
+
+} // namespace
+
+void TestPreview::bytesAreShownForWhatNothingElseClaims_data()
+{
+    QTest::addColumn<QString>("fileName");
+    QTest::addColumn<QByteArray>("contents");
+    QTest::addColumn<QString>("providerId");
+
+    QTest::newRow("no format anybody knows") << "firmware.dat" << unknownBinary(4096) << "mole.preview.hex";
+    QTest::newRow("a zip under any name")
+        << "bundle" << (QByteArrayLiteral("PK\x03\x04") + QByteArray(400, '\x01')) << "mole.preview.hex";
+    // Text never lands here, however unrecognisable its name.
+    QTest::newRow("text with an odd name")
+        << "Jenkinsfile" << QByteArray("pipeline { agent any }\n") << "mole.preview.text";
+    // And a format with a viewer of its own keeps it: the hex viewer sits below
+    // every one of them.
+    QTest::newRow("a database") << "index.sqlite"
+                                << (QByteArray("SQLite format 3\0", 16) + QByteArray(400, '\x02'))
+                                << "mole.preview.sqlite";
+}
+
+void TestPreview::bytesAreShownForWhatNothingElseClaims()
+{
+    QFETCH(QString, fileName);
+    QFETCH(QByteArray, contents);
+    QFETCH(QString, providerId);
+
+    QVERIFY(m_tree->writeFile(fileName, contents));
+
+    PreviewTabController* preview = openPreview(fileName);
+    QVERIFY(preview);
+    QVERIFY(preview->viewer());
+
+    // A PNG still reaches the image viewer, which claims it on its name and is
+    // never asked a second time.
+    QCOMPARE(preview->providerId(), providerId);
+}
+
+void TestPreview::theHexWindowIsOnePageOfSixtyFourKilobytes()
+{
+    const QByteArray contents = unknownBinary(200 * 1024);
+    QVERIFY(m_tree->writeFile(QStringLiteral("firmware.dat"), contents));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("firmware.dat"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<HexPreviewController*>(preview->viewer());
+    QVERIFY2(viewer, qPrintable(preview->viewerName()));
+    QVERIFY(waitFor([viewer] { return !viewer->rows().isEmpty(); }, 5000));
+
+    QCOMPARE(viewer->windowBytes(), HexPreviewController::kWindowBytes);
+    QCOMPARE(viewer->rows().size(), HexPreviewController::kWindowBytes / 16);
+    QVERIFY(viewer->isPaged());
+
+    // The first row is the first sixteen bytes, in both columns.
+    const QVariantMap first = viewer->rows().first().toMap();
+    QCOMPARE(first.value(QStringLiteral("offset")).toString(), QStringLiteral("00000000"));
+    QVERIFY2(first.value(QStringLiteral("hex")).toString().startsWith(QStringLiteral("7f 01 02 03 ")),
+        qPrintable(first.value(QStringLiteral("hex")).toString()));
+    QCOMPARE(first.value(QStringLiteral("text")).toString(), QStringLiteral("....MOLE-FIRMWAR"));
+}
+
+void TestPreview::ahugeFileIsPagedAndItsTailIsReachable()
+{
+    // A hundred gigabytes, sparse. The tail is the half that a viewer holding
+    // the file could never reach at all.
+    constexpr qint64 kSize = 100LL * 1024 * 1024 * 1024;
+    const QString path = m_tree->absolute(QStringLiteral("image.dat"));
+    {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        const QByteArray head = unknownBinary(64 * 1024);
+        QCOMPARE(file.write(head), head.size());
+        QVERIFY2(file.resize(kSize), qPrintable(file.errorString()));
+    }
+    if (QFileInfo(path).size() != kSize)
+        QSKIP("this filesystem would not make a sparse file");
+
+    auto counted = std::make_shared<FaultyFileSystem>(std::make_shared<LocalFileSystem>());
+    Mount mount;
+    mount.id = QStringLiteral("counted");
+    mount.displayName = QStringLiteral("counted");
+    mount.root = m_tree->rootUri();
+    mount.fileSystem = counted;
+    m_app->services().vfs->addMount(mount);
+
+    m_app->previewFile(VfsUri::fromLocalPath(path).toString());
+    auto* preview = qobject_cast<PreviewTabController*>(m_app->tabs()->currentController());
+    QVERIFY(preview);
+    QVERIFY(waitFor([preview] { return preview->viewer() != nullptr; }, 10000));
+
+    auto* viewer = qobject_cast<HexPreviewController*>(preview->viewer());
+    QVERIFY2(viewer, qPrintable(preview->viewerName()));
+    QVERIFY(waitFor([viewer] { return !viewer->rows().isEmpty(); }, 10000));
+
+    QCOMPARE(viewer->fileSize(), kSize);
+    QVERIFY(viewer->isPaged());
+    QVERIFY(viewer->isAtStart());
+
+    // Jumping to the end reads the end, and the offsets prove it: the last
+    // window starts one window short of the size.
+    viewer->lastWindow();
+    QVERIFY(waitFor([viewer] { return viewer->windowOffset() > 0; }, 10000));
+    QCOMPARE(viewer->windowOffset(), kSize - HexPreviewController::kWindowBytes);
+    QVERIFY(viewer->isAtEnd());
+    QCOMPARE(viewer->rows().first().toMap().value(QStringLiteral("offset")).toString(),
+        QStringLiteral("18ffff0000"));
+
+    // Two windows and one page to identify it, out of a hundred gigabytes.
+    QVERIFY2(counted->bytesRead() <= FileType::kSampleBytes + 2 * HexPreviewController::kWindowBytes + 3,
+        qPrintable(QStringLiteral("read %1 bytes of a 100 GB file").arg(counted->bytesRead())));
+}
+
+void TestPreview::theOffsetColumnWidensPastFourGigabytes()
+{
+    // Eight digits is the width every hex dump has always had, and it stops
+    // being enough at exactly 4 GB.
+    HexPreviewController small(m_app->services());
+    FileEntry entry;
+    entry.name = QStringLiteral("firmware.dat");
+    entry.uri = m_tree->rootUri().child(QStringLiteral("firmware.dat"));
+    entry.size = 4LL * 1024 * 1024 * 1024 - 1;
+    entry.mimeType = QStringLiteral("application/octet-stream");
+    QVERIFY(m_tree->writeFile(QStringLiteral("firmware.dat"), unknownBinary(64)));
+    small.load(entry);
+    QCOMPARE(small.offsetDigits(), 8);
+
+    HexPreviewController large(m_app->services());
+    entry.size = 8LL * 1024 * 1024 * 1024;
+    large.load(entry);
+    QCOMPARE(large.offsetDigits(), 10);
+}
+
+void TestPreview::aSelectionCopiesAsHexAndAsText()
+{
+    // Sixteen bytes whose hex and whose text are both known by hand, so what
+    // comes out can be compared against something written down rather than
+    // against the same code that produced it.
+    const QByteArray contents = QByteArray("\x00\x01MOLE bytes\x7f\xff\xfe\xfd", 16) + QByteArray(64, '*');
+    QVERIFY(m_tree->writeFile(QStringLiteral("sixteen.dat"), contents));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("sixteen.dat"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<HexPreviewController*>(preview->viewer());
+    QVERIFY2(viewer, qPrintable(preview->viewerName()));
+    QVERIFY(waitFor([viewer] { return !viewer->rows().isEmpty(); }, 5000));
+
+    QVERIFY(viewer->selectionAsHex().isEmpty());
+    QVERIFY(viewer->selectionSummary().isEmpty());
+
+    viewer->selectRange(0, 15);
+    QCOMPARE(viewer->selectionStart(), 0);
+    QCOMPARE(viewer->selectionLength(), 16);
+    QCOMPARE(viewer->selectionAsHex(), QStringLiteral("00 01 4d 4f 4c 45 20 62 79 74 65 73 7f ff fe fd"));
+    QCOMPARE(viewer->selectionAsText(), QStringLiteral("..MOLE bytes...."));
+
+    // Dragged the other way is the same selection, and a run in the middle is
+    // the run in the middle.
+    viewer->selectRange(5, 2);
+    QCOMPARE(viewer->selectionAsText(), QStringLiteral("MOLE"));
+    QCOMPARE(viewer->selectionAsHex(), QStringLiteral("4d 4f 4c 45"));
+    QVERIFY(viewer->selectionSummary().contains(QStringLiteral("4 bytes")));
+
+    // Past the end of the window clamps rather than reading anything.
+    viewer->selectRange(0, contents.size() * 4);
+    QCOMPARE(viewer->selectionLength(), contents.size());
+
+    // The clipboard is the platform's, so what is asserted is that asking does
+    // not go wrong; what would be copied is asserted above.
+    viewer->copySelectionAsHex();
+    viewer->copySelectionAsText();
+
+    viewer->clearSelection();
+    QCOMPARE(viewer->selectionStart(), -1);
+    QVERIFY(viewer->selectionAsText().isEmpty());
+}
+
+void TestPreview::anEmptyFileSaysSoRatherThanShowingAnEmptyGrid()
+{
+    // An empty file never reaches this viewer through the tab -- there is
+    // nothing to identify it with -- but a plugin or a backend that fills in a
+    // type can send one, and a grid with no rows explains nothing.
+    QVERIFY(m_tree->writeFile(QStringLiteral("nothing.dat"), QByteArray()));
+
+    FileEntry entry;
+    entry.name = QStringLiteral("nothing.dat");
+    entry.uri = m_tree->rootUri().child(QStringLiteral("nothing.dat"));
+    entry.size = 0;
+    entry.mimeType = QStringLiteral("application/octet-stream");
+
+    HexPreviewController viewer(m_app->services());
+    viewer.load(entry);
+
+    QVERIFY(viewer.isEmptyFile());
+    QVERIFY(viewer.rows().isEmpty());
+    QVERIFY(viewer.errorText().isEmpty());
+    QVERIFY(!viewer.isPaged());
+}
+
+void TestPreview::aWindowADriveCannotSeekToReportsTheError()
+{
+    // A drive that can only be read from the beginning: the first window works
+    // and the second is refused. What must not happen is an empty grid with no
+    // explanation -- or gigabytes read and thrown away to reach an offset.
+    const QByteArray contents = unknownBinary(200 * 1024);
+    auto memory = std::make_shared<MemoryFileSystem>();
+    memory->addFile(QStringLiteral("/stream.dat"), contents);
+    auto sequential = std::make_shared<FaultyFileSystem>(memory);
+    sequential->cannotSeek();
+
+    Mount mount;
+    mount.id = QStringLiteral("sequential");
+    mount.displayName = QStringLiteral("sequential");
+    mount.root = VfsUri::fromString(QStringLiteral("mem://sequential/"));
+    mount.fileSystem = sequential;
+    m_app->services().vfs->addMount(mount);
+
+    m_app->previewFile(QStringLiteral("mem://sequential/stream.dat"));
+    auto* preview = qobject_cast<PreviewTabController*>(m_app->tabs()->currentController());
+    QVERIFY(preview);
+    QVERIFY(waitFor([preview] { return preview->viewer() != nullptr; }, 5000));
+
+    auto* viewer = qobject_cast<HexPreviewController*>(preview->viewer());
+    QVERIFY2(viewer, qPrintable(preview->viewerName()));
+    QVERIFY(waitFor([viewer] { return !viewer->rows().isEmpty(); }, 5000));
+
+    viewer->nextWindow();
+    QVERIFY(waitFor([viewer] { return !viewer->errorText().isEmpty(); }, 5000));
+    QVERIFY2(viewer->errorText().contains(QStringLiteral("beginning")), qPrintable(viewer->errorText()));
+    QVERIFY2(viewer->rows().isEmpty(), "rows from the last window under this message would be a lie");
+    // Refused rather than satisfied the expensive way: a backend that cannot
+    // seek must not be read through to reach an offset.
+    QVERIFY2(sequential->bytesRead() <= FileType::kSampleBytes + HexPreviewController::kWindowBytes + 2,
+        qPrintable(QStringLiteral("read %1 bytes").arg(sequential->bytesRead())));
 }
 
 void TestPreview::tableOutranksTextForCsv()
@@ -1322,13 +1590,18 @@ void TestPreview::separatorCanBeOverridden()
 
 void TestPreview::reportsFactsForAnUnknownFile()
 {
-    PreviewTabController* preview = openPreview(QStringLiteral("mystery.bin"));
+    // What is left for the fact list now that the bytes have a viewer of their
+    // own: a file with nothing in it to show. There is nothing to read, so
+    // nothing identified it, and its size and dates are all there is to say.
+    QVERIFY(m_tree->writeFile(QStringLiteral("nothing-in-it"), QByteArray()));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("nothing-in-it"));
     QVERIFY(preview);
     QCOMPARE(preview->viewerName(), QStringLiteral("File information"));
 
     auto* viewer = qobject_cast<FileInfoPreviewController*>(preview->viewer());
     QVERIFY(viewer);
-    QCOMPARE(viewer->headline(), QStringLiteral("mystery.bin"));
+    QCOMPARE(viewer->headline(), QStringLiteral("nothing-in-it"));
     QVERIFY2(viewer->facts().size() >= 5, "an unknown file still has plenty to say about it");
 }
 

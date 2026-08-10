@@ -207,6 +207,147 @@ private:
     PluginServices m_services;
 };
 
+// ----------------------------------------------------------------- hex
+
+/// The bytes of a file, when nothing can say more than that.
+///
+/// **Read-only, and it will stay that way.** This is the viewer where somebody
+/// would most expect to be able to type, which is exactly why the rule is worth
+/// writing down here: previewing a file is not a licence to modify it, and there
+/// is no code path in Mole that writes through a preview. An editor is a
+/// different thing, wanted or not, and it would need undo, a save that cannot
+/// half-happen, and a story for a file that changed underneath it.
+///
+/// Windowed like the text viewer, and for the same reason: the file is never
+/// held, only the window being shown, so a 100 GB firmware image opens as fast
+/// as a 100 byte one.
+class HexPreviewController final : public PreviewController
+{
+    Q_OBJECT
+    /// One entry per row of sixteen bytes: `offset`, `hex` and `text`. The
+    /// absolute offset of a row's first byte is `windowOffset + index * 16`,
+    /// which is what the view uses to place a selection.
+    Q_PROPERTY(QVariantList rows READ rows NOTIFY windowChanged)
+    /// Said in words rather than shown as an empty grid.
+    Q_PROPERTY(bool emptyFile READ isEmptyFile NOTIFY windowChanged)
+    /// Hex digits in the offset column: eight, or more for a file past 4 GB.
+    Q_PROPERTY(int offsetDigits READ offsetDigits NOTIFY windowChanged)
+
+    /// Where this window sits in the file, for the position bar. The same set
+    /// the text viewer exposes, because the strip and the keys are the same.
+    Q_PROPERTY(qint64 fileSize READ fileSize NOTIFY windowChanged)
+    Q_PROPERTY(qint64 windowOffset READ windowOffset NOTIFY windowChanged)
+    Q_PROPERTY(qint64 windowBytes READ windowBytes NOTIFY windowChanged)
+    Q_PROPERTY(bool paged READ isPaged NOTIFY windowChanged)
+    Q_PROPERTY(bool atStart READ isAtStart NOTIFY windowChanged)
+    Q_PROPERTY(bool atEnd READ isAtEnd NOTIFY windowChanged)
+    Q_PROPERTY(QString positionText READ positionText NOTIFY windowChanged)
+    Q_PROPERTY(QString sizeText READ sizeText NOTIFY windowChanged)
+
+    /// The selected run of bytes, absolute. -1 and 0 when there is no selection.
+    Q_PROPERTY(qint64 selectionStart READ selectionStart NOTIFY selectionChanged)
+    Q_PROPERTY(qint64 selectionLength READ selectionLength NOTIFY selectionChanged)
+    /// "16 bytes selected", or empty. The strip says it because a byte range is
+    /// not something the eye counts.
+    Q_PROPERTY(QString selectionSummary READ selectionSummary NOTIFY selectionChanged)
+
+public:
+    explicit HexPreviewController(PluginServices services, QObject* parent = nullptr);
+    ~HexPreviewController() override;
+
+    /// 64 kB is 4096 rows -- more than anybody reads at once, and small enough
+    /// that paging feels instant.
+    static constexpr qint64 kWindowBytes = 64 * 1024;
+    static constexpr int kBytesPerRow = 16;
+
+    QVariantList rows() const { return m_rows; }
+    bool isEmptyFile() const { return m_fileSize == 0; }
+    int offsetDigits() const;
+
+    qint64 fileSize() const { return m_fileSize; }
+    qint64 windowOffset() const { return m_windowOffset; }
+    qint64 windowBytes() const { return m_window.size(); }
+    bool isPaged() const { return m_fileSize > kWindowBytes; }
+    bool isAtStart() const { return m_windowOffset <= 0; }
+    bool isAtEnd() const { return !m_hasMore; }
+    QString positionText() const;
+    QString sizeText() const;
+
+    void load(const FileEntry& entry) override;
+
+    // ---- paging ---------------------------------------------------------
+
+    Q_INVOKABLE void nextWindow();
+    Q_INVOKABLE void previousWindow();
+    Q_INVOKABLE void firstWindow();
+    Q_INVOKABLE void lastWindow();
+    /// Jumps to a point in the file, 0.0 .. 1.0, snapped down to a row.
+    Q_INVOKABLE void seekToFraction(double fraction);
+
+    // ---- selecting and copying -------------------------------------------
+
+    qint64 selectionStart() const { return m_selectionLength > 0 ? m_selectionStart : -1; }
+    qint64 selectionLength() const { return m_selectionLength; }
+    QString selectionSummary() const;
+
+    /// Selects every byte between two absolute offsets, either way round, and
+    /// clamped to the window on screen -- the bytes that can be selected are the
+    /// bytes in front of the reader.
+    Q_INVOKABLE void selectRange(qint64 fromByte, qint64 toByte);
+    Q_INVOKABLE void clearSelection();
+
+    /// The selection as `48 65 6c`, and as text with a dot for every byte that
+    /// has no printable form. Both are wanted: a header is read as hex and a
+    /// string inside a binary is read as text, and a selection that can only
+    /// leave one way is half a viewer.
+    Q_INVOKABLE QString selectionAsHex() const;
+    Q_INVOKABLE QString selectionAsText() const;
+    Q_INVOKABLE void copySelectionAsHex();
+    Q_INVOKABLE void copySelectionAsText();
+
+signals:
+    void windowChanged();
+    void selectionChanged();
+
+private:
+    void readWindow(qint64 offset);
+    void rebuildRows();
+    /// The window bytes covered by the selection, or empty.
+    QByteArray selectedBytes() const;
+
+    PluginServices m_services;
+    FileEntry m_entry;
+    FileSystemPtr m_fileSystem;
+
+    QByteArray m_window;
+    QVariantList m_rows;
+    qint64 m_fileSize = -1;
+    qint64 m_windowOffset = 0;
+    bool m_hasMore = false;
+
+    qint64 m_selectionStart = -1;
+    qint64 m_selectionLength = 0;
+
+    QPointer<ReadRangeTask> m_task;
+};
+
+class HexPreviewProvider final : public IPreviewProvider
+{
+public:
+    explicit HexPreviewProvider(PluginServices services);
+
+    QString id() const override { return QStringLiteral("mole.preview.hex"); }
+    QString displayName() const override { return QStringLiteral("Bytes"); }
+    /// Below every viewer that understands a format, above the list of facts.
+    int priority() const override { return -500; }
+    bool canPreview(const FileEntry& entry) const override;
+    QUrl viewSource() const override;
+    PreviewController* createController(QObject* parent) override;
+
+private:
+    PluginServices m_services;
+};
+
 // --------------------------------------------------------------- image
 
 class ImagePreviewController final : public PreviewController
