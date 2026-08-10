@@ -15,6 +15,37 @@
 
 namespace mole::net {
 
+/// The suffix an upload wears while it is still being written.
+///
+/// A process killed outright cannot tidy up after itself: it does not get to
+/// delete what it had written, and whatever is on the server when it dies stays
+/// there. So the protection cannot be an action taken afterwards -- it has to be
+/// the name the bytes were going under all along. `report.pdf.mole-partial` is
+/// visibly not `report.pdf`; nothing opens it by mistake, nothing syncs it as
+/// the real thing, and finding leftovers is reading a listing rather than
+/// consulting a bookkeeping file that the same kill would have truncated.
+///
+/// See ADR-0020.
+inline constexpr QLatin1String kPartialUploadSuffix(".mole-partial");
+
+/// Where an upload to `target` is written before it is finished.
+VfsUri partialUploadOf(const VfsUri& target);
+
+/// Whether this is the wreckage of an upload rather than a file somebody meant
+/// to have.
+bool isPartialUpload(const QString& name);
+
+/// Puts a finished upload under the name it was asked for.
+///
+/// Expressed against IFileSystem because all three backends that need it do the
+/// same two things -- check the destination is still free, then rename -- and
+/// the difference between SFTP, FTP and WebDAV is entirely in how those two
+/// calls are carried out.
+///
+/// A failure here is the upload's failure, and leaves nothing behind: bytes
+/// under a name nothing will ever open are litter, not a result.
+VfsError commitUpload(IFileSystem& fs, const VfsUri& staging, const VfsUri& target);
+
 /// A write stream that collects the whole payload locally and ships it when it
 /// is closed.
 ///
@@ -34,7 +65,12 @@ public:
     /// is positioned at the start and `size` is the byte count.
     using Sink = std::function<Result<void>(QIODevice& payload, qint64 size)>;
 
-    explicit BufferedUpload(Sink sink);
+    /// Runs once the payload has arrived intact, to make it visible under the
+    /// name it was asked for. Its failure is the stream's failure: a commit that
+    /// did not happen is a file that is not there, whatever the sink managed.
+    using Commit = std::function<VfsError()>;
+
+    explicit BufferedUpload(Sink sink, Commit commit = {});
     ~BufferedUpload() override;
 
     bool open(OpenMode mode) override;
@@ -50,6 +86,7 @@ protected:
 
 private:
     Sink m_sink;
+    Commit m_commit;
     QTemporaryFile m_scratch;
     VfsError m_error;
     bool m_committed = false;
@@ -81,7 +118,13 @@ public:
     using Send
         = std::function<VfsError(QIODevice& source, qint64 span, bool append, const CancelToken& cancel)>;
 
-    StreamingUpload(Send send, qint64 spanBytes);
+    /// Runs once every span has gone up and nothing has gone wrong, to make the
+    /// file visible under the name it was asked for. Its failure is the
+    /// stream's failure, and it does not run at all for a stream that was
+    /// cancelled or abandoned -- there is nothing finished to put in place.
+    using Commit = std::function<VfsError()>;
+
+    StreamingUpload(Send send, qint64 spanBytes, Commit commit = {});
     ~StreamingUpload() override;
 
     bool open(OpenMode mode) override;
@@ -107,6 +150,7 @@ private:
 
     Send m_send;
     qint64 m_spanBytes = 0;
+    Commit m_commit;
 
     std::thread m_thread;
     CancelToken m_cancel;

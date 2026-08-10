@@ -9,6 +9,53 @@ wrong.
 
 ---
 
+## An upload killed mid-flight left a partial file that looked finished (#33)
+
+**Asked for:** an upload interrupted by the process being killed leaves part of a
+file on the server, and what it leaves looks like a finished file. Write to a
+temporary name and rename on success.
+
+**What it turned out to be:** exactly what the issue said, and the interesting
+part was where the fix could not go. [ADR-0014](docs/adr/0014-remote-files-stream-rather-than-stage.md)
+already handles an upload that *fails* — the backend deletes what it wrote — and
+that answer covers every failure the process is alive to see and none of the ones
+it is not. `SIGKILL` runs no destructor and no error path. So no amount of
+cleanup code was ever going to help; the protection had to be the name the bytes
+were travelling under all along, which needs nothing to survive because it is
+already on the server. That is [ADR-0020](docs/adr/0020-an-upload-in-progress-wears-a-different-name.md).
+
+`StreamingUpload` and `BufferedUpload` gained a commit hook — one function, run
+after everything has arrived and nothing has gone wrong, whose failure becomes
+the stream's failure. It does not run for a stream that was cancelled or
+abandoned, which is the case that matters: part of a file has gone up, and giving
+it the real name would be the fault itself. SFTP, FTP and WebDAV write to
+`<name>.mole-partial` and rename at the end. **S3 was deliberately left alone** —
+a single `PUT` is atomic and a multipart upload does not exist as an object until
+it is completed, so there is nothing there to protect.
+
+**The test was the harder half.** A transfer that fails can be faked; a process
+that is killed cannot be, because the whole point is that no code of ours runs
+afterwards. So the live test spawns *this same binary* with an environment
+variable telling it to be the victim, waits for the file to appear on the server
+and sends it `SIGKILL`. It waits on the file appearing rather than on a clock,
+and — this took a second attempt — it waits for the file under **either** name.
+The first version watched only for `.mole-partial`, so against the unfixed
+backend it sat there for ninety seconds while the victim uploaded two gigabytes,
+and then reported "the upload never reached the server, so nothing was killed
+mid-flight". Which was untrue, and was the least useful thing it could have said:
+the whole question is which name the bytes are under, so both are worth waiting
+for and the answer is what gets asserted. Watching for either, it fails in three
+seconds with `a killed upload left mole-killed-555030.bin, which looks like a
+finished file` — the fault, named.
+
+Two things were found while writing it rather than being designed in. A `stat` of
+the destination that fails for a reason other than "not there" was originally
+treated as "the name is free"; it is now treated as "could not find out", because
+guessing there is guessing about whether somebody else's file is about to be
+replaced. And a rename that fails now removes the working file, so a failed
+upload still leaves nothing behind — bytes under a name nothing will ever open
+are litter, not a result.
+
 ## Only part of a large file arrived from an SFTP drive
 
 **Asked for:** work out why files copied from an SFTP server to local disk came back

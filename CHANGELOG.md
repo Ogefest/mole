@@ -6,6 +6,9 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- An upload to SFTP, FTP or WebDAV that is killed before it finishes now leaves a
+  file marked `.mole-partial` rather than a half-written file under the name it
+  was meant to have.
 - `F3` and `Ctrl+←/→/↑` work wherever the keyboard is, instead of going dead until
   the file listing is clicked, and clicking a drive hands the keyboard back.
 - Drives can be connected, ejected and checked from the command palette on `Ctrl+R`,
