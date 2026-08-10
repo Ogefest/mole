@@ -136,6 +136,18 @@ public:
     /// listing is built from a claim.
     FaultyFileSystem& listingOverstatesSizeBy(qint64 bytes);
 
+    // ---- what went through it ---------------------------------------------
+    //
+    // The wrapper already counts every byte through every stream to fire its
+    // faults, so saying how many there were costs nothing -- and it is the only
+    // way to hold "the viewer read one page and stopped" to account. A bound on
+    // what was read is as much a fact about a preview as what it showed.
+
+    /// How many times a file was opened for reading through this wrapper.
+    int openReadCount() const;
+    /// Every byte handed to a reader through this wrapper, over all streams.
+    qint64 bytesRead() const;
+
     // ---- the stall, from the test's side ----------------------------------
 
     /// Whether a stream is sitting at a readStallsAt() offset right now. Wait

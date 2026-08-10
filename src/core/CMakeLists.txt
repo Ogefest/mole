@@ -119,6 +119,8 @@ add_library(mole_core STATIC
     sets/VerifySetTask.h
     sets/VerifySetTask.cpp
 
+    data/FileType.h
+    data/FileType.cpp
     data/ITableSource.h
     data/SqliteTable.h
     data/SqliteTable.cpp

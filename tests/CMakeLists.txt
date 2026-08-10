@@ -135,6 +135,10 @@ mole_add_test(tst_TransferTaskUnderFault SOURCES core/tst_TransferTaskUnderFault
 mole_add_test(tst_FolderSizesTask   SOURCES core/tst_FolderSizesTask.cpp)
 mole_add_test(tst_Preferences       SOURCES core/tst_Preferences.cpp)
 mole_add_test(tst_ReadRangeTask     SOURCES core/tst_ReadRangeTask.cpp)
+
+# What a file is, from a page of it: the sniff every preview goes through when
+# the name had nothing to say.
+mole_add_test(tst_FileType          SOURCES core/tst_FileType.cpp)
 mole_add_test(tst_DelimitedText     SOURCES core/tst_DelimitedText.cpp)
 mole_add_test(tst_DelimitedStore    SOURCES core/tst_DelimitedStore.cpp)
 mole_add_test(tst_TableSources     SOURCES core/tst_TableSources.cpp)

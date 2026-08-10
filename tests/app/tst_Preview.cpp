@@ -5,11 +5,15 @@
 #include "plugins/builtin/previews/PdfPreview.h"
 #include "plugins/builtin/previews/PreviewProviders.h"
 #include "plugins/builtin/previews/SyntaxHighlighter.h"
+#include "support/FaultyFileSystem.h"
 #include "support/TestSupport.h"
 #include "ui/AppController.h"
 #include "ui/models/TabsModel.h"
 
 #include "core/CoreMetaTypes.h"
+#include "core/data/FileType.h"
+#include "core/vfs/VfsManager.h"
+#include "core/vfs/backends/MemoryFileSystem.h"
 
 #include <QAbstractTextDocumentLayout>
 #include <QCoreApplication>
@@ -89,6 +93,15 @@ private slots:
     void picksAViewer_data();
     void picksAViewer();
     void everyFileGetsSomething();
+
+    // ---- identified by what is in it, not by what it is called -----------
+    void aFileWhoseNameSaysNothingIsIdentifiedFromItsContents();
+    void contentsOutrankAMisleadingName();
+    void identifyingAFileIsOneReadOfOnePage();
+    void everyFileKeepsTheViewerItAlreadyHad_data();
+    void everyFileKeepsTheViewerItAlreadyHad();
+    void theFactListNamesWhatTheFileTurnedOutToBe();
+
     void tableOutranksTextForCsv();
     void directoriesGetNothing();
     void imageProviderOnlyClaimsWhatQtCanDecode();
@@ -183,7 +196,15 @@ IPreviewProvider* TestPreview::providerFor(const QString& relativePath) const
 PreviewTabController* TestPreview::openPreview(const QString& relativePath)
 {
     m_app->previewFile(m_tree->rootUri().child(relativePath).toString());
-    return qobject_cast<PreviewTabController*>(m_app->tabs()->currentController());
+    auto* preview = qobject_cast<PreviewTabController*>(m_app->tabs()->currentController());
+
+    // A file whose name got no further than the fallback tier is identified from
+    // its first page before a viewer is chosen, so there is a moment with no
+    // viewer at all. Waited for on the condition rather than for a duration: the
+    // read is off the UI thread and how long it takes is the machine's business.
+    if (preview)
+        waitFor([preview] { return preview->viewer() != nullptr || !preview->isIdentifying(); });
+    return preview;
 }
 
 // ------------------------------------------------------------ picking one
@@ -226,6 +247,132 @@ void TestPreview::everyFileGetsSomething()
              QStringLiteral("archive.tar.zst"), QStringLiteral(".hidden") }) {
         QVERIFY2(providerFor(name) != nullptr, qPrintable(name));
     }
+}
+
+// -------------------------------------- identified by what is in it
+
+void TestPreview::aFileWhoseNameSaysNothingIsIdentifiedFromItsContents()
+{
+    // shared-mime-info has no glob for this name, so the name-only lookup can
+    // only ever answer application/octet-stream and hand it to the fact list.
+    QVERIFY(m_tree->writeFile(QStringLiteral("Dockerfile"),
+        QByteArray("FROM debian:bookworm\nRUN apt-get update && apt-get install -y build-essential\n")));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("Dockerfile"));
+    QVERIFY(preview);
+    QVERIFY2(preview->viewer(), "a file that is plainly text has to reach a viewer");
+
+    auto* text = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY2(text, qPrintable(QStringLiteral("reached %1").arg(preview->viewerName())));
+    QVERIFY(waitFor([text] { return !text->text().isEmpty(); }, 5000));
+    QVERIFY(text->text().contains(QStringLiteral("FROM debian")));
+}
+
+void TestPreview::contentsOutrankAMisleadingName()
+{
+    // The other half: a name is a label somebody typed, and the text viewer
+    // would fill the window with replacement characters.
+    QVERIFY(m_tree->writeFile(
+        QStringLiteral("notes-really.txt"), QByteArrayLiteral("PK\x03\x04") + QByteArray(400, '\x01')));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("notes-really.txt"));
+    QVERIFY(preview);
+    QVERIFY(preview->viewer());
+    QVERIFY2(!qobject_cast<TextPreviewController*>(preview->viewer()),
+        "a zip called notes.txt must not open in the text viewer");
+    QCOMPARE(preview->viewerName(), QStringLiteral("File information"));
+}
+
+void TestPreview::identifyingAFileIsOneReadOfOnePage()
+{
+    // A file far larger than anything that gets read, on a drive that counts.
+    // The fact list reads nothing at all, so every byte counted here is the
+    // sniff's, and the bound on it is the whole promise: a 100 GB file with no
+    // extension has to open as fast as a 100 byte one.
+    auto memory = std::make_shared<MemoryFileSystem>();
+    memory->addFile(QStringLiteral("/blob8842"), QByteArray(4 * 1024 * 1024, '\x01'));
+    auto counted = std::make_shared<FaultyFileSystem>(memory);
+
+    Mount mount;
+    mount.id = QStringLiteral("counted");
+    mount.displayName = QStringLiteral("counted");
+    mount.root = VfsUri::fromString(QStringLiteral("mem://counted/"));
+    mount.fileSystem = counted;
+    m_app->services().vfs->addMount(mount);
+
+    m_app->previewFile(QStringLiteral("mem://counted/blob8842"));
+    auto* preview = qobject_cast<PreviewTabController*>(m_app->tabs()->currentController());
+    QVERIFY(preview);
+    QVERIFY(waitFor([preview] { return preview->viewer() != nullptr; }, 5000));
+
+    QCOMPARE(preview->viewerName(), QStringLiteral("File information"));
+    QCOMPARE(counted->openReadCount(), 1);
+    // One page, and the byte ReadRangeTask reads past the end of every window to
+    // learn whether anything follows it.
+    QVERIFY2(counted->bytesRead() <= FileType::kSampleBytes + 1,
+        qPrintable(QStringLiteral("read %1 bytes to identify a file").arg(counted->bytesRead())));
+}
+
+void TestPreview::everyFileKeepsTheViewerItAlreadyHad_data()
+{
+    QTest::addColumn<QString>("fileName");
+    QTest::addColumn<QString>("viewerName");
+
+    QTest::newRow("plain text") << "notes.txt" << "Text";
+    QTest::newRow("json") << "config.json" << "Text";
+    QTest::newRow("csv") << "prices.csv" << "Table";
+    QTest::newRow("tsv") << "data.tsv" << "Table";
+    QTest::newRow("unknown binary") << "mystery.bin" << "File information";
+    // Nothing to read, so nothing is read: an empty file keeps the answer its
+    // name has always given.
+    QTest::newRow("empty, named") << "empty.txt" << "Text";
+    QTest::newRow("empty, unnamed") << "empty" << "File information";
+}
+
+void TestPreview::everyFileKeepsTheViewerItAlreadyHad()
+{
+    QFETCH(QString, fileName);
+    QFETCH(QString, viewerName);
+
+    QVERIFY(m_tree->writeFile(QStringLiteral("empty.txt"), QByteArray()));
+    QVERIFY(m_tree->writeFile(QStringLiteral("empty"), QByteArray()));
+
+    PreviewTabController* preview = openPreview(fileName);
+    QVERIFY(preview);
+    QCOMPARE(preview->viewerName(), viewerName);
+
+    // And a directory is still nobody's business.
+    FileEntry folder;
+    folder.name = QStringLiteral("subfolder");
+    folder.uri = m_tree->rootUri().child(QStringLiteral("subfolder"));
+    folder.isDir = true;
+    QVERIFY(m_app->previews()->providerFor(folder) == nullptr);
+}
+
+void TestPreview::theFactListNamesWhatTheFileTurnedOutToBe()
+{
+    // A database with no suffix: no viewer claims it either way, but the file
+    // has a name for what it is and the fact list used to say "Unknown".
+    QVERIFY(m_tree->writeFile(
+        QStringLiteral("store"), QByteArray("SQLite format 3\0", 16) + QByteArray(400, '\x02')));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("store"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<FileInfoPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+
+    const auto factNamed = [viewer](const QString& label) {
+        for (const QVariant& entry : viewer->facts()) {
+            const QVariantMap fact = entry.toMap();
+            if (fact.value(QStringLiteral("label")).toString() == label)
+                return fact.value(QStringLiteral("value")).toString();
+        }
+        return QString();
+    };
+
+    QCOMPARE(factNamed(QStringLiteral("MIME type")), QStringLiteral("application/vnd.sqlite3"));
+    QVERIFY2(factNamed(QStringLiteral("Type")) != QStringLiteral("Unknown"),
+        qPrintable(factNamed(QStringLiteral("Type"))));
 }
 
 void TestPreview::tableOutranksTextForCsv()

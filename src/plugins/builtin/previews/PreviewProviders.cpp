@@ -498,6 +498,15 @@ bool TextPreviewProvider::canPreview(const FileEntry& entry) const
     if (entry.isDir)
         return false;
 
+    static const QMimeDatabase mimeDatabase;
+
+    // Something has already looked inside this file, so what is in it decides and
+    // the name does not get a second say: a Dockerfile is text however unknown its
+    // name, and a zip called notes.txt is not text however familiar its name is.
+    // Still no I/O here -- the answer arrived in the entry. See ADR-0033.
+    if (!entry.mimeType.isEmpty())
+        return mimeDatabase.mimeTypeForName(entry.mimeType).inherits(QStringLiteral("text/plain"));
+
     const QString suffix = entry.uri.suffix();
     if (textSuffixes().contains(suffix))
         return true;
@@ -506,7 +515,6 @@ bool TextPreviewProvider::canPreview(const FileEntry& entry) const
 
     // No suffix: ask the shared MIME database rather than guessing. Name-only
     // lookup, because opening the file to sniff it would be I/O in canPreview.
-    static const QMimeDatabase mimeDatabase;
     const QMimeType type = mimeDatabase.mimeTypeForFile(entry.name, QMimeDatabase::MatchExtension);
     return type.inherits(QStringLiteral("text/plain"));
 }
@@ -1027,7 +1035,12 @@ FileInfoPreviewController::FileInfoPreviewController(PluginServices services, QO
 void FileInfoPreviewController::load(const FileEntry& entry)
 {
     static const QMimeDatabase mimeDatabase;
-    const QMimeType type = mimeDatabase.mimeTypeForFile(entry.name, QMimeDatabase::MatchExtension);
+    // What the file is when something has looked inside it, and what its name
+    // suggests when nothing has. A name was all this viewer ever had, which is
+    // why a Dockerfile used to read "Unknown" here.
+    const QMimeType type = entry.mimeType.isEmpty()
+        ? mimeDatabase.mimeTypeForFile(entry.name, QMimeDatabase::MatchExtension)
+        : mimeDatabase.mimeTypeForName(entry.mimeType);
 
     m_headline = entry.name;
 

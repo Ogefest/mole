@@ -137,10 +137,13 @@ Item {
                 }
             }
 
+            // While the head of the file is being read there is no viewer yet and
+            // none has been ruled out, so neither of these would be true.
             Label {
                 Layout.fillWidth: true
                 Layout.margins: 12
                 visible: controller && controller.viewSource.toString().length === 0
+                         && !controller.identifying
                 wrapMode: Text.Wrap
                 color: "#8b93a7"
                 text: controller && controller.currentUri.length > 0

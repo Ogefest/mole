@@ -9,6 +9,49 @@ wrong.
 
 ---
 
+## The preview layer decided what a file was from its name and never looked inside it
+
+**Asked for:** MOLE-129 — `IPreviewProvider::canPreview()` is by contract a name, a suffix
+and a size, and no provider may do any I/O, so a `Dockerfile` shows nine facts out of
+`stat()` although it is plainly text. Read the head of a file that nothing claimed, put
+what it is in `FileEntry::mimeType` — a field that has carried the comment *"the preview
+layer sniffs the type lazily"* since it was written and has never been filled — and ask
+the registry again.
+
+**What it turned out to be:** `FileType::identify()` in `core`, a second lookup pass in
+`PreviewTabController::showEntry()`, and two providers that read the answer. The shape is
+in [ADR-0033](docs/adr/0033-a-file-is-identified-by-its-contents.md).
+
+**The ticket said to use `QMimeDatabase::mimeTypeForFileNameAndData()` and let it apply
+the freedesktop precedence. It does not apply it.** In Qt 6.4 a *unique* glob match is
+returned without the bytes being consulted at all, so a zip renamed `notes.txt` comes back
+as `text/plain` — the one case the whole ticket exists for, and it would have shipped
+green if the test had asserted what the ticket assumed. So `identify()` asks the database
+twice, once for the magic rules and once for the globs, and chooses between its two
+answers: magic beats the name unless the name's answer is a subclass of it (a `.docx` is a
+zip and the name knows more), and when both say text the name wins, because magic for text
+formats is thin enough to call every C++ file C. The magic table itself is still the
+database's; only the choice between two of its own answers is ours.
+
+**The second surprise was the other direction.** The ticket asks for a "more generous" text
+test than Qt's, for the case Qt answers `application/octet-stream` — and its own list of
+cases wants a Latin-1 log to be text, which the rule as written (*"unless the decoder
+errors"*) makes binary, since Latin-1 is not UTF-8. Bytes that fail as UTF-8 are read as
+Latin-1 instead, where 0x80..0x9F is control characters too and the same 2% threshold
+decides. A Latin-1 log is text because of a rule in `FileType`, rather than because Qt's
+private heuristic happens to catch it first.
+
+**A file is no longer shown before it is known.** The tab holds no viewer for the length of
+one 4 kB read rather than opening the name's viewer and swapping it, so one viewer is built
+per file and nothing reads a file it turns out not to be showing. That made `viewer()`
+asynchronous for the fallback tier, which half a dozen tests were asserting synchronously —
+each now waits on the condition, and `identifying` is what tells the view the difference
+between "not yet" and "nothing can show this". A zero-byte file is not read at all: there
+is nothing to read, and its name's answer stands.
+
+The bound is held to account rather than described: `FaultyFileSystem` now counts opens and
+bytes, and a 4 MB file with no suffix is identified in one open and one page.
+
 ## Five features and four viewers had no picture, and two no prose either
 
 **Asked for:** MOLE-115 — Duplicates, Sync, File sets, Alerts and Reports appear in no

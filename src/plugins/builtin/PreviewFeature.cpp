@@ -1,7 +1,9 @@
 #include "plugins/builtin/PreviewFeature.h"
 
+#include "core/data/FileType.h"
 #include "core/settings/Preferences.h"
 #include "core/tasks/ListDirectoryTask.h"
+#include "core/tasks/ReadRangeTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/VfsManager.h"
 
@@ -19,6 +21,8 @@ PreviewTabController::~PreviewTabController()
 {
     if (m_listing)
         m_listing->requestCancel();
+    if (m_sniff)
+        m_sniff->requestCancel();
 }
 
 QString PreviewTabController::folderPath() const
@@ -89,8 +93,63 @@ void PreviewTabController::showEntry(const FileEntry& entry)
     }
     m_viewSource = QUrl();
     m_viewerName.clear();
+    // A file being stepped past takes its unfinished sniff with it.
+    if (m_sniff) {
+        m_sniff->requestCancel();
+        m_sniff.clear();
+    }
 
     IPreviewProvider* provider = m_services.previews ? m_services.previews->providerFor(entry) : nullptr;
+
+    // Pass one asked the name. When it got no further than the fallback tier --
+    // the text viewer, or the list of facts -- the file itself is asked, because
+    // that is where the answer can still change: a Dockerfile is text, and a zip
+    // called notes.txt is not. See ADR-0033.
+    const bool nameWasEnough = !provider || provider->priority() >= 0;
+    if (!nameWasEnough && entry.mimeType.isEmpty() && entry.size != 0) {
+        identifyThenShow();
+        return;
+    }
+
+    installViewer(provider);
+}
+
+void PreviewTabController::identifyThenShow()
+{
+    FileSystemPtr fs = m_services.vfs ? m_services.vfs->resolve(m_current.uri) : nullptr;
+    if (!fs || !m_services.tasks) {
+        installViewer(m_services.previews ? m_services.previews->providerFor(m_current) : nullptr);
+        return;
+    }
+
+    // One page, off the UI thread, and not snapped to line boundaries: what is
+    // wanted is the first bytes of the file whatever they turn out to be.
+    auto* task = new ReadRangeTask(std::move(fs), m_current.uri, 0, FileType::kSampleBytes);
+    task->setAlignToLines(false);
+    m_sniff = task;
+
+    connect(task, &Task::finished, this, [this, task, uri = m_current.uri] {
+        if (m_sniff != task)
+            return;
+        m_sniff.clear();
+        if (m_current.uri != uri)
+            return;
+
+        // A file that cannot be read still gets a viewer: the name's answer
+        // stands, which is what happened before there was a second pass at all.
+        if (task->state() == Task::State::Succeeded)
+            m_current.mimeType = FileType::identify(m_current.name, task->contents());
+
+        installViewer(m_services.previews ? m_services.previews->providerFor(m_current) : nullptr);
+    });
+
+    m_services.tasks->submit(task);
+    // So the view says it is looking rather than saying nothing can show this.
+    emit currentChanged();
+}
+
+void PreviewTabController::installViewer(IPreviewProvider* provider)
+{
     if (!provider) {
         setSubtitle(QStringLiteral("Nothing can show this file"));
         emit currentChanged();
@@ -108,9 +167,9 @@ void PreviewTabController::showEntry(const FileEntry& entry)
     // before load(), so the file is read once and shown the way it was asked for
     // rather than shown one way and then the other.
     m_viewerOptions.clear();
-    const QList<ViewerOption> declared = provider->options(entry);
+    const QList<ViewerOption> declared = provider->options(m_current);
     for (const ViewerOption& option : declared) {
-        const QString chosen = rememberedChoice(option, entry);
+        const QString chosen = rememberedChoice(option, m_current);
         if (controller)
             controller->setViewerOption(option.key, chosen);
 
@@ -120,7 +179,7 @@ void PreviewTabController::showEntry(const FileEntry& entry)
     }
 
     if (controller)
-        controller->load(entry);
+        controller->load(m_current);
 
     setSubtitle(folderPath());
     emit currentChanged();
@@ -157,7 +216,12 @@ void PreviewTabController::loadSiblings(const VfsUri& directory, const VfsUri& s
             // if it is somehow missing from the listing.
             for (const FileEntry& entry : std::as_const(m_siblings)) {
                 if (entry.uri == select) {
+                    // A listing says nothing about what is inside a file, so it
+                    // must not undo what the content pass found out.
+                    const QString identified = m_current.mimeType;
                     m_current = entry;
+                    if (m_current.mimeType.isEmpty())
+                        m_current.mimeType = identified;
                     break;
                 }
             }

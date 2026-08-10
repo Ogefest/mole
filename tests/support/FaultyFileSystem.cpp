@@ -86,6 +86,10 @@ struct FaultyFileSystem::Policy
     int stalledStreams = 0;
     bool released = false;
     std::atomic_bool revoked { false };
+    /// What went through, for a test that is about how much was read rather than
+    /// about what came back. Atomic because the streams run on worker threads.
+    std::atomic_int reads { 0 };
+    std::atomic<qint64> bytesRead { 0 };
     qint64 listingSizeDelta = 0;
     bool failOnClose = false;
     QString closeMessage;
@@ -175,8 +179,10 @@ namespace {
                 permitted = std::min(permitted, m_endsAt - m_delivered);
 
             const qint64 got = m_inner->read(data, permitted);
-            if (got > 0)
+            if (got > 0) {
                 m_delivered += got;
+                m_policy->bytesRead += got;
+            }
             return got;
         }
 
@@ -482,6 +488,16 @@ FaultyFileSystem& FaultyFileSystem::listingOverstatesSizeBy(qint64 bytes)
     return *this;
 }
 
+int FaultyFileSystem::openReadCount() const
+{
+    return m_policy->reads.load();
+}
+
+qint64 FaultyFileSystem::bytesRead() const
+{
+    return m_policy->bytesRead.load();
+}
+
 bool FaultyFileSystem::isStalled() const
 {
     QMutexLocker lock(&m_policy->mutex);
@@ -589,6 +605,7 @@ Result<std::unique_ptr<QIODevice>> FaultyFileSystem::openRead(const VfsUri& targ
     Result<std::unique_ptr<QIODevice>> inner = m_inner->openRead(target, expectedSize);
     if (!inner.ok())
         return inner;
+    ++m_policy->reads;
 
     auto device = std::make_unique<FaultyReadDevice>(
         std::move(inner.value()), m_policy, m_policy->forStream(Policy::Side::Read, target), target);

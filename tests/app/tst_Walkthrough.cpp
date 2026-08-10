@@ -172,6 +172,10 @@ private:
     /// relative to the fixture root and may be in a subfolder, so this does not
     /// depend on which folder the pane happens to be showing.
     PreviewTabController* previewOf(const QString& relativePath);
+    /// The viewer of an open preview, once there is one. A file whose name says
+    /// nothing is identified from its first page before a viewer is chosen, so
+    /// asking for the viewer in the same breath as opening the file is a race.
+    QObject* viewerOf(PreviewTabController* preview);
     /// Puts the cursor on a folder in the current listing and opens it with
     /// Return. Named rather than assumed: these tests used to press Return on
     /// whatever row 0 happened to be, which was "documents" only for as long as
@@ -430,6 +434,14 @@ PreviewTabController* TestWalkthrough::previewOf(const QString& relativePath)
     return qobject_cast<PreviewTabController*>(m_harness->app()->tabs()->currentController());
 }
 
+QObject* TestWalkthrough::viewerOf(PreviewTabController* preview)
+{
+    if (!preview)
+        return nullptr;
+    m_harness->until([preview] { return preview->viewer() != nullptr; });
+    return preview->viewer();
+}
+
 void TestWalkthrough::enterFolder(const QString& name)
 {
     const int row = pane()->files()->rowOfUri(pane()->currentUri() + QLatin1Char('/') + name);
@@ -488,7 +500,7 @@ void TestWalkthrough::highlightsSourceAndPagesLargeFiles()
 
     auto* preview = qobject_cast<PreviewTabController*>(m_harness->app()->tabs()->currentController());
     QVERIFY(preview);
-    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    auto* viewer = qobject_cast<TextPreviewController*>(viewerOf(preview));
     QVERIFY(viewer);
     QVERIFY(m_harness->until([viewer] { return !viewer->text().isEmpty(); }));
 
@@ -561,7 +573,7 @@ void TestWalkthrough::aFileWithNoLineBreaksPreviewsRatherThanStoppingTheWindow()
 
     auto* preview = qobject_cast<PreviewTabController*>(m_harness->app()->tabs()->currentController());
     QVERIFY(preview);
-    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    auto* viewer = qobject_cast<TextPreviewController*>(viewerOf(preview));
     QVERIFY(viewer);
     QVERIFY(m_harness->until([viewer] { return !viewer->text().isEmpty(); }));
 
@@ -789,7 +801,7 @@ void TestWalkthrough::rendersMarkdownAsAPage()
 
     auto* preview = qobject_cast<PreviewTabController*>(m_harness->app()->tabs()->currentController());
     QVERIFY(preview);
-    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    auto* viewer = qobject_cast<TextPreviewController*>(viewerOf(preview));
     QVERIFY(viewer);
     QVERIFY(m_harness->until([viewer] { return viewer->isMarkdown() && !viewer->text().isEmpty(); }));
     m_harness->settle(6);
@@ -897,7 +909,7 @@ void TestWalkthrough::aSlowTableSaysSoAndThenFillsAsItReads()
     m_harness->app()->previewFile(QStringLiteral("mem://slowtable/export.csv"));
     auto* preview = qobject_cast<PreviewTabController*>(m_harness->app()->tabs()->currentController());
     QVERIFY(preview);
-    auto* table = qobject_cast<TablePreviewController*>(preview->viewer());
+    auto* table = qobject_cast<TablePreviewController*>(viewerOf(preview));
     QVERIFY(table);
 
     // Both panes of a preview exist even when one is hidden, so the visible one
@@ -1180,7 +1192,7 @@ void TestWalkthrough::aPdfOpensAsPages()
     QVERIFY(preview);
     QCOMPARE(preview->viewerName(), QStringLiteral("Document"));
 
-    auto* viewer = qobject_cast<PdfPreviewController*>(preview->viewer());
+    auto* viewer = qobject_cast<PdfPreviewController*>(viewerOf(preview));
     QVERIFY(viewer);
     QVERIFY(m_harness->until([viewer] { return viewer->pageCount() == 2; }, 10000));
     m_harness->settle(10);
@@ -1385,7 +1397,7 @@ void TestWalkthrough::htmlCanBeSwitchedBetweenSourceAndPage()
     m_harness->app()->previewFile(m_harness->fixtureUri() + QStringLiteral("/page.html"));
     auto* preview = qobject_cast<PreviewTabController*>(m_harness->app()->tabs()->currentController());
     QVERIFY(preview);
-    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    auto* viewer = qobject_cast<TextPreviewController*>(viewerOf(preview));
     QVERIFY(viewer);
     QVERIFY(m_harness->until([viewer] { return !viewer->text().isEmpty(); }));
     m_harness->settle(6);
@@ -1775,7 +1787,7 @@ void TestWalkthrough::filtersAndCopiesTableCells()
 
     auto* preview = qobject_cast<PreviewTabController*>(m_harness->app()->tabs()->currentController());
     QVERIFY(preview);
-    auto* viewer = qobject_cast<TablePreviewController*>(preview->viewer());
+    auto* viewer = qobject_cast<TablePreviewController*>(viewerOf(preview));
     QVERIFY(viewer);
     QVERIFY(m_harness->until(
         [viewer] { return !viewer->isImporting() && viewer->table()->rowCount() == 3; }, 10000));

@@ -13,6 +13,7 @@
 namespace mole {
 
 class ListDirectoryTask;
+class ReadRangeTask;
 
 /// A tab that shows one file at a time.
 ///
@@ -35,6 +36,11 @@ class PreviewTabController final : public FeatureController
     Q_PROPERTY(QUrl viewSource READ viewSource NOTIFY currentChanged)
     /// The object that component binds to. Owned by this controller.
     Q_PROPERTY(QObject* viewer READ viewer NOTIFY currentChanged)
+    /// True while the head of the file is being read to find out what it is, when
+    /// there is no viewer yet and none has been ruled out. The view has to know
+    /// the difference: "nothing can show this file" would be a lie for the moment
+    /// the answer takes to arrive. See ADR-0033.
+    Q_PROPERTY(bool identifying READ isIdentifying NOTIFY currentChanged)
     /// What can be chosen about how this file is shown, for the strip to render:
     /// one map per option with `key`, `title`, `choices` and `chosen`. Empty for
     /// most files. See docs/adr/0006-preview-options-and-preferences.md.
@@ -57,6 +63,7 @@ public:
     Q_INVOKABLE void chooseViewerOption(const QString& key, const QString& value);
     QUrl viewSource() const { return m_viewSource; }
     QObject* viewer() const;
+    bool isIdentifying() const { return !m_sniff.isNull(); }
     /// One-based, for "3 of 17".
     int position() const;
     int siblingCount() const { return static_cast<int>(m_siblings.size()); }
@@ -76,6 +83,13 @@ signals:
 
 private:
     void showEntry(const FileEntry& entry);
+    /// Reads the head of the current file, puts what it is in
+    /// `FileEntry::mimeType`, and asks the registry again. Only for a file whose
+    /// name got no further than the fallback tier -- which is where the answer
+    /// can still change.
+    void identifyThenShow();
+    /// Builds the viewer for the current entry, or says nothing can show it.
+    void installViewer(IPreviewProvider* provider);
     void loadSiblings(const VfsUri& directory, const VfsUri& select);
     void step(int delta);
 
@@ -95,6 +109,7 @@ private:
     QUrl m_viewSource;
     QPointer<QObject> m_viewer;
     QPointer<ListDirectoryTask> m_listing;
+    QPointer<ReadRangeTask> m_sniff;
 };
 
 class PreviewFeature final : public IFeature

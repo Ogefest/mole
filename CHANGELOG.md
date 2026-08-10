@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-11 #MOLE-129 The preview layer identifies a file by what is in it rather than by what it is called, so a Dockerfile opens as text and a zip renamed notes.txt does not
 2026-08-10 #MOLE-34 A file bigger than the local disk can be written to an FTP drive, which was the last backend that staged the whole upload first
 2026-08-10 #MOLE-30 A task that measures bytes says how long is left
 2026-08-10 #MOLE-73 The File menu offers a new tab only for what can be opened from nothing, instead of thirteen entries of which five open onto an empty view
