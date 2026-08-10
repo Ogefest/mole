@@ -100,6 +100,7 @@ private slots:
     void savingThroughTheFormShowsWhatTheCheckFound();
     void typingIntoTheKindPickerFiltersIt();
     void connectingFromTheListSurvivesTheListRebuilding();
+    void anAnalysisTabWithNoReportCentresItsMessage();
     void theSidebarListsADriveAndConnectsIt();
     void theWindowAsksForThePassphraseADriveIsWaitingOn();
     void emptyWindowExplainsItself();
@@ -2011,6 +2012,37 @@ void TestWalkthrough::connectingFromTheListSurvivesTheListRebuilding()
     // Still here, still able to answer, and the row reflects what happened.
     QVERIFY2(m_harness->item(QStringLiteral("configuredDriveList")), "still standing");
     QCOMPARE(m_harness->app()->configuredDrives()->rowCount(), 1);
+}
+
+/// An analysis tab with nothing scanned yet. The message was inside the
+/// scrolling column, top-aligned, so it hung near the top of whatever height
+/// the tab had -- and it was centred against the ScrollView's own width, which
+/// is not the width its content gets once the scrollbar and the padding come
+/// off. Measured both ways rather than eyeballed.
+void TestWalkthrough::anAnalysisTabWithNoReportCentresItsMessage()
+{
+    // A tab with no targets at all, which is the state the message exists for
+    // and the only one that does not race a scan.
+    m_harness->app()->openFeatureTab(QStringLiteral("mole.analysis"));
+    m_harness->settle(6);
+
+    QQuickItem* space = m_harness->item(QStringLiteral("analysisEmptyState"));
+    QVERIFY2(space, "an analysis tab with nothing scanned has to say so");
+    QVERIFY(m_harness->until([space] { return space->isVisible() && space->height() > 100; }));
+
+    QQuickItem* block = m_harness->item(QStringLiteral("analysisEmptyStateBlock"));
+    QVERIFY(block);
+    QVERIFY(block->width() > 0 && block->height() > 0);
+
+    // Within a pixel: a layout centres on whole pixels and half of an odd
+    // number is not one.
+    const qreal dx = qAbs((block->x() + block->width() / 2) - space->width() / 2);
+    const qreal dy = qAbs((block->y() + block->height() / 2) - space->height() / 2);
+    QVERIFY2(dx <= 1.0, qPrintable(QStringLiteral("off horizontally by %1").arg(dx)));
+    QVERIFY2(dy <= 1.0, qPrintable(QStringLiteral("off vertically by %1").arg(dy)));
+
+    m_harness->settle(2);
+    m_harness->screenshot(QStringLiteral("07c-analysis-empty"));
 }
 
 /// A configured drive in the sidebar, before and after connecting: the row is
