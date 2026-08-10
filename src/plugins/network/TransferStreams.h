@@ -16,6 +16,16 @@
 
 namespace mole::net {
 
+/// How much is allowed to sit between a transfer and the code at the other end
+/// of it. Large enough that neither waits on the other over a hiccup, small
+/// enough to be irrelevant next to the file being carried -- and it is the
+/// entire memory cost of a copy of any size.
+///
+/// Named here rather than kept inside the implementation because it is part of
+/// what StreamingDownload::seek() promises: a hop forwards of no more than this
+/// is answered from the transfer already running.
+constexpr qint64 kStreamBufferBytes = 8 * 1024 * 1024;
+
 /// A write stream that collects the whole payload locally and ships it when it
 /// is closed.
 ///
@@ -182,9 +192,14 @@ public:
 
     bool isSequential() const override { return false; }
     qint64 size() const override { return m_size; }
-    /// Backwards, or forwards past what is buffered, throws away the transfer in
-    /// flight and starts another at the new position. Correct, and expensive
-    /// enough that nothing should seek around a stream by choice.
+    /// Backwards, or forwards by more than kStreamBufferBytes, throws away the
+    /// transfer in flight and starts another at the new position. Correct, and
+    /// expensive enough that nothing should seek around a stream by choice.
+    ///
+    /// A shorter hop forwards waits for the bytes and skips them, whether or not
+    /// they have arrived yet. By distance rather than by what happens to be in
+    /// the buffer, deliberately: a device that starts a new transfer only when
+    /// the network was slow behaves differently on every run.
     bool seek(qint64 position) override;
 
     /// What went wrong, once a read has returned -1.

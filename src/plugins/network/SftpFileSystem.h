@@ -41,7 +41,7 @@ struct SftpSettings
 /// protocol's own attributes, and does everything that is not a transfer through
 /// SFTP's quote commands -- mkdir, rm, rmdir, rename. That is the whole protocol
 /// surface this needs, which is why no SSH library appears here directly.
-class SftpFileSystem final : public IFileSystem
+class SftpFileSystem : public IFileSystem
 {
 public:
     SftpFileSystem(QString scheme, SftpSettings settings);
@@ -60,6 +60,18 @@ public:
     Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1) override;
 
     Result<AccessInfo> access(const VfsUri& target) override;
+
+protected:
+    /// One directory listing, exactly as the server answered it and before
+    /// anything has been made of it.
+    ///
+    /// The seam a test puts a server behind. Everything above it is where
+    /// servers that answer differently are reconciled -- what a protocol error
+    /// means, what a "." row that is not a directory means, and how a refusal to
+    /// list is explained -- and that is the part worth holding to account on
+    /// every change rather than on the days somebody has a server to hand.
+    /// See tests/plugins/tst_SftpFileSystem.cpp.
+    virtual net::Response fetchListing(const VfsUri& dir, const CancelToken& cancel);
 
 private:
     /// Absolute path on the server for a uri in this drive.

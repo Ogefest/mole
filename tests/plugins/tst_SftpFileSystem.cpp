@@ -223,6 +223,57 @@ QByteArray blockAt(int index)
     return block;
 }
 
+/// A server that answers listings out of a script instead of over a network.
+///
+/// It exists because SFTP servers disagree about what "list this file" means.
+/// One does not refuse: it answers with a "." row describing the file itself.
+/// Another refuses and says the path does not exist -- which is true of the
+/// directory that was asked for and false of the file that is sitting there. The
+/// backend has to turn both into the same answer, and neither can be arranged on
+/// a server that is behaving, so the answer is supplied here instead.
+class ServerThatAnswers final : public SftpFileSystem
+{
+public:
+    ServerThatAnswers()
+        : SftpFileSystem(QStringLiteral("sftp"), SftpSettings {})
+    {
+    }
+
+    /// What the server sends back when this directory is listed.
+    void answers(const QString& path, const QByteArray& listing) { m_listings.insert(path, listing); }
+    /// How the server refuses when this path is listed.
+    void refuses(const QString& path, CURLcode code) { m_refusals.insert(path, code); }
+
+    /// One `ls -l` row in the shape libcurl produces for SFTP.
+    static QByteArray row(const QString& name, bool isDir, int size)
+    {
+        return QStringLiteral("%1rw-r--r--   1 -        -   %2 Aug  9 08:54 %3\n")
+            .arg(isDir ? QLatin1Char('d') : QLatin1Char('-'))
+            .arg(size, 13)
+            .arg(name)
+            .toUtf8();
+    }
+
+protected:
+    net::Response fetchListing(const VfsUri& dir, const CancelToken&) override
+    {
+        const QString path = dir.path().isEmpty() ? QStringLiteral("/") : dir.path();
+
+        net::Response response;
+        if (m_refusals.contains(path)) {
+            response.code = m_refusals.value(path);
+            response.detail = QStringLiteral("the server refused");
+            return response;
+        }
+        response.body = m_listings.value(path);
+        return response;
+    }
+
+private:
+    QHash<QString, QByteArray> m_listings;
+    QHash<QString, CURLcode> m_refusals;
+};
+
 } // namespace
 
 class TestSftpFileSystem : public QObject
@@ -234,6 +285,13 @@ private slots:
     void aFormWithoutCredentialsIsRefused();
     void theSchemeAndRootComeFromTheDrive();
     void theFormAsksOnlyWhatSftpNeeds();
+
+    void aServerThatDescribesTheFileItselfIsUnderstoodToMeanAFile();
+    void aServerThatRefusesToListAFileIsUnderstoodToMeanAFile();
+    void aServerThatRefusesForAnotherReasonIsStillUnderstood();
+    void aPathThatIsNotThereIsNotCalledAFile();
+    void aDirectoryStillListsItsChildrenAndNotItsDotRows();
+
     void itSatisfiesTheConformanceSuite();
     void aLargeFileArrivesWhole();
     void aLargeFileGoesUpWhole();
@@ -308,6 +366,96 @@ void TestSftpFileSystem::theFormAsksOnlyWhatSftpNeeds()
     }
     QCOMPARE(required, 2); // host and user, and nothing else
     QVERIFY2(hasPasswordField, "a password field is what routes the secret to the credential store");
+}
+
+/// Asked to list a file, a server that answers with a "." row describing the
+/// file is describing a file, and saying so is the whole of the answer.
+///
+/// Dropping the dot rows before looking at them -- which is the obvious thing to
+/// do with them -- turns "this is a file" into "this is an empty directory", and
+/// an empty directory is what the user then gets shown in place of the file they
+/// double-clicked.
+void TestSftpFileSystem::aServerThatDescribesTheFileItselfIsUnderstoodToMeanAFile()
+{
+    ServerThatAnswers server;
+    server.answers(QStringLiteral("/report.txt"), ServerThatAnswers::row(QStringLiteral("."), false, 12));
+
+    const Result<FileEntryList> listed
+        = server.list(VfsUri::fromString(QStringLiteral("sftp:///report.txt")), CancelToken());
+    QVERIFY(!listed.ok());
+    QCOMPARE(listed.error().code, VfsError::NotADirectory);
+}
+
+/// The other kind of server, which refuses instead -- and says the path does not
+/// exist, because the directory it was asked for does not.
+///
+/// Passing that on would be a lie about the file, which is there. The backend
+/// asks what the path actually is before it explains a failure, and the layers
+/// above must not have to know which kind of server they are talking to.
+void TestSftpFileSystem::aServerThatRefusesToListAFileIsUnderstoodToMeanAFile()
+{
+    ServerThatAnswers server;
+    server.refuses(QStringLiteral("/report.txt"), CURLE_REMOTE_FILE_NOT_FOUND);
+    server.answers(QStringLiteral("/"),
+        ServerThatAnswers::row(QStringLiteral("."), true, 0)
+            + ServerThatAnswers::row(QStringLiteral("report.txt"), false, 12)
+            + ServerThatAnswers::row(QStringLiteral("photos"), true, 0));
+
+    const Result<FileEntryList> listed
+        = server.list(VfsUri::fromString(QStringLiteral("sftp:///report.txt")), CancelToken());
+    QVERIFY(!listed.ok());
+    QCOMPARE(listed.error().code, VfsError::NotADirectory);
+}
+
+void TestSftpFileSystem::aServerThatRefusesForAnotherReasonIsStillUnderstood()
+{
+    // A refusal that says nothing useful at all is the common case: the protocol
+    // reports that the operation did not work and leaves the reason to be
+    // guessed. The path itself is what settles it.
+    ServerThatAnswers server;
+    server.refuses(QStringLiteral("/report.txt"), CURLE_QUOTE_ERROR);
+    server.answers(QStringLiteral("/"), ServerThatAnswers::row(QStringLiteral("report.txt"), false, 12));
+
+    const Result<FileEntryList> listed
+        = server.list(VfsUri::fromString(QStringLiteral("sftp:///report.txt")), CancelToken());
+    QVERIFY(!listed.ok());
+    QCOMPARE(listed.error().code, VfsError::NotADirectory);
+}
+
+void TestSftpFileSystem::aPathThatIsNotThereIsNotCalledAFile()
+{
+    // The other half of the same rule, and the one that keeps it honest: a path
+    // that really is missing has to stay missing. An explanation that turns
+    // every failed listing into "that is a file" would send whoever asked
+    // looking for something that was never there.
+    ServerThatAnswers server;
+    server.refuses(QStringLiteral("/gone.txt"), CURLE_REMOTE_FILE_NOT_FOUND);
+    server.answers(QStringLiteral("/"), ServerThatAnswers::row(QStringLiteral("report.txt"), false, 12));
+
+    const Result<FileEntryList> listed
+        = server.list(VfsUri::fromString(QStringLiteral("sftp:///gone.txt")), CancelToken());
+    QVERIFY(!listed.ok());
+    QCOMPARE(listed.error().code, VfsError::NotFound);
+}
+
+void TestSftpFileSystem::aDirectoryStillListsItsChildrenAndNotItsDotRows()
+{
+    ServerThatAnswers server;
+    server.answers(QStringLiteral("/photos"),
+        ServerThatAnswers::row(QStringLiteral("."), true, 0)
+            + ServerThatAnswers::row(QStringLiteral(".."), true, 0)
+            + ServerThatAnswers::row(QStringLiteral("beach.jpg"), false, 4096)
+            + ServerThatAnswers::row(QStringLiteral("raw"), true, 0));
+
+    const Result<FileEntryList> listed
+        = server.list(VfsUri::fromString(QStringLiteral("sftp:///photos")), CancelToken());
+    QVERIFY2(listed.ok(), qPrintable(listed.error().message));
+    QCOMPARE(listed.value().size(), 2);
+    QCOMPARE(listed.value().at(0).name, QStringLiteral("beach.jpg"));
+    QCOMPARE(listed.value().at(0).size, 4096);
+    QVERIFY(!listed.value().at(0).isDir);
+    QCOMPARE(listed.value().at(1).name, QStringLiteral("raw"));
+    QVERIFY(listed.value().at(1).isDir);
 }
 
 /// The case the control channel exists for.

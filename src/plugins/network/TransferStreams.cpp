@@ -92,14 +92,6 @@ Result<std::unique_ptr<QIODevice>> openDownloadedFile(std::unique_ptr<QTemporary
 
 // ---- StreamingUpload -------------------------------------------------------
 
-namespace {
-    /// How much is allowed to sit between a transfer and the code at the other
-    /// end of it. Large enough that neither waits on the other over a hiccup,
-    /// small enough to be irrelevant next to the file being carried -- and it is
-    /// the entire memory cost of a copy of any size.
-    constexpr qint64 kBufferBytes = 8 * 1024 * 1024;
-} // namespace
-
 /// What the send reads from: it takes from the writer's buffer and stops at the
 /// end of the span, so the next transfer can pick up where this one left off.
 class StreamingUpload::Source final : public QIODevice
@@ -170,7 +162,7 @@ qint64 StreamingUpload::writeData(const char* data, qint64 size)
         startSending();
 
     std::unique_lock<std::mutex> lock(m_mutex);
-    m_drained.wait(lock, [this] { return m_failed || m_buffered < kBufferBytes; });
+    m_drained.wait(lock, [this] { return m_failed || m_buffered < kStreamBufferBytes; });
     if (m_failed) {
         setErrorString(m_error.message);
         return -1;
@@ -412,7 +404,7 @@ void StreamingDownload::stopFetching()
 bool StreamingDownload::deliver(const char* data, qint64 size)
 {
     std::unique_lock<std::mutex> lock(m_mutex);
-    m_drained.wait(lock, [this] { return !m_running || m_buffered < kBufferBytes; });
+    m_drained.wait(lock, [this] { return !m_running || m_buffered < kStreamBufferBytes; });
     if (!m_running)
         return false;
 
@@ -498,7 +490,8 @@ bool StreamingDownload::seek(qint64 position)
         // rather than checking what has already arrived is deliberate -- whether
         // it has is a matter of timing, and a device whose behaviour depends on
         // how fast the network was is a device nothing can be tested against.
-        const bool worthSkipping = position > m_bufferedFrom && position - m_bufferedFrom <= kBufferBytes;
+        const bool worthSkipping
+            = position > m_bufferedFrom && position - m_bufferedFrom <= kStreamBufferBytes;
         if (worthSkipping && m_thread.joinable()) {
             while (m_bufferedFrom < position) {
                 if (m_chunks.empty()) {

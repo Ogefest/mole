@@ -471,6 +471,10 @@ VfsError errorFor(const Response& response, const QString& what, StatusMeaning m
     case CURLE_WRITE_ERROR:
     case CURLE_READ_ERROR:
     case CURLE_UPLOAD_FAILED:
+    // Never reported by a transfer that ran: it is how a backend says the
+    // transfer could not be started at all, which is a local failure and not
+    // something the other end did.
+    case CURLE_FAILED_INIT:
         return fail(VfsError::IoError, detail);
     case CURLE_UNSUPPORTED_PROTOCOL:
     case CURLE_NOT_BUILT_IN:

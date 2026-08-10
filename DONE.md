@@ -9,6 +9,70 @@ wrong.
 
 ---
 
+## Five faults from one day, and the three that could still have come back
+
+**Asked for:** MOLE-18. Each fault found in one day of working against a real
+server becomes a named tier 1 test, because finding one costs a day and keeping
+it costs a second. Five of them: a transfer that stops short of an announced
+length, a read that fails being taken for the end of a file, a large SFTP read
+crossing the point where the session re-keys, a listing of a file that has to
+mean "not a directory" whichever way the server answers, and a forward seek
+inside a stream's buffer that must not depend on how fast the network was.
+
+**What it turned out to be:** two of the five were already held. `net::errorFor`
+is covered by `tst_CurlTransport` — a short transfer, an unknown length, a HEAD
+that asked for no body, and a 404 whose body arrived whole — and the read that
+fails by `tst_TransferTask::aReadThatStopsHalfWayIsNotAnEndOfFile` next to the
+truncation case, which is the other half of the same question. The other three
+had nothing that would have caught them, and one of those three had a test that
+looked as though it did.
+
+**The re-key point had only a live test.** An SFTP transfer that runs past the
+point where the session re-keys stops dead — full speed, then nothing, with the
+connection open and the server there — and the answer was to fetch in spans, each
+over a connection of its own. Nothing checked that on a machine with no server:
+`tests/plugins/tst_StreamingDownload.cpp` now has a fake whose connection carries
+only so much and then reports that nothing more arrived, and the file still
+arrives byte for byte because no span is longer than the limit. It comes with its
+control — the same server asked for the whole file in one go dies part way —
+because a test that passes against a fake which does not actually misbehave is
+worse than no test.
+
+**Two kinds of SFTP server, neither reachable offline.** Asked to list a regular
+file, one server answers with a "." row describing the file and another refuses
+and says the path does not exist — true of the directory that was asked for, and
+false of the file that is sitting there. Both have to come out as
+`NotADirectory`, and nothing above the backend may have to know which kind of
+server it is talking to. Neither answer can be arranged on a server that is
+behaving, so `SftpFileSystem::fetchListing()` is now a seam: the transport on one
+side, and on the other everything that decides what an answer means. Five tests
+sit behind it, including the one that keeps the rule honest — a path that really
+is missing stays `NotFound`, rather than every failed listing becoming "that is a
+file".
+
+**A seek that looked tested and was not.** `StreamingDownload::seek()` answers a
+short hop forwards out of the transfer already running, and the rule is a
+*distance* — up to one bufferful — rather than what happens to have arrived. The
+test that existed read a kilobyte, seeked fifty forward, and passed whether or
+not the bytes were there. Two now replace it: one at the far edge of the buffer
+and one byte past it, which pins the distance; and one where the server has
+handed over a single block and is holding the rest, which is the state a stream
+that consulted its buffer would give up in. `kStreamBufferBytes` moved into the
+header for the first of those, because the size of the buffer is part of what
+seek promises rather than an implementation detail.
+
+**Each new test was checked against the fault it names** by putting the fault
+back — the span loop removed, the seek made to consult the buffer, the "." row
+dropped like any other dot entry, and "no such file" passed on as it stands. Each
+one turned exactly the expected tests red and left the rest green.
+
+**One clock survives, in the seek test, and it decides nothing.** The state under
+test is a transfer that is holding bytes back, and only the test can let them
+through; releasing them immediately would answer the easy question instead. So it
+waits a moment first, and what it asserts is the count of transfers started —
+which, once a second one begins, is wrong for ever, whether it began inside that
+window or after it.
+
 ## The server attacked while a transfer runs, and what it did not survive
 
 **Asked for:** MOLE-28. The same transfers with the machine being interfered with

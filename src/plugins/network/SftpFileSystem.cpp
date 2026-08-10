@@ -99,16 +99,17 @@ QByteArray SftpFileSystem::urlFor(const VfsUri& uri, bool asDirectory) const
     return url;
 }
 
-Result<FileEntryList> SftpFileSystem::listRaw(const VfsUri& dir, const CancelToken& cancel)
+net::Response SftpFileSystem::fetchListing(const VfsUri& dir, const CancelToken& cancel)
 {
     auto lease = m_pool->take();
     if (!lease) {
-        return Result<FileEntryList>::failure(
-            VfsError::IoError, QStringLiteral("Could not start an SFTP transfer"));
+        net::Response failed;
+        failed.code = CURLE_FAILED_INIT;
+        failed.detail = QStringLiteral("could not start an SFTP transfer");
+        return failed;
     }
 
-    const QByteArray url = urlFor(dir, true);
-    lease.setUrl(url);
+    lease.setUrl(urlFor(dir, true));
     if (!m_settings.privateKeyPath.isEmpty()) {
         curl_easy_setopt(
             lease.get(), CURLOPT_SSH_PRIVATE_KEYFILE, m_settings.privateKeyPath.toUtf8().constData());
@@ -118,7 +119,12 @@ Result<FileEntryList> SftpFileSystem::listRaw(const VfsUri& dir, const CancelTok
         }
     }
 
-    const net::Response response = m_pool->perform(lease, cancel);
+    return m_pool->perform(lease, cancel);
+}
+
+Result<FileEntryList> SftpFileSystem::listRaw(const VfsUri& dir, const CancelToken& cancel)
+{
+    const net::Response response = fetchListing(dir, cancel);
     const VfsError error = net::errorFor(
         response, QStringLiteral("Listing %1").arg(dir.path()), net::StatusMeaning::ProtocolReply);
     if (error.isError())
