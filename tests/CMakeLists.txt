@@ -10,6 +10,8 @@ add_library(mole_test_support STATIC
     support/MoleTestMain.h
     support/TestbedControl.h
     support/TestbedControl.cpp
+    support/ScriptedHttpServer.h
+    support/ScriptedHttpServer.cpp
 )
 
 # The QML-driving harness needs Quick and the application's QML; kept in its
@@ -31,7 +33,7 @@ qt_add_resources(mole_qml_harness "harness_qml"
 
 target_include_directories(mole_test_support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(mole_test_support
-    PUBLIC mole_core mole_sdk Qt6::Test
+    PUBLIC mole_core mole_sdk Qt6::Test Qt6::Network
     PRIVATE mole_flags)
 
 # Tests that load the archive plugin need to know where it was built.
@@ -202,6 +204,13 @@ if(MOLE_HAVE_NETWORK_PLUGIN)
     # behaving server produces on request.
     mole_add_test(tst_StreamingUpload  SOURCES plugins/tst_StreamingUpload.cpp
                                        LIBS mole_network_backends mole_core CURL::libcurl)
+
+    # Servers that answer wrongly on purpose. Offline, and it has to be: a
+    # server that is behaving cannot be asked for a 411, a Content-Length that
+    # does not match the body, or a listing cut off half way through -- and
+    # those are the answers that lose data.
+    mole_add_test(tst_ServersThatMisbehave SOURCES plugins/tst_ServersThatMisbehave.cpp
+                                       LIBS mole_network_backends CURL::libcurl)
 
     mole_add_test(tst_SftpFileSystem   SOURCES plugins/tst_SftpFileSystem.cpp
                                        LIBS mole_network_backends CURL::libcurl)

@@ -3,7 +3,9 @@
 #include "support/MoleTestMain.h"
 #include "support/TestbedControl.h"
 
+#include <QFile>
 #include <QProcess>
+#include <QTemporaryDir>
 #include <QUrl>
 
 #include <algorithm>
@@ -237,6 +239,7 @@ private slots:
     void aLargeFileGoesUpWhole();
     void aReadWhoseConnectionIsCutDoesNotLookLikeAWholeFile();
     void aKilledUploadLeavesNothingThatLooksFinished();
+    void aHostKeyThatChangedIsRefused();
 };
 
 void TestSftpFileSystem::aFormWithoutAHostIsRefused()
@@ -721,6 +724,92 @@ void TestSftpFileSystem::aKilledUploadLeavesNothingThatLooksFinished()
     QVERIFY2(after.contains(partialName),
         qPrintable(QStringLiteral("expected the wreckage under %1; the directory held %2")
                        .arg(partialName, after.join(QStringLiteral(", ")))));
+}
+
+/// The one case trust-on-first-use exists to catch.
+///
+/// Accepting a key from a host nobody has met is a judgement call, and Mole
+/// makes it: a new host is trusted and its key recorded. A host whose key has
+/// *changed* is a different question entirely, and there is no judgement in it —
+/// either the server was rebuilt or somebody is standing in the middle, and the
+/// two are indistinguishable from here. ADR-0011 says refuse, always, and this
+/// is what holds it to that.
+///
+/// It works on a `known_hosts` of its own. Doing this to the account's real one
+/// would be interfering with the machine the suite runs on.
+void TestSftpFileSystem::aHostKeyThatChangedIsRefused()
+{
+    const Account account = accountFromEnvironment();
+    if (!account.isConfigured())
+        QSKIP("No SFTP account in the environment.");
+
+    QTemporaryDir scratch;
+    QVERIFY(scratch.isValid());
+    const QString knownHosts = scratch.filePath(QStringLiteral("known_hosts"));
+
+    SftpSettings settings;
+    settings.host = account.host;
+    settings.port = account.port;
+    settings.username = account.user;
+    settings.password = account.password;
+    settings.remoteRoot = account.base;
+    settings.knownHostsPath = knownHosts;
+    settings.acceptNewHostKey = true;
+
+    const VfsUri root(QStringLiteral("sftp"), QString(), QStringLiteral("/"));
+
+    {
+        // Met for the first time, so the key is taken on trust and written down.
+        SftpFileSystem fileSystem(QStringLiteral("sftp"), settings);
+        const Result<FileEntryList> listing = fileSystem.list(root, CancelToken());
+        QVERIFY2(listing.ok(), qPrintable(listing.error().message));
+    }
+
+    QFile file(knownHosts);
+    QVERIFY2(file.open(QIODevice::ReadOnly), "the first connection should have written a known_hosts");
+    QByteArray recorded = file.readAll();
+    file.close();
+    QVERIFY2(!recorded.trimmed().isEmpty(), "nothing was recorded, so nothing can have changed");
+
+    // The same host, a different key.
+    //
+    // The key has to stay *valid* and simply be a different one. Flipping a
+    // character of the base64 was the obvious thing and it is wrong: the blob
+    // stops decoding, the parser discards the line, and a discarded line reads
+    // as a host nobody has ever met -- so the connection is accepted on trust
+    // and the test passes for the wrong reason. Decoding the blob and changing a
+    // byte of the key material inside it keeps every length prefix intact, which
+    // is what an impostor's key looks like from here.
+    QByteArray line;
+    for (const QByteArray& candidate : recorded.split('\n')) {
+        if (!candidate.trimmed().isEmpty() && !candidate.startsWith('#')) {
+            line = candidate.trimmed();
+            break;
+        }
+    }
+    const int lastSpace = line.lastIndexOf(' ');
+    QVERIFY2(lastSpace > 0,
+        qPrintable(QStringLiteral("unrecognised known_hosts line: %1").arg(QString::fromUtf8(line))));
+
+    QByteArray blob = QByteArray::fromBase64(line.mid(lastSpace + 1));
+    QVERIFY2(blob.size() > 16, "the recorded key did not decode, so nothing was really recorded");
+    blob[blob.size() - 3] = static_cast<char>(blob.at(blob.size() - 3) ^ 0x40);
+
+    const QByteArray changed = line.left(lastSpace + 1) + blob.toBase64() + "\n";
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    file.write(changed);
+    file.close();
+
+    // And now it is a host we have met, whose key is not the one we recorded.
+    // Trusting new hosts is beside the point: this one is not new.
+    SftpFileSystem again(QStringLiteral("sftp"), settings);
+    const Result<FileEntryList> refused = again.list(root, CancelToken());
+
+    QVERIFY2(!refused.ok(),
+        "a host whose key had changed was connected to anyway, which is the whole thing this policy is for");
+    QVERIFY2(!refused.error().message.isEmpty(),
+        "a refusal has to say something; being turned away for no stated reason is indistinguishable "
+        "from the server being down");
 }
 
 MOLE_TEST_MAIN(TestSftpFileSystem)

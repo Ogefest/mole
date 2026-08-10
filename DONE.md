@@ -9,6 +9,52 @@ wrong.
 
 ---
 
+## The network misbehaves (#4)
+
+**Asked for:** fifteen scenarios in which the network or the server does
+something other than what it should, each one named for the loss it prevents.
+
+**What it turned out to be:** two different jobs wearing one label. Most of the
+list is not about the *network* misbehaving at all — it is about a **server
+answering wrongly**, and a well-behaved server cannot be asked to do that. A 411
+to a chunked PUT, a `Content-Length` that does not match the body, a listing cut
+off half way through an XML document, a redirect aimed at a request carrying a
+file: none of them can be obtained from the testbed, and all of them are things
+some appliance out there does.
+
+So they are scripted. `tests/support/ScriptedHttpServer` is a server that
+answers wrongly on purpose — it runs on a thread of its own with no event loop,
+because `curl_easy_perform` blocks the thread that calls it and a server sharing
+that thread would never accept the connection. Six scenarios run offline in
+under a second, on every change.
+
+The one that matters most is the truncated listing. A mirror sync asks what is
+on the far side and deletes anything that is not there; a listing that arrives
+half-finished and is reported as a short directory is not a display problem, it
+is an instruction to delete everything the answer was cut off before mentioning.
+
+**The host-key test taught something about tests.** ADR-0011 says a host whose
+key has changed is refused, always. The first version of the test recorded the
+key, flipped one character of the base64 and reconnected — and the connection was
+*accepted*, which looked like a serious security finding. It was not. A flipped
+character stops the blob decoding, the parser discards the line, and a discarded
+line reads as a host nobody has ever met — so it was accepted on trust, exactly
+as it should be. Decoding the blob and changing a byte of the key material
+inside it, leaving every length prefix intact, is what an impostor's key actually
+looks like; against that the policy holds and the connection is refused. A test
+that passes for the wrong reason and a test that fails for the wrong reason are
+the same mistake seen from two sides.
+
+`SftpSettings` gained `knownHostsPath` so that test could work on a file of its
+own. Doing it to the account's real `known_hosts` would be interfering with the
+machine the suite runs on.
+
+**What is not here.** The scenarios that need a real network being mistreated —
+latency, packet loss, the stall guard's two sides, a connection killed at a byte
+offset, a server stopped and restarted mid-transfer — belong to the control
+channel and are done under #28 rather than duplicated here. The issue records
+which box went where.
+
 ## WebDAV met a real server, and could not write to it (#35)
 
 **Asked for:** the WebDAV backend has never been run against a live server, and

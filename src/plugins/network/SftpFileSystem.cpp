@@ -64,7 +64,8 @@ SftpFileSystem::SftpFileSystem(QString scheme, SftpSettings settings)
     net::TransportOptions options;
     options.username = m_settings.username;
     options.password = m_settings.password;
-    options.knownHostsPath = defaultKnownHosts();
+    options.knownHostsPath
+        = m_settings.knownHostsPath.isEmpty() ? defaultKnownHosts() : m_settings.knownHostsPath;
     options.acceptUnknownHostKey = m_settings.acceptNewHostKey;
     m_pool = std::make_unique<net::CurlPool>(std::move(options));
 }

@@ -41,7 +41,11 @@ add_subdirectory(src/plugins)
 add_subdirectory(src/app)
 
 if(MOLE_BUILD_TESTS)
-    find_package(Qt6 6.4 REQUIRED COMPONENTS Test)
+    # Network is for the tests alone -- Mole itself talks to servers through
+    # libcurl and never links it. It is what lets a suite stand up a server that
+    # answers wrongly on purpose, which is the only way most of those answers can
+    # be met at all. See tests/support/ScriptedHttpServer.h.
+    find_package(Qt6 6.4 REQUIRED COMPONENTS Test Network)
     enable_testing()
     add_subdirectory(tests)
 endif()
