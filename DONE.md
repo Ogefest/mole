@@ -9,6 +9,53 @@ wrong.
 
 ---
 
+## Five of the thirteen "New … tab" entries opened onto nothing
+
+**Asked for:** MOLE-73 — the File menu offered a *New … tab* per registered feature,
+including a preview of no file, a duplicates view whose own first line reads *"Open
+this from a folder to search it"*, and a sync with neither endpoint set. Give
+`IFeature` a way to say which kind it is, order what remains, and keep everything
+reachable.
+
+**What it turned out to be:** mostly a deletion, and a third instance of the same
+underlying shape. Two methods on `IFeature` already existed for questions in this
+area and were read by nobody who needed them: `needsContext()` was documented as
+*"the shell uses it to avoid offering a tab that would open onto nothing"* and only
+the empty-window buttons read it, and `sortOrder()` was documented as *"ordering hint
+for the new-tab menu"* while the menu used registration order. A declared method with
+no reader is a promise the code is not keeping, which is the same thing MOLE-79 and
+MOLE-100 were about.
+
+There turned out to be **three** kinds of feature, not two, and that is what decided
+the design:
+
+- **Opens from nothing** — a browser, a search. You open several, from cold.
+- **Needs a subject** — a preview, a bulk rename, a duplicate scan, a sync, an
+  analysis. `needsContext()` is the existing name for this.
+- **A standing tool that exists once** — the alerts list, the saved reports, the
+  schedule, the sets. It opens perfectly well empty, so `needsContext()` is correctly
+  false for it, but *New Alerts tab* is still the wrong entry: there is only ever one
+  alerts list, and *Saved reports* says what it is. ADR-0003 had already put those in
+  Workflows.
+
+So `opensFromNothing()` is a new predicate rather than a reuse of the old one, and the
+File menu now holds four entries — the two browsers and the two searches, in
+`sortOrder()`, read for the first time.
+
+**The default is `false`, and that was the decision worth making rather than falling
+into.** Defaulting to `true` keeps a third-party plugin's entry working without its
+author knowing the method exists, at the cost that every wrong answer is a menu entry
+that opens onto nothing — the fault being fixed — and nothing would notice. Defaulting
+to `false` makes a wrong answer a *missing* entry for something still reachable three
+other ways. The failure mode that is visible and recoverable won.
+
+**And the reachability is checked rather than asserted in prose.**
+`MenuAction::opensFeature` names the feature an entry opens, and a test fails, naming
+the feature, when a registered one is reachable by no action at all — which means
+nothing in the window and nothing in the palette can get to it, since the palette is
+built from the action registry. Verified by removing one link and watching it fail.
+Without that, tidying the menu is one edit away from orphaning a whole feature.
+
 ## The passphrase was asked for at the one moment nobody has a reason to answer
 
 **Asked for:** MOLE-111 — stop asking at startup. A drive that needs the credential

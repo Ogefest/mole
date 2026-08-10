@@ -175,6 +175,8 @@ public:
     QString description() const override { return m_config.description; }
     QString iconText() const override { return m_config.iconText; }
     int sortOrder() const override { return m_config.sortOrder; }
+    /// Both browsers: a second one, on a second folder, is the whole point.
+    bool opensFromNothing() const override { return true; }
 
     QUrl viewSource() const override;
     FeatureController* createController(QObject* parent) override;

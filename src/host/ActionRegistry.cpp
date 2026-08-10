@@ -119,6 +119,10 @@ QVariantList ActionRegistry::buildModel() const
             entry[QStringLiteral("checkable")] = static_cast<bool>(action->checked);
             entry[QStringLiteral("checked")] = action->checked ? action->checked() : false;
             entry[QStringLiteral("enabled")] = action->enabled ? action->enabled() : true;
+            // Empty for most entries. Carried through so a test can hold the rule
+            // that every registered feature is reachable by some action, now that
+            // most of them have no "New … tab" entry -- see ADR-0032.
+            entry[QStringLiteral("opensFeature")] = action->opensFeature;
             entries.append(entry);
             first = false;
         }

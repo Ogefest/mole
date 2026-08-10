@@ -133,6 +133,8 @@ public:
     }
     QString iconText() const override { return QStringLiteral("⇉"); }
     int sortOrder() const override { return 44; }
+    /// Needs two endpoints. Opened from nothing it has neither.
+    bool needsContext() const override { return true; }
     QUrl viewSource() const override;
     FeatureController* createController(QObject* parent) override;
 

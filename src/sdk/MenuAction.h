@@ -49,6 +49,11 @@ struct MenuAction
     int sortOrder = 500;
     /// Draws a divider above this entry.
     bool separatorBefore = false;
+    /// The feature this entry opens a tab of, when it opens one. Set it: most
+    /// features have no "New … tab" entry — see IFeature::opensFromNothing() —
+    /// and this is what proves each of them is reachable by some other route
+    /// rather than being orphaned by a tidy-up of the menu.
+    QString opensFeature;
 
     /// What to do when picked.
     std::function<void()> trigger;

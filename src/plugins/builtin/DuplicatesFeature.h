@@ -112,6 +112,10 @@ public:
     }
     QString iconText() const override { return QStringLiteral("⧉"); }
     int sortOrder() const override { return 46; }
+    /// Needs roots to compare, and says so on screen when it has none: "Open
+    /// this from a folder to search it." A tab that tells the user they arrived
+    /// the wrong way should not have been offered.
+    bool needsContext() const override { return true; }
     QUrl viewSource() const override;
     FeatureController* createController(QObject* parent) override;
 

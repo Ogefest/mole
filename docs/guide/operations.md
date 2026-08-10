@@ -10,7 +10,13 @@ finding anything meant reading all of it:
 The question that decides which is which: does it *do something to the files*, or does
 it *hand you a tool*? Anything that needs a tab of its own to be useful is a workflow.
 
-Everything in either is also reachable by typing — see [the palette](palette.md).
+The **File** section above them is a third thing: what you open from nothing. A browser,
+a second browser, a search — the four entries that have a keyboard shortcut of their
+own. Everything else is opened *onto* something, from Operations or Workflows, which is
+why there is no *New Preview tab* offering a preview of no file. See
+[ADR-0032](../adr/0032-a-feature-says-whether-a-new-tab-of-it-means-anything.md).
+
+Everything in any of them is also reachable by typing — see [the palette](palette.md).
 
 ## Compressing
 

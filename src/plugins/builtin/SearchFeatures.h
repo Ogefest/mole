@@ -187,6 +187,8 @@ public:
     }
     QString iconText() const override { return QStringLiteral("\U0001F50D"); }
     int sortOrder() const override { return 20; }
+    /// One search per question, and people ask several at once.
+    bool opensFromNothing() const override { return true; }
 
     QUrl viewSource() const override;
     FeatureController* createController(QObject* parent) override;
@@ -209,6 +211,7 @@ public:
     }
     QString iconText() const override { return QStringLiteral("\U0001F5C2"); }
     int sortOrder() const override { return 30; }
+    bool opensFromNothing() const override { return true; }
 
     QUrl viewSource() const override;
     FeatureController* createController(QObject* parent) override;

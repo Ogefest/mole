@@ -45,6 +45,24 @@ public:
     /// feature being broken rather than as it being inapplicable.
     virtual bool needsContext() const { return false; }
 
+    /// True when opening a new, empty tab of this kind is something somebody
+    /// actually does -- a browser, a search. The File menu offers "New … tab"
+    /// for exactly these, and for nothing else.
+    ///
+    /// False, the default, for both of the other two kinds, which is most
+    /// features. One needs a subject: a preview needs a file, a bulk rename a
+    /// selection, and a tab opened from nothing has nothing to show. The other is
+    /// a standing tool that exists once -- the alerts list, the saved reports, the
+    /// schedule -- where a second tab is a duplicate of the first and the entry
+    /// reads better as its own name in the Workflows section than as something
+    /// being created. See ADR-0003 for that split and ADR-0032 for this one.
+    ///
+    /// **A feature that answers false must be reachable some other way**: its own
+    /// menu action, which puts it in the command palette too. That is not a
+    /// suggestion — `everyFeatureIsReachableFromTheMenu` in `tst_AppIntegration`
+    /// fails when a registered feature is named by no action at all.
+    virtual bool opensFromNothing() const { return false; }
+
     /// QML component rendering the tab body. It is instantiated with a
     /// `controller` property holding the object from createController().
     /// Point it at a qrc: url shipped inside the plugin's own resources.

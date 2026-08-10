@@ -45,6 +45,9 @@
 #include <QTimer>
 #include <QWindow>
 
+#include <algorithm>
+#include <utility>
+
 namespace mole {
 
 AppController::AppController(QObject* parent)
@@ -1009,9 +1012,15 @@ void AppController::registerShellActions()
 {
     // --- File ---------------------------------------------------------
     //
-    // One entry per registered feature, so a plugin that adds a tab kind shows
-    // up here without touching the shell. Shortcut labels mirror the Shortcut
-    // items declared in QML; they are display only.
+    // One entry per feature that opens from nothing, so a plugin that adds a tab
+    // kind of that sort shows up here without touching the shell -- and one that
+    // does not is not advertised as something to open from nothing. This used to
+    // be one entry per feature, full stop, which offered a preview of no file, a
+    // duplicates view whose own first line says "Open this from a folder to search
+    // it", and a sync with neither endpoint set. See ADR-0032.
+    //
+    // Shortcut labels mirror the Shortcut items declared in QML; they are display
+    // only.
     static const QHash<QString, QString> knownShortcuts {
         { QStringLiteral("mole.browser"), QStringLiteral("Ctrl+T") },
         { QStringLiteral("mole.commander"), QStringLiteral("Ctrl+Shift+T") },
@@ -1019,8 +1028,23 @@ void AppController::registerShellActions()
         { QStringLiteral("mole.indexsearch"), QStringLiteral("Ctrl+Shift+I") },
     };
 
-    int order = 10;
+    // In the order somebody reaches for them -- the two browsers, then the two
+    // searches -- rather than in the order the plugins happened to load, which is
+    // what the registry hands back. `sortOrder()` has always been documented as
+    // the hint for this menu and was never read.
+    QList<IFeature*> openable;
     for (IFeature* feature : m_features->features()) {
+        if (feature->opensFromNothing())
+            openable.append(feature);
+    }
+    std::sort(openable.begin(), openable.end(), [](IFeature* left, IFeature* right) {
+        if (left->sortOrder() != right->sortOrder())
+            return left->sortOrder() < right->sortOrder();
+        return left->title() < right->title();
+    });
+
+    int order = 10;
+    for (IFeature* feature : openable) {
         MenuAction action;
         action.id = QStringLiteral("mole.file.newTab.%1").arg(feature->id());
         action.section = MenuAction::Section::File;
@@ -1028,6 +1052,7 @@ void AppController::registerShellActions()
         action.iconText = feature->iconText();
         action.shortcut = knownShortcuts.value(feature->id());
         action.sortOrder = order;
+        action.opensFeature = feature->id();
         const QString featureId = feature->id();
         action.trigger = [this, featureId] { openFeatureTab(featureId); };
         m_actions->addAction(std::move(action));
@@ -1219,6 +1244,7 @@ void AppController::registerShellActions()
     {
         MenuAction action;
         action.id = QStringLiteral("mole.tools.preview");
+        action.opensFeature = QStringLiteral("mole.preview");
         action.section = MenuAction::Section::Operations;
         action.title = QStringLiteral("Preview this file");
         action.shortcut = QStringLiteral("F3");
@@ -1230,6 +1256,7 @@ void AppController::registerShellActions()
     {
         MenuAction action;
         action.id = QStringLiteral("mole.tools.analyse");
+        action.opensFeature = QStringLiteral("mole.analysis");
         action.section = MenuAction::Section::Workflows;
         action.title = QStringLiteral("Analyse folder");
         action.shortcut = QStringLiteral("Ctrl+Shift+A");
@@ -1274,6 +1301,7 @@ void AppController::registerShellActions()
     {
         MenuAction action;
         action.id = QStringLiteral("mole.tools.sync");
+        action.opensFeature = QStringLiteral("core.sync");
         action.section = MenuAction::Section::Workflows;
         action.title = QStringLiteral("Sync folders");
         action.sortOrder = 40;
@@ -1297,6 +1325,7 @@ void AppController::registerShellActions()
     {
         MenuAction action;
         action.id = QStringLiteral("mole.tools.duplicates");
+        action.opensFeature = QStringLiteral("core.duplicates");
         action.section = MenuAction::Section::Workflows;
         action.title = QStringLiteral("Find duplicates");
         action.sortOrder = 20;
@@ -1322,6 +1351,7 @@ void AppController::registerShellActions()
     {
         MenuAction action;
         action.id = QStringLiteral("mole.tools.bulkRename");
+        action.opensFeature = QStringLiteral("core.bulkrename");
         action.section = MenuAction::Section::Workflows;
         action.title = QStringLiteral("Bulk rename");
         action.shortcut = QStringLiteral("Ctrl+Shift+R");
@@ -1333,6 +1363,7 @@ void AppController::registerShellActions()
     {
         MenuAction action;
         action.id = QStringLiteral("mole.tools.addToSet");
+        action.opensFeature = QStringLiteral("core.filesets");
         action.section = MenuAction::Section::Operations;
         action.title = QStringLiteral("Add to set");
         action.shortcut = QStringLiteral("Ctrl+Shift+S");
@@ -1354,6 +1385,7 @@ void AppController::registerShellActions()
     {
         MenuAction action;
         action.id = QStringLiteral("mole.tools.reports");
+        action.opensFeature = QStringLiteral("core.reports");
         action.section = MenuAction::Section::Workflows;
         action.title = QStringLiteral("Saved reports");
         action.sortOrder = 50;
@@ -1364,6 +1396,7 @@ void AppController::registerShellActions()
     {
         MenuAction action;
         action.id = QStringLiteral("mole.tools.alerts");
+        action.opensFeature = QStringLiteral("core.alerts");
         action.section = MenuAction::Section::Workflows;
         action.title = QStringLiteral("Alerts");
         action.shortcut = QStringLiteral("Ctrl+Shift+L");
@@ -1375,6 +1408,7 @@ void AppController::registerShellActions()
     {
         MenuAction action;
         action.id = QStringLiteral("mole.tools.automation");
+        action.opensFeature = QStringLiteral("core.automation");
         action.section = MenuAction::Section::Workflows;
         action.title = QStringLiteral("Scheduled jobs");
         action.shortcut = QStringLiteral("Ctrl+Shift+J");

@@ -76,7 +76,8 @@ private slots:
     void openExternallyGoesThroughTheLauncher();
     void menuHasTheClassicSections();
     void theTypeScaleIsOrderedAndAboveTheFloor();
-    void menuOffersOneNewTabEntryPerFeature();
+    void menuOffersANewTabOnlyForWhatOpensFromNothing();
+    void everyFeatureIsReachableFromTheMenu();
     void menuEntryOpensTheTab();
     void viewMenuReflectsAndTogglesTheCurrentTab();
     void menuEntriesGreyOutWhenTheyDoNotApply();
@@ -889,23 +890,70 @@ void TestAppIntegration::theTypeScaleIsOrderedAndAboveTheFloor()
     QVERIFY(m_app->listRowHeight() > m_app->textSize() * 2);
 }
 
-void TestAppIntegration::menuOffersOneNewTabEntryPerFeature()
+void TestAppIntegration::menuOffersANewTabOnlyForWhatOpensFromNothing()
 {
-    // The menu is generated from the feature registry, so a plugin that adds a
-    // tab kind appears here without the shell being edited.
+    // The File menu used to hold one entry per registered feature, which meant a
+    // preview of no file, a duplicates view whose own first line reads "Open this
+    // from a folder to search it", and a sync with neither endpoint set. It is
+    // generated from what each feature says about itself -- see ADR-0032 -- so a
+    // plugin still appears here without the shell being edited.
     const QList<IFeature*> features = m_app->features()->features();
     QVERIFY(!features.isEmpty());
 
     const QVariantList menu = m_app->buildMenu();
+    QStringList offered;
     for (IFeature* feature : features) {
         const QString id = QStringLiteral("mole.file.newTab.%1").arg(feature->id());
-        QVERIFY2(!menuEntry(menu, id).isEmpty(),
-            qPrintable(QStringLiteral("no menu entry for feature %1").arg(feature->id())));
+        const bool present = !menuEntry(menu, id).isEmpty();
+        QCOMPARE(present, feature->opensFromNothing());
+        if (present)
+            offered.append(feature->id());
     }
 
+    // Named rather than counted, and in order. The order is a decision -- the two
+    // browsers, then the two searches, which is how somebody reaches for them --
+    // and registration order is what it replaced. A fifth entry arriving here is a
+    // line somebody has to add on purpose, which is where the thinking happens.
+    QStringList inMenuOrder;
+    for (const QVariant& entry : menuSection(menu, QStringLiteral("File"))) {
+        const QString id = entry.toMap().value(QStringLiteral("id")).toString();
+        if (id.startsWith(QStringLiteral("mole.file.newTab.")))
+            inMenuOrder.append(id.mid(QStringLiteral("mole.file.newTab.").size()));
+    }
+    QCOMPARE(inMenuOrder,
+        QStringList({ QStringLiteral("mole.browser"), QStringLiteral("mole.commander"),
+            QStringLiteral("mole.livesearch"), QStringLiteral("mole.indexsearch") }));
+
     // Plus Drives, Close tab and Quit.
-    QCOMPARE(menuSection(menu, QStringLiteral("File")).size(), features.size() + 3);
+    QCOMPARE(menuSection(menu, QStringLiteral("File")).size(), offered.size() + 3);
     QVERIFY(!menuEntry(menu, QStringLiteral("mole.file.drives")).isEmpty());
+}
+
+void TestAppIntegration::everyFeatureIsReachableFromTheMenu()
+{
+    // The other half of the rule above, and the reason it is safe. Most features
+    // now have no "New … tab" entry, so each one has to be reachable by its own
+    // action instead -- which is also what puts it in the command palette. Without
+    // this, tidying the menu is one edit away from orphaning a whole feature.
+    QSet<QString> reachable;
+    for (const QVariant& sectionEntry : m_app->buildMenu()) {
+        for (const QVariant& action : sectionEntry.toMap().value(QStringLiteral("actions")).toList()) {
+            const QString opens = action.toMap().value(QStringLiteral("opensFeature")).toString();
+            if (!opens.isEmpty())
+                reachable.insert(opens);
+        }
+    }
+
+    QStringList orphaned;
+    for (IFeature* feature : m_app->features()->features()) {
+        if (!reachable.contains(feature->id()))
+            orphaned.append(feature->id());
+    }
+    orphaned.sort();
+    QVERIFY2(orphaned.isEmpty(),
+        qPrintable(QStringLiteral("no menu entry opens these features, so nothing in the window "
+                                  "and nothing in the palette can reach them: %1")
+                       .arg(orphaned.join(QStringLiteral(", ")))));
 }
 
 void TestAppIntegration::menuEntryOpensTheTab()
