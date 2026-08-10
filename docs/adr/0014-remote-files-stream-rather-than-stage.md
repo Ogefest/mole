@@ -1,6 +1,7 @@
 # ADR-0014: A remote file is streamed, not staged in a temporary file first
 
 - **Date:** 2026-08-09
+- **Amended:** 2026-08-10 — FTP writes stream now. See *Amendment* at the end.
 - **Status:** Accepted
 
 ## Context
@@ -94,3 +95,26 @@ than a class of bug that reports success.
   temporary name and renaming on success would cover it and is in TODO.md.
 - One thread per open remote stream, blocked on a condition variable almost all
   of the time.
+
+## Amendment, 2026-08-10 (MOLE-34)
+
+**FTP writes stream.** The paragraph above says S3, WebDAV and FTP keep staging,
+"because for the first two the protocol requires it, and rewriting a backend that is
+not in the way would be change for its own sake". The first half still holds. The
+second was a decision to defer, not a decision to stage, and it has expired: FTP was
+the last backend that could not write a file bigger than the local disk, and being the
+last one is itself the reason to finish.
+
+It uses the same `StreamingUpload` as SFTP, under the same working name, with `APPE`
+for anything past the first span. The span is a ceiling rather than a working figure:
+the span loop exists for SFTP's re-key fault, which FTP does not have, and a login and
+a data channel per span would buy nothing here.
+
+**FTP reads still stage,** and that is now the only place a file bigger than the disk
+is still a problem. Streaming a read needs ranged fetches, and what libcurl's
+`CURLOPT_RANGE` does to an FTP transfer — whether the end of the range is honoured or
+only the `REST` offset — decides whether a span can overrun into the next one and
+deliver the same bytes twice. That is not a thing to settle by reading documentation
+and hoping, and there is no FTP server in the build environment to settle it against,
+so it is tracked as its own task rather than guessed at. A read that quietly duplicates
+a span is worse than one that needs scratch space.

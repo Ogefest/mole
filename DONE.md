@@ -9,6 +9,47 @@ wrong.
 
 ---
 
+## FTP was the last backend that staged a whole upload
+
+**Asked for:** MOLE-34 — FTP stages a whole upload in a temporary file before
+sending it, so a file larger than the local scratch space cannot be written to an
+FTP drive. SFTP, S3 and WebDAV no longer do.
+
+**What it turned out to be:** the machinery was already written and already used by
+two backends, so this is `net::StreamingUpload` in place of `net::BufferedUpload`,
+plus a `sendSpan()` that sets `CURLOPT_APPEND` for anything past the first span —
+`APPE` rather than `STOR`, which is in the protocol beside it rather than an
+extension.
+
+One decision worth the line: **the span is a ceiling, not a working figure.** SFTP
+sends in 256 MiB spans to keep every connection clear of an SSH re-key fault; FTP has
+no such fault, and paying for a login and a data channel per span would buy nothing.
+So FTP's span is set past any file anybody will hand it, and the loop is kept rather
+than removed so that a file which does exceed it continues with `APPE` instead of
+failing.
+
+**This reverses a deferral in ADR-0014 and ADR-0015**, both of which said FTP keeps
+staging because "changing a backend nobody is blocked on is change for its own sake".
+That was a decision to defer rather than a decision to stage, and being the last
+backend that cannot write a file bigger than the disk is itself the reason to finish.
+ADR-0014 carries the amendment.
+
+**And a fault found on the way, which is now MOLE-127.** `openRead()` stages too, so
+FTP cannot *read* a file bigger than the disk either. It is not folded into this
+change on purpose: streaming a read needs ranged fetches, and whether libcurl honours
+the end of `CURLOPT_RANGE` for FTP or only the `REST` offset decides whether a span
+can overrun into the next one and hand the same bytes over twice. There is no FTP
+server in the build environment to settle that against, and a read that silently
+duplicates a span is worse than one that needs scratch space, so it is written down as
+its own task with the measurement to make first.
+
+The test needs no server, which is the point of it: a staged write is a different
+class from a streamed one, so the test asks FTP for a write stream — against a port
+nothing listens on, so the `stat()` on the way past is refused instantly — and holds
+that what comes back is the streaming kind. What that class *does* is proven by the
+conformance suite and the heavy tier's peak-scratch assertion, on the days there is a
+server.
+
 ## A task with a speed and a size now says how long is left
 
 **Asked for:** MOLE-30 — a task that measures bytes already knows its speed and

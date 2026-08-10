@@ -6,6 +6,20 @@
 #include <QTemporaryFile>
 
 namespace mole {
+namespace {
+
+    /// How much one transfer of a streamed upload carries before the next one
+    /// appends to it.
+    ///
+    /// Unlike SFTP, FTP has no reason to want several: the span loop there exists
+    /// to keep every connection clear of an SSH re-key fault, and paying for a
+    /// login and a data channel per span here would buy nothing. So this is a
+    /// ceiling rather than a working figure -- past any file anybody will hand
+    /// this, and present rather than removed so that a file which does exceed it
+    /// continues with APPE instead of failing.
+    constexpr qint64 kUploadSpanBytes = 1024LL * 1024 * 1024 * 1024;
+
+} // namespace
 
 FtpFileSystem::FtpFileSystem(QString scheme, FtpSettings settings)
     : m_scheme(std::move(scheme))
@@ -275,44 +289,65 @@ Result<std::unique_ptr<QIODevice>> FtpFileSystem::openRead(const VfsUri& target,
     return net::openDownloadedFile(std::move(scratch));
 }
 
-Result<void> FtpFileSystem::uploadTo(const VfsUri& target, QIODevice& payload, qint64 size)
+VfsError FtpFileSystem::sendSpan(
+    const VfsUri& target, QIODevice& source, bool append, const CancelToken& cancel)
 {
     auto lease = m_pool->take();
     if (!lease)
-        return Result<void>::failure(VfsError::IoError, QStringLiteral("Could not start an FTP transfer"));
+        return VfsError::make(VfsError::IoError, QStringLiteral("Could not start an FTP transfer"));
 
-    const QByteArray url = urlFor(target, false);
-    lease.setUrl(url);
+    lease.setUrl(urlFor(target, false));
     applySettings(lease);
-    net::CurlPool::sendFrom(lease, payload, size);
+    if (append) {
+        // APPE rather than STOR, which is how a second span continues the file
+        // instead of replacing it. Every server that can be written to at all
+        // has it; it is in the protocol beside STOR rather than an extension.
+        curl_easy_setopt(lease.get(), CURLOPT_APPEND, 1L);
+    }
+    // No length: a stream being written as it is sent does not know one, and
+    // FTP does not need one -- the data connection closing is the end of the file.
+    net::CurlPool::sendFrom(lease, source, -1);
 
-    const net::Response response = m_pool->perform(lease, CancelToken());
+    const net::Response response = m_pool->perform(lease, cancel);
     const VfsError error = net::errorFor(
         response, QStringLiteral("Writing %1").arg(target.path()), net::StatusMeaning::ProtocolReply);
-    if (error.isError())
-        return Result<void>(error);
-    return {};
+
+    if (error.isError()) {
+        // What arrived is part of a file, and leaving it would be litter under a
+        // name nothing will open. Always the working name openWrite() invented
+        // for this transfer, so removing it takes nothing that was not ours.
+        remove(target, false);
+    }
+    return error;
 }
 
 Result<std::unique_ptr<QIODevice>> FtpFileSystem::openWrite(const VfsUri& target, qint64)
 {
-    // Under a working name until it is finished: a process killed mid-PUT does
-    // not get to delete what it wrote, and what it leaves must not look like the
-    // file somebody asked for. See ADR-0020.
+    // Streamed rather than staged, which is what makes a file bigger than the
+    // local disk writable at all: staging collected the whole payload into a
+    // temporary file before sending any of it, so a 200 GB upload wanted 200 GB
+    // of local scratch space for a transfer whose destination had room to spare.
+    // FTP was the last backend still doing that -- see ADR-0014.
+    //
+    // Under a working name until it is finished, because a process killed
+    // mid-transfer does not get to delete what it wrote, and a half-sent file
+    // under the name somebody asked for is the one outcome worth ruling out. The
+    // rename at the end is a single server-side operation. See ADR-0020.
     const VfsUri staging = partialWriteOf(target);
     // Asked before the transfer, not after it: only an answer from before
     // the write began can tell an overwrite from a file that turned up while
     // this one was going over the wire.
     const bool replacing = stat(target).ok();
 
-    auto stream = std::make_unique<net::BufferedUpload>(
-        [this, staging](QIODevice& payload, qint64 size) {
-            const Result<void> sent = uploadTo(staging, payload, size);
-            if (!sent.ok())
-                remove(staging, false); // whatever arrived is not a file anybody wants
-            return sent;
-        },
-        [this, staging, target, replacing] { return commitPartialWrite(*this, staging, target, replacing); });
+    auto send = [this, staging](QIODevice& source, qint64, bool append, const CancelToken& cancel) {
+        return sendSpan(staging, source, append, cancel);
+    };
+    auto commit = [this, staging, target, replacing] {
+        return commitPartialWrite(*this, staging, target, replacing);
+    };
+
+    auto stream
+        = std::make_unique<net::StreamingUpload>(std::move(send), kUploadSpanBytes, std::move(commit));
     if (!stream->open(QIODevice::WriteOnly))
         return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, stream->errorString());
     return Result<std::unique_ptr<QIODevice>>(std::unique_ptr<QIODevice>(stream.release()));

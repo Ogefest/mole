@@ -72,7 +72,10 @@ private:
     Result<FileEntryList> listRaw(const VfsUri& dir, const CancelToken& cancel);
     /// Runs raw FTP commands against a directory that exists.
     Result<void> runCommands(const QList<QByteArray>& commands, const VfsUri& context, const QString& what);
-    Result<void> uploadTo(const VfsUri& target, QIODevice& payload, qint64 size);
+    /// Sends what `source` hands over, appending to the file rather than
+    /// replacing it when `append` is set. One span of a streamed upload; runs on
+    /// the stream's own thread.
+    VfsError sendSpan(const VfsUri& target, QIODevice& source, bool append, const CancelToken& cancel);
 
     QString m_scheme;
     FtpSettings m_settings;

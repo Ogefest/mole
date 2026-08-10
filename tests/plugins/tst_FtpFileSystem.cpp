@@ -1,4 +1,5 @@
 #include "plugins/network/FtpFileSystem.h"
+#include "plugins/network/TransferStreams.h"
 #include "support/FileSystemConformance.h"
 #include "support/MoleTestMain.h"
 
@@ -200,6 +201,7 @@ private slots:
     void anEmptyUserBecomesAnonymous();
     void encryptionDefaultsToTryingTls();
     void theFormAsksOnlyWhatFtpNeeds();
+    void aWriteStreamsRatherThanStagingTheWholeFile();
     void itSatisfiesTheConformanceSuite();
 };
 
@@ -250,6 +252,36 @@ void TestFtpFileSystem::theFormAsksOnlyWhatFtpNeeds()
     // FTP logs in with a plain-text password, so the encryption choice belongs in
     // front of the user rather than hidden behind "advanced".
     QVERIFY(hasSecurity);
+}
+
+void TestFtpFileSystem::aWriteStreamsRatherThanStagingTheWholeFile()
+{
+    // The whole of MOLE-34 in one assertion, and it needs no server: a staged
+    // write collects the entire payload into a local temporary file before
+    // sending any of it, so a file larger than the local disk cannot be written
+    // at all. Which class comes back is the difference, so that is what is held
+    // -- the behaviour it stands for is what a real server proves, in the
+    // conformance suite below and in the heavy tier's peak-scratch assertion.
+    FtpFileSystemFactory factory;
+    QString error;
+    // Nothing listens on port 1, so the stat() openWrite() makes on the way past
+    // is refused at once rather than waiting on a name that does not resolve.
+    const QVariantMap config { { QStringLiteral("host"), QStringLiteral("127.0.0.1") },
+        { QStringLiteral("port"), 1 }, { QStringLiteral("security"), QStringLiteral("none") } };
+    const FileSystemPtr fs = factory.create(config, &error);
+    QVERIFY2(fs != nullptr, qPrintable(error));
+
+    Result<std::unique_ptr<QIODevice>> opened
+        = fs->openWrite(VfsUri::fromString(QStringLiteral("ftp://server/big.iso")));
+    QVERIFY2(opened.ok(), qPrintable(opened.error().message));
+
+    // Destroyed without being closed and without a byte written, so nothing is
+    // ever sent and no thread is started -- the stream begins sending on the
+    // first write.
+    QVERIFY2(dynamic_cast<net::StreamingUpload*>(opened.value().get()) != nullptr,
+        "an FTP write has to stream; staging is what made a file bigger than the disk unwritable");
+    QVERIFY2(dynamic_cast<net::BufferedUpload*>(opened.value().get()) == nullptr,
+        "and specifically not the staged kind");
 }
 
 void TestFtpFileSystem::itSatisfiesTheConformanceSuite()

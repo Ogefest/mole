@@ -63,4 +63,6 @@ instead of being introduced to every small write that works today.
   written. A server that answers 411 will fail the write with the server's own
   words, which is at least a diagnosable failure rather than a silent one.
 - FTP still stages. It is not in anybody's way, and changing a backend nobody is
-  blocked on is change for its own sake.
+  blocked on is change for its own sake. *(No longer true of its writes as of
+  2026-08-10 — see the amendment to [ADR-0014](0014-remote-files-stream-rather-than-stage.md).
+  Its reads still stage.)*
