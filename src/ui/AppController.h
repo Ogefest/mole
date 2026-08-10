@@ -74,7 +74,9 @@ class AppController : public QObject
     //                      form labels
     //   smallTextSize      captions and badges, and the floor: nothing is
     //                      allowed to be smaller than this
-    //   monospaceSize      code and data, which reads a shade smaller than prose
+    //   monospaceSize      code and data, level with prose rather than under it:
+    //                      a log or a source file is the thing left open longest,
+    //                      and it may never read larger than prose
     //
     // Constant for now. When these become a preference the views do not change,
     // which is the point of them being here.
@@ -205,7 +207,7 @@ public:
     int textSize() const { return 14; }
     int secondaryTextSize() const { return 13; }
     int smallTextSize() const { return 11; }
-    int monospaceSize() const { return 13; }
+    int monospaceSize() const { return 14; }
     int listRowHeight() const { return qRound(textSize() * 2.2); }
     int minimumTarget() const { return 28; }
 

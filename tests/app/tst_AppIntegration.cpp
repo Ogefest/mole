@@ -881,7 +881,8 @@ void TestAppIntegration::theTypeScaleIsOrderedAndAboveTheFloor()
     // to reach down to nine.
     QVERIFY2(m_app->smallTextSize() >= 11, "nothing in the interface may be smaller than this");
 
-    // Code sits a shade under prose, never over it.
+    // Code sits level with prose, and never over it. Level is the decision; the
+    // assertion is what stops it drifting above prose later.
     QVERIFY(m_app->monospaceSize() <= m_app->textSize());
 
     // Derived, so raising the text size cannot crop a row.

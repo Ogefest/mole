@@ -9,6 +9,29 @@ wrong.
 
 ---
 
+## Code now sits level with prose, not a shade under it
+
+**Asked for:** MOLE-93 — plain text and source previews drawn one step larger,
+level with the primary text everywhere else.
+
+**What it turned out to be:** one number. `monospaceSize` was 13 against
+`textSize` at 14, and that entry in the scale is read in exactly one place in the
+whole application — the body size in `TextPreview.qml` — so raising it to 14
+raised the plain text and source preview and nothing else. Rendered Markdown and
+rendered pages already took `textSize` and did not move.
+
+This reverses half of a decision made when the scale was introduced (see *The type
+was too small, and there was no scale to raise* below): code was to read a shade
+smaller than prose. A log or a source file is the preview people leave open the
+longest, and being the smallest thing on the screen apart from captions was the
+wrong end of that trade. The assertion `monospaceSize() <= textSize()` stays, since
+what it stops — code drifting *above* prose — was never the part that was wrong.
+
+Not an offset inside the view, and not a preview-only size: the scale is where
+sizes are decided, and a second knob would let a preview and a listing disagree.
+No new test is owed — the scale is asserted as a shape rather than as five
+numbers, and the shape has not changed.
+
 ## Phase 5, the catalogue: fourteen groups, and the eleven faults they found
 
 **Asked for:** MOLE-1 through MOLE-18, the tests themselves — around 205
