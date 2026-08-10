@@ -118,6 +118,17 @@ public:
     /// operation on this drive -- listing, stat, open, remove -- is denied.
     FaultyFileSystem& accessRevokedAt(qint64 offset, const QString& path = {});
 
+    // ---- what goes wrong while deleting -----------------------------------
+
+    /// Refuses to delete `path`, or everything when it is empty.
+    ///
+    /// The dangerous case rather than an inconvenient one: the copy that came
+    /// before it worked, so a move whose delete fails has to leave both copies
+    /// and say so. Deleting the source anyway, or reporting the move as clean,
+    /// are the two ways this loses a file.
+    FaultyFileSystem& removeFails(const QString& path = {}, VfsError::Code code = VfsError::AccessDenied,
+        const QString& message = QStringLiteral("permission denied"));
+
     // ---- what the drive says about itself ---------------------------------
 
     /// Every file claims to be this many bytes bigger than it is, in a listing

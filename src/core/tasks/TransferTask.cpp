@@ -30,9 +30,26 @@ void TransferTask::recordFailure(const VfsUri& uri, const VfsError& error)
     m_failures.append(QStringLiteral("%1: %2").arg(uri.fileName(), error.message));
 }
 
+bool TransferTask::isInsideOrEqual(const VfsUri& inner, const VfsUri& outer)
+{
+    // By uri rather than by backend pointer, deliberately. Two mounts of the
+    // same drive are two objects -- a bookmarked folder and the disk it lives on
+    // are both mounted -- and nothing above here knows they are the same place.
+    // The uri is what does know.
+    if (inner.scheme() != outer.scheme() || inner.authority() != outer.authority())
+        return false;
+    if (inner.path() == outer.path())
+        return true;
+    const QString prefix
+        = outer.path().endsWith(QLatin1Char('/')) ? outer.path() : outer.path() + QLatin1Char('/');
+    return inner.path().startsWith(prefix);
+}
+
 bool TransferTask::planJobs(QList<Job>& jobsOut)
 {
+    int sourceIndex = -1;
     for (const VfsUri& source : std::as_const(m_request.sources)) {
+        ++sourceIndex;
         if (isCancelRequested())
             return false;
 
@@ -47,13 +64,25 @@ bool TransferTask::planJobs(QList<Job>& jobsOut)
             : source.fileName();
         const VfsUri target = m_request.targetDirectory.child(arrivalName);
 
+        // A directory cannot be put inside itself. The copy is finite -- the
+        // plan is built before a byte moves, so the walk never meets what the
+        // copy is writing -- but a *move* then deletes the source, and the only
+        // copy of everything that was in it is now underneath it. See ADR-0029.
+        if (stat.value().isDir && isInsideOrEqual(m_request.targetDirectory, source)) {
+            recordFailure(source,
+                VfsError::make(VfsError::NotSupported,
+                    QStringLiteral("%1 cannot be put inside itself: the destination is inside it")
+                        .arg(source.path())));
+            continue;
+        }
+
         if (!stat.value().isDir) {
-            jobsOut.append(Job { source, target, false, stat.value().size });
+            jobsOut.append(Job { source, target, false, stat.value().size, sourceIndex });
             continue;
         }
 
         // The directory itself first, so its children have somewhere to land.
-        jobsOut.append(Job { source, target, true, 0 });
+        jobsOut.append(Job { source, target, true, 0, sourceIndex });
 
         DirectoryWalker walker(m_request.sourceFileSystem);
         Result<void> walked = walker.walk(source, cancelToken(), [&](const FileEntry& entry, int) {
@@ -61,7 +90,7 @@ bool TransferTask::planJobs(QList<Job>& jobsOut)
             const QString relative = entry.uri.path().mid(source.path().size());
             jobsOut.append(
                 Job { entry.uri, VfsUri(target.scheme(), target.authority(), target.path() + relative),
-                    entry.isDir, entry.isDir ? 0 : entry.size });
+                    entry.isDir, entry.isDir ? 0 : entry.size, sourceIndex });
             return DirectoryWalker::Action::Continue;
         });
 
@@ -374,8 +403,15 @@ void TransferTask::run()
             return;
 
         // Directories are structure, not payload: only files count as copied.
-        if (transferOne(job) == Outcome::Transferred && !job.isDirectory)
+        const Outcome outcome = transferOne(job);
+        if (outcome == Outcome::Transferred && !job.isDirectory)
             ++m_copied;
+        // Anything that did not arrive means this source has not been moved,
+        // whatever the reason. A skipped file records no failure -- skipping is
+        // a success -- and deleting the source of one is a file thrown away for
+        // a file that was already there under the same name.
+        if (outcome != Outcome::Transferred)
+            m_unfinishedSources.insert(job.sourceIndex);
 
         // Whatever the outcome, this job is no longer in flight, so its bytes
         // are settled -- a skipped file must not leave the total short for ever.
@@ -408,14 +444,18 @@ void TransferTask::run()
     verifyArrivals();
 
     // A move only deletes the source once every byte arrived. Losing data
-    // because a copy half-failed is not an acceptable trade for tidiness.
+    // because a copy half-failed is not an acceptable trade for tidiness -- and
+    // a source none of whose files arrived is not deleted either, however
+    // deliberate the reason they did not.
     if (m_request.mode == Mode::Move && m_failures.isEmpty()) {
-        for (const VfsUri& source : std::as_const(m_request.sources)) {
+        for (int index = 0; index < m_request.sources.size(); ++index) {
             if (isCancelRequested())
                 return;
-            Result<void> removed = m_request.sourceFileSystem->remove(source, true);
+            if (m_unfinishedSources.contains(index))
+                continue;
+            Result<void> removed = m_request.sourceFileSystem->remove(m_request.sources.at(index), true);
             if (!removed.ok())
-                recordFailure(source, removed.error());
+                recordFailure(m_request.sources.at(index), removed.error());
         }
     }
 

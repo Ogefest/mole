@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <optional>
 #include <utility>
 
 namespace mole::test {
@@ -66,9 +67,21 @@ struct FaultyFileSystem::Policy
         --stalledStreams;
     }
 
+    /// The first refusal that covers this path, if there is one.
+    std::optional<VfsError> refusedRemoval(const VfsUri& target) const
+    {
+        QMutexLocker lock(&mutex);
+        for (const auto& [path, error] : removeRefusals) {
+            if (path.isEmpty() || path == target.path() || target.path().startsWith(path + QLatin1Char('/')))
+                return error;
+        }
+        return std::nullopt;
+    }
+
     mutable QMutex mutex;
     QWaitCondition wake;
     QList<Fault> faults;
+    QList<QPair<QString, VfsError>> removeRefusals;
     QList<QPair<QString, int>> keepEvery;
     int stalledStreams = 0;
     bool released = false;
@@ -539,7 +552,19 @@ Result<void> FaultyFileSystem::remove(const VfsUri& target, bool recursive)
 {
     if (m_policy->revoked.load())
         return revokedError();
+    // A refusal covers the path and everything under it, which is what a
+    // directory nobody may write to actually does to a recursive delete.
+    if (const std::optional<VfsError> refused = m_policy->refusedRemoval(target))
+        return Result<void>(*refused);
     return m_inner->remove(target, recursive);
+}
+
+FaultyFileSystem& FaultyFileSystem::removeFails(
+    const QString& path, VfsError::Code code, const QString& message)
+{
+    QMutexLocker lock(&m_policy->mutex);
+    m_policy->removeRefusals.append({ path, VfsError::make(code, message) });
+    return *this;
 }
 
 Result<void> FaultyFileSystem::rename(const VfsUri& from, const VfsUri& to)

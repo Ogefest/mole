@@ -3,6 +3,7 @@
 #include "core/tasks/Task.h"
 #include "core/vfs/IFileSystem.h"
 
+#include <QSet>
 #include <QStringList>
 
 namespace mole {
@@ -68,6 +69,10 @@ private:
         /// Known from the plan, so progress can be counted in bytes rather than
         /// in files -- one very large file otherwise sits at 0% then jumps.
         qint64 size = 0;
+        /// Which of the requested sources this job came out of. A move deletes
+        /// a source only when every job belonging to it arrived, so each job
+        /// has to be able to say which one that is.
+        int sourceIndex = 0;
     };
 
     /// Skipped is distinct from Transferred on purpose: a skipped conflict is
@@ -81,6 +86,10 @@ private:
         VfsUri target;
         qint64 bytes = 0;
     };
+
+    /// True when `inner` is `outer` or sits underneath it, judged by uri rather
+    /// than by which backend object was handed in.
+    static bool isInsideOrEqual(const VfsUri& inner, const VfsUri& outer);
 
     /// Weighs every copied file on the destination and fails the ones that do
     /// not match what was sent. One listing per directory, not one stat per
@@ -104,6 +113,9 @@ private:
 
     Request m_request;
     QList<Arrival> m_arrivals;
+    /// Indices into Request::sources whose jobs did not all arrive. A move
+    /// deletes what is not in here and nothing else.
+    QSet<int> m_unfinishedSources;
     int m_copied = 0;
     int m_skipped = 0;
     QStringList m_failures;
