@@ -349,8 +349,14 @@ Result<std::unique_ptr<QIODevice>> WebdavFileSystem::openWrite(const VfsUri& tar
     // half-sent file under the name somebody asked for is the outcome worth
     // ruling out; WebDAV's MOVE with `Overwrite: F` is exactly the operation
     // this needs. See ADR-0020.
-    const VfsUri staging = net::partialUploadOf(target);
-    auto commit = [this, staging, target] { return net::commitUpload(*this, staging, target); };
+    const VfsUri staging = partialWriteOf(target);
+    // Asked before the transfer, not after it: only an answer from before
+    // the write began can tell an overwrite from a file that turned up while
+    // this one was going over the wire.
+    const bool replacing = stat(target).ok();
+    auto commit = [this, staging, target, replacing] {
+        return commitPartialWrite(*this, staging, target, replacing);
+    };
 
     if (expectedSize > kStreamAbove) {
         auto send = [this, staging](QIODevice& source, qint64, bool, const CancelToken& cancel) {

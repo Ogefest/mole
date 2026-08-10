@@ -43,8 +43,9 @@ project, and a contributor should never hit a wall of text they cannot read.
 - Parquet writing is out of scope. Reading a file is not a licence to rewrite it,
   and the same goes for the SQLite viewer, which opens read-only.
 
-- A `.mole-partial` file on a remote drive is the wreckage of an upload that was
-  killed before it finished — see [ADR-0020](docs/adr/0020-an-upload-in-progress-wears-a-different-name.md).
+- A `.mole-partial` file, on a remote drive or a local disk, is the wreckage of a
+  write that was killed before it finished — see [ADR-0020](docs/adr/0020-an-upload-in-progress-wears-a-different-name.md)
+  and [ADR-0021](docs/adr/0021-the-working-name-is-not-only-for-servers.md).
   **Deleting them is a manual job**, and deliberately so for now: they are
   visible in any listing, which is most of what a sweep would have bought, and
   the version that decides on its own which leftovers are safe to remove needs to

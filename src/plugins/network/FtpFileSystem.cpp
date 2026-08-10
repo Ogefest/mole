@@ -299,7 +299,11 @@ Result<std::unique_ptr<QIODevice>> FtpFileSystem::openWrite(const VfsUri& target
     // Under a working name until it is finished: a process killed mid-PUT does
     // not get to delete what it wrote, and what it leaves must not look like the
     // file somebody asked for. See ADR-0020.
-    const VfsUri staging = net::partialUploadOf(target);
+    const VfsUri staging = partialWriteOf(target);
+    // Asked before the transfer, not after it: only an answer from before
+    // the write began can tell an overwrite from a file that turned up while
+    // this one was going over the wire.
+    const bool replacing = stat(target).ok();
 
     auto stream = std::make_unique<net::BufferedUpload>(
         [this, staging](QIODevice& payload, qint64 size) {
@@ -308,7 +312,7 @@ Result<std::unique_ptr<QIODevice>> FtpFileSystem::openWrite(const VfsUri& target
                 remove(staging, false); // whatever arrived is not a file anybody wants
             return sent;
         },
-        [this, staging, target] { return net::commitUpload(*this, staging, target); });
+        [this, staging, target, replacing] { return commitPartialWrite(*this, staging, target, replacing); });
     if (!stream->open(QIODevice::WriteOnly))
         return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, stream->errorString());
     return Result<std::unique_ptr<QIODevice>>(std::unique_ptr<QIODevice>(stream.release()));

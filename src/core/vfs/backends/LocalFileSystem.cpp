@@ -1,5 +1,7 @@
 #include "core/vfs/backends/LocalFileSystem.h"
 
+#include "core/vfs/PartialWrite.h"
+
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -8,6 +10,73 @@
 
 namespace mole {
 namespace {
+
+    /// A file written under a working name and moved into place when it is
+    /// closed.
+    ///
+    /// The rename is the only instant at which the destination changes, which is
+    /// what makes an interrupted write leave the previous contents alone rather
+    /// than in pieces. Its failure is the write's failure — every byte arriving
+    /// and the file not being there is not a success with a caveat.
+    class PartialFile final : public QFile, public ICommitsOnClose
+    {
+    public:
+        PartialFile(IFileSystem& owner, VfsUri staging, VfsUri target)
+            : QFile(staging.toLocalPath())
+            , m_owner(owner)
+            , m_staging(std::move(staging))
+            , m_target(std::move(target))
+            // Looked at now, before a byte is written, because that is the only
+            // moment at which "it exists" means "the caller is overwriting
+            // something it knew about" rather than "something turned up".
+            , m_replacing(QFileInfo::exists(m_target.toLocalPath()))
+        {
+        }
+
+        ~PartialFile() override
+        {
+            // Destroyed without being closed is an abandoned write — cancelled,
+            // or the caller gave up. What was written is not a file anybody
+            // asked for, so it goes rather than being left to be puzzled over.
+            if (!m_committed) {
+                QFile::close();
+                QFile::remove();
+            }
+        }
+
+        VfsError commitError() const override { return m_error; }
+
+        void close() override
+        {
+            if (m_committed) {
+                QFile::close();
+                return;
+            }
+            m_committed = true;
+
+            const bool flushed = flush();
+            QFile::close();
+            if (!flushed) {
+                m_error = VfsError::make(VfsError::IoError,
+                    QStringLiteral("Could not finish writing %1").arg(m_target.toLocalPath()));
+                QFile::remove();
+                setErrorString(m_error.message);
+                return;
+            }
+
+            m_error = commitPartialWrite(m_owner, m_staging, m_target, m_replacing);
+            if (m_error.isError())
+                setErrorString(m_error.message);
+        }
+
+    private:
+        IFileSystem& m_owner;
+        VfsUri m_staging;
+        VfsUri m_target;
+        bool m_replacing = false;
+        VfsError m_error;
+        bool m_committed = false;
+    };
 
     /// "rwxr-xr--", the form everyone reads permissions in. Built from Qt's
     /// owner/group/other flags rather than a raw octal number so a change is
@@ -229,10 +298,21 @@ Result<std::unique_ptr<QIODevice>> LocalFileSystem::openRead(const VfsUri& targe
 
 Result<std::unique_ptr<QIODevice>> LocalFileSystem::openWrite(const VfsUri& target, qint64)
 {
-    const QString path = target.toLocalPath();
-    auto file = std::make_unique<QFile>(path);
-    if (!file->open(QIODevice::WriteOnly | QIODevice::Truncate))
-        return VfsError::make(VfsError::IoError, QStringLiteral("Cannot write %1").arg(path));
+    // Under a working name until it is finished, and renamed into place at the
+    // end. See ADR-0021.
+    //
+    // Writing straight to the destination was two faults rather than one. A
+    // process killed part way through left half a file under the name somebody
+    // asked for, indistinguishable from a file that was simply that size — and
+    // Truncate had already destroyed whatever was there before the first byte of
+    // the replacement arrived, so an interrupted overwrite lost the original as
+    // well as failing to produce the new one.
+    const VfsUri staging = partialWriteOf(target);
+    auto file = std::make_unique<PartialFile>(*this, staging, target);
+    if (!file->open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        return VfsError::make(VfsError::IoError,
+            QStringLiteral("Cannot write %1: %2").arg(target.toLocalPath(), file->errorString()));
+    }
     return Result<std::unique_ptr<QIODevice>>(std::move(file));
 }
 

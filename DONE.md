@@ -9,6 +9,52 @@ wrong.
 
 ---
 
+## Killed outright, and what is left (#6)
+
+**Asked for:** `SIGKILL` at a known offset, then an independent look at what
+survived, then the same job run again — across six places a kill can land.
+
+**What it turned out to be:** two faults, both of them losses of data the user
+already had.
+
+**A local copy destroyed the file it was replacing.** `LocalFileSystem::openWrite()`
+opened the destination with `Truncate`, so the old contents were gone before the
+first byte of the new ones arrived; a kill in between left neither. A remote
+upload interrupted half way at least leaves the previous version alone, because
+nothing on the server is touched until the write begins — the local one had
+already thrown it away. And this is not the exotic case: a copy over a file of
+the same name is exactly what a re-run of a failed copy is. The working name from
+[ADR-0020](docs/adr/0020-an-upload-in-progress-wears-a-different-name.md) moved
+out of the network plugin into `core/vfs/PartialWrite.h` and now covers the local
+disk too — [ADR-0021](docs/adr/0021-the-working-name-is-not-only-for-servers.md).
+
+That change broke sync's overwrite mode immediately, and rightly: ADR-0020's
+"the destination must be free" had been quietly relying on the callers it
+happened to have. The question is now asked at the moment that can answer it —
+whether the destination existed *when the write began*. Existing then is an
+overwrite and proceeds; appearing since is somebody else's file and is refused.
+
+**Preferences were written with `QFile` and `Truncate`** while every other store
+in the project already used `QSaveFile`. Preferences are written wholesale, so a
+kill part way through the write is a kill part way through the only copy — and
+what the test found on disk afterwards was an empty file where every setting the
+user had ever chosen used to be.
+
+**`tests/support/Victim`** is what made these testable. `SIGKILL` cannot be
+simulated from inside a process that intends to keep running: no destructor runs,
+no error path runs, nothing tidies up. So a real process does the work and a real
+signal stops it — the test binary starts another copy of itself with an
+environment variable naming what to work on, waits on a *condition* rather than a
+clock, and kills it.
+
+**The same trap twice.** Both times the first version of a test waited for the
+working name to appear, and against the unfixed code that name never appears — so
+the test failed with "the write never started", which is untrue and useless.
+Waiting for *either* name makes it fail with `the file being overwritten
+disappeared`, which is the fault. It is worth writing down because the mistake is
+invisible when the test is green: a test that can only fail one way will
+eventually fail that way for the wrong reason.
+
 ## The network misbehaves (#4)
 
 **Asked for:** fifteen scenarios in which the network or the server does

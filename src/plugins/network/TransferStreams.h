@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/vfs/IFileSystem.h"
+#include "core/vfs/PartialWrite.h"
 #include "core/vfs/VfsTypes.h"
 
 #include <QIODevice>
@@ -14,37 +15,6 @@
 #include <thread>
 
 namespace mole::net {
-
-/// The suffix an upload wears while it is still being written.
-///
-/// A process killed outright cannot tidy up after itself: it does not get to
-/// delete what it had written, and whatever is on the server when it dies stays
-/// there. So the protection cannot be an action taken afterwards -- it has to be
-/// the name the bytes were going under all along. `report.pdf.mole-partial` is
-/// visibly not `report.pdf`; nothing opens it by mistake, nothing syncs it as
-/// the real thing, and finding leftovers is reading a listing rather than
-/// consulting a bookkeeping file that the same kill would have truncated.
-///
-/// See ADR-0020.
-inline constexpr QLatin1String kPartialUploadSuffix(".mole-partial");
-
-/// Where an upload to `target` is written before it is finished.
-VfsUri partialUploadOf(const VfsUri& target);
-
-/// Whether this is the wreckage of an upload rather than a file somebody meant
-/// to have.
-bool isPartialUpload(const QString& name);
-
-/// Puts a finished upload under the name it was asked for.
-///
-/// Expressed against IFileSystem because all three backends that need it do the
-/// same two things -- check the destination is still free, then rename -- and
-/// the difference between SFTP, FTP and WebDAV is entirely in how those two
-/// calls are carried out.
-///
-/// A failure here is the upload's failure, and leaves nothing behind: bytes
-/// under a name nothing will ever open are litter, not a result.
-VfsError commitUpload(IFileSystem& fs, const VfsUri& staging, const VfsUri& target);
 
 /// A write stream that collects the whole payload locally and ships it when it
 /// is closed.
