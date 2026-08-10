@@ -13,6 +13,9 @@ Item {
 
     property var controller: null
     readonly property var target: controller ? controller.current : null
+    /// Nothing has been scanned, so there is no report to show and the tab
+    /// shows why instead. Named once because both halves of the view read it.
+    readonly property bool nothingScannedYet: !target || (!target.hasReport && !target.busy)
 
     function focusActivePane() { body.forceActiveFocus() }
     Component.onCompleted: Qt.callLater(focusActivePane)
@@ -189,43 +192,63 @@ Item {
                 }
             }
 
+            // What the tab shows *instead of* a report, rather than the first
+            // thing in a report that is not there. It was inside the scrolling
+            // column, top-aligned, so it hung near the top of whatever height
+            // the tab had and the emptiness underneath read as a mistake.
+            Item {
+                objectName: "analysisEmptyState"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                visible: view.nothingScannedYet
+
+                ColumnLayout {
+                    objectName: "analysisEmptyStateBlock"
+                    anchors.centerIn: parent
+                    // Against the space it actually has. Centring inside a
+                    // ScrollView's own width put it half the scrollbar off,
+                    // because the scrollbar and the padding come off that
+                    // width before the content sees it.
+                    width: Math.min(parent.width - 80, 420)
+                    spacing: 8
+
+                    Label {
+                        Layout.alignment: Qt.AlignHCenter
+                        text: "No report yet"
+                        font.pixelSize: 16
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        text: "Rescan walks the folder and files the result, so the next run has something to compare against."
+                        color: "#8b93a7"
+                        wrapMode: Text.Wrap
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+                    Button {
+                        Layout.alignment: Qt.AlignHCenter
+                        text: "Scan now"
+                        highlighted: true
+                        focusPolicy: Qt.NoFocus
+                        onClicked: controller.refreshAll()
+                    }
+                }
+            }
+
             ScrollView {
+                id: reportScroll
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 clip: true
+                visible: !view.nothingScannedYet
                 contentWidth: availableWidth
 
                 ColumnLayout {
-                    width: parent.parent.width
+                    // The ScrollView's available width, by name. Reaching two
+                    // levels out through the parent chain got the control's own
+                    // width, which is not the width its content has: the
+                    // scrollbar and the padding come off first.
+                    width: reportScroll.availableWidth
                     spacing: 10
-
-                    // --- nothing yet -------------------------------------
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        Layout.margins: 40
-                        visible: !target || (!target.hasReport && !target.busy)
-                        spacing: 8
-
-                        Label {
-                            Layout.alignment: Qt.AlignHCenter
-                            text: "No report yet"
-                            font.pixelSize: 16
-                        }
-                        Label {
-                            Layout.alignment: Qt.AlignHCenter
-                            text: "Rescan walks the folder and files the result, so the next run has something to compare against."
-                            color: "#8b93a7"
-                            wrapMode: Text.Wrap
-                            horizontalAlignment: Text.AlignHCenter
-                        }
-                        Button {
-                            Layout.alignment: Qt.AlignHCenter
-                            text: "Scan now"
-                            highlighted: true
-                            focusPolicy: Qt.NoFocus
-                            onClicked: controller.refreshAll()
-                        }
-                    }
 
                     RowLayout {
                         Layout.fillWidth: true
