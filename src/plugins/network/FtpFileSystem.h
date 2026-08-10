@@ -29,6 +29,15 @@ struct FtpSettings
     Security security = Security::Try;
     /// Passive mode, which is what works through almost every firewall.
     bool passive = true;
+    /// Check the server's certificate against the machine's trust store.
+    ///
+    /// On by default and worth leaving on. Off is for a server whose
+    /// certificate is honestly self-signed -- one on your own network, or a
+    /// disposable one a test suite is pointed at -- where the alternative is
+    /// either no encryption at all or teaching every client machine to trust a
+    /// certificate authority invented for the occasion. S3 already carries the
+    /// same setting for the same reason.
+    bool verifyTls = true;
     QString remoteRoot = QStringLiteral("/");
 };
 
