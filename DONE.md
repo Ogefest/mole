@@ -61,6 +61,30 @@ from outside. Everything GitHub held was snapshotted first, and the verifier can
 still be run against that snapshot, which is the only reason it can still be run
 at all.
 
+**Then the dispatch rule changed, and that is the part that changed the board's
+shape.** The author asked for the work to be taken epic by epic rather than off a
+flat `Ready` queue — see
+[ADR-0023](docs/adr/0023-work-is-dispatched-by-epic.md). Reading `Ready` down the
+column showed why: it jumped between subjects six times in the first fifteen cards.
+The order the epics are now in was not invented, it was read off the last GitHub
+board — each epic sits where its first `Ready` task sat — so the next task to do is
+the same one it was before the rule changed.
+
+The rule had a hole in it that the board did not show. **Twenty-one tasks belonged
+to no epic**, four of them dispatchable and one of them the very next thing to do,
+and a rule that reaches tasks through epics never reaches those at all. They are in
+an epic now — `Loose ends` — and the `no epic` column of the `By epic` view is kept,
+empty, so that a task falling out of every epic is visible instead of silent.
+
+**And the two roles now write as themselves**
+([ADR-0024](docs/adr/0024-planning-and-engineering-write-as-themselves.md)), which
+turned up the one sharp edge in Vikunja's label model: a label can only be attached
+by an account that can already see it in use, so an unused label is invisible to the
+account most likely to want it, and the API says only `403`. Nothing that no task
+carries is created any more. `blocked` was one of those, and it is not coming back —
+blocking is a `blocked`/`blocking` relation between two tasks, which Vikunja has and
+a label only approximated.
+
 ## Backends, beyond the current conformance (#15)
 
 **Asked for:** eight things the conformance suite does not check, run against the

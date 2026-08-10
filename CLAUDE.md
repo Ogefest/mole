@@ -61,10 +61,31 @@ A task's number is the number the GitHub issue had before the move: `MOLE-19` is
 what `#19` was, and the gaps in the sequence are the numbers that belonged to pull
 requests. Every `Closes #…` already in the git history still names the right work.
 
-An epic is three things, because Vikunja has no single feature that does the job:
-a `milestone: …` label on each of its tasks, a column in the board's `By epic`
-view, and a task in the `Epics` sub-project whose subtasks are the tasks
-themselves. Put a new task in an epic by giving it the label; the other two follow.
+**Every task belongs to exactly one epic**, and an epic is three things, because
+Vikunja has no single feature that does the job:
+
+- an `epic: …` label on each of its tasks — this is the one that decides
+  membership, so putting a new task in an epic means giving it the label
+- a column in the board's `By epic` view, which filters on that label and so
+  follows on its own
+- a card in the `Epics` sub-project, whose subtasks are the tasks themselves. This
+  is where the epic's own brief lives, where its progress is counted, and **where
+  the order of the work is decided** — see below
+
+A task belonging to nothing would be a task nobody ever reaches, which is why
+`Loose ends` exists: the epic for a single fault or a single small change that is
+not part of any larger effort. The `no epic` column of the `By epic` view should
+always be empty, and a card appearing in it means one fell out.
+
+**You write to the board as yourself.** There is an account for planning and an
+account for engineering, each with its own token, so who moved a card and who left
+a comment is a fact on the board rather than a guess. Take the token from
+`VIKUNJA_TOKEN` in your own environment and never from a file in this repository.
+
+One consequence to know about, because the error is a bare `403`: a label is only
+usable by an account that can already see it in use somewhere. Every label the
+board needs is in use, and a brand-new one has to be introduced by the planning
+account — which is the right way round, since inventing vocabulary is planning.
 
 There is no planning document in the repository. A task carries what a builder
 needs and an epic names the effort it belongs to, and the reasoning that produced
@@ -123,14 +144,21 @@ The three files alongside it keep what a tracker holds badly:
 
 ## Which task to take next
 
-The board has five columns, and the one that matters is **Ready**: it holds
-everything that can be picked up right now, in the order it should be picked up.
-**Take the top card in `Ready`.** There is no choosing to do.
+**The work is taken epic by epic.** The queue is the `To-Do` column of the `Epics`
+board: **the topmost card there is the epic being worked on**, and you stay in it
+until it has nothing left in `Ready`. Within an epic, the tasks are taken in the
+order they sit in `Ready`. There is no choosing to do at either level.
+
+Two rules, because they answer different questions — the Epics board says *which
+topic*, and `Ready` says *which of its tasks*. Skip an epic with nothing in `Ready`:
+whatever it has left is in `Backlog` or `Blocked`, and neither is dispatchable.
+
+The Mole board's five columns say what state a task is in:
 
 | Column | Holds |
 |---|---|
 | `Backlog` | not planned, or the brief is not complete enough to work from |
-| `Ready` | planned and dispatchable, topmost card first |
+| `Ready` | planned and dispatchable |
 | `In Progress` | being worked on now — one at a time |
 | `Blocked` | waiting on something outside the repository, usually the live test environment |
 | `Done` | landed and verified |
@@ -146,12 +174,20 @@ a file in this repository:
 v() { curl -sS -H "Authorization: Bearer $VIKUNJA_TOKEN" \
         -H 'Content-Type: application/json' "${@:2}" "$VIKUNJA_URL/api/v2$1"; }
 
-root=$(v /projects | jq -r '.items[]|select(.title=="Mole")|.id')
+root=$(v /projects  | jq -r '.items[]|select(.title=="Mole")|.id')
+epics=$(v /projects | jq -r '.items[]|select(.title=="Epics")|.id')
 view=$(v "/projects/$root/views" | jq -r '.items[]|select(.title=="Kanban")|.id')
+queue=$(v "/projects/$epics/views" | jq -r '.items[]|select(.view_kind=="kanban")|.id')
 
+# which epic — the top card in To-Do
+v "/projects/$epics/views/$queue/buckets/tasks" \
+  | jq -r '.items[]|select(.title=="To-Do")|.tasks|sort_by(.position)[]|.title'
+
+# which of its tasks — Ready, in order, with the epic each one belongs to
 v "/projects/$root/views/$view/buckets/tasks" \
   | jq -r '.items[]|select(.title=="Ready")|.tasks|sort_by(.position)[]
-           |[.identifier,.title]|@tsv' | head
+           |[.identifier, ([.labels[]?|select(.title|startswith("epic: "))|.title]|first),
+             .title]|@tsv'
 ```
 
 **Move the card to `In Progress` before writing a line of code** — not after the
@@ -181,9 +217,12 @@ board() {   # board <task-number> <column>
 board 12 "In Progress"
 ```
 
-The order in `Ready` is deliberate rather than obvious. It is planned separately,
+An epic finished — nothing of it left outside `Done` — goes to `Done` on the Epics
+board too, which is the signal that the next card down is now the work.
+
+Both orders are deliberate rather than obvious. They are planned separately,
 weighing what unblocks the most against what is losing data today, and the
-reasoning does not fit on the card. If the top of the queue looks wrong from
+reasoning does not fit on a card. If the top of either queue looks wrong from
 inside the code — a dependency nobody saw, a fix that is three lines rather than
 three days — say so rather than quietly taking something else. Being wrong about
 the order is useful; working around it in silence is not.
