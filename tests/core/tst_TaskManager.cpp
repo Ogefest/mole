@@ -78,6 +78,7 @@ private slots:
 
     void aCancelledTaskIsNotLoggedAsAFailure();
     void aFailedTaskIsStillLoggedAsOne();
+    void durationAndRateComeFromAClockThatCannotGoBackwards();
 };
 
 void TestTaskManager::runsTaskOffTheCallingThread()
@@ -404,6 +405,36 @@ void TestTaskManager::aFailedTaskIsStillLoggedAsOne()
     QCOMPARE(task->state(), Task::State::Failed);
     QVERIFY2(warnings.contains(QStringLiteral("the server stopped answering")),
         qPrintable(QStringLiteral("a real failure left no warning; captured: %1").arg(warnings.joined())));
+}
+
+void TestTaskManager::durationAndRateComeFromAClockThatCannotGoBackwards()
+{
+    // The machine's clock is stepped by ntp, or by somebody in another time
+    // zone, while a job is running. Both numbers a task shows are differences
+    // between two readings, and a wall clock read twice can go backwards -- a
+    // job that has run for a minute reporting minus fifty-nine, and a rate to
+    // match. Nothing here can step the system clock, and nothing needs to: what
+    // the assertion holds is that neither figure is taken from it.
+    TaskManager manager;
+    auto* task = new ScriptedTask(QStringLiteral("copy"), [](ScriptedTask& self) {
+        self.setByteTotal(2000);
+        self.setBytesDone(1000);
+        QThread::msleep(300);
+        self.setBytesDone(2000);
+    });
+    manager.submit(task);
+    QVERIFY(waitForTask(task));
+    drainEvents();
+
+    QVERIFY2(task->elapsedMs() >= 0, "a duration is never negative");
+    QVERIFY2(task->bytesPerSecond() >= 0.0, "a rate is never negative");
+    QVERIFY(qIsFinite(task->bytesPerSecond()));
+
+    // And it stops when the task does, rather than growing for ever against a
+    // clock nobody is winding.
+    const qint64 first = task->elapsedMs();
+    QThread::msleep(20);
+    QCOMPARE(task->elapsedMs(), first);
 }
 
 MOLE_TEST_MAIN(TestTaskManager)

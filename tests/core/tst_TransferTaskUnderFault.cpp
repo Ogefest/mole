@@ -49,6 +49,8 @@ private slots:
     void aSourceDeletedMidCopyFails();
     void aSourceTruncatedMidCopyCopiesWhatIsLeft();
     void aSourceThatClaimsMoreThanItGivesFails();
+    void aSourceThatGrewSinceTheListingIsCopiedAsItNowIs();
+    void aSourceWhosePermissionIsWithdrawnMidCopyLeavesNothingBehind();
     void theFileBeingWrittenIsRemovedMidWrite();
     void aDestinationThatFillsUpSaysWhy();
 
@@ -207,6 +209,47 @@ void TestTransferTaskUnderFault::aSourceThatClaimsMoreThanItGivesFails()
     QVERIFY2(failure.contains(QStringLiteral("4500")) && failure.contains(QStringLiteral("4000")),
         qPrintable(failure));
     QVERIFY2(destinationEntries().isEmpty(), qPrintable(destinationEntries().join(QLatin1Char(' '))));
+}
+
+void TestTransferTaskUnderFault::aSourceThatGrewSinceTheListingIsCopiedAsItNowIs()
+{
+    // A log being written to, or a download finishing, between the listing and
+    // the copy. The plan says one size and the file gives more -- and the guard
+    // that catches a *short* read must not turn this into a failure, because
+    // nothing is wrong: everything the file had when it was opened arrived.
+    //
+    // A listing that understates is how the copy sees it, whichever way round it
+    // actually happened.
+    m_source->listingOverstatesSizeBy(-1000);
+
+    TransferTask* task = run(request());
+    QVERIFY(task);
+
+    QVERIFY2(task->failures().isEmpty(), qPrintable(task->failures().join(QLatin1Char(' '))));
+    QCOMPARE(task->copiedCount(), 1);
+    // All of it, not the 3000 the plan expected -- and the arrival check, which
+    // weighs what was sent rather than what was planned, is content with that.
+    QCOMPARE(destinationSize(QStringLiteral("payload.bin")), kPayload);
+}
+
+void TestTransferTaskUnderFault::aSourceWhosePermissionIsWithdrawnMidCopyLeavesNothingBehind()
+{
+    // Somebody changes the mode bits, or a credential is re-locked, while the
+    // copy is running. From here it is a read that fails and a drive that
+    // answers nothing afterwards -- including the question the short-read guard
+    // wants to ask it.
+    m_source->accessRevokedAt(kThirty);
+
+    TransferTask* task = run(request());
+    QVERIFY(task);
+
+    QCOMPARE(task->copiedCount(), 0);
+    QCOMPARE(task->failedCount(), 1);
+    QVERIFY2(destinationEntries().isEmpty(), qPrintable(destinationEntries().join(QLatin1Char(' '))));
+    // The source is untouched, which the drive underneath can still say even
+    // though the wrapper over it is refusing everything.
+    QCOMPARE(
+        m_memory->stat(VfsUri::fromString(QStringLiteral("mem:///src/payload.bin"))).value().size, kPayload);
 }
 
 void TestTransferTaskUnderFault::theFileBeingWrittenIsRemovedMidWrite()

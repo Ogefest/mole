@@ -3,7 +3,67 @@
 #include "core/vfs/DirectoryWalker.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
+#include <functional>
+
 using namespace mole;
+
+namespace {
+
+/// A drive that changes while it is being walked.
+///
+/// The first listing of a chosen directory runs the mutation and then answers,
+/// so the walker is handed a directory that is already out of date -- a file
+/// that has gone, a directory that is now a file, a name that was renamed while
+/// the walker was looking away. That is not a contrived arrangement: it is a
+/// build running in the folder somebody is copying.
+class ChurningFileSystem final : public IFileSystem
+{
+public:
+    ChurningFileSystem(FileSystemPtr inner, QString path, std::function<void()> churn)
+        : m_inner(std::move(inner))
+        , m_path(std::move(path))
+        , m_churn(std::move(churn))
+    {
+    }
+
+    QString scheme() const override { return m_inner->scheme(); }
+    VfsCapabilities capabilities() const override { return m_inner->capabilities(); }
+    Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) override
+    {
+        // The answer is taken first and the tree changed afterwards, which is
+        // the arrangement that matters: what the walker holds is a listing that
+        // was true a moment ago and is not true now.
+        Result<FileEntryList> listed = m_inner->list(dir, cancel);
+        if (dir.path() == m_path && !m_churned) {
+            m_churned = true;
+            m_churn();
+        }
+        return listed;
+    }
+    Result<FileEntry> stat(const VfsUri& target) override { return m_inner->stat(target); }
+    Result<void> makeDirectory(const VfsUri& target) override { return m_inner->makeDirectory(target); }
+    Result<void> remove(const VfsUri& target, bool recursive) override
+    {
+        return m_inner->remove(target, recursive);
+    }
+    Result<void> rename(const VfsUri& from, const VfsUri& to) override { return m_inner->rename(from, to); }
+    Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override
+    {
+        return m_inner->openRead(target, expectedSize);
+    }
+    Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1) override
+    {
+        return m_inner->openWrite(target, expectedSize);
+    }
+
+private:
+    FileSystemPtr m_inner;
+    QString m_path;
+    std::function<void()> m_churn;
+    bool m_churned = false;
+};
+
+} // namespace
 
 class TestDirectoryWalker : public QObject
 {
@@ -20,6 +80,7 @@ private slots:
     void cancellationStopsTheWalk();
     void skipsHiddenWhenAsked();
     void emptyRootYieldsNothing();
+    void aTreeThatChangesUnderTheWalkIsReportedAndTheWalkFinishes();
 
 private:
     std::shared_ptr<MemoryFileSystem> m_fs;
@@ -116,6 +177,57 @@ void TestDirectoryWalker::stopEndsTheWalkSuccessfully()
     QVERIFY2(result.ok(), "Stop must end the walk successfully");
     QVERIFY(walker.stoppedEarly());
     QCOMPARE(visited, 3);
+}
+
+void TestDirectoryWalker::aTreeThatChangesUnderTheWalkIsReportedAndTheWalkFinishes()
+{
+    // Four things happen to one directory between the walker being told what is
+    // in it and the walker going to look: a file appears, a file goes, a
+    // directory is renamed out from under the descent, and a directory becomes a
+    // file of the same name. None of them may abort the walk, and none of them
+    // may send it round a second time.
+    m_fs->addFile(QStringLiteral("/tree/steady.txt"));
+    m_fs->addFile(QStringLiteral("/tree/vanishing.txt"));
+    m_fs->addFile(QStringLiteral("/tree/renamed/inside.txt"));
+    m_fs->addFile(QStringLiteral("/tree/becomes-a-file/inside.txt"));
+
+    auto churning = std::make_shared<ChurningFileSystem>(m_fs, QStringLiteral("/tree"), [this] {
+        m_fs->addFile(QStringLiteral("/tree/appeared.txt"));
+        m_fs->remove(VfsUri::fromString(QStringLiteral("mem:///tree/vanishing.txt")), false);
+        m_fs->rename(VfsUri::fromString(QStringLiteral("mem:///tree/renamed")),
+            VfsUri::fromString(QStringLiteral("mem:///tree/elsewhere")));
+        m_fs->remove(VfsUri::fromString(QStringLiteral("mem:///tree/becomes-a-file")), true);
+        m_fs->addFile(QStringLiteral("/tree/becomes-a-file"), QByteArray("now a file"));
+    });
+
+    QStringList seen;
+    DirectoryWalker walker(churning);
+    Result<void> result = walker.walk(
+        VfsUri::fromString(QStringLiteral("mem:///tree")), CancelToken(), [&](const FileEntry& entry, int) {
+            seen.append(entry.name);
+            return DirectoryWalker::Action::Continue;
+        });
+
+    QVERIFY2(result.ok(), qPrintable(result.error().message));
+    // What the listing said is what it walked: a file that has since gone is
+    // still reported, and one that turned up after the listing is not.
+    QVERIFY(seen.contains(QStringLiteral("steady.txt")));
+    QVERIFY(seen.contains(QStringLiteral("vanishing.txt")));
+    QVERIFY2(!seen.contains(QStringLiteral("appeared.txt")), "the listing was taken before it appeared");
+    // The renamed directory and the one that became a file were both listed as
+    // directories and are neither of them there to descend into now. That is an
+    // error about those two, and not a reason to stop.
+    QVERIFY(seen.contains(QStringLiteral("renamed")));
+    QVERIFY(seen.contains(QStringLiteral("becomes-a-file")));
+    QVERIFY(!seen.contains(QStringLiteral("inside.txt")));
+    QVERIFY2(!walker.errors().isEmpty(), "a subtree that went away under the walk has to be reported");
+    // And nothing was visited twice, which is what a walk that follows a moving
+    // tree round in a circle would do.
+    QStringList sorted = seen;
+    sorted.sort();
+    for (int i = 1; i < sorted.size(); ++i)
+        QVERIFY2(sorted.at(i) != sorted.at(i - 1),
+            qPrintable(QStringLiteral("visited twice: %1").arg(sorted.at(i))));
 }
 
 void TestDirectoryWalker::unreadableDirectoryIsRecordedNotFatal()

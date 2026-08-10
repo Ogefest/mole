@@ -3,6 +3,7 @@
 #include "core/vfs/VfsTypes.h"
 
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QMap>
 #include <QObject>
 #include <QString>
@@ -165,6 +166,13 @@ private:
     bool m_background = false;
     QDateTime m_startedAt;
     QDateTime m_finishedAt;
+    /// How long the task has been going, measured with a clock that cannot go
+    /// backwards. The two QDateTimes above say *when* it started and finished,
+    /// which is what a person wants to read; a duration taken by subtracting
+    /// them is a duration that changes when the machine's clock is corrected,
+    /// and a rate computed from one can come out negative or infinite.
+    QElapsedTimer m_since;
+    qint64 m_finishedElapsedMs = -1;
     /// Keyed by TaskMetric::key. Owned by the UI thread.
     QMap<QString, TaskMetric> m_metrics;
     QString m_id;
@@ -183,8 +191,12 @@ private:
     // --- throughput sampling, touched only by the worker thread ---
     qint64 m_byteTotal = -1;
     qint64 m_lastSampleBytes = 0;
-    qint64 m_lastSampleMs = 0;
-    qint64 m_lastReportMs = 0;
+    /// Minus one rather than zero, because zero is a moment the monotonic clock
+    /// really can read: a task sampled in the millisecond it started would
+    /// otherwise look like one that has never been sampled at all, and its rate
+    /// would never be worked out.
+    qint64 m_lastSampleMs = -1;
+    qint64 m_lastReportMs = -1;
     double m_rate = 0.0;
 
     CancelToken m_cancel;

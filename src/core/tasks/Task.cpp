@@ -16,6 +16,9 @@ Task::Task(QString title, QObject* parent)
     , m_id(QUuid::createUuid().toString(QUuid::WithoutBraces))
     , m_title(std::move(title))
 {
+    // Started here rather than when the task begins running, so a queued task
+    // has a clock to measure from the moment anybody can ask it anything.
+    m_since.start();
 }
 
 Task::~Task() = default;
@@ -119,10 +122,12 @@ void Task::fail(const VfsError& error)
 
 qint64 Task::elapsedMs() const
 {
-    if (!m_startedAt.isValid())
+    // From the monotonic clock rather than from the two timestamps. Subtracting
+    // wall-clock readings is how a job that ran for a minute reports minus
+    // fifty-nine when ntp steps the clock, and how a rate comes out negative.
+    if (!m_since.isValid())
         return 0;
-    const QDateTime end = m_finishedAt.isValid() ? m_finishedAt : QDateTime::currentDateTime();
-    return m_startedAt.msecsTo(end);
+    return m_finishedElapsedMs >= 0 ? m_finishedElapsedMs : m_since.elapsed();
 }
 
 QString TaskMetric::format(double value, Kind kind)
@@ -233,8 +238,10 @@ void Task::setBytesDone(qint64 done)
     // A short window, sampled no more often than a few times a second: any
     // faster and the figure jitters between chunk boundaries, any slower and a
     // stall takes too long to become visible.
-    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
-    if (m_lastSampleMs == 0) {
+    // Monotonic, for the same reason elapsedMs() is: a clock stepped backwards
+    // between two samples would make the interval negative and the rate with it.
+    const qint64 nowMs = m_since.isValid() ? m_since.elapsed() : 0;
+    if (m_lastSampleMs < 0) {
         m_lastSampleMs = nowMs;
         m_lastSampleBytes = done;
     } else if (nowMs - m_lastSampleMs >= 250) {
@@ -252,7 +259,7 @@ void Task::setBytesDone(qint64 done)
     // would otherwise be a queued event carrying a number nobody can read that
     // fast.
     const bool finalCall = m_byteTotal > 0 && done >= m_byteTotal;
-    if (finalCall || m_lastReportMs == 0 || nowMs - m_lastReportMs >= 100) {
+    if (finalCall || m_lastReportMs < 0 || nowMs - m_lastReportMs >= 100) {
         m_lastReportMs = nowMs;
         reportBytes(TaskMetrics::kBytesDone, QStringLiteral("Copied"), done, 10);
         if (m_byteTotal > 0) {
@@ -276,6 +283,8 @@ void Task::setState(State state)
             // retention sweep and the list always agree about when this ended.
             if (isFinished() && !m_finishedAt.isValid())
                 m_finishedAt = QDateTime::currentDateTime();
+            if (isFinished() && m_finishedElapsedMs < 0 && m_since.isValid())
+                m_finishedElapsedMs = m_since.elapsed();
             emit stateChanged();
         },
         Qt::QueuedConnection);
