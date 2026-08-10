@@ -14,6 +14,7 @@ namespace mole {
 
 class ListDirectoryTask;
 class ReadRangeTask;
+class ReadMetadataTask;
 
 /// A tab that shows one file at a time.
 ///
@@ -45,6 +46,15 @@ class PreviewTabController final : public FeatureController
     /// one map per option with `key`, `title`, `choices` and `chosen`. Empty for
     /// most files. See docs/adr/0006-preview-options-and-preferences.md.
     Q_PROPERTY(QVariantList viewerOptions READ viewerOptions NOTIFY currentChanged)
+    /// The details panel: whether it is open, what is in it, and whether the
+    /// readers are still working. Filled from the metadata registry rather than
+    /// by any viewer, so every viewer has it and none of them knows it exists --
+    /// the same argument ADR-0006 makes for declared options.
+    /// See docs/adr/0034-what-a-file-says-about-itself.md.
+    Q_PROPERTY(bool detailsOpen READ isDetailsOpen NOTIFY detailsChanged)
+    Q_PROPERTY(bool detailsLoading READ isDetailsLoading NOTIFY detailsChanged)
+    /// One map per fact, with `label` and `value`.
+    Q_PROPERTY(QVariantList details READ details NOTIFY detailsChanged)
     Q_PROPERTY(int position READ position NOTIFY currentChanged)
     Q_PROPERTY(int siblingCount READ siblingCount NOTIFY currentChanged)
     Q_PROPERTY(bool canGoNext READ canGoNext NOTIFY currentChanged)
@@ -73,6 +83,14 @@ public:
     bool canGoNext() const { return position() > 0 && position() < siblingCount(); }
     bool canGoPrevious() const { return position() > 1; }
 
+    bool isDetailsOpen() const { return m_detailsOpen; }
+    bool isDetailsLoading() const { return !m_details.isNull(); }
+    QVariantList details() const { return m_detailFacts; }
+    /// Opens or closes the panel, remembers the answer for this file type, and
+    /// reads the facts when it is opened. Nothing is read for a panel nobody
+    /// opened: the cost of an expensive reader falls on whoever asked for it.
+    Q_INVOKABLE void setDetailsOpen(bool open);
+
     /// Shows `uri` and loads its folder in the background so the arrows work.
     Q_INVOKABLE void open(const QString& uri);
     Q_INVOKABLE void next();
@@ -83,6 +101,7 @@ public:
 
 signals:
     void currentChanged();
+    void detailsChanged();
 
 private:
     void showEntry(const FileEntry& entry);
@@ -93,6 +112,9 @@ private:
     void identifyThenShow();
     /// Builds the viewer for the current entry, or says nothing can show it.
     void installViewer(IPreviewProvider* provider);
+    /// Starts the readers for the current file, if the panel is open and there
+    /// is anything to ask.
+    void readDetails();
     void loadSiblings(const VfsUri& directory, const VfsUri& select);
     void step(int delta);
 
@@ -113,6 +135,13 @@ private:
     QPointer<QObject> m_viewer;
     QPointer<ListDirectoryTask> m_listing;
     QPointer<ReadRangeTask> m_sniff;
+    QPointer<ReadMetadataTask> m_details;
+
+    /// The head the content pass read, kept so opening the panel costs no
+    /// further read for a file that was identified from its bytes.
+    QByteArray m_head;
+    bool m_detailsOpen = false;
+    QVariantList m_detailFacts;
 };
 
 class PreviewFeature final : public IFeature

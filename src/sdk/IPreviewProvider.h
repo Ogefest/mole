@@ -94,6 +94,14 @@ public:
     /// Cheap test based on name, suffix and size. Must not do any I/O.
     virtual bool canPreview(const FileEntry& entry) const = 0;
 
+    /// Whether the details panel starts open for this viewer, the first time
+    /// somebody looks at a file of a type. True for a viewer whose content the
+    /// details are -- the information viewer shows nothing else -- and false for
+    /// one that has a file to show. Whatever the reader then chooses is
+    /// remembered per file type and outranks this.
+    /// See docs/adr/0034-what-a-file-says-about-itself.md.
+    virtual bool detailsOpenByDefault() const { return false; }
+
     /// QML component rendering the preview, given a `controller` property.
     virtual QUrl viewSource() const = 0;
 

@@ -1,5 +1,8 @@
 #include "plugins/builtin/PreviewFeature.h"
 
+#include "plugins/builtin/previews/MetadataReaders.h"
+#include "sdk/IMetadataReader.h"
+
 #include "core/data/FileType.h"
 #include "core/settings/Preferences.h"
 #include "core/tasks/ListDirectoryTask.h"
@@ -23,6 +26,8 @@ PreviewTabController::~PreviewTabController()
         m_listing->requestCancel();
     if (m_sniff)
         m_sniff->requestCancel();
+    if (m_details)
+        m_details->requestCancel();
 }
 
 QString PreviewTabController::folderPath() const
@@ -93,11 +98,19 @@ void PreviewTabController::showEntry(const FileEntry& entry)
     }
     m_viewSource = QUrl();
     m_viewerName.clear();
-    // A file being stepped past takes its unfinished sniff with it.
+    // A file being stepped past takes its unfinished sniff with it, and the
+    // readers for it: what they were about to say is about the last file.
     if (m_sniff) {
         m_sniff->requestCancel();
         m_sniff.clear();
     }
+    if (m_details) {
+        m_details->requestCancel();
+        m_details.clear();
+    }
+    m_head.clear();
+    m_detailFacts.clear();
+    emit detailsChanged();
 
     IPreviewProvider* provider = m_services.previews ? m_services.previews->providerFor(entry) : nullptr;
 
@@ -137,8 +150,10 @@ void PreviewTabController::identifyThenShow()
 
         // A file that cannot be read still gets a viewer: the name's answer
         // stands, which is what happened before there was a second pass at all.
-        if (task->state() == Task::State::Succeeded)
-            m_current.mimeType = FileType::identify(m_current.name, task->contents());
+        if (task->state() == Task::State::Succeeded) {
+            m_head = task->contents();
+            m_current.mimeType = FileType::identify(m_current.name, m_head);
+        }
 
         installViewer(m_services.previews ? m_services.previews->providerFor(m_current) : nullptr);
     });
@@ -181,8 +196,80 @@ void PreviewTabController::installViewer(IPreviewProvider* provider)
     if (controller)
         controller->load(m_current);
 
+    // Whether the panel is open is remembered per file type, and the viewer's
+    // own answer is what an unanswered type gets: the information viewer has
+    // nothing but the details, and a photograph has a photograph.
+    const QString key = preferenceKey(QStringLiteral("details"), m_current);
+    const bool remembered = m_services.preferences
+        ? m_services.preferences->value(key, provider->detailsOpenByDefault()).toBool()
+        : provider->detailsOpenByDefault();
+    m_detailsOpen = remembered;
+    emit detailsChanged();
+    if (m_detailsOpen)
+        readDetails();
+
     setSubtitle(folderPath());
     emit currentChanged();
+}
+
+void PreviewTabController::setDetailsOpen(bool open)
+{
+    if (m_services.preferences)
+        m_services.preferences->setValue(preferenceKey(QStringLiteral("details"), m_current), open);
+
+    if (m_detailsOpen == open)
+        return;
+    m_detailsOpen = open;
+
+    if (!open && m_details) {
+        m_details->requestCancel();
+        m_details.clear();
+    }
+    if (open)
+        readDetails();
+    emit detailsChanged();
+}
+
+void PreviewTabController::readDetails()
+{
+    if (m_details) {
+        m_details->requestCancel();
+        m_details.clear();
+    }
+    if (!m_services.isValid() || !m_services.metadata || !m_current.uri.isValid() || m_current.isDir)
+        return;
+
+    const QList<IMetadataReader*> readers = m_services.metadata->readersFor(m_current);
+    if (readers.isEmpty()) {
+        m_detailFacts.clear();
+        emit detailsChanged();
+        return;
+    }
+
+    auto* task = new ReadMetadataTask(
+        m_services.vfs->resolve(m_current.uri), m_current, m_head, readers, m_services);
+    m_details = task;
+
+    connect(task, &Task::finished, this, [this, task, uri = m_current.uri] {
+        if (m_details != task)
+            return;
+        m_details.clear();
+        if (m_current.uri != uri)
+            return;
+
+        m_detailFacts.clear();
+        if (task->state() == Task::State::Succeeded) {
+            const QList<FileFact> facts = task->facts();
+            for (const FileFact& fact : facts) {
+                m_detailFacts.append(QVariantMap {
+                    { QStringLiteral("label"), fact.label }, { QStringLiteral("value"), fact.value } });
+            }
+        }
+        emit detailsChanged();
+    });
+
+    m_services.tasks->submit(task);
+    emit detailsChanged();
 }
 
 void PreviewTabController::loadSiblings(const VfsUri& directory, const VfsUri& select)

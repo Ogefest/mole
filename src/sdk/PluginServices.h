@@ -7,6 +7,7 @@ class TaskManager;
 class IndexDatabase;
 class EventBus;
 class IPreviewLookup;
+class IMetadataLookup;
 class Scheduler;
 class AlertStore;
 class AnalysisStore;
@@ -33,6 +34,11 @@ struct PluginServices
     EventBus* events = nullptr;
     /// Finds the viewer for a file. Null in a headless context.
     IPreviewLookup* previews = nullptr;
+    /// Finds everything that can say what a file is: EXIF, document authors,
+    /// media tags. Every reader that claims a file contributes, unlike the
+    /// viewer lookup above. Null in a headless context.
+    /// See docs/adr/0034-what-a-file-says-about-itself.md.
+    IMetadataLookup* metadata = nullptr;
     /// Repeating work. Register a job kind here to have the host run it on a
     /// schedule; the rules themselves outlive the plugin that made them.
     Scheduler* scheduler = nullptr;

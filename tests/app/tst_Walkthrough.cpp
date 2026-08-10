@@ -404,6 +404,9 @@ void TestWalkthrough::buildFixture()
         { QStringLiteral("documents/prices.csv"), when(23, 16, 5) },
         { QStringLiteral("exports"), when(0, 2, 4) },
         { QStringLiteral("exports/catalogue.ndjson"), when(0, 2, 4) },
+        // Both of these are photographed, so neither may carry the clock: a
+        // picture whose date changes every day is a picture rewritten every day.
+        { QStringLiteral("exports/dump.bin"), when(4, 7, 19) },
         { QStringLiteral("media"), when(196, 20, 12) },
         { QStringLiteral("media/film.mkv"), when(196, 20, 12) },
         { QStringLiteral("media/clip.mkv"), when(201, 19, 48) },
@@ -2991,11 +2994,20 @@ void TestWalkthrough::aFileNothingClaimsStillReportsItself()
     // and its size and its dates are all there is to say -- which is still worth
     // saying rather than showing an empty pane.
     QVERIFY(m_harness->writeFile(QStringLiteral("exports/nothing-in-it.dat"), QByteArray()));
+    // Fixed, like everything else in the fixture: this file is in a picture.
+    QVERIFY(m_harness->setModified(
+        QStringLiteral("exports/nothing-in-it.dat"), QDateTime(QDate(2026, 3, 10), QTime(7, 19))));
 
     PreviewTabController* preview = previewOf(QStringLiteral("exports/nothing-in-it.dat"));
     QCOMPARE(preview->viewerName(), QStringLiteral("File information"));
-    QVERIFY(m_harness->until(
-        [preview] { return preview->viewer() && !preview->viewer()->property("facts").toList().isEmpty(); }));
+    QVERIFY(preview->viewer());
+
+    // The facts are the details panel's now, and this is the viewer that opens
+    // it by default -- because here they are the whole content.
+    QVERIFY(preview->isDetailsOpen());
+    QVERIFY(m_harness->until([preview] { return !preview->details().isEmpty(); }));
+    m_harness->settle(6);
+    QVERIFY2(m_harness->item(QStringLiteral("detailsPanel")), "the panel is what shows them");
     m_harness->screenshot(QStringLiteral("23-preview-file-info"));
 }
 

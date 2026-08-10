@@ -1,5 +1,6 @@
 #include "host/ActionRegistry.h"
 #include "host/FeatureRegistry.h"
+#include "host/MetadataRegistry.h"
 #include "host/PluginManager.h"
 #include "host/PreviewRegistry.h"
 #include "support/FakePlugin.h"
@@ -46,6 +47,7 @@ private:
     std::unique_ptr<IndexDatabase> m_index;
     FeatureRegistry* m_features = nullptr;
     PreviewRegistry* m_previews = nullptr;
+    MetadataRegistry* m_metadata = nullptr;
     ActionRegistry* m_actions = nullptr;
     PluginServices m_services;
 };
@@ -60,6 +62,7 @@ void TestPluginManager::init()
     m_events = new EventBus(this);
     m_features = new FeatureRegistry(this);
     m_previews = new PreviewRegistry(this);
+    m_metadata = new MetadataRegistry(this);
     m_actions = new ActionRegistry(this);
     m_index = std::make_unique<IndexDatabase>(QDir(m_dir->path()).filePath(QStringLiteral("i.sqlite")));
     QVERIFY(m_index->open().ok());
@@ -79,6 +82,8 @@ void TestPluginManager::cleanup()
     m_features = nullptr;
     delete m_previews;
     m_previews = nullptr;
+    delete m_metadata;
+    m_metadata = nullptr;
     delete m_actions;
     m_actions = nullptr;
     m_index.reset();
@@ -91,6 +96,7 @@ PluginManager* TestPluginManager::makeManager()
     destinations.vfs = m_vfs;
     destinations.features = m_features;
     destinations.previews = m_previews;
+    destinations.metadata = m_metadata;
     destinations.actions = m_actions;
     return new PluginManager(m_services, destinations, this);
 }
@@ -256,7 +262,7 @@ void TestPluginManager::shutdownIsCalledOnDestruction()
 
     {
         PluginManager manager(
-            m_services, PluginManager::Destinations { m_vfs, m_features, m_previews, m_actions });
+            m_services, PluginManager::Destinations { m_vfs, m_features, m_previews, m_metadata, m_actions });
         QVERIFY(manager.addBuiltIn(std::make_unique<FakePlugin>(config)));
         QVERIFY(!shutdownCalled);
     }

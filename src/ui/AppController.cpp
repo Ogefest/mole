@@ -2,6 +2,7 @@
 
 #include "host/ActionRegistry.h"
 #include "host/FeatureRegistry.h"
+#include "host/MetadataRegistry.h"
 #include "host/PluginManager.h"
 #include "host/PreviewRegistry.h"
 #include "ui/FileLauncher.h"
@@ -190,6 +191,7 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     m_taskManager = new TaskManager(this);
     m_features = new FeatureRegistry(this);
     m_previews = new PreviewRegistry(this);
+    m_metadata = new MetadataRegistry(this);
     m_actions = new ActionRegistry(this);
 
     m_index = std::make_unique<IndexDatabase>(IndexDatabase::defaultFilePath());
@@ -229,6 +231,7 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     m_services.index = m_index.get();
     m_services.events = m_events;
     m_services.previews = m_previews;
+    m_services.metadata = m_metadata;
     m_services.scheduler = m_scheduler;
     m_services.alerts = m_alerts;
     m_services.reports = m_reports.get();
@@ -243,6 +246,7 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     destinations.vfs = m_vfs;
     destinations.features = m_features;
     destinations.previews = m_previews;
+    destinations.metadata = m_metadata;
     destinations.actions = m_actions;
 
     m_plugins = new PluginManager(m_services, destinations, this);

@@ -5,6 +5,12 @@
 
 #include "core/vfs/backends/MemoryFileSystem.h"
 
+#include <QSemaphore>
+
+#include <atomic>
+#include <memory>
+#include <stdexcept>
+
 namespace mole::test {
 
 /// A feature that exists only to be registered and counted.
@@ -65,6 +71,75 @@ private:
     int m_priority = 0;
 };
 
+/// A reader that says whatever the test told it to, and records that it ran.
+///
+/// The counters are shared rather than owned, because the registry takes the
+/// reader and the test still has to see what happened to it -- and because a
+/// reader runs on a worker thread, they are atomic.
+class FakeMetadataReader final : public IMetadataReader
+{
+public:
+    struct Log
+    {
+        std::atomic_int reads { 0 };
+        std::atomic_int cancelled { 0 };
+        /// Bytes of head the reader was handed the last time it ran.
+        std::atomic<qsizetype> headSize { 0 };
+    };
+
+    FakeMetadataReader(QString id, QList<FileFact> facts, int priority = 0,
+        std::shared_ptr<Log> log = nullptr, QString suffix = {})
+        : m_id(std::move(id))
+        , m_facts(std::move(facts))
+        , m_priority(priority)
+        , m_log(std::move(log))
+        , m_suffix(std::move(suffix))
+    {
+    }
+
+    /// Waits for this before answering, so a test can hold a reader still and
+    /// step to another file underneath it. Not a sleep: released by the test.
+    void holdUntilReleased(std::shared_ptr<QSemaphore> gate) { m_gate = std::move(gate); }
+    /// Throws instead of answering, which one reader in a panel is allowed to do
+    /// without costing the others their rows.
+    void failInstead() { m_fails = true; }
+
+    QString id() const override { return m_id; }
+    int priority() const override { return m_priority; }
+
+    bool canRead(const FileEntry& entry) const override
+    {
+        return !entry.isDir && (m_suffix.isEmpty() || entry.uri.suffix() == m_suffix);
+    }
+
+    QList<FileFact> read(const FileEntry& entry, QByteArrayView head, PluginServices services,
+        const CancelToken& cancel) const override
+    {
+        Q_UNUSED(entry);
+        Q_UNUSED(services);
+        if (m_log) {
+            ++m_log->reads;
+            m_log->headSize = head.size();
+        }
+        if (m_gate)
+            m_gate->acquire();
+        if (cancel.isCancelled() && m_log)
+            ++m_log->cancelled;
+        if (m_fails)
+            throw std::runtime_error("this reader is having a bad afternoon");
+        return m_facts;
+    }
+
+private:
+    QString m_id;
+    QList<FileFact> m_facts;
+    int m_priority = 0;
+    std::shared_ptr<Log> m_log;
+    QString m_suffix;
+    std::shared_ptr<QSemaphore> m_gate;
+    bool m_fails = false;
+};
+
 /// A filesystem factory for a scheme nobody else claims.
 class FakeFileSystemFactory final : public IFileSystemFactory
 {
@@ -96,6 +171,7 @@ public:
         QStringList featureIds;
         QStringList schemes;
         QStringList previewIds;
+        QStringList metadataReaderIds;
         QStringList menuActionIds;
         /// Set to true by shutdown(). Owned by the test, because the manager
         /// destroys the plugin before the test can inspect it.
@@ -126,6 +202,8 @@ public:
             registry.addFileSystemFactory(std::make_unique<FakeFileSystemFactory>(scheme));
         for (const QString& id : m_config.previewIds)
             registry.addPreviewProvider(std::make_unique<FakePreviewProvider>(id, QString(), 0));
+        for (const QString& id : m_config.metadataReaderIds)
+            registry.addMetadataReader(std::make_unique<FakeMetadataReader>(id, QList<FileFact> {}));
         for (const QString& id : m_config.menuActionIds) {
             MenuAction action;
             action.id = id;

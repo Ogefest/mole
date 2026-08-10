@@ -9,6 +9,44 @@ wrong.
 
 ---
 
+## A preview showed what a file looked like and never what it said about itself
+
+**Asked for:** MOLE-132 — everything Mole knew about a file was nine facts out of
+`stat()`, and they were only shown when no viewer claimed it. Build a fifth extension
+point, a registry, and a details panel every viewer gets for free.
+
+**What it turned out to be:** `IMetadataReader` in the SDK, `MetadataRegistry` in the
+host, a panel in `PreviewView.qml`, and one reader — the generic one. The reasoning is in
+[ADR-0034](docs/adr/0034-what-a-file-says-about-itself.md); three things about the build
+are worth keeping here.
+
+**The registry is deliberately not the preview registry.** That one stops at the first
+provider that claims a file, because a file can only be drawn one way. This one returns
+every reader that claims it, because a container and its contents are two sets of true
+statements about one file and making them compete would mean one of them silently losing.
+It is the same twenty lines of sorted vector with the loop ending differently, and the
+difference is the whole design.
+
+**The information viewer lost its facts rather than keeping a copy.** It builds nothing
+now — the nine facts are the generic reader's, shown in the panel, so a file *with* a
+viewer gets them too, which is the fault the ticket is about. That viewer opens the panel
+by default, which needed a way for a viewer to say so without the shell knowing which
+viewer it is: `IPreviewProvider::detailsOpenByDefault()`, one virtual with a default.
+
+**Two tests were wrong before they were right.** The cancellation test waited for the tab
+to let go of the reader and then asserted that the reader had noticed — two different
+threads, and only the second is the claim; it passed or failed on scheduling. And several
+tests here are about what is *remembered*, so a preference left behind by one was deciding
+the next one's answer: `init()` now removes `preferences.json` as well as the session.
+Both are the same mistake in different clothes — a test that reads state somebody else
+wrote.
+
+**A picture in the guide was carrying the clock.** The file photographed for the fact list
+is written by the test rather than by the fixture, so its timestamp was "now" and the
+picture was rewritten every day. Fixed date, like everything else in the fixture. The
+Polish month name next to it is a real defect and a bigger one — it is in
+[TODO.md](TODO.md), because fixing it rewrites every picture that shows a size.
+
 ## There was nothing in Mole that would show you the bytes of a file
 
 **Asked for:** MOLE-131 — a stripped `.so`, a firmware image, a `.dat` nobody documented:

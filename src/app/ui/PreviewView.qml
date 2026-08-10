@@ -119,6 +119,75 @@ Item {
                 }
             }
 
+            // What the file says about itself, under the strip and above the
+            // viewer, filled by the tab from whatever readers claimed the file.
+            // No viewer knows this exists, which is the point: every one of them
+            // has it.
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 0
+                visible: controller && controller.currentUri.length > 0
+
+                ItemDelegate {
+                    objectName: "detailsHeader"
+                    Layout.fillWidth: true
+                    implicitHeight: App.minimumTarget
+                    focusPolicy: Qt.NoFocus
+                    onClicked: controller.setDetailsOpen(!controller.detailsOpen)
+
+                    contentItem: RowLayout {
+                        spacing: 6
+                        Label {
+                            text: controller && controller.detailsOpen ? "▾" : "▸"
+                            color: "#8b93a7"
+                            font.pixelSize: App.smallTextSize
+                        }
+                        Label {
+                            text: "Details"
+                            color: "#8b93a7"
+                            font.pixelSize: App.smallTextSize
+                        }
+                        BusyIndicator {
+                            running: controller ? controller.detailsLoading : false
+                            visible: running
+                            implicitWidth: 14
+                            implicitHeight: 14
+                        }
+                        Item { Layout.fillWidth: true }
+                    }
+                }
+
+                Flow {
+                    objectName: "detailsPanel"
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 12
+                    Layout.rightMargin: 12
+                    Layout.bottomMargin: 6
+                    visible: controller && controller.detailsOpen
+                    spacing: 18
+
+                    Repeater {
+                        model: controller ? controller.details : []
+
+                        delegate: Row {
+                            required property var modelData
+                            spacing: 6
+
+                            Label {
+                                text: modelData.label
+                                color: "#6f7788"
+                                font.pixelSize: App.smallTextSize
+                            }
+                            Label {
+                                text: modelData.value
+                                color: "#d7dae0"
+                                font.pixelSize: App.smallTextSize
+                            }
+                        }
+                    }
+                }
+            }
+
             // One viewer at a time. Reloaded from scratch on every file so a
             // heavy one cannot linger.
             Loader {

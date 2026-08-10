@@ -2,8 +2,14 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// The fallback. When nothing can render a file, say what is known about it
-// rather than showing an empty frame.
+// The fallback. When nothing can render a file -- an empty one, or one that
+// could not be read -- say what is known about it rather than showing an empty
+// frame.
+//
+// The facts themselves are not here any more: they are the details panel above,
+// which every viewer has and which this one opens by default. What is left is
+// the name and the reason there is nothing to show.
+// See docs/adr/0034-what-a-file-says-about-itself.md.
 Item {
     property var controller: null
 
@@ -32,26 +38,6 @@ Item {
                 text: "No installed viewer handles this file type. A plugin can add one."
             }
 
-            Repeater {
-                model: controller ? controller.facts : []
-                delegate: RowLayout {
-                    required property var modelData
-                    Layout.fillWidth: true
-                    spacing: 16
-                    Label {
-                        Layout.preferredWidth: 110
-                        text: modelData.label
-                        color: "#6f7788"
-                        font.pixelSize: App.secondaryTextSize
-                    }
-                    Label {
-                        Layout.fillWidth: true
-                        text: modelData.value
-                        wrapMode: Text.Wrap
-                        font.pixelSize: App.secondaryTextSize
-                    }
-                }
-            }
         }
     }
 }

@@ -1341,40 +1341,11 @@ FileInfoPreviewController::FileInfoPreviewController(PluginServices services, QO
 
 void FileInfoPreviewController::load(const FileEntry& entry)
 {
-    static const QMimeDatabase mimeDatabase;
-    // What the file is when something has looked inside it, and what its name
-    // suggests when nothing has. A name was all this viewer ever had, which is
-    // why a Dockerfile used to read "Unknown" here.
-    const QMimeType type = entry.mimeType.isEmpty()
-        ? mimeDatabase.mimeTypeForFile(entry.name, QMimeDatabase::MatchExtension)
-        : mimeDatabase.mimeTypeForName(entry.mimeType);
-
+    // The name, and nothing else. What is known about the file is the generic
+    // metadata reader's answer now, shown in the details panel this viewer opens
+    // by default -- built once, for every viewer, rather than here for the one
+    // case where no viewer claimed the file. See ADR-0034.
     m_headline = entry.name;
-
-    const auto fact = [](const QString& label, const QString& value) {
-        return QVariant(
-            QVariantMap { { QStringLiteral("label"), label }, { QStringLiteral("value"), value } });
-    };
-
-    m_facts.clear();
-    m_facts.append(fact(QStringLiteral("Type"),
-        type.isValid() && !type.isDefault() ? type.comment() : QStringLiteral("Unknown")));
-    m_facts.append(fact(QStringLiteral("MIME type"), type.name()));
-    m_facts.append(fact(QStringLiteral("Size"),
-        QStringLiteral("%1 (%2 bytes)")
-            .arg(QLocale().formattedDataSize(entry.size))
-            .arg(QLocale().toString(entry.size))));
-    if (entry.modified.isValid()) {
-        m_facts.append(
-            fact(QStringLiteral("Modified"), QLocale().toString(entry.modified, QLocale::LongFormat)));
-    }
-    m_facts.append(fact(QStringLiteral("Location"), entry.uri.parent().toString()));
-    m_facts.append(fact(QStringLiteral("Full path"), entry.uri.toString()));
-    m_facts.append(
-        fact(QStringLiteral("Readable"), entry.isReadable ? QStringLiteral("yes") : QStringLiteral("no")));
-    m_facts.append(
-        fact(QStringLiteral("Writable"), entry.isWritable ? QStringLiteral("yes") : QStringLiteral("no")));
-
     emit factsChanged();
 }
 

@@ -34,6 +34,8 @@ add_library(mole_builtin STATIC
     builtin/previews/MarkdownStyle.cpp
     builtin/previews/PreviewProviders.h
     builtin/previews/PreviewProviders.cpp
+    builtin/previews/MetadataReaders.h
+    builtin/previews/MetadataReaders.cpp
     builtin/previews/PdfPreview.h
     builtin/previews/PdfPreview.cpp
 )

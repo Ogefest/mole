@@ -29,6 +29,7 @@ class TaskManager;
 class IndexDatabase;
 class EventBus;
 class PreviewRegistry;
+class MetadataRegistry;
 class PluginManager;
 class FileLauncher;
 class ActionRegistry;
@@ -131,6 +132,7 @@ public:
     CommandPaletteModel* commands() const { return m_commands; }
     BookmarkModel* bookmarks() const { return m_bookmarks; }
     PreviewRegistry* previews() const { return m_previews; }
+    MetadataRegistry* metadata() const { return m_metadata; }
     Scheduler* scheduler() const { return m_scheduler; }
     ScheduleStore* schedules() const { return m_schedules; }
     AlertStore* alerts() const { return m_alerts; }
@@ -438,6 +440,7 @@ private:
     EventBus* m_events = nullptr;
     FeatureRegistry* m_features = nullptr;
     PreviewRegistry* m_previews = nullptr;
+    MetadataRegistry* m_metadata = nullptr;
     PluginManager* m_plugins = nullptr;
     FileLauncher* m_launcher = nullptr;
     ActionRegistry* m_actions = nullptr;

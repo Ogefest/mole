@@ -12,6 +12,7 @@ namespace mole {
 
 class FeatureRegistry;
 class PreviewRegistry;
+class MetadataRegistry;
 class ActionRegistry;
 
 /// Loads plugins and wires whatever they contribute into the host.
@@ -38,6 +39,7 @@ public:
         VfsManager* vfs = nullptr;
         FeatureRegistry* features = nullptr;
         PreviewRegistry* previews = nullptr;
+        MetadataRegistry* metadata = nullptr;
         ActionRegistry* actions = nullptr;
     };
 

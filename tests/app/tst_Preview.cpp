@@ -1,10 +1,13 @@
+#include "host/MetadataRegistry.h"
 #include "host/PreviewRegistry.h"
 #include "plugins/builtin/BuiltinPlugin.h"
 #include "plugins/builtin/PreviewFeature.h"
 #include "plugins/builtin/previews/MarkdownStyle.h"
+#include "plugins/builtin/previews/MetadataReaders.h"
 #include "plugins/builtin/previews/PdfPreview.h"
 #include "plugins/builtin/previews/PreviewProviders.h"
 #include "plugins/builtin/previews/SyntaxHighlighter.h"
+#include "support/FakePlugin.h"
 #include "support/FaultyFileSystem.h"
 #include "support/TestSupport.h"
 #include "ui/AppController.h"
@@ -103,6 +106,13 @@ private slots:
     void everyFileKeepsTheViewerItAlreadyHad();
     void theFactListNamesWhatTheFileTurnedOutToBe();
 
+    // ---- what a file says about itself ------------------------------------
+    void everyReaderThatClaimsAFileContributes();
+    void nothingIsReadUntilTheDetailsAreOpened();
+    void theDetailsAreRememberedPerFileType();
+    void steppingToTheNextFileCancelsAReaderInFlight();
+    void aReaderThatFailsCostsOnlyItsOwnRows();
+
     // ---- the bytes of a file, for the files nothing else can show ---------
     void bytesAreShownForWhatNothingElseClaims_data();
     void bytesAreShownForWhatNothingElseClaims();
@@ -175,6 +185,10 @@ void TestPreview::initTestCase()
 void TestPreview::init()
 {
     QFile::remove(QString::fromLocal8Bit(qgetenv("MOLE_SESSION_PATH")));
+    // Preferences outlive a test unless they are removed, and several tests here
+    // are about what is remembered -- one leaving a viewer choice or an open
+    // details panel behind would decide the next one's answer.
+    QFile::remove(m_profile.filePath(QStringLiteral("preferences.json")));
 
     m_tree = std::make_unique<TempTree>();
     QVERIFY(m_tree->isValid());
@@ -370,26 +384,26 @@ void TestPreview::everyFileKeepsTheViewerItAlreadyHad()
 
 void TestPreview::theFactListNamesWhatTheFileTurnedOutToBe()
 {
-    // Asked of the viewer rather than through the tab, because the tab no longer
-    // sends an identified file here: the hex viewer outranks the fact list for
-    // everything that is not text. What is held is that this viewer, given a file
-    // somebody has looked inside, says what the file is -- it used to answer
-    // "Unknown" for everything whose name the database had no glob for.
+    // Asked of the reader rather than through a viewer: the nine facts belong to
+    // the generic metadata reader now, and every viewer shows them in its details
+    // panel. What is held is that a file somebody has looked inside is named --
+    // this used to answer "Unknown" for everything the database had no glob for.
     FileEntry entry;
     entry.name = QStringLiteral("store");
     entry.uri = m_tree->rootUri().child(QStringLiteral("store"));
     entry.size = 416;
     entry.mimeType = QStringLiteral("application/vnd.sqlite3");
 
-    FileInfoPreviewController controller(m_app->services());
-    controller.load(entry);
-    auto* viewer = &controller;
+    const GenericMetadataReader reader;
+    QVERIFY(reader.canRead(entry));
 
-    const auto factNamed = [viewer](const QString& label) {
-        for (const QVariant& entry : viewer->facts()) {
-            const QVariantMap fact = entry.toMap();
-            if (fact.value(QStringLiteral("label")).toString() == label)
-                return fact.value(QStringLiteral("value")).toString();
+    const CancelToken cancel;
+    const QList<FileFact> facts = reader.read(entry, QByteArrayView(), m_app->services(), cancel);
+
+    const auto factNamed = [&facts](const QString& label) {
+        for (const FileFact& fact : facts) {
+            if (fact.label == label)
+                return fact.value;
         }
         return QString();
     };
@@ -397,6 +411,198 @@ void TestPreview::theFactListNamesWhatTheFileTurnedOutToBe()
     QCOMPARE(factNamed(QStringLiteral("MIME type")), QStringLiteral("application/vnd.sqlite3"));
     QVERIFY2(factNamed(QStringLiteral("Type")) != QStringLiteral("Unknown"),
         qPrintable(factNamed(QStringLiteral("Type"))));
+    QVERIFY(factNamed(QStringLiteral("Size")).contains(QStringLiteral("416")));
+}
+
+// ------------------------------------------ what a file says about itself
+
+namespace {
+
+/// The value of one fact in the panel, or empty when nothing said it.
+QString detailNamed(const PreviewTabController* preview, const QString& label)
+{
+    const QVariantList details = preview->details();
+    for (const QVariant& entry : details) {
+        const QVariantMap fact = entry.toMap();
+        if (fact.value(QStringLiteral("label")).toString() == label)
+            return fact.value(QStringLiteral("value")).toString();
+    }
+    return {};
+}
+
+QStringList detailLabels(const PreviewTabController* preview)
+{
+    QStringList labels;
+    const QVariantList details = preview->details();
+    for (const QVariant& entry : details)
+        labels.append(entry.toMap().value(QStringLiteral("label")).toString());
+    return labels;
+}
+
+} // namespace
+
+void TestPreview::everyReaderThatClaimsAFileContributes()
+{
+    // Where this differs from the viewer lookup, which stops at the first match:
+    // a container and its contents are two sets of facts about one file, and
+    // both are right at once. Priority decides the order, not the winner.
+    m_app->metadata()->addReader(std::make_unique<FakeMetadataReader>(QStringLiteral("test.low"),
+        QList<FileFact> { { QStringLiteral("Second"), QStringLiteral("later") } }, 10));
+    m_app->metadata()->addReader(std::make_unique<FakeMetadataReader>(QStringLiteral("test.high"),
+        QList<FileFact> { { QStringLiteral("First"), QStringLiteral("sooner") } }, 20));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("notes.txt"));
+    QVERIFY(preview);
+    preview->setDetailsOpen(true);
+    QVERIFY(waitFor([preview] { return !preview->isDetailsLoading(); }, 5000));
+
+    const QStringList labels = detailLabels(preview);
+    QVERIFY2(labels.contains(QStringLiteral("First")), qPrintable(labels.join(QLatin1Char(','))));
+    QVERIFY(labels.contains(QStringLiteral("Second")));
+    QVERIFY2(labels.indexOf(QStringLiteral("First")) < labels.indexOf(QStringLiteral("Second")),
+        "readers are shown in priority order");
+    // And the reader that claims everything is still there, underneath both.
+    QVERIFY(labels.contains(QStringLiteral("Size")));
+    QVERIFY(labels.indexOf(QStringLiteral("Second")) < labels.indexOf(QStringLiteral("Size")));
+
+    QCOMPARE(detailNamed(preview, QStringLiteral("First")), QStringLiteral("sooner"));
+}
+
+void TestPreview::nothingIsReadUntilTheDetailsAreOpened()
+{
+    // The panel is where an expensive reader's cost falls, so it must fall on
+    // somebody who asked. A file claimed on its name is the honest case: nothing
+    // has read it at all when the viewer opens.
+    auto memory = std::make_shared<MemoryFileSystem>();
+    memory->addFile(QStringLiteral("/rows.csv"), QByteArray("a,b\n1,2\n"));
+    auto counted = std::make_shared<FaultyFileSystem>(memory);
+
+    Mount mount;
+    mount.id = QStringLiteral("counted");
+    mount.displayName = QStringLiteral("counted");
+    mount.root = VfsUri::fromString(QStringLiteral("mem://counted/"));
+    mount.fileSystem = counted;
+    m_app->services().vfs->addMount(mount);
+
+    auto log = std::make_shared<FakeMetadataReader::Log>();
+    m_app->metadata()->addReader(std::make_unique<FakeMetadataReader>(QStringLiteral("test.counting"),
+        QList<FileFact> { { QStringLiteral("Asked"), QStringLiteral("yes") } }, 10, log));
+
+    m_app->previewFile(QStringLiteral("mem://counted/rows.csv"));
+    auto* preview = qobject_cast<PreviewTabController*>(m_app->tabs()->currentController());
+    QVERIFY(preview);
+    QVERIFY(waitFor([preview] { return preview->viewer() != nullptr; }, 5000));
+
+    QVERIFY2(!preview->isDetailsOpen(), "a viewer with a file to show does not open the panel");
+    QCOMPARE(log->reads.load(), 0);
+
+    const qint64 beforeOpening = counted->bytesRead();
+    preview->setDetailsOpen(true);
+    QVERIFY(waitFor([preview] { return !preview->isDetailsLoading(); }, 5000));
+
+    QCOMPARE(log->reads.load(), 1);
+    QCOMPARE(detailNamed(preview, QStringLiteral("Asked")), QStringLiteral("yes"));
+    // And what it cost is one page, because that is all a reader is given.
+    QVERIFY2(counted->bytesRead() - beforeOpening <= FileType::kSampleBytes,
+        qPrintable(
+            QStringLiteral("reading the details cost %1 bytes").arg(counted->bytesRead() - beforeOpening)));
+    QVERIFY(log->headSize.load() > 0);
+}
+
+void TestPreview::theDetailsAreRememberedPerFileType()
+{
+    QVERIFY(m_tree->writeFile(QStringLiteral("other.txt"), QByteArray("another note")));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("notes.txt"));
+    QVERIFY(preview);
+    QVERIFY2(!preview->isDetailsOpen(), "closed until somebody asks");
+    preview->setDetailsOpen(true);
+
+    // The next file of the same type opens the way the last one was left, which
+    // is the whole point of remembering it -- and a different type is untouched,
+    // because EXIF on every photograph is not a details panel on every log.
+    PreviewTabController* second = openPreview(QStringLiteral("other.txt"));
+    QVERIFY(second->isDetailsOpen());
+
+    PreviewTabController* table = openPreview(QStringLiteral("prices.csv"));
+    QVERIFY2(!table->isDetailsOpen(), "a choice for one file type must not answer for another");
+
+    // And it survives a restart, because it is a preference rather than a mood.
+    m_app->saveSessionNow();
+    m_app.reset();
+    drainEvents();
+
+    m_app = std::make_unique<AppController>();
+    std::vector<std::unique_ptr<IPlugin>> builtIns;
+    builtIns.push_back(std::make_unique<BuiltinPlugin>(m_tree->rootUri().toString()));
+    QString error;
+    QVERIFY2(m_app->initialise(std::move(builtIns), &error), qPrintable(error));
+
+    PreviewTabController* afterRestart = openPreview(QStringLiteral("notes.txt"));
+    QVERIFY(afterRestart);
+    QVERIFY(afterRestart->isDetailsOpen());
+}
+
+void TestPreview::steppingToTheNextFileCancelsAReaderInFlight()
+{
+    // A reader held still while the reader steps away. Waited on the condition
+    // -- the gate -- rather than on a clock, and released by the test.
+    auto gate = std::make_shared<QSemaphore>();
+    auto log = std::make_shared<FakeMetadataReader::Log>();
+    auto slow = std::make_unique<FakeMetadataReader>(QStringLiteral("test.slow"),
+        QList<FileFact> { { QStringLiteral("Slow"), QStringLiteral("finally") } }, 10, log);
+    slow->holdUntilReleased(gate);
+    m_app->metadata()->addReader(std::move(slow));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("notes.txt"));
+    QVERIFY(preview);
+    preview->setDetailsOpen(true);
+    QVERIFY(waitFor([log] { return log->reads.load() == 1; }, 5000));
+
+    // Off the GUI thread: it is still stuck in the reader and the interface is
+    // not.
+    QVERIFY(preview->isDetailsLoading());
+
+    preview->open(m_tree->rootUri().child(QStringLiteral("config.json")).toString());
+    QVERIFY2(!preview->isDetailsLoading(), "the tab lets go of a reader the moment the file changes");
+    gate->release();
+
+    // Waited on the reader having noticed, rather than on the tab having let go:
+    // the two happen on different threads and only the first one is the claim.
+    QVERIFY(waitFor([log] { return log->cancelled.load() == 1; }, 5000));
+
+    // And what it was going to say never reaches the file that is open now: the
+    // task finished, late, against a tab that has moved on.
+    drainEvents();
+    QVERIFY2(detailNamed(preview, QStringLiteral("Slow")).isEmpty(),
+        "facts about the file somebody stepped away from must not land on this one");
+}
+
+void TestPreview::aReaderThatFailsCostsOnlyItsOwnRows()
+{
+    auto failing = std::make_unique<FakeMetadataReader>(QStringLiteral("test.broken"),
+        QList<FileFact> { { QStringLiteral("Never"), QStringLiteral("shown") } }, 20);
+    failing->failInstead();
+    m_app->metadata()->addReader(std::move(failing));
+    // One that simply has nothing to say, which is not a failure at all.
+    m_app->metadata()->addReader(
+        std::make_unique<FakeMetadataReader>(QStringLiteral("test.silent"), QList<FileFact> {}, 15));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("notes.txt"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+
+    preview->setDetailsOpen(true);
+    QVERIFY(waitFor([preview] { return !preview->isDetailsLoading(); }, 5000));
+
+    QVERIFY2(detailNamed(preview, QStringLiteral("Never")).isEmpty(), "a reader that threw says nothing");
+    QVERIFY2(
+        !detailNamed(preview, QStringLiteral("Size")).isEmpty(), "and the readers after it are unaffected");
+
+    // The viewer is untouched by any of it.
+    QVERIFY(waitFor([viewer] { return !viewer->text().isEmpty(); }, 5000));
+    QVERIFY(viewer->errorText().isEmpty());
 }
 
 // ------------------------------------------------- the bytes themselves
@@ -1591,8 +1797,9 @@ void TestPreview::separatorCanBeOverridden()
 void TestPreview::reportsFactsForAnUnknownFile()
 {
     // What is left for the fact list now that the bytes have a viewer of their
-    // own: a file with nothing in it to show. There is nothing to read, so
-    // nothing identified it, and its size and dates are all there is to say.
+    // own: a file with nothing in it to show. Nothing read it, so nothing
+    // identified it, and its size and dates are all there is to say -- which is
+    // the details panel, opened because for this viewer it is the content.
     QVERIFY(m_tree->writeFile(QStringLiteral("nothing-in-it"), QByteArray()));
 
     PreviewTabController* preview = openPreview(QStringLiteral("nothing-in-it"));
@@ -1602,7 +1809,10 @@ void TestPreview::reportsFactsForAnUnknownFile()
     auto* viewer = qobject_cast<FileInfoPreviewController*>(preview->viewer());
     QVERIFY(viewer);
     QCOMPARE(viewer->headline(), QStringLiteral("nothing-in-it"));
-    QVERIFY2(viewer->facts().size() >= 5, "an unknown file still has plenty to say about it");
+
+    QVERIFY2(preview->isDetailsOpen(), "the details are all this viewer has, so it opens them");
+    QVERIFY(waitFor([preview] { return !preview->details().isEmpty(); }, 5000));
+    QVERIFY2(preview->details().size() >= 5, "an unknown file still has plenty to say about it");
 }
 
 void TestPreview::arrowsStepThroughFilesOnly()

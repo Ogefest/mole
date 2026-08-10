@@ -2,6 +2,7 @@
 
 #include "host/ActionRegistry.h"
 #include "host/FeatureRegistry.h"
+#include "host/MetadataRegistry.h"
 #include "host/PreviewRegistry.h"
 
 #include "core/vfs/VfsManager.h"
@@ -72,6 +73,20 @@ namespace {
             const QString id = provider->id();
             if (!m_destinations.previews->addProvider(std::move(provider))) {
                 reportError(QStringLiteral("preview provider id '%1' is already taken").arg(id));
+                return false;
+            }
+            return true;
+        }
+
+        bool addMetadataReader(std::unique_ptr<IMetadataReader> reader) override
+        {
+            if (!reader || !m_destinations.metadata) {
+                reportError(QStringLiteral("rejected a null metadata reader"));
+                return false;
+            }
+            const QString id = reader->id();
+            if (!m_destinations.metadata->addReader(std::move(reader))) {
+                reportError(QStringLiteral("metadata reader id '%1' is already taken").arg(id));
                 return false;
             }
             return true;

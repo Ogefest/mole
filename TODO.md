@@ -27,6 +27,12 @@ project, and a contributor should never hit a wall of text they cannot read.
 
 ## Notes
 
+- **The guide's pictures are in the locale of whoever ran the suite.** Sizes,
+  numbers and dates go through `QLocale`, so the details panel in
+  `23-preview-file-info.png` currently reads *"wtorek, 10 marca 2026"* in an
+  English-only repository. Fixing it means giving the walkthrough a fixed locale,
+  which rewrites every picture that shows a size — so it is one change, made once,
+  rather than something to slip into an unrelated ticket.
 - **`make guide-images` rewrites all forty-five pictures, whatever changed.** The
   sidebar shows the machine's real free space, so every window in the guide carries
   a number that is different on every run and on every machine. Copy in the pictures

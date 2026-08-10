@@ -1,6 +1,7 @@
 #pragma once
 
 #include "sdk/IFeature.h"
+#include "sdk/IMetadataReader.h"
 #include "sdk/IPreviewProvider.h"
 #include "sdk/MenuAction.h"
 #include "sdk/PluginServices.h"
@@ -17,7 +18,7 @@ namespace mole {
 /// Bumped whenever anything a plugin can see changes shape. The host refuses
 /// to load a plugin built against a different major version, which turns a
 /// mysterious crash into a clear message at startup.
-inline constexpr int kPluginApiVersion = 8;
+inline constexpr int kPluginApiVersion = 9;
 
 struct PluginMetadata
 {
@@ -51,6 +52,10 @@ public:
 
     /// Contribute a viewer for some family of file types.
     virtual bool addPreviewProvider(std::unique_ptr<IPreviewProvider> provider) = 0;
+
+    /// Contribute a reader of what a file says about itself. Unlike a preview
+    /// provider, every reader that claims a file is used.
+    virtual bool addMetadataReader(std::unique_ptr<IMetadataReader> reader) = 0;
 
     /// Contribute an entry to the application menu. Most plugins want
     /// MenuAction::Section::Workflows.

@@ -583,17 +583,20 @@ private:
 
 // ------------------------------------------------------------ file info
 
-/// The last resort: what we know about a file we cannot show.
+/// The last resort: a file nothing can show, named.
+///
+/// It used to build nine facts of its own out of `stat()`. They are the generic
+/// metadata reader's now, shown in the details panel that every viewer has and
+/// this one opens by default -- so a file with a viewer gets them too, which is
+/// the whole reason they moved. See ADR-0034.
 class FileInfoPreviewController final : public PreviewController
 {
     Q_OBJECT
-    Q_PROPERTY(QVariantList facts READ facts NOTIFY factsChanged)
     Q_PROPERTY(QString headline READ headline NOTIFY factsChanged)
 
 public:
     explicit FileInfoPreviewController(PluginServices services, QObject* parent = nullptr);
 
-    QVariantList facts() const { return m_facts; }
     QString headline() const { return m_headline; }
     void load(const FileEntry& entry) override;
 
@@ -602,7 +605,6 @@ signals:
 
 private:
     PluginServices m_services;
-    QVariantList m_facts;
     QString m_headline;
 };
 
@@ -616,6 +618,8 @@ public:
     /// Lowest of all: it accepts everything, so nothing else must lose to it.
     int priority() const override { return -1000; }
     bool canPreview(const FileEntry& entry) const override { return !entry.isDir; }
+    /// The details are all this viewer has, so it opens them.
+    bool detailsOpenByDefault() const override { return true; }
     QUrl viewSource() const override;
     PreviewController* createController(QObject* parent) override;
 

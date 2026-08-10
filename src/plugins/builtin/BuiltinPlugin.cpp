@@ -12,6 +12,7 @@
 #include "plugins/builtin/ReportsFeature.h"
 #include "plugins/builtin/SearchFeatures.h"
 #include "plugins/builtin/SyncFeature.h"
+#include "plugins/builtin/previews/MetadataReaders.h"
 #include "plugins/builtin/previews/PdfPreview.h"
 #include "plugins/builtin/previews/PreviewProviders.h"
 
@@ -100,6 +101,9 @@ void BuiltinPlugin::registerExtensions(PluginRegistry& registry)
     registry.addPreviewProvider(std::make_unique<TextPreviewProvider>(services));
     registry.addPreviewProvider(std::make_unique<HexPreviewProvider>(services));
     registry.addPreviewProvider(std::make_unique<FileInfoPreviewProvider>(services));
+
+    // What every file says about itself, whichever viewer shows it.
+    registry.addMetadataReader(std::make_unique<GenericMetadataReader>());
 }
 
 } // namespace mole

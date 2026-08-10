@@ -7,6 +7,7 @@ add_library(mole_sdk STATIC
     IFeature.h
     IPreviewProvider.h
     IPreviewProvider.cpp
+    IMetadataReader.h
     FeatureController.h
     FeatureController.cpp
 )
