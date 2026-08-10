@@ -77,10 +77,21 @@ A task belonging to nothing would be a task nobody ever reaches, which is why
 not part of any larger effort. The `no epic` column of the `By epic` view should
 always be empty, and a card appearing in it means one fell out.
 
-**You write to the board as yourself.** There is an account for planning and an
-account for engineering, each with its own token, so who moved a card and who left
-a comment is a fact on the board rather than a guess. Take the token from
-`VIKUNJA_TOKEN` in your own environment and never from a file in this repository.
+**You write to the board as yourself, and in this checkout you are the engineering
+role.** There is an account for planning and an account for engineering, each with
+its own credentials, so who moved a card and who left a comment is a fact on the
+board rather than a guess. The role follows the directory, so there is nothing to
+decide and nothing to set up first — one line, at the start of any shell that talks
+to the board:
+
+```sh
+set -a; . ~/dev/workspace/mole-pm/environment/vikunja/engineer.env; set +a
+```
+
+That is the only place the address and the token come from. **Never a value typed
+into a command** — that writes the credential into the session transcript — and never
+anything in this repository, which is public. Everything below then works from
+`$VIKUNJA_URL` and `$VIKUNJA_TOKEN`.
 
 One consequence to know about, because the error is a bare `403`: a label is only
 usable by an account that can already see it in use somewhere. Every label the
@@ -194,11 +205,11 @@ The Mole board's five columns say what state a task is in:
 `Backlog` and `Blocked` are not a queue to dip into. A task leaves them in a
 planning session, not because it looked convenient on the day.
 
-Everything below takes the address and the token from the environment, never from
-a file in this repository:
+Everything below takes the address and the token from the role's own file, never from
+anything in this repository:
 
 ```sh
-: "${VIKUNJA_URL:?}" "${VIKUNJA_TOKEN:?}"        # see mole-pm/environment/vikunja.md
+set -a; . ~/dev/workspace/mole-pm/environment/vikunja/engineer.env; set +a
 v() { curl -sS -H "Authorization: Bearer $VIKUNJA_TOKEN" \
         -H 'Content-Type: application/json' "${@:2}" "$VIKUNJA_URL/api/v2$1"; }
 
