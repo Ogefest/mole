@@ -1,7 +1,9 @@
 # ADR-0022: Work is tracked in Vikunja, not in GitHub issues
 
 - **Date:** 2026-08-10
-- **Status:** Accepted
+- **Status:** Accepted, and amended by
+  [ADR-0023](0023-work-is-dispatched-by-epic.md) on how work is dispatched — the
+  queue is the order of the epics, not the order of `Ready`
 
 ## Context
 
