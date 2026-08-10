@@ -14,6 +14,7 @@
 #include "plugins/builtin/SyncFeature.h"
 #include "plugins/builtin/previews/DocumentMetadata.h"
 #include "plugins/builtin/previews/ImageMetadata.h"
+#include "plugins/builtin/previews/MediaMetadata.h"
 #include "plugins/builtin/previews/MetadataReaders.h"
 #include "plugins/builtin/previews/PdfPreview.h"
 #include "plugins/builtin/previews/PreviewProviders.h"
@@ -108,6 +109,7 @@ void BuiltinPlugin::registerExtensions(PluginRegistry& registry)
     registry.addMetadataReader(std::make_unique<ImageMetadataReader>());
     registry.addMetadataReader(std::make_unique<PdfMetadataReader>());
     registry.addMetadataReader(std::make_unique<DocumentMetadataReader>());
+    registry.addMetadataReader(std::make_unique<VideoMetadataReader>());
     registry.addMetadataReader(std::make_unique<GenericMetadataReader>());
 }
 

@@ -6,3 +6,9 @@ leak:libQt6Quick.so
 leak:libQt6QuickControls2.so
 leak:libQt6Qml.so
 leak:libQt6Gui.so
+
+# QPdfDocument leaks its asynchronous loader's buffer when a load ends in an
+# error -- reached through load(QString) as much as load(QIODevice*), so there is
+# no overload to choose instead and nothing of ours to free. Suppressed by module
+# like the rest: a leak in our own code still fails the build.
+leak:libQt6Pdf.so

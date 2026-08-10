@@ -40,6 +40,8 @@ add_library(mole_builtin STATIC
     builtin/previews/ImageMetadata.cpp
     builtin/previews/DocumentMetadata.h
     builtin/previews/DocumentMetadata.cpp
+    builtin/previews/MediaMetadata.h
+    builtin/previews/MediaMetadata.cpp
     builtin/previews/PdfPreview.h
     builtin/previews/PdfPreview.cpp
 )

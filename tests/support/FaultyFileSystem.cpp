@@ -135,6 +135,17 @@ namespace {
         }
 
         bool open(OpenMode mode) override { return QIODevice::open(mode | QIODevice::Unbuffered); }
+
+        // Forwarded, or a caller that seeks reads from wherever the inner stream
+        // happened to be -- which looks like a reader ignoring an offset rather
+        // than like a wrapper swallowing one.
+        bool isSequential() const override { return !m_inner || m_inner->isSequential(); }
+        bool seek(qint64 position) override
+        {
+            if (isSequential() || !QIODevice::seek(position))
+                return false;
+            return m_inner->seek(position);
+        }
         void close() override
         {
             if (m_inner)
@@ -233,6 +244,17 @@ namespace {
         }
 
         bool open(OpenMode mode) override { return QIODevice::open(mode | QIODevice::Unbuffered); }
+
+        // Forwarded, or a caller that seeks reads from wherever the inner stream
+        // happened to be -- which looks like a reader ignoring an offset rather
+        // than like a wrapper swallowing one.
+        bool isSequential() const override { return !m_inner || m_inner->isSequential(); }
+        bool seek(qint64 position) override
+        {
+            if (isSequential() || !QIODevice::seek(position))
+                return false;
+            return m_inner->seek(position);
+        }
         void close() override
         {
             if (m_inner)

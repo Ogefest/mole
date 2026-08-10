@@ -4,10 +4,10 @@
 
 #include "core/vfs/VfsManager.h"
 
-#include <QBuffer>
 #include <QDir>
 #include <QFileInfo>
 #include <QLocale>
+#include <QTemporaryFile>
 #include <QUrl>
 
 #ifdef MOLE_HAVE_QTPDF
@@ -284,15 +284,20 @@ namespace {
 
 QList<FileFact> PdfMetadataReader::factsForBytes(const QByteArray& document)
 {
-    QByteArray owned = document;
-    QBuffer buffer(&owned);
-    buffer.open(QIODevice::ReadOnly);
+    // Staged to a file rather than handed a QIODevice: the device overload
+    // reports through error() once its asynchronous load has got somewhere,
+    // while a path returns the status. It is also what the viewer does with a
+    // remote document, so the two agree about what opening one means.
+    QTemporaryFile staged;
+    if (!staged.open())
+        return {};
+    if (staged.write(document) != document.size())
+        return {};
+    staged.flush();
 
     QPdfDocument opened;
-    // The device overload reports through error() rather than returning; the
-    // buffer has to outlive the call, which is why it is a local here.
-    opened.load(&buffer);
-    return factsOf(opened, opened.error());
+    const QPdfDocument::Error status = opened.load(staged.fileName());
+    return factsOf(opened, status);
 }
 
 QList<FileFact> PdfMetadataReader::read(

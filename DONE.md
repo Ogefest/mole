@@ -9,6 +9,36 @@ wrong.
 
 ---
 
+## A video file was a size and a date
+
+**Asked for:** MOLE-135 — how long a video runs, how big the picture is and what codec it
+is in are all in the container's header, and nothing read it. Three container families, a
+bounded read, and every length in the file treated as a claim.
+
+**What it turned out to be:** `VideoMetadataReader` over three parsers — ISO base media
+(`.mp4`, `.mov`), EBML (Matroska and WebM) and RIFF (AVI) — with the ISO box walk exposed
+in the header rather than hidden in the reader, because MOLE-136 wants the same walk for
+an `.m4a`'s tags.
+
+**A tail read is a window into the middle of a file, and that is the part that had to be
+learned twice.** An ISO file not written for streaming keeps its index at the end, so the
+reader takes one bounded read of the last 256 kB — and the first attempt walked that buffer
+from byte zero, which lands in the middle of the payload and finds nothing. The index is
+*found* in a tail window, by looking for its name and checking that the length in front of
+it is one the buffer could hold; a wrong guess fails the same bounds checks as everything
+else.
+
+**Two fixture bugs found by the same test.** `FaultyFileSystem` did not forward `seek()` to
+the stream underneath, so every tail read through it silently returned the head — a wrapper
+swallowing an offset looks exactly like a reader ignoring one, and it would have quietly
+weakened any future test about reading the end of a file. And the reader now refuses to
+read a tail from a drive that cannot seek, rather than being read through to reach it.
+
+**The sanitizers found the third.** `QPdfDocument` keeps its loader's buffer when a load
+fails, through `load(QString)` as much as `load(QIODevice*)` — so there is no overload to
+choose instead and nothing of ours to free. Suppressed by module, like Qt's scene graph,
+and the suppression list is no longer described as being only for QML tests.
+
 ## Nobody could see who wrote a document
 
 **Asked for:** MOLE-134 — a PDF renders its pages and says nothing about its author, and a

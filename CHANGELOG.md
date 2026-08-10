@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-11 #MOLE-135 A video's details say how long it runs, how big the picture is and what it is coded in, read from the container's header
 2026-08-11 #MOLE-134 A PDF's details name its title, author and page count, and a .docx or .odt names its author without the file being read whole
 2026-08-11 #MOLE-133 A photograph's details say its dimensions, its camera, the exposure and where it was taken, read from the header rather than by decoding it
 2026-08-11 #MOLE-132 Every preview has a Details panel saying what the file says about itself, and a plugin can fill it for a format without shipping a viewer

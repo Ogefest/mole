@@ -58,8 +58,11 @@ target_compile_definitions(mole_test_support
 
 # Tests that spin up a real QQuickWindow need the Qt scene-graph leak
 # suppressions: Qt does not release its textures when a window is torn down in
-# process, and there is no API to make it. Applied by name so a new QML test
-# gets it by being listed here, rather than by someone remembering.
+# process, and QPdfDocument keeps its loader's buffer when a load fails. Neither
+# is ours to free and neither has an API to force. Applied by name, so a test
+# that drives one of those stacks gets the suppressions by being listed here
+# rather than by somebody remembering -- and a leak in our own code still fails
+# every other suite.
 function(mole_mark_qml_test name)
     set_tests_properties(${name} PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/lsan-qt.supp")
@@ -190,6 +193,10 @@ mole_add_test(tst_ImageMetadata     SOURCES plugins/tst_ImageMetadata.cpp LIBS m
 # Who wrote a document: a zip built by hand, walked from its front, and a PDF
 # written by the test. Includes the hostile container and the hostile XML.
 mole_add_test(tst_DocumentMetadata  SOURCES plugins/tst_DocumentMetadata.cpp LIBS mole_builtin)
+
+# What a video says about itself, over containers built box by box -- including
+# the box that claims to be four gigabytes long inside a 64 kB buffer.
+mole_add_test(tst_MediaMetadata     SOURCES plugins/tst_MediaMetadata.cpp LIBS mole_builtin)
 mole_add_test(tst_AnalysisTab       SOURCES app/tst_AnalysisTab.cpp     LIBS mole_builtin)
 mole_add_test(tst_Automation        SOURCES app/tst_Automation.cpp      LIBS mole_builtin)
 mole_add_test(tst_FileSets          SOURCES app/tst_FileSets.cpp        LIBS mole_builtin)
@@ -231,6 +238,8 @@ qt_add_resources(tst_KeyboardNavigation "app_qml"
 mole_mark_qml_test(tst_KeyboardNavigation)
 mole_mark_qml_test(tst_Walkthrough)
 mole_mark_qml_test(tst_Sidebar)
+# Not a QML test: it opens documents through Qt Pdf, which leaks on a failed load.
+mole_mark_qml_test(tst_DocumentMetadata)
 if(MOLE_HAVE_ARCHIVE_PLUGIN)
     add_dependencies(tst_AppIntegration mole_plugin_archive)
     add_dependencies(tst_PluginManager mole_plugin_archive)
