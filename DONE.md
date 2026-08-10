@@ -9,6 +9,56 @@ wrong.
 
 ---
 
+## ADR-0010 reached six dialogs out of thirteen
+
+**Asked for:** MOLE-100 — the copy and move dialog has two identical buttons and
+the keyboard on neither, which is the arrangement ADR-0010 replaced. Close the
+whole gap rather than the one place it was noticed.
+
+**What it turned out to be:** the gap was bigger than the report, and the reason
+it existed is the part worth keeping. ADR-0010 landed the shared footer, converted
+the six dialogs that existed then, and predicted in writing that a dialog setting
+`standardButtons` would go back to two identical labels. Three did. The worst of
+them was not the one reported: the reports view offered to delete every saved run
+for a folder — history that cannot be recovered — on a button labelled *Ok*, in the
+same grey as the one next to it. Four more dialogs opened with the keyboard nowhere
+at all, so Return did nothing and there was no focus ring to see.
+
+The footer was opt-in, nothing failed when a dialog did not reach for it, and
+nobody was watching. So the fix that matters is not the seven dialogs; it is that
+**`standardButtons` now fails the build**, naming the file, in the same shape of
+configure-time check as the one beside it that catches a QML file missing from the
+application. A rule kept by remembering lasts until the next contributor.
+
+The seven: `transferDialog` gets *Copy* or *Move*, `scanDialog` *Index*,
+`forgetDialog` *Forget* in red with the keyboard on the way out; `transferHint`, the
+drives dialog, `aboutDialog` and `shortcutDialog` get the same footer with
+`dismissOnly`, which is one outlined *Close* button that holds the keyboard.
+`keyboardOn` now states where the keyboard starts — the acting button, the way out,
+or a field of the dialog's own — instead of leaving it to be inferred.
+
+**Two things about Qt that cost the most time**, and are in the ADR for the next
+person:
+
+- **`focus: true` on the right button does nothing.** `DialogButtonBox` lays its
+  buttons out with a `ListView`, and a `ListView` hands the keyboard to its own
+  current item — whichever button ends up first. Every dialog was quietly opening
+  on the way out, including the ones where that is the wrong button, and the
+  property said otherwise. The footer places the keyboard imperatively as well.
+- **A focused `Button` answers Space and not Return.** Return is a dialog-level key
+  and Qt Quick's `Dialog` only turns it into an answer when a standard button is in
+  charge — the very thing the footer replaced. So the footer handles Return itself.
+  Without that, the focus ring sits on a button Return does not press, which is a
+  more convincing kind of broken than no focus ring at all.
+
+**And one fault found on the way, which is the reason for the second changelog
+line.** The transfer dialog's *Name* field — the one that lets a single file arrive
+under a different name — has never appeared. The row was `visible: nameField.visible`
+and the field was `visible: <there is a single name>`; `visible` on an item is its
+effective visibility, parents included, so the row waited on the field and the field
+waited on the row, and both settled on false for ever. Found by a test asserting the
+keyboard was in that field, which is what testing through the real window buys.
+
 ## A file with no line breaks in it stopped the window
 
 **Asked for:** MOLE-112 — `F3` on a 13 MB JSON export left the window not

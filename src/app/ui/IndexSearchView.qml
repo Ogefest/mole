@@ -82,11 +82,25 @@ Item {
 
     Dialog {
         id: scanDialog
+        objectName: "scanDialog"
+        // Without this the popup never becomes a focus scope, so nothing inside it
+        // can hold the keyboard and the footer's focus quietly does nothing.
+        focus: true
         title: "Index a folder"
         modal: true
         anchors.centerIn: parent
         width: 520
-        standardButtons: Dialog.Ok | Dialog.Cancel
+
+        footer: ConfirmButtons {
+            acceptText: "Index"
+            // Nothing to index without a path, and a button that acts on nothing
+            // is worse than one that says it cannot.
+            acceptEnabled: scanPath.text.trim().length > 0
+            // Typed into first, so the field wins over the button.
+            keyboardOn: "none"
+        }
+
+        onOpened: scanPath.forceActiveFocus()
 
         onAccepted: {
             if (controller && scanPath.text.length > 0) {
@@ -111,9 +125,12 @@ Item {
 
             TextField {
                 id: scanPath
+                objectName: "scanPath"
                 Layout.fillWidth: true
                 placeholderText: "/home/you/big-archive"
                 selectByMouse: true
+                // The keyboard starts here, so Return has to answer from here.
+                onAccepted: if (text.trim().length > 0) scanDialog.accept()
             }
 
             TextField {
@@ -121,6 +138,7 @@ Item {
                 Layout.fillWidth: true
                 placeholderText: "Label (optional)"
                 selectByMouse: true
+                onAccepted: if (scanPath.text.trim().length > 0) scanDialog.accept()
             }
         }
     }

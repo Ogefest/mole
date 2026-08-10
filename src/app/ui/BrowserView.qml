@@ -327,6 +327,9 @@ Item {
     Dialog {
         id: transferDialog
         objectName: "transferDialog"
+        // Without this the popup never becomes a focus scope, so nothing inside it
+        // can hold the keyboard and the footer's focus quietly does nothing.
+        focus: true
         property bool isMove: false
         /// Read once when the dialog opens; the panes cannot change underneath
         /// a modal prompt, and re-reading per binding would re-scan the listing.
@@ -336,7 +339,18 @@ Item {
         modal: true
         anchors.centerIn: Overlay.overlay
         width: 520
-        standardButtons: Dialog.Ok | Dialog.Cancel
+
+        footer: ConfirmButtons {
+            acceptText: transferDialog.isMove ? "Move" : "Copy"
+            // Overwriting is the one answer here that cannot be undone, and the
+            // dialog already says so in red under the box. Choosing it turns the
+            // acting button red and takes the keyboard off it, the way the delete
+            // confirmation behaves.
+            destructive: conflictBox.currentValue === "overwrite"
+            // A single item can be renamed on arrival, and a dialog with a field
+            // in it is typed into first.
+            keyboardOn: nameRow.visible ? "none" : (destructive ? "reject" : "accept")
+        }
 
         function prepare(move) {
             isMove = move
@@ -348,8 +362,12 @@ Item {
             open()
         }
 
+        // After opening, not in prepare(): the field does not exist to take the
+        // keyboard until the dialog is up.
+        onOpened: if (nameRow.visible) nameField.forceActiveFocus()
+
         onAccepted: {
-            controller.runTransfer(isMove, nameField.visible ? nameField.text : "",
+            controller.runTransfer(isMove, nameRow.visible ? nameField.text : "",
                                    conflictBox.currentValue)
             view.focusActivePane()
         }
@@ -373,9 +391,17 @@ Item {
 
             // A single item can arrive under a different name. A batch cannot,
             // because there would be nothing sensible to call the rest.
+            //
+            // The condition is on the row and nowhere else. It used to be on the
+            // field, with the row bound to `nameField.visible` -- and `visible`
+            // on an item is its effective visibility, parents included, so the
+            // row was waiting on the field and the field was waiting on the row.
+            // Both settled on false and the field never appeared at all: renaming
+            // a single file on the way across has never once worked.
             RowLayout {
+                id: nameRow
                 Layout.fillWidth: true
-                visible: nameField.visible
+                visible: (transferDialog.plan.singleName || "").length > 0
                 Label {
                     text: "Name"
                     color: "#8b93a7"
@@ -385,9 +411,13 @@ Item {
                     id: nameField
                     objectName: "transferName"
                     Layout.fillWidth: true
-                    visible: (transferDialog.plan.singleName || "").length > 0
                     font.pixelSize: 12
                     selectByMouse: true
+                    // The keyboard is in here, so Return has to answer the
+                    // dialog from here -- the same as the rename and mkdir
+                    // fields. A field that swallows Return is a dialog that
+                    // cannot be answered without the mouse.
+                    onAccepted: transferDialog.accept()
                 }
             }
 
@@ -458,13 +488,20 @@ Item {
 
     Dialog {
         id: transferHint
+        objectName: "transferHint"
+        // Without this the popup never becomes a focus scope, so nothing inside it
+        // can hold the keyboard and the footer's focus quietly does nothing.
+        focus: true
         title: "Two panes needed"
         modal: true
         anchors.centerIn: Overlay.overlay
         width: 420
-        standardButtons: Dialog.Ok
 
-        onAccepted: view.focusActivePane()
+        footer: ConfirmButtons { dismissOnly: true }
+
+        // Either way out, since there is only the one and Escape is the other
+        // half of it.
+        onClosed: view.focusActivePane()
 
         Label {
             anchors.fill: parent

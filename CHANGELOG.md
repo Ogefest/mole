@@ -11,6 +11,8 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-10 #MOLE-100 Every dialog says which button acts, and can be answered from the keyboard
+2026-08-10 #MOLE-100 Copying or moving a single file can rename it on the way, which the field for it never allowed
 2026-08-10 #MOLE-112 A file with no line breaks in it — a minified export, a one-line dump — previews instead of stopping the window
 2026-08-10 #MOLE-93 Plain text and source previews are drawn a step larger, level with the rest of the interface
 2026-08-10 #MOLE-110 `make asan` is green again

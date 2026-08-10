@@ -75,6 +75,39 @@ if(MOLE_QML_MISSING)
         "Add them to the list in src/app/CMakeLists.txt.")
 endif()
 
+# The same shape of check, for the same reason. ADR-0010 replaced the standard
+# button pair with ui/ConfirmButtons.qml and converted the dialogs that existed
+# then -- and predicted in writing that a dialog written later would go back to
+# two identical labels. Three did, one of them offering to delete history that
+# cannot be recovered on a button labelled "Ok". The footer is opt-in, nothing
+# fails when a dialog does not reach for it, and nobody was watching.
+#
+# So the window has no use for `standardButtons` at all: every dialog says which
+# button acts and where the keyboard is, and a single-button one uses the same
+# footer with `dismissOnly`. A grep is enough; it does not need to parse QML.
+set(MOLE_QML_STANDARD_BUTTONS "")
+foreach(qml IN LISTS MOLE_QML_ON_DISK)
+    # Anything before it on the line, as long as none of it is a comment: a
+    # dialog written on one line is still a dialog. `[^/]*` is what excludes
+    # `//`, which is why this file's own prose about it does not trip the check.
+    file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/${qml}" offending
+         REGEX "^[^/]*standardButtons[ \t]*:")
+    if(offending)
+        list(APPEND MOLE_QML_STANDARD_BUTTONS ${qml})
+    endif()
+endforeach()
+if(MOLE_QML_STANDARD_BUTTONS)
+    message(FATAL_ERROR
+        "These QML files set `standardButtons`, which renders as flat labels of "
+        "the same weight and colour with the keyboard on neither:\n"
+        "  ${MOLE_QML_STANDARD_BUTTONS}\n"
+        "Use ui/ConfirmButtons.qml as the dialog's footer instead -- with "
+        "`dismissOnly: true` when there is only something to say. See "
+        "docs/adr/0010-telling-the-two-buttons-apart.md. If a dialog genuinely "
+        "needs an arrangement the footer cannot express, widen the footer and "
+        "amend that ADR rather than working around this check.")
+endif()
+
 qt_add_qml_module(mole
     URI Mole
     VERSION 1.0

@@ -252,10 +252,21 @@ Item {
 
     Dialog {
         id: forgetDialog
+        objectName: "forgetDialog"
+        // Without this the popup never becomes a focus scope, so nothing inside it
+        // can hold the keyboard and the footer's focus quietly does nothing.
+        focus: true
         anchors.centerIn: parent
         modal: true
         title: "Forget these reports?"
-        standardButtons: Dialog.Ok | Dialog.Cancel
+
+        // History that cannot be recovered, offered until now on a button
+        // labelled "Ok" in the same grey as the one beside it.
+        footer: ConfirmButtons {
+            acceptText: "Forget"
+            destructive: true
+        }
+
         onAccepted: controller.forgetFolder(controller.selectedRoot)
 
         Label {

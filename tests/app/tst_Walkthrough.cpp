@@ -45,6 +45,30 @@
 using namespace mole;
 using namespace mole::test;
 
+namespace {
+
+/// The colour actually painted behind a footer button, read off the item rather
+/// than off the style properties -- the properties were the thing that lied.
+/// Asking the Material style for a highlighted button gives an item that reports
+/// itself visible, sized and filled red and paints nothing. See ADR-0010.
+QColor fillOf(QQuickItem* button)
+{
+    QQuickItem* background = button ? button->property("background").value<QQuickItem*>() : nullptr;
+    return background ? background->property("color").value<QColor>() : QColor();
+}
+
+bool looksRed(const QColor& c)
+{
+    return c.red() > 150 && c.red() > c.green() * 2 && c.red() > c.blue() * 2;
+}
+
+bool looksBlue(const QColor& c)
+{
+    return c.blue() > 150 && c.blue() > c.red() * 2;
+}
+
+} // namespace
+
 /// Drives the real application through the things a person actually does, and
 /// photographs each one on the way.
 ///
@@ -90,6 +114,10 @@ private slots:
     void theFilterKeepsTheKeyboardWhileNarrowing();
     void dualPaneAndGrid();
     void f5CopiesTheSelectedFile();
+    void theCopyDialogSaysWhichButtonActsAndGoesRedForOverwrite();
+    void forgettingEveryReportForAFolderAsksInRed();
+    void indexingAFolderIsAskedForWithTheVerbAndTypedInto();
+    void aDialogWithOneButtonStillHoldsTheKeyboard();
     void analysesAFolder();
     void schedulesTheReportAndTracksIt();
     void ctrlWClosesAPreviewTabWithTheTextFocused();
@@ -1303,18 +1331,11 @@ void TestWalkthrough::deletingAsksWithTheFilesNamed()
     QCOMPARE(accept->property("text").toString(), QStringLiteral("Delete"));
     QCOMPARE(reject->property("text").toString(), QStringLiteral("Keep"));
     // Filled, and filled red because this one cannot be undone -- read off the pixels
-    // rather than off the properties. The Material style reported a highlighted button
-    // as visible, sized and red while painting nothing at all, which is the whole
-    // reason these backgrounds are drawn by hand.
-    QQuickItem* acceptBackground = accept->property("background").value<QQuickItem*>();
-    QVERIFY(acceptBackground);
-    const QColor filled = acceptBackground->property("color").value<QColor>();
-    QVERIFY2(filled.red() > 150 && filled.red() > filled.green() * 2 && filled.red() > filled.blue() * 2,
+    // rather than off the properties, for the reason fillOf() gives.
+    const QColor filled = fillOf(accept);
+    QVERIFY2(looksRed(filled),
         qPrintable(QStringLiteral("the acting button is red here, not %1").arg(filled.name())));
-
-    QQuickItem* rejectBackground = reject->property("background").value<QQuickItem*>();
-    QVERIFY(rejectBackground);
-    QVERIFY2(rejectBackground->property("color").value<QColor>().alpha() == 0,
+    QVERIFY2(fillOf(reject).alpha() == 0,
         "the way out is outlined, not filled -- one of the two has to be the quiet one");
 
     // And the keyboard starts on the safe one, so a stray Return closes the question
@@ -1590,7 +1611,17 @@ void TestWalkthrough::f5CopiesTheSelectedFile()
     QObject* dialog = m_harness->object(QStringLiteral("transferDialog"));
     QVERIFY(dialog);
     QVERIFY2(dialog->property("visible").toBool(), "F5 must put up the confirmation, not fail quietly");
-    QVERIFY(QMetaObject::invokeMethod(dialog, "accept"));
+
+    // Answered with Return rather than by invoking accept() on the object.
+    // Invoking it is what a dialog nobody can type into looks like from a test,
+    // and this dialog had the keyboard on nothing at all: one item, so the name
+    // field holds it, and Return there has to answer the question.
+    QQuickItem* name = m_harness->item(QStringLiteral("transferName"));
+    QVERIFY(name);
+    QVERIFY2(m_harness->until([name] { return name->hasActiveFocus(); }),
+        "a single item can be renamed on arrival, so the field wins");
+    m_harness->key(Qt::Key_Return);
+    QVERIFY(m_harness->until([dialog] { return !dialog->property("visible").toBool(); }));
 
     QVERIFY2(m_harness->until(
                  [browser] {
@@ -1600,6 +1631,158 @@ void TestWalkthrough::f5CopiesTheSelectedFile()
                  },
                  10000),
         "the file has to arrive in the other pane");
+}
+
+// ADR-0010 reached six dialogs out of thirteen. These are the ones it missed, and
+// they are checked here rather than left to the ADR's good intentions -- the
+// footer is opt-in, and three dialogs written after it went back to two identical
+// labels with the keyboard on neither.
+
+void TestWalkthrough::theCopyDialogSaysWhichButtonActsAndGoesRedForOverwrite()
+{
+    auto* browser = qobject_cast<BrowserController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY(browser);
+    browser->setViewMode(BrowserController::ViewMode::Dual);
+    m_harness->settle();
+
+    const QString source = m_harness->fixtureUri();
+    browser->otherPane()->navigateTo(source + QStringLiteral("/documents"));
+    QVERIFY(m_harness->until([browser] { return browser->otherPane()->files()->rowCount() == 2; }));
+
+    // Everything, so this is a batch: a batch cannot be renamed on arrival, so
+    // the name field stays hidden and the footer is where the keyboard belongs.
+    browser->activePane()->files()->selectAll();
+    QVERIFY(m_harness->until([browser] { return browser->canTransfer(); }));
+
+    m_harness->key(Qt::Key_F5);
+    QObject* dialog = m_harness->object(QStringLiteral("transferDialog"));
+    QVERIFY(dialog);
+    QVERIFY(m_harness->until([dialog] { return dialog->property("visible").toBool(); }));
+    m_harness->settle();
+
+    QQuickItem* accept = m_harness->item(QStringLiteral("dialogAccept"));
+    QQuickItem* reject = m_harness->item(QStringLiteral("dialogReject"));
+    QVERIFY(accept);
+    QVERIFY(reject);
+
+    // The verb, not "Ok". "Ok" only says which button is on the right.
+    QCOMPARE(accept->property("text").toString(), QStringLiteral("Copy"));
+    QCOMPARE(reject->property("text").toString(), QStringLiteral("Cancel"));
+    QVERIFY2(looksBlue(fillOf(accept)), "the acting button is filled");
+    QVERIFY2(fillOf(reject).alpha() == 0, "the way out is outlined");
+    QVERIFY2(accept->hasActiveFocus(), "an ordinary copy can be confirmed with Return");
+
+    // Overwriting is the one answer here that cannot be undone. Choosing it turns
+    // the acting button red and moves the keyboard off it, so a stray Return
+    // cancels rather than overwriting.
+    QObject* conflict = m_harness->object(QStringLiteral("conflictStrategy"));
+    QVERIFY(conflict);
+    QVERIFY(conflict->setProperty("currentIndex", 2));
+    QVERIFY(m_harness->until(
+        [conflict] { return conflict->property("currentValue").toString() == QStringLiteral("overwrite"); }));
+    m_harness->settle();
+
+    const QColor overwriting = fillOf(accept);
+    QVERIFY2(looksRed(overwriting),
+        qPrintable(QStringLiteral("overwriting is irreversible, so red -- not %1").arg(overwriting.name())));
+    QVERIFY2(reject->hasActiveFocus(), "and the keyboard moves to the way out");
+
+    // Left as it was found: this test is about the question.
+    m_harness->key(Qt::Key_Escape);
+    QVERIFY(m_harness->until([dialog] { return !dialog->property("visible").toBool(); }));
+}
+
+void TestWalkthrough::forgettingEveryReportForAFolderAsksInRed()
+{
+    // Straight to the dialog. Getting a saved report in front of it would test
+    // the reports view, and what is being checked here is the question it asks:
+    // history that cannot be recovered, offered until now on a button labelled
+    // "Ok" in the same grey as the one beside it.
+    QVERIFY(m_harness->app()->openFeatureTab(QStringLiteral("core.reports")) >= 0);
+    m_harness->settle(6);
+
+    QObject* dialog = m_harness->object(QStringLiteral("forgetDialog"));
+    QVERIFY(dialog);
+    QVERIFY(QMetaObject::invokeMethod(dialog, "open"));
+    QVERIFY(m_harness->until([dialog] { return dialog->property("visible").toBool(); }));
+    m_harness->settle();
+
+    QQuickItem* accept = m_harness->item(QStringLiteral("dialogAccept"));
+    QQuickItem* reject = m_harness->item(QStringLiteral("dialogReject"));
+    QVERIFY(accept);
+    QVERIFY(reject);
+    QCOMPARE(accept->property("text").toString(), QStringLiteral("Forget"));
+    QCOMPARE(reject->property("text").toString(), QStringLiteral("Cancel"));
+    QVERIFY2(looksRed(fillOf(accept)), "deleting every saved run cannot be undone");
+    QVERIFY2(reject->hasActiveFocus(), "so the keyboard starts on the way out");
+}
+
+void TestWalkthrough::indexingAFolderIsAskedForWithTheVerbAndTypedInto()
+{
+    QVERIFY(m_harness->app()->openFeatureTab(QStringLiteral("mole.indexsearch")) >= 0);
+    m_harness->settle(6);
+
+    QObject* dialog = m_harness->object(QStringLiteral("scanDialog"));
+    QVERIFY(dialog);
+    QVERIFY(QMetaObject::invokeMethod(dialog, "open"));
+    QVERIFY(m_harness->until([dialog] { return dialog->property("visible").toBool(); }));
+    m_harness->settle();
+
+    QQuickItem* accept = m_harness->item(QStringLiteral("dialogAccept"));
+    QVERIFY(accept);
+    QCOMPARE(accept->property("text").toString(), QStringLiteral("Index"));
+
+    // Typed into first, so the field holds the keyboard rather than the footer --
+    // ADR-0010's older rule, and the reason `keyboardOn` has a third value.
+    QQuickItem* path = m_harness->item(QStringLiteral("scanPath"));
+    QVERIFY(path);
+    // Waited for rather than settled for: the field is focused from onOpened,
+    // which Qt emits when the enter transition ends, not when the popup appears.
+    QVERIFY2(m_harness->until([path] { return path->hasActiveFocus(); }),
+        "a dialog that asks for text keeps the keyboard in the field");
+
+    // And the button says it cannot act until there is something to act on,
+    // rather than accepting and quietly indexing nothing.
+    QVERIFY2(!accept->property("enabled").toBool(), "nothing to index yet");
+    m_harness->type(m_harness->fixturePath());
+    QVERIFY(m_harness->until([accept] { return accept->property("enabled").toBool(); }));
+    QVERIFY2(looksBlue(fillOf(accept)), "indexing is not destructive, so blue rather than red");
+}
+
+void TestWalkthrough::aDialogWithOneButtonStillHoldsTheKeyboard()
+{
+    // Four dialogs exist only to be read and dismissed. ADR-0010 left them alone
+    // on the ground that there is nothing to tell apart, which was right about
+    // the appearance and wrong about the keyboard: with nothing focused there is
+    // no focus ring and Return does nothing, so the only ways out of a window
+    // that exists to be read were Escape and the mouse.
+    const QStringList dialogs { QStringLiteral("transferHint"), QStringLiteral("aboutDialog"),
+        QStringLiteral("shortcutDialog"), QStringLiteral("drivesDialog") };
+
+    for (const QString& name : dialogs) {
+        QObject* dialog = m_harness->object(name);
+        QVERIFY2(dialog, qPrintable(name));
+        QVERIFY(QMetaObject::invokeMethod(dialog, "open"));
+        QVERIFY2(
+            m_harness->until([dialog] { return dialog->property("visible").toBool(); }), qPrintable(name));
+        m_harness->settle();
+
+        QQuickItem* only = m_harness->item(QStringLiteral("dialogReject"));
+        QVERIFY2(only, qPrintable(name));
+        QCOMPARE(only->property("text").toString(), QStringLiteral("Close"));
+        QVERIFY2(
+            only->hasActiveFocus(), qPrintable(name + QStringLiteral(": the one button holds the keyboard")));
+
+        // Nothing to tell apart, so nothing is filled and there is no second
+        // button pretending to be an alternative.
+        QVERIFY2(fillOf(only).alpha() == 0, qPrintable(name));
+        QQuickItem* acting = m_harness->item(QStringLiteral("dialogAccept"));
+        QVERIFY2(!acting || !acting->isVisible(), qPrintable(name + QStringLiteral(": one button, not two")));
+
+        m_harness->key(Qt::Key_Return);
+        QVERIFY2(m_harness->until([dialog] { return !dialog->property("visible").toBool(); }),
+            qPrintable(name + QStringLiteral(": Return has to close it")));
+    }
 }
 
 void TestWalkthrough::analysesAFolder()

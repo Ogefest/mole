@@ -35,10 +35,16 @@ Dialog {
 
     title: "Drives"
     modal: true
+    // Without this the popup never becomes a focus scope, so nothing inside it
+    // can hold the keyboard and the footer's focus quietly does nothing.
+    focus: true
     anchors.centerIn: Overlay.overlay
     width: Math.min(880, parent ? parent.width - 80 : 880)
     height: Math.min(640, parent ? parent.height - 80 : 640)
-    standardButtons: Dialog.Close
+
+    // Nothing to confirm: a drive is saved by the form's own button, so the one
+    // button here is the way out. It holds the keyboard all the same.
+    footer: ConfirmButtons { dismissOnly: true }
 
     readonly property color mutedColor: "#8b93a7"
     readonly property color lineColor: "#2a3140"

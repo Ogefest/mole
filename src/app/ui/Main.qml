@@ -658,11 +658,16 @@ ApplicationWindow {
 
     Dialog {
         id: aboutDialog
+        objectName: "aboutDialog"
+        // Without this the popup never becomes a focus scope, so nothing inside it
+        // can hold the keyboard and the footer's focus quietly does nothing.
+        focus: true
         title: "Loaded plugins"
         modal: true
         anchors.centerIn: parent
         width: Math.min(560, root.width - 80)
-        standardButtons: Dialog.Close
+
+        footer: ConfirmButtons { dismissOnly: true }
 
         ColumnLayout {
             anchors.fill: parent
@@ -717,11 +722,16 @@ ApplicationWindow {
 
     Dialog {
         id: shortcutDialog
+        objectName: "shortcutDialog"
+        // Without this the popup never becomes a focus scope, so nothing inside it
+        // can hold the keyboard and the footer's focus quietly does nothing.
+        focus: true
         title: "Keyboard"
         modal: true
         anchors.centerIn: Overlay.overlay
         width: Math.min(620, root.width - 80)
-        standardButtons: Dialog.Close
+
+        footer: ConfirmButtons { dismissOnly: true }
 
         readonly property var groups: [
             { "heading": "Tabs", "keys": [

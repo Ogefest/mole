@@ -1,6 +1,7 @@
 # ADR-0010: The two buttons in a dialog are told apart
 
 - **Date:** 2026-08-09
+- **Amended:** 2026-08-10 — the reach, not the decision. See *Amendment* at the end.
 - **Status:** Accepted
 
 ## Context
@@ -59,3 +60,45 @@ Return blindly, so nothing is lost by it.
 - A new dialog gets this by using the shared footer; one that sets `standardButtons`
   instead goes back to two identical labels, so the footer is the thing to reach for.
 - Dialogs with a single *Close* button are left alone: there is nothing to tell apart.
+
+## Amendment, 2026-08-10 (MOLE-100)
+
+The decision above is unchanged. Three things were wrong about its reach, and the
+first of them is why the other two are worth writing down.
+
+**It was opt-in, and opt-in did not hold.** This ADR converted six dialogs of the
+thirteen in the window and predicted, in the consequence above, that a dialog
+setting `standardButtons` would go back to two identical labels. Three did — the copy
+and move dialog, the index-a-folder dialog, and the one that deletes every saved
+report for a folder, which offered that on a button labelled *Ok* in the same grey as
+the one beside it, with the keyboard on neither. Nothing failed when a dialog did not
+reach for the footer, and nobody was watching.
+
+**So the window has no use for `standardButtons` at all, and the build says so.**
+A configure-time check in `src/app/CMakeLists.txt` fails, naming the file, when any
+QML file under `src/app/ui` sets it — the same shape of check as the one beside it that
+catches a QML file missing from the application (MOLE-79). A grep, not a parser. A rule
+enforced by remembering is a rule that lasts until the next contributor.
+
+**A single-button dialog holds the keyboard on its one button.** Leaving those alone
+was right about the appearance and wrong about the keyboard: with nothing focused there
+is no focus ring and Return does nothing, so the only ways out of a window that exists
+to be read were Escape and the mouse. They use the same footer with `dismissOnly: true`
+— one outlined button, labelled *Close*, holding the keyboard.
+
+**Where the keyboard starts is now stated rather than implied.** `keyboardOn` takes
+`"accept"`, `"reject"` or `"none"`, defaulting to the way out for a destructive dialog
+and to the acting button otherwise, so an ordinary question can be answered with Return.
+`"none"` is for a dialog that puts the keyboard in a field of its own — this ADR's
+existing rule — and it is the dialog's job to focus that field. Never leave it nowhere.
+
+Two things learned building it, both worth the paragraph:
+
+- **`focus: true` on the right button is not enough.** `DialogButtonBox` lays its
+  buttons out with a `ListView`, and a `ListView` hands the keyboard to its own current
+  item — whichever button happens to be first. The declarative answer was overruled in
+  silence, so the footer places the keyboard imperatively as well.
+- **A focused `Button` answers Space and not Return.** Return is a dialog-level key,
+  and Qt Quick's `Dialog` only turns it into an answer when a standard button is in
+  charge — which is the thing this footer replaced. The footer handles Return itself, or
+  the focus ring sits on a button that Return does not press.
