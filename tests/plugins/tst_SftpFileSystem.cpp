@@ -368,12 +368,25 @@ void TestSftpFileSystem::aReadWhoseConnectionIsCutDoesNotLookLikeAWholeFile()
     QVERIFY2(cut, "the file was read before anything could be done to the connection");
     raw.removeTree(remotePath);
 
-    // The claim. Either everything arrived -- the server got the whole file out
-    // before the cut landed, which is a fair outcome -- or it stopped short and
-    // the stream says so. What must never happen is short and silent.
-    if (read == payload.size())
-        QSKIP("the transfer finished before the cut landed; nothing to assert about a short read");
+    // The claim, and it holds either way round rather than skipping when the
+    // race goes the other way. A test that reports "nothing to assert" is a
+    // test that does not run, and `make test-live` is right to treat a skip as
+    // a result rather than as a pass.
+    //
+    // Everything arrived: then it has to be the right bytes. A cut that lands
+    // after the last one is a fair outcome, but "we got it all" is only worth
+    // anything if what we got is what was sent.
+    if (read == payload.size()) {
+        stream.reset();
+        const Result<std::unique_ptr<QIODevice>> again = fileSystem->openRead(target, payload.size());
+        QVERIFY2(again.ok(), qPrintable(again.error().message));
+        QCOMPARE(again.value()->readAll().size(), payload.size());
+        return;
+    }
 
+    // Or it stopped short -- and then the stream has to say so. Short and
+    // silent is the one outcome that must never happen, because it is
+    // indistinguishable from a file that was simply that size.
     QVERIFY2(read < payload.size(), "sanity: this branch is the short read");
     QVERIFY2(stream->atEnd() == false || !stream->errorString().isEmpty(),
         qPrintable(QStringLiteral("stopped at %1 of %2 bytes and reported nothing. %3")
