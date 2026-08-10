@@ -172,6 +172,28 @@ only a reboot from the hypervisor recovers it. That happened once while this was
 being written. The timer means a run that dies mid-test leaves a machine that
 heals itself.
 
+## Starting from the same place every time
+
+```sh
+MOLE_PROXMOX_HOST=… scripts/testbed/snapshot.sh take      # once, after provisioning
+MOLE_PROXMOX_HOST=… scripts/testbed/snapshot.sh rollback  # before a run, and after it
+```
+
+The destructive scenarios are the point of this machine — filling a disk,
+deleting trees, killing services — so every run has to start from the same
+place. Without that, the second run of a suite is testing whatever the first one
+left behind, and the day it fails nobody can say which run caused it.
+
+The snapshot is called `provisioned` and is taken **with memory**, so a rollback
+lands on a machine already running its servers rather than one that has to boot.
+`rollback` waits for the machine to answer before returning: a suite that starts
+against a machine still coming up skips itself and reports green for having done
+nothing.
+
+Demonstrated rather than asserted: the disk filled to 100% and vsftpd stopped,
+then rolled back to 1% used with every server running — and two consecutive
+`make test-live` runs with a rollback between them produced identical results.
+
 ## Not here yet
 - the snapshot to roll back to, and its name — #22
 - `make test-live`, and a skip that says so — #23
