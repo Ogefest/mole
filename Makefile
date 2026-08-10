@@ -8,7 +8,7 @@ JOBS ?= $(shell nproc)
 PREFIX ?= /usr/local
 DESTDIR ?=
 
-.PHONY: all build configure release run test test-verbose clean distclean format tidy help guide-images \
+.PHONY: all build configure release run test test-live test-verbose clean distclean format tidy help guide-images \
         install uninstall bundle licence-check screenshots
 
 all: build
@@ -53,6 +53,14 @@ run-gdb: build
 ## test: build and run the whole suite in parallel
 test: build
 	@ctest --test-dir $(BUILD_DIR) --output-on-failure --parallel $(JOBS)
+
+## test-live: run the suites that need a real server, against the testbed
+##            Needs MOLE_TESTBED_ADDRESS and MOLE_TESTBED_PASSWORD, which live
+##            outside this repository. A suite that skips is reported as a
+##            result rather than passing quietly: that silence is how a
+##            listing behaviour that differs between servers stayed hidden.
+test-live: build
+	@scripts/testbed/test-live.sh $(BUILD_DIR)
 
 ## test-verbose: same, printing every assertion
 test-verbose: build

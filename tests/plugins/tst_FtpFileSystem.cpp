@@ -21,6 +21,15 @@ struct Account
     QString password;
     QString base;
     bool requireTls = true;
+    /// The server's certificate is honestly self-signed, so check that it is
+    /// there rather than that somebody vouched for it.
+    ///
+    /// TLS stays required either way -- this changes the trust anchor, not
+    /// whether the connection is encrypted. A disposable test server cannot
+    /// have a certificate anybody would vouch for, and the alternative is
+    /// teaching every machine that runs this suite to trust an authority
+    /// invented for the occasion.
+    bool ignoreSelfSignedCert = false;
 
     bool isConfigured() const { return !host.isEmpty() && !user.isEmpty(); }
 };
@@ -40,6 +49,7 @@ Account accountFromEnvironment()
     const int port = value("MOLE_TEST_FTP_PORT").toInt();
     account.port = port > 0 ? port : 21;
     account.requireTls = value("MOLE_TEST_FTP_TLS") != QLatin1String("none");
+    account.ignoreSelfSignedCert = !value("MOLE_TEST_IGNORE_SELF_SIGNED_CERT").isEmpty();
     return account;
 }
 
@@ -169,6 +179,10 @@ private:
         curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
         if (m_account.requireTls)
             curl_easy_setopt(handle, CURLOPT_USE_SSL, static_cast<long>(CURLUSESSL_ALL));
+        if (m_account.ignoreSelfSignedCert) {
+            curl_easy_setopt(handle, CURLOPT_SSL_VERIFYPEER, 0L);
+            curl_easy_setopt(handle, CURLOPT_SSL_VERIFYHOST, 0L);
+        }
         return handle;
     }
 
@@ -261,6 +275,9 @@ void TestFtpFileSystem::itSatisfiesTheConformanceSuite()
     settings.password = account.password;
     settings.remoteRoot = base;
     settings.security = account.requireTls ? FtpSettings::Security::Require : FtpSettings::Security::None;
+    // The backend under test gets told the same thing the fixture was, or the
+    // two would be talking to what looks like two different servers.
+    settings.verifyTls = !account.ignoreSelfSignedCert;
 
     ConformanceContext context;
     context.fileSystem = std::make_shared<FtpFileSystem>(QStringLiteral("ftp"), settings);

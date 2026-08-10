@@ -14,6 +14,7 @@ FtpFileSystem::FtpFileSystem(QString scheme, FtpSettings settings)
     net::TransportOptions options;
     options.username = m_settings.username;
     options.password = m_settings.password;
+    options.verifyTls = m_settings.verifyTls;
     m_pool = std::make_unique<net::CurlPool>(std::move(options));
 }
 
@@ -370,6 +371,8 @@ FtpSettings FtpFileSystemFactory::settingsFrom(const QVariantMap& config)
 
     const int port = config.value(QStringLiteral("port")).toInt();
     settings.port = port > 0 ? port : 21;
+
+    settings.verifyTls = config.value(QStringLiteral("verifyTls"), true).toBool();
 
     const QString security = config.value(QStringLiteral("security")).toString();
     if (security == QLatin1String("require"))

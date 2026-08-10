@@ -119,6 +119,27 @@ The WebDAV and FTP roots are on the small disk so that *the destination filled
 up* is a condition a test can create. MinIO's store is not: a bucket has no
 business filling the disk that condition is measured on.
 
+## Running the live suites
+
+```sh
+export MOLE_TESTBED_ADDRESS=…
+export MOLE_TESTBED_PASSWORD=…
+make test-live
+```
+
+Every `MOLE_TEST_*` variable the suites read is derived from those two, so there
+is one place to change when the machine moves.
+
+**A skip is a result.** Each of these suites skips itself when there is nothing
+to talk to, and in practice that meant they had never run — which is how a
+listing behaviour that differs between servers stayed hidden until a second
+server was tried. A suite that skips is named and counted here, and the run is
+not green.
+
+The testbed's FTP certificate is honestly self-signed, so the run sets
+`MOLE_TEST_IGNORE_SELF_SIGNED_CERT`. TLS stays *required*: that variable says
+who vouches for the certificate, not whether the connection is encrypted.
+
 ## Not here yet
 
 - the control channel for interfering with a running transfer — #21
