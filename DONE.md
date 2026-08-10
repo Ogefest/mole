@@ -9,6 +9,62 @@ wrong.
 
 ---
 
+## Phase 5, the catalogue: fourteen groups, and the eleven faults they found
+
+**Asked for:** MOLE-1 through MOLE-18, the tests themselves — around 205
+scenarios weighted towards what can destroy data, taken one group at a time.
+
+**What it turned out to be:** fourteen tickets, about 250 new cases, and eleven
+faults in the product. The suite went from 63 binaries to 72 and still runs in
+33 seconds. Every group's card carries the detail; what follows is what the
+exercise was actually for.
+
+**Four of the faults could lose a file, and none of them had a test.**
+
+- *A mirror deleted the far end when it could not read the near one.* One helper
+  answered a failed listing and an empty directory identically, so a refused
+  source listing read as "the source has nothing" and a mirror emptied the
+  destination to match. [ADR-0030](docs/adr/0030-an-unreadable-source-is-not-an-empty-one.md).
+- *A move deleted a file it had skipped.* `Conflict::Skip` reports a success, and
+  the move then deleted a source that had been copied nowhere.
+  [ADR-0029](docs/adr/0029-a-move-deletes-only-what-it-finished-moving.md).
+- *A directory could be moved inside itself*, after which the delete pass removed
+  the only copy of everything in it. Same ADR.
+- *Deleting a shortcut to a folder emptied the folder it pointed at.* A link says
+  yes when asked whether it is a directory, and `QDir::removeRecursively` walked
+  through it.
+
+**Two were security-shaped.** An archive entry called `../../etc/passwd` became a
+path outside its own mount — and `/..` resolved to the root, so the root's
+listing contained the root and any walk went round for ever. Entry names are
+resolved and clamped now. The other is the same class one layer up: a backslash
+in a file name was turned into a folder separator on every platform, so a file
+with one in its name could not be addressed at all.
+
+**Two were the framework lying.** A progress bar could read 150% and could slide
+backwards. An exception escaping a task body ended the process — the test for it
+did not fail, it called `std::terminate`.
+
+**Three were arithmetic and ordering.** A task measured its own duration and
+throughput by subtracting two wall-clock readings, so a stepped clock produced a
+negative rate. A bulk rename that swapped or shifted names refused every row,
+because the plan allowed a batch the task could not carry out in the order it was
+listed. A duplicate scan hashed a file, and anything that wrote to it afterwards
+left the hash proposing a deletion.
+
+**The tools grew with the tests.** The fault injector gained a delete refusal; a
+gated drive was added so a cancel can be aimed at a stage rather than a moment; a
+paced server holds a transfer still one block at a time; `SftpFileSystem` gained
+a seam so a server's answer can be supplied without a server. `make tsan` exists
+beside `make asan`, and what it found is MOLE-126.
+
+**What was struck through, and why.** Around forty scenarios need something a
+fake cannot honestly provide: a case-insensitive filesystem, hard links, a
+quota, a second real backend, or gigabytes. Each is struck through on its card
+with the reason, and the two clusters worth scheduling are MOLE-113 (the sizes
+where a backend changes strategy) and the live conformance run. Nothing was
+dropped in silence.
+
 ## Five faults from one day, and the three that could still have come back
 
 **Asked for:** MOLE-18. Each fault found in one day of working against a real
