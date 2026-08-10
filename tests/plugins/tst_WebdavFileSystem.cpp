@@ -58,7 +58,13 @@ public:
         curl_easy_setopt(handle, CURLOPT_URL, url.constData());
         curl_easy_setopt(handle, CURLOPT_USERNAME, m_account.user.toUtf8().constData());
         curl_easy_setopt(handle, CURLOPT_PASSWORD, m_account.password.toUtf8().constData());
-        curl_easy_setopt(handle, CURLOPT_HTTPAUTH, static_cast<long>(CURLAUTH_ANY));
+        // Basic, and not CURLAUTH_ANY. Anything else makes curl probe with no
+        // credentials, take the 401 and retry -- and a PUT cannot be retried,
+        // because the read callback has already been drained and there is no
+        // seek function to rewind it. MKCOL has no body and so worked, which is
+        // exactly the shape this fault presented in: the working collection was
+        // created and then nothing could be put in it.
+        curl_easy_setopt(handle, CURLOPT_HTTPAUTH, static_cast<long>(CURLAUTH_BASIC));
         curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, discard);
         curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT, 20L);
         curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);

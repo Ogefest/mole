@@ -22,6 +22,46 @@ struct Account
     QString endpoint;
     QString bucket;
 
+    /// The configuration the application would build from this account.
+    ///
+    /// Through the factory rather than field by field, because assigning the
+    /// endpoint straight across skips the parsing every real drive goes
+    /// through: an endpoint carrying a scheme -- which is what anybody pastes --
+    /// became a host name of "http" with the bucket glued to the front.
+    QVariantMap asConfig() const
+    {
+        QVariantMap config { { QStringLiteral("accessKeyId"), keyId },
+            { QStringLiteral("secretAccessKey"), secret }, { QStringLiteral("bucket"), bucket },
+            { QStringLiteral("region"), region } };
+        if (!endpoint.isEmpty()) {
+            config.insert(QStringLiteral("endpoint"), endpoint);
+            // An endpoint that says http:// means http. The factory strips the
+            // scheme to get a host and then defaults to https, which is right
+            // for a pasted bucket address and wrong for a server on a desk.
+            if (endpoint.startsWith(QLatin1String("http://")))
+                config.insert(QStringLiteral("useHttps"), false);
+        }
+        if (!addressing.isEmpty())
+            config.insert(QStringLiteral("addressing"), addressing);
+        return config;
+    }
+
+    /// The endpoint with a scheme on the front, for the raw client below. The
+    /// settings the backend gets have the scheme stripped off again by the
+    /// factory; this is the same address written the way curl wants it.
+    QString endpointUrl() const
+    {
+        if (endpoint.isEmpty())
+            return QStringLiteral("https://s3.%1.amazonaws.com").arg(region);
+        if (endpoint.startsWith(QLatin1String("http://")) || endpoint.startsWith(QLatin1String("https://")))
+            return endpoint;
+        return QStringLiteral("https://") + endpoint;
+    }
+
+    /// "path" or "virtual". MinIO and most Ceph installs require path-style,
+    /// and a suite that cannot ask for it can only ever be pointed at AWS.
+    QString addressing;
+
     bool isConfigured() const { return !keyId.isEmpty() && !secret.isEmpty() && !bucket.isEmpty(); }
 };
 
@@ -35,6 +75,7 @@ Account accountFromEnvironment()
     account.bucket = value("MOLE_TEST_S3_BUCKET");
     account.endpoint = value("MOLE_TEST_S3_ENDPOINT");
     account.region = value("MOLE_TEST_S3_REGION");
+    account.addressing = value("MOLE_TEST_S3_ADDRESSING");
     if (account.region.isEmpty())
         account.region = QStringLiteral("us-east-1");
     return account;
@@ -145,7 +186,10 @@ private:
         if (!handle)
             return nullptr;
 
-        QByteArray url = "https://" + m_account.endpoint.toUtf8() + '/' + m_account.bucket.toUtf8();
+        // The endpoint as given, scheme and all. It used to be "https://" glued
+        // to whatever was in the variable, so an endpoint that already carried
+        // one produced https://http://host and resolved nothing.
+        QByteArray url = m_account.endpointUrl().toUtf8() + '/' + m_account.bucket.toUtf8();
         if (!key.isEmpty())
             url += '/' + QUrl::toPercentEncoding(key, "/");
         bool first = true;
@@ -343,12 +387,10 @@ void TestS3FileSystem::anObjectTooBigForOneRequestGoesUpInParts()
     if (megabytes <= 0)
         megabytes = 150;
 
-    S3Settings settings;
-    settings.accessKeyId = account.keyId;
-    settings.secretAccessKey = account.secret;
-    settings.region = account.region;
-    settings.endpoint = account.endpoint;
-    settings.bucket = account.bucket;
+    // Through the factory, for the same reason the conformance case is: an
+    // endpoint assigned straight across never gets parsed, and the second copy
+    // of that mistake is how it survived the first one being fixed.
+    S3Settings settings = S3FileSystemFactory::settingsFrom(account.asConfig());
     settings.prefix = QStringLiteral("mole-multipart-%1").arg(QCoreApplication::applicationPid());
 
     auto fileSystem = std::make_shared<S3FileSystem>(QStringLiteral("s3"), settings);
@@ -421,12 +463,13 @@ void TestS3FileSystem::itSatisfiesTheConformanceSuite()
 
     raw.removeTree(prefix + QStringLiteral("/"));
 
-    S3Settings settings;
-    settings.accessKeyId = account.keyId;
-    settings.secretAccessKey = account.secret;
-    settings.region = account.region;
-    settings.endpoint = account.endpoint;
-    settings.bucket = account.bucket;
+    // Through the factory, not field by field. Assigning endpoint straight
+    // across skipped the parsing every real drive goes through, so an endpoint
+    // carrying a scheme -- which is what anybody pastes -- became a host name
+    // of "http" with the bucket glued to the front of it. Building the settings
+    // the way the application builds them also means this suite exercises that
+    // path rather than a hand-made shortcut around it.
+    S3Settings settings = S3FileSystemFactory::settingsFrom(account.asConfig());
     settings.prefix = prefix;
 
     ConformanceContext context;
