@@ -94,7 +94,35 @@ written, not beside it.
 
 Before starting anything, look for the task. If there is not one, open it first —
 a task written after the fact is a summary, and the point of writing it first is
-that somebody else can see the work is taken.
+that somebody else can see the work is taken. Opening one is four things, and a
+task missing any of them is one nobody will ever be given:
+
+```sh
+# v(), $root and $epics come from "Which task to take next" below.
+# The body is Markdown in a file — quoting it through a shell mangles it.
+id=$(jq -n --arg t "A cancelled task is logged as a failure" \
+        --rawfile d "$SCRATCH/task.md" '{title:$t, description:$d}' \
+     | v "/projects/$root/tasks?format=markdown" -X POST -d @- | jq -r .id)
+
+lab() { v /labels | jq -r --arg t "$1" '.items[]|select(.title==$t)|.id'; }
+for t in bug area:vfs "epic: Loose ends"; do        # what it is, where it lives, its epic
+  v "/tasks/$id/labels" -X POST -d "{\"label_id\":$(lab "$t")}"
+done
+
+epic=$(v "/projects/$epics/tasks?per_page=50" \
+       | jq -r '.items[]|select(.title=="Loose ends")|.id')
+v "/tasks/$epic/relations" -X POST \
+  -d "{\"relation_kind\":\"subtask\",\"other_task_id\":$id}"
+```
+
+It lands in `Backlog`, which is right: whether it is dispatchable is not yours to
+decide. Say what you opened and where, and leave it there.
+
+Two things about that. **Creating a task spends its number for ever** — deleting it
+does not give the number back, which is what keeps `MOLE-19` equal to `#19`, so
+nothing throwaway gets created on this board. And **a label you have never seen in
+use cannot be attached**, with a bare `403` as the only explanation; use the ones
+that are already on other tasks and leave inventing vocabulary to planning.
 
 A change that finishes a task says so in its commit message — `Closes MOLE-12`.
 Nothing acts on that any more, so the card is moved by hand as well; the commit
@@ -217,8 +245,20 @@ board() {   # board <task-number> <column>
 board 12 "In Progress"
 ```
 
-An epic finished — nothing of it left outside `Done` — goes to `Done` on the Epics
-board too, which is the signal that the next card down is now the work.
+**When an epic has nothing left outside `Done`, move its card to `Done` on the Epics
+board** — the same way you move your own, and for the same reason: it is the signal
+that the next card down is now the work, and nobody else is watching for it.
+
+```sh
+epic=$(v "/projects/$epics/tasks?per_page=50" \
+       | jq -r '.items[]|select(.title=="Duplicates, rebuilt")|.id')
+# a related task carries `index` but an empty `identifier`, so build the name
+v "/tasks/$epic" | jq -r '[.related_tasks.subtask[]?|select(.done|not)|"MOLE-\(.index)"]'
+```
+
+An empty list there is the whole test. If it is not empty, the epic is still the
+work, even when everything left in it sits in `Backlog` or `Blocked` — in that case
+say so rather than moving the card, because what happens next is a planning call.
 
 Both orders are deliberate rather than obvious. They are planned separately,
 weighing what unblocks the most against what is losing data today, and the
