@@ -32,7 +32,7 @@ public:
             ++m_spans;
             if (!append)
                 m_received.clear();
-            if (m_refuse)
+            if (m_refuse || m_spans == m_refuseSpan)
                 return VfsError::make(VfsError::NetworkError, QStringLiteral("the server hung up"));
 
             QByteArray buffer(16 * 1024, Qt::Uninitialized);
@@ -64,6 +64,9 @@ public:
     }
 
     void refuse() { m_refuse = true; }
+    /// Refuses one particular span and accepts the rest, so a failure can be
+    /// put at the start of a file or at its end.
+    void refuseSpan(int number) { m_refuseSpan = number; }
     QByteArray received() const { return m_received; }
     int spans() const { return m_spans; }
 
@@ -71,6 +74,7 @@ private:
     QByteArray m_received;
     std::atomic<int> m_spans { 0 };
     bool m_refuse = false;
+    int m_refuseSpan = 0;
 };
 
 /// Stands in for the step that puts a finished upload under its real name.
@@ -113,6 +117,15 @@ private slots:
     void bufferedCommitsOnceThePayloadIsSent();
     void bufferedDoesNotCommitAFailedSend();
     void bufferedReportsACommitThatFailed();
+
+    void closingAStreamWithNothingWrittenStillCreatesTheFile();
+    void closingABufferedUploadWithNothingWrittenStillCreatesTheFile();
+    void exactlyOneSpanAndOneSpanAndAByte_data();
+    void exactlyOneSpanAndOneSpanAndAByte();
+    void aSendThatFailsIsReportedWhicheverSpanItWas_data();
+    void aSendThatFailsIsReportedWhicheverSpanItWas();
+    void aBufferedUploadDestroyedWithoutBeingClosedSendsNothing();
+    void aStagingFileThatCannotBeOpenedIsRefusedRatherThanLost();
 
     void commitRenamesTheWorkingNameIntoPlace();
     void commitRefusesToReplaceSomethingThatAppeared();
@@ -264,6 +277,148 @@ void TestStreamingUpload::bufferedReportsACommitThatFailed()
 
     QCOMPARE(commit.calls(), 1);
     QCOMPARE(stream.commitError().code, VfsError::AlreadyExists);
+}
+
+void TestStreamingUpload::closingAStreamWithNothingWrittenStillCreatesTheFile()
+{
+    // Nothing to send is not nothing to do. A file somebody asked for that never
+    // appears because it happened to be empty is a missing file, and every
+    // backend here can hold one.
+    FakeServer server;
+    FakeCommit commit;
+
+    net::StreamingUpload stream(server.send(), 128 * 1024, commit.hook());
+    QVERIFY(stream.open(QIODevice::WriteOnly));
+    stream.close();
+
+    QVERIFY(!stream.commitError().isError());
+    QCOMPARE(server.spans(), 1);
+    QCOMPARE(server.received(), QByteArray());
+    QCOMPARE(commit.calls(), 1);
+}
+
+void TestStreamingUpload::closingABufferedUploadWithNothingWrittenStillCreatesTheFile()
+{
+    FakeServer server;
+    FakeCommit commit;
+
+    net::BufferedUpload stream(server.sink(), [&commit] { return commit.hook()(); });
+    QVERIFY(stream.open(QIODevice::WriteOnly));
+    stream.close();
+
+    QVERIFY(!stream.commitError().isError());
+    QCOMPARE(server.spans(), 1);
+    QCOMPARE(server.received(), QByteArray());
+    QCOMPARE(commit.calls(), 1);
+}
+
+void TestStreamingUpload::exactlyOneSpanAndOneSpanAndAByte_data()
+{
+    QTest::addColumn<int>("size");
+
+    // The boundary that decides whether a second transfer happens at all.
+    const int span = 128 * 1024;
+    QTest::newRow("a span less one") << span - 1;
+    QTest::newRow("exactly one span") << span;
+    QTest::newRow("one span and a byte") << span + 1;
+}
+
+void TestStreamingUpload::exactlyOneSpanAndOneSpanAndAByte()
+{
+    QFETCH(int, size);
+
+    const QByteArray payload = payloadOf(size);
+    FakeServer server;
+    FakeCommit commit;
+
+    net::StreamingUpload stream(server.send(), 128 * 1024, commit.hook());
+    QVERIFY(stream.open(QIODevice::WriteOnly));
+    QCOMPARE(stream.write(payload), static_cast<qint64>(payload.size()));
+    stream.close();
+
+    QVERIFY(!stream.commitError().isError());
+    QCOMPARE(server.received(), payload);
+    QCOMPARE(commit.calls(), 1);
+    // A file that fills a span exactly still costs a second transfer, because
+    // the only way to learn that it ended there is to offer the next span and
+    // be given nothing. That is a cost, not a fault -- what would be a fault is
+    // a byte landing in neither transfer.
+    QVERIFY2(server.spans() >= 1, "the payload has to be sent by somebody");
+}
+
+void TestStreamingUpload::aSendThatFailsIsReportedWhicheverSpanItWas_data()
+{
+    QTest::addColumn<int>("failingSpan");
+    QTest::newRow("the first span") << 1;
+    QTest::newRow("the last span") << 3;
+}
+
+void TestStreamingUpload::aSendThatFailsIsReportedWhicheverSpanItWas()
+{
+    QFETCH(int, failingSpan);
+
+    // A connection that dies at the start of a large upload and one that dies at
+    // the end are the same outcome from up here: the file is not there, and
+    // nothing may be put in place under the name somebody asked for.
+    const QByteArray payload = payloadOf(300 * 1024);
+    FakeServer server;
+    FakeCommit commit;
+    server.refuseSpan(failingSpan);
+
+    net::StreamingUpload stream(server.send(), 128 * 1024, commit.hook());
+    QVERIFY(stream.open(QIODevice::WriteOnly));
+    for (int at = 0; at < payload.size(); at += 32 * 1024)
+        stream.write(payload.mid(at, 32 * 1024));
+    stream.close();
+
+    QVERIFY(stream.commitError().isError());
+    QVERIFY2(stream.errorString().contains(QStringLiteral("hung up")), qPrintable(stream.errorString()));
+    QCOMPARE(commit.calls(), 0);
+}
+
+void TestStreamingUpload::aBufferedUploadDestroyedWithoutBeingClosedSendsNothing()
+{
+    // The staged path's version of an abandoned copy. Nothing has left the
+    // machine yet, so nothing should: sending a truncated payload from a
+    // destructor is silent corruption, and worse than sending nothing at all.
+    FakeServer server;
+    FakeCommit commit;
+
+    {
+        net::BufferedUpload stream(server.sink(), [&commit] { return commit.hook()(); });
+        QVERIFY(stream.open(QIODevice::WriteOnly));
+        stream.write(payloadOf(64 * 1024));
+    }
+
+    QCOMPARE(server.spans(), 0);
+    QCOMPARE(server.received(), QByteArray());
+    QCOMPARE(commit.calls(), 0);
+}
+
+void TestStreamingUpload::aStagingFileThatCannotBeOpenedIsRefusedRatherThanLost()
+{
+    // Everything below the streaming threshold is staged in a temporary file,
+    // and a machine whose temporary directory is missing or full is a machine
+    // where that fails. Opening has to say so: a stream that reports itself open
+    // and then swallows every write is how an upload disappears without an
+    // error anywhere.
+    const QByteArray previous = qgetenv("TMPDIR");
+    qputenv("TMPDIR", "/proc/mole-has-no-temporary-directory-here");
+
+    FakeServer server;
+    FakeCommit commit;
+    net::BufferedUpload stream(server.sink(), [&commit] { return commit.hook()(); });
+    const bool opened = stream.open(QIODevice::WriteOnly);
+
+    if (previous.isEmpty())
+        qunsetenv("TMPDIR");
+    else
+        qputenv("TMPDIR", previous);
+
+    QVERIFY2(!opened, "an upload with nowhere to stage itself has to refuse to open");
+    QVERIFY2(stream.errorString().contains(QStringLiteral("temporary")), qPrintable(stream.errorString()));
+    QCOMPARE(server.spans(), 0);
+    QCOMPARE(commit.calls(), 0);
 }
 
 void TestStreamingUpload::commitRenamesTheWorkingNameIntoPlace()

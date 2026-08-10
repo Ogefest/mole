@@ -154,11 +154,18 @@ public:
                     std::unique_lock<std::mutex> lock(m_mutex);
                     if (m_credits == 0 && !m_open) {
                         m_waiting = true;
+                        ++m_parks;
                         m_parked.notify_all();
-                        m_go.wait(lock, [this] { return m_credits > 0 || m_open; });
+                        // Polled rather than notified, the way a transfer polls
+                        // the cancel token it was handed: a stream is closed by
+                        // cancelling and joining, and a fake that could only be
+                        // woken by the test would hang that instead of modelling
+                        // it. Nothing asserted anywhere waits on this interval.
+                        while (m_credits == 0 && !m_open && !cancel.isCancelled())
+                            m_go.wait_for(lock, std::chrono::milliseconds(2));
                         m_waiting = false;
                     }
-                    if (!m_open)
+                    if (!m_open && m_credits > 0)
                         --m_credits;
                 }
                 if (cancel.isCancelled())
@@ -182,10 +189,14 @@ public:
 
     /// Returns once every block allowed so far has been handed over and the
     /// transfer is waiting for the next one.
-    void waitUntilItIsWaitingForMore()
+    ///
+    /// Counted rather than flagged: `waiting` goes false again the moment the
+    /// transfer is let go, so a test pacing block after block would otherwise
+    /// see a stale one and hand over two at once.
+    void waitUntilItIsWaitingForMore(int parkNumber = 1)
     {
         std::unique_lock<std::mutex> lock(m_mutex);
-        m_parked.wait(lock, [this] { return m_waiting; });
+        m_parked.wait(lock, [this, parkNumber] { return m_parks >= parkNumber; });
     }
 
     /// Leaves the transfer where it is for a moment, so that a reader which was
@@ -229,6 +240,7 @@ private:
     std::condition_variable m_started;
     int m_credits = 0;
     int m_spans = 0;
+    int m_parks = 0;
     bool m_waiting = false;
     bool m_open = false;
 };
@@ -281,6 +293,17 @@ private slots:
 
     void aFileLongerThanOneConnectionCanCarryStillArrivesWhole();
     void thatSameFileOverOneConnectionDiesPartWay();
+
+    void seekingToTheStartToTheEndAndPastIt();
+    void aSpanBoundaryThatFallsOnAReadBoundaryIsInvisible();
+    void aFileOfNoBytesAndAFileOfOne_data();
+    void aFileOfNoBytesAndAFileOfOne();
+    void aFileTheSizeOfTheBufferArrivesWhole_data();
+    void aFileTheSizeOfTheBufferArrivesWhole();
+    void aFetchFasterThanTheReaderFillsUpAndWaits();
+    void aReaderFasterThanTheFetchWaitsAndGetsEverything();
+    void readingAgainAfterAnErrorSaysTheSameThing();
+    void closingDuringABlockedReadDoesNotHang();
 };
 
 void TestStreamingDownload::readsTheWholeFileThroughSeveralSpans()
@@ -545,6 +568,223 @@ void TestStreamingDownload::thatSameFileOverOneConnectionDiesPartWay()
     QVERIFY(collected.size() < payload.size());
     QVERIFY2(stream.errorString().contains(QStringLiteral("nothing more arrived")),
         qPrintable(stream.errorString()));
+}
+
+void TestStreamingDownload::seekingToTheStartToTheEndAndPastIt()
+{
+    // The ends of the device, which is where anything that previews a file goes
+    // first: to the front for a header and to the back for a footer.
+    const QByteArray payload = payloadOf(64 * 1024);
+    FakeServer server(payload);
+
+    net::StreamingDownload stream(server.fetch(), payload.size(), 16 * 1024);
+    QVERIFY(stream.open(QIODevice::ReadOnly));
+
+    QVERIFY(stream.seek(0));
+    QCOMPARE(stream.read(16), payload.left(16));
+
+    // Exactly the end is a legal position holding nothing, not a failure.
+    QVERIFY(stream.seek(payload.size()));
+    QVERIFY(stream.atEnd());
+    QCOMPARE(stream.read(16).size(), 0);
+
+    // Past the end is refused rather than answered with rubbish, and the device
+    // is still usable afterwards.
+    QVERIFY(!stream.seek(payload.size() + 1));
+    QVERIFY(!stream.seek(-1));
+    QVERIFY(stream.seek(1024));
+    QCOMPARE(stream.read(16), payload.mid(1024, 16));
+}
+
+void TestStreamingDownload::aSpanBoundaryThatFallsOnAReadBoundaryIsInvisible()
+{
+    // The seam between two transfers, landing exactly where a read ends. Every
+    // span is a separate connection, so this is the arrangement where an
+    // off-by-one at either end shows up as a missing or a repeated block -- and
+    // the reader is supposed to see one continuous file.
+    const qint64 span = 32 * 1024;
+    const QByteArray payload = payloadOf(4 * static_cast<int>(span));
+    FakeServer server(payload);
+
+    net::StreamingDownload stream(server.fetch(4096), payload.size(), span);
+    QVERIFY(stream.open(QIODevice::ReadOnly));
+
+    QByteArray collected;
+    for (int i = 0; i < 4; ++i) {
+        const QByteArray chunk = stream.read(span);
+        QCOMPARE(chunk.size(), static_cast<int>(span));
+        collected.append(chunk);
+    }
+    QCOMPARE(collected, payload);
+    QCOMPARE(server.spans(), 4);
+    QCOMPARE(stream.read(1).size(), 0);
+}
+
+void TestStreamingDownload::aFileOfNoBytesAndAFileOfOne_data()
+{
+    QTest::addColumn<int>("size");
+    QTest::newRow("no bytes at all") << 0;
+    QTest::newRow("one byte") << 1;
+}
+
+void TestStreamingDownload::aFileOfNoBytesAndAFileOfOne()
+{
+    QFETCH(int, size);
+
+    // The degenerate ends of every loop in the class, and both are real files.
+    const QByteArray payload = payloadOf(size);
+    FakeServer server(payload);
+
+    net::StreamingDownload stream(server.fetch(), size, 64 * 1024);
+    QVERIFY(stream.open(QIODevice::ReadOnly));
+    QCOMPARE(stream.size(), static_cast<qint64>(size));
+
+    QCOMPARE(stream.readAll(), payload);
+    QVERIFY(stream.atEnd());
+    QCOMPARE(stream.read(16).size(), 0);
+    // An empty file is not a transfer: there is nothing to ask a server for.
+    QCOMPARE(server.spans(), size == 0 ? 0 : 1);
+}
+
+void TestStreamingDownload::aFileTheSizeOfTheBufferArrivesWhole_data()
+{
+    QTest::addColumn<qint64>("size");
+
+    // The threshold in this class: what fits between the transfer and the
+    // reader. Below it the fetch never waits, at it the fetch waits exactly
+    // once, and above it the two take turns for the rest of the file.
+    QTest::newRow("a buffer less one") << net::kStreamBufferBytes - 1;
+    QTest::newRow("exactly a buffer") << net::kStreamBufferBytes;
+    QTest::newRow("a buffer and one") << net::kStreamBufferBytes + 1;
+}
+
+void TestStreamingDownload::aFileTheSizeOfTheBufferArrivesWhole()
+{
+    QFETCH(qint64, size);
+
+    const QByteArray payload = payloadOf(static_cast<int>(size));
+    FakeServer server(payload);
+
+    net::StreamingDownload stream(server.fetch(), size, size + 1024);
+    QVERIFY(stream.open(QIODevice::ReadOnly));
+
+    qint64 last = 0;
+    const QByteArray collected = readAll(stream, &last);
+    QCOMPARE(last, 0);
+    QCOMPARE(collected.size(), payload.size());
+    QCOMPARE(collected, payload);
+}
+
+void TestStreamingDownload::aFetchFasterThanTheReaderFillsUpAndWaits()
+{
+    // A server handing bytes over faster than anything is reading them. The
+    // buffer is what stops that from becoming unbounded memory, and it works by
+    // making the transfer wait -- so the file has to be larger than the buffer
+    // for the waiting to happen at all.
+    const QByteArray payload = payloadOf(static_cast<int>(net::kStreamBufferBytes) + 4 * 1024 * 1024);
+    FakeServer server(payload);
+
+    net::StreamingDownload stream(server.fetch(64 * 1024), payload.size(), payload.size());
+    QVERIFY(stream.open(QIODevice::ReadOnly));
+
+    QByteArray collected;
+    QByteArray buffer(8 * 1024, Qt::Uninitialized);
+    qint64 got = 0;
+    while ((got = stream.read(buffer.data(), buffer.size())) > 0)
+        collected.append(buffer.constData(), static_cast<int>(got));
+
+    QCOMPARE(got, 0);
+    QCOMPARE(collected.size(), payload.size());
+    QCOMPARE(collected, payload);
+    QCOMPARE(server.spans(), 1);
+}
+
+void TestStreamingDownload::aReaderFasterThanTheFetchWaitsAndGetsEverything()
+{
+    // The other way round: a reader that has asked for everything and a server
+    // handing over one block at a time. The reader has to wait rather than see
+    // the end of the file early, which is the difference between a slow copy and
+    // a truncated one.
+    const int blockSize = 8 * 1024;
+    const QByteArray payload = payloadOf(10 * blockSize);
+    PacedServer server(payload, blockSize);
+
+    net::StreamingDownload stream(server.fetch(), payload.size(), payload.size());
+    LetGo letGo { server };
+    QVERIFY(stream.open(QIODevice::ReadOnly));
+
+    QByteArray collected;
+    qint64 last = 0;
+    std::thread reader([&] { collected = readAll(stream, &last); });
+
+    // One block per park, so the reader is genuinely waiting between them
+    // rather than being handed a file that had already arrived.
+    for (int block = 1; block <= 10; ++block) {
+        server.waitUntilItIsWaitingForMore(block);
+        server.allow(1);
+    }
+    reader.join();
+
+    QCOMPARE(last, 0);
+    QCOMPARE(collected, payload);
+    QCOMPARE(server.spans(), 1);
+}
+
+void TestStreamingDownload::readingAgainAfterAnErrorSaysTheSameThing()
+{
+    // Whoever is copying the file asks again -- a loop does not stop on the
+    // first -1 unless somebody wrote it to. A second read must not turn the
+    // failure into an end of file, which would leave the copy calling a
+    // truncated result complete.
+    const QByteArray payload = payloadOf(256 * 1024);
+    FakeServer server(payload);
+    server.failAfter(64 * 1024);
+
+    net::StreamingDownload stream(server.fetch(), payload.size(), payload.size());
+    QVERIFY(stream.open(QIODevice::ReadOnly));
+
+    qint64 first = 0;
+    readAll(stream, &first);
+    QCOMPARE(first, -1);
+    const QString said = stream.errorString();
+
+    QByteArray buffer(1024, Qt::Uninitialized);
+    QCOMPARE(stream.read(buffer.data(), buffer.size()), -1);
+    QCOMPARE(stream.read(buffer.data(), buffer.size()), -1);
+    QCOMPARE(stream.errorString(), said);
+    QVERIFY(stream.error().isError());
+}
+
+void TestStreamingDownload::closingDuringABlockedReadDoesNotHang()
+{
+    // A drive ejected, or a preview closed, while a read is waiting on a server
+    // that has stopped sending. The read has to come back -- as a failure, since
+    // the file did not arrive -- and the close has to return rather than wait for
+    // a transfer that is waiting for it.
+    const QByteArray payload = payloadOf(200 * 1024);
+    PacedServer server(payload, 8 * 1024);
+
+    net::StreamingDownload stream(server.fetch(), payload.size(), payload.size());
+    LetGo letGo { server };
+    QVERIFY(stream.open(QIODevice::ReadOnly));
+
+    server.allow(1);
+    QCOMPARE(stream.read(1024).size(), 1024);
+    server.waitUntilItIsWaitingForMore();
+
+    qint64 result = 0;
+    std::thread reader([&] {
+        QByteArray buffer(128 * 1024, Qt::Uninitialized);
+        result = stream.read(buffer.data(), buffer.size());
+    });
+    stream.close();
+    reader.join();
+
+    // One block was handed over and 1024 bytes of it read, so 7168 is all there
+    // ever was. Whether the read comes back with those or with a failure depends
+    // on which side of the close it was, and both are correct; inventing bytes
+    // that never arrived is not, and neither is never coming back at all.
+    QVERIFY2(result <= 7 * 1024, "a stream closed under a reader must not hand over bytes it never had");
 }
 
 MOLE_TEST_MAIN(TestStreamingDownload)
