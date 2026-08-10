@@ -16,9 +16,9 @@ Item {
     // A page rather than its source, when that is what was chosen for this type.
     readonly property bool showsPage: controller ? controller.renderedHtml === true : false
 
-    // Prose and code come from the same scale as everywhere else; code sits a
-    // shade smaller because it is scanned a line at a time rather than read by
-    // the paragraph.
+    // Prose and code come from the same scale as everywhere else, and at the same
+    // step: a log is the preview left open longest, so it is not the place to save
+    // a pixel. The two entries stay separate because the family differs.
     readonly property int bodyPixelSize: (showsMarkdown || showsPage) ? App.textSize : App.monospaceSize
 
     // A page of prose needs a measure. Text that runs the full width of a wide
