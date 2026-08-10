@@ -9,6 +9,57 @@ wrong.
 
 ---
 
+## Five features and four viewers had no picture, and two no prose either
+
+**Asked for:** MOLE-115 — Duplicates, Sync, File sets, Alerts and Reports appear in no
+picture anywhere in the guide, and Sync and Alerts are not mentioned in any prose either.
+Four of the seven preview providers are undocumented too, and no picture anywhere shows a
+transfer actually running.
+
+**What it turned out to be:** ten pictures, each with a test that drives the thing into
+the state and asserts it before shooting — which is the guarantee the guide's README
+makes, so a picture that got there any other way would be a lie about the whole document.
+
+The part that matters most is not the ten pictures. **Five features were registered,
+tested and shipped without anybody noticing they were undocumented**, which is the third
+instance this week of the same shape: a fact declared in one place with nothing checking
+it. So a test now holds three claims about every registered feature and every preview
+provider — that it names a picture, that the picture exists, and that some page in the
+guide actually shows it. An id in neither the map nor the exemption list fails by name.
+Verified by removing Sync's entry and watching it fail. The exemption list is empty
+today, and an entry in it is a decision with a reason rather than a gap.
+
+The third claim earned its keep immediately: `03-preview-text.png` was being generated
+and committed and no page in the guide showed it. A picture in a folder that nothing
+displays is not in the guide.
+
+**Duplicates was in the ticket as blocked** — it says to wait for MOLE-69, MOLE-70 and
+MOLE-71, since that view is being rebuilt — and it is done anyway, on the author's call:
+the picture is produced by the test suite, so when those land a regeneration corrects it
+without anybody remembering. What is committed now honestly shows what exists today,
+including how much empty space that view has, which is the fault MOLE-69 is about.
+
+**Two things had to be built.** `tests/support/TableFixtures` writes the SQLite, Parquet
+and image fixtures, so the guide's picture is of the same fixture the readers themselves
+are tested against rather than a second copy that can drift; the image is drawn with
+`QPainter`, which costs no licence question and no weight in the repository, and is made
+larger than any pane so the picture shows the viewer fitting it.
+
+And `MemoryFileSystem` gained `setReadThrottle()`, which is the difference between a
+delay and a pace. A transfer in flight cannot be photographed with `setReadDelayMs()`: it
+makes the file slow to *arrive* and leaves the copy itself instant, so the strip goes from
+nothing to "finished" with no moment in between. Handing the bytes over at 256 kB every
+60 ms gives a second and a half of a genuine transfer — a bar between the ends and a real
+speed — for six megabytes of memory rather than the several hundred a real copy would
+need to take that long. Two false starts before that: the memory backend builds its entry
+uris with no authority, so a mount at `mem://camera/` hands back uris the manager cannot
+resolve, and the transfer refuses with "one of the panes has no drive mounted" several
+steps away from the cause.
+
+Sync and Alerts have prose now, and the reasoning is in it rather than only the
+mechanics: why a sync plans before it touches anything, and why an alert that never
+clears is one people learn to ignore.
+
 ## The guide's pictures were of four small files, half drawn, at 1280x800
 
 **Asked for:** MOLE-114 — three faults in one regeneration, because done separately

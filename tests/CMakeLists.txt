@@ -14,6 +14,8 @@ add_library(mole_test_support STATIC
     support/TestbedControl.cpp
     support/ScriptedHttpServer.h
     support/ScriptedHttpServer.cpp
+    support/TableFixtures.h
+    support/TableFixtures.cpp
     support/Victim.h
     support/Victim.cpp
 )
@@ -37,8 +39,13 @@ qt_add_resources(mole_qml_harness "harness_qml"
 
 target_include_directories(mole_test_support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(mole_test_support
-    PUBLIC mole_core mole_sdk Qt6::Test Qt6::Network
+    PUBLIC mole_core mole_sdk Qt6::Test Qt6::Network Qt6::Sql Qt6::Gui
     PRIVATE mole_flags)
+
+# Where the user guide keeps its pictures, so a test can hold the rule that every
+# feature has one -- see everyFeatureAndPreviewHasAPictureInTheGuide.
+target_compile_definitions(mole_test_support
+    PUBLIC MOLE_GUIDE_IMAGE_DIR="${CMAKE_SOURCE_DIR}/docs/guide/images")
 
 # Tests that load the archive plugin need to know where it was built.
 target_compile_definitions(mole_test_support

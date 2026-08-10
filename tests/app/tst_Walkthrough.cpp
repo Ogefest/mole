@@ -1,12 +1,20 @@
+#include "host/FeatureRegistry.h"
+#include "host/PreviewRegistry.h"
+#include "plugins/builtin/AlertsFeature.h"
 #include "plugins/builtin/AnalysisFeature.h"
 #include "plugins/builtin/AutomationFeature.h"
 #include "plugins/builtin/BrowserFeature.h"
 #include "plugins/builtin/BulkRenameFeature.h"
+#include "plugins/builtin/DuplicatesFeature.h"
+#include "plugins/builtin/FileSetsFeature.h"
 #include "plugins/builtin/PreviewFeature.h"
+#include "plugins/builtin/ReportsFeature.h"
 #include "plugins/builtin/SearchFeatures.h"
+#include "plugins/builtin/SyncFeature.h"
 #include "plugins/builtin/previews/PdfPreview.h"
 #include "plugins/builtin/previews/PreviewProviders.h"
 #include "support/QmlAppHarness.h"
+#include "support/TableFixtures.h"
 #include "support/TestSupport.h"
 #include "ui/AppController.h"
 #include "ui/models/BookmarkModel.h"
@@ -20,6 +28,7 @@
 #include "ui/models/TerminalController.h"
 
 #include "core/CoreMetaTypes.h"
+#include "core/alerts/AlertRule.h"
 #include "core/alerts/AlertStore.h"
 #include "core/automation/ScheduleStore.h"
 #include "core/automation/Scheduler.h"
@@ -32,6 +41,7 @@
 #include <QColor>
 #include <QDateTime>
 #include <QDir>
+#include <QDirIterator>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QPageSize>
@@ -140,11 +150,28 @@ private slots:
     void openingALockedDriveAsksForThePassphraseAndThenGoesThere();
     void emptyWindowExplainsItself();
 
+    // --- the features and viewers the guide had no picture of ---------------
+    void syncPlansBeforeItTouchesAnything();
+    void alertsSayWhatWentOutsideItsBounds();
+    void savedReportsAreAListYouCanOpen();
+    void aFileSetIsAListYouCarryAround();
+    void duplicatesFindsTheSamePictureThreeTimes();
+    void anImageIsFittedToThePane();
+    void aSqliteFileOpensItsTables();
+    void aParquetFileOpensItsColumns();
+    void aFileNothingClaimsStillReportsItself();
+    void aTransferInFlightShowsASpeedAndABar();
+    void everyFeatureAndPreviewHasAPictureInTheGuide();
+
 private:
     BrowserPaneController* pane() const;
     /// Writes the fixture tree every test starts from. See its definition for
     /// what is in it and why.
     void buildFixture();
+    /// Opens a preview of a file in the fixture and returns the tab. The path is
+    /// relative to the fixture root and may be in a subfolder, so this does not
+    /// depend on which folder the pane happens to be showing.
+    PreviewTabController* previewOf(const QString& relativePath);
     /// Puts the cursor on a folder in the current listing and opens it with
     /// Return. Named rather than assumed: these tests used to press Return on
     /// whatever row 0 happened to be, which was "documents" only for as long as
@@ -325,6 +352,30 @@ void TestWalkthrough::buildFixture()
         QByteArray("# Still to do\n\n- Sort out the photo import.\n- Retire the 2019 archive.\n")));
     QVERIFY(m_harness->writeSparseFile(QStringLiteral("recording.wav"), 620LL * 1000 * 1000));
 
+    // photos/ holds the same picture three times under three names, which is what
+    // the handover note in notes.txt says about it and what a duplicate scan is
+    // for. Identical bytes, so every strategy finds them -- name, size and hash.
+    const QByteArray shot = QByteArray("\x89PNG\r\n\x1a\n", 8) + QByteArray(240000, '\x7f');
+    for (const QString& name : { QStringLiteral("photos/IMG_4417.jpg"),
+             QStringLiteral("photos/IMG_4417 (copy).jpg"), QStringLiteral("photos/imported/IMG_4417.jpg") }) {
+        QVERIFY(m_harness->writeFile(name, shot));
+    }
+    QVERIFY(m_harness->writeFile(QStringLiteral("photos/IMG_4418.jpg"), QByteArray(180000, '\x22')));
+
+    // One file for each viewer the guide has to show. The table ones come from
+    // tests/support/TableFixtures, so the picture is of the same fixture the
+    // readers themselves are tested against.
+    QVERIFY(fixtures::writeLargeImage(
+        QDir(m_harness->fixturePath()).filePath(QStringLiteral("photos/sunset.png"))));
+    QVERIFY(fixtures::writeSqlite(
+        QDir(m_harness->fixturePath()).filePath(QStringLiteral("exports/catalogue.sqlite"))));
+    if (fixtures::parquetAvailable()) {
+        QVERIFY(fixtures::writeParquet(
+            QDir(m_harness->fixturePath()).filePath(QStringLiteral("exports/rows.parquet"))));
+    }
+    // A file nothing claims, which is what the file-info viewer is for.
+    QVERIFY(m_harness->writeFile(QStringLiteral("exports/dump.bin"), QByteArray(4096, '\x01')));
+
     // --- and then spread over time, so the date column says something --------
     const QList<QPair<QString, QDateTime>> dates {
         { QStringLiteral("archive"), when(430, 11, 2) },
@@ -370,6 +421,13 @@ void TestWalkthrough::buildFixture()
 void TestWalkthrough::cleanup()
 {
     m_harness.reset();
+}
+
+PreviewTabController* TestWalkthrough::previewOf(const QString& relativePath)
+{
+    m_harness->app()->previewFile(m_harness->fixtureUri() + QLatin1Char('/') + relativePath);
+    m_harness->settle();
+    return qobject_cast<PreviewTabController*>(m_harness->app()->tabs()->currentController());
 }
 
 void TestWalkthrough::enterFolder(const QString& name)
@@ -1994,11 +2052,23 @@ void TestWalkthrough::analysesAFolder()
     QVERIFY(m_harness->until(
         [analysis] { return analysis->current() && analysis->current()->hasReport(); }, 20000));
 
-    // Twenty-one files across the tree, and one machine image dominates by size
-    // -- which is the answer an analysis exists to give: a folder of a few
-    //  hundred gigabytes where almost all of it is in a single file.
+    // Every file in the tree, counted here rather than written in: one of the
+    // fixture's files is only there when the build has Arrow, and a magic number
+    // would make this assertion depend on that. What is being claimed is that the
+    // analysis missed nothing.
+    qint64 onDisk = 0;
+    QDirIterator walk(
+        m_harness->fixturePath(), QDir::Files | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+    while (walk.hasNext()) {
+        walk.next();
+        ++onDisk;
+    }
+    QVERIFY(onDisk > 20);
+
+    // And one machine image dominates by size, which is the answer an analysis
+    // exists to give: a few hundred gigabytes where almost all of it is one file.
     const QVariantMap headline = analysis->current()->headline();
-    QCOMPARE(headline.value(QStringLiteral("files")).toLongLong(), 21);
+    QCOMPARE(headline.value(QStringLiteral("files")).toLongLong(), onDisk);
     QCOMPARE(analysis->current()->extensions()->index(0, 0).data(BreakdownModel::ExtensionRole).toString(),
         QStringLiteral("img"));
 
@@ -2716,6 +2786,354 @@ void TestWalkthrough::typingIntoTheKindPickerFiltersIt()
     m_harness->settle(4);
 
     QVERIFY2(m_harness->item(QStringLiteral("driveKindPicker")), "still standing");
+}
+
+// --------------------------------------------- what had no picture at all
+//
+// Five of the thirteen features and four of the seven preview providers were
+// registered, tested and shipped without a picture anywhere in the guide, and two
+// of the five were not mentioned in any prose either. Each of these drives the
+// thing into a state worth showing, asserts the state, and then photographs it --
+// which is the only way a picture in this guide is allowed to exist.
+
+void TestWalkthrough::syncPlansBeforeItTouchesAnything()
+{
+    auto* sync = qobject_cast<SyncController*>(m_harness->app()->tabs()->controllerAt(
+        m_harness->app()->openFeatureTab(QStringLiteral("core.sync"))));
+    QVERIFY(sync);
+
+    // documents/ against exports/: two folders that really differ, so the plan has
+    // something in it rather than being empty and truthful.
+    sync->setSourceUri(m_harness->fixtureUri() + QStringLiteral("/documents"));
+    sync->setTargetUri(m_harness->fixtureUri() + QStringLiteral("/exports"));
+    QVERIFY(m_harness->until([sync] { return sync->isReady(); }));
+
+    sync->preview();
+    QVERIFY(m_harness->until([sync] { return sync->hasPlan() && !sync->isRunning(); }, 20000));
+    QVERIFY2(!sync->steps().isEmpty(), "a plan with nothing in it is not worth a picture");
+    QVERIFY2(!sync->planSummary().isEmpty(), "and it has to say what it adds up to");
+
+    // Nothing has happened yet, which is the point of the view: the plan is shown
+    // and waited on. Mirror mode is the one with deletions in it, so the number
+    // the summary carries is the one worth seeing.
+    m_harness->screenshot(QStringLiteral("15-sync"));
+}
+
+void TestWalkthrough::alertsSayWhatWentOutsideItsBounds()
+{
+    // Two rules, one of them over its bound, so the picture shows both states --
+    // an alert that is fine is as much a part of the list as one that is not.
+    AlertRule quiet;
+    quiet.id = QStringLiteral("rule-exports");
+    quiet.label = QStringLiteral("Exports stay under 1 GB");
+    quiet.targetUri = m_harness->fixtureUri() + QStringLiteral("/exports");
+    quiet.metric = AlertMetric::TotalSize;
+    quiet.comparison = AlertComparison::Above;
+    quiet.threshold = 1e9;
+
+    AlertRule loud = quiet;
+    loud.id = QStringLiteral("rule-backups");
+    loud.label = QStringLiteral("Backups stay under 100 GB");
+    loud.targetUri = m_harness->fixtureUri() + QStringLiteral("/backups");
+    loud.threshold = 100e9;
+
+    QVERIFY(m_harness->app()->alerts()->put(quiet));
+    QVERIFY(m_harness->app()->alerts()->put(loud));
+
+    auto* alerts = m_harness->app()->tabs()->controllerAt(
+        m_harness->app()->openFeatureTab(QStringLiteral("core.alerts")));
+    QVERIFY(alerts);
+    QVERIFY(QMetaObject::invokeMethod(alerts, "checkNow", Q_ARG(QString, QString())));
+
+    // Waited on the answer rather than on a clock: the check walks the tree.
+    QVERIFY(m_harness->until([this] { return m_harness->app()->alerts()->triggeredCount() > 0; }, 20000));
+    m_harness->screenshot(QStringLiteral("16-alerts"));
+}
+
+void TestWalkthrough::savedReportsAreAListYouCanOpen()
+{
+    // A report has to exist before a library of them is worth a picture, and the
+    // honest way to get one is to run the analysis that saves it.
+    m_harness->app()->analyseSelection();
+    auto* analysis = qobject_cast<AnalysisTabController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY(analysis);
+    QVERIFY(m_harness->until(
+        [analysis] { return analysis->current() && analysis->current()->hasReport(); }, 20000));
+
+    auto* reports = m_harness->app()->tabs()->controllerAt(
+        m_harness->app()->openFeatureTab(QStringLiteral("core.reports")));
+    QVERIFY(reports);
+    QVERIFY2(m_harness->until([reports] { return reports->property("folderCount").toInt() > 0; }),
+        "the run that just finished has to be in the library");
+    QVERIFY(reports->property("reportCount").toInt() > 0);
+    m_harness->screenshot(QStringLiteral("17-reports"));
+}
+
+void TestWalkthrough::aFileSetIsAListYouCarryAround()
+{
+    // Built from what a search found, which is the route the guide already
+    // describes and the one the button exists for.
+    FileSetStore* store = m_harness->app()->services().sets;
+    QVERIFY(store);
+    const QString id = store->create(QStringLiteral("To sort out")).id;
+    QVERIFY(!id.isEmpty());
+
+    QStringList chosen;
+    for (const QString& name : { QStringLiteral("photos/IMG_4417.jpg"), QStringLiteral("photos/IMG_4418.jpg"),
+             QStringLiteral("documents/report.txt"), QStringLiteral("notes.txt"),
+             QStringLiteral("archive/2019.tar") }) {
+        chosen.append(m_harness->fixtureUri() + QLatin1Char('/') + name);
+    }
+    QCOMPARE(store->addTo(id, chosen), chosen.size());
+
+    auto* sets = m_harness->app()->tabs()->controllerAt(
+        m_harness->app()->openFeatureTab(QStringLiteral("core.filesets")));
+    QVERIFY(sets);
+    QVERIFY(m_harness->until([sets] { return sets->property("memberCount").toInt() == 5; }));
+    QVERIFY2(sets->property("summary").toString().length() > 0, "a set says what it adds up to");
+    m_harness->screenshot(QStringLiteral("18-file-sets"));
+}
+
+void TestWalkthrough::duplicatesFindsTheSamePictureThreeTimes()
+{
+    // photos/ holds one picture three times under three names, one of them in a
+    // subfolder -- which is what the handover note in the fixture says about it.
+    auto* duplicates = qobject_cast<DuplicatesController*>(m_harness->app()->tabs()->controllerAt(
+        m_harness->app()->openFeatureTab(QStringLiteral("core.duplicates"))));
+    QVERIFY(duplicates);
+
+    duplicates->setTargets({ m_harness->fixtureUri() + QStringLiteral("/photos") });
+    duplicates->scan();
+    QVERIFY(
+        m_harness->until([duplicates] { return duplicates->hasRun() && !duplicates->isScanning(); }, 20000));
+
+    QCOMPARE(duplicates->groupCount(), 1);
+    QVERIFY2(!duplicates->summary().isEmpty(), "the scan says what it found");
+    m_harness->screenshot(QStringLiteral("19-duplicates"));
+}
+
+// --- and the four viewers ------------------------------------------------
+
+void TestWalkthrough::anImageIsFittedToThePane()
+{
+    PreviewTabController* preview = previewOf(QStringLiteral("photos/sunset.png"));
+    QCOMPARE(preview->viewerName(), QStringLiteral("Image"));
+    // The viewer hands QML a url to load rather than the pixels, so "it has one"
+    // is the state to wait for -- what QML then does with it is what the picture
+    // shows.
+    QVERIFY(m_harness->until(
+        [preview] {
+            return preview->viewer() && !preview->viewer()->property("source").toString().isEmpty();
+        },
+        20000));
+    m_harness->screenshot(QStringLiteral("20-preview-image"));
+}
+
+void TestWalkthrough::aSqliteFileOpensItsTables()
+{
+    PreviewTabController* preview = previewOf(QStringLiteral("exports/catalogue.sqlite"));
+    QCOMPARE(preview->viewerName(), QStringLiteral("Database"));
+
+    QObject* viewer = preview->viewer();
+    QVERIFY(viewer);
+    QVERIFY2(
+        m_harness->until([viewer] { return viewer->property("tables").toStringList().size() >= 3; }, 20000),
+        "two tables and a view");
+    m_harness->screenshot(QStringLiteral("21-preview-sqlite"));
+}
+
+void TestWalkthrough::aParquetFileOpensItsColumns()
+{
+    if (!fixtures::parquetAvailable())
+        QSKIP("this build has no Parquet support; the committed picture stays as it is");
+
+    PreviewTabController* preview = previewOf(QStringLiteral("exports/rows.parquet"));
+    QCOMPARE(preview->viewerName(), QStringLiteral("Parquet"));
+
+    QObject* viewer = preview->viewer();
+    QVERIFY(viewer);
+    QVERIFY(m_harness->until(
+        [viewer] {
+            auto* table = viewer->property("table").value<TableModel*>();
+            return table && table->rowCount() > 0;
+        },
+        20000));
+    m_harness->screenshot(QStringLiteral("22-preview-parquet"));
+}
+
+void TestWalkthrough::aFileNothingClaimsStillReportsItself()
+{
+    // The viewer of last resort. Every other provider refused this file, and what
+    // is left to say about it -- its size, its kind, when it was touched -- is
+    // still worth saying rather than showing an empty pane.
+    PreviewTabController* preview = previewOf(QStringLiteral("exports/dump.bin"));
+    QCOMPARE(preview->viewerName(), QStringLiteral("File information"));
+    QVERIFY(m_harness->until(
+        [preview] { return preview->viewer() && !preview->viewer()->property("facts").toList().isEmpty(); }));
+    m_harness->screenshot(QStringLiteral("23-preview-file-info"));
+}
+
+void TestWalkthrough::aTransferInFlightShowsASpeedAndABar()
+{
+    // Every other picture of the task strip says "finished". This is one with work
+    // actually going, and getting there needs a copy that takes a measurable
+    // amount of time without writing gigabytes: a drive that hands its bytes over
+    // slowly. Contrived in the same way the slow-listing test is, and for the same
+    // reason -- the only honest way to photograph a transfer in flight is to have
+    // one in flight.
+    auto slow = std::make_shared<MemoryFileSystem>();
+    slow->addFile(QStringLiteral("/holiday.mp4"), QByteArray(6 * 1024 * 1024, 'v'));
+    // Paced rather than delayed, and that distinction is the whole test: a delay
+    // before the file arrives leaves the copy itself instant, so the strip goes
+    // from nothing to "finished" with no moment in between to photograph. Six
+    // megabytes at 256 kB every 60 ms is about a second and a half of a transfer
+    // genuinely in flight.
+    slow->setReadThrottle(256 * 1024, 60);
+
+    Mount mount;
+    mount.id = QStringLiteral("camera");
+    mount.displayName = QStringLiteral("Camera");
+    // At the scheme root, not at mem://camera/. The in-memory backend builds its
+    // entry uris with no authority, so a mount under one hands back uris the
+    // manager cannot resolve -- which the transfer refuses with "one of the panes
+    // has no drive mounted", several steps away from the cause.
+    mount.root = VfsUri::fromString(QStringLiteral("mem:///"));
+    mount.fileSystem = slow;
+    m_harness->app()->services().vfs->addMount(mount);
+
+    auto* browser = qobject_cast<BrowserController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY(browser);
+    browser->setViewMode(BrowserController::ViewMode::Dual);
+    m_harness->settle();
+
+    browser->otherPane()->navigateTo(m_harness->fixtureUri() + QStringLiteral("/media"));
+    QVERIFY(m_harness->until(
+        [browser] { return browser->otherPane()->currentUri().endsWith(QStringLiteral("/media")); }));
+
+    browser->activePane()->navigateTo(QStringLiteral("mem:///"));
+    QVERIFY(m_harness->until([browser] { return browser->activePane()->files()->rowCount() == 1; }, 20000));
+    browser->activePane()->setCurrentIndex(0);
+    QVERIFY(m_harness->until([browser] { return browser->canTransfer(); }));
+
+    browser->runTransfer(false, QString(), QStringLiteral("overwrite"));
+
+    // Waited on the strip saying so, never on a clock.
+    TaskListModel* tasks = m_harness->app()->tasks();
+    QVERIFY(m_harness->until([tasks] { return tasks->activeCount() > 0; }, 20000));
+    QQuickItem* rate = m_harness->item(QStringLiteral("activeTaskRate"));
+    QVERIFY(rate);
+    QVERIFY2(m_harness->until([rate] { return rate->isVisible(); }, 30000), "a copy in flight has a speed");
+    QVERIFY2(tasks->activeProgress() > 0, "and a bar that has moved off nothing");
+    m_harness->screenshot(QStringLiteral("24-transfer-running"));
+
+    // Left tidy: a task still running when the harness is torn down is noise in
+    // the next test's log.
+    tasks->cancelAll();
+    QVERIFY(m_harness->until([tasks] { return tasks->activeCount() == 0; }, 20000));
+}
+
+// Five features got as far as being registered, tested and shipped without
+// anybody noticing they were undocumented. That is the same shape as MOLE-79 -- a
+// QML file tested and still missing from the application -- and it wants the same
+// answer: a check that fails when a registered feature has no picture, with an
+// explicit list of the ones deliberately without one.
+//
+// Without this the work above is a snapshot, and the fourteenth feature arrives
+// undocumented too.
+void TestWalkthrough::everyFeatureAndPreviewHasAPictureInTheGuide()
+{
+    // Feature or provider id, against a picture in docs/guide/images. One entry
+    // each is enough: what is being held is that the guide shows the thing at all,
+    // not how many times.
+    static const QHash<QString, QString> pictures {
+        { QStringLiteral("mole.browser"), QStringLiteral("01-browser") },
+        { QStringLiteral("mole.commander"), QStringLiteral("05-dual-pane") },
+        { QStringLiteral("mole.livesearch"), QStringLiteral("12b-search-results") },
+        { QStringLiteral("mole.indexsearch"), QStringLiteral("12-search-box") },
+        { QStringLiteral("mole.preview"), QStringLiteral("03-preview-text") },
+        { QStringLiteral("mole.analysis"), QStringLiteral("07-analysis") },
+        { QStringLiteral("core.automation"), QStringLiteral("08-automation") },
+        { QStringLiteral("core.bulkrename"), QStringLiteral("07b-bulk-rename") },
+        { QStringLiteral("core.sync"), QStringLiteral("15-sync") },
+        { QStringLiteral("core.alerts"), QStringLiteral("16-alerts") },
+        { QStringLiteral("core.reports"), QStringLiteral("17-reports") },
+        { QStringLiteral("core.filesets"), QStringLiteral("18-file-sets") },
+        { QStringLiteral("core.duplicates"), QStringLiteral("19-duplicates") },
+
+        { QStringLiteral("mole.preview.text"), QStringLiteral("03-preview-text") },
+        { QStringLiteral("mole.preview.table"), QStringLiteral("02-preview-csv") },
+        { QStringLiteral("mole.preview.pdf"), QStringLiteral("03d-preview-pdf") },
+        { QStringLiteral("mole.preview.image"), QStringLiteral("20-preview-image") },
+        { QStringLiteral("mole.preview.sqlite"), QStringLiteral("21-preview-sqlite") },
+        { QStringLiteral("mole.preview.parquet"), QStringLiteral("22-preview-parquet") },
+        { QStringLiteral("mole.preview.fileinfo"), QStringLiteral("23-preview-file-info") },
+    };
+
+    // Deliberately without one, each with the reason. An entry here is a decision;
+    // an id in neither list is an omission, which is what this test is for.
+    static const QHash<QString, QString> exempt {};
+
+    // This run's own output when there is one, the committed guide otherwise. Both
+    // matter and they are different questions: a screenshot run has to have
+    // produced a picture for everything, and an ordinary run has to find one
+    // committed. Checking only the committed directory would also mean the run that
+    // produces a new picture fails on its absence and never gets to copy it in.
+    const QDir images(m_shots.isEmpty() ? QStringLiteral(MOLE_GUIDE_IMAGE_DIR) : m_shots);
+    QVERIFY2(images.exists(), qPrintable(images.path()));
+
+    QStringList undocumented;
+    QStringList missing;
+    const auto check = [&](const QString& id) {
+        if (exempt.contains(id))
+            return;
+        const auto picture = pictures.constFind(id);
+        if (picture == pictures.constEnd()) {
+            undocumented.append(id);
+            return;
+        }
+        if (!images.exists(*picture + QStringLiteral(".png")))
+            missing.append(QStringLiteral("%1 -> %2.png").arg(id, *picture));
+    };
+
+    for (IFeature* feature : m_harness->app()->features()->features())
+        check(feature->id());
+    for (IPreviewProvider* provider : m_harness->app()->previews()->providers())
+        check(provider->id());
+
+    // And shown on a page. A picture that exists in the directory and is referenced
+    // by no prose is not in the guide -- it is a file in a folder.
+    QString allPages;
+    const QDir guide(QFileInfo(QStringLiteral(MOLE_GUIDE_IMAGE_DIR)).dir());
+    for (const QFileInfo& page : guide.entryInfoList({ QStringLiteral("*.md") }, QDir::Files)) {
+        QFile file(page.absoluteFilePath());
+        if (file.open(QIODevice::ReadOnly))
+            allPages += QString::fromUtf8(file.readAll());
+    }
+    QVERIFY2(!allPages.isEmpty(), qPrintable(guide.path()));
+
+    QStringList unshown;
+    for (auto entry = pictures.constBegin(); entry != pictures.constEnd(); ++entry) {
+        if (exempt.contains(entry.key()))
+            continue;
+        if (!allPages.contains(QStringLiteral("images/%1.png").arg(entry.value())))
+            unshown.append(QStringLiteral("%1 -> %2.png").arg(entry.key(), entry.value()));
+    }
+    unshown.sort();
+    QVERIFY2(unshown.isEmpty(),
+        qPrintable(QStringLiteral("has a picture that no page in the guide shows: %1")
+                       .arg(unshown.join(QStringLiteral(", ")))));
+
+    undocumented.sort();
+    missing.sort();
+    QVERIFY2(undocumented.isEmpty(),
+        qPrintable(QStringLiteral("registered with no picture in the guide and no entry saying why: %1\n"
+                                  "Add a picture in tst_Walkthrough and name it here, or add it to "
+                                  "`exempt` with the reason.")
+                       .arg(undocumented.join(QStringLiteral(", ")))));
+    QVERIFY2(missing.isEmpty(),
+        qPrintable(QStringLiteral("named a picture that is not in %1: %2\n"
+                                  "Run `make guide-images`.")
+                       .arg(images.path(), missing.join(QStringLiteral(", ")))));
 }
 
 void TestWalkthrough::emptyWindowExplainsItself()

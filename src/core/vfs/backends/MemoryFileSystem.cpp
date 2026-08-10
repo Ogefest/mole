@@ -6,6 +6,7 @@
 #include <QThread>
 
 #include <algorithm>
+#include <cstring>
 
 namespace mole {
 
@@ -225,6 +226,46 @@ Result<void> MemoryFileSystem::rename(const VfsUri& from, const VfsUri& to)
     return {};
 }
 
+namespace {
+
+    /// Hands its contents over a chunk at a time, pausing before each. See
+    /// MemoryFileSystem::setReadThrottle() for why a paced read is worth having
+    /// when a delayed one is not.
+    class ThrottledReadDevice final : public QIODevice
+    {
+    public:
+        ThrottledReadDevice(QByteArray contents, qint64 chunk, int delayMs)
+            : m_contents(std::move(contents))
+            , m_chunk(std::max<qint64>(1, chunk))
+            , m_delayMs(std::max(0, delayMs))
+        {
+        }
+
+        bool isSequential() const override { return false; }
+        qint64 size() const override { return m_contents.size(); }
+
+    protected:
+        qint64 readData(char* data, qint64 maxSize) override
+        {
+            const qint64 remaining = m_contents.size() - pos();
+            if (remaining <= 0)
+                return 0;
+            if (m_delayMs > 0)
+                QThread::msleep(static_cast<unsigned long>(m_delayMs));
+            const qint64 taken = std::min({ maxSize, m_chunk, remaining });
+            std::memcpy(data, m_contents.constData() + pos(), static_cast<size_t>(taken));
+            return taken;
+        }
+        qint64 writeData(const char*, qint64) override { return -1; }
+
+    private:
+        QByteArray m_contents;
+        qint64 m_chunk = 0;
+        int m_delayMs = 0;
+    };
+
+} // namespace
+
 Result<std::unique_ptr<QIODevice>> MemoryFileSystem::openRead(const VfsUri& target, qint64)
 {
     // Slept before the lock is taken, so a delayed read does not block every
@@ -242,6 +283,14 @@ Result<std::unique_ptr<QIODevice>> MemoryFileSystem::openRead(const VfsUri& targ
         return VfsError::make(VfsError::NotFound, QStringLiteral("No such file: %1").arg(path));
     if (node->isDir)
         return VfsError::make(VfsError::IsADirectory, QStringLiteral("Is a directory: %1").arg(path));
+
+    if (m_throttleBytes > 0) {
+        auto throttled
+            = std::make_unique<ThrottledReadDevice>(node->contents, m_throttleBytes, m_throttleDelayMs);
+        if (!throttled->open(QIODevice::ReadOnly))
+            return VfsError::make(VfsError::IoError, QStringLiteral("Cannot open %1").arg(path));
+        return Result<std::unique_ptr<QIODevice>>(std::move(throttled));
+    }
 
     auto buffer = std::make_unique<QBuffer>();
     buffer->setData(node->contents);

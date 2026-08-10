@@ -9,11 +9,23 @@ got, and offers whatever that viewer lets you choose.
 
 ## Text and code
 
+![Plain text](images/03-preview-text.png)
+
+Plain text is drawn at the same size as everything else in the window, in the same
+monospaced family every code and data view uses — a log or a source file is the preview
+people leave open longest, so it is not the place to save a pixel.
+
 ![JSON, coloured](images/03b-preview-json.png)
 
 Source is coloured lexically rather than parsed, which means a half-written file, a
 truncated one, or the middle of a 100 GB log still gets colour — the cases where it
 helps most.
+
+A file with no line breaks in it at all — a minified export, a one-line dump, a base64
+blob — is folded into readable lengths rather than handed to the layout as a single line
+half a million characters long, and the header says so: the breaks you are looking at are
+Mole's, not the file's. Colouring goes off for such a window, because a fold cuts a
+string in half and a half-coloured string is worse than none.
 
 Nothing is ever read whole. Only the window on screen is fetched, so a huge log opens
 as fast as a small one:
@@ -69,7 +81,34 @@ PDFs open as a column of pages, rendered one at a time as they are reached, so a
 six-hundred-page scan costs the first page rather than six hundred. Read-only:
 previewing a document is not a licence to modify it.
 
+## Pictures
+
+![An image](images/20-preview-image.png)
+
+An image is fitted to the pane rather than shown at its own size, so a photograph off a
+camera is looked at rather than scrolled around. Whatever Qt on this machine can decode
+is claimed — png, jpeg, webp, and the rest of that list — and anything it cannot is left
+to the viewer of last resort below.
+
+## Databases
+
+![A SQLite database](images/21-preview-sqlite.png)
+
+A SQLite file opens as its tables and views, one at a time, read a page at a time. Open
+**read-only**: reading a database is not a licence to write to it, which is the same
+rule the PDF viewer follows.
+
+![A Parquet file](images/22-preview-parquet.png)
+
+Parquet the same, when the build has Apache Arrow — it is optional, and a build without
+it says so on the file rather than pretending the file is broken. Column types come from
+the file's own schema, and only the row groups needed for what is on screen are read, so
+a file of millions of rows opens as fast as one of ten.
+
 ## Anything else
 
+![A file nothing else claims](images/23-preview-file-info.png)
+
 A file no viewer can show gets described instead — its size, its kind, what is known
-about it. "Nothing happens" is never the answer.
+about it. "Nothing happens" is never the answer, and this is the reason: something always
+claims the file, even when all it can say is what the filesystem knows.

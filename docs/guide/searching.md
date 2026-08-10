@@ -51,3 +51,17 @@ Above them:
 - **Build a set** — turn what was found into a named file set, so the work carries on
   over that set instead of ending when the tab closes. It is a snapshot of what is on
   screen, narrowing included, because those rows are what "these results" means.
+
+## Sets, which outlive the search
+
+![A file set](images/18-file-sets.png)
+
+A set is a named list of files that survives the tab it was made in. Building one from
+results is the common route, but anything can be added to one from the Operations menu,
+and the point is what happens next: a set is a target like a folder is. Analyse it,
+compare it, rename across it, delete from it — the files in it may be scattered over
+several drives and it makes no difference.
+
+A set holds locations, not copies. A file that has moved or gone since is shown as
+missing rather than quietly dropped, because "where did that go" is a question worth
+being able to ask.

@@ -48,6 +48,19 @@ public:
     /// The same for openRead(), because the honest way to test what a view does
     /// while a file is slow to arrive is to have one that is.
     void setReadDelayMs(int ms) { m_readDelayMs = ms; }
+    /// Hands the bytes over at a pace: no more than `bytesPerRead` per read, and
+    /// `delayMs` before each one.
+    ///
+    /// Unlike the two above this makes a read take time *while bytes are moving*,
+    /// which is the only way to have a transfer that is genuinely in flight --
+    /// with a speed to measure and a bar between the ends -- without moving enough
+    /// real bytes to make the suite slow. A delay before the file arrives cannot
+    /// do it: the copy is still instant once it starts.
+    void setReadThrottle(qint64 bytesPerRead, int delayMs)
+    {
+        m_throttleBytes = bytesPerRead;
+        m_throttleDelayMs = delayMs;
+    }
 
     int listCallCount() const;
 
@@ -68,6 +81,8 @@ private:
     QHash<QString, VfsError::Code> m_faults;
     int m_listDelayMs = 0;
     int m_readDelayMs = 0;
+    qint64 m_throttleBytes = 0;
+    int m_throttleDelayMs = 0;
     mutable int m_listCalls = 0;
 };
 
