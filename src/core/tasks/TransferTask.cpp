@@ -488,6 +488,16 @@ void DeleteTask::run()
         if (isCancelRequested())
             return;
 
+        // Nobody asks for this on purpose: it is what a selection of everything
+        // collapses to, or what an empty path resolves to. The drive root is
+        // somebody's whole disk, and there is nothing to undo it with.
+        if (target.isRoot()) {
+            m_failures.append(QStringLiteral("%1: the drive root cannot be deleted").arg(target.toString()));
+            ++done;
+            setProgress(static_cast<int>(100.0 * done / m_targets.size()));
+            continue;
+        }
+
         Result<void> removed = m_fileSystem->remove(target, true);
         if (removed.ok())
             ++m_deleted;

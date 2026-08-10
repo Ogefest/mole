@@ -101,6 +101,9 @@ mole_add_test(tst_TransferTask      SOURCES core/tst_TransferTask.cpp)
 # that need no server, at every boundary size the copy loop has.
 mole_add_test(tst_FilesArriveWhole  SOURCES core/tst_FilesArriveWhole.cpp)
 
+# Delete, which has nothing to compare afterwards: what else went with it.
+mole_add_test(tst_Delete            SOURCES core/tst_Delete.cpp)
+
 # The one operation that deletes something: every stage of a move interrupted,
 # and the source still there afterwards.
 mole_add_test(tst_MoveIsPermanent   SOURCES core/tst_MoveIsPermanent.cpp)

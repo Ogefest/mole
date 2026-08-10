@@ -260,6 +260,18 @@ Result<void> LocalFileSystem::remove(const VfsUri& target, bool recursive)
         return Result<void>::failure(VfsError::NotSupported, QStringLiteral("Not a local uri"));
 
     const QFileInfo info(path);
+    // A link is a name, and removing the name is the whole job. Asked whether it
+    // is a directory, a link to one says yes -- so a recursive delete that looks
+    // no further walks through it and empties whatever it points at, which is
+    // how deleting a scratch folder takes a home directory with it. Checked
+    // before existence as well, because a link whose target is gone does not
+    // "exist" and still has to be removable.
+    if (info.isSymLink()) {
+        if (!QFile::remove(path))
+            return Result<void>::failure(VfsError::IoError, QStringLiteral("Cannot remove %1").arg(path));
+        return {};
+    }
+
     if (!info.exists())
         return Result<void>::failure(VfsError::NotFound, QStringLiteral("No such file: %1").arg(path));
 
