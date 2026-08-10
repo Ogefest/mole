@@ -9,6 +9,46 @@ wrong.
 
 ---
 
+## One drive that misbehaves on purpose, instead of three that each did once
+
+**Asked for:** MOLE-24. Three fakes had been written in a single day —
+`CommitFailingFileSystem`, `HalfReadingFileSystem`, `ForgetfulFileSystem`, all in
+`tst_TransferTask.cpp` — each invented to reproduce one fault, each about forty
+lines of delegation around the one line that misbehaved. A fourth would have been
+written the same way. Write the general one, and make every fault fire on a byte
+offset rather than on a clock. See
+[ADR-0026](docs/adr/0026-faults-are-injected-at-a-byte-offset.md).
+
+**What it turned out to be:** `tests/support/FaultyFileSystem`, a decorator over
+any `IFileSystem` in the shape `LoggingFileSystem` already uses for every real
+mount. Ten faults, each one something that had actually been seen: a read that
+fails after N bytes, a read that goes short and recovers, a read that stalls
+until it is released, a write that accepts everything and stores every fourth
+byte, a write that only fails when it is closed, a file that changes size or
+vanishes or is renamed under the reader, access withdrawn part way through, a
+destination that fills up, and a listing that overstates a size.
+
+**The chunk size nearly made the offsets a lie.** A fault declared at byte 1200
+would first have fired at whatever multiple of 256 KiB the caller's read landed
+on, so the wrapper clamps each read and write to stop exactly on the next offset.
+`theOffsetHoldsWhateverChunkSizeIsUsed` reads the same file 7 bytes at a time and
+4096 bytes at a time and demands the same answer.
+
+**Each stream takes its own copy of the faults.** The first version kept the
+fired flags on the policy, which would have meant ten concurrent copies of one
+file producing one failure and nine successes — the exact scenario phase 2 was
+written to check, quietly passing.
+
+**A stall is the one fault that cannot be an offset**, since it is the absence of
+an event. It is still not a clock: the stream stops at its offset and stays there
+until `release()`, and a test waits for `isStalled()`.
+
+The three fakes are deleted and the four tests that used them go through the
+wrapper unchanged in meaning, down to the assertions on "stopped after 4 bytes"
+and "4000 bytes were sent but 1000 arrived". The wrapper has its own suite,
+`tst_FaultyFileSystem`, because a test tool that miscounts bytes would make
+everything built on it green for the wrong reason.
+
 ## The board moves to Vikunja
 
 **Asked for:** GitHub's GraphQL rate limits were making the Projects board

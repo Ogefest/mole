@@ -6,6 +6,8 @@ add_library(mole_test_support STATIC
     support/TestSupport.cpp
     support/FileSystemConformance.h
     support/FileSystemConformance.cpp
+    support/FaultyFileSystem.h
+    support/FaultyFileSystem.cpp
     support/FakePlugin.h
     support/MoleTestMain.h
     support/TestbedControl.h
@@ -76,6 +78,10 @@ mole_add_test(tst_LocalFileSystem   SOURCES core/tst_LocalFileSystem.cpp)
 # from inside a process that intends to keep running.
 mole_add_test(tst_KilledOutright    SOURCES core/tst_KilledOutright.cpp LIBS Qt6::Sql)
 mole_add_test(tst_MemoryFileSystem  SOURCES core/tst_MemoryFileSystem.cpp)
+
+# The fault injector is a test tool, and one that miscounts bytes would make
+# every suite built on it green for the wrong reason.
+mole_add_test(tst_FaultyFileSystem  SOURCES support/tst_FaultyFileSystem.cpp)
 mole_add_test(tst_VfsManager        SOURCES core/tst_VfsManager.cpp)
 mole_add_test(tst_DirectoryWalker   SOURCES core/tst_DirectoryWalker.cpp)
 mole_add_test(tst_TaskManager       SOURCES core/tst_TaskManager.cpp)

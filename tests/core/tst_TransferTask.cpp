@@ -1,3 +1,4 @@
+#include "support/FaultyFileSystem.h"
 #include "support/MoleTestMain.h"
 #include "support/TestSupport.h"
 
@@ -9,239 +10,8 @@
 #include <QDir>
 #include <QFile>
 
-#include <cstring>
-
 using namespace mole;
 using namespace mole::test;
-
-namespace {
-
-/// A write stream that accepts everything and only fails when it is closed.
-///
-/// That is what every remote backend looks like: it stages the payload locally and
-/// sends it in close(), because a signature needs the length up front. The failure
-/// therefore arrives after the last successful write() -- and QIODevice::close()
-/// returns void, so it can only be found by asking.
-class FailsOnCloseDevice : public QIODevice, public ICommitsOnClose
-{
-public:
-    bool open(OpenMode mode) override { return QIODevice::open(mode | QIODevice::Unbuffered); }
-    VfsError commitError() const override
-    {
-        return VfsError::make(VfsError::NetworkError, QStringLiteral("the server hung up"));
-    }
-
-protected:
-    qint64 readData(char*, qint64) override { return -1; }
-    // Every write succeeds, which is the point: nothing before close() knows.
-    qint64 writeData(const char*, qint64 size) override { return size; }
-};
-
-/// A backend that behaves like the memory one in every way except that its write
-/// streams fail when closed. By delegation rather than inheritance, because
-/// MemoryFileSystem is final.
-class CommitFailingFileSystem final : public IFileSystem
-{
-public:
-    explicit CommitFailingFileSystem(std::shared_ptr<MemoryFileSystem> inner)
-        : m_inner(std::move(inner))
-    {
-    }
-
-    QString scheme() const override { return m_inner->scheme(); }
-    VfsCapabilities capabilities() const override { return m_inner->capabilities(); }
-    Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) override
-    {
-        return m_inner->list(dir, cancel);
-    }
-    Result<FileEntry> stat(const VfsUri& target) override { return m_inner->stat(target); }
-    Result<void> makeDirectory(const VfsUri& target) override { return m_inner->makeDirectory(target); }
-    Result<void> remove(const VfsUri& target, bool recursive) override
-    {
-        return m_inner->remove(target, recursive);
-    }
-    Result<void> rename(const VfsUri& from, const VfsUri& to) override { return m_inner->rename(from, to); }
-    Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override
-    {
-        return m_inner->openRead(target, expectedSize);
-    }
-
-    Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri&, qint64 = -1) override
-    {
-        auto device = std::make_unique<FailsOnCloseDevice>();
-        device->open(QIODevice::WriteOnly);
-        return Result<std::unique_ptr<QIODevice>>(std::unique_ptr<QIODevice>(device.release()));
-    }
-
-private:
-    std::shared_ptr<MemoryFileSystem> m_inner;
-};
-
-/// Hands over the beginning of a file and then fails.
-///
-/// This is what a remote read looks like when the connection dies half way: the
-/// device knows how long the file is, has delivered part of it, and can deliver
-/// no more. Crucially it reports the failure the way QIODevice does -- by
-/// reading nothing -- which is indistinguishable from the end of the file unless
-/// the position is checked as well.
-class HalfReadableDevice final : public QIODevice
-{
-public:
-    HalfReadableDevice(QByteArray head, qint64 wholeSize)
-        : m_head(std::move(head))
-        , m_wholeSize(wholeSize)
-    {
-    }
-
-    bool open(OpenMode mode) override { return QIODevice::open(mode | QIODevice::Unbuffered); }
-    qint64 size() const override { return m_wholeSize; }
-
-protected:
-    qint64 readData(char* data, qint64 maxSize) override
-    {
-        if (m_served >= m_head.size()) {
-            setErrorString(QStringLiteral("the connection went away"));
-            return -1;
-        }
-        const qint64 bytes = qMin(maxSize, static_cast<qint64>(m_head.size()) - m_served);
-        std::memcpy(data, m_head.constData() + m_served, static_cast<size_t>(bytes));
-        m_served += bytes;
-        return bytes;
-    }
-    qint64 writeData(const char*, qint64) override { return -1; }
-
-private:
-    QByteArray m_head;
-    qint64 m_wholeSize = 0;
-    qint64 m_served = 0;
-};
-
-/// A backend whose reads stop half way, by delegation as above.
-class HalfReadingFileSystem final : public IFileSystem
-{
-public:
-    explicit HalfReadingFileSystem(std::shared_ptr<MemoryFileSystem> inner)
-        : m_inner(std::move(inner))
-    {
-    }
-
-    QString scheme() const override { return m_inner->scheme(); }
-    VfsCapabilities capabilities() const override { return m_inner->capabilities(); }
-    Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) override
-    {
-        return m_inner->list(dir, cancel);
-    }
-    Result<FileEntry> stat(const VfsUri& target) override { return m_inner->stat(target); }
-    Result<void> makeDirectory(const VfsUri& target) override { return m_inner->makeDirectory(target); }
-    Result<void> remove(const VfsUri& target, bool recursive) override
-    {
-        return m_inner->remove(target, recursive);
-    }
-    Result<void> rename(const VfsUri& from, const VfsUri& to) override { return m_inner->rename(from, to); }
-    Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1) override
-    {
-        return m_inner->openWrite(target, expectedSize);
-    }
-
-    Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 = -1) override
-    {
-        const Result<FileEntry> what = m_inner->stat(target);
-        if (!what.ok())
-            return Result<std::unique_ptr<QIODevice>>(what.error());
-
-        auto device = std::make_unique<HalfReadableDevice>(QByteArray("head"), what.value().size);
-        device->open(QIODevice::ReadOnly);
-        return Result<std::unique_ptr<QIODevice>>(std::unique_ptr<QIODevice>(device.release()));
-    }
-
-private:
-    std::shared_ptr<MemoryFileSystem> m_inner;
-};
-
-/// A drive that accepts every byte and quietly keeps only some of them.
-///
-/// Servers do this. Not often, and not on purpose, but a write that is
-/// acknowledged and then lands short is exactly the failure that leaves a backup
-/// looking like a backup, and nothing before the destination is weighed can tell
-/// the difference.
-class ForgetfulFileSystem final : public IFileSystem
-{
-public:
-    ForgetfulFileSystem(std::shared_ptr<MemoryFileSystem> inner, int keepEvery)
-        : m_inner(std::move(inner))
-        , m_keepEvery(keepEvery)
-    {
-    }
-
-    QString scheme() const override { return m_inner->scheme(); }
-    VfsCapabilities capabilities() const override { return m_inner->capabilities(); }
-    Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) override
-    {
-        return m_inner->list(dir, cancel);
-    }
-    Result<FileEntry> stat(const VfsUri& target) override { return m_inner->stat(target); }
-    Result<void> makeDirectory(const VfsUri& target) override { return m_inner->makeDirectory(target); }
-    Result<void> remove(const VfsUri& target, bool recursive) override
-    {
-        return m_inner->remove(target, recursive);
-    }
-    Result<void> rename(const VfsUri& from, const VfsUri& to) override { return m_inner->rename(from, to); }
-    Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override
-    {
-        return m_inner->openRead(target, expectedSize);
-    }
-
-    Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1) override
-    {
-        Result<std::unique_ptr<QIODevice>> inner = m_inner->openWrite(target, expectedSize);
-        if (!inner.ok())
-            return inner;
-        return Result<std::unique_ptr<QIODevice>>(
-            std::unique_ptr<QIODevice>(new LosingDevice(std::move(inner.value()), m_keepEvery)));
-    }
-
-private:
-    /// Reports every byte as written and passes on only every Nth one.
-    class LosingDevice final : public QIODevice
-    {
-    public:
-        LosingDevice(std::unique_ptr<QIODevice> inner, int keepEvery)
-            : m_inner(std::move(inner))
-            , m_keepEvery(keepEvery)
-        {
-            QIODevice::open(QIODevice::WriteOnly | QIODevice::Unbuffered);
-        }
-        void close() override
-        {
-            m_inner->close();
-            QIODevice::close();
-        }
-
-    protected:
-        qint64 readData(char*, qint64) override { return -1; }
-        qint64 writeData(const char* data, qint64 size) override
-        {
-            QByteArray kept;
-            for (qint64 i = 0; i < size; ++i) {
-                if ((m_seen + i) % m_keepEvery == 0)
-                    kept.append(data[i]);
-            }
-            m_seen += size;
-            m_inner->write(kept);
-            return size; // the lie
-        }
-
-    private:
-        std::unique_ptr<QIODevice> m_inner;
-        int m_keepEvery = 1;
-        qint64 m_seen = 0;
-    };
-
-    std::shared_ptr<MemoryFileSystem> m_inner;
-    int m_keepEvery = 1;
-};
-
-} // namespace
 
 class TestTransferTask : public QObject
 {
@@ -579,7 +349,8 @@ void TestTransferTask::aWriteThatFailsOnlyWhenClosedIsStillAFailure()
 
     auto inner = std::make_shared<MemoryFileSystem>();
     inner->addDirectory(QStringLiteral("/target"));
-    auto target = std::make_shared<CommitFailingFileSystem>(inner);
+    auto target = std::make_shared<FaultyFileSystem>(inner);
+    target->writeFailsOnClose();
 
     TransferTask::Request request;
     request.sourceFileSystem = m_mem;
@@ -628,7 +399,8 @@ void TestTransferTask::aReadThatStopsHalfWayIsNotAnEndOfFile()
     // original then gets deleted by a move, or trusted by whoever reads it.
     m_mem->addFile(QStringLiteral("/a/big.bin"), QByteArray("head and then some more"));
 
-    auto source = std::make_shared<HalfReadingFileSystem>(m_mem);
+    auto source = std::make_shared<FaultyFileSystem>(m_mem);
+    source->readFailsAt(4);
     auto target = std::make_shared<MemoryFileSystem>();
     target->addDirectory(QStringLiteral("/target"));
 
@@ -656,7 +428,8 @@ void TestTransferTask::aFileThatLandedShortIsCaughtAfterwards()
 
     auto inner = std::make_shared<MemoryFileSystem>();
     inner->addDirectory(QStringLiteral("/target"));
-    auto target = std::make_shared<ForgetfulFileSystem>(inner, 4);
+    auto target = std::make_shared<FaultyFileSystem>(inner);
+    target->writeKeepsEveryNth(4);
 
     TransferTask::Request request;
     request.sourceFileSystem = m_mem;
@@ -681,7 +454,8 @@ void TestTransferTask::aMoveKeepsTheSourceWhenTheCheckFails()
 
     auto inner = std::make_shared<MemoryFileSystem>();
     inner->addDirectory(QStringLiteral("/target"));
-    auto target = std::make_shared<ForgetfulFileSystem>(inner, 4);
+    auto target = std::make_shared<FaultyFileSystem>(inner);
+    target->writeKeepsEveryNth(4);
 
     TransferTask::Request request;
     request.mode = TransferTask::Mode::Move;
