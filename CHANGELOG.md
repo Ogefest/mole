@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-10 #MOLE-13 A bulk rename that swaps or shifts names now works instead of refusing every row
 2026-08-10 #MOLE-2 A backslash in a file name is part of the name, not a folder separator
 2026-08-10 #MOLE-2 A file with a name at the length limit can be copied
 2026-08-10 #MOLE-16 A progress bar can no longer read past 100% or slide backwards

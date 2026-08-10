@@ -129,6 +129,9 @@ mole_add_test(tst_DelimitedText     SOURCES core/tst_DelimitedText.cpp)
 mole_add_test(tst_DelimitedStore    SOURCES core/tst_DelimitedStore.cpp)
 mole_add_test(tst_TableSources     SOURCES core/tst_TableSources.cpp)
 mole_add_test(tst_RenamePlan       SOURCES core/tst_RenamePlan.cpp)
+
+# Carrying a batch of renames out, where the order is the whole problem.
+mole_add_test(tst_RenameTask       SOURCES core/tst_RenameTask.cpp)
 mole_add_test(tst_Duplicates       SOURCES core/tst_Duplicates.cpp)
 mole_add_test(tst_Sync             SOURCES core/tst_Sync.cpp)
 mole_add_test(tst_Terminal         SOURCES core/tst_Terminal.cpp)
