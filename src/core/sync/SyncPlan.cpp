@@ -8,19 +8,38 @@
 namespace mole {
 namespace {
 
-    /// Everything in one directory, keyed by name. An empty result and an
-    /// unreadable directory are deliberately the same here: a destination that does
-    /// not exist yet reads as empty, which is exactly right for a first sync.
-    QHash<QString, FileEntry> listByName(IFileSystem* fs, const VfsUri& dir, const CancelToken& cancel)
+    /// Everything in one directory, keyed by name, and whether it could be read
+    /// at all.
+    ///
+    /// The difference matters entirely at the source. An empty directory and one
+    /// that could not be listed look identical in the result, and in a mirror
+    /// that is the difference between "the source has nothing here" and "we
+    /// could not see" -- the first of which is an instruction to delete
+    /// everything at the far end. At the destination the two really are the
+    /// same: a target that does not exist yet reads as empty, which is exactly
+    /// right for a first sync.
+    struct Listing
     {
-        QHash<QString, FileEntry> out;
-        if (!fs)
+        QHash<QString, FileEntry> byName;
+        bool readable = true;
+    };
+
+    Listing listByName(IFileSystem* fs, const VfsUri& dir, const CancelToken& cancel)
+    {
+        Listing out;
+        if (!fs) {
+            out.readable = false;
             return out;
+        }
         Result<FileEntryList> listed = fs->list(dir, cancel);
-        if (!listed.ok())
+        if (!listed.ok()) {
+            // Cancellation is not a fault in the source, but it is still not a
+            // picture of it, and the caller must not act on the difference.
+            out.readable = false;
             return out;
+        }
         for (const FileEntry& entry : listed.value())
-            out.insert(entry.name, entry);
+            out.byName.insert(entry.name, entry);
         return out;
     }
 
@@ -83,13 +102,24 @@ namespace {
 
     void walk(IFileSystem* sourceFs, const VfsUri& source, IFileSystem* targetFs, const VfsUri& target,
         const SyncOptions& options, const QString& relative, const CancelToken& cancel,
-        QList<SyncPlan::Step>& steps)
+        QList<SyncPlan::Step>& steps, QStringList& unreadable)
     {
         if (cancel.isCancelled())
             return;
 
-        const QHash<QString, FileEntry> here = listByName(sourceFs, source, cancel);
-        const QHash<QString, FileEntry> there = listByName(targetFs, target, cancel);
+        const Listing sourceListing = listByName(sourceFs, source, cancel);
+        if (!sourceListing.readable) {
+            // Nothing is planned for a directory we could not read -- not a copy,
+            // and above all not a deletion. A source that cannot be seen is not a
+            // source that is empty, and a mirror told the difference wrongly
+            // deletes the only remaining copy of everything in it.
+            if (!cancel.isCancelled())
+                unreadable.append(source.path());
+            return;
+        }
+
+        const QHash<QString, FileEntry>& here = sourceListing.byName;
+        const QHash<QString, FileEntry> there = listByName(targetFs, target, cancel).byName;
 
         for (auto it = here.constBegin(); it != here.constEnd(); ++it) {
             if (cancel.isCancelled())
@@ -111,7 +141,8 @@ namespace {
                     steps.append(SyncPlan::Step { SyncPlan::Action::CreateDirectory, entry.uri,
                         target.child(entry.name), path, 0, QStringLiteral("not there") });
                 }
-                walk(sourceFs, entry.uri, targetFs, target.child(entry.name), options, path, cancel, steps);
+                walk(sourceFs, entry.uri, targetFs, target.child(entry.name), options, path, cancel, steps,
+                    unreadable);
                 continue;
             }
 
@@ -174,7 +205,7 @@ SyncPlan SyncPlan::build(IFileSystem* sourceFs, const VfsUri& source, IFileSyste
     SyncPlan plan;
     if (!sourceFs || !targetFs)
         return plan;
-    walk(sourceFs, source, targetFs, target, options, QString(), cancel, plan.m_steps);
+    walk(sourceFs, source, targetFs, target, options, QString(), cancel, plan.m_steps, plan.m_unreadable);
 
     // Directories before the files that go in them, deletions last: a mirror
     // that deleted first would remove a file it was about to be given back.

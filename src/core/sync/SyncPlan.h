@@ -4,6 +4,7 @@
 #include "core/vfs/IFileSystem.h"
 
 #include <QList>
+#include <QStringList>
 
 namespace mole {
 
@@ -41,6 +42,11 @@ public:
         const VfsUri& target, const SyncOptions& options, const CancelToken& cancel);
 
     const QList<Step>& steps() const { return m_steps; }
+    /// Directories the comparison could not read, in words. A plan with any of
+    /// these in it is a plan built from an incomplete picture of the source, and
+    /// the parts it could not see produced no steps at all -- neither copies nor
+    /// deletions. See ADR-0030.
+    const QStringList& unreadable() const { return m_unreadable; }
     int countOf(Action action) const;
     qint64 bytesToTransfer() const;
     bool isEmpty() const { return m_steps.isEmpty(); }
@@ -49,6 +55,7 @@ public:
 
 private:
     QList<Step> m_steps;
+    QStringList m_unreadable;
 };
 
 } // namespace mole

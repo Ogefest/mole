@@ -90,6 +90,13 @@ void SyncTask::run()
             m_plan.countOf(SyncPlan::Action::Delete), 30);
     }
 
+    // A directory the comparison could not read produced no steps at all, which
+    // keeps the plan safe -- but it also means this sync is not the mirror it
+    // was asked for, and saying nothing about that would leave somebody
+    // believing the two trees now match.
+    for (const QString& path : m_plan.unreadable())
+        m_failures.append(QStringLiteral("%1: could not be read, so nothing was planned for it").arg(path));
+
     emit planReady(m_plan);
 
     if (m_options.dryRun) {
