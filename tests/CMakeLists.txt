@@ -101,6 +101,10 @@ mole_add_test(tst_TransferTask      SOURCES core/tst_TransferTask.cpp)
 # that need no server, at every boundary size the copy loop has.
 mole_add_test(tst_FilesArriveWhole  SOURCES core/tst_FilesArriveWhole.cpp)
 
+# Several jobs over the same files at once: what must never appear is a file
+# that is half of one and half of the other.
+mole_add_test(tst_ManyAtOnce        SOURCES core/tst_ManyAtOnce.cpp)
+
 # Cancellation, aimed at a stage rather than at a moment: the walk, the arrival
 # check, a move's delete pass, and the queue before any of it starts.
 mole_add_test(tst_Cancellation      SOURCES core/tst_Cancellation.cpp)

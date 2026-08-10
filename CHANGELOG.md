@@ -1,10 +1,26 @@
 # Changelog
 
-New features and visible changes in Mole, newest first — **one sentence each**.
-The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
-[DONE.md](DONE.md); repeating either one here only makes this file harder to scan.
+New features and visible changes in Mole, newest first — **one line each**, in the
+shape `YYYY-MM-DD #MOLE-nn what changed`. This file is the release notes: the
+block between two release markers is one version's, pulled out by a regular
+expression, so a line in another shape is a line nobody reads. The reasoning
+belongs in [docs/adr/](docs/adr/) and the long account in [DONE.md](DONE.md).
+
+The prose entries below the dated ones are from before 2026-08-10 and belong to
+the first release; they stay as they are.
 
 ## Unreleased
+
+2026-08-10 #MOLE-16 A progress bar can no longer read past 100% or slide backwards
+2026-08-10 #MOLE-16 A task that throws is reported as failed instead of ending the process
+2026-08-10 #MOLE-10 An archive entry named `../` can no longer address anything outside the archive
+2026-08-10 #MOLE-12 A file changed while a duplicate scan reads it is no longer offered as a copy of anything
+2026-08-10 #MOLE-11 A mirror no longer deletes the destination when it cannot read the source
+2026-08-10 #MOLE-3 A job's duration and speed no longer go wrong when the system clock is stepped
+2026-08-10 #MOLE-9 Deleting a shortcut to a folder no longer empties the folder it points at
+2026-08-10 #MOLE-9 The drive root cannot be deleted
+2026-08-10 #MOLE-8 A move no longer deletes a file it skipped
+2026-08-10 #MOLE-8 A folder can no longer be moved or copied into itself
 
 - `mole-tasks` runs any of the work from a console — copy, move, delete, sync,
   compress, rename, scan, duplicates, verify — with no window and no display.

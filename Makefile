@@ -8,7 +8,7 @@ JOBS ?= $(shell nproc)
 PREFIX ?= /usr/local
 DESTDIR ?=
 
-.PHONY: all build configure release run test test-live test-heavy test-verbose clean distclean format tidy help guide-images \
+.PHONY: all build configure release run test test-live test-heavy test-verbose tsan clean distclean format tidy help guide-images \
         install uninstall bundle licence-check screenshots
 
 all: build
@@ -79,6 +79,22 @@ test-verbose: build
 ## asan: build and test with address and undefined-behaviour sanitizers
 asan:
 	@$(MAKE) test PRESET=asan
+
+## tsan: build and test under ThreadSanitizer
+##       A separate build from asan because the two cannot share a binary. The
+##       suites worth running here are the concurrent ones -- everything else is
+##       single-threaded and pays the slowdown for nothing -- so this runs the
+##       whole suite by default and takes TESTS= to narrow it.
+TESTS ?= .
+tsan:
+	@cmake --build build/tsan --parallel $(JOBS) 2>/dev/null || cmake --preset tsan
+	@cmake --build build/tsan --parallel $(JOBS)
+	@# setarch -R turns address-space randomisation off for the run. Without it
+	@# every binary dies on "unexpected memory mapping": the kernel's default
+	@# mmap entropy on this distribution is wider than ThreadSanitizer's shadow
+	@# mapping expects, and nothing in the build can fix that from inside.
+	@setarch $$(uname -m) -R ctest --test-dir build/tsan --output-on-failure \
+		--parallel $(JOBS) --label-exclude heavy -R "$(TESTS)"
 
 ## format: apply .clang-format to every source file
 format:

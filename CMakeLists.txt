@@ -12,6 +12,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(MOLE_BUILD_TESTS "Build unit tests" ON)
 option(MOLE_ENABLE_SANITIZERS "Enable ASan + UBSan" OFF)
+# Separate from the one above, because the two cannot be built together: address
+# and thread sanitizers instrument the same things and refuse to share a binary.
+option(MOLE_ENABLE_THREAD_SANITIZER "Enable ThreadSanitizer" OFF)
 
 # Qt 6.4 is the baseline (Ubuntu 24.04 ships 6.4.2). Do not use newer APIs
 # without bumping this number first -- it is what keeps the port to
@@ -26,9 +29,22 @@ target_compile_options(mole_flags INTERFACE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wshadow;-Wnon-virtual-dtor>
     $<$<CXX_COMPILER_ID:MSVC>:/W4;/permissive->)
 
+if(MOLE_ENABLE_SANITIZERS AND MOLE_ENABLE_THREAD_SANITIZER)
+    message(FATAL_ERROR "MOLE_ENABLE_SANITIZERS and MOLE_ENABLE_THREAD_SANITIZER cannot both be on")
+endif()
+
 if(MOLE_ENABLE_SANITIZERS)
     target_compile_options(mole_flags INTERFACE -fsanitize=address,undefined -fno-omit-frame-pointer)
     target_link_options(mole_flags INTERFACE -fsanitize=address,undefined)
+endif()
+
+# Races are what the concurrency tests exist to find, and they are invisible to
+# every other tool here: a task that reads a field another thread is writing
+# passes every run until the day it does not. ThreadSanitizer is the only thing
+# that sees one without it having to happen.
+if(MOLE_ENABLE_THREAD_SANITIZER)
+    target_compile_options(mole_flags INTERFACE -fsanitize=thread -fno-omit-frame-pointer -g)
+    target_link_options(mole_flags INTERFACE -fsanitize=thread)
 endif()
 
 # Strictly layered, each depending only on the ones above it:

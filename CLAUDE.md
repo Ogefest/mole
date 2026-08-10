@@ -172,9 +172,23 @@ pushed by any mistake.
 
 The three files alongside it keep what a tracker holds badly:
 
-- [CHANGELOG.md](CHANGELOG.md) — the short, user-facing list: **one sentence** per
-  new feature or visible change, newest first. No design discussion, no
-  internals, no restating the ADR.
+- [CHANGELOG.md](CHANGELOG.md) — **one line per change, not one sentence.** Newest
+  first, and in this shape:
+
+  ```
+  2026-08-10 #MOLE-22 Fix something somewhere
+  ```
+
+  The day it landed, the ticket, and the shortest phrase that says what changed. No
+  design discussion, no internals, no restating the ADR — that is what `DONE.md` and
+  the ADRs are for. Write `#MOLE-22`, never `#22`: GitHub turns `#22` into a link to
+  an issue that was deleted on 2026-08-10.
+
+  **This file is the release notes.** `make release` will insert a marker line above
+  the unreleased entries, and everything between two markers is one version's notes,
+  pulled out by a regular expression — so a line that does not follow the shape is a
+  line that will not reach anybody. Lines already in the file from before
+  2026-08-10 are prose and stay that way; they belong to the first release.
 - [DONE.md](DONE.md) — the long account of what was asked for and what the answer
   turned out to be, including the times the first answer was wrong.
 - [TODO.md](TODO.md) — context that is *not* a task: behaviour we have decided to

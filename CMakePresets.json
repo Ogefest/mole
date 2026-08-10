@@ -28,6 +28,15 @@
       }
     },
     {
+      "name": "tsan",
+      "inherits": "base",
+      "displayName": "Debug + thread sanitizer",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "MOLE_ENABLE_THREAD_SANITIZER": "ON"
+      }
+    },
+    {
       "name": "release",
       "inherits": "base",
       "displayName": "Release",
@@ -37,6 +46,7 @@
   "buildPresets": [
     { "name": "debug", "configurePreset": "debug" },
     { "name": "asan", "configurePreset": "asan" },
+    { "name": "tsan", "configurePreset": "tsan" },
     { "name": "release", "configurePreset": "release" }
   ],
   "testPresets": [
