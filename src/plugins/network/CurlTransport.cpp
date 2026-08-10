@@ -6,6 +6,7 @@
 #include <QUrl>
 
 #include <atomic>
+#include <cstdio>
 #include <cstring>
 
 namespace mole::net {
@@ -94,6 +95,26 @@ namespace {
         auto* source = static_cast<QIODevice*>(userData);
         const qint64 read = source->read(buffer, static_cast<qint64>(size * count));
         return read < 0 ? CURL_READFUNC_ABORT : static_cast<size_t>(read);
+    }
+
+    /// Puts the payload back to a byte offset so curl can send it again.
+    ///
+    /// curl needs this far more often than it sounds. An authenticating server
+    /// answers the first request with a 401, and curl retries -- which means
+    /// sending the body a second time. Without a way to rewind, that retry is
+    /// impossible and the transfer dies with "necessary data rewind wasn't
+    /// possible", whatever the request was and however small.
+    ///
+    /// A staged upload is a temporary file and can always oblige. A stream being
+    /// written as it is sent cannot: the bytes it already handed over are gone.
+    /// Saying so is the point -- curl asks a server's permission before sending
+    /// a body it cannot repeat, which is what Expect: 100-continue is for.
+    int seekDevice(void* userData, curl_off_t offset, int origin)
+    {
+        auto* source = static_cast<QIODevice*>(userData);
+        if (origin != SEEK_SET || source->isSequential())
+            return CURL_SEEKFUNC_CANTSEEK;
+        return source->seek(offset) ? CURL_SEEKFUNC_OK : CURL_SEEKFUNC_FAIL;
     }
 
     size_t collectHeader(char* data, size_t size, size_t count, void* userData)
@@ -301,6 +322,17 @@ void CurlPool::sendFrom(const Lease& lease, QIODevice& payload, qint64 size)
     curl_easy_setopt(handle, CURLOPT_UPLOAD, 1L);
     curl_easy_setopt(handle, CURLOPT_READFUNCTION, readFromDevice);
     curl_easy_setopt(handle, CURLOPT_READDATA, &payload);
+    curl_easy_setopt(handle, CURLOPT_SEEKFUNCTION, seekDevice);
+    curl_easy_setopt(handle, CURLOPT_SEEKDATA, &payload);
+    // A request carrying a file does not follow redirects.
+    //
+    // Handles are set up with FOLLOWLOCATION on, which is right for a listing
+    // and wrong for this: a server answering a PUT with a redirect would have
+    // the file sent to whatever address it named. That was harmless only for as
+    // long as the body could not be replayed at all -- an accident rather than a
+    // policy, and the moment a staged upload became rewindable the file started
+    // going wherever it was pointed.
+    curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 0L);
     // A negative size means the length is not known in advance, which a stream
     // being written as it is sent cannot know. Protocols that need it up front
     // do not use this path -- see StreamingUpload.
@@ -357,6 +389,9 @@ Response CurlPool::perform(const Lease& lease, const CancelToken& cancel, QIODev
     const qint64 elapsed = clock.elapsed();
 
     curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &response.status);
+    const char* landedOn = nullptr;
+    if (curl_easy_getinfo(handle, CURLINFO_EFFECTIVE_URL, &landedOn) == CURLE_OK && landedOn)
+        response.effectiveUrl = landedOn;
 
     // Detached before the handle goes back to the pool: the buffer is on our
     // stack and must not outlive this call.

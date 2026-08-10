@@ -314,6 +314,20 @@ Result<std::unique_ptr<QIODevice>> WebdavFileSystem::openRead(const VfsUri& targ
     if (error.isError())
         return Result<std::unique_ptr<QIODevice>>(error);
 
+    // A GET on a collection is not an error, which is the problem. The server
+    // redirects to the same path with a slash on the end and answers with an
+    // HTML index of the directory -- 200, a body, and nothing in the response
+    // saying it is not the file that was asked for. So a copy of a directory
+    // produced an HTML page named after it, and a preview showed the same.
+    //
+    // The redirect is the tell, and it costs nothing: asking where the transfer
+    // landed is free, where asking the server what kind of thing this is would
+    // be a PROPFIND before every read.
+    if (!response.effectiveUrl.isEmpty() && response.effectiveUrl.endsWith('/') && !call.url.endsWith('/')) {
+        return Result<std::unique_ptr<QIODevice>>::failure(
+            VfsError::IsADirectory, QStringLiteral("%1 is a directory, not a file").arg(target.path()));
+    }
+
     return net::openDownloadedFile(std::move(scratch));
 }
 
