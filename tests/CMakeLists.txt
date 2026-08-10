@@ -44,6 +44,11 @@ target_link_libraries(mole_test_support
 target_compile_definitions(mole_test_support
     PUBLIC MOLE_TEST_PLUGIN_DIR="${CMAKE_BINARY_DIR}/plugins")
 
+# The console runner lands next to the application rather than next to the test
+# binaries, and one test starts it for real.
+target_compile_definitions(mole_test_support
+    PUBLIC MOLE_TASKS_BINARY="${CMAKE_BINARY_DIR}/mole-tasks")
+
 # Tests that spin up a real QQuickWindow need the Qt scene-graph leak
 # suppressions: Qt does not release its textures when a window is torn down in
 # process, and there is no API to make it. Applied by name so a new QML test
@@ -110,6 +115,15 @@ mole_add_test(tst_RemoteRegistry   SOURCES core/tst_RemoteRegistry.cpp)
 mole_add_test(tst_Analysis          SOURCES core/tst_Analysis.cpp)
 mole_add_test(tst_Scheduler         SOURCES core/tst_Scheduler.cpp)
 mole_add_test(tst_Alerts            SOURCES core/tst_Alerts.cpp)
+
+# --- tools: the console runner ----------------------------------------------
+#
+# Driven in-process: a runner tested only by starting a process gives up its own
+# failure messages, and its exit codes are half of what it is for. One test in
+# there does start the binary, because "runs with no display" is a claim about a
+# process and cannot be checked from inside one.
+mole_add_test(tst_MoleTasks         SOURCES tools/tst_MoleTasks.cpp LIBS mole_tasks_cli)
+add_dependencies(tst_MoleTasks mole-tasks)
 
 # --- host: the extension system ---------------------------------------------
 mole_add_test(tst_PluginManager     SOURCES host/tst_PluginManager.cpp  LIBS mole_host)

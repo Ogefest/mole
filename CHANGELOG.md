@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- `mole-tasks` runs any of the work from a console — copy, move, delete, sync,
+  compress, rename, scan, duplicates, verify — with no window and no display.
 - A copy that is cancelled, or that fails part way through, no longer leaves what
   had arrived behind under the name it was aiming at.
 - A copy whose source stops handing over bytes early is reported as a failure

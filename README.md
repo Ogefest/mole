@@ -195,6 +195,7 @@ src/host       plugin loader and registries
 src/ui         list models and controllers       (headless)
 src/plugins    built-in features + archive plugin
 src/app        main() and the QML shell
+src/tools      mole-tasks, the console runner       (no GUI)
 tests          one binary per unit, plus an integration suite
 ```
 
@@ -204,6 +205,31 @@ tests          one binary per unit, plus an integration suite
   searching, and the operations. Every picture in it was taken by the test suite
   immediately after asserting that what it shows is real, so it cannot document a
   feature that has stopped working.
+
+### From a console
+
+`mole-tasks` runs any of the work without a window — for reproducing something
+against a real server, for driving a transfer under `tc netem`, and for a machine
+with no display. It reads the same drives, credentials and index the application
+does. See [ADR-0028](docs/adr/0028-a-console-runner-for-the-tasks.md).
+
+```sh
+mole-tasks copy --from file:///data/big.bin --to file:///backup --log net
+mole-tasks sync --from file:///photos --to nas:///photos --mode mirror   # says what it would do
+mole-tasks sync --from file:///photos --to nas:///photos --mode mirror --apply
+mole-tasks duplicates file:///downloads --by content
+mole-tasks drives                                                        # what is mounted
+mole-tasks help                                                          # every command
+```
+
+A drive that needs configuring comes from the store the application writes
+(`--drive «name»`, with the passphrase in `MOLE_PASSPHRASE`) or from the command
+line (`--mount name=nas,type=sftp,host=…,user=…,password=@SFTP_PASSWORD`). A
+value written `@SOMETHING` is read from that environment variable, so a password
+stays out of the argument list and out of the shell history.
+
+Exit codes: `0` done, `1` something in the work failed, `2` the command line is
+wrong, `3` a drive could not be reached, `130` interrupted.
 
 ## Extending it
 
@@ -240,6 +266,7 @@ that third-party code uses, so the API cannot quietly rot.
 | `MOLE_PLUGIN_PATH` | extra directories to load plugins from |
 | `MOLE_LOG_PATH` | where the session log is written, instead of the user profile |
 | `MOLE_LOG` | what to record in detail: `task`, `drive`, `net`, `curl`, or `all` |
+| `MOLE_PASSPHRASE` | unlocks the credential store for `mole-tasks`, which has nobody to ask |
 | `MOLE_SCREENSHOT_DIR` | where `tst_Walkthrough` writes its pictures |
 
 ### When something goes wrong

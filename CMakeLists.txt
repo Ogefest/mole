@@ -39,6 +39,7 @@ add_subdirectory(src/host)
 add_subdirectory(src/ui)
 add_subdirectory(src/plugins)
 add_subdirectory(src/app)
+add_subdirectory(src/tools)
 
 if(MOLE_BUILD_TESTS)
     # Network is for the tests alone -- Mole itself talks to servers through
@@ -63,7 +64,7 @@ include(GNUInstallDirs)
 
 set(MOLE_PLUGIN_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/mole/plugins")
 
-install(TARGETS mole
+install(TARGETS mole mole-tasks
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 if(MOLE_HAVE_ARCHIVE_PLUGIN)

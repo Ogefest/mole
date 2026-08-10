@@ -9,6 +9,44 @@ wrong.
 
 ---
 
+## Every task, from a console, with no window
+
+**Asked for:** MOLE-26. A binary that starts any task against any configured
+drive and says what it did, so that a fault found by hand against a real server
+is one command rather than a window, two panes and a drag; so that the scale tier
+can run on a machine with no display; and so that a shell script can put a
+transfer under `tc netem`. Deliberately not a scenario language — scenarios are
+C++ tests. See
+[ADR-0028](docs/adr/0028-a-console-runner-for-the-tasks.md).
+
+**What it turned out to be:** `src/tools/`, a second binary in the same build,
+linking `mole_core` and `mole_host` and nothing above them. Ten commands — copy,
+move, delete, sync, compress, rename, scan, duplicates, verify, and `drives`,
+which says what is mounted and how to address it. It reads the drives file, the
+credential store and the index the application uses, because a runner that
+connected its own way would reproduce its own faults.
+
+**The exit codes are half of what it is for.** A script in a loop has to tell
+"the copy failed" from "I typed the command wrong" from "the drive was never
+there", so those are 1, 2 and 3, with 130 for an interrupt. Ctrl-C asks the task
+to cancel rather than killing the process, which is what makes the half-written
+file get cleaned up.
+
+**Secrets never appear in an argument.** A configured drive is named with
+`--drive` and its passphrase comes from `MOLE_PASSPHRASE`; a drive described on
+the command line takes `password=@SOME_VARIABLE`, read from the environment. An
+argument list is readable by every process on the machine, and a shell history
+outlives the run.
+
+**`sync` and `rename` say what they would do and stop**, as the interface does.
+`--apply` carries it out. Nothing that can delete files does it on the strength
+of a typo.
+
+The commands are driven by the test suite in-process, so a failure reads as an
+assertion rather than as a blob of captured output — with one test that starts
+the binary for real with `DISPLAY` and `WAYLAND_DISPLAY` removed, because "runs
+with no window" is a claim about a process and cannot be checked from inside one.
+
 ## A copy, going wrong thirteen ways, and two faults it found
 
 **Asked for:** MOLE-25. A first vertical slice of hostile scenarios through
