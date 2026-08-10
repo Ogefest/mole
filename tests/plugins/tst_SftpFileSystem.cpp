@@ -1,5 +1,6 @@
 #include "plugins/network/SftpFileSystem.h"
 #include "support/FileSystemConformance.h"
+#include "support/TestbedControl.h"
 #include "support/MoleTestMain.h"
 
 #include <QUrl>
@@ -210,6 +211,7 @@ private slots:
     void itSatisfiesTheConformanceSuite();
     void aLargeFileArrivesWhole();
     void aLargeFileGoesUpWhole();
+    void aReadWhoseConnectionIsCutDoesNotLookLikeAWholeFile();
 };
 
 void TestSftpFileSystem::aFormWithoutAHostIsRefused()
@@ -278,6 +280,106 @@ void TestSftpFileSystem::theFormAsksOnlyWhatSftpNeeds()
     }
     QCOMPARE(required, 2); // host and user, and nothing else
     QVERIFY2(hasPasswordField, "a password field is what routes the secret to the credential store");
+}
+
+/// The case the control channel exists for.
+///
+/// A server that behaves proves very little. What a file manager has to survive
+/// is the connection going away in the middle of a transfer -- and the failure
+/// that matters is not the error, it is the *silence*: bytes stopping early and
+/// being handed over as though the file were complete. That has happened here
+/// before, which is why a copy is weighed at the destination now.
+///
+/// The cut is triggered on a byte offset rather than after a wait. A test that
+/// sleeps for 200 ms passes on one machine and fails on another.
+void TestSftpFileSystem::aReadWhoseConnectionIsCutDoesNotLookLikeAWholeFile()
+{
+    const Account account = accountFromEnvironment();
+    if (!account.isConfigured())
+        QSKIP("No SFTP account in the environment.");
+    if (!TestbedControl::isAvailable()) {
+        QSKIP("No control channel; set MOLE_TEST_CONTROL to a command that can interfere with the "
+              "server, e.g. \"ssh user@machine sudo mole-control\".");
+    }
+
+    int megabytes = qEnvironmentVariableIntValue("MOLE_TEST_SFTP_LARGE_MB");
+    if (megabytes <= 0)
+        megabytes = 64;
+
+    SftpSettings settings;
+    settings.host = account.host;
+    settings.port = account.port;
+    settings.username = account.user;
+    settings.password = account.password;
+    settings.remoteRoot = QStringLiteral("/");
+
+    auto fileSystem = std::make_shared<SftpFileSystem>(QStringLiteral("sftp"), settings);
+    const RawSftp raw(account);
+
+    const QString remotePath
+        = account.base + QStringLiteral("/mole-cut-%1.bin").arg(QCoreApplication::applicationPid());
+    QByteArray payload;
+    payload.reserve(megabytes * kBlockSize);
+    for (int block = 0; block < megabytes; ++block)
+        payload.append(blockAt(block));
+    QVERIFY2(raw.putFile(remotePath, payload), "could not put a large file on the server");
+
+    // Slowed down first, with the same channel. Over a local network the file
+    // arrives before a command to cut the connection has finished travelling,
+    // so without this the test can only ever report that it was too late --
+    // which is the shape of a test that never actually runs.
+    const QString limited = TestbedControl::run(
+        { QStringLiteral("netem"), QStringLiteral("rate"), QStringLiteral("40mbit") });
+    QVERIFY2(!limited.isEmpty(), "the control channel has to say what it did");
+
+    const VfsUri target(QStringLiteral("sftp"), QString(), remotePath);
+    Result<std::unique_ptr<QIODevice>> opened = fileSystem->openRead(target, payload.size());
+    QVERIFY2(opened.ok(), qPrintable(opened.error().message));
+    std::unique_ptr<QIODevice> stream = std::move(opened.value());
+
+    const qint64 cutAfter = payload.size() / 3;
+    qint64 read = 0;
+    bool cut = false;
+    QString whatWasDone;
+
+    while (read < payload.size()) {
+        const QByteArray chunk = stream->read(256 * 1024);
+        if (chunk.isEmpty())
+            break;
+        read += chunk.size();
+
+        // Triggered on the offset itself, not on a clock.
+        if (!cut && read >= cutAfter) {
+            cut = true;
+            // The network, not the socket. Killing the connection with ss
+            // leaves whatever curl has already buffered to be read out, so a
+            // transfer can finish after the socket is gone -- which is a real
+            // thing to know and the wrong thing to build this on. Total loss
+            // stops bytes arriving, full stop.
+            whatWasDone = TestbedControl::run(
+                { QStringLiteral("netem"), QStringLiteral("loss"), QStringLiteral("100%") });
+            QVERIFY2(!whatWasDone.isEmpty(), "the control channel has to say what it did");
+        }
+    }
+
+    // Put back before anything is asserted, so a failing assertion cannot leave
+    // the machine throttled for whatever runs next.
+    TestbedControl::restore();
+    QVERIFY2(cut, "the file was read before anything could be done to the connection");
+    raw.removeTree(remotePath);
+
+    // The claim. Either everything arrived -- the server got the whole file out
+    // before the cut landed, which is a fair outcome -- or it stopped short and
+    // the stream says so. What must never happen is short and silent.
+    if (read == payload.size())
+        QSKIP("the transfer finished before the cut landed; nothing to assert about a short read");
+
+    QVERIFY2(read < payload.size(), "sanity: this branch is the short read");
+    QVERIFY2(stream->atEnd() == false || !stream->errorString().isEmpty(),
+        qPrintable(QStringLiteral("stopped at %1 of %2 bytes and reported nothing. %3")
+                       .arg(read)
+                       .arg(payload.size())
+                       .arg(whatWasDone)));
 }
 
 void TestSftpFileSystem::aLargeFileArrivesWhole()

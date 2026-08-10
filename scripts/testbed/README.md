@@ -140,9 +140,39 @@ The testbed's FTP certificate is honestly self-signed, so the run sets
 `MOLE_TEST_IGNORE_SELF_SIGNED_CERT`. TLS stays *required*: that variable says
 who vouches for the certificate, not whether the connection is encrypted.
 
-## Not here yet
+## Interfering with it on purpose
 
-- the control channel for interfering with a running transfer — #21
+```sh
+MOLE_TESTBED_ADDRESS=… scripts/testbed/control.sh install
+MOLE_TESTBED_ADDRESS=… scripts/testbed/control.sh fill 95
+MOLE_TESTBED_ADDRESS=… scripts/testbed/control.sh netem loss 30% 15
+MOLE_TESTBED_ADDRESS=… scripts/testbed/control.sh restore
+```
+
+The difference between a server and a piece of test equipment is whether a test
+can do something to it *while it works*. `mole-control` on the machine can stop
+and start a service, kill established connections without stopping the server,
+fill the small disk to a chosen percentage and empty it, and apply or remove
+`tc netem`. Every command prints what it did, because a test that fails after
+interfering has to be able to say what it interfered with.
+
+From C++ it is `TestbedControl` in `tests/support`, and **it is absent by
+default**: nothing reaches for it unless `MOLE_TEST_CONTROL` names the command,
+so a suite on somebody's own machine cannot start stopping services on anything.
+
+```sh
+export MOLE_TEST_CONTROL='ssh -o BatchMode=yes moletest@<address> sudo mole-control'
+```
+
+**Every `netem` clears itself after thirty seconds by default.** That is not
+tidiness. This channel reaches the machine over the network it is being asked to
+damage, so `netem loss 100%` cuts off the very command that would undo it — the
+machine goes unreachable, including to whoever is trying to put it back, and
+only a reboot from the hypervisor recovers it. That happened once while this was
+being written. The timer means a run that dies mid-test leaves a machine that
+heals itself.
+
+## Not here yet
 - the snapshot to roll back to, and its name — #22
 - `make test-live`, and a skip that says so — #23
 

@@ -8,6 +8,8 @@ add_library(mole_test_support STATIC
     support/FileSystemConformance.cpp
     support/FakePlugin.h
     support/MoleTestMain.h
+    support/TestbedControl.h
+    support/TestbedControl.cpp
 )
 
 # The QML-driving harness needs Quick and the application's QML; kept in its
