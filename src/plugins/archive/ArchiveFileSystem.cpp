@@ -55,17 +55,34 @@ namespace {
     };
 
     /// libarchive reports "dir/sub/file.txt"; normalise to "/dir/sub/file.txt".
+    ///
+    /// "." and ".." are resolved here and stop at the root, which is the whole
+    /// of this mount's defence against a hostile archive. An entry called
+    /// "../../etc/passwd" is an instruction to write outside wherever it is
+    /// extracted to, and one called "/etc/passwd" is the same instruction
+    /// spelled differently; both become paths inside the archive and can address
+    /// nothing else. It is also what keeps the tree acyclic -- "/.." resolves to
+    /// the root, so a directory listing that contained it would list itself, and
+    /// anything walking the mount would go round for ever.
     QString normaliseEntryPath(const char* raw)
     {
-        QString path = QString::fromUtf8(raw);
-        path.replace(QLatin1Char('\\'), QLatin1Char('/'));
-        while (path.startsWith(QLatin1String("./")))
-            path.remove(0, 2);
-        while (path.endsWith(QLatin1Char('/')))
-            path.chop(1);
-        if (path.isEmpty())
+        QString raw_path = QString::fromUtf8(raw);
+        raw_path.replace(QLatin1Char('\\'), QLatin1Char('/'));
+
+        QStringList parts;
+        for (const QString& part : raw_path.split(QLatin1Char('/'), Qt::SkipEmptyParts)) {
+            if (part == QLatin1String("."))
+                continue;
+            if (part == QLatin1String("..")) {
+                if (!parts.isEmpty())
+                    parts.removeLast();
+                continue;
+            }
+            parts.append(part);
+        }
+        if (parts.isEmpty())
             return {};
-        return QLatin1Char('/') + path;
+        return QLatin1Char('/') + parts.join(QLatin1Char('/'));
     }
 
 } // namespace

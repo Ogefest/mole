@@ -39,6 +39,7 @@ private slots:
     void theOriginalsGoOnlyWhenAskedAndOnlyAfterTheArchiveIsWritten();
     void theOriginalsAreKeptWhenAnythingCouldNotBeRead();
     void theSourceHoldingTheArchiveIsNeverDeleted();
+    void anArchiveWrittenIntoTheTreeItIsArchivingDoesNotIncludeItself();
 
 private:
     /// Runs a compression to completion and returns the task.
@@ -69,6 +70,31 @@ void TestCompressTask::cleanup()
 {
     m_tasks.reset();
     m_tree.reset();
+}
+
+void TestCompressTask::anArchiveWrittenIntoTheTreeItIsArchivingDoesNotIncludeItself()
+{
+    // The archive is being written into the folder it is packing, so the folder
+    // grows a file while it is being read. Including it would mean packing a
+    // file that is still being written -- and, on a format that can be appended
+    // to, packing what it has just packed.
+    CompressTask::Request request;
+    request.sourceFileSystem = m_fs;
+    request.targetFileSystem = m_fs;
+    request.sources.append(m_tree->rootUri().child(QStringLiteral("reports")));
+    request.target = m_tree->rootUri().child(QStringLiteral("reports/self.zip"));
+
+    auto* task = new CompressTask(request);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task, 30000));
+    QCOMPARE(task->state(), Task::State::Succeeded);
+
+    const QStringList inside = contentsOf(QStringLiteral("reports/self.zip"));
+    for (const QString& entry : inside) {
+        QVERIFY2(!entry.endsWith(QLatin1String("self.zip")),
+            qPrintable(QStringLiteral("the archive packed itself: %1").arg(entry)));
+    }
+    QVERIFY2(!inside.isEmpty(), "and it packed everything else");
 }
 
 CompressTask* TestCompressTask::pack(
