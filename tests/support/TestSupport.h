@@ -6,11 +6,54 @@
 #include <QString>
 #include <QStringList>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QtGlobal>
 
+#include <atomic>
+#include <functional>
 #include <memory>
 
 namespace mole::test {
+
+/// A task whose body is supplied by the test. Shared, because "a task that takes
+/// a measurable amount of time and reports as it goes" is what several suites
+/// need and none of them should have to grow their own.
+class ScriptedTask final : public Task
+{
+public:
+    using Body = std::function<void(ScriptedTask&)>;
+
+    ScriptedTask(QString title, Body body)
+        : Task(std::move(title))
+        , m_body(std::move(body))
+    {
+    }
+
+    /// Re-exposed so the test can drive them from inside the body.
+    using Task::fail;
+    using Task::isCancelRequested;
+    using Task::reportBytes;
+    using Task::reportCount;
+    using Task::reportText;
+    using Task::setBytesDone;
+    using Task::setByteTotal;
+    using Task::setProgress;
+    using Task::setStatusText;
+
+    QThread* ranOn() const { return m_ranOn; }
+
+protected:
+    void run() override
+    {
+        m_ranOn = QThread::currentThread();
+        if (m_body)
+            m_body(*this);
+    }
+
+private:
+    Body m_body;
+    std::atomic<QThread*> m_ranOn { nullptr };
+};
 
 /// Spins the event loop until `task` reaches a terminal state. Tasks report
 /// their state through queued invocations, so a plain sleep would never see

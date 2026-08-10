@@ -9,6 +9,43 @@ wrong.
 
 ---
 
+## A task with a speed and a size now says how long is left
+
+**Asked for:** MOLE-30 — a task that measures bytes already knows its speed and
+its total, so it should say how long is left.
+
+**What it turned out to be:** the arithmetic, and three decisions about when to
+keep quiet. `Task::setBytesDone()` already kept a smoothed rate and already knew
+the total, and `TaskMetric::Kind::Duration` already existed so a view could format
+a time without parsing text — so the estimate is published there, beside the rate,
+and every task that measures bytes gets it at once rather than each one growing its
+own.
+
+The three decisions, in the order they matter:
+
+- **Nothing until the rate has settled.** Three closed sampling windows, so the
+  first figure is never one taken from the opening half second, where a copy is
+  still spinning up and the estimate is wrong by multiples rather than by percent.
+  A wrong estimate is worse than none: it is read once, believed, and remembered.
+- **The smoothed rate, not the instantaneous one**, which was already there for the
+  speed and for the same reason — a figure that changes every frame is not a figure.
+- **A stall holds the last estimate.** Dividing by a rate on its way to zero gives
+  something that runs off to hours and then to infinity. The last figure that meant
+  something is more honest than that.
+
+One thing that fell out of it: `Kind::Duration` now formats a negative value as an
+empty string. "Not known" is a real state for an estimate — before the rate settles
+and again once there is nothing left — and the model already drops a metric with no
+text, so that is how the column comes and goes instead of showing "0s left" on a row
+that has stopped.
+
+Four tests: the estimate appears and is in the right ballpark, a task with no total
+says nothing, a stalled one keeps its last figure and never prints infinity, and the
+strip carries it — that last one through the real window, because the property name
+in the binding is the part a C++ test cannot get wrong. `ScriptedTask` moved to
+`tests/support/` on the way, since "a task that takes a measurable amount of time and
+reports as it goes" is now wanted by two suites.
+
 ## Five of the thirteen "New … tab" entries opened onto nothing
 
 **Asked for:** MOLE-73 — the File menu offered a *New … tab* per registered feature,

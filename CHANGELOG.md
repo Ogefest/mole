@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-10 #MOLE-30 A task that measures bytes says how long is left
 2026-08-10 #MOLE-73 The File menu offers a new tab only for what can be opened from nothing, instead of thirteen entries of which five open onto an empty view
 2026-08-10 #MOLE-111 A drive whose password is in the credential store is connected the first time you open it, and asks for the passphrase then, instead of asking at startup for a drive you may never touch
 2026-08-10 #MOLE-111 Opening a configured drive that is not connected connects it, instead of showing it as a folder with nothing in it

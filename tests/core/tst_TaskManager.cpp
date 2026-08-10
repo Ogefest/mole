@@ -9,52 +9,11 @@
 #include <QThread>
 
 #include <atomic>
+#include <cmath>
 #include <stdexcept>
 
 using namespace mole;
 using namespace mole::test;
-
-namespace {
-
-/// A task whose body is supplied by the test.
-class ScriptedTask final : public Task
-{
-public:
-    using Body = std::function<void(ScriptedTask&)>;
-
-    ScriptedTask(QString title, Body body)
-        : Task(std::move(title))
-        , m_body(std::move(body))
-    {
-    }
-
-    /// Re-exposed so the test can drive them from inside the body.
-    using Task::fail;
-    using Task::isCancelRequested;
-    using Task::reportBytes;
-    using Task::reportCount;
-    using Task::reportText;
-    using Task::setBytesDone;
-    using Task::setByteTotal;
-    using Task::setProgress;
-    using Task::setStatusText;
-
-    QThread* ranOn() const { return m_ranOn; }
-
-protected:
-    void run() override
-    {
-        m_ranOn = QThread::currentThread();
-        if (m_body)
-            m_body(*this);
-    }
-
-private:
-    Body m_body;
-    std::atomic<QThread*> m_ranOn { nullptr };
-};
-
-} // namespace
 
 class TestTaskManager : public QObject
 {
@@ -75,6 +34,9 @@ private slots:
 
     void aTaskPublishesWhateverItWants();
     void byteProgressDrivesThePercentageAndTheRate();
+    void aTaskWithASpeedAndASizeSaysHowLongIsLeft();
+    void withNoTotalThereIsNoEstimate();
+    void aStallHoldsTheLastEstimateRatherThanShowingInfinity();
     void aCancelledTaskIsNotStillInProgress();
     void elapsedTimeStopsWhenTheTaskDoes();
 
@@ -324,6 +286,93 @@ void TestTaskManager::byteProgressDrivesThePercentageAndTheRate()
     QCOMPARE(task->progress(), 100);
     QVERIFY2(task->bytesPerSecond() > 0.0, "a throughput figure has to appear");
     QVERIFY(!task->metric(TaskMetrics::kRate).text.isEmpty());
+}
+
+// --- how long is left -------------------------------------------------------
+//
+// The sleeps below are the work taking time, not the test waiting on a clock: a
+// rate is bytes divided by elapsed time, so a task that finishes instantly has
+// no rate to publish and nothing to estimate from. Every assertion is on what
+// the task published, never on when.
+
+void TestTaskManager::aTaskWithASpeedAndASizeSaysHowLongIsLeft()
+{
+    TaskManager manager;
+    auto* task = new ScriptedTask(QStringLiteral("copy"), [](ScriptedTask& self) {
+        self.setByteTotal(1000000);
+        // A fifth of the file per closed sampling window. Four windows, so three
+        // rate samples close and the third is where an estimate first appears.
+        for (int step = 1; step <= 4 && !self.isCancelRequested(); ++step) {
+            QThread::msleep(260);
+            self.setBytesDone(step * 200000);
+        }
+    });
+    manager.submit(task);
+    QVERIFY(waitForTask(task));
+    drainEvents();
+
+    const TaskMetric left = task->metric(TaskMetrics::kTimeLeft);
+    QVERIFY2(!left.text.isEmpty(), "a task that knows its speed and its size has to say how long is left");
+    QCOMPARE(left.kind, TaskMetric::Kind::Duration);
+    QCOMPARE(left.label, QStringLiteral("Left"));
+
+    // Two hundred thousand bytes left at roughly 770 kB/s is a few hundred
+    // milliseconds. Bounded generously on both sides rather than compared: the
+    // claim is that the arithmetic is the right arithmetic, and a loaded machine
+    // is allowed to be slow without turning this red.
+    QVERIFY2(left.value > 20.0 && left.value < 20000.0,
+        qPrintable(QStringLiteral("an estimate of %1 ms is not from this file").arg(left.value)));
+
+    // Right after the rate, so the two read together.
+    QVERIFY(left.order > task->metric(TaskMetrics::kRate).order);
+}
+
+void TestTaskManager::withNoTotalThereIsNoEstimate()
+{
+    TaskManager manager;
+    // Bytes reported, and plenty of time for the rate to settle, but nobody ever
+    // said how much there was to move. There is no denominator, so there is
+    // nothing to say -- and an estimate invented from a total nobody declared
+    // would be a number read once and believed.
+    auto* task = new ScriptedTask(QStringLiteral("scan"), [](ScriptedTask& self) {
+        for (int step = 1; step <= 4 && !self.isCancelRequested(); ++step) {
+            QThread::msleep(260);
+            self.setBytesDone(step * 200000);
+        }
+    });
+    manager.submit(task);
+    QVERIFY(waitForTask(task));
+    drainEvents();
+
+    QVERIFY(!task->metric(TaskMetrics::kRate).text.isEmpty());
+    QVERIFY2(task->metric(TaskMetrics::kTimeLeft).text.isEmpty(), "no total, no estimate");
+}
+
+void TestTaskManager::aStallHoldsTheLastEstimateRatherThanShowingInfinity()
+{
+    TaskManager manager;
+    auto* task = new ScriptedTask(QStringLiteral("copy"), [](ScriptedTask& self) {
+        self.setByteTotal(1000000);
+        for (int step = 1; step <= 4 && !self.isCancelRequested(); ++step) {
+            QThread::msleep(260);
+            self.setBytesDone(step * 200000);
+        }
+        // And then it stops moving, while still being asked about. The smoothed
+        // rate decays towards nothing, and dividing by that gives a figure that
+        // runs off to hours and then to infinity.
+        for (int idle = 0; idle < 6 && !self.isCancelRequested(); ++idle) {
+            QThread::msleep(260);
+            self.setBytesDone(800000);
+        }
+    });
+    manager.submit(task);
+    QVERIFY(waitForTask(task));
+    drainEvents();
+
+    const TaskMetric left = task->metric(TaskMetrics::kTimeLeft);
+    QVERIFY2(!left.text.isEmpty(), "a stalled task keeps the last figure that meant something");
+    QVERIFY2(std::isfinite(left.value), "and it is a number");
+    QVERIFY2(!left.text.contains(QStringLiteral("inf")), qPrintable(left.text));
 }
 
 void TestTaskManager::aCancelledTaskIsNotStillInProgress()

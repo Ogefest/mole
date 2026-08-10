@@ -7,6 +7,7 @@
 #include "plugins/builtin/previews/PdfPreview.h"
 #include "plugins/builtin/previews/PreviewProviders.h"
 #include "support/QmlAppHarness.h"
+#include "support/TestSupport.h"
 #include "ui/AppController.h"
 #include "ui/models/BookmarkModel.h"
 #include "ui/models/BrowserPaneController.h"
@@ -41,6 +42,7 @@
 #include <QTest>
 #include <QTextBlock>
 #include <QTextDocument>
+#include <QThread>
 
 using namespace mole;
 using namespace mole::test;
@@ -120,6 +122,7 @@ private slots:
     void aDialogWithOneButtonStillHoldsTheKeyboard();
     void analysesAFolder();
     void schedulesTheReportAndTracksIt();
+    void theStripSaysHowLongIsLeftOnWhatIsRunning();
     void ctrlWClosesAPreviewTabWithTheTextFocused();
     void theTerminalOpensInTheFolderYouAreLookingAt();
     void theTerminalTakesTheKeyboardAndCtrlDEndsIt();
@@ -1844,6 +1847,42 @@ void TestWalkthrough::schedulesTheReportAndTracksIt()
 
     m_harness->settle(10);
     m_harness->screenshot(QStringLiteral("08-automation"));
+}
+
+void TestWalkthrough::theStripSaysHowLongIsLeftOnWhatIsRunning()
+{
+    // Through the strip rather than off the model, because the property name in
+    // the binding is the part a C++ test cannot get wrong. A scripted task rather
+    // than a real copy: what is being checked is that a figure the task publishes
+    // reaches the window, and a copy big enough to take a second would make this
+    // the slowest test in the suite for no extra claim.
+    auto* task = new ScriptedTask(QStringLiteral("Copying"), [](ScriptedTask& self) {
+        self.setByteTotal(1000000);
+        // Four closed sampling windows, which is where the first estimate appears.
+        // The sleeps are the work taking time: a rate needs elapsed time to divide
+        // by. Nothing here waits on a clock to decide whether the test passed.
+        for (int step = 1; step <= 4 && !self.isCancelRequested(); ++step) {
+            QThread::msleep(260);
+            self.setBytesDone(step * 200000);
+        }
+        while (!self.isCancelRequested())
+            QThread::msleep(20);
+    });
+    m_harness->app()->services().tasks->submit(task);
+
+    QQuickItem* left = m_harness->item(QStringLiteral("activeTaskTimeLeft"));
+    QVERIFY2(left, "the strip has to carry the figure, not only the model");
+    QVERIFY2(m_harness->until([left] { return left->isVisible(); }, 15000),
+        "a task with a speed and a size says how long is left");
+    const QString shown = left->property("text").toString();
+    QVERIFY2(shown.contains(QStringLiteral("left")), qPrintable(shown));
+    QVERIFY2(!shown.contains(QStringLiteral("inf")), qPrintable(shown));
+
+    // And it goes away with the work, rather than leaving a stale countdown on a
+    // row that has stopped.
+    task->requestCancel();
+    QVERIFY(m_harness->until([this] { return m_harness->app()->tasks()->activeCount() == 0; }));
+    QVERIFY(m_harness->until([left] { return !left->isVisible(); }));
 }
 
 void TestWalkthrough::ctrlWClosesAPreviewTabWithTheTextFocused()

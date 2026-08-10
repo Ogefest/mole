@@ -26,6 +26,9 @@ public:
     Q_PROPERTY(int finishedCount READ finishedCount NOTIFY activeSummaryChanged)
     Q_PROPERTY(QString activeElapsedText READ activeElapsedText NOTIFY activeSummaryChanged)
     Q_PROPERTY(QString activeRateText READ activeRateText NOTIFY activeSummaryChanged)
+    /// How long is left on the running task, or empty when it cannot be known --
+    /// no byte total, or a rate that has not settled yet.
+    Q_PROPERTY(QString activeTimeLeftText READ activeTimeLeftText NOTIFY activeSummaryChanged)
 
     enum Role {
         TitleRole = Qt::UserRole + 1,
@@ -63,6 +66,7 @@ public:
     int finishedCount() const;
     QString activeElapsedText() const;
     QString activeRateText() const;
+    QString activeTimeLeftText() const;
 
 signals:
     void countChanged();

@@ -105,6 +105,12 @@ QString TaskListModel::activeRateText() const
     return task ? task->metric(TaskMetrics::kRate).text : QString();
 }
 
+QString TaskListModel::activeTimeLeftText() const
+{
+    Task* task = firstRunning();
+    return task ? task->metric(TaskMetrics::kTimeLeft).text : QString();
+}
+
 QString TaskListModel::activeStatus() const
 {
     Task* task = firstRunning();

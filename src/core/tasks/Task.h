@@ -49,6 +49,9 @@ namespace TaskMetrics {
     inline constexpr QLatin1String kBytesDone("bytes.done");
     inline constexpr QLatin1String kBytesTotal("bytes.total");
     inline constexpr QLatin1String kRate("bytes.rate");
+    /// How long is left, in milliseconds. Published by Task itself for anything
+    /// that measures bytes, so no task grows its own arithmetic.
+    inline constexpr QLatin1String kTimeLeft("time.left");
     inline constexpr QLatin1String kFiles("files.done");
 } // namespace TaskMetrics
 
@@ -165,6 +168,17 @@ protected:
 
 private:
     void setState(State state);
+    /// Publishes how long is left, from the smoothed rate and the total. Called
+    /// from setBytesDone() so every task that measures bytes gets it at once
+    /// rather than each one growing its own arithmetic.
+    void reportTimeLeft(qint64 done);
+
+    /// How many rate windows have to close before an estimate is offered. Three
+    /// windows of 250 ms, so the first figure is never one taken from the opening
+    /// half second -- where a copy is still spinning up and the estimate is wrong
+    /// by multiples rather than by percent. A wrong estimate is worse than none:
+    /// it is read once, believed, and remembered.
+    static constexpr int kSettledRateSamples = 3;
 
     // --- owned by the UI thread ---
     bool m_background = false;
@@ -202,6 +216,11 @@ private:
     qint64 m_lastSampleMs = -1;
     qint64 m_lastReportMs = -1;
     double m_rate = 0.0;
+    /// How many rate windows have closed. An estimate wants more than one.
+    int m_rateSamples = 0;
+    /// The last estimate worth showing, in milliseconds; -1 for "not known".
+    /// Kept so a stall holds the last figure rather than publishing infinity.
+    double m_timeLeftMs = -1.0;
 
     CancelToken m_cancel;
 };

@@ -165,6 +165,12 @@ QString TaskMetric::format(double value, Kind kind)
             ? QString()
             : QStringLiteral("%1/s").arg(QLocale().formattedDataSize(static_cast<qint64>(value)));
     case Kind::Duration: {
+        // A negative duration is "not known" rather than a number: an estimate
+        // before the rate has settled, or after there is nothing left to
+        // estimate. Empty, so the view leaves no column instead of printing
+        // something nobody can act on.
+        if (value < 0.0)
+            return {};
         const qint64 seconds = static_cast<qint64>(value) / 1000;
         if (seconds < 60)
             return QStringLiteral("%1s").arg(seconds);
@@ -274,8 +280,12 @@ void Task::setBytesDone(qint64 done)
         m_rate = m_rate > 0.0 ? m_rate * 0.6 + rate * 0.4 : rate;
         m_lastSampleMs = nowMs;
         m_lastSampleBytes = done;
+        ++m_rateSamples;
         report(TaskMetric {
             TaskMetrics::kRate, QStringLiteral("Speed"), {}, m_rate, TaskMetric::Kind::Rate, 30 });
+        // Beside the rate, from the same window: a task that knows its speed and
+        // its size knows how long is left, and every one of them should say so.
+        reportTimeLeft(done);
     }
 
     // Coalesced: a chunk loop calls this thousands of times, and every call
@@ -289,7 +299,35 @@ void Task::setBytesDone(qint64 done)
             setProgress(
                 static_cast<int>(100.0 * static_cast<double>(done) / static_cast<double>(m_byteTotal)));
         }
+        // Whether or not a rate window happened to close on the last chunk: a row
+        // that has stopped must not be left holding an estimate.
+        if (finalCall)
+            reportTimeLeft(done);
     }
+}
+
+void Task::reportTimeLeft(qint64 done)
+{
+    // Nothing to divide with. A task that never declared a total has no
+    // denominator, and one whose rate has not settled would publish a figure
+    // wrong by multiples -- see kSettledRateSamples.
+    if (m_byteTotal <= 0 || m_rateSamples < kSettledRateSamples)
+        return;
+
+    const qint64 remaining = m_byteTotal - done;
+    if (remaining <= 0) {
+        // Finished, or as good as. "0s left" on a row that has stopped is noise,
+        // and the figure it had a moment ago would be worse.
+        m_timeLeftMs = -1.0;
+    } else if (m_rate > 1.0) {
+        m_timeLeftMs = 1000.0 * static_cast<double>(remaining) / m_rate;
+    }
+    // Otherwise a stall, and the last estimate stands. Dividing by a rate on its
+    // way to zero gives a figure that runs off to hours and then to infinity,
+    // which is less honest than the last one that meant something.
+
+    report(TaskMetric {
+        TaskMetrics::kTimeLeft, QStringLiteral("Left"), {}, m_timeLeftMs, TaskMetric::Kind::Duration, 35 });
 }
 
 void Task::setState(State state)

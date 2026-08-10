@@ -122,6 +122,18 @@ Rectangle {
                 font.family: App.monospaceFont
             }
 
+            // And how much longer. Empty until the rate has settled and empty
+            // again once there is nothing left, so the column comes and goes
+            // rather than showing a figure nobody can act on.
+            Label {
+                objectName: "activeTaskTimeLeft"
+                visible: strip.working && App.tasks.activeTimeLeftText.length > 0
+                text: "· " + App.tasks.activeTimeLeftText + " left"
+                color: strip.mutedText
+                font.pixelSize: 11
+                font.family: App.monospaceFont
+            }
+
             Item { Layout.fillWidth: true }
 
             ToolButton {
