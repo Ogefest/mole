@@ -101,6 +101,10 @@ mole_add_test(tst_TransferTask      SOURCES core/tst_TransferTask.cpp)
 # that need no server, at every boundary size the copy loop has.
 mole_add_test(tst_FilesArriveWhole  SOURCES core/tst_FilesArriveWhole.cpp)
 
+# Cancellation, aimed at a stage rather than at a moment: the walk, the arrival
+# check, a move's delete pass, and the queue before any of it starts.
+mole_add_test(tst_Cancellation      SOURCES core/tst_Cancellation.cpp)
+
 # Delete, which has nothing to compare afterwards: what else went with it.
 mole_add_test(tst_Delete            SOURCES core/tst_Delete.cpp)
 
