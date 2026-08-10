@@ -42,6 +42,8 @@ add_library(mole_builtin STATIC
     builtin/previews/DocumentMetadata.cpp
     builtin/previews/MediaMetadata.h
     builtin/previews/MediaMetadata.cpp
+    builtin/previews/AudioMetadata.h
+    builtin/previews/AudioMetadata.cpp
     builtin/previews/PdfPreview.h
     builtin/previews/PdfPreview.cpp
 )

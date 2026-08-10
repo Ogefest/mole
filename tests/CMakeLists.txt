@@ -197,6 +197,10 @@ mole_add_test(tst_DocumentMetadata  SOURCES plugins/tst_DocumentMetadata.cpp LIB
 # What a video says about itself, over containers built box by box -- including
 # the box that claims to be four gigabytes long inside a 64 kB buffer.
 mole_add_test(tst_MediaMetadata     SOURCES plugins/tst_MediaMetadata.cpp LIBS mole_builtin)
+
+# The tags inside an audio file: four formats, and the frame that claims to be
+# longer than the block it is in.
+mole_add_test(tst_AudioMetadata     SOURCES plugins/tst_AudioMetadata.cpp LIBS mole_builtin)
 mole_add_test(tst_AnalysisTab       SOURCES app/tst_AnalysisTab.cpp     LIBS mole_builtin)
 mole_add_test(tst_Automation        SOURCES app/tst_Automation.cpp      LIBS mole_builtin)
 mole_add_test(tst_FileSets          SOURCES app/tst_FileSets.cpp        LIBS mole_builtin)

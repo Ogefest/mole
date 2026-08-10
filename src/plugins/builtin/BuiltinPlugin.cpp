@@ -12,6 +12,7 @@
 #include "plugins/builtin/ReportsFeature.h"
 #include "plugins/builtin/SearchFeatures.h"
 #include "plugins/builtin/SyncFeature.h"
+#include "plugins/builtin/previews/AudioMetadata.h"
 #include "plugins/builtin/previews/DocumentMetadata.h"
 #include "plugins/builtin/previews/ImageMetadata.h"
 #include "plugins/builtin/previews/MediaMetadata.h"
@@ -110,6 +111,7 @@ void BuiltinPlugin::registerExtensions(PluginRegistry& registry)
     registry.addMetadataReader(std::make_unique<PdfMetadataReader>());
     registry.addMetadataReader(std::make_unique<DocumentMetadataReader>());
     registry.addMetadataReader(std::make_unique<VideoMetadataReader>());
+    registry.addMetadataReader(std::make_unique<AudioMetadataReader>());
     registry.addMetadataReader(std::make_unique<GenericMetadataReader>());
 }
 

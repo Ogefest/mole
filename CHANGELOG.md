@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-11 #MOLE-136 An audio file's details say its title, artist and album, with the duration exact where the file states it and labelled as an estimate where it does not
 2026-08-11 #MOLE-135 A video's details say how long it runs, how big the picture is and what it is coded in, read from the container's header
 2026-08-11 #MOLE-134 A PDF's details name its title, author and page count, and a .docx or .odt names its author without the file being read whole
 2026-08-11 #MOLE-133 A photograph's details say its dimensions, its camera, the exposure and where it was taken, read from the header rather than by decoding it

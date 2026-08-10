@@ -9,6 +9,31 @@ wrong.
 
 ---
 
+## An audio file's tags were inside it and never on the screen
+
+**Asked for:** MOLE-136 — an audio file carries its title, artist and album inside it and
+Mole showed a size and a date. Four tag formats, a bounded read, and no cover art.
+
+**What it turned out to be:** `AudioMetadataReader` over ID3v2.3 and 2.4, ID3v1, Vorbis
+comments in FLAC and Ogg, and an MP4 `ilst` — the last through MOLE-135's box walk, used
+rather than written again, which is the reason that walk is in a header at all.
+
+**An estimate is labelled.** An MP3 with no Xing or VBRI header has its length written down
+nowhere, so it is arithmetic on the bitrate and the file size: right for a constant bitrate,
+wrong for a variable one. The row says "(estimated)". A FLAC's `STREAMINFO` carries the
+total sample count, so that duration is exact and says nothing.
+
+**Three bugs, all in the fixtures, all worth the time.** `"\xa9ART"` is not four bytes: the
+hex escape swallows the `A`, because `A` is a hex digit — so the tag name in the *reader*
+was wrong in exactly the same way as the one in the test, and the two wrongs did not cancel.
+`\xa9nam` and `\xa9gen` were fine and `\xa9alb` and `\xa9day` were not, which is the kind of
+half-working nobody notices. Both are now written as `"\xa9" "ART"`. The other two were the
+test writing an ID3v1 track number and an MP4 `trkn` a byte out of place: the reader was
+right and the fixture was the corrupt file.
+
+**No cover art, deliberately.** It is the one thing in a tag block that is megabytes rather
+than bytes, and nobody asked for it.
+
 ## A video file was a size and a date
 
 **Asked for:** MOLE-135 — how long a video runs, how big the picture is and what codec it
