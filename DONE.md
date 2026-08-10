@@ -9,6 +9,73 @@ wrong.
 
 ---
 
+## The passphrase was asked for at the one moment nobody has a reason to answer
+
+**Asked for:** MOLE-111 — stop asking at startup. A drive that needs the credential
+store should read as inactive until something asks for it; opening it should be what
+connects it; and the passphrase should be asked for at that moment, in a dialog
+rather than in a strip of the sidebar.
+
+**What it turned out to be:** three changes with one shape, and a fourth that fell
+out of the first.
+
+The band above the drive list appeared whenever anything was waiting, and every such
+drive wore an amber dot — all before anybody had asked for any of them. Nothing had
+gone wrong: the store is shut at every startup and may stay shut all session. That
+band was itself a fix, for something worse (a drive used to wait at startup in
+complete silence), and its trade was recorded in a commit message rather than in an
+ADR — which is part of why it went unexamined. It is gone. What stays is the news:
+the row still says `Locked`, its tooltip still says so, and it still offers a key
+rather than a play triangle. What changes is the colour: `Locked` joins `Disconnected`
+in `idle`, because amber is what a drive on its way to failing wears and a drive
+nobody has opened is not a problem.
+
+`AppController::goTo()` — where the sidebar row, the palette and the bookmarks all
+arrive — now connects the configured drive behind a uri when nothing is mounted
+there. It used to hand the uri straight to the pane, `VfsManager::resolve()` found
+nothing, and an unconnected drive was shown as a folder with nothing in it. A connect
+that fails now says so.
+
+And when that drive needs the store and the store is shut, the passphrase is asked
+for **then**, in a modal centred on the window, and the navigation finishes on its
+own once it is open. This reverses half of MOLE-44's "never a modal" and keeps the
+reason behind it: a modal at startup for a drive nobody asked for is still the wrong
+trade, and this one only ever appears because somebody just asked. ADR-0031 records
+it, including what it used to do.
+
+`UnlockBand.qml` is gone and `UnlockDialog.qml` is the only place the copy lives —
+the sentence about the passphrase not being tied to this computer is the thing people
+need to hear exactly once. The drives dialog gets a line and an *Unlock…* button that
+opens the same dialog, rather than a second copy of the paragraph.
+
+**Two things that had to be built to make it work**, both worth the paragraph:
+
+- **A button that acts without closing.** A passphrase can be refused, and the dialog
+  is the only place that can say so — but `DialogButtonBox`'s accept role closes the
+  dialog before anything can be reported. The shared footer gained
+  `actWithoutClosing`, which reports Apply instead, so the dialog decides whether to
+  close. The alternative was closing and immediately reopening, which is a flicker
+  and a lie about what happened.
+- **`goTo()` now says whether it navigated.** The sidebar row hands the keyboard to
+  wherever it just went, which is right until the click puts a modal up: handing the
+  keyboard to the listing behind a modal takes it *out* of that modal for good — the
+  popup is left holding no focus, so nothing inside it can take the keyboard
+  afterwards either. That cost an hour and looked exactly like `forceActiveFocus()`
+  being ignored.
+
+**A fault in the test fixture, found by the same test.** The locked-drive fixture
+gave the SFTP backend a host and a password and no user name, so `create()` refused
+before any I/O and the drive never connected. Both suites had been asserting only
+that the drive "left `Locked`" — which it did, for `Disconnected`. The fixture is
+complete now and the drive really does connect, which is what let the last assertion
+in the walkthrough be the one that matters: the pane ends up at the drive that was
+asked for.
+
+Five tests rewritten rather than deleted — they were the tests for the old flow, not
+tests that happened to touch it — and three new ones: that startup asks nothing, that
+the key and the palette reach one dialog, and that a drive with no secret still comes
+up with nothing typed.
+
 ## ADR-0010 reached six dialogs out of thirteen
 
 **Asked for:** MOLE-100 — the copy and move dialog has two identical buttons and

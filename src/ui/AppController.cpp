@@ -447,7 +447,9 @@ bool AppController::unlockCredentials(const QString& passphrase)
         return false;
     }
 
-    // Everything that was waiting for a password can connect now.
+    // Everything that was waiting for a password can connect now. Typing the
+    // passphrase once and having the drives somebody marked "connect at startup"
+    // come up is what that setting means.
     for (const RemoteDrive& drive : m_remotes->drives()) {
         if (drive.mountAtStartup && !drive.secretFields.isEmpty())
             connectDrive(drive.id);
@@ -455,6 +457,13 @@ bool AppController::unlockCredentials(const QString& passphrase)
 
     emit credentialsChanged();
     emit drivesChanged();
+
+    // And whoever opened a drive to get here is taken there, which is the whole
+    // point of asking at that moment rather than at startup.
+    if (!m_pendingNavigation.isEmpty()) {
+        const QString waiting = std::exchange(m_pendingNavigation, QString());
+        goTo(waiting);
+    }
     return true;
 }
 
@@ -852,16 +861,66 @@ void AppController::revealFile(const QString& fileUri)
     QMetaObject::invokeMethod(pane, "revealFile", Q_ARG(QString, fileUri));
 }
 
-void AppController::goTo(const QString& uri)
+AppController::DriveReadiness AppController::prepareDriveFor(const QString& uri)
 {
+    if (!m_remotes || !m_vfs)
+        return DriveReadiness::Ready;
+
+    const VfsUri target = VfsUri::fromString(uri);
+    if (!target.isValid())
+        return DriveReadiness::Ready;
+
+    // Already mounted, or somewhere that is not a configured drive at all -- a
+    // local path, an archive, a bookmark on a disk. Nothing to arrange.
+    if (m_vfs->resolve(target))
+        return DriveReadiness::Ready;
+
+    const RemoteDrive drive = m_remotes->driveForUri(target);
+    if (!drive.isValid())
+        return DriveReadiness::Ready;
+
+    // A drive whose password is in the store cannot be built while the store is
+    // shut. Asked for now rather than at startup, because now is the first moment
+    // anybody has a reason to answer.
+    if (m_remotes->needsUnlocking(drive))
+        return DriveReadiness::Waiting;
+
+    const QString error = connectDrive(drive.id);
+    if (!error.isEmpty()) {
+        // Said out loud. An unconnected drive navigated to in silence is a folder
+        // with nothing in it, which reads as an empty drive.
+        emit notification(static_cast<int>(EventBus::Severity::Warning),
+            QStringLiteral("Cannot connect %1").arg(drive.name), error);
+        return DriveReadiness::Failed;
+    }
+    return DriveReadiness::Ready;
+}
+
+bool AppController::goTo(const QString& uri)
+{
+    // Opening a drive is what connects it. Everything arrives here -- a sidebar
+    // row, the command palette, a bookmark -- so this is the one place that has
+    // to know, rather than each of them.
+    switch (prepareDriveFor(uri)) {
+    case DriveReadiness::Ready:
+        break;
+    case DriveReadiness::Waiting:
+        m_pendingNavigation = uri;
+        emit credentialsRequested();
+        return false;
+    case DriveReadiness::Failed:
+        return false;
+    }
+
     QObject* current = m_tabs->currentController();
     // Reuse the current tab when it knows how to navigate; otherwise the user
     // asked to go somewhere a search tab cannot take them, so open a browser.
     if (current && current->metaObject()->indexOfMethod("navigateActive(QString)") >= 0) {
         QMetaObject::invokeMethod(current, "navigateActive", Q_ARG(QString, uri));
-        return;
+        return true;
     }
     openLocation(uri);
+    return true;
 }
 
 bool AppController::isMountableArchive(const QString& uri) const

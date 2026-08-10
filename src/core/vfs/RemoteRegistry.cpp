@@ -148,6 +148,17 @@ RemoteDrive RemoteRegistry::drive(const QString& id) const
     return {};
 }
 
+RemoteDrive RemoteRegistry::driveForUri(const VfsUri& uri) const
+{
+    if (!uri.isValid())
+        return {};
+    for (const RemoteDrive& drive : m_drives) {
+        if (drive.scheme() == uri.scheme())
+            return drive;
+    }
+    return {};
+}
+
 bool RemoteRegistry::put(
     const RemoteDrive& drive, const QVariantMap& secretValues, QString* errorOut, QString* storedIdOut)
 {

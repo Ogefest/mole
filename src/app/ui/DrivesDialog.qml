@@ -123,10 +123,40 @@ Dialog {
 
         // ---- the credential store -------------------------------------------
 
-        UnlockBand {
-            objectName: "drivesUnlockBand"
+        // A line and a button, not a second copy of the explanation. The store
+        // is asked for by ui/UnlockDialog.qml, which is where that copy lives:
+        // one sentence to keep true rather than two that will disagree.
+        Rectangle {
+            objectName: "drivesLockedNote"
             Layout.fillWidth: true
             visible: App.credentialsAvailable && !App.credentialsUnlocked
+            radius: 4
+            color: "#2a2418"
+            border.color: "#d9a441"
+            implicitHeight: lockedRow.implicitHeight + 18
+
+            RowLayout {
+                id: lockedRow
+                anchors.fill: parent
+                anchors.margins: 9
+                spacing: 8
+
+                Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: "#e8c07d"
+                    font.pixelSize: App.smallTextSize
+                    text: App.credentialsExist
+                          ? "The credential store is shut, so a drive with a password cannot connect yet."
+                          : "No credential store yet. One is made the first time you set a passphrase."
+                }
+                Button {
+                    objectName: "drivesUnlockButton"
+                    text: App.credentialsExist ? "Unlock…" : "Set a passphrase…"
+                    font.pixelSize: App.secondaryTextSize
+                    onClicked: App.requestCredentials()
+                }
+            }
         }
 
         // ---- what the last check found ---------------------------------------

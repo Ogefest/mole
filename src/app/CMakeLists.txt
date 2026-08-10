@@ -28,7 +28,7 @@ set(MOLE_QML_FILES
     ui/TargetList.qml
     ui/ConfirmButtons.qml
     ui/Sidebar.qml
-    ui/UnlockBand.qml
+    ui/UnlockDialog.qml
     ui/TaskStrip.qml
     ui/FilePane.qml
     ui/BrowserView.qml

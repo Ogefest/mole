@@ -174,6 +174,15 @@ public:
     Q_INVOKABLE QString connectDrive(const QString& id);
     Q_INVOKABLE void disconnectDrive(const QString& id);
 
+    /// Asks the shell for the passphrase. The key on a locked row and the
+    /// palette's Unlock command both come through here, so there is one dialog
+    /// rather than two ways of doing the same thing.
+    Q_INVOKABLE void requestCredentials() { emit credentialsRequested(); }
+    /// Forgets where the store was being opened on the way to. Called when
+    /// somebody backs out of the passphrase dialog: the navigation they asked
+    /// for is not owed to them a session later.
+    Q_INVOKABLE void abandonPendingNavigation() { m_pendingNavigation.clear(); }
+
     /// Asks whether a saved drive can actually be reached, in the background,
     /// and reports through driveChecked(). Runs automatically after saveDrive(),
     /// so a configuration is verified where it was entered rather than several
@@ -260,7 +269,19 @@ public:
 
     Q_INVOKABLE void openLocation(const QString& uri);
     /// Navigates the current tab if it can navigate, otherwise opens a new one.
-    Q_INVOKABLE void goTo(const QString& uri);
+    ///
+    /// A configured drive with nothing mounted behind it is connected on the way,
+    /// because opening a drive is what asking for it means. When it needs the
+    /// credential store and the store is shut, the passphrase is asked for and
+    /// the navigation follows once it is open — rather than showing the drive as
+    /// a folder with nothing in it, which is what it used to do.
+    ///
+    /// Returns whether the navigation actually happened, so a caller that hands
+    /// the keyboard to wherever it just went does not hand it to a place nobody
+    /// arrived at. Taking the keyboard out of the dialog that just went up leaves
+    /// that dialog holding no focus, and then nothing inside it can take the
+    /// keyboard either.
+    Q_INVOKABLE bool goTo(const QString& uri);
     /// Opens the folder holding this file with the cursor on it -- what "show me
     /// where this is" means at the end of a search.
     Q_INVOKABLE void revealFile(const QString& fileUri);
@@ -360,9 +381,9 @@ signals:
     /// The shell should show the drives dialog. A signal rather than a direct
     /// call, because this layer has no business knowing what a dialog is.
     void drivesRequested();
-    /// The shell should put the cursor where the passphrase is typed. Same
-    /// reasoning: this layer does not know there is a band, only that somebody
-    /// asked to do something that needs the store open.
+    /// The shell should ask for the passphrase. Same reasoning: this layer does
+    /// not know there is a dialog, only that somebody asked to do something that
+    /// needs the store open.
     void credentialsRequested();
     void notification(int severity, const QString& title, const QString& detail);
     /// The shell asks for the little dialog: a name and a format are the user's to
@@ -375,6 +396,19 @@ signals:
 private:
     void mountDefaultDrives();
     void registerShellActions();
+
+    /// Whether there is a drive behind `uri` ready to be read from.
+    enum class DriveReadiness {
+        Ready, ///< mounted, or there is no configured drive here at all
+        Waiting, ///< it needs the credential store, and the store is shut
+        Failed, ///< there is a drive, and connecting it did not work
+    };
+    /// Connects the configured drive behind `uri` when nothing is mounted there.
+    /// Says which of the three happened rather than returning a bare bool: the
+    /// caller has something different to do in each case, and "false" for both
+    /// "ask for the passphrase" and "it is broken" is how an unconnected drive
+    /// came to look like an empty folder.
+    DriveReadiness prepareDriveFor(const QString& uri);
     /// Restores the previous tabs, or opens a default one. Returns false when
     /// there was nothing to restore.
     bool restoreSession();
@@ -417,6 +451,9 @@ private:
     SecretStore* m_secrets = nullptr;
     RemoteRegistry* m_remotes = nullptr;
     QString m_credentialsError;
+    /// Where goTo() was heading when it found the store shut, so unlocking can
+    /// finish the journey rather than leaving the user to ask twice.
+    QString m_pendingNavigation;
     BookmarkModel* m_bookmarks = nullptr;
     CommandPaletteModel* m_commands = nullptr;
     WindowGeometry m_window;

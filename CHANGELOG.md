@@ -11,6 +11,8 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-10 #MOLE-111 A drive whose password is in the credential store is connected the first time you open it, and asks for the passphrase then, instead of asking at startup for a drive you may never touch
+2026-08-10 #MOLE-111 Opening a configured drive that is not connected connects it, instead of showing it as a folder with nothing in it
 2026-08-10 #MOLE-100 Every dialog says which button acts, and can be answered from the keyboard
 2026-08-10 #MOLE-100 Copying or moving a single file can rename it on the way, which the field for it never allowed
 2026-08-10 #MOLE-112 A file with no line breaks in it — a minified export, a one-line dump — previews instead of stopping the window

@@ -97,9 +97,14 @@ Rectangle {
         // order to look at it and being left unable to type into it is wrong on
         // its own terms, and every navigation control in the pane's own toolbar
         // already does exactly this.
+        //
+        // But only when it actually went there. A locked drive puts the passphrase
+        // dialog up instead, and handing the keyboard to the listing behind a
+        // modal takes it out of that modal for good: the popup is left holding no
+        // focus, so nothing inside it can take the keyboard afterwards either.
         onClicked: {
-            App.goTo(target)
-            sidebar.focusWanted()
+            if (App.goTo(target))
+                sidebar.focusWanted()
         }
 
         // Stated rather than inherited. Control.hoverEnabled follows a platform
@@ -258,23 +263,14 @@ Rectangle {
             color: sidebar.mutedText
         }
 
-        // Said here, in the window, rather than behind a dialog nobody has a
-        // reason to open. A drive whose password is in a shut store used to
-        // wait at startup in complete silence -- no prompt, no badge, no
-        // failure -- and the only way to find out why was to go looking.
-        UnlockBand {
-            id: sidebarUnlock
-            objectName: "sidebarUnlockBand"
-            Layout.fillWidth: true
-            visible: App.credentialsNeeded
-
-            // Asked for from somewhere else -- the command palette, which has
-            // no more business knowing about this band than the controller does.
-            Connections {
-                target: App
-                function onCredentialsRequested() { sidebarUnlock.focusField() }
-            }
-        }
+        // No band here any more. It asked for the passphrase at startup, for
+        // drives nobody had opened yet -- the one moment nobody has a reason to
+        // answer -- and it asked for it in a label, a field and a button sharing
+        // about two hundred pixels of a sidebar that can be dragged down to a
+        // hundred and sixty. The question is asked when a drive is opened now,
+        // in a dialog. What stays here is the news: the row still reads Locked
+        // and still offers the key rather than the play triangle. See
+        // docs/adr/0031-a-locked-drive-is-connected-when-it-is-opened.md.
 
         // Local disks, network shares and mounted archives are the same kind
         // of row -- that uniformity is the point of the VFS layer.
@@ -326,7 +322,10 @@ Rectangle {
                 checkCaption: checkedAt !== "" ? checkMessage + " · " + checkedAt : ""
 
                 onConnectRequested: App.connectDrive(configuredId)
-                onUnlockRequested: sidebarUnlock.focusField()
+                // The same signal the palette's Unlock command raises, so the key
+                // on a row and the command arrive at one dialog rather than at two
+                // ways of doing the same thing.
+                onUnlockRequested: App.requestCredentials()
                 onCheckRequested: App.checkDrive(configuredId)
                 onRemoveRequested: configuredId !== "" ? App.disconnectDrive(configuredId)
                                                        : App.drives.unmount(index)

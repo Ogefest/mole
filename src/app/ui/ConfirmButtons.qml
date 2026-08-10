@@ -40,6 +40,11 @@ DialogButtonBox {
     /// a form that saves as you go -- has one way out and nothing to tell apart.
     /// The acting button goes; the keyboard does not.
     property bool dismissOnly: false
+    /// The acting button reports Apply rather than Accept, so pressing it does not
+    /// close the dialog: the dialog gets `applied` and decides. For a question
+    /// that can be refused -- a passphrase that might be wrong -- the alternative
+    /// is a dialog that closes on the wrong answer and has nowhere to say so.
+    property bool actWithoutClosing: false
     /// Where the keyboard starts: "accept", "reject", or "none" for a dialog that
     /// puts it in a field of its own. Set it to "none" and focus the field, never
     /// leave it nowhere: a dialog with the keyboard nowhere cannot be answered
@@ -123,7 +128,8 @@ DialogButtonBox {
         Keys.onReturnPressed: acceptButton.clicked()
         Keys.onEnterPressed: acceptButton.clicked()
         font.pixelSize: App.secondaryTextSize
-        DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+        DialogButtonBox.buttonRole: box.actWithoutClosing ? DialogButtonBox.ApplyRole
+                                                         : DialogButtonBox.AcceptRole
 
         contentItem: Label {
             text: acceptButton.text

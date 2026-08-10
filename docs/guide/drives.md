@@ -40,14 +40,26 @@ something the operating system keeps for you.
 The settings file beside it stays readable, diffable and worth backing up — it
 records *that* a field has a secret, never what the secret is.
 
-If the store is shut when Mole starts, the window says so:
+**Nothing asks for it at startup.** The store is shut every time Mole starts, and
+most sessions never touch a drive that needs it — so a drive whose password is in
+there simply sits in the list, grey like the ones nobody has connected. Point at it
+and its tooltip says *Locked*, and the button it offers is a key rather than a play
+triangle:
 
 ![A drive waiting on the passphrase](images/11d-drive-locked.png)
 
-One line above the drive list, one field, one button. Not a dialog in the way:
-the application is perfectly usable while a drive waits, and being asked for a
-password at startup for something you have not asked for yet is the wrong trade.
-One entry opens the store and everything that was waiting connects.
+**Opening it is what asks.** Click the drive and the passphrase is asked for then,
+in a dialog, because that is the first moment you have a reason to answer:
+
+![Asking for the passphrase](images/11e-drive-unlock.png)
+
+Enter it and the drive connects and opens — the click you made is finished, not
+thrown away. Everything else that was waiting on the store connects at the same
+time, so one entry is all it ever takes. A drive marked *connect at startup* that
+has no password needs nothing typed at all.
+
+See [ADR-0031](../adr/0031-a-locked-drive-is-connected-when-it-is-opened.md) for
+why it works this way, including what it used to do instead.
 
 ## Connecting, ejecting, checking
 

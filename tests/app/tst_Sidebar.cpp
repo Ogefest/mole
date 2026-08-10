@@ -38,12 +38,26 @@ private slots:
     void aLocalDiskOffersNeitherButton();
     void connectingAsksWhetherTheDriveIsThere();
 
-    void aLockedStoreSaysSoInTheWindow();
+    void atStartupNothingAsksForThePassphrase();
+    void openingALockedDriveIsWhatAsksForThePassphrase();
     void onePassphraseConnectsTheDrivesThatWereWaiting();
     void aWrongPassphraseSaysSoAndConnectsNothing();
-    void withNothingWaitingThereIsNoBand();
+    void theKeyOnARowAndThePaletteOpenTheSameDialog();
+    void aDriveWithNoSecretConnectsWithNothingTyped();
+    void withNothingWaitingNothingAsks();
 
 private:
+    /// The passphrase dialog, which is a Popup and so never appears in the
+    /// visual tree that item() walks.
+    QObject* unlockDialog() const { return m_harness->object(QStringLiteral("unlockDialog")); }
+    bool unlockDialogIsUp() const
+    {
+        QObject* dialog = unlockDialog();
+        return dialog && dialog->property("visible").toBool();
+    }
+    /// Types a passphrase into the dialog and presses its acting button.
+    void answerUnlockDialog(const QString& passphrase);
+
     /// The sidebar row showing this name, from either list.
     QQuickItem* rowNamed(const QString& label) const;
     QQuickItem* buttonIn(QQuickItem* row, const QString& objectName) const;
@@ -125,6 +139,10 @@ bool TestSidebar::configureLockedDrive(const QString& name)
     // depend on the store being open.
     QVariantMap values;
     values.insert(QStringLiteral("host"), QStringLiteral("nas.local"));
+    // Every field the backend insists on, so building it succeeds and the drive
+    // really does connect. Without the user name create() refuses before any I/O,
+    // and a test meaning to watch a drive connect watches it fail instead.
+    values.insert(QStringLiteral("user"), QStringLiteral("someone"));
     values.insert(QStringLiteral("password"), QStringLiteral("not-a-real-password"));
     if (!m_harness->app()->saveDrive({}, name, QStringLiteral("sftp"), QStringLiteral("sftp"), {}, values))
         return false;
@@ -136,35 +154,71 @@ bool TestSidebar::configureLockedDrive(const QString& name)
     return m_harness->until([this, &name] { return rowNamed(name) != nullptr; });
 }
 
-/// The worst behaviour in this area, and the reason for the band. A drive whose
-/// password lives in a shut store waited at startup in complete silence -- no
-/// prompt, no badge, no failure. The drive simply was not there, and the way to
-/// find out why was to open a dialog and notice an amber panel.
-void TestSidebar::aLockedStoreSaysSoInTheWindow()
+void TestSidebar::answerUnlockDialog(const QString& passphrase)
+{
+    QQuickItem* field = m_harness->item(QStringLiteral("passphraseField"));
+    QVERIFY(field);
+    field->setProperty("text", passphrase);
+    // The acting button, not the dialog's accept(): the point of the button is
+    // that it acts without closing, so a refused passphrase has somewhere to be
+    // reported.
+    QQuickItem* act = m_harness->item(QStringLiteral("dialogAccept"));
+    QVERIFY(act);
+    QVERIFY(act->property("enabled").toBool());
+    QMetaObject::invokeMethod(act, "clicked");
+    m_harness->settle(4);
+}
+
+/// A drive whose password lives in a shut store used to have the whole window ask
+/// about it at startup -- an amber band above the drive list and an amber dot on
+/// every such row, before anybody had asked for any of them. Nothing had gone
+/// wrong: the store is shut at every startup and may stay shut all session. The
+/// one moment nobody has a reason to answer was the moment it got asked.
+void TestSidebar::atStartupNothingAsksForThePassphrase()
 {
     if (!m_harness->app()->credentialsAvailable())
         QSKIP("this build cannot encrypt");
     QVERIFY(configureLockedDrive(QStringLiteral("Locked NAS")));
 
-    QVERIFY2(m_harness->app()->credentialsNeeded(),
-        "a drive that cannot connect without the store is what the band is for");
+    QVERIFY2(!unlockDialogIsUp(), "nothing is asked for at startup: no band, no dialog");
 
-    QQuickItem* band = m_harness->item(QStringLiteral("sidebarUnlockBand"));
-    QVERIFY2(band, "the property has to have a reader; this test is that reader");
-    QVERIFY2(band->isVisible(), "said in the window, before anything is opened, and without a dialog");
-
+    // The row keeps the news, which is the half of the old behaviour worth
+    // keeping. It reads Locked and offers the key rather than the play triangle,
+    // so a drive waiting on the store is still told apart from one that is merely
+    // disconnected by anybody who looks at the row.
     QCOMPARE(stateOfDrive(QStringLiteral("Locked NAS")), DriveListModel::State::Locked);
-
-    // The row points at the band rather than offering a second way to do it.
     QQuickItem* row = rowNamed(QStringLiteral("Locked NAS"));
     QVERIFY(row);
     QCOMPARE(row->property("unlockable").toBool(), true);
     QCOMPARE(row->property("connectable").toBool(), false);
+    QCOMPARE(row->property("stateCaption").toString(), QStringLiteral("Locked"));
 
-    press(buttonIn(row, QStringLiteral("placeRemoveButton")));
+    // And it reads grey, not amber. Amber is what a drive on its way to failing
+    // wears, and a drive nobody has opened is not a problem.
+    QCOMPARE(row->property("severity").toString(), QStringLiteral("idle"));
+}
+
+void TestSidebar::openingALockedDriveIsWhatAsksForThePassphrase()
+{
+    if (!m_harness->app()->credentialsAvailable())
+        QSKIP("this build cannot encrypt");
+    QVERIFY(configureLockedDrive(QStringLiteral("Locked NAS")));
+    QVERIFY(!unlockDialogIsUp());
+
+    // Clicking the row is "take me there", and taking somebody there means
+    // connecting the drive. Before this, the pane was pointed at a drive with no
+    // mount behind it and showed a folder with nothing in it.
+    QQuickItem* row = rowNamed(QStringLiteral("Locked NAS"));
+    QVERIFY(row);
+    QMetaObject::invokeMethod(row, "clicked");
+
+    QVERIFY2(m_harness->until([this] { return unlockDialogIsUp(); }),
+        "opening a drive that needs the store is what asks for the passphrase");
+
     QQuickItem* field = m_harness->item(QStringLiteral("passphraseField"));
     QVERIFY(field);
-    QVERIFY2(field->hasActiveFocus(), "a locked row sends the cursor to where the passphrase is typed");
+    QVERIFY2(m_harness->until([field] { return field->hasActiveFocus(); }),
+        "and the keyboard is in the field, so it can be typed straight away");
 }
 
 void TestSidebar::onePassphraseConnectsTheDrivesThatWereWaiting()
@@ -174,10 +228,9 @@ void TestSidebar::onePassphraseConnectsTheDrivesThatWereWaiting()
     QVERIFY(configureLockedDrive(QStringLiteral("Locked NAS")));
     QCOMPARE(stateOfDrive(QStringLiteral("Locked NAS")), DriveListModel::State::Locked);
 
-    QQuickItem* field = m_harness->item(QStringLiteral("passphraseField"));
-    QVERIFY(field);
-    field->setProperty("text", QStringLiteral("a passphrase"));
-    press(m_harness->item(QStringLiteral("unlockButton")));
+    m_harness->app()->requestCredentials();
+    QVERIFY(m_harness->until([this] { return unlockDialogIsUp(); }));
+    answerUnlockDialog(QStringLiteral("a passphrase"));
 
     // One entry, and everything that was waiting stops waiting. Where the drive
     // ends up is the connection's business -- it is pointed at a host that does
@@ -185,10 +238,8 @@ void TestSidebar::onePassphraseConnectsTheDrivesThatWereWaiting()
     QVERIFY(m_harness->until(
         [this] { return stateOfDrive(QStringLiteral("Locked NAS")) != DriveListModel::State::Locked; }));
     QVERIFY(!m_harness->app()->credentialsNeeded());
-
-    QQuickItem* band = m_harness->item(QStringLiteral("sidebarUnlockBand"));
-    QVERIFY(band);
-    QVERIFY2(!band->isVisible(), "nothing is waiting any more, so the band has nothing to say");
+    QVERIFY2(m_harness->until([this] { return !unlockDialogIsUp(); }),
+        "the question is answered, so the dialog goes");
 }
 
 void TestSidebar::aWrongPassphraseSaysSoAndConnectsNothing()
@@ -197,26 +248,60 @@ void TestSidebar::aWrongPassphraseSaysSoAndConnectsNothing()
         QSKIP("this build cannot encrypt");
     QVERIFY(configureLockedDrive(QStringLiteral("Locked NAS")));
 
-    QQuickItem* field = m_harness->item(QStringLiteral("passphraseField"));
-    QVERIFY(field);
-    field->setProperty("text", QStringLiteral("not the passphrase"));
-    press(m_harness->item(QStringLiteral("unlockButton")));
+    m_harness->app()->requestCredentials();
+    QVERIFY(m_harness->until([this] { return unlockDialogIsUp(); }));
+    answerUnlockDialog(QStringLiteral("not the passphrase"));
 
     QQuickItem* error = m_harness->item(QStringLiteral("unlockError"));
     QVERIFY(error);
     QVERIFY2(!error->property("text").toString().isEmpty(), "a refused passphrase has to say so");
+    QVERIFY2(unlockDialogIsUp(), "and it has to say so where it was asked, so the dialog stays up");
     QCOMPARE(stateOfDrive(QStringLiteral("Locked NAS")), DriveListModel::State::Locked);
     QVERIFY(m_harness->app()->credentialsNeeded());
 }
 
-void TestSidebar::withNothingWaitingThereIsNoBand()
+void TestSidebar::theKeyOnARowAndThePaletteOpenTheSameDialog()
+{
+    if (!m_harness->app()->credentialsAvailable())
+        QSKIP("this build cannot encrypt");
+    QVERIFY(configureLockedDrive(QStringLiteral("Locked NAS")));
+
+    // The key on the row.
+    QQuickItem* row = rowNamed(QStringLiteral("Locked NAS"));
+    QVERIFY(row);
+    press(buttonIn(row, QStringLiteral("placeRemoveButton")));
+    QVERIFY2(m_harness->until([this] { return unlockDialogIsUp(); }), "the key asks for the passphrase");
+    QObject* fromTheRow = unlockDialog();
+
+    QVERIFY(QMetaObject::invokeMethod(fromTheRow, "close"));
+    QVERIFY(m_harness->until([this] { return !unlockDialogIsUp(); }));
+
+    // And the palette's Unlock command, which is what the controller raises.
+    m_harness->app()->requestCredentials();
+    QVERIFY(m_harness->until([this] { return unlockDialogIsUp(); }));
+    QCOMPARE(unlockDialog(), fromTheRow);
+}
+
+void TestSidebar::aDriveWithNoSecretConnectsWithNothingTyped()
+{
+    // The half of the old behaviour that must not change: a drive with no secret
+    // fields and mountAtStartup on asks nobody anything.
+    QVERIFY(configureScratchDrive(QStringLiteral("Scratch")));
+    QString error;
+    QVERIFY2(m_harness->restart(&error), qPrintable(error));
+    QVERIFY(m_harness->until([this] { return rowNamed(QStringLiteral("Scratch")) != nullptr; }));
+
+    QVERIFY2(!unlockDialogIsUp(), "nothing here needs the store, so nothing asks");
+    QVERIFY(m_harness->until(
+        [this] { return stateOfDrive(QStringLiteral("Scratch")) == DriveListModel::State::Connected; }));
+}
+
+void TestSidebar::withNothingWaitingNothingAsks()
 {
     // The fixture has local disks and no configured drive at all, which is what
     // most people have most of the time.
     QVERIFY(!m_harness->app()->credentialsNeeded());
-    QQuickItem* band = m_harness->item(QStringLiteral("sidebarUnlockBand"));
-    QVERIFY(band);
-    QVERIFY2(!band->isVisible(), "nothing is waiting on a passphrase, so nothing asks for one");
+    QVERIFY2(!unlockDialogIsUp(), "nothing is waiting on a passphrase, so nothing asks for one");
 }
 
 void TestSidebar::aConfiguredDriveIsListedWithSomethingToPress()

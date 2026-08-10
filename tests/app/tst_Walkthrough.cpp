@@ -131,7 +131,7 @@ private slots:
     void connectingFromTheListSurvivesTheListRebuilding();
     void anAnalysisTabWithNoReportCentresItsMessage();
     void theSidebarListsADriveAndConnectsIt();
-    void theWindowAsksForThePassphraseADriveIsWaitingOn();
+    void openingALockedDriveAsksForThePassphraseAndThenGoesThere();
     void emptyWindowExplainsItself();
 
 private:
@@ -2349,7 +2349,7 @@ void TestWalkthrough::theSidebarListsADriveAndConnectsIt()
 /// The band, and the state it exists for. A drive whose password lives in a
 /// shut store used to wait at startup in silence; the window says so now, and
 /// the guide shows what that looks like.
-void TestWalkthrough::theWindowAsksForThePassphraseADriveIsWaitingOn()
+void TestWalkthrough::openingALockedDriveAsksForThePassphraseAndThenGoesThere()
 {
     if (!m_harness->app()->credentialsAvailable())
         QSKIP("this build cannot encrypt");
@@ -2357,6 +2357,10 @@ void TestWalkthrough::theWindowAsksForThePassphraseADriveIsWaitingOn()
     QVERIFY(m_harness->app()->unlockCredentials(QStringLiteral("test-passphrase")));
     QVariantMap values;
     values.insert(QStringLiteral("host"), QStringLiteral("nas.local"));
+    // Every field the backend insists on, so building it succeeds and the drive
+    // really does connect. Without the user name create() refuses before any I/O,
+    // and a test meaning to watch a drive connect watches it fail instead.
+    values.insert(QStringLiteral("user"), QStringLiteral("someone"));
     values.insert(QStringLiteral("password"), QStringLiteral("not-a-real-password"));
     QVERIFY(m_harness->app()->saveDrive(QString(), QStringLiteral("Office NAS"), QStringLiteral("sftp"),
         QStringLiteral("sftp"), QString(), values));
@@ -2367,14 +2371,63 @@ void TestWalkthrough::theWindowAsksForThePassphraseADriveIsWaitingOn()
     // into.
     QString error;
     QVERIFY2(m_harness->restart(&error), qPrintable(error));
-
     QVERIFY(m_harness->until([this] { return m_harness->app()->credentialsNeeded(); }));
-    QQuickItem* band = m_harness->item(QStringLiteral("sidebarUnlockBand"));
-    QVERIFY2(band, "the window has to say so without a dialog being opened");
-    QVERIFY(m_harness->until([band] { return band->isVisible(); }));
 
-    m_harness->settle(4);
+    // Nothing has asked anybody anything. The store is shut, which is what it is
+    // at every startup, and this drive may never be touched.
+    QObject* dialog = m_harness->object(QStringLiteral("unlockDialog"));
+    QVERIFY(dialog);
+    QVERIFY2(!dialog->property("visible").toBool(), "startup asks for no passphrase");
+
+    // The drive's own row, in the state a reader should see it in: grey, and
+    // saying Locked.
+    QQuickItem* row = nullptr;
+    QVERIFY(m_harness->until([this, &row] {
+        for (QQuickItem* candidate : m_harness->items(QStringLiteral("placeRow"))) {
+            if (candidate->property("label").toString() == QStringLiteral("Office NAS")) {
+                row = candidate;
+                return true;
+            }
+        }
+        return false;
+    }));
+    QCOMPARE(row->property("stateCaption").toString(), QStringLiteral("Locked"));
+    QCOMPARE(row->property("severity").toString(), QStringLiteral("idle"));
+    m_harness->settle(15);
     m_harness->screenshot(QStringLiteral("11d-drive-locked"));
+
+    // Opening it is what asks. Through goTo(), which is where the sidebar row,
+    // the command palette and the bookmarks all arrive. The uri comes off the row
+    // itself rather than being spelled out here: how a drive's name becomes a
+    // scheme is the registry's business, not this test's.
+    const QString root = row->property("target").toString();
+    QVERIFY(!root.isEmpty());
+    QVERIFY2(!m_harness->app()->goTo(root), "the navigation waits on the store");
+    QVERIFY(m_harness->until([dialog] { return dialog->property("visible").toBool(); }));
+
+    QQuickItem* field = m_harness->item(QStringLiteral("passphraseField"));
+    QVERIFY(field);
+    QVERIFY(m_harness->until([field] { return field->hasActiveFocus(); }));
+
+    // Typed before the picture, so it shows the dialog as somebody answering it
+    // sees it -- with something in the field and the acting button live.
+    m_harness->type(QStringLiteral("test-passphrase"));
+    // Longer than the enter transition, which is 220 ms and which every other
+    // grab in this file is also taken inside. MOLE-114 replaces the waiting with
+    // a look at whether the window has stopped changing.
+    m_harness->settle(15);
+    m_harness->screenshot(QStringLiteral("11e-drive-unlock"));
+
+    // Answered with Return, from the field it was typed into.
+    m_harness->key(Qt::Key_Return);
+
+    QVERIFY(m_harness->until([dialog] { return !dialog->property("visible").toBool(); }));
+    QVERIFY2(!m_harness->app()->credentialsNeeded(), "the store is open");
+
+    // And the journey finishes on its own. Where the listing ends up is the
+    // connection's business -- there is no host called nas.local -- but the pane
+    // has to have gone to the drive that was asked for rather than staying put.
+    QVERIFY(m_harness->until([this, root] { return pane()->currentUri().startsWith(root); }));
 }
 
 /// Typing in the kind picker to narrow sixty backends down to the one wanted.

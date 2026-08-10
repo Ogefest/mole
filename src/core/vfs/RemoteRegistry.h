@@ -57,6 +57,11 @@ public:
 
     QList<RemoteDrive> drives() const { return m_drives; }
     RemoteDrive drive(const QString& id) const;
+    /// The configured drive a uri belongs to, matched on its scheme. An invalid
+    /// drive when the uri is not one of theirs — a local path, an archive, a
+    /// mount nobody configured. Here rather than in a caller because the rule
+    /// that a drive's scheme comes from its name is this file's.
+    RemoteDrive driveForUri(const VfsUri& uri) const;
     /// Adds or replaces by id, storing `secrets` in the credential store rather
     /// than in the settings file. Returns false when a secret was given but the
     /// store is locked -- writing it in the clear instead is not an option.

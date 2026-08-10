@@ -224,13 +224,19 @@ QString DriveListModel::stateSeverity(State state)
     switch (state) {
     case State::Connected:
         return QStringLiteral("good");
-    case State::Locked:
     case State::Connecting:
         return QStringLiteral("attention");
     case State::Unreachable:
         return QStringLiteral("broken");
     case State::Local:
     case State::Disconnected:
+    // A drive whose password is in a shut store is not a problem: the store is
+    // shut at every startup and may stay shut all session, and nothing has gone
+    // wrong until somebody asks for that drive. Amber is what a drive on its way
+    // to failing wears, so Locked reads grey with the rest of the not-yet. The
+    // word keeps the distinction the colour gives up: the row still says Locked
+    // and still offers the key rather than the play triangle.
+    case State::Locked:
         break;
     }
     // Nothing to report, which is what a local disk and a drive nobody has

@@ -225,10 +225,18 @@ ApplicationWindow {
         id: drivesDialog
     }
 
+    // Here rather than in the sidebar, because it is asked for from four places
+    // -- opening a locked drive, the key on its row, the palette's Unlock, and
+    // the drives dialog -- and none of them should have to know where it lives.
+    UnlockDialog {
+        id: unlockDialog
+    }
+
     Connections {
         target: App
         function onDrivesRequested() { drivesDialog.open() }
         function onCompressionRequested() { compressDialog.open() }
+        function onCredentialsRequested() { unlockDialog.open() }
     }
 
     Shortcut {
