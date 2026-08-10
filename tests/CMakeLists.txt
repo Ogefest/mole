@@ -12,6 +12,8 @@ add_library(mole_test_support STATIC
     support/TestbedControl.cpp
     support/ScriptedHttpServer.h
     support/ScriptedHttpServer.cpp
+    support/Victim.h
+    support/Victim.cpp
 )
 
 # The QML-driving harness needs Quick and the application's QML; kept in its
@@ -68,6 +70,11 @@ endfunction()
 # --- core: no GUI, no plugins -----------------------------------------------
 mole_add_test(tst_VfsUri            SOURCES core/tst_VfsUri.cpp)
 mole_add_test(tst_LocalFileSystem   SOURCES core/tst_LocalFileSystem.cpp)
+
+# What a process killed outright leaves behind. It starts a second copy of
+# itself and sends it SIGKILL, which is the one failure that cannot be faked
+# from inside a process that intends to keep running.
+mole_add_test(tst_KilledOutright    SOURCES core/tst_KilledOutright.cpp LIBS Qt6::Sql)
 mole_add_test(tst_MemoryFileSystem  SOURCES core/tst_MemoryFileSystem.cpp)
 mole_add_test(tst_VfsManager        SOURCES core/tst_VfsManager.cpp)
 mole_add_test(tst_DirectoryWalker   SOURCES core/tst_DirectoryWalker.cpp)

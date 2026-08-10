@@ -4,6 +4,7 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSaveFile>
 #include <QStandardPaths>
 
 namespace mole {
@@ -49,13 +50,25 @@ bool Preferences::save() const
 {
     QDir().mkpath(QFileInfo(m_path).absolutePath());
 
-    QFile file(m_path);
+    // QSaveFile writes to a temporary and renames, so the file is either the
+    // settings as they were or the settings as they now are, and never a moment
+    // of neither.
+    //
+    // This is not a nicety. Preferences are written wholesale — the whole file
+    // is replaced whenever anything changes — so an interruption part way
+    // through the write is an interruption part way through the only copy.
+    // Every other store here already used QSaveFile; this one was opening the
+    // real file with Truncate, and a process killed at the wrong instant left an
+    // empty file where every setting the user had ever chosen used to be.
+    QSaveFile file(m_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
         return false;
 
     // Indented: it is a handful of keys and someone will read it with an editor.
     const QJsonDocument document(QJsonObject::fromVariantMap(m_values));
-    return file.write(document.toJson(QJsonDocument::Indented)) > 0;
+    if (file.write(document.toJson(QJsonDocument::Indented)) < 0)
+        return false;
+    return file.commit();
 }
 
 QVariant Preferences::value(const QString& key, const QVariant& fallback) const

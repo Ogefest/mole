@@ -404,12 +404,18 @@ Result<std::unique_ptr<QIODevice>> SftpFileSystem::openWrite(const VfsUri& targe
     // outright does not get to delete what it wrote, and a half-sent file under
     // the name somebody asked for is the one outcome worth ruling out. The
     // rename at the end is a single server-side operation. See ADR-0020.
-    const VfsUri staging = net::partialUploadOf(target);
+    const VfsUri staging = partialWriteOf(target);
+    // Asked before the transfer, not after it: only an answer from before
+    // the write began can tell an overwrite from a file that turned up while
+    // this one was going over the wire.
+    const bool replacing = stat(target).ok();
 
     auto send = [this, staging](QIODevice& source, qint64, bool append, const CancelToken& cancel) {
         return sendSpan(staging, source, append, cancel);
     };
-    auto commit = [this, staging, target] { return net::commitUpload(*this, staging, target); };
+    auto commit = [this, staging, target, replacing] {
+        return commitPartialWrite(*this, staging, target, replacing);
+    };
 
     auto stream = std::make_unique<net::StreamingUpload>(std::move(send), kSpanBytes, std::move(commit));
     if (!stream->open(QIODevice::WriteOnly)) {

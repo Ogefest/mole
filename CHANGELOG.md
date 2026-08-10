@@ -6,6 +6,10 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- A copy interrupted by the machine losing power no longer destroys the file it was
+  replacing: what is left is marked `.mole-partial` and the previous version is
+  untouched.
+- Preferences survive a crash during a save, instead of being emptied.
 - Writing anything larger than a few hundred bytes to a WebDAV drive works;
   it previously failed with "necessary data rewind wasn't possible" on any server
   that asks for a password.

@@ -5,46 +5,6 @@
 
 namespace mole::net {
 
-VfsUri partialUploadOf(const VfsUri& target)
-{
-    return target.parent().child(target.fileName() + kPartialUploadSuffix);
-}
-
-bool isPartialUpload(const QString& name)
-{
-    return name.endsWith(kPartialUploadSuffix);
-}
-
-VfsError commitUpload(IFileSystem& fs, const VfsUri& staging, const VfsUri& target)
-{
-    // A copy clears the way before it starts, so the destination ought to be
-    // free. Ought is not is: something else may have put a file there in the
-    // minutes this one spent going up, and a rename that quietly replaced it
-    // would destroy data this transfer was never asked to touch. So the
-    // emptiness is checked rather than assumed.
-    const Result<FileEntry> occupied = fs.stat(target);
-    if (occupied.ok()) {
-        fs.remove(staging, false);
-        return VfsError::make(VfsError::AlreadyExists,
-            QStringLiteral("%1 appeared while it was being written, so the upload was not put in place")
-                .arg(target.path()));
-    }
-    if (occupied.error().code != VfsError::NotFound) {
-        // Not there is one answer; could not find out is another, and only the
-        // first of them makes a rename safe. Guessing here is guessing about
-        // whether somebody else's file is about to be replaced.
-        fs.remove(staging, false);
-        return occupied.error();
-    }
-
-    const Result<void> renamed = fs.rename(staging, target);
-    if (!renamed.ok()) {
-        fs.remove(staging, false);
-        return renamed.error();
-    }
-    return VfsError::ok();
-}
-
 BufferedUpload::BufferedUpload(Sink sink, Commit commit)
     : m_sink(std::move(sink))
     , m_commit(std::move(commit))

@@ -122,7 +122,7 @@ private slots:
 void TestStreamingUpload::aWorkingNameIsRecognisableAndReversible()
 {
     const VfsUri target = VfsUri::fromString(QStringLiteral("sftp://nas/photos/report.pdf"));
-    const VfsUri staging = net::partialUploadOf(target);
+    const VfsUri staging = partialWriteOf(target);
 
     QCOMPARE(staging.path(), QStringLiteral("/photos/report.pdf.mole-partial"));
     QCOMPARE(staging.scheme(), target.scheme());
@@ -132,9 +132,9 @@ void TestStreamingUpload::aWorkingNameIsRecognisableAndReversible()
     // The whole mechanism is that anybody looking at a listing can tell. That
     // includes a sweep for what a killed process left behind, which is a filter
     // over names and nothing else.
-    QVERIFY(net::isPartialUpload(staging.fileName()));
-    QVERIFY(!net::isPartialUpload(target.fileName()));
-    QVERIFY(!net::isPartialUpload(QStringLiteral("mole-partial.txt")));
+    QVERIFY(isPartialWrite(staging.fileName()));
+    QVERIFY(!isPartialWrite(target.fileName()));
+    QVERIFY(!isPartialWrite(QStringLiteral("mole-partial.txt")));
 }
 
 void TestStreamingUpload::streamingCommitsOnceEverythingIsSent()
@@ -270,10 +270,10 @@ void TestStreamingUpload::commitRenamesTheWorkingNameIntoPlace()
 {
     auto fs = std::make_shared<MemoryFileSystem>();
     const VfsUri target = VfsUri::fromString(QStringLiteral("mem:///notes.txt"));
-    const VfsUri staging = net::partialUploadOf(target);
+    const VfsUri staging = partialWriteOf(target);
     fs->addFile(staging.path(), QByteArrayLiteral("the whole file"));
 
-    const VfsError failed = net::commitUpload(*fs, staging, target);
+    const VfsError failed = commitPartialWrite(*fs, staging, target);
 
     QVERIFY(!failed.isError());
     QVERIFY(fs->stat(target).ok());
@@ -284,12 +284,12 @@ void TestStreamingUpload::commitRefusesToReplaceSomethingThatAppeared()
 {
     auto fs = std::make_shared<MemoryFileSystem>();
     const VfsUri target = VfsUri::fromString(QStringLiteral("mem:///notes.txt"));
-    const VfsUri staging = net::partialUploadOf(target);
+    const VfsUri staging = partialWriteOf(target);
     fs->addFile(staging.path(), QByteArrayLiteral("what was uploaded"));
     // Somebody else got there during the minutes the upload took.
     fs->addFile(target.path(), QByteArrayLiteral("what somebody else put there"));
 
-    const VfsError failed = net::commitUpload(*fs, staging, target);
+    const VfsError failed = commitPartialWrite(*fs, staging, target);
 
     QCOMPARE(failed.code, VfsError::AlreadyExists);
     // Theirs, untouched -- the whole reason for checking rather than assuming.
@@ -304,11 +304,11 @@ void TestStreamingUpload::commitLeavesNothingBehindWhenTheRenameFails()
 {
     auto fs = std::make_shared<MemoryFileSystem>();
     const VfsUri target = VfsUri::fromString(QStringLiteral("mem:///notes.txt"));
-    const VfsUri staging = net::partialUploadOf(target);
+    const VfsUri staging = partialWriteOf(target);
     fs->addFile(staging.path(), QByteArrayLiteral("the whole file"));
     fs->setFault(target.path(), VfsError::AccessDenied);
 
-    const VfsError failed = net::commitUpload(*fs, staging, target);
+    const VfsError failed = commitPartialWrite(*fs, staging, target);
 
     QCOMPARE(failed.code, VfsError::AccessDenied);
     // The transfer failed, so it leaves nothing: bytes under a name nothing
