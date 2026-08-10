@@ -147,7 +147,9 @@ void TestDuplicates::aFileThatChangesWhileItIsBeingComparedIsLeftOutOfEveryGroup
     QCOMPARE(task->changedDuringTheScan(), 1);
     QCOMPARE(task->groups().size(), 1);
 
-    const QList<FileEntry>& files = task->groups().first().files;
+    // By value, for the same reason as everywhere else here: groups() returns a
+    // copy, and a reference into it dangles as soon as the statement ends.
+    const QList<FileEntry> files = task->groups().first().files;
     QCOMPARE(files.size(), 2);
     for (const FileEntry& entry : files) {
         QVERIFY2(entry.name != QLatin1String("two.bin"),

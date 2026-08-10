@@ -462,7 +462,14 @@ FaultyFileSystem& FaultyFileSystem::accessRevokedAt(qint64 offset, const QString
 {
     Policy::Fault fault = readFault(offset, path, Policy::Effect::Fail);
     fault.error = revokedError();
-    fault.action = [policy = m_policy](const VfsUri&) { policy->revoked.store(true); };
+    // Weak, and this is the one that matters: the policy owns the fault, the
+    // fault owns this lambda, and a shared_ptr here would close the ring --
+    // every drive built with a revocation would then live until the process
+    // ended, along with everything it wrapped.
+    fault.action = [policy = std::weak_ptr<Policy>(m_policy)](const VfsUri&) {
+        if (const std::shared_ptr<Policy> alive = policy.lock())
+            alive->revoked.store(true);
+    };
     QMutexLocker lock(&m_policy->mutex);
     m_policy->faults.append(std::move(fault));
     return *this;

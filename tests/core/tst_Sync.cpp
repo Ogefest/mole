@@ -458,7 +458,9 @@ void TestSync::aRenameIsNeverADeleteBeforeItIsACopy()
 
     int firstDelete = -1;
     int lastCopy = -1;
-    const QList<SyncPlan::Step>& steps = task->plan().steps();
+    // By value: plan() hands back a copy, so a reference into it would outlive
+    // what it refers to by the length of one statement.
+    const QList<SyncPlan::Step> steps = task->plan().steps();
     for (int i = 0; i < steps.size(); ++i) {
         if (steps.at(i).action == SyncPlan::Action::Delete && firstDelete < 0)
             firstDelete = i;
