@@ -101,6 +101,9 @@ mole_add_test(tst_TransferTask      SOURCES core/tst_TransferTask.cpp)
 # that need no server, at every boundary size the copy loop has.
 mole_add_test(tst_FilesArriveWhole  SOURCES core/tst_FilesArriveWhole.cpp)
 
+# What happens when the machine runs out of something.
+mole_add_test(tst_RunningOut        SOURCES core/tst_RunningOut.cpp)
+
 # Names people really have, and shapes a filesystem really holds.
 mole_add_test(tst_AwkwardNames      SOURCES core/tst_AwkwardNames.cpp)
 
