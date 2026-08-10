@@ -25,6 +25,14 @@ struct SftpSettings
     /// Trust a host we have not met before, recording its key. A host whose key
     /// has *changed* is refused either way -- see ADR-0011.
     bool acceptNewHostKey = true;
+    /// Where the record of which host had which key lives. Empty means the
+    /// account's own `~/.ssh/known_hosts`, which is what every drive uses.
+    ///
+    /// It is settable so a test can hold the policy to account: a changed key
+    /// has to be refused, and the only way to demonstrate that is to record a
+    /// key, change it, and come back -- which is not something to do to the
+    /// machine the suite is running on.
+    QString knownHostsPath;
 };
 
 /// SFTP over libcurl.
