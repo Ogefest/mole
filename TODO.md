@@ -46,6 +46,15 @@ project, and a contributor should never hit a wall of text they cannot read.
   as it is unless someone hits it in a real file.
 - Parquet writing is out of scope. Reading a file is not a licence to rewrite it,
   and the same goes for the SQLite viewer, which opens read-only.
+- **A window with lines too long to lay out is folded, but only where a line break
+  is what makes a block** — the plain text and source case, which is where the
+  minified exports, one-line logs and base64 blobs are. A Markdown file or an HTML
+  page with no line breaks in it and no markup to divide it either would still
+  reach the layout as one enormous block, and folding would not help: both parse
+  their own blocks out of the markup, and a newline inside a paragraph is turned
+  back into a space by both. Nobody has hit it — a minified `.md` is not a thing a
+  tool produces — and the answer if they do is to divide the block, not to insert
+  line breaks the renderer discards.
 
 - A `.mole-partial` file, on a remote drive or a local disk, is the wreckage of a
   write that was killed before it finished — see [ADR-0020](docs/adr/0020-an-upload-in-progress-wears-a-different-name.md)

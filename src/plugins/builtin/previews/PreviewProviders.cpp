@@ -24,6 +24,65 @@ namespace {
         return QUrl(QStringLiteral("qrc:/qt/qml/Mole/ui/%1").arg(QLatin1String(name)));
     }
 
+    /// Everything Qt's text engine starts a new block on. Measured against the
+    /// same set the engine uses, so a file with old Mac endings -- or one that
+    /// is already in blocks for a reason of its own -- is not folded for nothing.
+    bool isLineBreak(QChar c)
+    {
+        return c == u'\n' || c == u'\r' || c == u'\v' || c == QChar::LineSeparator
+            || c == QChar::ParagraphSeparator;
+    }
+
+    /// Whether any run without a line break in it is longer than `limit`.
+    /// Separate from the fold so the ordinary file costs one scan and no
+    /// allocation: almost every window read is this and nothing else.
+    bool hasOverlongLine(const QString& text, qsizetype limit)
+    {
+        qsizetype run = 0;
+        for (const QChar c : text) {
+            if (isLineBreak(c))
+                run = 0;
+            else if (++run > limit)
+                return true;
+        }
+        return false;
+    }
+
+    /// Breaks every run longer than `limit` into pieces of `limit` characters.
+    QString withLongLinesFolded(const QString& text, qsizetype limit)
+    {
+        QString folded;
+        folded.reserve(text.size() + text.size() / limit + 1);
+
+        qsizetype run = 0;
+        for (const QChar c : text) {
+            if (isLineBreak(c)) {
+                folded.append(c);
+                run = 0;
+                continue;
+            }
+            if (run >= limit) {
+                // Never between the halves of a surrogate pair -- that would put
+                // an unpaired code unit either side of the fold and show two
+                // replacement characters where the file has one emoji. The pair
+                // goes on to the next line whole.
+                if (!folded.isEmpty() && folded.back().isHighSurrogate()) {
+                    const QChar high = folded.back();
+                    folded.chop(1);
+                    folded.append(u'\n');
+                    folded.append(high);
+                    run = 1;
+                } else {
+                    folded.append(u'\n');
+                    run = 0;
+                }
+            }
+            folded.append(c);
+            ++run;
+        }
+        return folded;
+    }
+
 } // namespace
 
 // ------------------------------------------------------------- local copy
@@ -157,6 +216,7 @@ void TextPreviewController::setViewerOption(const QString& key, const QString& v
     // The text already read is reused: switching between source and page is a
     // question about the same bytes, not a reason to go back to the drive.
     updateDisplayText();
+    applyViewers();
     emit textChanged();
 }
 
@@ -202,6 +262,20 @@ void TextPreviewController::attachDocument(
 void TextPreviewController::updateDisplayText()
 {
     m_displayText = isRenderedHtml() ? withoutExternalReferences(m_text) : m_text;
+
+    // A window with no line break in it reaches the text engine as one block of
+    // half a million characters, which is itemised and shaped whole on the GUI
+    // thread -- and a single line has no partial layout to fall back on, so the
+    // window stops answering. Nothing should be handed a block that size; break
+    // the runs that are too long.
+    //
+    // Only where a line break is what makes a block, which is the plain text and
+    // source case. Markdown and a rendered page are parsed into blocks by their
+    // own markup, and a newline inside a paragraph is folded back into a space
+    // by both -- so a fold there would change what is shown and fix nothing.
+    m_longLinesFolded = !m_markdown && !isRenderedHtml() && hasOverlongLine(m_displayText, kFoldedLineChars);
+    if (m_longLinesFolded)
+        m_displayText = withLongLinesFolded(m_displayText, kFoldedLineChars);
 }
 
 void TextPreviewController::applyViewers()
@@ -220,6 +294,22 @@ void TextPreviewController::applyViewers()
     }
 
     m_markdownStyle->detach();
+
+    // Not over a folded window, for two reasons rather than one. A fold cuts
+    // strings and comments in half, and the highlighter carries nothing from one
+    // block to the next except block-comment state, so it would colour the
+    // second half of every cut token as something it is not. And colouring per
+    // block is the other half of what makes a minified window slow: 512 kB of
+    // JSON holds around twenty thousand quoted strings, each one a setFormat()
+    // call, with a format kept per character while it runs.
+    //
+    // The language itself is unchanged, so paging on to a window that does have
+    // lines in it gets its colour back.
+    if (m_longLinesFolded) {
+        m_highlighter->attachTo(nullptr);
+        return;
+    }
+
     m_highlighter->attachTo(m_document);
     m_highlighter->setLanguage(m_language);
 }
@@ -293,6 +383,11 @@ void TextPreviewController::readWindow(qint64 offset)
         QStringDecoder decoder(QStringDecoder::Utf8);
         m_text = decoder.decode(task->contents());
         updateDisplayText();
+        // Whether this window is folded decides whether it is coloured, so the
+        // highlighter is settled before the new text reaches the document rather
+        // than after: attached, it would colour the window we just folded to
+        // avoid the cost of colouring it.
+        applyViewers();
 
         m_windowOffset = task->actualOffset();
         m_windowBytes = task->contents().size();

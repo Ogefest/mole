@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-10 #MOLE-112 A file with no line breaks in it — a minified export, a one-line dump — previews instead of stopping the window
 2026-08-10 #MOLE-93 Plain text and source previews are drawn a step larger, level with the rest of the interface
 2026-08-10 #MOLE-110 `make asan` is green again
 2026-08-10 #MOLE-13 A bulk rename that swaps or shifts names now works instead of refusing every row

@@ -107,6 +107,18 @@ Item {
                 font.pixelSize: App.smallTextSize
             }
 
+            // Said out loud, and in the colour of a caveat rather than of a
+            // caption: the line breaks in front of the reader are Mole's, not the
+            // file's, and somebody comparing this against the original has to
+            // know that. "folded" is the word for it because nothing was lost.
+            Label {
+                objectName: "foldedNote"
+                visible: controller ? controller.longLinesFolded === true : false
+                text: "long lines folded, colouring off"
+                color: "#c8a04a"
+                font.pixelSize: App.smallTextSize
+            }
+
             Item { Layout.fillWidth: true }
 
             Label {

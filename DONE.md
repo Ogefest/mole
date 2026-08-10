@@ -9,6 +9,58 @@ wrong.
 
 ---
 
+## A file with no line breaks in it stopped the window
+
+**Asked for:** MOLE-112 — `F3` on a 13 MB JSON export left the window not
+answering, and it did not come back in any time anybody would wait for.
+
+**What it turned out to be:** not the size. The preview reads a 512 kB window and
+never holds the file, so this reproduces on a 600 kB file and would not reproduce
+at all on a 13 MB file with lines in it. What mattered is that the window had *no
+line break in it*: `ReadRangeTask`'s line snapping is a no-op when
+`lastIndexOf('\n')` returns -1, so 524,288 bytes arrived as one line of 514,694
+characters, and everything downstream of the window assumes lines. The layout has
+to itemise and shape a single block that long before the `ScrollView` can be told
+how wide its content is, and one line has no partial layout to fall back on; the
+highlighter colours per block, and a window of minified JSON is around twenty
+thousand `setFormat()` calls with a format kept per character while it runs.
+
+The fix folds in `updateDisplayText()`, which already existed to derive what the
+view shows from what was read: any run longer than 4,096 characters is broken up,
+so the window arrives as about 126 blocks instead of one. Colouring goes off for a
+folded window for two reasons rather than one — the twenty thousand `setFormat()`
+calls go with it, and a fold cuts strings in half, so the highlighter, which
+carries nothing across a block boundary but block-comment state, would colour the
+second half of every cut token as something it is not. The language is unchanged,
+so paging on to a window that does have lines in it gets its colour back.
+
+Three things were decided rather than fallen into:
+
+- **Measured against every character Qt's text engine starts a block on**, not
+  just `\n`. A file with old Mac line endings is already in blocks as far as the
+  engine is concerned, and folding it would have been work for nothing.
+- **The fold never lands between the halves of a surrogate pair**, which would
+  have put an unpaired code unit either side of the break and shown two
+  replacement characters where the file has one emoji.
+- **Only where a line break is what makes a block** — the plain text and source
+  case. Markdown and a rendered page parse their own blocks out of the markup and
+  fold a newline inside a paragraph back into a space, so a fold there would
+  change what is shown and fix nothing. Recorded in TODO.md rather than left to be
+  discovered.
+
+The view says so, in the colour of a caveat: *long lines folded, colouring off*.
+The reader has to know the breaks in front of them are Mole's and not the file's.
+One cost that goes with it and was accepted rather than missed: text selected out
+of a folded window carries the folds. This is a preview, not an editor, and a
+window that can be read beats a window that does not answer.
+
+Four tests on the controller and one through the real window. The one through the
+window is the one that matters, because it is the only one that lays out a frame:
+with the fold turned off it does not finish in five minutes, and with it on it
+takes 1.8 seconds. Pretty-printing the JSON would be a different feature and is
+not this: the rule has to hold for a minified stylesheet, a one-line log and a
+base64 blob, none of which have a pretty form to be put into.
+
 ## Code now sits level with prose, not a shade under it
 
 **Asked for:** MOLE-93 — plain text and source previews drawn one step larger,

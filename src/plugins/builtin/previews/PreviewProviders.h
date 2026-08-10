@@ -60,6 +60,10 @@ class TextPreviewController final : public PreviewController
     Q_OBJECT
     Q_PROPERTY(QString text READ text NOTIFY textChanged)
     Q_PROPERTY(bool highlighted READ isHighlighted NOTIFY textChanged)
+    /// True when this window had runs too long to lay out and they were broken
+    /// up to be shown. The view has to say so: a reader must not take a fold for
+    /// a line break that is in the file.
+    Q_PROPERTY(bool longLinesFolded READ longLinesFolded NOTIFY textChanged)
     /// Rendered rather than coloured. Markdown is meant to be read, not read
     /// as source -- if someone wants the source they can open it as text.
     Q_PROPERTY(bool markdown READ isMarkdown NOTIFY textChanged)
@@ -84,10 +88,21 @@ public:
     explicit TextPreviewController(PluginServices services, QObject* parent = nullptr);
     ~TextPreviewController() override;
 
+    /// The longest run the text engine is ever handed as one block. A line
+    /// wider than this is not a line anybody wrote -- it is a minified file, a
+    /// one-line dump or a base64 blob -- and a single block that long is
+    /// itemised and shaped whole, on the GUI thread, with no partial layout to
+    /// fall back on. Wide enough to leave every real line alone; narrow enough
+    /// that a window of them lays out a block at a time.
+    static constexpr qsizetype kFoldedLineChars = 4096;
+
     /// What the view shows: the source as read, or the page with everything that
     /// could reach off the disk taken out of it.
     QString text() const { return m_displayText; }
-    bool isHighlighted() const { return !m_language.isEmpty(); }
+    /// False for a folded window even when the file has a language: see
+    /// updateDisplayText().
+    bool isHighlighted() const { return !m_language.isEmpty() && !m_longLinesFolded; }
+    bool longLinesFolded() const { return m_longLinesFolded; }
     bool isMarkdown() const { return m_markdown; }
     bool isRenderedHtml() const { return m_renderHtml && m_isHtml; }
     QString languageName() const;
@@ -154,6 +169,9 @@ private:
     /// Derived from m_text and the chosen mode, computed once per change rather
     /// than on every read.
     QString m_displayText;
+    /// Whether deriving it had to break long runs up. A property of the window
+    /// rather than of the file: paging on to one with lines in it clears it.
+    bool m_longLinesFolded = false;
 
     FileEntry m_entry;
     FileSystemPtr m_fileSystem;

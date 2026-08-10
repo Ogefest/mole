@@ -63,6 +63,7 @@ private slots:
 
     void browsesAndPreviews();
     void highlightsSourceAndPagesLargeFiles();
+    void aFileWithNoLineBreaksPreviewsRatherThanStoppingTheWindow();
     void rendersMarkdownAsAPage();
     void aSlowTableSaysSoAndThenFillsAsItReads();
     void aPdfOpensAsPages();
@@ -245,6 +246,78 @@ void TestWalkthrough::highlightsSourceAndPagesLargeFiles()
     QVERIFY(m_harness->until([viewer] { return viewer->isAtEnd(); }));
     m_harness->settle(6);
     m_harness->screenshot(QStringLiteral("03c-preview-paging"));
+}
+
+void TestWalkthrough::aFileWithNoLineBreaksPreviewsRatherThanStoppingTheWindow()
+{
+    // A minified export: 600 kB and not one line break in it. Held together the
+    // whole window reaches the layout as a single block of over half a million
+    // characters, which is itemised and shaped whole on the GUI thread with no
+    // partial layout to fall back on -- and the window stopped answering.
+    //
+    // So the until() below is the assertion that matters most, and there is no
+    // sleep in it: it waits for the text to arrive in the view, which is what
+    // used not to happen in any time anybody would wait for.
+    QByteArray minified = QByteArrayLiteral("{\"records\":[");
+    for (int i = 0; minified.size() < 600 * 1024; ++i) {
+        minified += QByteArrayLiteral("{\"id\":") + QByteArray::number(i)
+            + QByteArrayLiteral(",\"name\":\"row\",\"ok\":true},");
+    }
+    QVERIFY(!minified.contains('\n'));
+    QVERIFY(m_harness->writeFile(QStringLiteral("export.json"), minified));
+
+    const int row = pane()->files()->rowOfUri(pane()->currentUri() + QStringLiteral("/settings.json"));
+    QVERIFY(row >= 0);
+    pane()->setCurrentIndex(row);
+    m_harness->settle();
+    m_harness->key(Qt::Key_F3);
+
+    auto* preview = qobject_cast<PreviewTabController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(m_harness->until([viewer] { return !viewer->text().isEmpty(); }));
+
+    FileEntry entry;
+    entry.uri = VfsUri::fromString(m_harness->fixtureUri() + QStringLiteral("/export.json"));
+    entry.name = QStringLiteral("export.json");
+    entry.size = minified.size();
+    viewer->load(entry);
+
+    QVERIFY(m_harness->until([viewer] { return viewer->longLinesFolded(); }));
+
+    // Through the view rather than off the controller, because the property name
+    // in the binding is the part a C++ test cannot get wrong.
+    QQuickItem* body = m_harness->item(QStringLiteral("previewText"));
+    QVERIFY(body);
+    const QString shown = body->property("text").toString();
+    QVERIFY(!shown.isEmpty());
+
+    qsizetype longest = 0;
+    qsizetype run = 0;
+    for (const QChar c : shown) {
+        if (c == u'\n')
+            run = 0;
+        else
+            longest = std::max(longest, ++run);
+    }
+    QVERIFY2(longest <= TextPreviewController::kFoldedLineChars,
+        "the view is handed blocks it can lay out one at a time");
+
+    // And the reader is told, because the breaks in front of them are not in
+    // the file.
+    QQuickItem* note = m_harness->item(QStringLiteral("foldedNote"));
+    QVERIFY(note);
+    QVERIFY2(note->isVisible(), "a folded window says so");
+    QVERIFY(note->property("text").toString().contains(QStringLiteral("folded")));
+
+    // And it still draws and still answers. Laying out a frame with this text in
+    // it is where the old code went and did not come back, so settling here and
+    // then paging on is the guard -- as is this test finishing at all.
+    m_harness->settle(6);
+    const qint64 firstOffset = viewer->windowOffset();
+    viewer->nextWindow();
+    QVERIFY(m_harness->until([viewer, firstOffset] { return viewer->windowOffset() > firstOffset; }));
 }
 
 void TestWalkthrough::ctrlGRevealsTheEditablePath()

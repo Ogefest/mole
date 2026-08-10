@@ -30,6 +30,51 @@
 using namespace mole;
 using namespace mole::test;
 
+namespace {
+
+/// One JSON object on a single line, `bytes` long, with no newline anywhere in
+/// it -- the shape a minified export arrives in.
+QByteArray minifiedJson(qsizetype bytes)
+{
+    QByteArray out = QByteArrayLiteral("{\"records\":[");
+    for (int i = 0; out.size() < bytes; ++i) {
+        out += QByteArrayLiteral("{\"id\":") + QByteArray::number(i)
+            + QByteArrayLiteral(",\"name\":\"row\",\"ok\":true},");
+    }
+    out.truncate(bytes);
+    Q_ASSERT(!out.contains('\n'));
+    return out;
+}
+
+/// The same records with a line each, so a window of them is already blocks.
+QByteArray linedJson(qsizetype bytes)
+{
+    QByteArray out;
+    for (int i = 0; out.size() < bytes; ++i) {
+        out += QByteArrayLiteral("  {\"id\": ") + QByteArray::number(i)
+            + QByteArrayLiteral(", \"name\": \"row\", \"ok\": true},\n");
+    }
+    return out;
+}
+
+/// The longest run with no line break in it -- which is what the text engine is
+/// handed as one block, and what has to be laid out whole.
+qsizetype longestLine(const QString& text)
+{
+    qsizetype longest = 0;
+    qsizetype run = 0;
+    for (const QChar c : text) {
+        if (c == u'\n') {
+            run = 0;
+            continue;
+        }
+        longest = std::max(longest, ++run);
+    }
+    return longest;
+}
+
+} // namespace
+
 /// Which viewer a file gets, and what the preview tab does around it.
 class TestPreview : public QObject
 {
@@ -68,6 +113,11 @@ private slots:
     void markdownStylingGivesThePageMoreRoomThanTheImporter();
     void markdownRestylingWaitsForTheImporterToFinish();
     void markdownRestylingIsDroppedWhenTheDocumentChanges();
+
+    // --- files with no lines in them ---
+    void aWindowWithNoLineBreaksIsFoldedAndLeftUncoloured();
+    void aWindowOfTheSameSizeWithLinesInItIsUntouched();
+    void pagingOnFromAFoldedWindowGetsColouringBack();
 
     // --- the tab ---
     void loadsTextContent();
@@ -814,6 +864,82 @@ void TestPreview::markdownRestylingIsDroppedWhenTheDocumentChanges()
     QCOMPARE(firstChanged, 0);
     QVERIFY2(looksStyled(blockSaying(second, QStringLiteral("Two"))), "the document in front of the reader");
     QVERIFY2(!looksStyled(blockSaying(first, QStringLiteral("One"))), "the one that was left behind");
+}
+
+// --------------------------------------------- files with no lines in them
+
+// A 13 MB minified export left the window not answering, and the size was not
+// why: the preview reads a 512 kB window and never holds the file. What matters
+// is that the window has no line break in it, so everything downstream -- the
+// layout, which shapes a block whole, and the highlighter, which colours per
+// block -- is handed one line of over half a million characters.
+
+void TestPreview::aWindowWithNoLineBreaksIsFoldedAndLeftUncoloured()
+{
+    const QByteArray minified = minifiedJson(600 * 1024);
+    QVERIFY(m_tree->writeFile(QStringLiteral("export.json"), minified));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("export.json"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(waitFor([viewer] { return !viewer->text().isEmpty(); }, 5000));
+
+    // Still a whole window of the file. What changed is the shape it arrives in.
+    QVERIFY2(viewer->windowBytes() > 400 * 1024, "the window is read as it always was");
+    QVERIFY2(longestLine(viewer->text()) <= TextPreviewController::kFoldedLineChars,
+        "a block this long is itemised and shaped whole, on the GUI thread");
+    QVERIFY(viewer->longLinesFolded());
+
+    // The file is still JSON and the header still says so; what is off is the
+    // colouring of this window, because a fold cuts strings in half and the
+    // highlighter carries no state across a break except a block comment.
+    QCOMPARE(viewer->languageName(), QStringLiteral("JSON"));
+    QVERIFY2(!viewer->isHighlighted(), "colouring is off for a folded window");
+}
+
+void TestPreview::aWindowOfTheSameSizeWithLinesInItIsUntouched()
+{
+    const QByteArray lined = linedJson(600 * 1024);
+    QVERIFY(m_tree->writeFile(QStringLiteral("records.json"), lined));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("records.json"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(waitFor([viewer] { return !viewer->text().isEmpty(); }, 5000));
+
+    QVERIFY(!viewer->longLinesFolded());
+    QVERIFY(viewer->isHighlighted());
+    // Not one character added or moved: the window as it was read.
+    QCOMPARE(viewer->text(), QString::fromUtf8(lined.left(viewer->windowBytes())));
+}
+
+void TestPreview::pagingOnFromAFoldedWindowGetsColouringBack()
+{
+    // One line filling most of the first window, then ordinary lines, so the
+    // first window folds and the second does not. Folding is a property of the
+    // window rather than of the file.
+    QByteArray mixed = minifiedJson(500 * 1024);
+    mixed += '\n';
+    mixed += linedJson(200 * 1024);
+    QVERIFY(m_tree->writeFile(QStringLiteral("mixed.json"), mixed));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("mixed.json"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(waitFor([viewer] { return !viewer->text().isEmpty(); }, 5000));
+
+    QVERIFY(viewer->longLinesFolded());
+    QVERIFY(!viewer->isHighlighted());
+    QVERIFY2(!viewer->isAtEnd(), "there is a window after this one");
+
+    viewer->nextWindow();
+    QVERIFY(waitFor([viewer] { return viewer->windowOffset() > 0; }, 5000));
+    QVERIFY2(!viewer->longLinesFolded(), "this window has lines in it");
+    QVERIFY2(viewer->isHighlighted(), "so the colouring comes back");
+    QVERIFY(longestLine(viewer->text()) < TextPreviewController::kFoldedLineChars);
 }
 
 // -------------------------------------------------------------- the tab
