@@ -9,6 +9,69 @@ wrong.
 
 ---
 
+## The server attacked while a transfer runs, and what it did not survive
+
+**Asked for:** MOLE-28. The same transfers with the machine being interfered with
+while they run: the connection killed at a byte offset in each direction, the
+service stopped and restarted, 200 ms of latency and 1% and 5% packet loss, an
+outage shorter than the stall guard and one longer, the destination disk filled,
+the host key changed between two operations, and the process killed outright.
+Each one to produce a *named outcome* rather than a hang.
+
+**What it turned out to be:** `tests/scale/tst_Interference.cpp`, eleven cases
+over the control channel from phase 1. Nine of them hold, and each one interferes
+**at a byte offset** — waiting on `Task::bytesDone()` rather than on a clock, so
+the attack lands in the middle of the transfer on a fast machine and on a slow
+one alike.
+
+What holds: a connection cut at 25% either finishes or fails by name, with
+nothing left under the name it was aiming at. A server restarted mid-transfer
+comes back and the drive works again afterwards. Latency and loss are survived
+with every byte verified through the same bad link. **A changed host key is
+refused** — the one SSH warning nobody may wave through. **A process killed
+outright leaves nothing under the final name and the job runs again over the
+wreckage**, which is what the working name from ADR-0020 exists for. And a
+destination with less room than the payload fails with `no room left on the
+server`, naming the file.
+
+**One finding, and it is the serious kind.** A download cut off by a total outage
+of 140 seconds — against a stall guard set to give up after 120 — neither failed
+nor recovered. It sat there having moved 34 MB and was still sitting there **641
+seconds later**, when the test gave up on it. The same outage at 119 seconds is
+survived correctly and every byte arrives, so the recovery path works; what is
+missing is the giving-up path. A job that neither finishes nor fails is the one
+outcome a file manager may not produce, and it is MOLE-108.
+
+**Three of the failures in this suite were the suite's own**, which is worth
+recording because each was the same shape: a green test that checked nothing.
+A transfer that finished before anything could be done to it passed every
+assertion for the wrong reason, so interference now has to *prove* it landed
+while the transfer was running. A `netem` clearer written as an anonymous
+`sleep N; tc qdisc del` deleted whatever qdisc it found on waking rather than the
+one it was scheduled for, so two cases in a row cut each other's outages short.
+And filling a disk takes half a minute of `dd`, which lost its race with an
+upload every time — so the room is taken away *before* the copy starts now, and
+the payload is sized from what the machine says is left, which needs no timing at
+all.
+
+**Two cases are behind a variable, and that is a gap rather than a decision.**
+The outage pair needs a total blackout, and the instrument for one cuts the path
+that undoes it: `netem loss 100%` stops the machine answering ARP, so it is
+unreachable to the timer that should clear the rule and to the command that would
+check on it. It happened twice while this was being written, and both times the
+way back in was the hypervisor's guest agent — which is now
+`scripts/testbed/rescue.sh`, because a lesson learned twice belongs in a script
+rather than in somebody's memory. A per-port blackhole is in the control channel
+now and is closer, but until it is proven the two cases run on purpose rather
+than unattended: `MOLE_TEST_INTERFERENCE_OUTAGE=1`. That is MOLE-109, and it
+carries the port conflict it exposed — the host-key case rotates the second
+server's identity, so a control channel arriving there refuses to speak to the
+machine for the rest of the run.
+
+**And the heavy tier came out of `make test`.** Two suites that move gigabytes and
+need a server were in the ordinary run by label alone; `ctest --label-exclude
+heavy` keeps `make test` something anybody can run.
+
 ## Gigabytes each way, and the wall that was still there
 
 **Asked for:** MOLE-27. Transfers at the sizes that break things, in both

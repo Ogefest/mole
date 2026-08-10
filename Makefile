@@ -51,8 +51,10 @@ run-gdb: build
 		--args $(BUILD_DIR)/mole
 
 ## test: build and run the whole suite in parallel
+##       The heavy tier is excluded by label: it moves gigabytes and needs a
+##       server, and `make test` has to stay something anybody can run.
 test: build
-	@ctest --test-dir $(BUILD_DIR) --output-on-failure --parallel $(JOBS)
+	@ctest --test-dir $(BUILD_DIR) --output-on-failure --parallel $(JOBS) --label-exclude heavy
 
 ## test-live: run the suites that need a real server, against the testbed
 ##            Needs MOLE_TESTBED_ADDRESS and MOLE_TESTBED_PASSWORD, which live
@@ -72,7 +74,7 @@ test-heavy: build
 
 ## test-verbose: same, printing every assertion
 test-verbose: build
-	@ctest --test-dir $(BUILD_DIR) --output-on-failure --verbose
+	@ctest --test-dir $(BUILD_DIR) --output-on-failure --verbose --label-exclude heavy
 
 ## asan: build and test with address and undefined-behaviour sanitizers
 asan:

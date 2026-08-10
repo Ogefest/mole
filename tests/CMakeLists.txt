@@ -266,6 +266,13 @@ if(MOLE_HAVE_NETWORK_PLUGIN)
     # An hour is not enough for 10 GB over a slow link, and a tier that times
     # out is a tier nobody trusts.
     set_tests_properties(tst_HeavyTransfers PROPERTIES TIMEOUT 7200 LABELS heavy)
+
+    # The same transfers with the server being attacked while they run. Needs
+    # the control channel as well as an account, and skips itself with the
+    # reason when either is missing.
+    mole_add_test(tst_Interference     SOURCES scale/tst_Interference.cpp scale/HeavyPayload.cpp
+                                       LIBS mole_network_backends CURL::libcurl)
+    set_tests_properties(tst_Interference PROPERTIES TIMEOUT 3600 LABELS heavy)
 else()
     message(STATUS "Network drive tests skipped: the network plugin was not built")
 endif()

@@ -81,12 +81,20 @@ on_server <<REMOTE || die "could not configure the second sshd"
 set -euo pipefail
 install -d -m 0755 /etc/ssh/rekey
 
+# Its own host key, not the stock server's.
+#
+# Two servers sharing one identity is odd on a machine whose job is to be
+# different from itself, and it makes one test impossible: a changed host key
+# must be refused, and causing that on the shared key would cut the control
+# channel -- which arrives over the stock server -- with no way back in.
+[ -f /etc/ssh/rekey/ssh_host_ed25519_key ] \
+    || ssh-keygen -q -t ed25519 -N '' -f /etc/ssh/rekey/ssh_host_ed25519_key
+
 # A whole second server rather than a second Port line: the point is a *server
 # configured differently*, and one sshd cannot offer two cipher lists at once.
 cat > /etc/ssh/sshd_config.rekey <<'CONF'
 Port $REKEY_PORT
-HostKey /etc/ssh/ssh_host_ed25519_key
-HostKey /etc/ssh/ssh_host_rsa_key
+HostKey /etc/ssh/rekey/ssh_host_ed25519_key
 PidFile /run/sshd-rekey.pid
 Subsystem sftp /usr/lib/openssh/sftp-server
 PasswordAuthentication yes

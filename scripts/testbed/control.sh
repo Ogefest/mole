@@ -62,10 +62,19 @@ mole-control <command>
   kill-connections <port>             established connections die; the server lives
   fill <percent>                      the small disk fills to about this much
   empty                               and empties again
+  blackhole <port> [seconds]          every packet leaving that port is dropped,
+                                      and nothing else is touched -- so a
+                                      transfer stalls dead while this channel,
+                                      on another port, still answers
   netem delay <ms>|loss <pc>|rate <bits> [seconds]   clears itself after
                                       `seconds` (30 by default), because this
                                       channel travels over the link it damages
   netem clear                         now
+  hostkey rotate|restore              the second sshd gets a new identity, and
+                                      gets its old one back. Never the first
+                                      one: this channel arrives over that, and a
+                                      client that correctly refuses a changed key
+                                      would refuse the command that puts it back
   room <sftp|s3|webdav|ftp>           bytes free where that service keeps its
                                       files, so a test can decline to fill a
                                       disk it would take the machine down with
@@ -124,6 +133,44 @@ empty)
     say "emptied $DATA, now $(df --output=pcent "$DATA" | tail -1 | tr -d ' %')% used"
     ;;
 
+blackhole)
+    # A total outage for one port, rather than for the machine.
+    #
+    # `netem loss 100%` on the root qdisc was the obvious way to cut a transfer
+    # off, and it cuts ARP with it: the machine stops answering anything at all,
+    # including the command that would put it back, and the only way in is the
+    # hypervisor's guest agent. Ask me how I know -- twice now.
+    #
+    # This drops only packets leaving the port named, which is the transfer's,
+    # while this channel arrives on a different one and keeps working. The
+    # stall is identical from the transfer's point of view: no bytes, no error,
+    # nothing.
+    port="${2:-22}"
+    seconds="${3:-30}"
+    # Four bands with a priomap that sends *everything* to the first one, so the
+    # only way into the band that drops packets is the filter below. A default
+    # priomap routes by TOS, and ssh sets TOS -- which put this channel in the
+    # dropping band along with the transfer, and cut the machine off exactly as
+    # the whole-interface version did.
+    tc qdisc del dev "$IFACE" root 2>/dev/null
+    tc qdisc add dev "$IFACE" root handle 1: prio bands 4 \
+        priomap 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+    tc qdisc add dev "$IFACE" parent 1:4 handle 40: netem loss 100%
+    tc filter add dev "$IFACE" protocol ip parent 1:0 prio 4 u32 \
+        match ip sport "$port" 0xffff flowid 1:4
+    say "everything leaving port $port is dropped on $IFACE"
+
+    cat > /run/mole-netem-clear <<CLEARER
+#!/bin/bash
+sleep $seconds
+tc qdisc del dev $IFACE root 2>/dev/null
+CLEARER
+    chmod +x /run/mole-netem-clear
+    pkill -f /run/mole-netem-clear 2>/dev/null
+    setsid /run/mole-netem-clear >/dev/null 2>&1 &
+    say "it clears itself in ${seconds}s"
+    ;;
+
 netem)
     what="${2:-}"
     # Every netem is temporary, and that is not tidiness.
@@ -144,8 +191,52 @@ netem)
     clear) say "netem cleared on $IFACE"; exit 0 ;;
     *)     usage; exit 2 ;;
     esac
-    setsid bash -c "sleep $seconds; tc qdisc del dev $IFACE root 2>/dev/null" >/dev/null 2>&1 &
+    # The clearer is a named script, and a new one kills the old.
+    #
+    # It used to be an anonymous `sleep N; tc qdisc del`, which deletes whatever
+    # qdisc it finds when it wakes up rather than the one it was scheduled for.
+    # Two tests in a row then interfere with each other: the first one's timer
+    # fires in the middle of the second one and quietly ends its outage early,
+    # and the second test reports that the transfer survived something that had
+    # already stopped happening to it.
+    cat > /run/mole-netem-clear <<CLEARER
+#!/bin/bash
+sleep $seconds
+tc qdisc del dev $IFACE root 2>/dev/null
+CLEARER
+    chmod +x /run/mole-netem-clear
+    pkill -f /run/mole-netem-clear 2>/dev/null
+    setsid /run/mole-netem-clear >/dev/null 2>&1 &
     say "it clears itself in ${seconds}s, because this channel travels over the link it just damaged"
+    ;;
+
+hostkey)
+    # A changed host key is the one SSH warning nobody may wave through, so a
+    # test has to be able to cause it. Only ever on the second server: the
+    # control channel arrives over the first, and a client that correctly
+    # refuses a changed key would refuse this command as well.
+    dir=/etc/ssh/rekey
+    case "${2:-}" in
+    rotate)
+        [ -f "$dir/ssh_host_ed25519_key.original" ] \
+            || cp "$dir/ssh_host_ed25519_key" "$dir/ssh_host_ed25519_key.original"
+        [ -f "$dir/ssh_host_ed25519_key.original.pub" ] \
+            || cp "$dir/ssh_host_ed25519_key.pub" "$dir/ssh_host_ed25519_key.original.pub"
+        rm -f "$dir/ssh_host_ed25519_key" "$dir/ssh_host_ed25519_key.pub"
+        ssh-keygen -q -t ed25519 -N '' -f "$dir/ssh_host_ed25519_key"
+        systemctl restart sshd-rekey
+        say "the second sshd has a new host key"
+        ;;
+    restore)
+        if [ -f "$dir/ssh_host_ed25519_key.original" ]; then
+            mv "$dir/ssh_host_ed25519_key.original" "$dir/ssh_host_ed25519_key"
+            mv "$dir/ssh_host_ed25519_key.original.pub" "$dir/ssh_host_ed25519_key.pub"
+            systemctl restart sshd-rekey
+        fi
+        say "the second sshd has its own host key back"
+        ;;
+    *) usage; exit 2 ;;
+    esac
     ;;
 
 room)
@@ -173,7 +264,13 @@ status)
     ;;
 
 restore)
+    pkill -f /run/mole-netem-clear 2>/dev/null
     rm -f "$BALLAST"
+    if [ -f /etc/ssh/rekey/ssh_host_ed25519_key.original ]; then
+        mv /etc/ssh/rekey/ssh_host_ed25519_key.original /etc/ssh/rekey/ssh_host_ed25519_key
+        mv /etc/ssh/rekey/ssh_host_ed25519_key.original.pub /etc/ssh/rekey/ssh_host_ed25519_key.pub
+        systemctl restart sshd-rekey 2>/dev/null
+    fi
     tc qdisc del dev "$IFACE" root 2>/dev/null
     for unit in ssh sshd-rekey vsftpd apache2 minio; do
         systemctl is-active --quiet "$unit" || systemctl start "$unit" 2>/dev/null

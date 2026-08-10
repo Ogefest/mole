@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# The scale tier: gigabytes, in both directions, against the machine the other
-# scripts built.
+# The heavy tiers: gigabytes in both directions, and then the same transfers
+# with the machine being attacked while they run.
 #
 # Separate from `make test` because it moves real data and takes real minutes,
 # and separate from `make test-live` because that one is about whether the
@@ -69,6 +69,12 @@ export MOLE_TEST_IGNORE_SELF_SIGNED_CERT=1
 export MOLE_TEST_HEAVY_BYTES="$BYTES"
 export MOLE_TEST_HEAVY_REPORT="${MOLE_TEST_HEAVY_REPORT:-$BUILD/heavy-report.txt}"
 
+# On the stock port, which is the one the host-key case leaves alone: it rotates
+# the second server's identity, and a channel arriving there would correctly
+# refuse to talk to the machine for the rest of the run. The outage cases want
+# the opposite -- they blackhole this port -- which is why they are the ones
+# behind a variable, and why sorting that out (MOLE-109) means sorting out the
+# port each one may use.
 CONTROL="${MOLE_TEST_CONTROL:-ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new $ACCOUNT@$ADDRESS sudo mole-control}"
 
 # What each destination has room for, from the machine itself. Missing answers
@@ -85,7 +91,9 @@ echo
 echo "payload: $(numfmt --to=iec "$BYTES" 2>/dev/null || echo "$BYTES bytes"), report: $MOLE_TEST_HEAVY_REPORT"
 echo
 
-cmake --build "$BUILD" --target tst_HeavyTransfers --parallel "$(nproc)" >/dev/null || exit 1
+export MOLE_TEST_CONTROL="$CONTROL"
+
+cmake --build "$BUILD" --target tst_HeavyTransfers tst_Interference --parallel "$(nproc)" >/dev/null || exit 1
 
 # Run the binary rather than ctest: this tier is watched while it runs, and one
 # line per scenario as it happens is the point. ctest would hold every line
@@ -97,6 +105,15 @@ cmake --build "$BUILD" --target tst_HeavyTransfers --parallel "$(nproc)" >/dev/n
 QTEST_FUNCTION_TIMEOUT="${QTEST_FUNCTION_TIMEOUT:-7200000}" \
 QT_QPA_PLATFORM=offscreen "$BUILD/tests/tst_HeavyTransfers"
 status=$?
+
+# And the same transfers with the machine being attacked while they run. After
+# the scale tier rather than before it: this one leaves the link damaged for
+# seconds at a time, and a rate limit still in place would make every throughput
+# figure above a lie.
+echo
+QTEST_FUNCTION_TIMEOUT="${QTEST_FUNCTION_TIMEOUT:-7200000}" \
+QT_QPA_PLATFORM=offscreen "$BUILD/tests/tst_Interference"
+[ $? -eq 0 ] || status=$?
 
 echo
 echo "recorded in $MOLE_TEST_HEAVY_REPORT:"
