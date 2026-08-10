@@ -179,6 +179,13 @@ Check a packaged build without a display:
 
 The `⌨` button in the toolbar shows the same list in the app.
 
+The first block works wherever the keyboard is; so do `F3` and `Ctrl+←/→/↑`,
+because what they act on is the pane in front of you rather than whatever holds
+the keyboard. The rest need the listing focused — cursor keys, typing to filter
+and ticking rows are about the thing you are looking at, and `F2` `F5` `F6` `F7`
+`F8` need to know which pane they are working *from*. See
+[ADR-0019](docs/adr/0019-the-keys-that-belong-to-the-window.md).
+
 ## Layout
 
 ```

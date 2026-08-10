@@ -320,6 +320,25 @@ public:
     /// maximised, so this must be the size the user chose".
     Q_INVOKABLE void rememberWindowGeometry(int x, int y, int width, int height, int visibility);
 
+    // ---- the keys that act on the pane in front of you --------------------
+    //
+    // Routed through the active tab's active pane rather than through whatever
+    // holds the keyboard, because that is what they mean. currentFile() and
+    // currentLocation() already resolve their target the same way and have
+    // always worked from the menu, wherever the focus was; these are the same
+    // operations reached by a key.
+    //
+    // See docs/adr/0019-the-keys-that-belong-to-the-window.md for which keys
+    // are here and which stay in the pane.
+
+    /// Previews the file under the pane's cursor, or opens it when it is a
+    /// folder -- a key that does nothing is indistinguishable from one that is
+    /// broken, and there is nothing to preview about a directory.
+    Q_INVOKABLE void previewCurrent();
+    Q_INVOKABLE void goUpInCurrentPane();
+    Q_INVOKABLE void goBackInCurrentPane();
+    Q_INVOKABLE void goForwardInCurrentPane();
+
     /// True when this rectangle still overlaps a screen that exists. A window
     /// restored onto an unplugged monitor is invisible and unrecoverable.
     static bool geometryIsOnScreen(int x, int y, int width, int height);

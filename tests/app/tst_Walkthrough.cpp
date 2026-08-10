@@ -8,10 +8,10 @@
 #include "plugins/builtin/previews/PreviewProviders.h"
 #include "support/QmlAppHarness.h"
 #include "ui/AppController.h"
-#include "ui/models/DriveListModel.h"
 #include "ui/models/BookmarkModel.h"
 #include "ui/models/BrowserPaneController.h"
 #include "ui/models/CommandPaletteModel.h"
+#include "ui/models/DriveListModel.h"
 #include "ui/models/FileListModel.h"
 #include "ui/models/TableModel.h"
 #include "ui/models/TabsModel.h"
@@ -2043,8 +2043,7 @@ void TestWalkthrough::theSidebarListsADriveAndConnectsIt()
 
     // Nothing is known about how full it is, so the row is a name and a dot
     // rather than a bar standing behind no measurement.
-    QCOMPARE(drives->data(drives->index(rowOfArchiveBox(), 0), DriveListModel::HasSpaceRole).toBool(),
-        false);
+    QCOMPARE(drives->data(drives->index(rowOfArchiveBox(), 0), DriveListModel::HasSpaceRole).toBool(), false);
     m_harness->settle(4);
     m_harness->screenshot(QStringLiteral("11b-drive-not-connected"));
 
@@ -2071,8 +2070,8 @@ void TestWalkthrough::theWindowAsksForThePassphraseADriveIsWaitingOn()
     QVariantMap values;
     values.insert(QStringLiteral("host"), QStringLiteral("nas.local"));
     values.insert(QStringLiteral("password"), QStringLiteral("not-a-real-password"));
-    QVERIFY(m_harness->app()->saveDrive(QString(), QStringLiteral("Office NAS"),
-        QStringLiteral("sftp"), QStringLiteral("sftp"), QString(), values));
+    QVERIFY(m_harness->app()->saveDrive(QString(), QStringLiteral("Office NAS"), QStringLiteral("sftp"),
+        QStringLiteral("sftp"), QString(), values));
     m_harness->settle(4);
 
     // Started again, because a store that is shut at startup is what somebody

@@ -167,6 +167,37 @@ ApplicationWindow {
         sequences: [StandardKey.Quit]            // Ctrl+Q
         onActivated: Qt.quit()
     }
+    // --- the keys that act on the pane in front of you ---------------------
+    //
+    // Window shortcuts, not pane handlers. F3 and Ctrl+Up were handlers on the
+    // focused item, so they stopped working the moment the keyboard went
+    // anywhere else -- clicking a drive in the sidebar was enough -- and came
+    // back only when the listing was clicked. They read as though something
+    // else were catching them. Nothing was catching them at all.
+    //
+    // They belong here because what they act on does not depend on the focus:
+    // the active tab's active pane knows its own cursor, which is how the menu
+    // entry for Preview has always worked from anywhere. See
+    // docs/adr/0019-the-keys-that-belong-to-the-window.md -- and note what
+    // stays in FilePane: cursor movement, type-to-filter and selection mean
+    // nothing without the keyboard.
+    Shortcut {
+        sequence: "F3"
+        onActivated: App.previewCurrent()
+    }
+    Shortcut {
+        sequence: "Ctrl+Up"
+        onActivated: App.goUpInCurrentPane()
+    }
+    Shortcut {
+        sequence: "Ctrl+Left"
+        onActivated: App.goBackInCurrentPane()
+    }
+    Shortcut {
+        sequence: "Ctrl+Right"
+        onActivated: App.goForwardInCurrentPane()
+    }
+
     Shortcut {
         // F4 is the classic "open the menu" key in a commander, and it makes
         // the whole menu reachable without the mouse.
@@ -419,6 +450,7 @@ ApplicationWindow {
         orientation: Qt.Horizontal
 
         Sidebar {
+            onFocusWanted: root.focusCurrentTab()
             SplitView.preferredWidth: 240
             SplitView.minimumWidth: 160
             panelColor: root.panelColor

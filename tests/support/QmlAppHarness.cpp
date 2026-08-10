@@ -93,8 +93,7 @@ bool QmlAppHarness::build(QString* errorOut)
     // Media is a second, empty drive so the list is not one row long.
     const QString media = QDir(m_drives->path()).filePath(QStringLiteral("media"));
     QDir().mkpath(media);
-    qputenv("MOLE_DRIVES",
-        QStringLiteral("Home=%1;Media=%2").arg(fixturePath(), media).toLocal8Bit());
+    qputenv("MOLE_DRIVES", QStringLiteral("Home=%1;Media=%2").arg(fixturePath(), media).toLocal8Bit());
 
     m_app = std::make_unique<AppController>();
     std::vector<std::unique_ptr<IPlugin>> builtIns;
