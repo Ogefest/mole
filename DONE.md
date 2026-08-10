@@ -9,6 +9,68 @@ wrong.
 
 ---
 
+## The guide's pictures were of four small files, half drawn, at 1280x800
+
+**Asked for:** MOLE-114 — three faults in one regeneration, because done separately
+every binary in `docs/guide/images/` is replaced three times and git keeps all of it.
+Pictures taken 40 ms into a 220 ms dialog transition; a window one rung too small;
+and a fixture of four small files with every timestamp inside the same minute.
+
+**What it turned out to be:** two of the three as described, one not.
+
+**The grab now decides by looking at the window.** It takes a frame, waits, takes
+another, and shoots when two are identical — rather than waiting a number chosen to
+outlast whatever the longest animation happens to be, which is exactly the kind of
+number that produced this fault. The cap is documented where it is set, because one
+picture reaches it on purpose: `02b-preview-csv-loading` is deliberately a load in
+progress and its spinner never stops. With that in place the twenty `settle()` calls
+that sat in front of a screenshot are noise, and they are gone.
+
+**The window is 1440x900** — one rung up the same 16:10 ladder, a quarter more pixels,
+still opening whole on an ordinary laptop screen. 1600x1000 needs a viewport wider
+than 1600 to be looked at without scrolling. Not a device pixel ratio of 2: four times
+the weight for sharpness GitHub scales away anyway.
+
+**The fixture looks like somebody's disk.** Twenty rows instead of four; seven folders
+worth opening; sizes from 9 B to 224 GB, because `QFile::resize()` reports a size
+without occupying it, so a 240 GB machine image costs nothing and the analysis picture
+finally shows what an analysis is *for* — 249 GB across 21 files where almost all of it
+is one file. Timestamps spread over two years rather than one minute. And contents
+worth previewing: a changelog, an nginx configuration, a page of handover prose, a
+4,000-line log, in place of `plain notes` and a stub.
+
+**And the fixture directory has a name.** `mole-guide` rather than
+`mole-tests-wAYrZa`, for a screenshot run only — the random name is right for an
+ordinary run, where several go in parallel, and wrong for a run whose whole output has
+that name in the tab and the breadcrumbs of every picture.
+
+**Two regenerations of the same commit now produce 31 of 34 pictures byte for byte.**
+The three that differ are pictures of something genuinely different each time: two
+spinners, and one measured duration in the automation view. That was worth checking
+rather than assuming, and it is what caught the folders — their timestamps came from
+the clock until `setModified()` learned to handle a directory, which needs `utime()`
+because a directory cannot be opened as a `QFile`.
+
+**The part the ticket got wrong**, which is worth recording because the picture looked
+exactly like the diagnosis. `13-compress.png` showed the listing through the dialog and
+its labels half transparent, and the ticket put that down to the fade. It is not: with
+the frame settled and four seconds of waiting, every picture with a popup open still
+comes out with the whole window behind it at about forty percent — pixel (300,300) is
+(158,160,164) where it should be (21,25,34), alpha 255, unchanged by any amount of
+settling, and not the modal scrim either (declaring our own made no difference). It is
+something in how the offscreen path renders a window under a popup, it is the last
+thing wrong with these pictures, and it is now MOLE-128 with those measurements in it
+rather than a guess.
+
+Fifty-three `rowCount()` assertions and about thirty fixture-name references moved with
+the tree. The ten tests that broke were all the same mistake — pressing Return on
+whatever row 0 happened to be, which was `documents` only for as long as the fixture
+had two folders — so they now name the folder they mean, through one `enterFolder()`
+helper. The three filter tests picked new letters and kept their reasoning: `j` is
+still in nothing but `settings.json`, `doc` still in nothing but `documents`, and `log`
+now demonstrates substring-not-prefix better than `m` did, since it matches
+`changelog.md` in the middle of the name.
+
 ## FTP was the last backend that staged a whole upload
 
 **Asked for:** MOLE-34 — FTP stages a whole upload in a temporary file before

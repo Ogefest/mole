@@ -3,6 +3,7 @@
 #include "sdk/PluginApi.h"
 #include "support/TestSupport.h"
 
+#include <QDateTime>
 #include <QImage>
 #include <QList>
 #include <QString>
@@ -42,9 +43,23 @@ public:
         /// Where the application starts. Defaults to the harness fixture root.
         QString startUri;
         /// Written to when a test asks for a screenshot. Empty disables them.
+        ///
+        /// Setting it also fixes the fixture directory's name. The random name a
+        /// temporary directory gets is right for an ordinary run -- several can go
+        /// in parallel -- and wrong for a screenshot run, because the name is in
+        /// the tab and in the breadcrumbs of every picture: `mole-tests-wAYrZa`
+        /// both looks like nothing anybody has on their disk and makes two
+        /// regenerations of the same commit differ in thirty-four files.
         QString screenshotDirectory;
-        int windowWidth = 1280;
-        int windowHeight = 800;
+        /// One rung up the same 16:10 ladder the guide's pictures were taken on
+        /// at 1280x800: a quarter more pixels, and a picture that still opens
+        /// whole on an ordinary laptop screen. 1600x1000 was considered and needs
+        /// a viewport wider than 1600 to be looked at without scrolling, which is
+        /// not what most people read the guide on. Not a device pixel ratio of 2
+        /// either: sharper on a high-density screen, four times the weight, and
+        /// GitHub scales the image to the page width anyway.
+        int windowWidth = 1440;
+        int windowHeight = 900;
     };
 
     QmlAppHarness();
@@ -69,6 +84,16 @@ public:
 
     /// Creates a file inside the fixture, making parent folders as needed.
     bool writeFile(const QString& relativePath, const QByteArray& contents = "x");
+    /// Creates a file that reports `bytes` and occupies almost none.
+    ///
+    /// `QFile::resize()` makes a sparse file, so a 1.2 GB video costs no disk and
+    /// still says how big it is -- which is what lets the guide's pictures show
+    /// the range of sizes Mole exists for without committing gigabytes to a test
+    /// fixture. Not for anything that reads the contents: they are zeroes.
+    bool writeSparseFile(const QString& relativePath, qint64 bytes);
+    /// Sets a file's modification time, so the date column holds more than one
+    /// date and a listing sorted by age has something to sort.
+    bool setModified(const QString& relativePath, const QDateTime& when);
     bool makeDirs(const QString& relativePath);
 
     // ---- driving it ------------------------------------------------------
@@ -112,7 +137,10 @@ private:
 
     Options m_options;
     std::unique_ptr<PrivateProfile> m_profile;
+    /// One or the other: a temporary directory for an ordinary run, a fixed path
+    /// for a screenshot run. See Options::screenshotDirectory.
     std::unique_ptr<QTemporaryDir> m_fixture;
+    QString m_fixedFixture;
     /// Where the sidebar's drives point. Its own directory rather than a corner
     /// of the fixture, because the fixture is what the listing tests count.
     std::unique_ptr<QTemporaryDir> m_drives;

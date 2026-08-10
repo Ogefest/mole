@@ -29,6 +29,9 @@
 #include "core/vfs/backends/MemoryFileSystem.h"
 
 #include <QClipboard>
+#include <QColor>
+#include <QDateTime>
+#include <QDir>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QPageSize>
@@ -139,6 +142,19 @@ private slots:
 
 private:
     BrowserPaneController* pane() const;
+    /// Writes the fixture tree every test starts from. See its definition for
+    /// what is in it and why.
+    void buildFixture();
+    /// Puts the cursor on a folder in the current listing and opens it with
+    /// Return. Named rather than assumed: these tests used to press Return on
+    /// whatever row 0 happened to be, which was "documents" only for as long as
+    /// the fixture had two folders in it.
+    void enterFolder(const QString& name);
+
+    /// Rows in the fixture root: seven folders and thirteen files. Named rather
+    /// than repeated, because it is asserted in several places and a bare number
+    /// there says nothing about what it counts.
+    static constexpr int kRootRows = 20;
 
     std::unique_ptr<QmlAppHarness> m_harness;
     QString m_shots;
@@ -159,26 +175,212 @@ void TestWalkthrough::init()
     QString error;
     QVERIFY2(m_harness->start(options, &error), qPrintable(error));
 
-    QVERIFY(m_harness->makeDirs(QStringLiteral("media")));
-    QVERIFY(m_harness->makeDirs(QStringLiteral("documents")));
+    buildFixture();
+
+    // Reload so the pane sees the fixture that was just written.
+    pane()->refresh();
+    QVERIFY(m_harness->until(
+        [this] { return !pane()->isLoading() && pane()->files()->rowCount() == kRootRows; }));
+}
+
+// A tree that looks like somebody's disk rather than like a test fixture.
+//
+// Every picture in the user guide is one of these windows photographed, and the
+// old fixture was four rows -- two folders and two small files, every timestamp
+// inside the same minute -- which left two thirds of the pane empty and showed
+// none of the range Mole exists for. What it needs, and what is here:
+//
+//   * enough rows to fill the pane at 1440x900, in folders worth opening;
+//   * sizes spanning kilobytes to gigabytes. `writeSparseFile()` reports a size
+//     without occupying it, so a 4.7 GB backup costs no disk and does not make
+//     the suite slow;
+//   * timestamps spread over two years, so the date column holds more than one
+//     date and sorting by age has something to sort;
+//   * contents worth previewing -- a changelog, a service configuration, a log,
+//     a page of prose -- rather than "plain notes" and a stub.
+//
+// The six names the tests were written around are still here and still the same
+// sizes: `documents/` still holds exactly two files, `media/` still holds the
+// .mkv pair. Only the root grew, which is what keeps this a fixture change
+// rather than a rewrite of fifty assertions.
+void TestWalkthrough::buildFixture()
+{
+    // Fixed, so the same commit produces the same pictures twice running. Dates
+    // in the fixture must never come from the clock: a picture whose date column
+    // changes every day is a picture that is rewritten every day.
+    const QDate epoch(2026, 3, 14);
+    const auto when = [epoch](int daysAgo, int hour, int minute) {
+        return QDateTime(epoch.addDays(-daysAgo), QTime(hour, minute));
+    };
+
+    for (const QString& folder : { QStringLiteral("archive"), QStringLiteral("backups"),
+             QStringLiteral("code"), QStringLiteral("documents"), QStringLiteral("exports"),
+             QStringLiteral("media"), QStringLiteral("photos") }) {
+        QVERIFY(m_harness->makeDirs(folder));
+    }
+
+    // --- the six the tests know, unchanged ---------------------------------
     QVERIFY(m_harness->writeFile(QStringLiteral("media/film.mkv"), QByteArray(90000, 'x')));
     QVERIFY(m_harness->writeFile(QStringLiteral("media/clip.mkv"), QByteArray(30000, 'x')));
     QVERIFY(m_harness->writeFile(
         QStringLiteral("documents/report.txt"), QByteArray("The quarterly report.\nSecond line.\n")));
     QVERIFY(m_harness->writeFile(QStringLiteral("documents/prices.csv"),
         QByteArray("name;price;qty\nwidget;1,50;3\nbolt;0,99;10\nnut;12,00;250\n")));
-    QVERIFY(m_harness->writeFile(QStringLiteral("settings.json"),
-        QByteArray("{\n  \"name\": \"example\",\n  \"count\": 42,\n  \"ok\": true\n}\n")));
-    QVERIFY(m_harness->writeFile(QStringLiteral("notes.txt"), QByteArray("plain notes")));
 
-    // Reload so the pane sees the fixture that was just written.
-    pane()->refresh();
-    QVERIFY(m_harness->until([this] { return !pane()->isLoading() && pane()->files()->rowCount() == 4; }));
+    // --- a configuration file, which is what a JSON preview is usually of ---
+    QVERIFY(m_harness->writeFile(QStringLiteral("settings.json"),
+        QByteArray("{\n"
+                   "  \"name\": \"example\",\n"
+                   "  \"count\": 42,\n"
+                   "  \"ok\": true,\n"
+                   "  \"index\": {\n"
+                   "    \"roots\": [\"/srv/media\", \"/srv/archive\"],\n"
+                   "    \"followSymlinks\": false,\n"
+                   "    \"refreshMinutes\": 30\n"
+                   "  },\n"
+                   "  \"retain\": { \"reports\": 90, \"logs\": 14 }\n"
+                   "}\n")));
+
+    // --- a page of prose, so the text preview shows reading rather than a stub ---
+    QVERIFY(m_harness->writeFile(QStringLiteral("notes.txt"),
+        QByteArray("Handover notes\n"
+                   "\n"
+                   "The archive drive is the one that matters. Everything under\n"
+                   "archive/ is the only copy -- the backups folder holds machine\n"
+                   "images, which can be rebuilt, and exports/ is generated nightly\n"
+                   "and safe to lose.\n"
+                   "\n"
+                   "The nightly job writes to exports/ and rotates access.log at\n"
+                   "midnight. If the log stops growing, that job has stopped.\n"
+                   "\n"
+                   "Photos are imported by hand, roughly monthly. There is no\n"
+                   "duplicate check on import, which is why photos/ is worth a\n"
+                   "duplicate scan every so often.\n")));
+
+    // --- a changelog, which is the shape a Markdown preview is usually of ---
+    QVERIFY(m_harness->writeFile(QStringLiteral("changelog.md"),
+        QByteArray("# Changelog\n"
+                   "\n"
+                   "## 2026-03-14\n"
+                   "\n"
+                   "- Nightly export moved to 02:00, after the backup finishes.\n"
+                   "- `access.log` is rotated rather than truncated.\n"
+                   "\n"
+                   "## 2026-02-28\n"
+                   "\n"
+                   "- Photo import checks free space first.\n"
+                   "- Removed the second copy of the 2019 holiday footage.\n")));
+
+    // --- a service configuration, which is the other thing people preview ---
+    QVERIFY(m_harness->writeFile(QStringLiteral("nginx.conf"),
+        QByteArray("worker_processes auto;\n"
+                   "\n"
+                   "events {\n"
+                   "    worker_connections 1024;\n"
+                   "}\n"
+                   "\n"
+                   "http {\n"
+                   "    sendfile on;\n"
+                   "    keepalive_timeout 65;\n"
+                   "\n"
+                   "    server {\n"
+                   "        listen 8080;\n"
+                   "        root /srv/exports;\n"
+                   "        access_log /var/log/nginx/access.log combined;\n"
+                   "    }\n"
+                   "}\n")));
+
+    // --- a log, long enough that the preview has something to page through ---
+    QByteArray log;
+    for (int line = 0; line < 4000; ++line) {
+        log += QStringLiteral("2026-03-14T02:%1:%2 nightly-export  file %3 of 4000  ok\n")
+                   .arg(line / 60 % 60, 2, 10, QLatin1Char('0'))
+                   .arg(line % 60, 2, 10, QLatin1Char('0'))
+                   .arg(line + 1, 4, 10, QLatin1Char('0'))
+                   .toUtf8();
+    }
+    QVERIFY(m_harness->writeFile(QStringLiteral("access.log"), log));
+
+    // --- and the sizes Mole exists for, which cost nothing to have -----------
+    QVERIFY(m_harness->writeSparseFile(QStringLiteral("system-backup.tar.zst"), 4700LL * 1000 * 1000));
+    QVERIFY(m_harness->writeSparseFile(QStringLiteral("install.iso"), 3100LL * 1000 * 1000));
+    QVERIFY(m_harness->writeSparseFile(QStringLiteral("holiday.mp4"), 1200LL * 1000 * 1000));
+    QVERIFY(m_harness->writeSparseFile(QStringLiteral("archive/2019.tar"), 18LL * 1000 * 1000 * 1000));
+    QVERIFY(m_harness->writeSparseFile(QStringLiteral("backups/laptop.img"), 240LL * 1000 * 1000 * 1000));
+    QVERIFY(m_harness->writeSparseFile(QStringLiteral("exports/catalogue.ndjson"), 86LL * 1000 * 1000));
+    QVERIFY(m_harness->writeFile(QStringLiteral("code/build.sh"),
+        QByteArray("#!/bin/sh\nset -eu\ncmake --preset release\ncmake --build build/release\n")));
+
+    // Enough more to fill the pane at 900 pixels rather than stopping two thirds
+    // of the way down. None of them contains a "j", so the filter test's "only
+    // settings.json has one" still holds, and none contains "log" or "doc", so
+    // the other two filter claims hold too.
+    QVERIFY(m_harness->writeFile(QStringLiteral("budget.csv"),
+        QByteArray("month;planned;actual\n2026-01;1200,00;1187,40\n2026-02;1200,00;1342,10\n")));
+    QVERIFY(m_harness->writeFile(QStringLiteral("checksums.sha256"),
+        QByteArray("e3b0c44298fc1c149afbf4c8996fb924  install.iso\n"
+                   "9f86d081884c7d659a2feaa0c55ad015  system-backup.tar.zst\n")));
+    QVERIFY(m_harness->writeFile(QStringLiteral("VERSION"), QByteArray("2026.3.1\n")));
+    QVERIFY(m_harness->writeFile(QStringLiteral("todo.md"),
+        QByteArray("# Still to do\n\n- Sort out the photo import.\n- Retire the 2019 archive.\n")));
+    QVERIFY(m_harness->writeSparseFile(QStringLiteral("recording.wav"), 620LL * 1000 * 1000));
+
+    // --- and then spread over time, so the date column says something --------
+    const QList<QPair<QString, QDateTime>> dates {
+        { QStringLiteral("archive"), when(430, 11, 2) },
+        { QStringLiteral("archive/2019.tar"), when(430, 11, 2) },
+        { QStringLiteral("backups"), when(9, 3, 15) },
+        { QStringLiteral("backups/laptop.img"), when(9, 3, 15) },
+        { QStringLiteral("code"), when(62, 17, 41) },
+        { QStringLiteral("code/build.sh"), when(62, 17, 41) },
+        { QStringLiteral("documents"), when(21, 9, 30) },
+        { QStringLiteral("documents/report.txt"), when(21, 9, 30) },
+        { QStringLiteral("documents/prices.csv"), when(23, 16, 5) },
+        { QStringLiteral("exports"), when(0, 2, 4) },
+        { QStringLiteral("exports/catalogue.ndjson"), when(0, 2, 4) },
+        { QStringLiteral("media"), when(196, 20, 12) },
+        { QStringLiteral("media/film.mkv"), when(196, 20, 12) },
+        { QStringLiteral("media/clip.mkv"), when(201, 19, 48) },
+        { QStringLiteral("photos"), when(35, 12, 0) },
+        { QStringLiteral("access.log"), when(0, 2, 8) },
+        { QStringLiteral("changelog.md"), when(0, 9, 12) },
+        { QStringLiteral("holiday.mp4"), when(2380, 18, 30) },
+        { QStringLiteral("install.iso"), when(118, 8, 55) },
+        { QStringLiteral("nginx.conf"), when(74, 14, 21) },
+        { QStringLiteral("notes.txt"), when(1, 16, 40) },
+        { QStringLiteral("settings.json"), when(5, 10, 5) },
+        { QStringLiteral("system-backup.tar.zst"), when(1, 1, 30) },
+        { QStringLiteral("budget.csv"), when(12, 11, 25) },
+        { QStringLiteral("checksums.sha256"), when(1, 1, 52) },
+        { QStringLiteral("VERSION"), when(48, 10, 0) },
+        { QStringLiteral("todo.md"), when(3, 8, 47) },
+        { QStringLiteral("recording.wav"), when(88, 21, 9) },
+    };
+    // Folders last, because writing a file into one updates its own timestamp.
+    for (const auto& [path, stamp] : dates) {
+        if (!QFileInfo(QDir(m_harness->fixturePath()).filePath(path)).isDir())
+            QVERIFY2(m_harness->setModified(path, stamp), qPrintable(path));
+    }
+    for (const auto& [path, stamp] : dates) {
+        if (QFileInfo(QDir(m_harness->fixturePath()).filePath(path)).isDir())
+            QVERIFY2(m_harness->setModified(path, stamp), qPrintable(path));
+    }
 }
 
 void TestWalkthrough::cleanup()
 {
     m_harness.reset();
+}
+
+void TestWalkthrough::enterFolder(const QString& name)
+{
+    const int row = pane()->files()->rowOfUri(pane()->currentUri() + QLatin1Char('/') + name);
+    QVERIFY2(row >= 0, qPrintable(name));
+    pane()->setCurrentIndex(row);
+    m_harness->settle();
+    m_harness->key(Qt::Key_Return);
+    QVERIFY(
+        m_harness->until([this, name] { return pane()->currentUri().endsWith(QLatin1Char('/') + name); }));
 }
 
 BrowserPaneController* TestWalkthrough::pane() const
@@ -189,12 +391,11 @@ BrowserPaneController* TestWalkthrough::pane() const
 
 void TestWalkthrough::browsesAndPreviews()
 {
-    QCOMPARE(pane()->files()->rowCount(), 4); // two folders, two files
+    QCOMPARE(pane()->files()->rowCount(), kRootRows); // seven folders, thirteen files
     m_harness->screenshot(QStringLiteral("01-browser"));
 
     // Into a folder with the keyboard.
-    m_harness->key(Qt::Key_Return);
-    QVERIFY(m_harness->until([this] { return pane()->currentUri().endsWith(QStringLiteral("/documents")); }));
+    enterFolder(QStringLiteral("documents"));
     QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 2; }));
 
     // Preview the CSV: the table viewer must win over the text one.
@@ -208,7 +409,6 @@ void TestWalkthrough::browsesAndPreviews()
     QVERIFY2(preview, "F3 must open a preview tab");
     QCOMPARE(preview->viewerName(), QStringLiteral("Table"));
     QVERIFY(m_harness->until([preview] { return preview->siblingCount() > 0; }));
-    m_harness->settle();
     m_harness->screenshot(QStringLiteral("02-preview-csv"));
 
     // Right steps to the next file in the folder, and the viewer changes with it.
@@ -239,7 +439,6 @@ void TestWalkthrough::highlightsSourceAndPagesLargeFiles()
     QVERIFY2(!viewer->isMarkdown(), "JSON is coloured, not rendered");
     // Small file: one window, so no paging strip to distract with.
     QVERIFY(!viewer->isPaged());
-    m_harness->settle(6);
     m_harness->screenshot(QStringLiteral("03b-preview-json"));
 
     // Now a file bigger than one window. Paging appears, and stepping forward
@@ -275,7 +474,6 @@ void TestWalkthrough::highlightsSourceAndPagesLargeFiles()
 
     viewer->lastWindow();
     QVERIFY(m_harness->until([viewer] { return viewer->isAtEnd(); }));
-    m_harness->settle(6);
     m_harness->screenshot(QStringLiteral("03c-preview-paging"));
 }
 
@@ -501,7 +699,6 @@ void TestWalkthrough::theListingMarksReportsAndAlerts()
     QVERIFY2(flag(mediaRow, FileListModel::AlertTriggeredRole), "and a tripped alert reads differently");
     QVERIFY2(!flag(mediaRow, FileListModel::HasReportRole), "a folder with no report is not marked");
 
-    m_harness->settle(6);
     m_harness->screenshot(QStringLiteral("01c-listing-tags"));
 }
 
@@ -524,7 +721,7 @@ void TestWalkthrough::rendersMarkdownAsAPage()
     // before any of the styling runs, and a picture of this page should not be
     // showing it off.
     pane()->refresh();
-    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 5; }));
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == kRootRows + 1; }));
 
     const int row = pane()->files()->rowOfUri(pane()->currentUri() + QStringLiteral("/guide.md"));
     QVERIFY(row >= 0);
@@ -590,8 +787,9 @@ void TestWalkthrough::rendersMarkdownAsAPage()
     };
 
     viewer->load(entryFor(QStringLiteral("notes.txt")));
-    QVERIFY(m_harness->until(
-        [viewer] { return !viewer->isMarkdown() && viewer->text() == QStringLiteral("plain notes"); }));
+    QVERIFY(m_harness->until([viewer] {
+        return !viewer->isMarkdown() && viewer->text().startsWith(QStringLiteral("Handover notes"));
+    }));
     m_harness->settle(6);
     QCOMPARE(document->firstBlock().blockFormat().bottomMargin(), 0.0);
 
@@ -683,7 +881,6 @@ void TestWalkthrough::folderSizesLandInTheListing()
     // 90 000 + 30 000 across the two files in there.
     QCOMPARE(files->measuredSize(media), 120000);
 
-    m_harness->settle(8);
     m_harness->screenshot(QStringLiteral("01b-folder-sizes"));
 }
 
@@ -858,7 +1055,7 @@ void TestWalkthrough::theSidebarRowsAreEvenlyTallAndHoldStill()
 
 void TestWalkthrough::bulkRenameShowsThePreviewAsYouType()
 {
-    m_harness->key(Qt::Key_Return); // into "documents"
+    enterFolder(QStringLiteral("documents"));
     QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 2; }));
     pane()->files()->selectAll();
     m_harness->settle();
@@ -896,7 +1093,6 @@ void TestWalkthrough::bulkRenameShowsThePreviewAsYouType()
                  4000),
         "the preview has to follow what is typed, without leaving the field");
 
-    m_harness->settle(8);
     m_harness->screenshot(QStringLiteral("07b-bulk-rename"));
 }
 
@@ -971,7 +1167,6 @@ void TestWalkthrough::theCommandPaletteFindsAndRunsThings()
     QVERIFY2(m_harness->until([list] { return list->property("count").toInt() == 1; }),
         "five characters is enough to find one command out of everything");
 
-    m_harness->settle(6);
     m_harness->screenshot(QStringLiteral("11-command-palette"));
 
     // Closed and opened again: it must start empty. Leaving the last query in the
@@ -1110,7 +1305,6 @@ void TestWalkthrough::ctrlFIsASearchBoxYouCanTypeInto()
     QVERIFY(QMetaObject::invokeMethod(narrow, "textEdited"));
     QCOMPARE(search->results()->rowCount(), found);
 
-    m_harness->settle(6);
     m_harness->screenshot(QStringLiteral("12-search-box"));
 
     QQuickItem* buildSet = m_harness->item(QStringLiteral("buildSetFromResultsButton"));
@@ -1201,7 +1395,6 @@ void TestWalkthrough::searchResultsAreWalkableAndLeadSomewhere()
     m_harness->key(Qt::Key_Up);
     QVERIFY(m_harness->until([list] { return list->property("currentIndex").toInt() == 0; }));
 
-    m_harness->settle(6);
     m_harness->screenshot(QStringLiteral("12b-search-results"));
 
     // Enter is "show me where this is": the folder holding it, cursor on the file.
@@ -1238,7 +1431,7 @@ void TestWalkthrough::compressingTheSelectionMakesAnArchiveBesideIt()
     }
     QVERIFY2(inOperations, "compressing is an operation on the selection");
 
-    m_harness->key(Qt::Key_Return); // into "documents"
+    enterFolder(QStringLiteral("documents"));
     QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 2; }));
     pane()->files()->selectAll();
     m_harness->settle();
@@ -1303,7 +1496,7 @@ void TestWalkthrough::compressingTheSelectionMakesAnArchiveBesideIt()
 // about whether the two are the two they meant.
 void TestWalkthrough::deletingAsksWithTheFilesNamed()
 {
-    m_harness->key(Qt::Key_Return); // into "documents"
+    enterFolder(QStringLiteral("documents"));
     QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 2; }));
     pane()->files()->selectAll();
     m_harness->settle();
@@ -1418,7 +1611,7 @@ void TestWalkthrough::breadcrumbsClimbTheTree()
 {
     // Two levels down, then back up in one click rather than one Backspace per
     // level -- which is what the plain text path amounted to.
-    m_harness->key(Qt::Key_Return); // documents
+    enterFolder(QStringLiteral("documents"));
     QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 2; }));
 
     const QVariantList deep = pane()->pathSegments();
@@ -1445,7 +1638,6 @@ void TestWalkthrough::breadcrumbsClimbTheTree()
     pane()->navigateTo(parent);
     QVERIFY(m_harness->until([this, parent] { return pane()->currentUri() == parent; }));
 
-    m_harness->settle(4);
     m_harness->screenshot(QStringLiteral("01b-breadcrumbs"));
 }
 
@@ -1462,14 +1654,17 @@ void TestWalkthrough::filtersByTyping()
     QVERIFY2(filter->hasActiveFocus(), "the keyboard must move into the filter");
     QCOMPARE(filter->property("text").toString(), QStringLiteral("j"));
 
-    // A filter is a substring match, not a prefix: "m" catches both folders.
+    // A filter is a substring match, not a prefix: "log" catches access.log and
+    // changelog.md, and in the second the match is in the middle of the name.
     m_harness->key(Qt::Key_Backspace);
-    m_harness->key(Qt::Key_M);
+    m_harness->key(Qt::Key_L);
+    m_harness->key(Qt::Key_O);
+    m_harness->key(Qt::Key_G);
     QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 2; }));
     m_harness->screenshot(QStringLiteral("04-filter"));
 
     m_harness->key(Qt::Key_Escape);
-    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 4; }));
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == kRootRows; }));
 }
 
 void TestWalkthrough::theFilterKeepsTheKeyboardWhileNarrowing()
@@ -1511,7 +1706,7 @@ void TestWalkthrough::theFilterKeepsTheKeyboardWhileNarrowing()
 
 void TestWalkthrough::filtersAndCopiesTableCells()
 {
-    m_harness->key(Qt::Key_Return); // into "documents"
+    enterFolder(QStringLiteral("documents"));
     QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 2; }));
 
     const int row = pane()->files()->rowOfUri(pane()->currentUri() + QStringLiteral("/prices.csv"));
@@ -1551,7 +1746,6 @@ void TestWalkthrough::filtersAndCopiesTableCells()
     QCOMPARE(widths.at(0).toInt(), 6); // "widget"
     QCOMPARE(widths.at(2).toInt(), 3); // "qty" beats "250" only by tying it
 
-    m_harness->settle(6);
     m_harness->screenshot(QStringLiteral("04b-table-filter"));
 }
 
@@ -1800,13 +1994,14 @@ void TestWalkthrough::analysesAFolder()
     QVERIFY(m_harness->until(
         [analysis] { return analysis->current() && analysis->current()->hasReport(); }, 20000));
 
-    // Six files, and the .mkv pair dominates by size.
+    // Twenty-one files across the tree, and one machine image dominates by size
+    // -- which is the answer an analysis exists to give: a folder of a few
+    //  hundred gigabytes where almost all of it is in a single file.
     const QVariantMap headline = analysis->current()->headline();
-    QCOMPARE(headline.value(QStringLiteral("files")).toLongLong(), 6);
+    QCOMPARE(headline.value(QStringLiteral("files")).toLongLong(), 21);
     QCOMPARE(analysis->current()->extensions()->index(0, 0).data(BreakdownModel::ExtensionRole).toString(),
-        QStringLiteral("mkv"));
+        QStringLiteral("img"));
 
-    m_harness->settle(10);
     m_harness->screenshot(QStringLiteral("07-analysis"));
 }
 
@@ -1845,7 +2040,6 @@ void TestWalkthrough::schedulesTheReportAndTracksIt()
     QCOMPARE(automation->history().first().toMap().value(QStringLiteral("statusText")).toString(),
         QStringLiteral("OK"));
 
-    m_harness->settle(10);
     m_harness->screenshot(QStringLiteral("08-automation"));
 }
 
@@ -1887,7 +2081,7 @@ void TestWalkthrough::theStripSaysHowLongIsLeftOnWhatIsRunning()
 
 void TestWalkthrough::ctrlWClosesAPreviewTabWithTheTextFocused()
 {
-    m_harness->key(Qt::Key_Return); // into "documents"
+    enterFolder(QStringLiteral("documents"));
     QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 2; }));
 
     const int row = pane()->files()->rowOfUri(pane()->currentUri() + QStringLiteral("/report.txt"));
@@ -1947,7 +2141,6 @@ void TestWalkthrough::theTerminalOpensInTheFolderYouAreLookingAt()
                  10000),
         "the shell's output reaches the screen");
 
-    m_harness->settle(6);
     m_harness->screenshot(QStringLiteral("10-terminal"));
 
     // The same key closes it, which is what makes it a panel rather than a tab.
@@ -2074,7 +2267,6 @@ void TestWalkthrough::theDrivesDialogOffersBackendsAndAForm()
     // whichever the picker offers first, and saving it with an empty form now
     // runs a check that fails and says so -- correct behaviour, and a poor
     // picture of "this is the form you fill in".
-    m_harness->settle(4);
     m_harness->screenshot(QStringLiteral("11-drives"));
 
     // And saving has to put the drive in the list beside it. The list was bound
@@ -2336,7 +2528,6 @@ void TestWalkthrough::anAnalysisTabWithNoReportCentresItsMessage()
     QVERIFY2(dx <= 1.0, qPrintable(QStringLiteral("off horizontally by %1").arg(dx)));
     QVERIFY2(dy <= 1.0, qPrintable(QStringLiteral("off vertically by %1").arg(dy)));
 
-    m_harness->settle(2);
     m_harness->screenshot(QStringLiteral("07c-analysis-empty"));
 }
 
@@ -2371,7 +2562,6 @@ void TestWalkthrough::theSidebarListsADriveAndConnectsIt()
     // Nothing is known about how full it is, so the row is a name and a dot
     // rather than a bar standing behind no measurement.
     QCOMPARE(drives->data(drives->index(rowOfArchiveBox(), 0), DriveListModel::HasSpaceRole).toBool(), false);
-    m_harness->settle(4);
     m_harness->screenshot(QStringLiteral("11b-drive-not-connected"));
 
     const QString id
@@ -2381,7 +2571,6 @@ void TestWalkthrough::theSidebarListsADriveAndConnectsIt()
 
     QVERIFY(m_harness->until([&] { return stateNow() == DriveListModel::State::Connected; }));
     QVERIFY(drives->data(drives->index(rowOfArchiveBox(), 0), DriveListModel::CanEjectRole).toBool());
-    m_harness->settle(4);
     m_harness->screenshot(QStringLiteral("11c-drive-connected"));
 }
 
@@ -2432,7 +2621,6 @@ void TestWalkthrough::openingALockedDriveAsksForThePassphraseAndThenGoesThere()
     }));
     QCOMPARE(row->property("stateCaption").toString(), QStringLiteral("Locked"));
     QCOMPARE(row->property("severity").toString(), QStringLiteral("idle"));
-    m_harness->settle(15);
     m_harness->screenshot(QStringLiteral("11d-drive-locked"));
 
     // Opening it is what asks. Through goTo(), which is where the sidebar row,
@@ -2454,7 +2642,6 @@ void TestWalkthrough::openingALockedDriveAsksForThePassphraseAndThenGoesThere()
     // Longer than the enter transition, which is 220 ms and which every other
     // grab in this file is also taken inside. MOLE-114 replaces the waiting with
     // a look at whether the window has stopped changing.
-    m_harness->settle(15);
     m_harness->screenshot(QStringLiteral("11e-drive-unlock"));
 
     // Answered with Return, from the field it was typed into.

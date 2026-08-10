@@ -14,7 +14,23 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#ifdef Q_OS_UNIX
+#include <utime.h>
+#endif
+
 namespace mole::test {
+namespace {
+
+    /// How many frames grab() will look at before taking whatever it has.
+    ///
+    /// Each attempt costs one settle(2) -- about 40 ms -- so this is roughly
+    /// eight hundred milliseconds, comfortably past the 220 ms of the longest
+    /// transition in the window. A settled picture leaves after two attempts and
+    /// never comes near it; the one picture that is deliberately of something
+    /// still moving pays the whole cap, once. See grab().
+    constexpr int kGrabAttempts = 20;
+
+} // namespace
 
 QmlAppHarness::QmlAppHarness() = default;
 
@@ -25,6 +41,8 @@ QmlAppHarness::~QmlAppHarness()
 
 QString QmlAppHarness::fixturePath() const
 {
+    if (!m_fixedFixture.isEmpty())
+        return m_fixedFixture;
     return m_fixture ? m_fixture->path() : QString();
 }
 
@@ -45,14 +63,25 @@ bool QmlAppHarness::start(const Options& options, QString* errorOut)
     // analysis history, schedule and alerts must never be touched -- the
     // scheduler starts on its own, and it would run their jobs.
     m_profile = std::make_unique<PrivateProfile>();
-    m_fixture = std::make_unique<QTemporaryDir>();
     m_drives = std::make_unique<QTemporaryDir>();
-    if (!m_profile->isValid() || !m_fixture->isValid() || !m_drives->isValid())
+    if (!m_profile->isValid() || !m_drives->isValid())
         return fail(QStringLiteral("could not create temporary directories"));
 
     m_screenshotDirectory = options.screenshotDirectory;
-    if (!m_screenshotDirectory.isEmpty())
+    if (m_screenshotDirectory.isEmpty()) {
+        m_fixture = std::make_unique<QTemporaryDir>();
+        if (!m_fixture->isValid())
+            return fail(QStringLiteral("could not create a temporary directory"));
+    } else {
         QDir().mkpath(m_screenshotDirectory);
+        // A name a reader recognises, in place of `mole-tests-wAYrZa`. Emptied
+        // first rather than reused: a leftover from a previous run would appear
+        // in the pictures as a file nobody wrote.
+        m_fixedFixture = QDir(QDir::tempPath()).filePath(QStringLiteral("mole-guide"));
+        QDir(m_fixedFixture).removeRecursively();
+        if (!QDir().mkpath(m_fixedFixture))
+            return fail(QStringLiteral("could not create the fixture directory"));
+    }
 
     m_options = options;
     return build(errorOut);
@@ -131,6 +160,10 @@ void QmlAppHarness::stop()
     m_engine.reset();
     m_window = nullptr;
     m_app.reset();
+    if (!m_fixedFixture.isEmpty()) {
+        QDir(m_fixedFixture).removeRecursively();
+        m_fixedFixture.clear();
+    }
     m_fixture.reset();
     m_drives.reset();
     m_profile.reset();
@@ -152,6 +185,44 @@ bool QmlAppHarness::writeFile(const QString& relativePath, const QByteArray& con
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
         return false;
     return file.write(contents) == contents.size();
+}
+
+bool QmlAppHarness::writeSparseFile(const QString& relativePath, qint64 bytes)
+{
+    const QString target = QDir(fixturePath()).filePath(relativePath);
+    const QFileInfo info(target);
+    if (!info.dir().exists() && !QDir().mkpath(info.dir().absolutePath()))
+        return false;
+
+    QFile file(target);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return false;
+    return file.resize(bytes);
+}
+
+bool QmlAppHarness::setModified(const QString& relativePath, const QDateTime& when)
+{
+    const QString target = QDir(fixturePath()).filePath(relativePath);
+
+    // A directory cannot be opened as a QFile, and QFileDevice::setFileTime is
+    // the only portable way Qt offers -- so folders go through utime(), which is
+    // POSIX and is what the screenshot run uses. A folder whose date comes from
+    // the clock is a folder whose date differs between two regenerations of the
+    // same commit, which is the whole thing the fixed fixture name is for.
+    if (QFileInfo(target).isDir()) {
+#ifdef Q_OS_UNIX
+        const time_t stamp = static_cast<time_t>(when.toSecsSinceEpoch());
+        utimbuf times { stamp, stamp };
+        return utime(QFile::encodeName(target).constData(), &times) == 0;
+#else
+        return true;
+#endif
+    }
+
+    QFile file(target);
+    if (!file.open(QIODevice::ReadWrite))
+        return false;
+    return file.setFileTime(when, QFileDevice::FileModificationTime);
 }
 
 void QmlAppHarness::settle(int rounds)
@@ -281,8 +352,32 @@ QImage QmlAppHarness::grab()
 {
     if (!m_window)
         return {};
-    settle(2);
-    return m_window->grabWindow();
+
+    // Two identical frames, rather than a fixed wait chosen to outlast whatever
+    // the longest animation happens to be today. That number goes stale the
+    // first time somebody writes a slower transition, and it had: every picture
+    // of a dialog was taken 40 ms into the Material style's 220 ms enter
+    // transition, at about 96% scale, with the body not yet opaque -- the file
+    // listing showed through between a dialog's title bar and its footer, and
+    // one picture had a file name legible *through* the dialog covering it.
+    QImage previous;
+    for (int attempt = 0; attempt < kGrabAttempts; ++attempt) {
+        settle(2);
+        QImage frame = m_window->grabWindow();
+        if (frame.isNull())
+            return frame;
+        if (!previous.isNull() && frame == previous)
+            return frame;
+        previous = std::move(frame);
+    }
+
+    // The cap, and it is reached on purpose. `02b-preview-csv-loading` is
+    // deliberately a load in progress and its BusyIndicator never stops turning,
+    // so that picture can never have two identical frames: hitting the cap is the
+    // correct outcome there rather than a failure, which is why this hands back
+    // the last frame instead of complaining. Anything else reaching it is a
+    // window that will not settle, and the picture will show why.
+    return previous;
 }
 
 QString QmlAppHarness::screenshot(const QString& name)
