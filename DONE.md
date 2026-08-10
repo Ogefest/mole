@@ -9,6 +9,40 @@ wrong.
 
 ---
 
+## Three languages the highlighter has always known were unreachable
+
+**Asked for:** MOLE-130 — `Dockerfile`, `.gitignore`, `.bashrc`, `Jenkinsfile` and
+`LICENSE` are all text and none of them previewed as text; and one layer down,
+`SourceHighlighter` has had full `dockerfile`, `make` and `cmake` rule sets since it was
+written while `suffixTable()` maps no name to any of them, so `Makefile` and
+`CMakeLists.txt` were claimed as text and shown grey.
+
+**What it turned out to be:** the first half was already done — accepting a sniffed text
+type is what MOLE-129's own checklist required, so this ticket is the colouring. A file's
+language now comes from `SourceHighlighter::languageFor()`, which asks three things in
+order: **the name, then the type, then the suffix**. That order is the whole point, and it
+is not the obvious one — for exactly the files this is about, the suffix is where the
+information *is not*. `Dockerfile` and `Makefile` have none, `CMakeLists.txt` has one that
+only says "text", and `.bashrc` has one `VfsUri::suffix()` will not admit to, since it
+returns nothing when the only dot is at position 0.
+
+That last quirk is left alone. Widening `suffix()` so dotfiles have one would change what
+a preference key, a rename plan and every suffix test mean, to fix a handful of names that
+an exact-name table fixes better. The two entries in `textSuffixes()` that can only ever
+match `something.gitignore` stay too — harmless, and now beside the point.
+
+**The type row earns its place on the files that have no conventional name either.** A
+shell script called `deploy` is `application/x-shellscript` to the content pass and is
+coloured as shell, which neither its name nor its suffix could ever have said. Both
+spellings of that type are in the table, because shared-mime-info moved it and a database
+older or newer than the one here should still colour a script.
+
+**The 100 GB promise is held by a test rather than by a paragraph.** A two gigabyte sparse
+file with no suffix and no line break in its first window opens on one page to identify it
+and one 512 kB window to show it — asserted through a drive that counts bytes, with a
+lower bound as well as an upper one so that a drive nobody asked cannot pass by reading
+nothing.
+
 ## The preview layer decided what a file was from its name and never looked inside it
 
 **Asked for:** MOLE-129 — `IPreviewProvider::canPreview()` is by contract a name, a suffix

@@ -330,7 +330,7 @@ void TextPreviewController::load(const FileEntry& entry)
     m_markdown = suffix == QLatin1String("md") || suffix == QLatin1String("markdown")
         || suffix == QLatin1String("mdown") || suffix == QLatin1String("mkd");
     m_isHtml = TextPreviewProvider::isRenderable(suffix);
-    m_language = m_markdown ? QString() : SourceHighlighter::languageForSuffix(suffix);
+    m_language = m_markdown ? QString() : SourceHighlighter::languageFor(entry.name, entry.mimeType, suffix);
     m_highlighter->setLanguage(m_language);
     // Stepping from a Markdown file to a source file, or back, changes which of
     // the two viewers the document needs.

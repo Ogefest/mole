@@ -52,6 +52,28 @@ public:
     /// sensible applies. An unknown suffix means no colour rather than a wrong
     /// guess -- miscoloured text reads as a broken file.
     static QString languageForSuffix(const QString& suffix);
+
+    /// The language for one file, from everything known about it: what it is
+    /// called, what the content pass found it to be, and what it ends in.
+    ///
+    /// The order is name, then type, then suffix, and it is not the obvious one
+    /// because for the files this exists for **the suffix is not where the
+    /// information is**. `Dockerfile` and `Makefile` have no suffix at all,
+    /// `CMakeLists.txt` has one that only says "text", and `.bashrc` has one
+    /// VfsUri will not admit to. What each of them has is a name every
+    /// programmer recognises, so the name is asked first; the sniffed type
+    /// second, which is how a shell script called `deploy` gets coloured; and
+    /// the suffix last, where it remains right for everything else.
+    static QString languageFor(const QString& fileName, const QString& mimeType, const QString& suffix);
+
+    /// The language for a file name that is a convention rather than a suffix.
+    /// Exact names and one-step patterns (`Dockerfile.build`), no globbing:
+    /// these are a short list of names people agreed on, not a pattern language.
+    static QString languageForName(const QString& fileName);
+
+    /// The language for a MIME type, for the few where the database is more
+    /// specific than a suffix could be.
+    static QString languageForMimeType(const QString& mimeType);
     static bool isSupported(const QString& suffix) { return !languageForSuffix(suffix).isEmpty(); }
     /// Every language this build can colour, for the documentation and tests.
     static QStringList supportedLanguages();

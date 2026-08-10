@@ -13,6 +13,7 @@
 #include "core/CoreMetaTypes.h"
 #include "core/data/FileType.h"
 #include "core/vfs/VfsManager.h"
+#include "core/vfs/backends/LocalFileSystem.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
 #include <QAbstractTextDocumentLayout>
@@ -114,6 +115,11 @@ private slots:
     // --- syntax highlighting ---
     void recognisesHighlightableLanguages_data();
     void recognisesHighlightableLanguages();
+    void coloursFilesWhoseNameIsTheirType_data();
+    void coloursFilesWhoseNameIsTheirType();
+    void textWithNothingToColourOpensPlain_data();
+    void textWithNothingToColourOpensPlain();
+    void aHugeFileWithNoSuffixOpensOnItsFirstWindow();
 
     // --- markdown typography ---
     void markdownHeadingsGetRoomAndScale();
@@ -649,6 +655,132 @@ void TestPreview::recognisesHighlightableLanguages()
     QFETCH(QString, suffix);
     QFETCH(bool, highlighted);
     QCOMPARE(SourceHighlighter::isSupported(suffix), highlighted);
+}
+
+void TestPreview::coloursFilesWhoseNameIsTheirType_data()
+{
+    QTest::addColumn<QString>("fileName");
+    QTest::addColumn<QByteArray>("contents");
+    QTest::addColumn<QString>("languageName");
+
+    // Three languages that have existed since the highlighter was written and
+    // could not be reached: no suffix maps to dockerfile at all, and only .mk
+    // and .cmake reach the other two.
+    QTest::newRow("Dockerfile") << "Dockerfile"
+                                << QByteArray("FROM debian:bookworm\n# a comment\nRUN make all\n")
+                                << "Dockerfile";
+    QTest::newRow("Dockerfile.build")
+        << "Dockerfile.build" << QByteArray("FROM alpine\nARG VERSION\n") << "Dockerfile";
+    QTest::newRow("Containerfile") << "Containerfile" << QByteArray("FROM alpine\n") << "Dockerfile";
+    QTest::newRow("Makefile") << "Makefile" << QByteArray("all:\n\tgcc -o x x.c\n") << "Makefile";
+    QTest::newRow("GNUmakefile") << "GNUmakefile" << QByteArray("include config.mk\nall:\n") << "Makefile";
+    QTest::newRow("CMakeLists.txt") << "CMakeLists.txt"
+                                    << QByteArray("project(mole)\nif(NOT WIN32)\nendif()\n") << "CMake";
+    QTest::newRow("bashrc") << ".bashrc" << QByteArray("export PS1='$ '\nalias ll='ls -l'\n") << "Shell";
+    QTest::newRow("editorconfig") << ".editorconfig" << QByteArray("root = true\n") << "INI / TOML";
+
+    // And the case the name cannot answer: a script with no suffix and no
+    // conventional name, coloured because the content pass knows what it is.
+    QTest::newRow("a script called deploy")
+        << "deploy" << QByteArray("#!/bin/sh\nset -e\necho deploying\n") << "Shell";
+}
+
+void TestPreview::coloursFilesWhoseNameIsTheirType()
+{
+    QFETCH(QString, fileName);
+    QFETCH(QByteArray, contents);
+    QFETCH(QString, languageName);
+
+    QVERIFY(m_tree->writeFile(fileName, contents));
+
+    PreviewTabController* preview = openPreview(fileName);
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY2(viewer, qPrintable(QStringLiteral("%1 reached %2").arg(fileName, preview->viewerName())));
+    QVERIFY(waitFor([viewer] { return !viewer->text().isEmpty(); }, 5000));
+
+    QCOMPARE(viewer->languageName(), languageName);
+    QVERIFY(viewer->isHighlighted());
+}
+
+void TestPreview::textWithNothingToColourOpensPlain_data()
+{
+    QTest::addColumn<QString>("fileName");
+    QTest::addColumn<QByteArray>("contents");
+
+    QTest::newRow("gitignore") << ".gitignore" << QByteArray("build/\n*.o\n");
+    QTest::newRow("LICENSE") << "LICENSE" << QByteArray("MIT License\n\nPermission is hereby granted\n");
+}
+
+void TestPreview::textWithNothingToColourOpensPlain()
+{
+    QFETCH(QString, fileName);
+    QFETCH(QByteArray, contents);
+
+    QVERIFY(m_tree->writeFile(fileName, contents));
+
+    PreviewTabController* preview = openPreview(fileName);
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY2(viewer, qPrintable(QStringLiteral("%1 reached %2").arg(fileName, preview->viewerName())));
+    QVERIFY(waitFor([viewer] { return !viewer->text().isEmpty(); }, 5000));
+
+    // Shown, not coloured, and no complaint about either: an unknown language is
+    // no language rather than a wrong guess.
+    QVERIFY(!viewer->isHighlighted());
+    QVERIFY(viewer->languageName().isEmpty());
+    QVERIFY2(viewer->errorText().isEmpty(), qPrintable(viewer->errorText()));
+}
+
+void TestPreview::aHugeFileWithNoSuffixOpensOnItsFirstWindow()
+{
+    // Two gigabytes, sparse: the point is the offsets, not the bytes, and a test
+    // that really wrote them would be a test nobody runs. No newline in the
+    // first window either, which is the shape a one-line dump arrives in.
+    constexpr qint64 kSize = 2LL * 1024 * 1024 * 1024;
+    const QString path = m_tree->absolute(QStringLiteral("dump8842"));
+    {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QByteArray head;
+        while (head.size() < 1024 * 1024)
+            head += QByteArrayLiteral("{\"id\":1,\"name\":\"row\"},");
+        QCOMPARE(file.write(head), head.size());
+        QVERIFY2(file.resize(kSize), qPrintable(file.errorString()));
+    }
+    if (QFileInfo(path).size() != kSize)
+        QSKIP("this filesystem would not make a sparse file");
+
+    // Through a drive that counts, because "it opened" is only half of it: what
+    // must not happen is the file being read to find that out.
+    auto counted = std::make_shared<FaultyFileSystem>(std::make_shared<LocalFileSystem>());
+    Mount mount;
+    mount.id = QStringLiteral("counted");
+    mount.displayName = QStringLiteral("counted");
+    mount.root = m_tree->rootUri();
+    mount.fileSystem = counted;
+    m_app->services().vfs->addMount(mount);
+
+    m_app->previewFile(VfsUri::fromLocalPath(path).toString());
+    auto* preview = qobject_cast<PreviewTabController*>(m_app->tabs()->currentController());
+    QVERIFY(preview);
+    QVERIFY(waitFor([preview] { return preview->viewer() != nullptr; }, 10000));
+
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY2(viewer, qPrintable(QStringLiteral("reached %1").arg(preview->viewerName())));
+    QVERIFY(waitFor([viewer] { return !viewer->text().isEmpty(); }, 10000));
+
+    QCOMPARE(viewer->fileSize(), kSize);
+    QCOMPARE(viewer->windowBytes(), 512 * 1024);
+    QVERIFY(viewer->isPaged());
+
+    // One page to identify it and one window to show it. Anything else means
+    // something read towards the end of a file it was only asked the start of --
+    // and the lower bound is there so a drive that was never asked at all cannot
+    // pass this by reading nothing.
+    QVERIFY2(counted->bytesRead() >= 512 * 1024, "the window has to have come through this drive");
+    QVERIFY2(counted->bytesRead() <= FileType::kSampleBytes + 512 * 1024 + 2,
+        qPrintable(QStringLiteral("read %1 bytes of a 2 GB file").arg(counted->bytesRead())));
 }
 
 // ------------------------------------------------------ markdown typography

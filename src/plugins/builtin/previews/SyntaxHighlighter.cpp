@@ -379,6 +379,56 @@ namespace {
         return table;
     }
 
+    /// File names that are a convention rather than a suffix. Split into the
+    /// ones that must match exactly and the ones that may carry a tail --
+    /// `Dockerfile.build` is a Dockerfile, `Makefile.am` is a makefile.
+    const QHash<QString, QString>& nameTable()
+    {
+        static const QHash<QString, QString> table = {
+            { QStringLiteral("Dockerfile"), QStringLiteral("dockerfile") },
+            { QStringLiteral("Containerfile"), QStringLiteral("dockerfile") },
+            { QStringLiteral("Makefile"), QStringLiteral("make") },
+            { QStringLiteral("makefile"), QStringLiteral("make") },
+            { QStringLiteral("GNUmakefile"), QStringLiteral("make") },
+            { QStringLiteral("CMakeLists.txt"), QStringLiteral("cmake") },
+            { QStringLiteral(".bashrc"), QStringLiteral("shell") },
+            { QStringLiteral(".zshrc"), QStringLiteral("shell") },
+            { QStringLiteral(".bash_profile"), QStringLiteral("shell") },
+            { QStringLiteral(".profile"), QStringLiteral("shell") },
+            { QStringLiteral(".gitconfig"), QStringLiteral("ini") },
+            { QStringLiteral(".editorconfig"), QStringLiteral("ini") },
+        };
+        return table;
+    }
+
+    /// The stems that may be followed by anything: `Dockerfile.*`, `Makefile.*`.
+    const QHash<QString, QString>& stemTable()
+    {
+        static const QHash<QString, QString> table = {
+            { QStringLiteral("Dockerfile"), QStringLiteral("dockerfile") },
+            { QStringLiteral("Makefile"), QStringLiteral("make") },
+        };
+        return table;
+    }
+
+    /// MIME type to language, for the types the database can be more specific
+    /// about than a suffix ever is -- a shell script with no suffix at all is
+    /// application/x-shellscript to it.
+    const QHash<QString, QString>& mimeTable()
+    {
+        static const QHash<QString, QString> table = {
+            { QStringLiteral("text/x-makefile"), QStringLiteral("make") },
+            { QStringLiteral("text/x-cmake"), QStringLiteral("cmake") },
+            // Both spellings: shared-mime-info moved this one, and a database
+            // older or newer than the one here should still colour a script.
+            { QStringLiteral("text/x-shellscript"), QStringLiteral("shell") },
+            { QStringLiteral("application/x-shellscript"), QStringLiteral("shell") },
+            { QStringLiteral("application/json"), QStringLiteral("json") },
+            { QStringLiteral("text/x-python"), QStringLiteral("python") },
+        };
+        return table;
+    }
+
     bool isWordCharacter(QChar c)
     {
         return c.isLetterOrNumber() || c == QLatin1Char('_') || c == QLatin1Char('$');
@@ -407,6 +457,33 @@ QString SourceHighlighter::languageForSuffix(const QString& suffix)
     if (id.isEmpty())
         return {};
     return id;
+}
+
+QString SourceHighlighter::languageForName(const QString& fileName)
+{
+    const QString name = fileName.section(QLatin1Char('/'), -1);
+    const QString exact = nameTable().value(name);
+    if (!exact.isEmpty())
+        return exact;
+
+    const int dot = name.indexOf(QLatin1Char('.'), 1);
+    return dot > 0 ? stemTable().value(name.left(dot)) : QString();
+}
+
+QString SourceHighlighter::languageForMimeType(const QString& mimeType)
+{
+    return mimeTable().value(mimeType.toLower());
+}
+
+QString SourceHighlighter::languageFor(
+    const QString& fileName, const QString& mimeType, const QString& suffix)
+{
+    QString language = languageForName(fileName);
+    if (language.isEmpty())
+        language = languageForMimeType(mimeType);
+    if (language.isEmpty())
+        language = languageForSuffix(suffix);
+    return language;
 }
 
 QStringList SourceHighlighter::supportedLanguages()
