@@ -2,6 +2,7 @@
 #include "host/PreviewRegistry.h"
 #include "plugins/builtin/BuiltinPlugin.h"
 #include "plugins/builtin/PreviewFeature.h"
+#include "plugins/builtin/previews/DocumentMetadata.h"
 #include "plugins/builtin/previews/MarkdownStyle.h"
 #include "plugins/builtin/previews/MetadataReaders.h"
 #include "plugins/builtin/previews/PdfPreview.h"
@@ -10,6 +11,7 @@
 #include "support/FakePlugin.h"
 #include "support/FaultyFileSystem.h"
 #include "support/TestSupport.h"
+#include "support/ZipFixtures.h"
 #include "ui/AppController.h"
 #include "ui/models/TabsModel.h"
 
@@ -115,6 +117,7 @@ private slots:
     void steppingToTheNextFileCancelsAReaderInFlight();
     void aReaderThatFailsCostsOnlyItsOwnRows();
     void aPhotographShowsThePictureAndWhatTheCameraWrote();
+    void aDocumentNamesItsAuthorWithoutBeingReadWhole();
 
     // ---- the bytes of a file, for the files nothing else can show ---------
     void bytesAreShownForWhatNothingElseClaims_data();
@@ -664,6 +667,56 @@ void TestPreview::aPhotographShowsThePictureAndWhatTheCameraWrote()
     QCOMPARE(detailNamed(preview, QStringLiteral("Camera")), QStringLiteral("Canon EOS 700D"));
     // And the generic facts are still underneath, from the reader below it.
     QVERIFY(!detailNamed(preview, QStringLiteral("Size")).isEmpty());
+}
+
+void TestPreview::aDocumentNamesItsAuthorWithoutBeingReadWhole()
+{
+    if (!DocumentMetadataReader::isAvailable())
+        QSKIP("built without libarchive");
+
+    // A container the size of a real report, with its properties at the front
+    // where every writer puts them. What must not happen is the whole thing
+    // being fetched to read a name out of the first kilobytes.
+    QByteArray core
+        = QByteArrayLiteral("<?xml version=\"1.0\"?><cp:coreProperties xmlns:cp=\"x\" xmlns:dc=\"y\">"
+                            "<dc:creator>Ada Lovelace</dc:creator><dc:title>Quarterly report</dc:title>"
+                            "</cp:coreProperties>");
+
+    // Its properties at the front and a body far larger than anything the
+    // reader is allowed to fetch.
+    StoredZip zip;
+    zip.add("docProps/core.xml", core);
+    zip.add("word/document.xml", QByteArray(4 * 1024 * 1024, 'w'));
+    const QByteArray document = zip.build();
+
+    auto memory = std::make_shared<MemoryFileSystem>();
+    memory->addFile(QStringLiteral("/report.docx"), document);
+    auto counted = std::make_shared<FaultyFileSystem>(memory);
+
+    Mount mount;
+    mount.id = QStringLiteral("counted");
+    mount.displayName = QStringLiteral("counted");
+    mount.root = VfsUri::fromString(QStringLiteral("mem://counted/"));
+    mount.fileSystem = counted;
+    m_app->services().vfs->addMount(mount);
+
+    m_app->previewFile(QStringLiteral("mem://counted/report.docx"));
+    auto* preview = qobject_cast<PreviewTabController*>(m_app->tabs()->currentController());
+    QVERIFY(preview);
+    QVERIFY(waitFor([preview] { return preview->viewer() != nullptr; }, 5000));
+
+    preview->setDetailsOpen(true);
+    QVERIFY(waitFor([preview] { return !preview->isDetailsLoading(); }, 5000));
+
+    QCOMPARE(detailNamed(preview, QStringLiteral("Author")), QStringLiteral("Ada Lovelace"));
+    QCOMPARE(detailNamed(preview, QStringLiteral("Title")), QStringLiteral("Quarterly report"));
+
+    // The sniff, the hex viewer's window, and one bounded prefix for the
+    // reader. Nowhere near the four megabytes of body.
+    const qint64 allowed = FileType::kSampleBytes + HexPreviewController::kWindowBytes
+        + DocumentMetadataReader::kPrefixBytes + 8;
+    QVERIFY2(counted->bytesRead() <= allowed,
+        qPrintable(QStringLiteral("read %1 bytes of a 4 MB document").arg(counted->bytesRead())));
 }
 
 // ------------------------------------------------- the bytes themselves

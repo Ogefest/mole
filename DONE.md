@@ -9,6 +9,41 @@ wrong.
 
 ---
 
+## Nobody could see who wrote a document
+
+**Asked for:** MOLE-134 — a PDF renders its pages and says nothing about its author, and a
+`.docx` had no viewer at all although the author's name is a few hundred bytes of XML a
+short way into the file. Two readers against MOLE-132's interface.
+
+**What it turned out to be:** `PdfMetadataReader` beside the PDF viewer, and
+`DocumentMetadataReader` for the zip-based families, plus `membersFromZipPrefix()` in the
+archive backend — twenty lines that pull named members out of the *front* of a container.
+
+**The prefix is the whole idea.** A zip's local headers appear in stream order, so the
+members near the front can be read without the central directory at the end of the file:
+256 kB answers for every writer we have seen, and a container that keeps its properties
+further in costs its author's name rather than a hundred megabytes of transfer. The reader
+says which of the two happened rather than reading like a document with no author. The
+bound is asserted through a counting drive at the app level, on a four megabyte container.
+
+**The PDF is the exception, and it is written down rather than hidden.** A document's
+metadata is reached through its trailer at the *end* of the file, so there is no prefix that
+answers. A local file is opened where it lies and Qt reads what it needs; anything else is
+fetched — a second time, the viewer having fetched it once. That is a consequence of the
+panel being closed by default, and a local copy shared between a viewer and a reader is a
+caching decision of its own.
+
+**Two hostile inputs, both tested.** A zip that is not a document contributes nothing —
+which is not a corner case but the ordinary outcome of OOXML, ODF and a bag of holiday
+photographs all being zips to a magic rule. And an XML entity naming a local file is not
+resolved: the test writes a real secret to a real path, builds a container whose `core.xml`
+points at it, and asserts that no row anywhere contains it. Same rule as ADR-0006's
+`<img>`: previewing a file puts nothing on the network and reads nothing it was not asked
+to.
+
+**The hand-built zip moved to `tests/support/ZipFixtures.h`** the moment a second suite
+wanted one, which is where a fixture belongs.
+
 ## A photograph showed its pixels and nothing about the photograph
 
 **Asked for:** MOLE-133 — a photograph opens as a picture fitted to the pane and Mole says

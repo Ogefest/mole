@@ -2,6 +2,9 @@
 
 #include "plugins/builtin/previews/PreviewProviders.h"
 
+#include "core/vfs/VfsManager.h"
+
+#include <QBuffer>
 #include <QDir>
 #include <QFileInfo>
 #include <QLocale>
@@ -207,5 +210,143 @@ PreviewController* PdfPreviewProvider::createController(QObject* parent)
     return nullptr;
 #endif
 }
+
+// ---------------------------------------------------------------- metadata
+
+bool PdfMetadataReader::canRead(const FileEntry& entry) const
+{
+    if (entry.isDir || !PdfPreviewProvider::isAvailable())
+        return false;
+    return entry.mimeType == QLatin1String("application/pdf")
+        || entry.uri.suffix().compare(QLatin1String("pdf"), Qt::CaseInsensitive) == 0;
+}
+
+#ifdef MOLE_HAVE_QTPDF
+
+namespace {
+
+    /// The facts of an open document. Shared by the two ways of opening one.
+    QList<FileFact> factsOf(QPdfDocument& document, QPdfDocument::Error status)
+    {
+        QList<FileFact> facts;
+
+        // One row rather than eight empty ones: a document that cannot be read
+        // has one thing to say and it is not its title.
+        switch (status) {
+        case QPdfDocument::Error::None:
+            break;
+        case QPdfDocument::Error::IncorrectPassword:
+            return { { QStringLiteral("Document"), QStringLiteral("encrypted — needs a password") } };
+        default:
+            return { { QStringLiteral("Document"), QStringLiteral("cannot be read") } };
+        }
+
+        const auto append = [&facts, &document](QPdfDocument::MetaDataField field, const QString& label) {
+            const QVariant value = document.metaData(field);
+            if (value.typeId() == QMetaType::QDateTime) {
+                const QDateTime when = value.toDateTime();
+                if (when.isValid())
+                    facts.append({ label, QLocale().toString(when, QLocale::ShortFormat) });
+                return;
+            }
+            const QString text = value.toString().trimmed();
+            if (!text.isEmpty())
+                facts.append({ label, text });
+        };
+
+        append(QPdfDocument::MetaDataField::Title, QStringLiteral("Title"));
+        append(QPdfDocument::MetaDataField::Author, QStringLiteral("Author"));
+        append(QPdfDocument::MetaDataField::Subject, QStringLiteral("Subject"));
+        append(QPdfDocument::MetaDataField::Keywords, QStringLiteral("Keywords"));
+        append(QPdfDocument::MetaDataField::Creator, QStringLiteral("Created with"));
+        append(QPdfDocument::MetaDataField::Producer, QStringLiteral("Produced by"));
+        append(QPdfDocument::MetaDataField::CreationDate, QStringLiteral("Created"));
+        append(QPdfDocument::MetaDataField::ModificationDate, QStringLiteral("Modified"));
+
+        // "How many pages" is the question people actually ask of a PDF, and how
+        // big a page is answers the other one.
+        if (document.pageCount() > 0) {
+            facts.append({ QStringLiteral("Pages"), QString::number(document.pageCount()) });
+            const QSizeF points = document.pagePointSize(0);
+            if (!points.isEmpty()) {
+                // A point is 1/72 inch; millimetres is what a page size is
+                // ordinarily said in.
+                facts.append({ QStringLiteral("Page size"),
+                    QStringLiteral("%1 × %2 mm")
+                        .arg(qRound(points.width() * 25.4 / 72.0))
+                        .arg(qRound(points.height() * 25.4 / 72.0)) });
+            }
+        }
+        return facts;
+    }
+
+} // namespace
+
+QList<FileFact> PdfMetadataReader::factsForBytes(const QByteArray& document)
+{
+    QByteArray owned = document;
+    QBuffer buffer(&owned);
+    buffer.open(QIODevice::ReadOnly);
+
+    QPdfDocument opened;
+    // The device overload reports through error() rather than returning; the
+    // buffer has to outlive the call, which is why it is a local here.
+    opened.load(&buffer);
+    return factsOf(opened, opened.error());
+}
+
+QList<FileFact> PdfMetadataReader::read(
+    const FileEntry& entry, QByteArrayView head, PluginServices services, const CancelToken& cancel) const
+{
+    Q_UNUSED(head);
+    if (cancel.isCancelled())
+        return {};
+
+    // A local file is opened where it lies -- QPdfDocument reads what it needs
+    // and no more, which for the metadata is the trailer and one object.
+    const QString localPath = entry.uri.toLocalPath();
+    if (!localPath.isEmpty()) {
+        QPdfDocument document;
+        const QPdfDocument::Error status = document.load(localPath);
+        return factsOf(document, status);
+    }
+
+    // Anywhere else there is no seeking to a trailer, so the document is
+    // fetched. See the note on the class: this is the second fetch, and it
+    // happens only because somebody opened the panel.
+    if (!services.vfs)
+        return {};
+    FileSystemPtr fs = services.vfs->resolve(entry.uri);
+    if (!fs)
+        return {};
+    Result<std::unique_ptr<QIODevice>> opened = fs->openRead(entry.uri);
+    if (!opened.ok() || !opened.value())
+        return {};
+
+    const QByteArray bytes = opened.value()->readAll();
+    if (cancel.isCancelled())
+        return {};
+    return factsForBytes(bytes);
+}
+
+#else // MOLE_HAVE_QTPDF
+
+QList<FileFact> PdfMetadataReader::factsForBytes(const QByteArray& document)
+{
+    Q_UNUSED(document);
+    return {};
+}
+
+QList<FileFact> PdfMetadataReader::read(
+    const FileEntry& entry, QByteArrayView head, PluginServices services, const CancelToken& cancel) const
+{
+    Q_UNUSED(entry);
+    Q_UNUSED(head);
+    Q_UNUSED(services);
+    Q_UNUSED(cancel);
+    return {};
+}
+
+#endif // MOLE_HAVE_QTPDF
 
 } // namespace mole

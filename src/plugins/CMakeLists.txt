@@ -38,6 +38,8 @@ add_library(mole_builtin STATIC
     builtin/previews/MetadataReaders.cpp
     builtin/previews/ImageMetadata.h
     builtin/previews/ImageMetadata.cpp
+    builtin/previews/DocumentMetadata.h
+    builtin/previews/DocumentMetadata.cpp
     builtin/previews/PdfPreview.h
     builtin/previews/PdfPreview.cpp
 )
@@ -78,6 +80,8 @@ if(LibArchive_FOUND)
     add_library(mole_archive_backend STATIC
         archive/ArchiveFileSystem.h
         archive/ArchiveFileSystem.cpp
+        archive/ZipPrefix.h
+        archive/ZipPrefix.cpp
         archive/CompressTask.h
         archive/CompressTask.cpp
     )
