@@ -9,6 +9,61 @@ wrong.
 
 ---
 
+## Gigabytes each way, and the wall that was still there
+
+**Asked for:** MOLE-27. Transfers at the sizes that break things, in both
+directions, byte-verified, with **peak local scratch space measured and
+asserted** — the check that would have caught staging before it became a wall —
+plus memory and descriptors sampled and asserted flat, a transfer crossing the
+re-key point on both server configurations, and throughput recorded per run so a
+regression in speed is visible as well as one in correctness.
+
+**A hundred gigabytes was asked for and cannot run anywhere.** This machine has
+80 GB free and the test machine 27 GB, so the tier takes its size from
+`MOLE_TEST_HEAVY_BYTES` and defaults to 10 GiB. That is not a compromise on what
+is being checked: the assertion is the *ratio* between the payload and the
+temporary space it needs, and ten gigabytes proves that as well as a hundred
+would. Where the payload does not fit, the case is a **skip with the reason**
+rather than a pass — the WebDAV and FTP roots are on a small disk on purpose, and
+filling it would take every other suite down with it.
+
+**The tier asks the machine how much room it has**, through a new
+`mole-control room <service>` on the control channel, rather than having numbers
+about somebody's disk typed into a script in a public repository. A machine is
+the only thing that knows its own layout.
+
+**Verified byte for byte without holding ten gigabytes anywhere.** The payload is
+a function of where it is: one megabyte of fixed pseudo-random bytes, repeated,
+each block stamped with its own index. Every byte is compared against what
+belongs at that offset, and the stamp catches what a plain repetition would hide
+— a copy that duplicated, dropped or reordered a block.
+
+**What ten gibibytes each way measured.** Local disk to itself at 329 MiB/s, to
+SFTP at 25 and back at 16, to S3 at 47 and back at 62 — and **peak temporary
+space of zero** on every SFTP transfer and 125 KiB at worst on S3, against a
+payload of ten gigabytes. That is ADR-0014's claim about streaming, measured
+rather than believed, and it is the number that would have caught staging.
+Resident memory grew by 11 MB at its worst and descriptors came back. WebDAV and
+FTP were skipped, out loud, because their roots have 2.73 GiB and the run needed
+twice ten.
+
+**And the tier found what it was built to find.** A read from the second
+SSH server configuration — `chacha20-poly1305`, `RekeyLimit 256M`, which exists
+on the test machine precisely to provoke this — stops dead at 267,780,096 bytes,
+640 KiB short of exactly 256 MiB, and the stall guard fails it two minutes later.
+[ADR-0013](docs/adr/0013-a-large-sftp-read-arrives-in-spans.md) fetches large
+reads in 256 MiB spans on the reasoning that this is "far enough below the fault
+that a server re-keying earlier is still covered". It is not: on that server the
+re-key lands *inside* the first span. Writing to the same server is unaffected.
+It stops at the same byte at 1 GiB and at 10 GiB, which is as reproducible as a
+fault gets. It is MOLE-99, with the failing scenario left in place — named and
+red — because the tier's job was to produce exactly that.
+
+**Two things about running it.** QTest kills a test function after five minutes,
+which is less than one large transfer takes on any link worth testing, so the
+watchdog is raised rather than removed. And the tier is not part of `make test`:
+it moves real data and takes real minutes.
+
 ## Every task, from a console, with no window
 
 **Asked for:** MOLE-26. A binary that starts any task against any configured

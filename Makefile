@@ -8,7 +8,7 @@ JOBS ?= $(shell nproc)
 PREFIX ?= /usr/local
 DESTDIR ?=
 
-.PHONY: all build configure release run test test-live test-verbose clean distclean format tidy help guide-images \
+.PHONY: all build configure release run test test-live test-heavy test-verbose clean distclean format tidy help guide-images \
         install uninstall bundle licence-check screenshots
 
 all: build
@@ -61,6 +61,14 @@ test: build
 ##            listing behaviour that differs between servers stayed hidden.
 test-live: build
 	@scripts/testbed/test-live.sh $(BUILD_DIR)
+
+## test-heavy: the scale tier -- gigabytes each way against the testbed, with
+##             peak scratch space, memory and descriptors asserted. Needs
+##             MOLE_TESTBED_ADDRESS and MOLE_TESTBED_PASSWORD, which live
+##             outside this repository. A destination without room to hold the
+##             payload is reported as a skip rather than filling a disk.
+test-heavy: build
+	@scripts/testbed/test-heavy.sh $(BUILD_DIR)
 
 ## test-verbose: same, printing every assertion
 test-verbose: build

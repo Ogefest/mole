@@ -308,6 +308,27 @@ afterwards, so it is safe to point at a bucket or share that holds real files.
 it works and how it connects. Use a throwaway account: these are test credentials
 in a shell history.
 
+### The scale tier
+
+`make test-heavy` is the same thing at a size that hurts: gigabytes each way,
+between local disk and every configured backend, with the payload verified byte
+for byte against what belongs at each offset. It asserts more than "the copy
+worked" —
+
+- **peak temporary space**, which is the check that would have caught staging
+  before it became a wall (see [ADR-0014](docs/adr/0014-remote-files-stream-rather-than-stage.md));
+  a copy that streams needs room for a chunk, one that stages needs room for the
+  whole file, and nothing else tells them apart
+- **resident memory and file descriptors**, so a leak shows up here rather than
+  after eight hours of somebody's backup
+- **throughput per run**, recorded to a file, so a regression in speed is as
+  visible as one in correctness
+
+It asks the test machine how much room each destination has rather than being
+told, and a destination that cannot hold the payload is a **skip with the
+reason** — filling a test machine's disk would take every other suite down with
+it. `MOLE_TEST_HEAVY_BYTES` sets the size; the default is 10 GiB.
+
 The SFTP and S3 suites also carry large-file tests, because that is where transfers
 break and a few kilobytes prove nothing. SFTP puts 64 MB on the server and reads it
 back; `MOLE_TEST_SFTP_LARGE_MB` changes the size, and `MOLE_TEST_SFTP_LARGE_PATH`

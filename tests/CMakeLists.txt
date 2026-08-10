@@ -254,6 +254,18 @@ if(MOLE_HAVE_NETWORK_PLUGIN)
 
     mole_add_test(tst_WebdavFileSystem SOURCES plugins/tst_WebdavFileSystem.cpp
                                        LIBS mole_network_backends CURL::libcurl)
+
+    # The scale tier: gigabytes, against a real machine, with peak scratch
+    # space, memory and file descriptors asserted rather than hoped for. Not
+    # part of `make test` -- `make test-heavy` runs it, and every case skips
+    # itself with a reason when there is no server or no room. Its own
+    # directory because it is a tier rather than a unit: it tests no single
+    # class, it tests what happens at a size.
+    mole_add_test(tst_HeavyTransfers   SOURCES scale/tst_HeavyTransfers.cpp scale/HeavyPayload.cpp
+                                       LIBS mole_network_backends CURL::libcurl)
+    # An hour is not enough for 10 GB over a slow link, and a tier that times
+    # out is a tier nobody trusts.
+    set_tests_properties(tst_HeavyTransfers PROPERTIES TIMEOUT 7200 LABELS heavy)
 else()
     message(STATUS "Network drive tests skipped: the network plugin was not built")
 endif()

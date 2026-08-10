@@ -66,6 +66,9 @@ mole-control <command>
                                       `seconds` (30 by default), because this
                                       channel travels over the link it damages
   netem clear                         now
+  room <sftp|s3|webdav|ftp>           bytes free where that service keeps its
+                                      files, so a test can decline to fill a
+                                      disk it would take the machine down with
   status                              what is currently being done to this machine
   restore                             undo everything: no ballast, no netem, all up
 USAGE
@@ -143,6 +146,22 @@ netem)
     esac
     setsid bash -c "sleep $seconds; tc qdisc del dev $IFACE root 2>/dev/null" >/dev/null 2>&1 &
     say "it clears itself in ${seconds}s, because this channel travels over the link it just damaged"
+    ;;
+
+room)
+    # The machine is the only thing that knows its own layout, and a suite that
+    # asked for ten gigabytes on the four-gigabyte disk would take every other
+    # suite down with it. So the question is asked here rather than answered by
+    # a number typed into a script somewhere else.
+    case "${2:-}" in
+    sftp)   path=$(getent passwd "$(stat -c %U "$DATA")" | cut -d: -f6)/sftp ;;
+    s3)     path=/var/lib/minio ;;
+    webdav) path="$DATA/webdav" ;;
+    ftp)    path="$DATA/ftp" ;;
+    *)      usage; exit 2 ;;
+    esac
+    [ -d "$path" ] || path="$(dirname "$path")"
+    df --output=avail -B1 "$path" | tail -1 | tr -d ' '
     ;;
 
 status)
