@@ -91,7 +91,28 @@ net::Response WebdavFileSystem::send(const Call& call, const CancelToken& cancel
         headers = curl_slist_append(headers, (header.first + ": " + header.second).constData());
     if (!call.body.isEmpty())
         headers = curl_slist_append(headers, "Content-Type: application/xml; charset=utf-8");
-    headers = curl_slist_append(headers, "Expect:");
+    if (!call.payload) {
+        // Suppressed for a request that carries no file, where a server which
+        // never answers "100 Continue" costs a wait for nothing: the body of a
+        // PROPFIND is a few hundred bytes curl holds in memory and can send
+        // again as often as it likes.
+        //
+        // **Never suppressed for a request that carries a file.** This one line
+        // made every WebDAV write of any real size fail. `CURLAUTH_ANY` sends
+        // the first request with no credentials, takes the 401 and tries again
+        // -- and the body cannot be sent twice, because it comes from a
+        // QIODevice curl has no way to rewind. curl calls that "necessary data
+        // rewind wasn't possible", and it happens at every size: reproduced with
+        // plain `curl --anyauth -T -` against this same server, exit 65, from
+        // one kilobyte upwards. Only the conformance fixtures were small enough
+        // to escape it, which is exactly why nothing noticed.
+        //
+        // Asking permission first means the 401 arrives before any of the file
+        // does, so there is nothing to rewind. curl asks only when it needs to
+        // -- an upload it knows it can repeat does not carry the header at all
+        // -- so this costs a directory of small files nothing.
+        headers = curl_slist_append(headers, "Expect:");
+    }
 
     lease.setUrl(call.url);
     curl_easy_setopt(lease.get(), CURLOPT_HTTPHEADER, headers);

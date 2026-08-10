@@ -6,6 +6,9 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- Writing anything larger than a few hundred bytes to a WebDAV drive works;
+  it previously failed with "necessary data rewind wasn't possible" on any server
+  that asks for a password.
 - An upload to SFTP, FTP or WebDAV that is killed before it finishes now leaves a
   file marked `.mole-partial` rather than a half-written file under the name it
   was meant to have.

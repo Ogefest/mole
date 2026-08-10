@@ -1,3 +1,4 @@
+#include "plugins/network/TransferStreams.h"
 #include "plugins/network/WebdavFileSystem.h"
 #include "plugins/network/WebdavListing.h"
 #include "support/FileSystemConformance.h"
@@ -109,6 +110,21 @@ private:
     Account m_account;
 };
 
+/// A megabyte of content that depends on where it sits in the file.
+///
+/// Repeated zeroes would prove only that the right number of bytes arrived;
+/// content that differs block by block also proves they arrived in the right
+/// order and none was skipped over.
+constexpr int kBlockSize = 1024 * 1024;
+
+QByteArray blockAt(int index)
+{
+    QByteArray block(kBlockSize, Qt::Uninitialized);
+    for (int i = 0; i < kBlockSize; ++i)
+        block[i] = static_cast<char>((i * 31 + index * 17) & 0xff);
+    return block;
+}
+
 } // namespace
 
 class TestWebdavFileSystem : public QObject
@@ -128,6 +144,8 @@ private slots:
     void theBaseUrlIsSplitIntoOriginAndPath();
     void anAddressThatIsNotAUrlIsRefused();
     void itSatisfiesTheConformanceSuite();
+    void aLargeFileGoesUpWholeThroughAChunkedPut();
+    void aStagedWriteTooBigToBufferAlsoArrives();
 };
 
 void TestWebdavFileSystem::aNextcloudAnswerIsRead()
@@ -383,6 +401,142 @@ void TestWebdavFileSystem::itSatisfiesTheConformanceSuite()
     runFileSystemConformance(context);
 
     raw.request("DELETE", base);
+}
+
+/// The write that has no alternative, against a server entitled to refuse it.
+///
+/// A file too large to stage locally goes out with a chunked transfer encoding,
+/// because there is no other way to send something whose length nobody knows
+/// yet. WebDAV servers are not uniformly happy with that -- some answer 411 and
+/// demand a `Content-Length` -- which is exactly why a small write keeps the
+/// staged PUT: that risk is not worth taking when there is a choice. The large
+/// case has no choice, and until this ran there was nothing anywhere saying it
+/// worked against a server at all.
+void TestWebdavFileSystem::aLargeFileGoesUpWholeThroughAChunkedPut()
+{
+    const Account account = accountFromEnvironment();
+    if (!account.isConfigured())
+        QSKIP("No WebDAV server in the environment.");
+
+    int megabytes = qEnvironmentVariableIntValue("MOLE_TEST_WEBDAV_LARGE_MB");
+    if (megabytes <= 0)
+        megabytes = 96; // above the size at which the backend stops staging
+
+    const RawWebdav raw(account);
+    const QString base = QStringLiteral("mole-dav-large-%1").arg(QCoreApplication::applicationPid());
+    QVERIFY2(raw.request("MKCOL", base), "could not create the working collection on the server");
+
+    WebdavSettings settings;
+    settings.baseUrl = account.url;
+    settings.username = account.user;
+    settings.password = account.password;
+    settings.remoteRoot = base;
+
+    auto fileSystem = std::make_shared<WebdavFileSystem>(QStringLiteral("webdav"), settings);
+    const VfsUri target(QStringLiteral("webdav"), QString(), QStringLiteral("/large.bin"));
+    const qint64 size = static_cast<qint64>(megabytes) * kBlockSize;
+
+    Result<std::unique_ptr<QIODevice>> opened = fileSystem->openWrite(target, size);
+    QVERIFY2(opened.ok(), qPrintable(opened.error().message));
+    std::unique_ptr<QIODevice> stream = std::move(opened.value());
+
+    // Which route was taken is the whole question, so it is asserted rather than
+    // assumed. A threshold quietly raised past this size would otherwise turn
+    // this into a second test of the staged PUT, passing while covering nothing.
+    QVERIFY2(dynamic_cast<net::StreamingUpload*>(stream.get()) != nullptr,
+        "a write this size should stream; staging it locally is the thing that cannot scale");
+
+    for (int block = 0; block < megabytes; ++block) {
+        const QByteArray payload = blockAt(block);
+        QCOMPARE(stream->write(payload), static_cast<qint64>(payload.size()));
+    }
+
+    const Result<void> written = closeAndReport(*stream);
+    stream.reset();
+    QVERIFY2(written.ok(), qPrintable(written.error().message));
+
+    // Asked of the server, not of the stream: a write is finished when the file
+    // is there, and the length it reports is the only claim that matters.
+    const Result<FileEntry> what = fileSystem->stat(target);
+    QVERIFY2(what.ok(), qPrintable(what.error().message));
+    QCOMPARE(what.value().size, size);
+
+    Result<std::unique_ptr<QIODevice>> back = fileSystem->openRead(target, size);
+    QVERIFY2(back.ok(), qPrintable(back.error().message));
+
+    qint64 read = 0;
+    bool contentsMatch = true;
+    for (int block = 0; block < megabytes && contentsMatch; ++block) {
+        const QByteArray chunk = back.value()->read(kBlockSize);
+        read += chunk.size();
+        if (chunk != blockAt(block))
+            contentsMatch = false;
+    }
+    back.value().reset();
+
+    raw.request("DELETE", base);
+
+    QCOMPARE(read, size);
+    QVERIFY2(contentsMatch, "what came back is not what was sent");
+}
+
+/// The staged PUT, at a size nothing can hold in memory for a second try.
+///
+/// The conformance suite writes files of a few bytes, and a body that small is
+/// one curl keeps a copy of -- so a 401 followed by a retry costs nothing and
+/// the fault below never shows. A few megabytes is past that, and the staged
+/// route is what almost every real write takes, so the case worth covering is
+/// the one between "trivially small" and "too large to stage".
+void TestWebdavFileSystem::aStagedWriteTooBigToBufferAlsoArrives()
+{
+    const Account account = accountFromEnvironment();
+    if (!account.isConfigured())
+        QSKIP("No WebDAV server in the environment.");
+
+    const RawWebdav raw(account);
+    const QString base = QStringLiteral("mole-dav-staged-%1").arg(QCoreApplication::applicationPid());
+    QVERIFY2(raw.request("MKCOL", base), "could not create the working collection on the server");
+
+    WebdavSettings settings;
+    settings.baseUrl = account.url;
+    settings.username = account.user;
+    settings.password = account.password;
+    settings.remoteRoot = base;
+
+    auto fileSystem = std::make_shared<WebdavFileSystem>(QStringLiteral("webdav"), settings);
+    const VfsUri target(QStringLiteral("webdav"), QString(), QStringLiteral("/staged.bin"));
+
+    constexpr int kMegabytes = 8;
+    const qint64 size = static_cast<qint64>(kMegabytes) * kBlockSize;
+
+    Result<std::unique_ptr<QIODevice>> opened = fileSystem->openWrite(target, size);
+    QVERIFY2(opened.ok(), qPrintable(opened.error().message));
+    std::unique_ptr<QIODevice> stream = std::move(opened.value());
+
+    // The other route, asserted for the same reason: this test is only worth
+    // running if it is testing the one the last one is not.
+    QVERIFY2(dynamic_cast<net::BufferedUpload*>(stream.get()) != nullptr,
+        "a write this size should still be staged and sent with an exact length");
+
+    for (int block = 0; block < kMegabytes; ++block) {
+        const QByteArray payload = blockAt(block);
+        QCOMPARE(stream->write(payload), static_cast<qint64>(payload.size()));
+    }
+
+    const Result<void> written = closeAndReport(*stream);
+    stream.reset();
+    QVERIFY2(written.ok(), qPrintable(written.error().message));
+
+    Result<std::unique_ptr<QIODevice>> back = fileSystem->openRead(target, size);
+    QVERIFY2(back.ok(), qPrintable(back.error().message));
+    const QByteArray returned = back.value()->readAll();
+    back.value().reset();
+
+    raw.request("DELETE", base);
+
+    QCOMPARE(returned.size(), size);
+    QCOMPARE(returned.left(kBlockSize), blockAt(0));
+    QCOMPARE(returned.right(kBlockSize), blockAt(kMegabytes - 1));
 }
 
 MOLE_TEST_MAIN(TestWebdavFileSystem)
