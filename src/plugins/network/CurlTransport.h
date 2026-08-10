@@ -71,6 +71,13 @@ struct Response
     qint64 expectedBytes = -1;
     qint64 receivedBytes = -1;
 
+    /// The URL the transfer actually finished on, which is not the one it
+    /// started on whenever a redirect was followed. A WebDAV server answers a
+    /// GET on a collection by redirecting to the same path with a slash on the
+    /// end, so this is how a caller finds out it asked for a directory without
+    /// paying for a PROPFIND to ask.
+    QByteArray effectiveUrl;
+
     /// Case-insensitive lookup; empty when absent.
     QByteArray header(const char* name) const;
     bool httpOk() const { return status >= 200 && status < 300; }

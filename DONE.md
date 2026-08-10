@@ -9,6 +9,56 @@ wrong.
 
 ---
 
+## Backends, beyond the current conformance (#15)
+
+**Asked for:** eight things the conformance suite does not check, run against the
+real servers.
+
+**What it turned out to be:** the suite had a hole in the middle of it. **It never
+called `openWrite`.** Every fixture was seeded out of band — correctly, because a
+listing bug that mirrored a writing bug would cancel out — and the consequence
+was that the write path of every backend was covered by nothing at all. That is
+how a WebDAV backend that could not write a file survived for months, and why
+#35's fix turned out to be half a fix: it covered the sizes at which curl asks
+for `Expect: 100-continue` and left the small ones failing exactly as before.
+
+The suite now writes through the backend at two sizes and overwrites what it
+wrote, and it found three faults on the first run.
+
+**WebDAV could not write a small file either.** The real cause was never about
+size: an authenticating server answers the first request with a 401 and curl
+retries, which means sending the body a second time, and curl had no way to
+rewind a `QIODevice`. `Expect: 100-continue` avoids the retry only when curl
+decides to ask, and it asks by size. The proper fix is one layer down —
+`CurlPool::sendFrom` now gives curl a **seek function**. A staged upload is a
+temporary file and can always oblige; a stream being written as it is sent says
+`CANTSEEK`, which is true and is what makes curl ask permission before sending a
+body it cannot repeat.
+
+**And that immediately broke something else**, which is the best argument for the
+scripted-server suite from #4. With the body rewindable, curl started *following
+a redirect on a PUT* and re-sending the file to whatever address the server
+named — the exact scenario #4 lists, caught within minutes by the test written
+for it. `FOLLOWLOCATION` is right for a listing and wrong for a request carrying
+a file, and it is now off for those. It had been harmless only for as long as the
+body could not be replayed at all: an accident, not a policy.
+
+**WebDAV handed back a directory as a file.** A `GET` on a collection is not an
+error — Apache redirects to the same path with a slash and answers with an HTML
+index, 200 and a body, with nothing saying it is not what was asked for. So
+copying a folder produced an HTML page named after it. The redirect is the tell,
+and asking where the transfer landed costs nothing where a `PROPFIND` before
+every read would cost a round trip.
+
+**The fourth failure was the server, not us.** FTP uploads failed with `426`,
+intermittently and at no consistent size. Reproduced with plain `curl` and no
+Mole involved: vsftpd's shutdown handling predates TLS 1.3 and misreads a data
+connection closing cleanly, logging `FAIL UPLOAD` for transfers that arrived
+whole. The environment is what had to change — `scripts/testbed/services.sh` now
+pins the data channel to TLS 1.2, and eighteen uploads in a row succeed where
+most had been failing. An intermittent failure in a test environment is worse
+than a constant one, because it teaches everyone to re-run rather than to look.
+
 ## Killed outright, and what is left (#6)
 
 **Asked for:** `SIGKILL` at a known offset, then an independent look at what

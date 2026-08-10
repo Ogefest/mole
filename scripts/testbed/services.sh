@@ -225,8 +225,43 @@ ssl_sslv3=NO
 # connection's session and vsftpd would refuse it. A real server may well want
 # this on; a test server that rejects the client under test is no use.
 require_ssl_reuse=NO
+# TLS 1.2, and no higher.
+#
+# vsftpd's shutdown handling predates TLS 1.3 and misreads a data connection
+# closing cleanly: the bytes all arrive, the server writes "FAIL UPLOAD" to its
+# own log and answers 426, and the client is told the transfer was aborted. It
+# happens to *some* transfers and not others with no pattern in the size, which
+# is the worst way for a fault to behave -- an intermittent failure in the test
+# environment teaches everyone to re-run rather than to look.
+#
+# Reproduced with plain curl and no Mole involved, so it is the server rather
+# than the client under test.
+ssl_ciphers=ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:HIGH
 CONF
 mkdir -p /var/run/vsftpd/empty
+
+# The cipher list above does not hold TLS 1.3 back on its own -- OpenSSL keeps
+# its 1.3 suites in a separate list and offers them whatever ssl_ciphers says
+# -- so the ceiling goes where OpenSSL reads it. Scoped to vsftpd's own service
+# rather than to /etc/ssl/openssl.cnf, which everything on the machine shares.
+mkdir -p /etc/systemd/system/vsftpd.service.d
+cat > /etc/systemd/system/vsftpd.service.d/tls12.conf <<'UNIT'
+[Service]
+Environment=OPENSSL_CONF=/etc/ssl/vsftpd-openssl.cnf
+UNIT
+cat > /etc/ssl/vsftpd-openssl.cnf <<'SSLCONF'
+openssl_conf = default_conf
+
+[default_conf]
+ssl_conf = ssl_sect
+
+[ssl_sect]
+system_default = system_default_sect
+
+[system_default_sect]
+MaxProtocol = TLSv1.2
+SSLCONF
+systemctl daemon-reload
 
 # Stopped, waited for, then started -- not restarted.
 #

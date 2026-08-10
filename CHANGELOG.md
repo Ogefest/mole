@@ -6,6 +6,13 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- Writing a small file to a WebDAV drive works; like the large case before it, any
+  server that asks for a password refused it.
+- Opening a WebDAV folder as if it were a file is refused, instead of handing back
+  the server's HTML index of the folder as the file's contents.
+- A file being uploaded is never re-sent to somewhere else because a server answered
+  with a redirect.
+
 - A copy interrupted by the machine losing power no longer destroys the file it was
   replacing: what is left is marked `.mole-partial` and the previous version is
   untouched.
