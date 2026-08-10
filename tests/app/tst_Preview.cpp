@@ -20,11 +20,13 @@
 #include "core/vfs/backends/MemoryFileSystem.h"
 
 #include <QAbstractTextDocumentLayout>
+#include <QBuffer>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QGuiApplication>
 #include <QImage>
+#include <QImageWriter>
 #include <QPageSize>
 #include <QPainter>
 #include <QPdfWriter>
@@ -112,6 +114,7 @@ private slots:
     void theDetailsAreRememberedPerFileType();
     void steppingToTheNextFileCancelsAReaderInFlight();
     void aReaderThatFailsCostsOnlyItsOwnRows();
+    void aPhotographShowsThePictureAndWhatTheCameraWrote();
 
     // ---- the bytes of a file, for the files nothing else can show ---------
     void bytesAreShownForWhatNothingElseClaims_data();
@@ -603,6 +606,64 @@ void TestPreview::aReaderThatFailsCostsOnlyItsOwnRows()
     // The viewer is untouched by any of it.
     QVERIFY(waitFor([viewer] { return !viewer->text().isEmpty(); }, 5000));
     QVERIFY(viewer->errorText().isEmpty());
+}
+
+void TestPreview::aPhotographShowsThePictureAndWhatTheCameraWrote()
+{
+    // The whole point of the panel, on the file type people care most about: the
+    // picture is still a picture, and everything the camera wrote is on screen
+    // beside it.
+    QImage image(320, 240, QImage::Format_RGB32);
+    image.fill(Qt::darkMagenta);
+    QByteArray encoded;
+    {
+        QBuffer buffer(&encoded);
+        buffer.open(QIODevice::WriteOnly);
+        QImageWriter writer(&buffer, "jpeg");
+        QVERIFY(writer.write(image));
+    }
+
+    // A minimal EXIF block: a make, a model and an exposure, spliced in as the
+    // APP1 segment the way a camera writes it. The parser has its own suite --
+    // what is held here is that the panel shows what it found.
+    const QByteArray exif = QByteArray::fromHex("49492a00080000000200"
+                                                "0f01"
+                                                "0200"
+                                                "06000000"
+                                                "26000000"
+                                                "1001"
+                                                "0200"
+                                                "09000000"
+                                                "2c000000"
+                                                "00000000")
+        + QByteArray("Canon\0", 6) + QByteArray("EOS 700D\0", 9);
+    QByteArray app1;
+    app1 += char(0xff);
+    app1 += char(0xe1);
+    const int length = int(exif.size()) + 8;
+    app1 += char((length >> 8) & 0xff);
+    app1 += char(length & 0xff);
+    app1 += QByteArray("Exif\0\0", 6);
+    app1 += exif;
+
+    QVERIFY(m_tree->writeFile(QStringLiteral("holiday.jpg"), encoded.left(2) + app1 + encoded.mid(2)));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("holiday.jpg"));
+    QVERIFY(preview);
+    QCOMPARE(preview->providerId(), QStringLiteral("mole.preview.image"));
+
+    auto* viewer = qobject_cast<ImagePreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(waitFor([viewer] { return !viewer->source().isEmpty(); }, 5000));
+
+    preview->setDetailsOpen(true);
+    QVERIFY(waitFor([preview] { return !preview->isDetailsLoading(); }, 5000));
+
+    QCOMPARE(detailNamed(preview, QStringLiteral("Dimensions")), QStringLiteral("320 × 240"));
+    QCOMPARE(detailNamed(preview, QStringLiteral("Format")), QStringLiteral("JPEG"));
+    QCOMPARE(detailNamed(preview, QStringLiteral("Camera")), QStringLiteral("Canon EOS 700D"));
+    // And the generic facts are still underneath, from the reader below it.
+    QVERIFY(!detailNamed(preview, QStringLiteral("Size")).isEmpty());
 }
 
 // ------------------------------------------------- the bytes themselves

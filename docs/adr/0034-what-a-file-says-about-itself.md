@@ -78,6 +78,17 @@ convention to learn rather than two.
 about a file. One plugin's bad afternoon costs its own rows; taking the others'
 answers with it would make the whole panel as reliable as its worst reader.
 
+**Why no exiv2, which the roadmap promised.** The first reader written against
+this interface is the image one, and the obvious way to write it is to link
+exiv2. It is not taken. A reader is handed a *prefix* of a file that may be on a
+remote drive, and exiv2 wants a path or a whole buffer — so using it would mean
+either fetching a 60 MB raw file to read forty bytes of it, or reimplementing the
+bounded read underneath it anyway. Two IFD walks over a checked buffer are two
+hundred lines, they work identically over SFTP and inside an archive, and they
+add no packaging to every platform Mole ships on. If XMP, IPTC and forty raw
+formats are ever wanted, exiv2 is the upgrade path and this interface does not
+change.
+
 **Why the facts are strings.** A reader knows whether a number is seconds,
 samples or frames, and the panel does not. Handing over "4:32" rather than 272
 puts the formatting where the knowledge is, and keeps the panel free of a type

@@ -7,6 +7,11 @@ without going back to the listing.
 Whichever viewer suits the file claims it. The strip along the top says which one you
 got, and offers whatever that viewer lets you choose.
 
+Under the strip, **Details** is what the file says about itself — a photograph's camera and
+exposure, a document's size and dates. It is read only when you open it, and whether it is
+open is remembered per file type, so EXIF on every photograph does not mean a panel on
+every log.
+
 ## Text and code
 
 ![Plain text](images/03-preview-text.png)

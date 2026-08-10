@@ -411,6 +411,8 @@ void TestWalkthrough::buildFixture()
         { QStringLiteral("media/film.mkv"), when(196, 20, 12) },
         { QStringLiteral("media/clip.mkv"), when(201, 19, 48) },
         { QStringLiteral("photos"), when(35, 12, 0) },
+        // Photographed with its details panel open, so its date is in a picture.
+        { QStringLiteral("photos/sunset.png"), when(35, 12, 0) },
         { QStringLiteral("access.log"), when(0, 2, 8) },
         { QStringLiteral("changelog.md"), when(0, 9, 12) },
         { QStringLiteral("holiday.mp4"), when(2380, 18, 30) },
@@ -2952,7 +2954,19 @@ void TestWalkthrough::anImageIsFittedToThePane()
             return preview->viewer() && !preview->viewer()->property("source").toString().isEmpty();
         },
         20000));
+
+    // And what the picture says about itself, beside the picture: this is the
+    // file type the details panel was built for.
+    preview->setDetailsOpen(true);
+    QVERIFY(m_harness->until([preview] { return !preview->details().isEmpty(); }));
+    m_harness->settle(6);
     m_harness->screenshot(QStringLiteral("20-preview-image"));
+
+    const QVariantList details = preview->details();
+    QStringList labels;
+    for (const QVariant& fact : details)
+        labels.append(fact.toMap().value(QStringLiteral("label")).toString());
+    QVERIFY2(labels.contains(QStringLiteral("Dimensions")), qPrintable(labels.join(QLatin1Char(','))));
 }
 
 void TestWalkthrough::aSqliteFileOpensItsTables()

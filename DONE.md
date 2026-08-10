@@ -9,6 +9,41 @@ wrong.
 
 ---
 
+## A photograph showed its pixels and nothing about the photograph
+
+**Asked for:** MOLE-133 — a photograph opens as a picture fitted to the pane and Mole says
+nothing else about it. Write a reader against MOLE-132's interface: dimensions from the
+header, EXIF for JPEG and TIFF, GPS as numbers, no new dependency.
+
+**What it turned out to be:** `ImageMetadataReader`, two IFD walks and a formatter, about
+four hundred lines with no dependency added. `README.md` promises exiv2 for this and the
+promise is not kept, for a reason that is now in
+[ADR-0034](docs/adr/0034-what-a-file-says-about-itself.md): a reader is handed a *prefix*
+of a file that may be on a remote drive, and exiv2 wants a path or a whole buffer — so
+using it would mean fetching a 60 MB raw file to read forty bytes of it, or writing the
+bounded read underneath it anyway. The roadmap line is MOLE-137's to correct.
+
+**Every offset in the file is treated as a claim.** An IFD entry says where its value lives
+and how long it is, and a corrupt or hostile file says whatever it likes. Each range is
+checked against the buffer before it is followed, and one that leads outside costs that tag
+and nothing else. The test writes the hostile file itself — a tag pointing at 0x7fffff00,
+and a sub-directory pointer bent the same way — and asserts that the tags around it are
+untouched. Same lesson as [ADR-0010](docs/adr/0010-archive-entries-are-not-paths.md)'s
+archive entries: an offset inside a file is not a promise.
+
+**A header read, never a decode.** Dimensions come from `QImageReader` over a `QBuffer` on
+the prefix, so a 60 MB raw costs the same kilobytes as a thumbnail. The test states it as an
+equality rather than as a hope: the facts from the first 64 kB are the same list as the
+facts from the whole file, and `wantsMore()` says when one page is not enough — which is the
+only reason a second, bounded read ever happens.
+
+**Two bugs the tests found.** A camera with a make and no model came out as `"Nikon "` with
+a trailing space, because the join was written for the usual case. And the app-level test
+first failed with the model missing entirely — its hand-written EXIF block declared a
+ten-byte string where nine bytes followed, and the bounds check refused it. The parser was
+right and the test was the corrupt file; both are fixed, and the second is a small
+demonstration that the check does what it says.
+
 ## A preview showed what a file looked like and never what it said about itself
 
 **Asked for:** MOLE-132 — everything Mole knew about a file was nine facts out of

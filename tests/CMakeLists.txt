@@ -182,6 +182,10 @@ mole_add_test(tst_CommandPalette       SOURCES ui/tst_CommandPalette.cpp       L
 mole_add_test(tst_AppIntegration    SOURCES app/tst_AppIntegration.cpp   LIBS mole_builtin)
 mole_add_test(tst_Session           SOURCES app/tst_Session.cpp          LIBS mole_builtin)
 mole_add_test(tst_Preview           SOURCES app/tst_Preview.cpp          LIBS mole_builtin)
+
+# What a photograph says about itself: an EXIF walk over bytes the test wrote,
+# including the offsets a hostile file would write.
+mole_add_test(tst_ImageMetadata     SOURCES plugins/tst_ImageMetadata.cpp LIBS mole_builtin)
 mole_add_test(tst_AnalysisTab       SOURCES app/tst_AnalysisTab.cpp     LIBS mole_builtin)
 mole_add_test(tst_Automation        SOURCES app/tst_Automation.cpp      LIBS mole_builtin)
 mole_add_test(tst_FileSets          SOURCES app/tst_FileSets.cpp        LIBS mole_builtin)
