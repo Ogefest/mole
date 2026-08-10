@@ -2,12 +2,14 @@
 #include "support/TestSupport.h"
 
 #include "core/tasks/TaskManager.h"
+#include "core/vfs/backends/MemoryFileSystem.h"
 
 #include <QLocale>
 #include <QSignalSpy>
 #include <QThread>
 
 #include <atomic>
+#include <stdexcept>
 
 using namespace mole;
 using namespace mole::test;
@@ -79,6 +81,12 @@ private slots:
     void aCancelledTaskIsNotLoggedAsAFailure();
     void aFailedTaskIsStillLoggedAsOne();
     void durationAndRateComeFromAClockThatCannotGoBackwards();
+
+    void progressNeverGoesBackwardsAndNeverPassesTheTotal();
+    void bytesDoneIsWhatTheTaskActuallyMoved();
+    void aTaskWhoseBodyThrowsIsReportedFailedAndThePoolSurvives();
+    void tenThousandMetricUpdatesDoNotFloodTheQueue();
+    void aTaskOutlivesTheDriveItWasGiven();
 };
 
 void TestTaskManager::runsTaskOffTheCallingThread()
@@ -435,6 +443,140 @@ void TestTaskManager::durationAndRateComeFromAClockThatCannotGoBackwards()
     const qint64 first = task->elapsedMs();
     QThread::msleep(20);
     QCOMPARE(task->elapsedMs(), first);
+}
+
+void TestTaskManager::progressNeverGoesBackwardsAndNeverPassesTheTotal()
+{
+    // The bar is a promise about how much is left. One that slides back, or sits
+    // at 103%, is worse than no bar: it turns "nearly finished" into a guess.
+    TaskManager manager;
+    QList<int> seen;
+
+    auto* task = new ScriptedTask(QStringLiteral("copy"), [](ScriptedTask& self) {
+        self.setByteTotal(1000);
+        // Deliberately hostile: out of order, past the end, and negative.
+        self.setBytesDone(400);
+        self.setBytesDone(200);
+        self.setBytesDone(1500);
+        self.setBytesDone(-50);
+        self.setBytesDone(1000);
+        self.setProgress(50);
+        self.setProgress(20);
+        self.setProgress(140);
+    });
+    connect(task, &Task::progressChanged, task, [task, &seen] { seen.append(task->progress()); });
+    manager.submit(task);
+    QVERIFY(waitForTask(task));
+    drainEvents();
+
+    QVERIFY2(!seen.isEmpty(), "something has to be reported");
+    int highest = -1;
+    for (int value : seen) {
+        QVERIFY2(value >= 0 && value <= 100, qPrintable(QStringLiteral("progress reached %1").arg(value)));
+        QVERIFY2(value >= highest,
+            qPrintable(QStringLiteral("progress went from %1 back to %2").arg(highest).arg(value)));
+        highest = value;
+    }
+}
+
+void TestTaskManager::bytesDoneIsWhatTheTaskActuallyMoved()
+{
+    // The number the arrival check compares against. If it counts anything other
+    // than bytes that moved -- a chunk counted twice, a skipped file added in --
+    // then every check built on it is comparing against fiction.
+    TaskManager manager;
+    auto* task = new ScriptedTask(QStringLiteral("copy"), [](ScriptedTask& self) {
+        self.setByteTotal(4096);
+        qint64 moved = 0;
+        for (int i = 0; i < 4; ++i) {
+            moved += 1024;
+            self.setBytesDone(moved);
+        }
+    });
+    manager.submit(task);
+    QVERIFY(waitForTask(task));
+    drainEvents();
+
+    QCOMPARE(task->bytesDone(), 4096);
+    QCOMPARE(task->progress(), 100);
+}
+
+void TestTaskManager::aTaskWhoseBodyThrowsIsReportedFailedAndThePoolSurvives()
+{
+    // A backend throwing std::bad_alloc, or a plugin doing something a plugin
+    // should not. An exception escaping into the pool takes the process with it,
+    // and the job it was running disappears with no record of why.
+    TaskManager manager;
+    auto* thrower = new ScriptedTask(
+        QStringLiteral("throws"), [](ScriptedTask&) { throw std::runtime_error("something gave way"); });
+    manager.submit(thrower);
+    QVERIFY2(waitForTask(thrower), "a task that threw still has to reach an end");
+    QCOMPARE(thrower->state(), Task::State::Failed);
+    QVERIFY2(!errorTextOf(*thrower).isEmpty(), "and it has to say what happened");
+
+    // And the pool is still usable afterwards, which is the half that would
+    // otherwise be discovered by everything after it silently never running.
+    auto* after
+        = new ScriptedTask(QStringLiteral("after"), [](ScriptedTask& self) { self.setProgress(100); });
+    manager.submit(after);
+    QVERIFY(waitForTask(after));
+    QCOMPARE(after->state(), Task::State::Succeeded);
+}
+
+void TestTaskManager::tenThousandMetricUpdatesDoNotFloodTheQueue()
+{
+    // A chunk loop reports every chunk, and a fast local copy runs thousands a
+    // second. Every one of them is a queued event carrying a number nobody can
+    // read that fast, and an interface that spends its time draining them is an
+    // interface that stops answering.
+    TaskManager manager;
+    auto* task = new ScriptedTask(QStringLiteral("busy"), [](ScriptedTask& self) {
+        self.setByteTotal(10000);
+        for (int i = 1; i <= 10000; ++i)
+            self.setBytesDone(i);
+    });
+
+    int notifications = 0;
+    connect(task, &Task::progressChanged, task, [&notifications] { ++notifications; });
+    manager.submit(task);
+    QVERIFY(waitForTask(task));
+    drainEvents();
+
+    QCOMPARE(task->bytesDone(), 10000);
+    QVERIFY2(notifications < 500,
+        qPrintable(
+            QStringLiteral("%1 notifications for 10000 updates is not coalescing").arg(notifications)));
+}
+
+void TestTaskManager::aTaskOutlivesTheDriveItWasGiven()
+{
+    // A drive is ejected while a job is running. The job holds a shared_ptr, so
+    // the backend stays alive until the job lets go of it -- asserted here
+    // rather than assumed, because the alternative is a use-after-free in a
+    // worker thread, which is the hardest kind of crash to read.
+    TaskManager manager;
+    auto drive = std::make_shared<MemoryFileSystem>();
+    drive->addFile(QStringLiteral("/data/file.bin"), QByteArray(4096, 'x'));
+    std::weak_ptr<MemoryFileSystem> watch = drive;
+
+    auto* task = new ScriptedTask(QStringLiteral("reads"), [drive](ScriptedTask& self) {
+        for (int i = 0; i < 20; ++i) {
+            Result<std::unique_ptr<QIODevice>> reader
+                = drive->openRead(VfsUri::fromString(QStringLiteral("mem:///data/file.bin")));
+            if (!reader.ok())
+                self.fail(reader.error());
+            self.setBytesDone(4096);
+        }
+    });
+    manager.submit(task);
+
+    // The mount table lets go of it while the job is running.
+    drive.reset();
+    QVERIFY2(!watch.expired(), "the running task is holding the drive up");
+
+    QVERIFY(waitForTask(task));
+    QCOMPARE(task->state(), Task::State::Succeeded);
+    drainEvents();
 }
 
 MOLE_TEST_MAIN(TestTaskManager)

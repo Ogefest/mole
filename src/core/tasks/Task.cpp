@@ -8,6 +8,7 @@
 #include <QUuid>
 
 #include <algorithm>
+#include <exception>
 
 namespace mole {
 
@@ -44,7 +45,18 @@ void Task::execute()
 
     QElapsedTimer clock;
     clock.start();
-    run();
+    // A task body is other people's code -- a backend, a plugin, whatever a
+    // library throws on its way out. An exception reaching the thread pool ends
+    // the process, and the job it was running disappears with no record of why,
+    // so it becomes a failure like any other here.
+    try {
+        run();
+    } catch (const std::exception& problem) {
+        fail(VfsError::make(VfsError::Unknown,
+            QStringLiteral("%1 stopped unexpectedly: %2").arg(m_title, QString::fromUtf8(problem.what()))));
+    } catch (...) {
+        fail(VfsError::make(VfsError::Unknown, QStringLiteral("%1 stopped unexpectedly").arg(m_title)));
+    }
     const qint64 elapsed = clock.elapsed();
 
     const char* outcome = "finished";
@@ -78,6 +90,17 @@ void Task::execute()
 
 void Task::setProgress(int percent)
 {
+    // A bar is a promise about how much is left, and two things break it: a
+    // figure past the end, and one that slides back. Both are arithmetic
+    // accidents rather than intentions -- a total that turned out to be wrong, a
+    // count restarted for the next stage -- and neither is worth showing.
+    // Minus one is left alone: it is the indeterminate state, not a percentage.
+    if (percent != kIndeterminateProgress) {
+        percent = std::clamp(percent, 0, 100);
+        if (m_lastPostedProgress != kIndeterminateProgress && percent < m_lastPostedProgress)
+            return;
+    }
+
     // Called once per processed item on hot paths, so drop no-op updates
     // before they ever reach the event queue.
     if (percent == m_lastPostedProgress)

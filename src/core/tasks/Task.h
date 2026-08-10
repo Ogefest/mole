@@ -71,6 +71,10 @@ class Task : public QObject
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusTextChanged)
 
 public:
+    /// A task that cannot say how far along it is. Distinct from nought per
+    /// cent, which is a claim about a total that is known.
+    static constexpr int kIndeterminateProgress = -1;
+
     enum class State { Pending, Running, Succeeded, Failed, Cancelled };
     Q_ENUM(State)
 
