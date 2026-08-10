@@ -323,23 +323,40 @@ Result<std::unique_ptr<QIODevice>> WebdavFileSystem::openWrite(const VfsUri& tar
     // is known and modest, or not known at all, keeps the staged PUT with an
     // exact Content-Length that has always worked; a write too large to stage
     // takes the only route there is.
+    // Either way it goes up under a working name and is moved into place at the
+    // end. A process killed mid-PUT does not get to delete what it wrote, and a
+    // half-sent file under the name somebody asked for is the outcome worth
+    // ruling out; WebDAV's MOVE with `Overwrite: F` is exactly the operation
+    // this needs. See ADR-0020.
+    const VfsUri staging = net::partialUploadOf(target);
+    auto commit = [this, staging, target] { return net::commitUpload(*this, staging, target); };
+
     if (expectedSize > kStreamAbove) {
-        auto send = [this, target](QIODevice& source, qint64, bool, const CancelToken& cancel) {
-            const Result<void> sent = uploadFrom(target, source, -1, cancel);
-            return sent.ok() ? VfsError::ok() : sent.error();
+        auto send = [this, staging](QIODevice& source, qint64, bool, const CancelToken& cancel) {
+            const Result<void> sent = uploadFrom(staging, source, -1, cancel);
+            if (!sent.ok()) {
+                remove(staging, false); // a part of a file, under a name nothing opens
+                return sent.error();
+            }
+            return VfsError::ok();
         };
         // One span: HTTP has no way to append to what a previous request wrote,
         // so the whole object goes in a single PUT however long it takes.
-        auto stream
-            = std::make_unique<net::StreamingUpload>(std::move(send), std::numeric_limits<qint64>::max());
+        auto stream = std::make_unique<net::StreamingUpload>(
+            std::move(send), std::numeric_limits<qint64>::max(), commit);
         if (!stream->open(QIODevice::WriteOnly))
             return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, stream->errorString());
         return Result<std::unique_ptr<QIODevice>>(std::unique_ptr<QIODevice>(stream.release()));
     }
 
-    auto stream = std::make_unique<net::BufferedUpload>([this, target](QIODevice& payload, qint64 size) {
-        return uploadFrom(target, payload, size, CancelToken());
-    });
+    auto stream = std::make_unique<net::BufferedUpload>(
+        [this, staging](QIODevice& payload, qint64 size) {
+            const Result<void> sent = uploadFrom(staging, payload, size, CancelToken());
+            if (!sent.ok())
+                remove(staging, false);
+            return sent;
+        },
+        std::move(commit));
     if (!stream->open(QIODevice::WriteOnly))
         return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, stream->errorString());
     return Result<std::unique_ptr<QIODevice>>(std::unique_ptr<QIODevice>(stream.release()));

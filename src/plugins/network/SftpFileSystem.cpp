@@ -384,10 +384,10 @@ VfsError SftpFileSystem::sendSpan(
         response, QStringLiteral("Writing %1").arg(target.path()), net::StatusMeaning::ProtocolReply);
 
     if (error.isError()) {
-        // What has been written so far is part of a file, and a partial file
-        // that looks finished is the thing worth avoiding above all. The target
-        // is always one this write created -- a copy clears the way before it
-        // starts -- so removing it takes nothing that was not ours.
+        // What has been written so far is part of a file, and leaving it would
+        // be litter under a name nothing will open. This is always the working
+        // name that openWrite() invented for this transfer, so removing it takes
+        // nothing that was not ours.
         remove(target, false);
     }
     return error;
@@ -398,11 +398,19 @@ Result<std::unique_ptr<QIODevice>> SftpFileSystem::openWrite(const VfsUri& targe
     // Streamed rather than staged: a copy of a hundred-gigabyte file must not
     // need a hundred gigabytes of local scratch space to send it, and the span
     // loop keeps each transfer clear of the fault a long one runs into.
-    auto send = [this, target](QIODevice& source, qint64, bool append, const CancelToken& cancel) {
-        return sendSpan(target, source, append, cancel);
-    };
+    //
+    // Under a working name until it is finished, because a process killed
+    // outright does not get to delete what it wrote, and a half-sent file under
+    // the name somebody asked for is the one outcome worth ruling out. The
+    // rename at the end is a single server-side operation. See ADR-0020.
+    const VfsUri staging = net::partialUploadOf(target);
 
-    auto stream = std::make_unique<net::StreamingUpload>(std::move(send), kSpanBytes);
+    auto send = [this, staging](QIODevice& source, qint64, bool append, const CancelToken& cancel) {
+        return sendSpan(staging, source, append, cancel);
+    };
+    auto commit = [this, staging, target] { return net::commitUpload(*this, staging, target); };
+
+    auto stream = std::make_unique<net::StreamingUpload>(std::move(send), kSpanBytes, std::move(commit));
     if (!stream->open(QIODevice::WriteOnly)) {
         return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, stream->errorString());
     }

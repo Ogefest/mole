@@ -43,7 +43,13 @@ project, and a contributor should never hit a wall of text they cannot read.
 - Parquet writing is out of scope. Reading a file is not a licence to rewrite it,
   and the same goes for the SQLite viewer, which opens read-only.
 
+- A `.mole-partial` file on a remote drive is the wreckage of an upload that was
+  killed before it finished — see [ADR-0020](docs/adr/0020-an-upload-in-progress-wears-a-different-name.md).
+  **Deleting them is a manual job**, and deliberately so for now: they are
+  visible in any listing, which is most of what a sweep would have bought, and
+  the version that decides on its own which leftovers are safe to remove needs to
+  be sure it is not looking at another Mole's transfer in flight.
+
 Tracked as issues rather than kept here: the full-screen window geometry (#31),
-an SFTP upload killed mid-flight (#33), FTP staging (#34), WebDAV against a real
-server (#35), NFS and SMB (#36), video preview (#37) and the terminal on Windows
-(#38).
+FTP staging (#34), WebDAV against a real server (#35), NFS and SMB (#36), video
+preview (#37) and the terminal on Windows (#38).

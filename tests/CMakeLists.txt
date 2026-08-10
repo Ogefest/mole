@@ -196,6 +196,13 @@ if(MOLE_HAVE_NETWORK_PLUGIN)
     mole_add_test(tst_StreamingDownload SOURCES plugins/tst_StreamingDownload.cpp
                                        LIBS mole_network_backends CURL::libcurl)
 
+    # The write streams, and the step that gives an upload its real name only
+    # once every byte of it has arrived. Offline: the interesting cases are a
+    # send that fails and a stream that is abandoned, neither of which a
+    # behaving server produces on request.
+    mole_add_test(tst_StreamingUpload  SOURCES plugins/tst_StreamingUpload.cpp
+                                       LIBS mole_network_backends mole_core CURL::libcurl)
+
     mole_add_test(tst_SftpFileSystem   SOURCES plugins/tst_SftpFileSystem.cpp
                                        LIBS mole_network_backends CURL::libcurl)
 

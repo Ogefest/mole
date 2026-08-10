@@ -1,8 +1,9 @@
 #include "plugins/network/SftpFileSystem.h"
 #include "support/FileSystemConformance.h"
-#include "support/TestbedControl.h"
 #include "support/MoleTestMain.h"
+#include "support/TestbedControl.h"
 
+#include <QProcess>
 #include <QUrl>
 
 #include <algorithm>
@@ -103,12 +104,12 @@ public:
         return code == CURLE_OK;
     }
 
-    /// Deletes a tree, so a failed run does not leave litter on a real server.
-    void removeTree(const QString& absolutePath) const
+    /// One long-format line per entry, exactly as the server gave them.
+    QStringList linesIn(const QString& absolutePath) const
     {
         CURL* handle = prepare();
         if (!handle)
-            return;
+            return {};
         QByteArray listing;
         const QByteArray url = urlFor(absolutePath, true);
         curl_easy_setopt(handle, CURLOPT_URL, url.constData());
@@ -117,9 +118,32 @@ public:
         const bool listed = curl_easy_perform(handle) == CURLE_OK;
         curl_easy_cleanup(handle);
         if (!listed)
-            return;
+            return {};
+        return QString::fromUtf8(listing).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    }
 
-        const QStringList lines = QString::fromUtf8(listing).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    /// What the server says is in a directory. Asked out of band on purpose: the
+    /// question is what the backend left behind, and the backend is not a
+    /// trustworthy witness to that.
+    QStringList namesIn(const QString& absolutePath) const
+    {
+        QStringList names;
+        const QStringList lines = linesIn(absolutePath);
+        for (const QString& line : lines) {
+            const int space = line.lastIndexOf(QLatin1Char(' '));
+            if (space < 0)
+                continue;
+            const QString name = line.mid(space + 1);
+            if (name != QLatin1String(".") && name != QLatin1String(".."))
+                names.append(name);
+        }
+        return names;
+    }
+
+    /// Deletes a tree, so a failed run does not leave litter on a real server.
+    void removeTree(const QString& absolutePath) const
+    {
+        const QStringList lines = linesIn(absolutePath);
         for (const QString& line : lines) {
             const int space = line.lastIndexOf(QLatin1Char(' '));
             if (space < 0)
@@ -212,6 +236,7 @@ private slots:
     void aLargeFileArrivesWhole();
     void aLargeFileGoesUpWhole();
     void aReadWhoseConnectionIsCutDoesNotLookLikeAWholeFile();
+    void aKilledUploadLeavesNothingThatLooksFinished();
 };
 
 void TestSftpFileSystem::aFormWithoutAHostIsRefused()
@@ -328,8 +353,8 @@ void TestSftpFileSystem::aReadWhoseConnectionIsCutDoesNotLookLikeAWholeFile()
     // arrives before a command to cut the connection has finished travelling,
     // so without this the test can only ever report that it was too late --
     // which is the shape of a test that never actually runs.
-    const QString limited = TestbedControl::run(
-        { QStringLiteral("netem"), QStringLiteral("rate"), QStringLiteral("40mbit") });
+    const QString limited
+        = TestbedControl::run({ QStringLiteral("netem"), QStringLiteral("rate"), QStringLiteral("40mbit") });
     QVERIFY2(!limited.isEmpty(), "the control channel has to say what it did");
 
     const VfsUri target(QStringLiteral("sftp"), QString(), remotePath);
@@ -589,6 +614,113 @@ void TestSftpFileSystem::itSatisfiesTheConformanceSuite()
     runFileSystemConformance(context);
 
     raw.removeTree(base);
+}
+
+/// What a process killed outright leaves on the server.
+///
+/// A transfer that *fails* is tidied up: the backend deletes what it wrote. A
+/// process that is killed does not get to tidy up anything -- whatever is on the
+/// server at that instant stays there, under whatever name it was going under.
+/// So the only protection that survives a SIGKILL is the name the bytes were
+/// travelling under all along, and the only honest way to test that is to kill a
+/// real process in the middle of a real upload.
+///
+/// The victim is this same binary, re-run with one test function and an
+/// environment variable naming the file to write. It writes until it is stopped,
+/// which is what makes the kill land mid-flight rather than after the fact.
+void TestSftpFileSystem::aKilledUploadLeavesNothingThatLooksFinished()
+{
+    const Account account = accountFromEnvironment();
+    if (!account.isConfigured())
+        QSKIP("No SFTP account in the environment.");
+
+    SftpSettings settings;
+    settings.host = account.host;
+    settings.port = account.port;
+    settings.username = account.user;
+    settings.password = account.password;
+    settings.remoteRoot = QStringLiteral("/");
+
+    const QString victimTarget = qEnvironmentVariable("MOLE_TEST_KILL_TARGET");
+    if (!victimTarget.isEmpty()) {
+        // The victim. Nothing here is asserted: this process exists to be killed,
+        // and everything worth checking is checked by the one doing the killing.
+        auto fileSystem = std::make_shared<SftpFileSystem>(QStringLiteral("sftp"), settings);
+        const VfsUri target(QStringLiteral("sftp"), QString(), victimTarget);
+        Result<std::unique_ptr<QIODevice>> opened = fileSystem->openWrite(target, -1);
+        if (!opened.ok())
+            return;
+
+        // A ceiling rather than a duration, and a backstop rather than the
+        // mechanism: the parent kills this long before it gets here, and this
+        // only bounds what a parent that died itself could leave running.
+        const QByteArray block = blockAt(0);
+        for (int written = 0; written < 1024; ++written) {
+            if (opened.value()->write(block) != block.size())
+                break;
+        }
+        return;
+    }
+
+    const QString directory = account.base;
+    const QString name = QStringLiteral("mole-killed-%1.bin").arg(QCoreApplication::applicationPid());
+    const QString remotePath = directory + QLatin1Char('/') + name;
+    const QString partialName = name + QStringLiteral(".mole-partial");
+
+    const RawSftp raw(account);
+
+    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    environment.insert(QStringLiteral("MOLE_TEST_KILL_TARGET"), remotePath);
+
+    QProcess victim;
+    victim.setProcessEnvironment(environment);
+    victim.setProcessChannelMode(QProcess::MergedChannels);
+    victim.start(QCoreApplication::applicationFilePath(),
+        { QStringLiteral("aKilledUploadLeavesNothingThatLooksFinished") });
+    QVERIFY2(victim.waitForStarted(10000), "could not start a second copy of this test binary");
+
+    // Killed on the file appearing, not after a wait. Until the server has
+    // something on disk there is nothing to interrupt, and a fixed sleep would
+    // be either too short on a slow link or wasted on a fast one.
+    //
+    // Under *either* name, deliberately. Waiting only for the working name
+    // would turn the fault into "nothing ever reached the server", which is
+    // both untrue and the least useful thing this could report -- the whole
+    // question is which name the bytes are travelling under, so both are worth
+    // waiting for and the answer is what gets asserted.
+    bool appeared = false;
+    for (int attempt = 0; attempt < 400 && !appeared; ++attempt) {
+        if (victim.state() != QProcess::Running)
+            break;
+        const QStringList names = raw.namesIn(directory);
+        appeared = names.contains(partialName) || names.contains(name);
+        if (!appeared)
+            QTest::qWait(50);
+    }
+
+    const QString transcript = QString::fromLocal8Bit(victim.readAll());
+    victim.kill(); // SIGKILL: no destructors, no cleanup, no second chance
+    victim.waitForFinished(15000);
+
+    const QStringList after = raw.namesIn(directory);
+    // Tidied up before anything is asserted, so a failure cannot leave a
+    // multi-gigabyte carcass on the server for whatever runs next.
+    raw.command(QStringLiteral("rm \"%1\"").arg(remotePath), directory);
+    raw.command(QStringLiteral("rm \"%1.mole-partial\"").arg(remotePath), directory);
+
+    QVERIFY2(appeared,
+        qPrintable(QStringLiteral("the upload never reached the server, so nothing was killed "
+                                  "mid-flight. The victim said: %1")
+                       .arg(transcript)));
+
+    // The claim. Part of a file is on the server -- that is unavoidable and not
+    // the fault. The fault is that part of a file is sitting under the name
+    // somebody asked for, where the next thing to open it cannot tell.
+    QVERIFY2(!after.contains(name),
+        qPrintable(QStringLiteral("a killed upload left %1, which looks like a finished file").arg(name)));
+    QVERIFY2(after.contains(partialName),
+        qPrintable(QStringLiteral("expected the wreckage under %1; the directory held %2")
+                       .arg(partialName, after.join(QStringLiteral(", ")))));
 }
 
 MOLE_TEST_MAIN(TestSftpFileSystem)
