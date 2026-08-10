@@ -14,6 +14,11 @@ Rectangle {
 
     color: panelColor
 
+    /// The keyboard should go back to whatever the window was showing. A signal
+    /// rather than a reach, because the sidebar has no business knowing that a
+    /// file pane exists.
+    signal focusWanted()
+
     // What a drive's state means, in the sidebar's own colours. The model says
     // what a state means -- "good", "attention", "broken", "idle" -- and the
     // palette lives here, so neither has to know the other's vocabulary.
@@ -88,7 +93,14 @@ Rectangle {
         topPadding: 4
         bottomPadding: 4
 
-        onClicked: App.goTo(target)
+        // Navigating and then handing the keyboard back. Clicking a place in
+        // order to look at it and being left unable to type into it is wrong on
+        // its own terms, and every navigation control in the pane's own toolbar
+        // already does exactly this.
+        onClicked: {
+            App.goTo(target)
+            sidebar.focusWanted()
+        }
 
         // Stated rather than inherited. Control.hoverEnabled follows a platform
         // style hint, so the highlight, the tooltip and the × all depended on

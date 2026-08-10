@@ -6,6 +6,8 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- `F3` and `Ctrl+←/→/↑` work wherever the keyboard is, instead of going dead until
+  the file listing is clicked, and clicking a drive hands the keyboard back.
 - Drives can be connected, ejected and checked from the command palette on `Ctrl+R`,
   by name, without reaching for the pointer.
 - A drive whose password is in a locked store now says so in the window, with one place

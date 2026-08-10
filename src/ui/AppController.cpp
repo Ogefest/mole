@@ -393,8 +393,7 @@ void AppController::mountDefaultDrives()
     // fixture says the same thing about the software and nothing about a desk.
     const QByteArray fixed = qgetenv("MOLE_DRIVES");
     if (!fixed.isEmpty()) {
-        const QStringList entries
-            = QString::fromLocal8Bit(fixed).split(QLatin1Char(';'), Qt::SkipEmptyParts);
+        const QStringList entries = QString::fromLocal8Bit(fixed).split(QLatin1Char(';'), Qt::SkipEmptyParts);
         for (const QString& entry : entries) {
             const qsizetype split = entry.indexOf(QLatin1Char('='));
             if (split <= 0)
@@ -1395,6 +1394,56 @@ QString AppController::currentLocation() const
 {
     QObject* pane = currentTabProperty("activePane").value<QObject*>();
     return pane ? pane->property("currentUri").toString() : QString();
+}
+
+namespace {
+
+    /// Calls a method on whatever object is given, when there is one. The four
+    /// routed keys differ only in the name, so the resolution lives in one place.
+    void invokeOn(QObject* target, const char* method)
+    {
+        if (target)
+            QMetaObject::invokeMethod(target, method);
+    }
+
+} // namespace
+
+void AppController::previewCurrent()
+{
+    QObject* pane = currentTabProperty("activePane").value<QObject*>();
+    if (!pane)
+        return;
+    QObject* files = pane->property("files").value<QObject*>();
+    if (!files)
+        return;
+
+    const int row = pane->property("currentIndex").toInt();
+    bool isDir = false;
+    QMetaObject::invokeMethod(files, "isDirAt", Q_RETURN_ARG(bool, isDir), Q_ARG(int, row));
+    if (isDir) {
+        bool opened = false;
+        QMetaObject::invokeMethod(pane, "activate", Q_RETURN_ARG(bool, opened), Q_ARG(int, row));
+        return;
+    }
+
+    const QString file = currentFile();
+    if (!file.isEmpty())
+        previewFile(file);
+}
+
+void AppController::goUpInCurrentPane()
+{
+    invokeOn(currentTabProperty("activePane").value<QObject*>(), "goUp");
+}
+
+void AppController::goBackInCurrentPane()
+{
+    invokeOn(currentTabProperty("activePane").value<QObject*>(), "goBack");
+}
+
+void AppController::goForwardInCurrentPane()
+{
+    invokeOn(currentTabProperty("activePane").value<QObject*>(), "goForward");
 }
 
 QString AppController::currentFile() const

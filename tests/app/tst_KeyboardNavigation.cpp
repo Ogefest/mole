@@ -67,6 +67,8 @@ private slots:
     void newTabShortcutOpensATab();
     void f4MenuWalksIntoSubmenusWithTheKeyboard();
 
+    void f3AndCtrlUpWorkWithTheKeyboardOutsideThePane();
+
 private:
     BrowserPaneController* pane() const;
     /// QObject::findChild does not follow the visual tree that Loader and
@@ -798,6 +800,60 @@ void TestKeyboardNavigation::deleteAsksWithTheFilesNamed()
     pane()->files()->clearSelection();
     settle();
     QCOMPARE(listed->property("count").toInt(), 2);
+}
+
+/// The reported fault. F3 and Ctrl+Up were handlers on the focused item, so
+/// they stopped working the moment the keyboard went anywhere else -- clicking
+/// a drive in the sidebar was enough -- and came back only when the listing was
+/// clicked. They read as though something else were catching them; nothing was
+/// catching them at all.
+///
+/// What they act on never depended on the focus: the active tab's active pane
+/// knows its own cursor, which is how the Preview menu entry has always worked
+/// from anywhere. See docs/adr/0019-the-keys-that-belong-to-the-window.md.
+void TestKeyboardNavigation::f3AndCtrlUpWorkWithTheKeyboardOutsideThePane()
+{
+    // Somewhere that is not the listing, and that is not meant to keep the
+    // keyboard either. The sidebar is where this was reported from.
+    // Somewhere with a level above it, or "up" has nowhere to go and the test
+    // would pass or fail for a reason that is not the one it is about.
+    const QString root = pane()->currentUri();
+    pane()->navigateTo(m_tree->rootUri().child(QStringLiteral("folder")).toString());
+    QVERIFY(waitFor([this, &root] { return pane()->currentUri() != root && !pane()->isLoading(); }));
+    const QString start = pane()->currentUri();
+
+    QQuickItem* sidebarRow = findItem(QStringLiteral("placeRow"));
+    QVERIFY2(sidebarRow, "the sidebar has to be there for this to be about the sidebar");
+    sidebarRow->forceActiveFocus();
+    settle();
+
+    QQuickItem* fileList = findItem(QStringLiteral("fileList"));
+    QVERIFY(fileList);
+    QVERIFY2(!fileList->hasActiveFocus(), "the pane must not hold the keyboard, or this proves nothing");
+
+    // Ctrl+Up: up a level, from wherever the keyboard happens to be.
+    pressKey(Qt::Key_Up, Qt::ControlModifier);
+    QVERIFY2(waitFor([this, &start] { return pane()->currentUri() != start; }),
+        "Ctrl+Up has to go up a level with the keyboard in the sidebar");
+
+    // Back down, and the cursor onto a file.
+    pane()->navigateTo(root);
+    QVERIFY(waitFor([this] { return !pane()->isLoading(); }));
+    const int row = pane()->files()->rowOfUri(m_tree->rootUri().child(QStringLiteral("one.txt")).toString());
+    QVERIFY(row >= 0);
+    pane()->setCurrentIndex(row);
+    settle();
+
+    sidebarRow->forceActiveFocus();
+    settle();
+    QVERIFY(!fileList->hasActiveFocus());
+
+    const int before = m_app->tabs()->rowCount();
+    pressKey(Qt::Key_F3);
+    QVERIFY2(waitFor([this, before] { return m_app->tabs()->rowCount() == before + 1; }),
+        "F3 has to preview the file under the pane's cursor with the keyboard in the sidebar");
+    QCOMPARE(m_app->tabs()->currentController()->property("currentUri").toString(),
+        m_tree->rootUri().child(QStringLiteral("one.txt")).toString());
 }
 
 int main(int argc, char** argv)
