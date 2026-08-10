@@ -264,7 +264,13 @@ namespace {
         {
         }
 
-        ~MemoryWriteDevice() override { commit(); }
+        // Nothing lands here. A device destroyed without being closed is an
+        // abandoned write -- a cancelled copy, or one that failed part way --
+        // and committing it would put a half file under the name somebody asked
+        // for. Every backend agrees about that, whatever it does underneath:
+        // the disk writes under a working name and removes it, and a scratch
+        // drive in RAM simply forgets. See ADR-0021.
+        ~MemoryWriteDevice() override = default;
 
         void close() override
         {

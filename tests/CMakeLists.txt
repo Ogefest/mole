@@ -91,6 +91,10 @@ mole_add_test(tst_ScanTask          SOURCES core/tst_ScanTask.cpp)
 mole_add_test(tst_LiveSearchTask    SOURCES core/tst_LiveSearchTask.cpp)
 mole_add_test(tst_EventBus          SOURCES core/tst_EventBus.cpp)
 mole_add_test(tst_TransferTask      SOURCES core/tst_TransferTask.cpp)
+
+# The same task, everything going wrong: the copy loop's guards, one hostile
+# scenario each, through the fault injector.
+mole_add_test(tst_TransferTaskUnderFault SOURCES core/tst_TransferTaskUnderFault.cpp)
 mole_add_test(tst_FolderSizesTask   SOURCES core/tst_FolderSizesTask.cpp)
 mole_add_test(tst_Preferences       SOURCES core/tst_Preferences.cpp)
 mole_add_test(tst_ReadRangeTask     SOURCES core/tst_ReadRangeTask.cpp)

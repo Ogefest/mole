@@ -9,6 +9,60 @@ wrong.
 
 ---
 
+## A copy, going wrong thirteen ways, and two faults it found
+
+**Asked for:** MOLE-25. A first vertical slice of hostile scenarios through
+`TransferTask` — source renamed, deleted or truncated part way through, the
+destination removed or filled up, cancellation before the first byte, mid-file
+and between files, ten concurrent copies, a drive unmounted with a transfer in
+flight — each asserting that no partial file is presented as complete, that the
+source is intact, and that the failure says which file and why.
+
+**What it turned out to be:** `tests/core/tst_TransferTaskUnderFault.cpp`,
+thirteen scenarios, running in 44 ms with no sleep anywhere in it. Faults fire at
+a byte offset through `FaultyFileSystem`, and a transfer is held still by
+stalling its read rather than by hoping. The destination is the local disk rather
+than the memory drive on purpose: the guard being tested lives in a backend, and
+testing it against a drive that does not implement it would prove nothing.
+
+Nine of the thirteen were red on the first run, and two of those were faults in
+the product rather than in the test.
+
+**A cancelled copy was renamed into place as if it had finished** — MOLE-97. A
+local write goes under a working name and is renamed when it is closed, so an
+abandoned one can be discarded; `~PartialFile` says exactly that in a comment and
+then does the opposite. It calls `QFile::remove()`, which closes the file first,
+and `close()` is virtual — so the call arrives back in `PartialFile`, finds a
+write that has not committed, and commits it. The remove that was meant to
+discard the file then fails with "No such file or directory", against the name
+that no longer exists. Every failed and cancelled copy in the slice left a
+complete-looking file behind. `MemoryFileSystem` reached the same outcome by a
+different route: it committed from its write device's destructor on purpose.
+
+The rule now lives in the backend conformance suite rather than in one test, so
+every backend is held to it — local, memory, and the remote ones when there is a
+server to run them against. It fails on both backends when either fix is backed
+out, which is how it was checked.
+
+**A read that ended early was reported as a copy** — the second fault, and the
+reason for [ADR-0027](docs/adr/0027-a-read-that-ends-early-is-not-a-file-that-shrank.md).
+`QIODevice` answers "the file ended" and "the connection went away and I am
+pretending it ended" with the same zero, and a plan built from a listing cannot
+tell which happened. So the source is asked again, once, and only when fewer
+bytes arrived than expected: a file that really shrank is copied as it now is, a
+source that still claims the larger size is a failure. The check happens before
+the destination is closed, because closing is what puts it in place.
+
+**And a short write now says why.** "short write" was true and useless — a disk
+that filled up and a server that hung up read exactly alike, and neither is
+something anybody can act on.
+
+**One fault was left as a task.** `SyncTask::copyOne()` still reads with the
+`QByteArray` overload and stops on an empty result, which is the older and worse
+version of the same fault: a dropped connection is taken for the end of the file
+and the file is counted as copied. It is MOLE-98 rather than a quiet fix here,
+because sync's own hostile slice is what should land it.
+
 ## One drive that misbehaves on purpose, instead of three that each did once
 
 **Asked for:** MOLE-24. Three fakes had been written in a single day —

@@ -38,10 +38,18 @@ namespace {
             // Destroyed without being closed is an abandoned write — cancelled,
             // or the caller gave up. What was written is not a file anybody
             // asked for, so it goes rather than being left to be puzzled over.
-            if (!m_committed) {
-                QFile::close();
-                QFile::remove();
-            }
+            if (m_committed)
+                return;
+
+            // Settled *before* anything is done to the file, because
+            // QFile::remove() closes it first and close() is virtual: the call
+            // arrives back in this class, finds a write that has not committed,
+            // and puts it in place — renaming a cancelled copy into the name
+            // somebody asked for, which is the one outcome the working name
+            // exists to prevent.
+            m_committed = true;
+            QFile::close();
+            QFile::remove();
         }
 
         VfsError commitError() const override { return m_error; }

@@ -1,5 +1,7 @@
 #include "FileSystemConformance.h"
 
+#include "core/vfs/PartialWrite.h"
+
 #include <QTest>
 
 #include <algorithm>
@@ -231,6 +233,33 @@ void runFileSystemConformance(const ConformanceContext& context)
         QCOMPARE(back.value()->readAll(), large);
 
         QVERIFY2(fs.remove(written, false).ok(), "removing what this suite wrote must succeed");
+    }
+
+    // --- a write that is abandoned rather than closed ----------------------
+    //
+    // A cancelled copy, or one that failed part way through, destroys its write
+    // stream without closing it. Nothing may appear under the name it was aiming
+    // at: half a file under the name somebody asked for is indistinguishable
+    // from a file that is simply that size, and it is what a move would then
+    // delete the original for. The working name is not litter to be left either
+    // -- what a live process abandoned, it can clean up. See ADR-0021.
+    {
+        const VfsUri abandoned = context.root.child(QStringLiteral("abandoned.bin"));
+        {
+            Result<std::unique_ptr<QIODevice>> out = fs.openWrite(abandoned, 4096);
+            QVERIFY2(out.ok(), qPrintable(out.error().message));
+            QCOMPARE(out.value()->write(QByteArray(4096, 'p')), qint64(4096));
+        }
+
+        QVERIFY2(!fs.stat(abandoned).ok(), "an abandoned write was put in place as if it had finished");
+
+        Result<FileEntryList> after = fs.list(context.root, noCancel);
+        QVERIFY2(after.ok(), qPrintable(after.error().message));
+        for (const FileEntry& entry : after.value())
+            QVERIFY2(!isPartialWrite(entry.name),
+                qPrintable(QStringLiteral("an abandoned write left %1 "
+                                          "behind")
+                               .arg(entry.name)));
     }
 
     // --- a directory with nothing in it -----------------------------------

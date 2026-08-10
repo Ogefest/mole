@@ -55,6 +55,18 @@ project, and a contributor should never hit a wall of text they cannot read.
   the version that decides on its own which leftovers are safe to remove needs to
   be sure it is not looking at another Mole's transfer in flight.
 
+- **Unmounting a drive does not stop transfers already running on it.** A task
+  holds its backend for the length of its run, so a copy in flight finishes
+  against the drive it was given while the mount disappears from the sidebar.
+  That is the safe half — nothing is pulled out from under a worker thread — and
+  it is checked in `tst_TransferTaskUnderFault`. What is missing is the other
+  half: nothing tells the user that the drive they just removed is still being
+  written to. Left as it is until somebody hits it.
+- **Sync does not ask whether a read ended early**, the question
+  [ADR-0027](docs/adr/0027-a-read-that-ends-early-is-not-a-file-that-shrank.md)
+  added to `TransferTask`. Its copy loop has a worse version of the same fault
+  and is tracked as MOLE-98.
+
 Tracked as issues rather than kept here: the full-screen window geometry (#31),
 FTP staging (#34), WebDAV against a real server (#35), NFS and SMB (#36), video
 preview (#37) and the terminal on Windows (#38).

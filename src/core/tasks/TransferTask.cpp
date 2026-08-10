@@ -156,8 +156,18 @@ bool TransferTask::copyStream(const VfsUri& from, const VfsUri& to, qint64 expec
         if (got == 0)
             break;
 
-        if (target->write(chunk.constData(), got) != got) {
-            recordFailure(to, VfsError::make(VfsError::IoError, QStringLiteral("short write")));
+        // The reason goes in the message. A destination that filled up, one
+        // whose connection went away and one whose file was pulled out from
+        // under it are all "short write", and which of them it was is the only
+        // part anybody can act on.
+        const qint64 put = target->write(chunk.constData(), got);
+        if (put != got) {
+            recordFailure(to,
+                VfsError::make(VfsError::IoError,
+                    QStringLiteral("the destination took %1 of %2 bytes and stopped: %3")
+                        .arg(written + qMax<qint64>(put, 0))
+                        .arg(written + got)
+                        .arg(target->errorString())));
             return false;
         }
 
@@ -165,6 +175,29 @@ bool TransferTask::copyStream(const VfsUri& from, const VfsUri& to, qint64 expec
         // copy show a moving bar and a throughput figure at all.
         written += got;
         setBytesDone(m_bytesCompleted + written);
+    }
+
+    // A read that ended early and a file that shrank look exactly alike from
+    // here: both hand over fewer bytes than the plan said and then report the
+    // end of the file. Only the source can tell them apart, so it is asked --
+    // once, and only when there is a discrepancy to explain. A file that really
+    // is smaller now is copied as it now is; a source that still claims the
+    // larger size gave a short answer, and taking that for a finished copy is
+    // how a move deletes the only whole one. See ADR-0027.
+    //
+    // Before the destination is closed, because closing is what puts it in
+    // place: a copy that is about to be called a failure must not first be
+    // renamed into the name somebody asked for.
+    if (expectedSize > 0 && written < expectedSize) {
+        const Result<FileEntry> now = m_request.sourceFileSystem->stat(from);
+        if (!now.ok() || now.value().size != written) {
+            recordFailure(from,
+                VfsError::make(VfsError::IoError,
+                    QStringLiteral("the source said %1 bytes and gave %2").arg(expectedSize).arg(written)));
+            return false;
+        }
+        qCDebug(taskLog, "%s: shrank to %lld bytes while it was being copied", qPrintable(from.toString()),
+            static_cast<long long>(written));
     }
 
     // Closing is where a buffered backend actually commits, so it must happen
@@ -181,11 +214,11 @@ bool TransferTask::copyStream(const VfsUri& from, const VfsUri& to, qint64 expec
         qPrintable(to.toString()), static_cast<long long>(written), static_cast<long long>(expectedSize),
         clock.elapsed());
 
-    // Said rather than enforced: the size comes from a listing taken earlier, so
-    // a file that legitimately grew or shrank in between would be failed for it.
-    // What the destination now holds is checked separately, once everything has
-    // been written -- see verifyArrivals().
-    if (expectedSize > 0 && written != expectedSize) {
+    // A file that grew between the listing and the copy is said rather than
+    // enforced: everything it had when it was opened arrived, which is all a
+    // copy can promise. What the destination now holds is checked separately,
+    // once everything has been written -- see verifyArrivals().
+    if (expectedSize > 0 && written > expectedSize) {
         qCWarning(taskLog, "%s: copied %lld bytes where the listing said %lld", qPrintable(from.toString()),
             static_cast<long long>(written), static_cast<long long>(expectedSize));
     }

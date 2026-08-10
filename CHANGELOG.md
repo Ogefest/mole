@@ -6,6 +6,12 @@ The reasoning belongs in [docs/adr/](docs/adr/) and the long account in
 
 ## Unreleased
 
+- A copy that is cancelled, or that fails part way through, no longer leaves what
+  had arrived behind under the name it was aiming at.
+- A copy whose source stops handing over bytes early is reported as a failure
+  rather than as a finished file, unless the file really did get smaller.
+- A copy that could not be written says why — the disk being full and the
+  connection going away no longer read alike.
 - Writing a small file to a WebDAV drive works; like the large case before it, any
   server that asks for a password refused it.
 - Opening a WebDAV folder as if it were a file is refused, instead of handing back
