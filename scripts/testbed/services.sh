@@ -173,6 +173,22 @@ note "http://$ADDRESS/dav"
 say "FTP"
 on_server <<REMOTE || die "could not configure vsftpd"
 set -euo pipefail
+# A self-signed certificate, so FTP is FTPS. The suite requires TLS unless
+# explicitly told not to, and it is right to: plain FTP is not what anybody
+# should run, and the backend has a TLS path that deserves exercising.
+# Self-signed because this machine is disposable and a real certificate for it
+# would be a lie about what it is.
+if [ ! -f /etc/ssl/private/vsftpd.pem ]; then
+    # Two files, then joined. Passing the same path to -keyout and -out writes
+    # the key and then overwrites it with the certificate.
+    openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
+        -subj '/CN=mole-testbed' \
+        -keyout /tmp/vsftpd.key -out /tmp/vsftpd.crt >/dev/null 2>&1
+    cat /tmp/vsftpd.key /tmp/vsftpd.crt > /etc/ssl/private/vsftpd.pem
+    rm -f /tmp/vsftpd.key /tmp/vsftpd.crt
+    chmod 0600 /etc/ssl/private/vsftpd.pem
+fi
+
 cat > /etc/vsftpd.conf <<'CONF'
 listen=YES
 listen_ipv6=NO
@@ -194,20 +210,46 @@ pasv_enable=YES
 pasv_min_port=30000
 pasv_max_port=30020
 local_root=/srv/moledata/ftp
-# No TLS yet, and it matters: tst_FtpFileSystem requires it unless
-# MOLE_TEST_FTP_TLS=none, so that suite cannot run against this server as it
-# stands. vsftpd with ssl_enable would not stay up here and chasing it further
-# belongs with #23, where the suites get pointed at this machine.
+# FTPS, explicit rather than implicit -- which is what curl and everything else
+# expects on port 21.
+ssl_enable=YES
+rsa_cert_file=/etc/ssl/private/vsftpd.pem
+rsa_private_key_file=/etc/ssl/private/vsftpd.pem
+allow_anon_ssl=NO
+force_local_data_ssl=YES
+force_local_logins_ssl=YES
+ssl_tlsv1=YES
+ssl_sslv2=NO
+ssl_sslv3=NO
+# Off, because curl opens the data connection without resuming the control
+# connection's session and vsftpd would refuse it. A real server may well want
+# this on; a test server that rejects the client under test is no use.
+require_ssl_reuse=NO
 CONF
 mkdir -p /var/run/vsftpd/empty
-systemctl restart vsftpd
-# Started, not merely asked to start. systemctl restart returns happily for a
-# unit that then dies, and a server that is not running is the one thing this
-# script must not report as done.
+
+# Stopped, waited for, then started -- not restarted.
+#
+# vsftpd does not set SO_REUSEADDR, so a start that treads on the previous
+# instance's port cannot bind. It then exits with status 2 and says nothing at
+# all: no message on stderr, none in the journal, none on the console. That
+# silence cost an evening, because every foreground attempt to reproduce it was
+# masked by the very service being diagnosed still holding port 21.
+systemctl stop vsftpd 2>/dev/null || true
+# Escaped, so the far side counts. Left unescaped the local shell expands it
+# first and puts a newline between every number, which ends the for-list on the
+# first one and is a syntax error on arrival.
+for _ in \$(seq 1 20); do
+    ss -ltn 2>/dev/null | grep -q ':21 ' || break
+    sleep 1
+done
+systemctl start vsftpd
+
+# Started, not merely asked to start.
 sleep 2
 systemctl is-active --quiet vsftpd || { echo "vsftpd did not stay up:"; journalctl -u vsftpd -n 15 --no-pager; exit 1; }
 REMOTE
-note "ftp://$ADDRESS/ (root /srv/moledata/ftp, passive 30000-30020)"
+note "ftps://$ADDRESS/ (root /srv/moledata/ftp, passive 30000-30020)"
 note "  and /Shared inside it, which is where tst_FtpFileSystem works by default"
 
 # --- S3 ----------------------------------------------------------------------

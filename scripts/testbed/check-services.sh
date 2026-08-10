@@ -78,9 +78,12 @@ fi
 
 # --- FTP ---------------------------------------------------------------------
 
-if curl -fsS --ftp-pasv --connect-timeout 8 -u "$ACCOUNT:$PASSWORD" \
+# --ssl-reqd, so a server that quietly fell back to plain FTP fails this rather
+# than passing it. --insecure because the certificate is self-signed, which is
+# the honest thing for a disposable machine to carry.
+if curl -fsS --ftp-pasv --ssl-reqd --insecure --connect-timeout 8 -u "$ACCOUNT:$PASSWORD" \
         "ftp://$ADDRESS/" >/dev/null 2>&1; then
-    ok "ftp on 21 (no TLS yet -- see the note in services.sh)"
+    ok "ftp on 21, TLS required"
 else
     bad "ftp on 21"
 fi
