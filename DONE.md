@@ -9,6 +9,58 @@ wrong.
 
 ---
 
+## The board moves to Vikunja
+
+**Asked for:** GitHub's GraphQL rate limits were making the Projects board
+unreliable to work with, so move the tickets to a self-hosted Vikunja instead.
+See [ADR-0022](docs/adr/0022-work-is-tracked-in-vikunja.md).
+
+**What it turned out to be:** 67 issues, 11 comments, 20 labels, 9 milestones and
+66 board cards, moved by a script that reads GitHub, writes Vikunja and then reads
+the result back to compare the two. The comparison is the part that earned its
+keep: the first run reported 41 faults, all of them real, and none of them
+visible by looking at the board.
+
+**Every ticket kept its number, and that took a trick.** `MOLE-19` is what `#19`
+was, which is what keeps every `Closes #…` already in the git history — and this
+file — pointing at the right work. Vikunja assigns the per-project task index
+itself and will not accept one, but its counter is not rolled back by a deletion,
+so the 29 numbers that had belonged to pull requests were reserved by creating a
+task and deleting it again. That the counter behaves this way was tested rather
+than assumed, including deleting the highest index, because the alternative
+silently slides the numbering by one at every gap.
+
+**Two positions of 100 are not two positions.** Numbering each column's cards from
+1 again gave five cards the same position, and Vikunja recalculates every position
+in a view when two of them crowd each other. The order came back *nearly* right,
+which is the worst outcome available — it looked correct and was not. A position
+is stored per view rather than per column, so one counter now runs across the whole
+board.
+
+**Labels belong to the account, not the project.** Deleting a project leaves its
+labels behind, so the second attempt created a second `blocked`, a second
+`area:ui`, and no way to tell the pairs apart. The script reuses a label with a
+matching title now.
+
+**The descriptions convert themselves.** Vikunja's API takes GFM Markdown on write
+and converts it server-side, which was worth finding before hand-rolling a
+converter: the 314 `- [ ]` lines across these tickets became real checkboxes
+rather than the characters `[ ]`, and every table, fence and cross-reference
+survived. Cross-references were rewritten to point at the board, with the code
+blocks left alone — a link inside a code sample is damage, not a convenience.
+
+**A milestone became three things**, because Vikunja has no milestone and no one
+feature does the job: a label, a column in a second `By epic` view, and a task in
+an `Epics` sub-project whose subtasks are the tickets. The tickets stay on the
+workflow board, where an epic card would otherwise sit in `Ready` between the work
+it is made of.
+
+Then the GitHub issues were deleted and the Projects board with them, at the
+author's instruction — one place, not two. The Issues tab stays open as a way in
+from outside. Everything GitHub held was snapshotted first, and the verifier can
+still be run against that snapshot, which is the only reason it can still be run
+at all.
+
 ## Backends, beyond the current conformance (#15)
 
 **Asked for:** eight things the conformance suite does not check, run against the

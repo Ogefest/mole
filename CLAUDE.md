@@ -47,41 +47,59 @@ Small changes — a bug fix, a rename, a test, a tidy-up — do not need one.
 
 ## Where work is tracked
 
-**Work lives in [GitHub issues](https://github.com/Ogefest/mole/issues).** A bug,
-a feature, a test that is owed — each is an issue, and each should carry enough
-for somebody to pick it up without asking a question: what is wrong or wanted,
-where in the code it lives, and how anyone will know it is finished. A larger
-effort is a milestone over those issues, which names what they add up to; all of
-it sits on one [board](https://github.com/users/Ogefest/projects/1).
+**Work lives on the Mole board in Vikunja** — a self-hosted instance on the
+author's own network, not on GitHub. A bug, a feature, a test that is owed — each
+is a task, and each should carry enough for somebody to pick it up without asking
+a question: what is wrong or wanted, where in the code it lives, and how anyone
+will know it is finished. A larger effort is an **epic**, which names what several
+tasks add up to; all of it sits on one board. See
+[ADR-0022](docs/adr/0022-work-is-tracked-in-vikunja.md) for why it moved, and
+`~/dev/workspace/mole-pm/environment/vikunja.md` for the address, the account and
+the token.
 
-There is no planning document in the repository. An issue carries what a builder
-needs and a milestone names the effort it belongs to, and the reasoning that
-produced either is planning work rather than engineering work — it happens
-before an issue is written, not beside it.
+A task's number is the number the GitHub issue had before the move: `MOLE-19` is
+what `#19` was, and the gaps in the sequence are the numbers that belonged to pull
+requests. Every `Closes #…` already in the git history still names the right work.
 
-Before starting anything, look for the issue. If there is not one, open it first
-— an issue written after the fact is a summary, and the point of writing it
-first is that somebody else can see the work is taken.
+An epic is three things, because Vikunja has no single feature that does the job:
+a `milestone: …` label on each of its tasks, a column in the board's `By epic`
+view, and a task in the `Epics` sub-project whose subtasks are the tasks
+themselves. Put a new task in an epic by giving it the label; the other two follow.
 
-A change that closes an issue says so in its commit message, in GitHub's own
-words — `Closes #12` — so the issue shuts when the work lands rather than when
-somebody remembers.
+There is no planning document in the repository. A task carries what a builder
+needs and an epic names the effort it belongs to, and the reasoning that produced
+either is planning work rather than engineering work — it happens before a task is
+written, not beside it.
 
-**The repository is public, and so is every issue.** No host names, no account
-names, no bucket names, no credentials — not in an issue, not in a comment, not
-in a test fixture, however local the work felt while it was being done. When a
-fault is reproduced against a real server, the issue describes the *behaviour*,
-not the address it was found at.
+Before starting anything, look for the task. If there is not one, open it first —
+a task written after the fact is a summary, and the point of writing it first is
+that somebody else can see the work is taken.
+
+A change that finishes a task says so in its commit message — `Closes MOLE-12`.
+Nothing acts on that any more, so the card is moved by hand as well; the commit
+message says it because the git history should record what a change finished.
+
+**The repository is public. The board is not, and that changes nothing about what
+may be written where.** No host names, no account names, no bucket names, no
+credentials — not in the repository, and not on the board either, because a board
+gets exported, backed up and read by tools. When a fault is reproduced against a
+real server, the task describes the *behaviour*, not the address it was found at.
+
+**The GitHub Issues tab is still open, and it is not the tracker.** It is the way
+somebody outside can report a fault, since the board is unreachable from outside
+this network. Anything that arrives there is copied onto the board and closed on
+GitHub, so there is one queue rather than two.
 
 **Those facts are kept, just not here.** What machine exists, how it is reached,
 which account, where the credentials are — all of it lives outside this
-repository, in `~/dev/workspace/mole-pm/environment/`. An issue labelled
-`needs-server` is one whose work depends on them, and that directory is the
-first thing to read before starting one. Reading a path outside this checkout
-may ask for permission the first time; that is the mechanism working.
+repository, in `~/dev/workspace/mole-pm/environment/`. That now includes the board
+itself: `vikunja.md` there holds the address and the only copy of the bot token. A
+task labelled `needs-server` is one whose work depends on those facts, and that
+directory is the first thing to read before starting one. Reading a path outside
+this checkout may ask for permission the first time; that is the mechanism working.
 
 Nothing comes back the other way. Not into a commit message, a code comment, a
-test fixture, an issue, a pull request, or a log attached to one. Anything the
+test fixture, a task, a pull request, or a log attached to one. Anything the
 code needs from there is a **parameter read at run time** — the way the
 `MOLE_TEST_*` suites already take theirs from the environment. A host name typed
 into a tracked file is not a small lapse to be tidied up later; it is the signal
@@ -103,54 +121,64 @@ The three files alongside it keep what a tracker holds badly:
   live with, conventions to follow, gaps that are documented rather than
   scheduled.
 
-## Which issue to take next
+## Which task to take next
 
 The board has five columns, and the one that matters is **Ready**: it holds
 everything that can be picked up right now, in the order it should be picked up.
-**Take the lowest `Rank` in `Ready`.** There is no choosing to do.
+**Take the top card in `Ready`.** There is no choosing to do.
 
 | Column | Holds |
 |---|---|
 | `Backlog` | not planned, or the brief is not complete enough to work from |
-| `Ready` | planned and dispatchable, lowest `Rank` first |
+| `Ready` | planned and dispatchable, topmost card first |
 | `In Progress` | being worked on now — one at a time |
 | `Blocked` | waiting on something outside the repository, usually the live test environment |
 | `Done` | landed and verified |
 
-`Backlog` and `Blocked` are not a queue to dip into. An issue leaves them in a
+`Backlog` and `Blocked` are not a queue to dip into. A task leaves them in a
 planning session, not because it looked convenient on the day.
 
+Everything below takes the address and the token from the environment, never from
+a file in this repository:
+
 ```sh
-gh project item-list 1 --owner Ogefest --format json --limit 200 \
-  | jq -r '.items[] | select(.status=="Ready") | [.rank, .content.number, .title] | @tsv' \
-  | sort -n | head
+: "${VIKUNJA_URL:?}" "${VIKUNJA_TOKEN:?}"        # see mole-pm/environment/vikunja.md
+v() { curl -sS -H "Authorization: Bearer $VIKUNJA_TOKEN" \
+        -H 'Content-Type: application/json' "${@:2}" "$VIKUNJA_URL/api/v2$1"; }
+
+root=$(v /projects | jq -r '.items[]|select(.title=="Mole")|.id')
+view=$(v "/projects/$root/views" | jq -r '.items[]|select(.title=="Kanban")|.id')
+
+v "/projects/$root/views/$view/buckets/tasks" \
+  | jq -r '.items[]|select(.title=="Ready")|.tasks|sort_by(.position)[]
+           |[.identifier,.title]|@tsv' | head
 ```
 
 **Move the card to `In Progress` before writing a line of code** — not after the
-first commit, not when the branch is pushed. It is the first step of picking an
-issue up, because it is the only signal anybody else has that the work is taken,
-and a branch on one machine is not visible to anyone.
+first commit, not when the branch is pushed. It is the first step of picking a task
+up, because it is the only signal anybody else has that the work is taken, and a
+branch on one machine is not visible to anyone.
 
-Move it to `Done` once the change is on `main` and the issue is closed. The
-project's own workflows already do that for anything that goes through a pull
-request; the case that needs you is a change merged without one.
+Move it to `Done` once the change is on `main`. Dropping a card in `Done` is what
+marks the task done — the column is the view's done bucket, so there is nothing
+else to remember. Nothing does this for you any more: there is no workflow watching
+for `Closes MOLE-12`, which is exactly why it is the first and last step of picking
+a task up.
 
 A board that disagrees with the repository is worse than no board, because it is
 believed.
 
 ```sh
-board() {   # board <issue-number> <column>
-  local proj fid oid iid
-  proj=$(gh project view 1 --owner Ogefest --format json | jq -r .id)
-  fid=$(gh project field-list 1 --owner Ogefest --format json \
-        | jq -r '.fields[] | select(.name=="Status") | .id')
-  oid=$(gh project field-list 1 --owner Ogefest --format json \
-        | jq -r --arg c "$2" '.fields[] | select(.name=="Status") | .options[] | select(.name==$c) | .id')
-  iid=$(gh project item-list 1 --owner Ogefest --format json --limit 200 \
-        | jq -r --argjson n "$1" '.items[] | select(.content.number==$n) | .id')
-  gh project item-edit --id "$iid" --project-id "$proj" --field-id "$fid" \
-    --single-select-option-id "$oid"
+board() {   # board <task-number> <column>
+  local bucket task
+  bucket=$(v "/projects/$root/views/$view/buckets" \
+           | jq -r --arg c "$2" '.items[]|select(.title==$c)|.id')
+  task=$(v "/projects/$root/tasks/by-index/$1" | jq -r .id)
+  v "/projects/$root/views/$view/buckets/$bucket/tasks" -X PUT -d "{\"task_id\":$task}" \
+    | jq -r '"\(.task.identifier) -> \(.bucket.title)"'
 }
+
+board 12 "In Progress"
 ```
 
 The order in `Ready` is deliberate rather than obvious. It is planned separately,

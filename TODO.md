@@ -1,11 +1,15 @@
 # TODO
 
-**Work is tracked in [GitHub issues](https://github.com/Ogefest/mole/issues).**
-Anything actionable lives there: bugs, features, and the tests that are owed.
-A larger effort is a [milestone](https://github.com/Ogefest/mole/milestones) over
-those issues, which names what they add up to; all of it sits on one
-[board](https://github.com/users/Ogefest/projects/1). The reasoning behind an
-effort is not kept in the repository — an issue carries what a builder needs.
+**Work is tracked on the Mole board in Vikunja**, self-hosted on the author's own
+network — see [ADR-0022](docs/adr/0022-work-is-tracked-in-vikunja.md). Anything
+actionable lives there: bugs, features, and the tests that are owed. A larger
+effort is an epic, which names what several tasks add up to; all of it sits on one
+board. The reasoning behind an effort is not kept in the repository — a task
+carries what a builder needs.
+
+A task's number is the number the GitHub issue had before the move, so a `#12` in
+this file or in the git history is `MOLE-12` on the board. The GitHub Issues tab
+stays open as a way in from outside, but it holds no work.
 
 What stays in this file is the other thing — **context that is not a task**.
 Behaviour we know about and have decided to live with, conventions a change
