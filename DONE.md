@@ -9,6 +9,50 @@ wrong.
 
 ---
 
+## WebDAV met a real server, and could not write to it (#35)
+
+**Asked for:** the WebDAV backend has never been run against a live server, and
+has since grown a streaming write that has never been exercised — a large write
+goes out with a chunked transfer encoding, and a server answering 411 would
+refuse it. Run the conformance suite and a large streaming write against a real
+server, green.
+
+**What it turned out to be:** far worse than the issue expected, and nothing to
+do with chunked encoding. The first large write returned
+
+    Writing /large.bin.mole-partial: necessary data rewind wasn't possible
+
+`CURLAUTH_ANY` — chosen so a user never has to care whether their server wants
+Basic or Digest — makes curl send the first request with **no credentials**, take
+the 401 and try again. The retry has to send the body a second time, and the body
+comes from a `QIODevice` curl has no way to rewind. Meanwhile `Expect:` was being
+appended to every request, switching off the one mechanism that would have made
+the 401 arrive *before* the body did.
+
+**It was not a large-write problem.** Reproduced with plain
+`curl --anyauth -T -` against the same server: exit 65, `CURLE_SEND_FAIL_REWIND`,
+at every size tried from one kilobyte upwards. Every WebDAV write of any real
+size had been failing against any server that asks for a password. The only
+reason the suite was green is that the conformance fixtures are a few bytes each
+— small enough for curl to hold a copy and send it again.
+
+The fix is one condition: keep `Expect: 100-continue` for a request that carries
+a file, and suppress it only for the ones that do not. curl asks only when it
+needs to, so a directory of small files pays nothing.
+
+Two tests, both live, and both fail on the old code for the reason above: a
+96 MiB write that asserts it took the streaming route, and an 8 MiB write that
+asserts it took the staged one. Each checks the route with a `dynamic_cast`
+rather than trusting a size threshold — a threshold quietly raised past the test's
+file would otherwise turn one of them into a duplicate of the other, passing while
+covering nothing.
+
+**The lesson is about the fixture, not the backend.** A conformance suite that
+only ever writes a few bytes tests a different code path from the one users
+take, and it had been green for months over a backend that could not write a
+file. Sizes that cross a real boundary — an authentication retry, a staging
+threshold, a buffer — belong in the suite deliberately.
+
 ## An upload killed mid-flight left a partial file that looked finished (#33)
 
 **Asked for:** an upload interrupted by the process being killed leaves part of a
