@@ -328,8 +328,8 @@ void TestKilledOutright::anIndexKilledMidWriteOpensAgainAndAnswers()
     QVERIFY2(volumes.ok(), qPrintable(volumes.error().message));
     QCOMPARE(volumes.value().size(), 1);
 
-    IndexSearchQuery query;
-    query.text = QStringLiteral("settled-");
+    SearchQuery query;
+    query.add(SearchPredicate::name(QStringLiteral("settled-")));
     const Result<QList<IndexSearchHit>> hits = reopened.search(query);
     QVERIFY2(hits.ok(), qPrintable(hits.error().message));
     QVERIFY2(!hits.value().isEmpty(),
@@ -339,8 +339,9 @@ void TestKilledOutright::anIndexKilledMidWriteOpensAgainAndAnswers()
     // And nothing from the scan that was killed: it was never committed, so it
     // was never the volume's contents, and a half-walked tree must not become
     // the answer merely because the process that was walking it died.
-    query.text = QStringLiteral("file-0-");
-    QVERIFY2(reopened.search(query).value().isEmpty(),
+    SearchQuery gone;
+    gone.add(SearchPredicate::name(QStringLiteral("file-0-")));
+    QVERIFY2(reopened.search(gone).value().isEmpty(),
         "half of an interrupted rescan became the index, which is a search answering short and sure");
 }
 

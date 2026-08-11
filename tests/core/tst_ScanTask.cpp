@@ -155,8 +155,8 @@ void TestScanTask::indexedEntriesAreSearchable()
 
     QVERIFY(waitForTask(startScan()));
 
-    IndexSearchQuery query;
-    query.text = QStringLiteral("budget");
+    SearchQuery query;
+    query.add(SearchPredicate::name(QStringLiteral("budget")));
     Result<QList<IndexSearchHit>> hits = m_index->search(query);
 
     QVERIFY(hits.ok());
@@ -180,8 +180,8 @@ void TestScanTask::rescanReplacesPreviousContents()
     QCOMPARE(m_index->fileCount().value(), 1);
     QCOMPARE(m_index->volumes().value().size(), 1);
 
-    IndexSearchQuery query;
-    query.text = QStringLiteral("gone");
+    SearchQuery query;
+    query.add(SearchPredicate::name(QStringLiteral("gone")));
     QVERIFY(m_index->search(query).value().isEmpty());
 }
 
@@ -204,11 +204,11 @@ void TestScanTask::aSearchDuringARescanSeesThePreviousContents()
     // The rescan has written rows by now and not one of them may be visible,
     // and nothing it is going to replace may have gone missing yet.
     QCOMPARE(m_index->fileCount().value(), kSettledFiles);
-    IndexSearchQuery settled;
-    settled.text = QStringLiteral("settled-");
+    SearchQuery settled;
+    settled.add(SearchPredicate::name(QStringLiteral("settled-")));
     QCOMPARE(m_index->search(settled).value().size(), kSettledFiles);
-    IndexSearchQuery arriving;
-    arriving.text = QStringLiteral("f1"); // only the /bulk files are named this way
+    SearchQuery arriving; // "f1" names only the /bulk files
+    arriving.add(SearchPredicate::name(QStringLiteral("f1")));
     QVERIFY2(m_index->search(arriving).value().isEmpty(),
         "half a scan became visible, which is a search answering from a tree it has not finished reading");
 

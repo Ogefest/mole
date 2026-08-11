@@ -81,6 +81,8 @@ add_library(mole_core STATIC
     index/IndexSearchTask.h
     index/IndexSearchTask.cpp
 
+    search/SearchQuery.h
+    search/SearchQuery.cpp
     search/LiveSearchTask.h
     search/LiveSearchTask.cpp
 

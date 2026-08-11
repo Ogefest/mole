@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/search/SearchQuery.h"
 #include "core/tasks/Task.h"
 #include "core/vfs/IFileSystem.h"
 
@@ -13,19 +14,7 @@ class LiveSearchTask final : public Task
     Q_OBJECT
 
 public:
-    struct Criteria
-    {
-        QString text;
-        QString extension;
-        bool caseSensitive = false;
-        bool includeDirs = true;
-        bool includeFiles = true;
-        qint64 minSize = -1;
-        qint64 maxSize = -1;
-        int maxResults = 10000;
-    };
-
-    LiveSearchTask(FileSystemPtr fileSystem, VfsUri root, Criteria criteria, QObject* parent = nullptr);
+    LiveSearchTask(FileSystemPtr fileSystem, VfsUri root, SearchQuery query, QObject* parent = nullptr);
 
     qint64 hitCount() const { return m_hitCount; }
     bool truncated() const { return m_truncated; }
@@ -47,12 +36,12 @@ private:
     /// until the whole walk finished, because the batch never reached two hundred.
     static constexpr int kEmitIntervalMs = 120;
 
-    bool matches(const FileEntry& entry) const;
-
     FileSystemPtr m_fileSystem;
     VfsUri m_root;
-    Criteria m_criteria;
-    QString m_foldedText;
+    SearchQuery m_query;
+    /// A walk pushes nothing down -- it lists a directory and looks at what
+    /// came back -- so every criterion is in here, cheapest first.
+    SearchPlan m_plan;
     qint64 m_hitCount = 0;
     bool m_truncated = false;
 };

@@ -30,7 +30,7 @@ private slots:
     void missingBackendFailsTask();
 
 private:
-    LiveSearchTask* start(LiveSearchTask::Criteria criteria, FileSystemPtr fs = nullptr);
+    LiveSearchTask* start(SearchQuery query, FileSystemPtr fs = nullptr);
 
     std::unique_ptr<TaskManager> m_tasks;
     std::shared_ptr<MemoryFileSystem> m_fs;
@@ -50,10 +50,10 @@ void TestLiveSearchTask::cleanup()
     m_fs.reset();
 }
 
-LiveSearchTask* TestLiveSearchTask::start(LiveSearchTask::Criteria criteria, FileSystemPtr fs)
+LiveSearchTask* TestLiveSearchTask::start(SearchQuery query, FileSystemPtr fs)
 {
-    auto* task = new LiveSearchTask(
-        fs ? fs : m_fs, VfsUri::fromString(QStringLiteral("mem:///")), std::move(criteria));
+    auto* task
+        = new LiveSearchTask(fs ? fs : m_fs, VfsUri::fromString(QStringLiteral("mem:///")), std::move(query));
     connect(
         task, &LiveSearchTask::hitsFound, this, [this](const FileEntryList& batch) { m_hits.append(batch); });
     m_tasks->submit(task);
@@ -66,10 +66,10 @@ void TestLiveSearchTask::findsMatchesByName()
     m_fs->addFile(QStringLiteral("/b/report-q2.pdf"));
     m_fs->addFile(QStringLiteral("/b/unrelated.txt"));
 
-    LiveSearchTask::Criteria criteria;
-    criteria.text = QStringLiteral("report");
+    SearchQuery query;
+    query.add(SearchPredicate::name(QStringLiteral("report")));
 
-    LiveSearchTask* task = start(criteria);
+    LiveSearchTask* task = start(query);
     QVERIFY(waitForTask(task));
 
     QCOMPARE(task->state(), Task::State::Succeeded);
@@ -84,10 +84,10 @@ void TestLiveSearchTask::streamsResultsWhileRunning()
     for (int i = 0; i < 450; ++i)
         m_fs->addFile(QStringLiteral("/bulk/match%1.txt").arg(i));
 
-    LiveSearchTask::Criteria criteria;
-    criteria.text = QStringLiteral("match");
+    SearchQuery query;
+    query.add(SearchPredicate::name(QStringLiteral("match")));
 
-    LiveSearchTask* task = start(criteria);
+    LiveSearchTask* task = start(query);
     QVERIFY(waitForTask(task));
 
     QCOMPARE(task->hitCount(), 450);
@@ -109,8 +109,8 @@ void TestLiveSearchTask::aHandfulOfMatchesArrivesBeforeTheWalkEnds()
     m_fs->addFile(QStringLiteral("/e/hit-6.txt"));
     m_fs->setListDelayMs(250);
 
-    LiveSearchTask::Criteria criteria;
-    criteria.text = QStringLiteral("hit");
+    SearchQuery query;
+    query.add(SearchPredicate::name(QStringLiteral("hit")));
 
     // Timed rather than checked against isFinished(): the last flush happens inside
     // run(), before the task is marked finished, so "arrived while not finished" is
@@ -120,7 +120,7 @@ void TestLiveSearchTask::aHandfulOfMatchesArrivesBeforeTheWalkEnds()
     qint64 firstBatchAt = -1;
     qint64 finishedAt = -1;
 
-    auto* task = new LiveSearchTask(m_fs, VfsUri::fromString(QStringLiteral("mem:///")), criteria);
+    auto* task = new LiveSearchTask(m_fs, VfsUri::fromString(QStringLiteral("mem:///")), query);
     connect(
         task, &LiveSearchTask::hitsFound, this, [this, &clock, &firstBatchAt](const FileEntryList& batch) {
             m_hits.append(batch);
@@ -152,10 +152,10 @@ void TestLiveSearchTask::filtersByExtension()
     m_fs->addFile(QStringLiteral("/x/data.csv"));
     m_fs->addFile(QStringLiteral("/x/data.parquet"));
 
-    LiveSearchTask::Criteria criteria;
-    criteria.extension = QStringLiteral("PARQUET");
+    SearchQuery query;
+    query.add(SearchPredicate::extension(QStringLiteral("PARQUET")));
 
-    LiveSearchTask* task = start(criteria);
+    LiveSearchTask* task = start(query);
     QVERIFY(waitForTask(task));
 
     QCOMPARE(m_hits.size(), 1);
@@ -166,8 +166,8 @@ void TestLiveSearchTask::filtersByKind()
 {
     m_fs->addFile(QStringLiteral("/folder/file.txt"));
 
-    LiveSearchTask::Criteria dirsOnly;
-    dirsOnly.includeFiles = false;
+    SearchQuery dirsOnly;
+    dirsOnly.add(SearchPredicate::kind(true));
     LiveSearchTask* task = start(dirsOnly);
     QVERIFY(waitForTask(task));
 
@@ -181,11 +181,11 @@ void TestLiveSearchTask::filtersBySize()
     m_fs->addFile(QStringLiteral("/small.bin"), QByteArray(10, 'x'));
     m_fs->addFile(QStringLiteral("/big.bin"), QByteArray(5000, 'x'));
 
-    LiveSearchTask::Criteria criteria;
-    criteria.minSize = 1000;
-    criteria.includeDirs = false;
+    SearchQuery query;
+    query.add(SearchPredicate::minSize(1000));
+    query.add(SearchPredicate::kind(false));
 
-    LiveSearchTask* task = start(criteria);
+    LiveSearchTask* task = start(query);
     QVERIFY(waitForTask(task));
 
     QCOMPARE(m_hits.size(), 1);
@@ -196,15 +196,15 @@ void TestLiveSearchTask::caseInsensitiveByDefault()
 {
     m_fs->addFile(QStringLiteral("/ŁÓDŹ.txt"));
 
-    LiveSearchTask::Criteria criteria;
-    criteria.text = QStringLiteral("łódź");
+    SearchQuery query;
+    query.add(SearchPredicate::name(QStringLiteral("łódź")));
 
-    LiveSearchTask* task = start(criteria);
+    LiveSearchTask* task = start(query);
     QVERIFY(waitForTask(task));
     QCOMPARE(m_hits.size(), 1);
 
-    LiveSearchTask::Criteria sensitive = criteria;
-    sensitive.caseSensitive = true;
+    SearchQuery sensitive;
+    sensitive.add(SearchPredicate::name(QStringLiteral("łódź"), true));
     m_hits.clear();
 
     LiveSearchTask* strict = start(sensitive);
@@ -217,11 +217,11 @@ void TestLiveSearchTask::stopsAtResultLimit()
     for (int i = 0; i < 100; ++i)
         m_fs->addFile(QStringLiteral("/many/file%1.txt").arg(i));
 
-    LiveSearchTask::Criteria criteria;
-    criteria.text = QStringLiteral("file");
-    criteria.maxResults = 10;
+    SearchQuery query;
+    query.add(SearchPredicate::name(QStringLiteral("file")));
+    query.limit = 10;
 
-    LiveSearchTask* task = start(criteria);
+    LiveSearchTask* task = start(query);
     QVERIFY(waitForTask(task));
 
     // Truncation is a normal outcome and must be visible to the user, not an
@@ -239,10 +239,10 @@ void TestLiveSearchTask::cancellationStopsSearch()
         m_fs->addFile(QStringLiteral("/dir%1/file.txt").arg(i));
     m_fs->setListDelayMs(50);
 
-    LiveSearchTask::Criteria criteria;
-    criteria.text = QStringLiteral("file");
+    SearchQuery query;
+    query.add(SearchPredicate::name(QStringLiteral("file")));
 
-    LiveSearchTask* task = start(criteria);
+    LiveSearchTask* task = start(query);
     QVERIFY(waitFor([task] { return task->state() == Task::State::Running; }));
     task->requestCancel();
 
@@ -252,12 +252,11 @@ void TestLiveSearchTask::cancellationStopsSearch()
 
 void TestLiveSearchTask::missingBackendFailsTask()
 {
-    LiveSearchTask* task = start(LiveSearchTask::Criteria {}, FileSystemPtr {});
+    LiveSearchTask* task = start(SearchQuery {}, FileSystemPtr {});
     // start() substitutes m_fs when given null, so build this one directly.
     QVERIFY(waitForTask(task));
 
-    auto* orphan = new LiveSearchTask(
-        nullptr, VfsUri::fromString(QStringLiteral("mem:///")), LiveSearchTask::Criteria {});
+    auto* orphan = new LiveSearchTask(nullptr, VfsUri::fromString(QStringLiteral("mem:///")), SearchQuery {});
     m_tasks->submit(orphan);
     QVERIFY(waitForTask(orphan));
 

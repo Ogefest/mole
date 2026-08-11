@@ -6,37 +6,13 @@
 
 namespace mole {
 
-LiveSearchTask::LiveSearchTask(FileSystemPtr fileSystem, VfsUri root, Criteria criteria, QObject* parent)
+LiveSearchTask::LiveSearchTask(FileSystemPtr fileSystem, VfsUri root, SearchQuery query, QObject* parent)
     : Task(QStringLiteral("Search %1").arg(root.toString()), parent)
     , m_fileSystem(std::move(fileSystem))
     , m_root(std::move(root))
-    , m_criteria(std::move(criteria))
-    , m_foldedText(m_criteria.text.toLower())
+    , m_query(std::move(query))
+    , m_plan(planSearch(m_query, SearchSource::Walk))
 {
-}
-
-bool LiveSearchTask::matches(const FileEntry& entry) const
-{
-    if (entry.isDir && !m_criteria.includeDirs)
-        return false;
-    if (!entry.isDir && !m_criteria.includeFiles)
-        return false;
-
-    if (!m_criteria.text.isEmpty()) {
-        const bool hit = m_criteria.caseSensitive ? entry.name.contains(m_criteria.text, Qt::CaseSensitive)
-                                                  : entry.name.toLower().contains(m_foldedText);
-        if (!hit)
-            return false;
-    }
-
-    if (!m_criteria.extension.isEmpty() && entry.uri.suffix() != m_criteria.extension.toLower())
-        return false;
-    if (m_criteria.minSize >= 0 && entry.size < m_criteria.minSize)
-        return false;
-    if (m_criteria.maxSize >= 0 && entry.size > m_criteria.maxSize)
-        return false;
-
-    return true;
 }
 
 void LiveSearchTask::run()
@@ -66,7 +42,7 @@ void LiveSearchTask::run()
 
     DirectoryWalker walker(m_fileSystem);
     Result<void> walked = walker.walk(m_root, cancelToken(), [&](const FileEntry& entry, int) {
-        if (matches(entry)) {
+        if (m_plan.matches(entry)) {
             batch.append(entry);
             ++m_hitCount;
             if (batch.size() >= kEmitBatchSize || sinceLastEmit.elapsed() >= kEmitIntervalMs)
@@ -75,7 +51,7 @@ void LiveSearchTask::run()
 
         setStatusText(QStringLiteral("%1 matches / %2 scanned").arg(m_hitCount).arg(walker.visitedCount()));
 
-        if (m_hitCount >= m_criteria.maxResults) {
+        if (m_hitCount >= m_query.limit) {
             m_truncated = true;
             return DirectoryWalker::Action::Stop;
         }

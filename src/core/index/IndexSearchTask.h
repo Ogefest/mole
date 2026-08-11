@@ -17,7 +17,7 @@ class IndexSearchTask final : public Task
 
 public:
     /// `index` is borrowed and must outlive the task.
-    IndexSearchTask(IndexDatabase* index, IndexSearchQuery query, QObject* parent = nullptr);
+    IndexSearchTask(IndexDatabase* index, SearchQuery query, QObject* parent = nullptr);
 
     int hitCount() const { return m_hitCount; }
 
@@ -30,7 +30,7 @@ protected:
 
 private:
     IndexDatabase* m_index = nullptr;
-    IndexSearchQuery m_query;
+    SearchQuery m_query;
     int m_hitCount = 0;
 };
 

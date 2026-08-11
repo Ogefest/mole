@@ -60,6 +60,13 @@ private:
     /// scan is running, and a test that only ever asked fileCount() could not
     /// tell a row written and waiting from one never written at all.
     qint64 rowsInTable() const;
+    /// The commonest query there is: one name to look for.
+    static SearchQuery named(const QString& text)
+    {
+        SearchQuery query;
+        query.add(SearchPredicate::name(text));
+        return query;
+    }
 
     std::unique_ptr<QTemporaryDir> m_dir;
     std::unique_ptr<IndexDatabase> m_db;
@@ -192,8 +199,8 @@ void TestIndexDatabase::searchMatchesSubstring()
                 { QStringLiteral("/data/annual-report.pdf"), QStringLiteral("/data/notes.txt") })
         >= 0);
 
-    IndexSearchQuery query;
-    query.text = QStringLiteral("report");
+    SearchQuery query;
+    query.add(SearchPredicate::name(QStringLiteral("report")));
 
     Result<QList<IndexSearchHit>> hits = m_db->search(query);
     QVERIFY2(hits.ok(), qPrintable(hits.error().message));
@@ -207,8 +214,8 @@ void TestIndexDatabase::searchIsCaseInsensitiveForNonAsciiByDefault()
 
     // SQLite's own NOCASE only folds ASCII, so this is the case that catches a
     // regression in the folded-name column.
-    IndexSearchQuery query;
-    query.text = QStringLiteral("łódź");
+    SearchQuery query;
+    query.add(SearchPredicate::name(QStringLiteral("łódź")));
 
     Result<QList<IndexSearchHit>> hits = m_db->search(query);
     QVERIFY(hits.ok());
@@ -221,9 +228,8 @@ void TestIndexDatabase::searchHonoursCaseSensitiveFlag()
                 { QStringLiteral("/data/Report.txt"), QStringLiteral("/data/report.txt") })
         >= 0);
 
-    IndexSearchQuery query;
-    query.text = QStringLiteral("Report");
-    query.caseSensitive = true;
+    SearchQuery query;
+    query.add(SearchPredicate::name(QStringLiteral("Report"), true));
 
     Result<QList<IndexSearchHit>> hits = m_db->search(query);
     QVERIFY(hits.ok());
@@ -240,21 +246,23 @@ void TestIndexDatabase::searchFiltersByExtensionAndKind()
         { makeFile(QStringLiteral("/data/a.pdf")), makeFile(QStringLiteral("/data/a.txt")),
             makeFile(QStringLiteral("/data/subdir"), 0, true) }));
 
-    IndexSearchQuery byExtension;
-    byExtension.extension = QStringLiteral("PDF"); // matching must not be case sensitive
+    SearchQuery byExtension; // matching must not be case sensitive
+    byExtension.add(SearchPredicate::extension(QStringLiteral("PDF")));
     QCOMPARE(m_db->search(byExtension).value().size(), 1);
 
-    IndexSearchQuery filesOnly;
-    filesOnly.includeDirs = false;
+    SearchQuery filesOnly;
+    filesOnly.add(SearchPredicate::kind(false));
     QCOMPARE(m_db->search(filesOnly).value().size(), 2);
 
-    IndexSearchQuery dirsOnly;
-    dirsOnly.includeFiles = false;
+    SearchQuery dirsOnly;
+    dirsOnly.add(SearchPredicate::kind(true));
     QCOMPARE(m_db->search(dirsOnly).value().size(), 1);
 
-    IndexSearchQuery neither;
-    neither.includeFiles = false;
-    neither.includeDirs = false;
+    // Asking for what is a directory and also a file. Two criteria that cannot
+    // both hold answer with nothing, rather than with everything.
+    SearchQuery neither;
+    neither.add(SearchPredicate::kind(true));
+    neither.add(SearchPredicate::kind(false));
     QVERIFY(m_db->search(neither).value().isEmpty());
 }
 
@@ -267,13 +275,13 @@ void TestIndexDatabase::searchFiltersBySize()
         { makeFile(QStringLiteral("/data/small.bin"), 100),
             makeFile(QStringLiteral("/data/big.bin"), 10'000) }));
 
-    IndexSearchQuery large;
-    large.minSize = 1000;
+    SearchQuery large;
+    large.add(SearchPredicate::minSize(1000));
     QCOMPARE(m_db->search(large).value().size(), 1);
     QCOMPARE(m_db->search(large).value().first().name, QStringLiteral("big.bin"));
 
-    IndexSearchQuery small;
-    small.maxSize = 1000;
+    SearchQuery small;
+    small.add(SearchPredicate::maxSize(1000));
     QCOMPARE(m_db->search(small).value().size(), 1);
     QCOMPARE(m_db->search(small).value().first().name, QStringLiteral("small.bin"));
 }
@@ -284,11 +292,11 @@ void TestIndexDatabase::searchScopesToVolume()
     const qint64 second = seedVolume(QStringLiteral("file:///two"), { QStringLiteral("/two/shared.txt") });
     QVERIFY(first >= 0 && second >= 0);
 
-    IndexSearchQuery all;
-    all.text = QStringLiteral("shared");
+    SearchQuery all;
+    all.add(SearchPredicate::name(QStringLiteral("shared")));
     QCOMPARE(m_db->search(all).value().size(), 2);
 
-    IndexSearchQuery scoped = all;
+    SearchQuery scoped = all;
     scoped.volumeId = second;
     QCOMPARE(m_db->search(scoped).value().size(), 1);
     QCOMPARE(m_db->search(scoped).value().first().uri, QStringLiteral("file:///two/shared.txt"));
@@ -301,7 +309,7 @@ void TestIndexDatabase::searchRespectsLimit()
         paths.append(QStringLiteral("/data/file%1.txt").arg(i));
     QVERIFY(seedVolume(QStringLiteral("file:///data"), paths) >= 0);
 
-    IndexSearchQuery query;
+    SearchQuery query;
     query.limit = 10;
     QCOMPARE(m_db->search(query).value().size(), 10);
 }
@@ -310,8 +318,8 @@ void TestIndexDatabase::searchReturnsResolvableUris()
 {
     QVERIFY(seedVolume(QStringLiteral("sftp://nas/volume1"), { QStringLiteral("/volume1/deep/a.txt") }) >= 0);
 
-    IndexSearchQuery query;
-    query.text = QStringLiteral("a.txt");
+    SearchQuery query;
+    query.add(SearchPredicate::name(QStringLiteral("a.txt")));
     Result<QList<IndexSearchHit>> hits = m_db->search(query);
     QVERIFY(hits.ok());
     QCOMPARE(hits.value().size(), 1);
@@ -339,11 +347,9 @@ void TestIndexDatabase::rowsFromAnUnfinishedScanAreNotVisible()
     QCOMPARE(rowsInTable(), 2);
     QCOMPARE(m_db->fileCount(volume).value(), 1);
 
-    IndexSearchQuery query;
-    query.text = QStringLiteral("arriving");
-    QVERIFY2(m_db->search(query).value().isEmpty(), "a scan in progress answered a search");
-    query.text = QStringLiteral("settled");
-    QCOMPARE(m_db->search(query).value().size(), 1);
+    QVERIFY2(m_db->search(named(QStringLiteral("arriving"))).value().isEmpty(),
+        "a scan in progress answered a search");
+    QCOMPARE(m_db->search(named(QStringLiteral("settled"))).value().size(), 1);
 
     const QDateTime when = QDateTime::fromSecsSinceEpoch(1700000000);
     QVERIFY(m_db->commitScan(volume, scan.value(), when).ok());
@@ -352,10 +358,8 @@ void TestIndexDatabase::rowsFromAnUnfinishedScanAreNotVisible()
     // what it replaced is gone rather than lingering alongside it.
     QCOMPARE(rowsInTable(), 1);
     QCOMPARE(m_db->fileCount(volume).value(), 1);
-    query.text = QStringLiteral("arriving");
-    QCOMPARE(m_db->search(query).value().size(), 1);
-    query.text = QStringLiteral("settled");
-    QVERIFY(m_db->search(query).value().isEmpty());
+    QCOMPARE(m_db->search(named(QStringLiteral("arriving"))).value().size(), 1);
+    QVERIFY(m_db->search(named(QStringLiteral("settled"))).value().isEmpty());
 }
 
 void TestIndexDatabase::anAbandonedScanLeavesThePreviousContents()
@@ -371,8 +375,8 @@ void TestIndexDatabase::anAbandonedScanLeavesThePreviousContents()
 
     QCOMPARE(rowsInTable(), 1);
     QCOMPARE(m_db->fileCount(volume).value(), 1);
-    IndexSearchQuery query;
-    query.text = QStringLiteral("settled");
+    SearchQuery query;
+    query.add(SearchPredicate::name(QStringLiteral("settled")));
     QCOMPARE(m_db->search(query).value().size(), 1);
 
     // Nothing about the volume moved either: an abandoned scan is one that did
@@ -437,11 +441,8 @@ void TestIndexDatabase::aRescanTouchesOnlyItsOwnVolume()
     // The volume row itself survives so a rescan reuses the same id.
     QCOMPARE(m_db->volumes().value().size(), 2);
 
-    IndexSearchQuery query;
-    query.text = QStringLiteral("b.txt");
-    QCOMPARE(m_db->search(query).value().size(), 1);
-    query.text = QStringLiteral("a.txt");
-    QVERIFY(m_db->search(query).value().isEmpty());
+    QCOMPARE(m_db->search(named(QStringLiteral("b.txt"))).value().size(), 1);
+    QVERIFY(m_db->search(named(QStringLiteral("a.txt"))).value().isEmpty());
 }
 
 void TestIndexDatabase::removeVolumeDropsEverything()
@@ -520,8 +521,8 @@ void TestIndexDatabase::anIndexWrittenBeforeGenerationsStaysVisible()
     QVERIFY2(upgraded.open().ok(), "an index from the previous schema must still open");
 
     QCOMPARE(upgraded.fileCount().value(), 2);
-    IndexSearchQuery query;
-    query.text = QStringLiteral("kept");
+    SearchQuery query;
+    query.add(SearchPredicate::name(QStringLiteral("kept")));
     QCOMPARE(upgraded.search(query).value().size(), 1);
     QCOMPARE(upgraded.volumes().value().first().fileCount, 2);
 
@@ -574,8 +575,8 @@ void TestIndexDatabase::survivesAccessFromSeveralThreads()
     // Reading from yet another thread must work too.
     std::atomic_int seen { -1 };
     std::thread reader([this, &seen] {
-        IndexSearchQuery query;
-        query.text = QStringLiteral("w0-");
+        SearchQuery query;
+        query.add(SearchPredicate::name(QStringLiteral("w0-")));
         Result<QList<IndexSearchHit>> hits = m_db->search(query);
         seen = hits.ok() ? hits.value().size() : -1;
     });
@@ -592,7 +593,7 @@ void TestIndexDatabase::operationsFailCleanlyWhenClosed()
     // Every entry point must report a plain error instead of crashing.
     QVERIFY(!m_db->volumes().ok());
     QVERIFY(!m_db->fileCount().ok());
-    QVERIFY(!m_db->search(IndexSearchQuery {}).ok());
+    QVERIFY(!m_db->search(SearchQuery {}).ok());
     QVERIFY(!m_db->upsertVolume(VfsUri::fromString(QStringLiteral("file:///x")), QString()).ok());
     QVERIFY(!m_db->beginScan(1).ok());
     QVERIFY(!m_db->insertBatch(1, 1, { makeFile(QStringLiteral("/x/a")) }).ok());

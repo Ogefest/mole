@@ -9,6 +9,39 @@ wrong.
 
 ---
 
+## A query was described twice, and nothing kept the two in step
+
+**Asked for:** MOLE-147 — `IndexSearchQuery` and `LiveSearchTask::Criteria` held the same
+list of fields, in two structs, with two evaluators behind them. ADR-0005 had already
+written down what that costs; the epic above this ticket adds four more criteria, and each
+would have been added to both, in two languages.
+
+**What it turned out to be:** one `SearchQuery`, a list of predicates rather than a struct
+of optional fields, and a planner that splits it per source. A predicate says what it
+matches and what it costs; `matches(FileEntry)` is a pure function with its own test; and
+`planSearch()` answers what a source will state in its own query and what is left over,
+cheapest first. Nothing is dropped — a criterion the source cannot express is evaluated
+afterwards, and the plan says so, which is what the status line and MOLE-153's form will
+read. [ADR-0036](docs/adr/0036-one-query-with-a-cost-on-every-criterion.md) records why the
+cost sits on the predicate rather than in a lookup keyed by field.
+
+**The test that proves the merge lost nothing** asks one fixture tree the same nine
+questions through both engines and compares the answers — every criterion that exists,
+including the ones that only ever worked by accident on one side. It also insists each
+question matches something, because a merge test where both engines return nothing passes
+for the wrong reason.
+
+**Two things were quietly wrong and are now written down.** The indexed path narrowed its
+own answer by hand in the controller, because a volume can be a whole disk and the question
+was about one folder in it; that is a `underPath` predicate now, so every future caller of
+the index gets it rather than having to remember it. And the two engines' result caps were
+5000 and 10000, picked independently and documented nowhere; they are one number now.
+
+**One thing was nearly changed by accident.** The first draft exempted directories from a
+size range — defensible, and not this ticket's decision to make. Both engines have always
+compared a folder on the size the listing gave it, and they still do; the comment in the
+evaluator says whose call it is to change that.
+
 ## Twenty results examined was twenty browser tabs, and the comment said the opposite
 
 **Asked for:** MOLE-158 — going from a search result to the folder it lives in opened a

@@ -104,6 +104,7 @@ mole_add_test(tst_DriveCheckTask    SOURCES core/tst_DriveCheckTask.cpp)
 mole_add_test(tst_IndexDatabase     SOURCES core/tst_IndexDatabase.cpp LIBS Qt6::Sql)
 mole_add_test(tst_ScanTask          SOURCES core/tst_ScanTask.cpp)
 mole_add_test(tst_LiveSearchTask    SOURCES core/tst_LiveSearchTask.cpp)
+mole_add_test(tst_SearchQuery       SOURCES core/tst_SearchQuery.cpp)
 mole_add_test(tst_EventBus          SOURCES core/tst_EventBus.cpp)
 mole_add_test(tst_TransferTask      SOURCES core/tst_TransferTask.cpp)
 

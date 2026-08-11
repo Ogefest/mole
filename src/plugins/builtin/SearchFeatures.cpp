@@ -196,31 +196,29 @@ void LiveSearchController::start()
     m_results->clear();
     m_truncated = false;
 
+    // One query, whichever engine answers it. The criteria mean the same thing
+    // to each of them because there is only one place that says what they mean.
+    SearchQuery query;
+    query.addIfSet(SearchPredicate::name(m_queryText, m_caseSensitive));
+    query.addIfSet(SearchPredicate::extension(m_extension));
+    query.addIfSet(SearchPredicate::minSize(m_minSize));
+    query.addIfSet(SearchPredicate::maxSize(m_maxSize));
+    // The folder the question was about. A walk is already inside it; the index
+    // is not, because a volume can be a whole disk -- and rather than the answer
+    // being narrowed by hand afterwards, the narrowing is part of the question.
+    query.addIfSet(SearchPredicate::underPath(m_rootUri));
+
     // Which engine answers, and saying so. ADR-0005: the index when it covers the
     // whole subtree and has not been turned off, a walk otherwise.
     if (const std::optional<IndexVolume> volume = m_useIndex ? coveringVolume() : std::nullopt) {
-        IndexSearchQuery query;
-        query.text = m_queryText;
-        query.extension = m_extension;
-        query.caseSensitive = m_caseSensitive;
         query.volumeId = volume->id;
-        query.minSize = m_minSize;
-        query.maxSize = m_maxSize;
 
         auto* indexTask = new IndexSearchTask(m_services.index, query);
         m_indexTask = indexTask;
         connect(
             indexTask, &IndexSearchTask::resultsReady, this, [this, indexTask](const FileEntryList& hits) {
-                if (m_indexTask != indexTask)
-                    return;
-                // Only what is under the folder being searched: the volume can be a
-                // whole disk and the question was about one folder in it.
-                FileEntryList inScope;
-                for (const FileEntry& entry : hits) {
-                    if (entry.uri.toString().startsWith(m_rootUri))
-                        inScope.append(entry);
-                }
-                m_results->setEntries(inScope);
+                if (m_indexTask == indexTask)
+                    m_results->setEntries(hits);
             });
         connect(indexTask, &Task::finished, this, [this, indexTask] {
             if (m_indexTask != indexTask)
@@ -239,14 +237,7 @@ void LiveSearchController::start()
         return;
     }
 
-    LiveSearchTask::Criteria criteria;
-    criteria.text = m_queryText;
-    criteria.extension = m_extension;
-    criteria.caseSensitive = m_caseSensitive;
-    criteria.minSize = m_minSize;
-    criteria.maxSize = m_maxSize;
-
-    auto* task = new LiveSearchTask(std::move(fs), root, criteria);
+    auto* task = new LiveSearchTask(std::move(fs), root, query);
     m_task = task;
 
     connect(task, &LiveSearchTask::hitsFound, this, [this, task](const FileEntryList& batch) {
@@ -419,8 +410,8 @@ void IndexSearchController::search()
         m_task.clear();
     }
 
-    IndexSearchQuery query;
-    query.text = m_queryText;
+    SearchQuery query;
+    query.addIfSet(SearchPredicate::name(m_queryText));
     query.volumeId
         = m_volumeIndex >= 0 && m_volumeIndex < m_volumeIds.size() ? m_volumeIds.at(m_volumeIndex) : -1;
 

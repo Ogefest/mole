@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/search/SearchQuery.h"
 #include "core/vfs/VfsTypes.h"
 #include "core/vfs/VfsUri.h"
 
@@ -34,19 +35,6 @@ struct IndexVolume
     QString label;
     QDateTime lastScan;
     qint64 fileCount = 0;
-};
-
-struct IndexSearchQuery
-{
-    QString text; ///< substring match on the file name
-    QString extension; ///< optional exact extension filter
-    qint64 volumeId = -1; ///< -1 = all volumes
-    bool caseSensitive = false;
-    bool includeDirs = true;
-    bool includeFiles = true;
-    qint64 minSize = -1;
-    qint64 maxSize = -1;
-    int limit = 5000;
 };
 
 struct IndexSearchHit
@@ -131,7 +119,12 @@ public:
 
     // ---- reading ---------------------------------------------------------
 
-    [[nodiscard]] Result<QList<IndexSearchHit>> search(const IndexSearchQuery& query) const;
+    /// Answers the part of `query` that SQL can express.
+    ///
+    /// Only that part: what the planner could not push down is left to whoever
+    /// has the entries, because a criterion the database cannot state is one it
+    /// must not silently drop. See SearchPlan.
+    [[nodiscard]] Result<QList<IndexSearchHit>> search(const SearchQuery& query) const;
     /// How many rows a search can currently reach. Rows an unfinished scan has
     /// written are not among them.
     [[nodiscard]] Result<qint64> fileCount(qint64 volumeId = -1) const;

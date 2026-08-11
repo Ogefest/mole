@@ -1,9 +1,22 @@
 #include "core/index/IndexSearchTask.h"
 
 namespace mole {
+namespace {
 
-IndexSearchTask::IndexSearchTask(IndexDatabase* index, IndexSearchQuery query, QObject* parent)
-    : Task(QStringLiteral("Search index for \"%1\"").arg(query.text), parent)
+    /// Names the search after what was typed, when anything was.
+    QString titleFor(const SearchQuery& query)
+    {
+        for (const SearchPredicate& predicate : query.predicates) {
+            if (predicate.field == SearchPredicate::Field::Name && !predicate.text.isEmpty())
+                return QStringLiteral("Search index for \"%1\"").arg(predicate.text);
+        }
+        return QStringLiteral("Search the index");
+    }
+
+} // namespace
+
+IndexSearchTask::IndexSearchTask(IndexDatabase* index, SearchQuery query, QObject* parent)
+    : Task(titleFor(query), parent)
     , m_index(index)
     , m_query(std::move(query))
 {
@@ -24,6 +37,11 @@ void IndexSearchTask::run()
 
     // Index hits become ordinary FileEntry values, so the same list model and
     // the same context menu work whether results came from disk or the index.
+    //
+    // And everything SQL could not state is applied here, to the entry, by the
+    // evaluator the walk uses -- so a criterion the database cannot express
+    // narrows the answer rather than being lost on the way out of it.
+    const SearchPlan plan = planSearch(m_query, SearchSource::Index);
     FileEntryList entries;
     entries.reserve(hits.value().size());
     for (const IndexSearchHit& hit : hits.value()) {
@@ -34,6 +52,8 @@ void IndexSearchTask::run()
         entry.size = hit.size;
         if (hit.modifiedEpoch > 0)
             entry.modified = QDateTime::fromSecsSinceEpoch(hit.modifiedEpoch);
+        if (!plan.matches(entry))
+            continue;
         entries.append(entry);
     }
 

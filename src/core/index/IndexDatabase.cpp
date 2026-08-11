@@ -15,14 +15,6 @@ namespace {
 
     constexpr int kSchemaVersion = 2;
 
-    /// SQLite's LIKE and NOCASE only fold ASCII, so "Łódź" would never match
-    /// "łódź". We store a Qt-lowercased copy of the name and match against
-    /// that instead -- Qt's toLower() is Unicode-aware.
-    QString foldForSearch(const QString& text)
-    {
-        return text.toLower();
-    }
-
 } // namespace
 
 IndexDatabase::IndexDatabase(QString filePath)
@@ -491,13 +483,11 @@ Result<void> IndexDatabase::insertBatch(qint64 volumeId, qint64 generation, cons
     return {};
 }
 
-Result<QList<IndexSearchHit>> IndexDatabase::search(const IndexSearchQuery& query) const
+Result<QList<IndexSearchHit>> IndexDatabase::search(const SearchQuery& query) const
 {
     QMutexLocker lock(&m_mutex);
     if (!m_open)
         return VfsError::make(VfsError::IoError, QStringLiteral("Index is not open"));
-    if (!query.includeDirs && !query.includeFiles)
-        return QList<IndexSearchHit> {};
 
     QSqlDatabase db = connectionForCurrentThread();
     if (!db.isOpen())
@@ -510,40 +500,46 @@ Result<QList<IndexSearchHit>> IndexDatabase::search(const IndexSearchQuery& quer
         "FROM files f JOIN volumes v ON v.id = f.volume_id AND v.generation = f.generation WHERE 1=1");
     QVariantList bindings;
 
-    if (!query.text.isEmpty()) {
-        // instr() instead of LIKE: no wildcard escaping to get wrong, and it
-        // lets the case-insensitive path use our Unicode-folded column.
-        if (query.caseSensitive) {
-            sql += QStringLiteral(" AND instr(f.name, ?) > 0");
-            bindings.append(query.text);
-        } else {
-            sql += QStringLiteral(" AND instr(f.name_folded, ?) > 0");
-            bindings.append(foldForSearch(query.text));
+    for (const SearchPredicate& predicate : planSearch(query, SearchSource::Index).pushedDown()) {
+        switch (predicate.field) {
+        case SearchPredicate::Field::Name:
+            // instr() instead of LIKE: no wildcard escaping to get wrong, and
+            // it lets the case-insensitive path use our Unicode-folded column.
+            if (predicate.caseSensitive) {
+                sql += QStringLiteral(" AND instr(f.name, ?) > 0");
+                bindings.append(predicate.text);
+            } else {
+                sql += QStringLiteral(" AND instr(f.name_folded, ?) > 0");
+                bindings.append(foldForSearch(predicate.text));
+            }
+            break;
+        case SearchPredicate::Field::Extension:
+            sql += QStringLiteral(" AND f.extension = ?");
+            bindings.append(predicate.text);
+            break;
+        case SearchPredicate::Field::Size:
+            sql += predicate.match == SearchPredicate::Match::AtMost ? QStringLiteral(" AND f.size <= ?")
+                                                                     : QStringLiteral(" AND f.size >= ?");
+            bindings.append(predicate.number);
+            break;
+        case SearchPredicate::Field::Kind:
+            sql += QStringLiteral(" AND f.is_dir = ?");
+            bindings.append(predicate.flag ? 1 : 0);
+            break;
+        case SearchPredicate::Field::Modified:
+        case SearchPredicate::Field::Path:
+            // Never pushed down; the planner does not hand these over.
+            break;
         }
     }
-    if (!query.extension.isEmpty()) {
-        sql += QStringLiteral(" AND f.extension = ?");
-        bindings.append(query.extension.toLower());
-    }
+
     if (query.volumeId >= 0) {
         sql += QStringLiteral(" AND f.volume_id = ?");
         bindings.append(query.volumeId);
     }
-    if (!query.includeDirs)
-        sql += QStringLiteral(" AND f.is_dir = 0");
-    if (!query.includeFiles)
-        sql += QStringLiteral(" AND f.is_dir = 1");
-    if (query.minSize >= 0) {
-        sql += QStringLiteral(" AND f.size >= ?");
-        bindings.append(query.minSize);
-    }
-    if (query.maxSize >= 0) {
-        sql += QStringLiteral(" AND f.size <= ?");
-        bindings.append(query.maxSize);
-    }
 
     sql += QStringLiteral(" ORDER BY f.is_dir DESC, f.name COLLATE NOCASE LIMIT ?");
-    bindings.append(query.limit > 0 ? query.limit : 5000);
+    bindings.append(query.limit > 0 ? query.limit : SearchQuery {}.limit);
 
     QSqlQuery statement(db);
     statement.prepare(sql);
