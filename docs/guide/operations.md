@@ -65,6 +65,54 @@ not where you think it is, have aimed the operation at something else. Deleting
 duplicates lists full locations instead of names, because inside a duplicate group
 every name is the same.
 
+## Dragging files in and out
+
+Copying and moving have always been `F5` and `F6` between two panes. Dragging is the
+other way round: it is how files get between Mole and everything else on the desktop.
+
+**Dragging out.** Press a row and move the pointer. If the row you started on is one of
+the ticked ones, the whole ticked selection goes; if it is not, that row goes on its own —
+so dragging one file out of a set of ten sends one file, and finds the ten still ticked
+afterwards. Dragging never moves the cursor and never ticks anything: it is not a way of
+selecting.
+
+**What leaves is always a copy.** Some applications ask for a move, and a move on this
+kind of gesture is something the *receiver* performs — it takes the data and trusts the
+sender to delete the original. Mole never offers that, whatever is asked for, so nothing
+can leave this window by being deleted from it. The worst a misunderstood drag can do is
+leave you with a duplicate. See
+[ADR-0040](../adr/0040-what-leaves-the-window-is-a-path-and-it-leaves-as-a-copy.md).
+
+**Dragging in.** Drop files onto a listing and they are copied into the folder it is
+showing. While the drag is over the pane it says what would happen — how many, how much,
+and into which folder, which is the thing worth checking when two panes are open:
+
+![Files dragged onto a listing](images/26-drag-into-a-pane.png)
+
+A name that is already taken opens the same confirmation `F5` uses, with the clashing
+names listed and the choice between stopping, skipping that file, or overwriting it.
+Nothing is written before that is answered, and stopping is the default. The pane you
+drop onto becomes the active one, because that is where the files now are.
+
+**It takes files, not addresses.** An image dragged out of a web page is a link rather
+than a file, and Mole says so instead of appearing to accept it — there is nothing here
+that fetches from the web, and a drop that silently does nothing reads as a fault. Drag
+the file out of a folder, or save it first.
+
+**A read-only drive does not take a drop at all.** A mounted archive cannot be written
+to, so the pane showing one refuses the drag while the pointer is still moving: the
+desktop shows it cannot be dropped there, and the pane says *read-only* under the
+listing. Being told before letting go beats being told afterwards.
+
+**A file that is not on this computer takes two drags.** A row inside an archive, or on
+SFTP or in a bucket, has no path another application could open — so Mole fetches it into
+a scratch copy first, and *that* is what leaves. The first drag starts the fetch and says
+so, with the transfer in the strip along the bottom like any other; the second drag
+carries the files. It works that way because a gesture cannot be paused: there is no way
+to hold a drag open while a hundred megabytes come over the network, and freezing the
+window until they arrived would be worse than asking for the gesture twice. Dragging the
+same file again fetches nothing — the copy is reused until the original changes.
+
 ## Renaming in bulk
 
 ![Bulk rename](images/07b-bulk-rename.png)

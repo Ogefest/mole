@@ -44,6 +44,11 @@ being added on top of it.
   and right step through the folder.
 - **Commander-style file operations.** Copy and move between panes with F5/F6,
   across *any* two drives; rename, create and delete with F2/F7/F8.
+- **Dragging in and out.** Files leave a listing by pointer into anything that
+  takes files, and arrive the same way into the folder a pane is showing —
+  always as a copy, asking before it overwrites a name. A row that is not on
+  this computer is fetched first, so an archive and a bucket can be dragged out
+  of too.
 - **Full keyboard control.** Arrows, Enter, Insert to select, function keys for
   operations. Enter hands a file to the desktop's default application.
 - **Background everything.** Listing, scanning and searching run on a thread

@@ -52,6 +52,7 @@
 #include <QQuickTextDocument>
 #include <QQuickWindow>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QTest>
 #include <QTextBlock>
 #include <QTextDocument>
@@ -165,6 +166,7 @@ private slots:
     void theBytesOfAFileNothingElseCanShow();
     void aFileIsWhatIsInItRatherThanWhatItIsCalled();
     void aTransferInFlightShowsASpeedAndABar();
+    void aDragOverAPaneSaysWhatWouldHappen();
     void everyFeatureAndPreviewHasAPictureInTheGuide();
 
 private:
@@ -3231,6 +3233,50 @@ void TestWalkthrough::aTransferInFlightShowsASpeedAndABar()
 //
 // Without this the work above is a snapshot, and the fourteenth feature arrives
 // undocumented too.
+void TestWalkthrough::aDragOverAPaneSaysWhatWouldHappen()
+{
+    // A folder outside the fixture, because that is what a drop is: files arriving
+    // from somewhere that is not this window.
+    QTemporaryDir downloads;
+    QVERIFY(downloads.isValid());
+    for (const QString& name : { QStringLiteral("scan-0417.pdf"), QStringLiteral("receipt-april.pdf"),
+             QStringLiteral("bank-statement.pdf") }) {
+        QFile file(QDir(downloads.path()).filePath(name));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(QByteArray("%PDF-1.4\n").repeated(400));
+    }
+
+    QQuickItem* listing = m_harness->item(QStringLiteral("fileList"));
+    QVERIFY(listing);
+    const QPoint where = m_harness->centreOf(listing);
+
+    QStringList dragged;
+    for (const QString& name : { QStringLiteral("scan-0417.pdf"), QStringLiteral("receipt-april.pdf"),
+             QStringLiteral("bank-statement.pdf") }) {
+        dragged.append(QDir(downloads.path()).filePath(name));
+    }
+
+    m_harness->dragEnter(dragged, where);
+    m_harness->dragMove(where);
+
+    // A drag in flight cannot be photographed -- QDrag wants a platform and a
+    // pointer -- but the sentence the pane says while one is over it can be, and
+    // that is the part this documents. Asserted before the picture is taken, like
+    // every other picture in the guide.
+    QQuickItem* hint = nullptr;
+    for (QQuickItem* candidate : m_harness->items(QStringLiteral("dropHintText"))) {
+        if (candidate->isVisible())
+            hint = candidate;
+    }
+    QVERIFY2(hint, "the pane says nothing while a drag is over it");
+    const QString said = hint->property("text").toString();
+    QVERIFY2(said.contains(QStringLiteral("3 items")), qPrintable(said));
+    QVERIFY2(said.contains(pane()->displayPath()), qPrintable(said));
+
+    m_harness->screenshot(QStringLiteral("26-drag-into-a-pane"));
+    m_harness->dragLeave();
+}
+
 void TestWalkthrough::everyFeatureAndPreviewHasAPictureInTheGuide()
 {
     // Feature or provider id, against a picture in docs/guide/images. One entry

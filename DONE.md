@@ -9,6 +9,31 @@ wrong.
 
 ---
 
+## The guide did not mention dragging
+
+**Asked for:** MOLE-89 — `operations.md` covered copying, moving, deleting and packing,
+every operation as the keyboard performs it. Dragging is now a second way to do two of
+them, and it is the way somebody arriving from another file manager will try first.
+
+**What it turned out to be:** a section built around the four things that surprise people,
+rather than a description of the gesture. What goes when rows are ticked and what goes when
+they are not. That it is always a copy, with the reason — a move on this kind of gesture is
+something the *receiver* performs, so offering one would mean trusting another application's
+word before deleting. That a drop takes files and not addresses, so an image dragged out of
+a web page is refused and says so. And that a file which is not on this computer takes two
+drags, with one sentence on why: a gesture cannot be held open while a hundred megabytes
+come over the network.
+
+**One picture, and it is the banner rather than the gesture.** A drag in flight cannot be
+photographed — `QDrag` wants a platform and a pointer — and a staged imitation of one would
+be exactly the kind of picture this guide's rule exists to prevent. What the harness can
+reach is the sentence the pane says while a drag is over it, so that is the picture, taken
+by `tst_Walkthrough` immediately after asserting it says *3 items* and names the folder.
+
+**Only the one picture was copied in.** `make guide-images` rewrites all forty-nine, because
+the sidebar shows the machine's real free space — the rest were left as they were, which is
+what [TODO.md](TODO.md) says to do.
+
 ## A file that was not on disk could not be dragged anywhere
 
 **Asked for:** MOLE-88 — Mole's own argument is that a bucket, a NAS and an archive are the
