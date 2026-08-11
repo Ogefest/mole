@@ -53,8 +53,13 @@ class PreviewTabController final : public FeatureController
     /// See docs/adr/0034-what-a-file-says-about-itself.md.
     Q_PROPERTY(bool detailsOpen READ isDetailsOpen NOTIFY detailsChanged)
     Q_PROPERTY(bool detailsLoading READ isDetailsLoading NOTIFY detailsChanged)
-    /// One map per fact, with `label` and `value`.
+    /// One map per fact, with `label`, `value` and `startsBlock` -- true on the
+    /// first row of each reader's contribution, which is where the drawer draws
+    /// a line. The order is the readers' priority order; nothing is regrouped.
     Q_PROPERTY(QVariantList details READ details NOTIFY detailsChanged)
+    /// How wide the drawer is, remembered across restarts. A choice about the
+    /// person's screen, like whether it is open at all.
+    Q_PROPERTY(int detailsWidth READ detailsWidth NOTIFY detailsChanged)
     Q_PROPERTY(int position READ position NOTIFY currentChanged)
     Q_PROPERTY(int siblingCount READ siblingCount NOTIFY currentChanged)
     Q_PROPERTY(bool canGoNext READ canGoNext NOTIFY currentChanged)
@@ -86,10 +91,27 @@ public:
     bool isDetailsOpen() const { return m_detailsOpen; }
     bool isDetailsLoading() const { return !m_details.isNull(); }
     QVariantList details() const { return m_detailFacts; }
-    /// Opens or closes the panel, remembers the answer for this file type, and
-    /// reads the facts when it is opened. Nothing is read for a panel nobody
-    /// opened: the cost of an expensive reader falls on whoever asked for it.
+    int detailsWidth() const { return m_detailsWidth; }
+    /// Opens or closes the drawer, remembers the answer -- **once, for every
+    /// file** rather than per file type -- and reads the facts when it is
+    /// opened. Nothing is read for a drawer nobody opened: the cost of an
+    /// expensive reader falls on whoever asked for it.
+    ///
+    /// Not ADR-0006's per-suffix key, deliberately. That one is right for
+    /// *render this .html as a page*, which is a choice about a file type;
+    /// whether a drawer is open is a choice about the person and their screen,
+    /// and having it appear for a .jpg and vanish for a .png is the surprise.
     Q_INVOKABLE void setDetailsOpen(bool open);
+    /// Remembers how wide the reader left it. Called when the divider is
+    /// released rather than as it moves: a preference is a file on disk.
+    Q_INVOKABLE void setDetailsWidth(int width);
+    /// Puts every row on the clipboard as `label: value` lines. The second thing
+    /// anybody wants after one value is all of them.
+    Q_INVOKABLE void copyDetails();
+    /// Read the facts although the drawer is shut, because the viewer on screen
+    /// is showing them itself -- which the information viewer does, its content
+    /// being the facts. The cost rule survives: something is about to show them.
+    Q_INVOKABLE void requestDetails();
 
     /// Shows `uri` and loads its folder in the background so the arrows work.
     Q_INVOKABLE void open(const QString& uri);
@@ -141,6 +163,7 @@ private:
     /// further read for a file that was identified from its bytes.
     QByteArray m_head;
     bool m_detailsOpen = false;
+    int m_detailsWidth = 320;
     QVariantList m_detailFacts;
 };
 

@@ -1,7 +1,10 @@
 # ADR-0034: What a file says about itself is a fifth extension point
 
 - **Date:** 2026-08-11
-- **Status:** Accepted
+- **Status:** Accepted. The panel's shape and how its state is remembered are
+  superseded by
+  [ADR-0035](0035-the-details-are-a-drawer-and-one-setting.md); the extension
+  point, the cost rule and the reader ordering below still hold.
 
 ## Context
 

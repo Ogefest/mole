@@ -13,6 +13,18 @@ import QtQuick.Layouts
 Item {
     id: view
     property var controller: null
+    /// The preview tab, which owns the facts -- the viewer's own controller does
+    /// not. Set by PreviewView alongside `controller`.
+    property var tab: null
+
+    // This viewer shows the facts whether or not the drawer is open, so it asks
+    // for them itself. Nothing is read for a drawer nobody opened; something is
+    // read when something is about to show it.
+    onTabChanged: if (tab) tab.requestDetails()
+    Component.onCompleted: if (tab) tab.requestDetails()
+    /// Read by PreviewView: this viewer renders the facts itself, so the drawer
+    /// stays out of its way rather than showing them twice.
+    readonly property bool showsDetailsItself: !showsBytes
 
     readonly property bool showsBytes: controller ? controller.showingBytes === true : false
 
@@ -56,6 +68,17 @@ Item {
                 text: "No installed viewer handles this file type. A plugin can add one."
             }
 
+            // The facts, in the body rather than in the drawer, because here
+            // they are the content. The same component either way.
+            DetailsList {
+                objectName: "fileInfoDetails"
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.max(120, implicitHeight)
+                Layout.minimumHeight: 120
+                facts: view.tab ? view.tab.details : []
+                busy: view.tab ? view.tab.detailsLoading : false
+                onCopyAll: function() { if (view.tab) view.tab.copyDetails() }
+            }
         }
     }
 }

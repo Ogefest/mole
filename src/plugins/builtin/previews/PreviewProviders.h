@@ -636,8 +636,6 @@ public:
     /// Lowest of all: it accepts everything, so nothing else must lose to it.
     int priority() const override { return -1000; }
     bool canPreview(const FileEntry& entry) const override { return !entry.isDir; }
-    /// The details are all this viewer has, so it opens them.
-    bool detailsOpenByDefault() const override { return true; }
     /// Information or the bytes, remembered per file type like every other
     /// viewer's choice. See docs/adr/0006-preview-options-and-preferences.md.
     QList<ViewerOption> options(const FileEntry& entry) const override;

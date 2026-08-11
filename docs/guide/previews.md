@@ -124,7 +124,8 @@ a file of millions of rows opens as fast as one of ten.
 
 ## Details
 
-Under the strip of every viewer, **Details** is what the file says about itself:
+The **Details** checkbox in the strip opens a drawer beside the viewer, with one fact a
+line:
 
 - a **photograph** — its dimensions, format and colour depth, and what the camera wrote:
   the make and model, the lens, the exposure, the aperture, the ISO, the focal length, when
@@ -135,9 +136,18 @@ Under the strip of every viewer, **Details** is what the file says about itself:
 - an **audio file** — title, artist, album, year, track and genre, with the duration, the
   bitrate, the sample rate and the channels
 
-The panel is **closed until you open it**, and nothing is read for a panel nobody opened —
-so stepping through a folder of photographs stays as quick as it is. Whether it is open is
-remembered per file type: EXIF on every photograph does not mean a panel on every log.
+![A photograph and what it says about itself](images/20-preview-image.png)
+
+The drawer is **closed until you open it**, and nothing is read for a drawer nobody opened —
+so stepping through a folder of photographs stays as quick as it is. It is **one switch for
+every preview**, not one per file type: where a viewer's own choices are remembered per
+type, this is a choice about your screen rather than about the file. Drag the divider to
+change how much room it takes; the width is remembered too.
+
+Every value can be selected with the mouse and copied, which is the point of a fact — a
+camera model or a full path is something you take out of here. **Copy all** puts every row
+on the clipboard as `label: value` lines. Facts appear in the order the readers answered,
+with a line between one reader's block and the next.
 
 Reading it puts **nothing on the network**, which is the same rule a rendered page follows.
 A picture's position is shown as the numbers in the file and is not looked up anywhere; a

@@ -2973,10 +2973,21 @@ void TestWalkthrough::anImageIsFittedToThePane()
         20000));
 
     // And what the picture says about itself, beside the picture: this is the
-    // file type the details panel was built for.
-    preview->setDetailsOpen(true);
+    // file type the drawer was built for. Turned on the way a reader turns it
+    // on, through the checkbox in the strip.
+    QQuickItem* toggle = m_harness->item(QStringLiteral("detailsToggle"));
+    QVERIFY2(toggle, "the drawer's switch is in the strip, beside Open");
+    QVERIFY(!preview->isDetailsOpen());
+    QVERIFY(QMetaObject::invokeMethod(toggle, "toggle"));
+    QVERIFY(QMetaObject::invokeMethod(toggle, "toggled"));
+    QVERIFY(m_harness->until([preview] { return preview->isDetailsOpen(); }));
     QVERIFY(m_harness->until([preview] { return !preview->details().isEmpty(); }));
     m_harness->settle(6);
+
+    QQuickItem* drawer = m_harness->item(QStringLiteral("detailsPanel"));
+    QVERIFY2(drawer && drawer->isVisible(), "the facts are down the right-hand side");
+    QVERIFY2(drawer->width() >= 200 && drawer->width() <= m_harness->window()->width() / 2,
+        "and the picture keeps its share of the window");
     m_harness->screenshot(QStringLiteral("20-preview-image"));
 
     const QVariantList details = preview->details();
@@ -3033,12 +3044,13 @@ void TestWalkthrough::aFileNothingClaimsStillReportsItself()
     QCOMPARE(preview->viewerName(), QStringLiteral("File information"));
     QVERIFY(preview->viewer());
 
-    // The facts are the details panel's now, and this is the viewer that opens
-    // it by default -- because here they are the whole content.
-    QVERIFY(preview->isDetailsOpen());
+    // The facts are this viewer's content, so it shows them in its own body
+    // whether or not the drawer is open -- and it does not turn the drawer on.
+    QVERIFY2(!preview->isDetailsOpen(), "the drawer is the reader's choice, not this viewer's");
     QVERIFY(m_harness->until([preview] { return !preview->details().isEmpty(); }));
     m_harness->settle(6);
-    QVERIFY2(m_harness->item(QStringLiteral("detailsPanel")), "the panel is what shows them");
+    QQuickItem* body = m_harness->item(QStringLiteral("fileInfoDetails"));
+    QVERIFY2(body && body->isVisible(), "a file with nothing to show still says what it is");
     m_harness->screenshot(QStringLiteral("23-preview-file-info"));
 }
 

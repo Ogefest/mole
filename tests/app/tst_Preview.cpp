@@ -183,7 +183,8 @@ private slots:
     // ---- what a file says about itself ------------------------------------
     void everyReaderThatClaimsAFileContributes();
     void nothingIsReadUntilTheDetailsAreOpened();
-    void theDetailsAreRememberedPerFileType();
+    void theDetailsAreOneSettingForEveryFile();
+    void aValueCanBeCopiedOutOfTheDetails();
     void steppingToTheNextFileCancelsAReaderInFlight();
     void aReaderThatFailsCostsOnlyItsOwnRows();
     void aPhotographShowsThePictureAndWhatTheCameraWrote();
@@ -566,23 +567,24 @@ void TestPreview::nothingIsReadUntilTheDetailsAreOpened()
     QVERIFY(log->headSize.load() > 0);
 }
 
-void TestPreview::theDetailsAreRememberedPerFileType()
+void TestPreview::theDetailsAreOneSettingForEveryFile()
 {
-    QVERIFY(m_tree->writeFile(QStringLiteral("other.txt"), QByteArray("another note")));
+    // Deliberately not ADR-0006's per-suffix key. That one is right for "render
+    // this .html as a page", which is a choice about a file type; whether a
+    // drawer is open is a choice about the person and their screen, and having
+    // it appear for one kind of file and vanish for the next is the surprise.
+    QVERIFY(m_tree->writeFile(QStringLiteral("photo.jpg"), QByteArray("not really a photograph\n")));
 
     PreviewTabController* preview = openPreview(QStringLiteral("notes.txt"));
     QVERIFY(preview);
     QVERIFY2(!preview->isDetailsOpen(), "closed until somebody asks");
     preview->setDetailsOpen(true);
 
-    // The next file of the same type opens the way the last one was left, which
-    // is the whole point of remembering it -- and a different type is untouched,
-    // because EXIF on every photograph is not a details panel on every log.
-    PreviewTabController* second = openPreview(QStringLiteral("other.txt"));
-    QVERIFY(second->isDetailsOpen());
-
+    // A different file type, and the drawer is still there.
     PreviewTabController* table = openPreview(QStringLiteral("prices.csv"));
-    QVERIFY2(!table->isDetailsOpen(), "a choice for one file type must not answer for another");
+    QVERIFY2(table->isDetailsOpen(), "one switch for every preview, not one per file type");
+    PreviewTabController* picture = openPreview(QStringLiteral("photo.jpg"));
+    QVERIFY(picture->isDetailsOpen());
 
     // And it survives a restart, because it is a preference rather than a mood.
     m_app->saveSessionNow();
@@ -598,6 +600,35 @@ void TestPreview::theDetailsAreRememberedPerFileType()
     PreviewTabController* afterRestart = openPreview(QStringLiteral("notes.txt"));
     QVERIFY(afterRestart);
     QVERIFY(afterRestart->isDetailsOpen());
+
+    // Shutting it shuts it for everything, which is the other half of "one
+    // setting" and the half a per-type key got wrong.
+    afterRestart->setDetailsOpen(false);
+    QVERIFY(!openPreview(QStringLiteral("prices.csv"))->isDetailsOpen());
+
+    // The width is remembered the same way, and only when the divider is let go.
+    afterRestart = openPreview(QStringLiteral("notes.txt"));
+    afterRestart->setDetailsWidth(420);
+    QCOMPARE(openPreview(QStringLiteral("prices.csv"))->detailsWidth(), 420);
+}
+
+void TestPreview::aValueCanBeCopiedOutOfTheDetails()
+{
+    // A fact nobody can copy is a fact somebody retypes. The selection is the
+    // view's business; putting every row on the clipboard is the controller's,
+    // the same shape as TablePreviewController::copyBlock().
+    PreviewTabController* preview = openPreview(QStringLiteral("notes.txt"));
+    QVERIFY(preview);
+    preview->setDetailsOpen(true);
+    QVERIFY(waitFor([preview] { return !preview->isDetailsLoading(); }, 5000));
+    QVERIFY(!preview->details().isEmpty());
+
+    preview->copyDetails();
+    const QString copied = QGuiApplication::clipboard()->text();
+    QVERIFY2(copied.contains(QStringLiteral("Size: ")), qPrintable(copied));
+    QVERIFY2(copied.contains(QStringLiteral("MIME type: text/plain")), qPrintable(copied));
+    // One row per line, in the order the readers answered.
+    QCOMPARE(copied.split(QLatin1Char('\n')).size(), preview->details().size());
 }
 
 void TestPreview::steppingToTheNextFileCancelsAReaderInFlight()
@@ -631,6 +662,10 @@ void TestPreview::steppingToTheNextFileCancelsAReaderInFlight()
     // And what it was going to say never reaches the file that is open now: the
     // task finished, late, against a tab that has moved on.
     drainEvents();
+    // The drawer is one setting, so the file stepped to opens it too and the
+    // same reader is waiting on the gate again. Let every one of them go, or the
+    // teardown waits for a thread that is never coming back.
+    gate->release(16);
     QVERIFY2(detailNamed(preview, QStringLiteral("Slow")).isEmpty(),
         "facts about the file somebody stepped away from must not land on this one");
 }
@@ -2012,7 +2047,10 @@ void TestPreview::reportsFactsForAnUnknownFile()
     QVERIFY(viewer);
     QCOMPARE(viewer->headline(), QStringLiteral("nothing-in-it"));
 
-    QVERIFY2(preview->isDetailsOpen(), "the details are all this viewer has, so it opens them");
+    // The facts are this viewer's content, so it asks for them whether or not
+    // the drawer is open -- which is what FileInfoPreview.qml does on load.
+    QVERIFY2(!preview->isDetailsOpen(), "and it does not turn the drawer on to do it");
+    preview->requestDetails();
     QVERIFY(waitFor([preview] { return !preview->details().isEmpty(); }, 5000));
     QVERIFY2(preview->details().size() >= 5, "an unknown file still has plenty to say about it");
 }

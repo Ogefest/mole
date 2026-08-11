@@ -41,6 +41,9 @@ public:
 
     /// Valid once finished() has been delivered.
     const QList<FileFact>& facts() const { return m_facts; }
+    /// Where each reader's contribution began in facts(), so the panel can put a
+    /// line between one reader's answer and the next without inventing groups.
+    const QList<int>& blockStarts() const { return m_blockStarts; }
     /// How many bytes of the file this task read for itself. Zero when the head
     /// it was given was enough, which is the usual case.
     qint64 bytesRead() const { return m_bytesRead; }
@@ -56,6 +59,7 @@ private:
     PluginServices m_services;
 
     QList<FileFact> m_facts;
+    QList<int> m_blockStarts;
     qint64 m_bytesRead = 0;
 };
 

@@ -10,9 +10,19 @@
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/VfsManager.h"
 
+#include <QClipboard>
+#include <QGuiApplication>
+
 #include <algorithm>
 
 namespace mole {
+namespace {
+
+    /// One key for every preview, not one per file type. See setDetailsOpen().
+    const QString kDetailsOpenKey = QStringLiteral("preview.details.open");
+    const QString kDetailsWidthKey = QStringLiteral("preview.details.width");
+
+} // namespace
 
 PreviewTabController::PreviewTabController(PluginServices services, QObject* parent)
     : FeatureController(QStringLiteral("Preview"), parent)
@@ -196,14 +206,13 @@ void PreviewTabController::installViewer(IPreviewProvider* provider)
     if (controller)
         controller->load(m_current);
 
-    // Whether the panel is open is remembered per file type, and the viewer's
-    // own answer is what an unanswered type gets: the information viewer has
-    // nothing but the details, and a photograph has a photograph.
-    const QString key = preferenceKey(QStringLiteral("details"), m_current);
-    const bool remembered = m_services.preferences
-        ? m_services.preferences->value(key, provider->detailsOpenByDefault()).toBool()
-        : provider->detailsOpenByDefault();
-    m_detailsOpen = remembered;
+    // One switch for every preview rather than one per file type: see
+    // setDetailsOpen(). Read here rather than once in the constructor because a
+    // tab restored from a session builds its viewer before anybody looks at it.
+    if (m_services.preferences) {
+        m_detailsOpen = m_services.preferences->value(kDetailsOpenKey, false).toBool();
+        m_detailsWidth = m_services.preferences->value(kDetailsWidthKey, 320).toInt();
+    }
     emit detailsChanged();
     if (m_detailsOpen)
         readDetails();
@@ -215,7 +224,7 @@ void PreviewTabController::installViewer(IPreviewProvider* provider)
 void PreviewTabController::setDetailsOpen(bool open)
 {
     if (m_services.preferences)
-        m_services.preferences->setValue(preferenceKey(QStringLiteral("details"), m_current), open);
+        m_services.preferences->setValue(kDetailsOpenKey, open);
 
     if (m_detailsOpen == open)
         return;
@@ -228,6 +237,35 @@ void PreviewTabController::setDetailsOpen(bool open)
     if (open)
         readDetails();
     emit detailsChanged();
+}
+
+void PreviewTabController::setDetailsWidth(int width)
+{
+    if (width <= 0 || width == m_detailsWidth)
+        return;
+    m_detailsWidth = width;
+    if (m_services.preferences)
+        m_services.preferences->setValue(kDetailsWidthKey, width);
+}
+
+void PreviewTabController::copyDetails()
+{
+    QStringList lines;
+    lines.reserve(m_detailFacts.size());
+    for (const QVariant& entry : std::as_const(m_detailFacts)) {
+        const QVariantMap fact = entry.toMap();
+        lines.append(QStringLiteral("%1: %2").arg(
+            fact.value(QStringLiteral("label")).toString(), fact.value(QStringLiteral("value")).toString()));
+    }
+    if (!lines.isEmpty())
+        QGuiApplication::clipboard()->setText(lines.join(QLatin1Char('\n')));
+}
+
+void PreviewTabController::requestDetails()
+{
+    if (m_details || !m_detailFacts.isEmpty())
+        return;
+    readDetails();
 }
 
 void PreviewTabController::readDetails()

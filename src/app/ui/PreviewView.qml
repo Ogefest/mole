@@ -108,6 +108,17 @@ Item {
                         }
                     }
 
+                    // The drawer's switch, beside the viewer's own choices --
+                    // the Source/Rendered picker on an .html is its neighbour.
+                    CheckBox {
+                        objectName: "detailsToggle"
+                        text: "Details"
+                        font.pixelSize: App.secondaryTextSize
+                        focusPolicy: Qt.NoFocus
+                        checked: controller ? controller.detailsOpen : false
+                        onToggled: if (controller) controller.setDetailsOpen(checked)
+                    }
+
                     ToolButton {
                         text: "Open"
                         font.pixelSize: App.secondaryTextSize
@@ -119,90 +130,72 @@ Item {
                 }
             }
 
-            // What the file says about itself, under the strip and above the
-            // viewer, filled by the tab from whatever readers claimed the file.
-            // No viewer knows this exists, which is the point: every one of them
-            // has it.
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 0
-                visible: controller && controller.currentUri.length > 0
-
-                ItemDelegate {
-                    objectName: "detailsHeader"
-                    Layout.fillWidth: true
-                    implicitHeight: App.minimumTarget
-                    focusPolicy: Qt.NoFocus
-                    onClicked: controller.setDetailsOpen(!controller.detailsOpen)
-
-                    contentItem: RowLayout {
-                        spacing: 6
-                        Label {
-                            text: controller && controller.detailsOpen ? "▾" : "▸"
-                            color: "#8b93a7"
-                            font.pixelSize: App.smallTextSize
-                        }
-                        Label {
-                            text: "Details"
-                            color: "#8b93a7"
-                            font.pixelSize: App.smallTextSize
-                        }
-                        BusyIndicator {
-                            running: controller ? controller.detailsLoading : false
-                            visible: running
-                            implicitWidth: 14
-                            implicitHeight: 14
-                        }
-                        Item { Layout.fillWidth: true }
-                    }
-                }
-
-                Flow {
-                    objectName: "detailsPanel"
-                    Layout.fillWidth: true
-                    Layout.leftMargin: 12
-                    Layout.rightMargin: 12
-                    Layout.bottomMargin: 6
-                    visible: controller && controller.detailsOpen
-                    spacing: 18
-
-                    Repeater {
-                        model: controller ? controller.details : []
-
-                        delegate: Row {
-                            required property var modelData
-                            spacing: 6
-
-                            Label {
-                                text: modelData.label
-                                color: "#6f7788"
-                                font.pixelSize: App.smallTextSize
-                            }
-                            Label {
-                                text: modelData.value
-                                color: "#d7dae0"
-                                font.pixelSize: App.smallTextSize
-                            }
-                        }
-                    }
-                }
-            }
-
-            // One viewer at a time. Reloaded from scratch on every file so a
-            // heavy one cannot linger.
-            Loader {
-                id: viewerLoader
+            // The viewer, and the drawer beside it. A long vertical list belongs
+            // down the side rather than across the top, where every row of it
+            // cost the picture room whether or not anybody was reading it.
+            SplitView {
+                id: split
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                source: controller ? controller.viewSource : ""
-                onLoaded: if (item) item.controller = controller ? controller.viewer : null
+                orientation: Qt.Horizontal
+
+                handle: Rectangle {
+                    implicitWidth: 5
+                    color: SplitHandle.pressed ? Material.accent
+                                               : (SplitHandle.hovered ? "#39445a" : "#232a35")
+                    // Written when the divider is let go rather than as it moves:
+                    // a preference is a file on disk.
+                    onPressedChanged: if (!SplitHandle.pressed && controller && drawer.visible)
+                                          controller.setDetailsWidth(Math.round(drawer.width))
+                    property bool pressed: SplitHandle.pressed
+                }
+
+                // One viewer at a time. Reloaded from scratch on every file so a
+                // heavy one cannot linger.
+                Loader {
+                    id: viewerLoader
+                    SplitView.fillWidth: true
+                    // The picture keeps a usable width at every window size, so
+                    // turning the drawer on narrows it rather than replacing it.
+                    SplitView.minimumWidth: 260
+                    source: controller ? controller.viewSource : ""
+                    onLoaded: {
+                        if (!item)
+                            return
+                        item.controller = controller ? controller.viewer : null
+                        // A viewer that renders the facts itself needs the tab
+                        // that owns them; the rest have no such property.
+                        if (item.hasOwnProperty("tab"))
+                            item.tab = controller
+                    }
+                }
+
+                DetailsList {
+                    id: drawer
+                    objectName: "detailsPanel"
+                    // Not for the viewer whose content the facts already are:
+                    // the information viewer renders this same list in its body,
+                    // and two copies of it would be one too many.
+                    visible: controller && controller.detailsOpen
+                             && !(viewerLoader.item && viewerLoader.item.showsDetailsItself === true)
+                    SplitView.preferredWidth: controller ? controller.detailsWidth : 320
+                    SplitView.minimumWidth: 200
+                    SplitView.maximumWidth: Math.max(240, split.width / 2)
+
+                    facts: controller ? controller.details : []
+                    busy: controller ? controller.detailsLoading : false
+                    onCopyAll: function() { if (controller) controller.copyDetails() }
+                }
             }
 
             Connections {
                 target: controller
                 function onCurrentChanged() {
-                    if (viewerLoader.item)
-                        viewerLoader.item.controller = controller.viewer
+                    if (!viewerLoader.item)
+                        return
+                    viewerLoader.item.controller = controller.viewer
+                    if (viewerLoader.item.hasOwnProperty("tab"))
+                        viewerLoader.item.tab = controller
                 }
             }
 

@@ -75,7 +75,11 @@ void ReadMetadataTask::run()
         // of independent claims about a file, and a plugin that throws must not
         // take the others' answers with it.
         try {
-            m_facts.append(reader->read(m_entry, m_head, m_services, cancelToken()));
+            const QList<FileFact> said = reader->read(m_entry, m_head, m_services, cancelToken());
+            if (!said.isEmpty()) {
+                m_blockStarts.append(int(m_facts.size()));
+                m_facts.append(said);
+            }
         } catch (const std::exception& error) {
             qWarning("metadata reader %s failed: %s", qPrintable(reader->id()), error.what());
         } catch (...) {

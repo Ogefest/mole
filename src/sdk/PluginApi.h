@@ -18,7 +18,7 @@ namespace mole {
 /// Bumped whenever anything a plugin can see changes shape. The host refuses
 /// to load a plugin built against a different major version, which turns a
 /// mysterious crash into a clear message at startup.
-inline constexpr int kPluginApiVersion = 9;
+inline constexpr int kPluginApiVersion = 10;
 
 struct PluginMetadata
 {
