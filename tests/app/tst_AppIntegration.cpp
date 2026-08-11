@@ -58,6 +58,9 @@ private slots:
     void narrowingResultsDoesNotSearchAgain();
     void aSetCanBeBuiltFromWhatTheSearchFound();
     void revealingAFileOpensItsFolderWithTheCursorOnIt();
+    void examiningASearchsResultsLeavesOneBrowserTab();
+    void aFolderResultAndAFileResultShareTheOneBrowserTab();
+    void previewingFromASearchLeavesTheRevealTabAlone();
     void compressActsOnTheCursorWhenNothingIsTicked();
     void textPreviewProviderClaimsTextFiles();
     void archivePluginMountsAZip();
@@ -89,6 +92,9 @@ private:
     std::vector<std::unique_ptr<IPlugin>> builtIns() const;
     /// Puts both panes in place for a transfer and returns the browser.
     BrowserController* readyToTransfer(const QString& destination);
+    /// A finished search over the temp tree for `text`, and the row its tab sits
+    /// at. Null when it never finished or found nothing.
+    LiveSearchController* finishedSearchFor(const QString& text, int* rowOut);
 
     PrivateProfile m_profile;
     std::unique_ptr<TempTree> m_tree;
@@ -540,6 +546,175 @@ void TestAppIntegration::revealingAFileOpensItsFolderWithTheCursorOnIt()
     const QString other = m_tree->rootUri().child(QStringLiteral("reports/deep/haystack.txt")).toString();
     m_app->revealFile(other);
     QCOMPARE(pane->files()->uriAt(pane->currentIndex()), other);
+}
+
+LiveSearchController* TestAppIntegration::finishedSearchFor(const QString& text, int* rowOut)
+{
+    const int row = m_app->tabs()->openTab(QStringLiteral("mole.livesearch"));
+    if (row < 0)
+        return nullptr;
+    if (rowOut)
+        *rowOut = row;
+
+    auto* search = qobject_cast<LiveSearchController*>(m_app->tabs()->controllerAt(row));
+    if (!search)
+        return nullptr;
+    search->setRootUri(m_tree->rootUri().toString());
+    search->setQueryText(text);
+    search->start();
+    if (!waitFor([search] { return !search->isRunning(); }, 15000))
+        return nullptr;
+    return search;
+}
+
+/// Twenty results examined used to be twenty browser tabs.
+///
+/// `revealFile()` reused the current tab when it had an `activePane`, and a
+/// search tab has none — so from a search the reuse branch was never the one
+/// taken and every reveal opened another tab. The comment above it described
+/// the behaviour it did not have, which is what stopped anybody noticing.
+void TestAppIntegration::examiningASearchsResultsLeavesOneBrowserTab()
+{
+    constexpr int kHits = 5;
+    // A folder each, so a tab reused for the second hit really has to navigate
+    // rather than being already where it was asked to go.
+    for (int i = 0; i < kHits; ++i)
+        QVERIFY(m_tree->writeFile(QStringLiteral("hits/f%1/needle-%1.txt").arg(i), QByteArray("x")));
+
+    int searchRow = -1;
+    LiveSearchController* search = finishedSearchFor(QStringLiteral("needle-"), &searchRow);
+    QVERIFY(search);
+    QCOMPARE(search->results()->rowCount(), kHits);
+
+    // A reset is what loses a scroll position, so this is the scroll position
+    // being kept, expressed as something a test can hold.
+    QSignalSpy resets(search->results(), &QAbstractItemModel::modelReset);
+
+    const int before = m_app->tabs()->rowCount();
+    BrowserPaneController* pane = nullptr;
+
+    for (int i = 0; i < kHits; ++i) {
+        // Back to the results between reveals, because that is what examining
+        // them is: look at one, come back, look at the next.
+        m_app->tabs()->setCurrentIndex(searchRow);
+        const QString hit
+            = m_tree->rootUri().child(QStringLiteral("hits/f%1/needle-%1.txt").arg(i)).toString();
+        m_app->revealFile(hit);
+
+        auto* browser = qobject_cast<BrowserController*>(m_app->tabs()->currentController());
+        QVERIFY2(browser, "revealing a result did not switch to a browser");
+        if (pane)
+            QCOMPARE(browser->activePane(), pane); // the same one, every time
+        pane = browser->activePane();
+        QVERIFY(pane);
+
+        QVERIFY(waitFor(
+            [pane, i] { return pane->currentUri().endsWith(QStringLiteral("/hits/f%1").arg(i)); }, 10000));
+        QVERIFY(waitFor(
+            [pane, hit] {
+                return pane->currentIndex() >= 0 && pane->files()->uriAt(pane->currentIndex()) == hit;
+            },
+            10000));
+    }
+
+    QCOMPARE(m_app->tabs()->rowCount(), before + 1);
+
+    // The search is where it was, with what it found, and a narrowing filter
+    // still narrowing -- coming back to a search that has forgotten what you
+    // asked it is the same loss as losing the tab.
+    QCOMPARE(m_app->tabs()->controllerAt(searchRow), search);
+    QCOMPARE(search->results()->totalCount(), kHits);
+    QCOMPARE(resets.count(), 0);
+
+    search->results()->setFilterText(QStringLiteral("needle-2"));
+    QCOMPARE(search->results()->rowCount(), 1);
+    m_app->tabs()->setCurrentIndex(searchRow);
+    m_app->revealFile(m_tree->rootUri().child(QStringLiteral("hits/f2/needle-2.txt")).toString());
+    QCOMPARE(search->results()->filterText(), QStringLiteral("needle-2"));
+    QCOMPARE(search->results()->rowCount(), 1);
+    QCOMPARE(m_app->tabs()->rowCount(), before + 1);
+
+    // And closing the browser it opened hands the user back to the search.
+    const int revealRow = before;
+    QCOMPARE(m_app->tabs()->index(revealRow, 0).data(TabsModel::FeatureIdRole).toString(),
+        QStringLiteral("mole.browser"));
+    m_app->tabs()->setCurrentIndex(revealRow);
+    m_app->tabs()->closeTab(revealRow);
+    QCOMPARE(m_app->tabs()->currentIndex(), searchRow);
+}
+
+/// A folder hit is navigated to rather than revealed, and takes the same route
+/// through goTo() that a sidebar row does. From a search that route used to end
+/// in openLocation(), which opens a tab whatever else is already open.
+void TestAppIntegration::aFolderResultAndAFileResultShareTheOneBrowserTab()
+{
+    QVERIFY(m_tree->writeFile(QStringLiteral("mixed/folder/inside.txt"), QByteArray("x")));
+    QVERIFY(m_tree->writeFile(QStringLiteral("mixed/folder-note.txt"), QByteArray("y")));
+
+    int searchRow = -1;
+    LiveSearchController* search = finishedSearchFor(QStringLiteral("folder"), &searchRow);
+    QVERIFY(search);
+
+    const int before = m_app->tabs()->rowCount();
+
+    m_app->tabs()->setCurrentIndex(searchRow);
+    QVERIFY(m_app->goTo(m_tree->rootUri().child(QStringLiteral("mixed/folder")).toString()));
+    QCOMPARE(m_app->tabs()->rowCount(), before + 1);
+
+    auto* browser = qobject_cast<BrowserController*>(m_app->tabs()->currentController());
+    QVERIFY(browser);
+    BrowserPaneController* pane = browser->activePane();
+    QVERIFY(pane);
+    QVERIFY(waitFor([pane] { return pane->currentUri().endsWith(QStringLiteral("/mixed/folder")); }, 10000));
+
+    // The file hit next, from the same search: the same tab, moved.
+    m_app->tabs()->setCurrentIndex(searchRow);
+    const QString note = m_tree->rootUri().child(QStringLiteral("mixed/folder-note.txt")).toString();
+    m_app->revealFile(note);
+
+    QCOMPARE(m_app->tabs()->rowCount(), before + 1);
+    QCOMPARE(m_app->tabs()->currentController(), browser);
+    QCOMPARE(browser->activePane(), pane);
+    QVERIFY(waitFor([pane] { return pane->currentUri().endsWith(QStringLiteral("/mixed")); }, 10000));
+    QVERIFY(waitFor(
+        [pane, note] {
+            return pane->currentIndex() >= 0 && pane->files()->uriAt(pane->currentIndex()) == note;
+        },
+        10000));
+}
+
+void TestAppIntegration::previewingFromASearchLeavesTheRevealTabAlone()
+{
+    QVERIFY(m_tree->writeFile(QStringLiteral("looking/one-look.txt"), QByteArray("a")));
+    QVERIFY(m_tree->writeFile(QStringLiteral("looking/two-look.txt"), QByteArray("b")));
+
+    int searchRow = -1;
+    LiveSearchController* search = finishedSearchFor(QStringLiteral("-look"), &searchRow);
+    QVERIFY(search);
+    QCOMPARE(search->results()->rowCount(), 2);
+
+    const int before = m_app->tabs()->rowCount();
+    const QString first = m_tree->rootUri().child(QStringLiteral("looking/one-look.txt")).toString();
+    const QString second = m_tree->rootUri().child(QStringLiteral("looking/two-look.txt")).toString();
+
+    m_app->tabs()->setCurrentIndex(searchRow);
+    m_app->revealFile(first);
+    auto* browser = qobject_cast<BrowserController*>(m_app->tabs()->currentController());
+    QVERIFY(browser);
+    BrowserPaneController* pane = browser->activePane();
+    QVERIFY(waitFor([pane] { return pane->currentUri().endsWith(QStringLiteral("/looking")); }, 10000));
+
+    // Two previews from the results: one preview tab, as F3 has always given.
+    m_app->tabs()->setCurrentIndex(searchRow);
+    m_app->previewFile(first);
+    m_app->tabs()->setCurrentIndex(searchRow);
+    m_app->previewFile(second);
+
+    QCOMPARE(m_app->tabs()->rowCount(), before + 2); // one browser, one preview
+
+    // And the browser the reveal opened is untouched by any of it.
+    QCOMPARE(browser->activePane(), pane);
+    QVERIFY(pane->currentUri().endsWith(QStringLiteral("/looking")));
 }
 
 void TestAppIntegration::compressActsOnTheCursorWhenNothingIsTicked()

@@ -411,6 +411,14 @@ private:
     /// "ask for the passphrase" and "it is broken" is how an unconnected drive
     /// came to look like an empty folder.
     DriveReadiness prepareDriveFor(const QString& uri);
+    /// The row of the browser tab a tab with no browsing of its own should send
+    /// somebody to: the one it opened before, or a new one. Returns -1 when a
+    /// browser tab cannot be opened at all.
+    ///
+    /// A search is the case this exists for. Twenty results examined has to
+    /// leave one browser tab, not twenty, and the search itself has to be
+    /// waiting where it was when the user comes back to it.
+    int browserTabForCurrent();
     /// Restores the previous tabs, or opens a default one. Returns false when
     /// there was nothing to restore.
     bool restoreSession();

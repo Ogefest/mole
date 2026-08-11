@@ -840,9 +840,25 @@ int AppController::openFeatureTab(const QString& featureId)
     return row;
 }
 
+int AppController::browserTabForCurrent()
+{
+    // The browser this tab has already opened, switched to; otherwise a new one.
+    //
+    // This is what makes examining a search's results leave one tab behind
+    // rather than one per result. The search tab itself is never touched, so
+    // its results, its narrowing and where it was scrolled to are all still
+    // there to come back to.
+    const int existing = m_tabs->rowOpenedFromCurrent(QStringLiteral("mole.browser"));
+    if (existing >= 0) {
+        m_tabs->setCurrentIndex(existing);
+        return existing;
+    }
+    return m_tabs->openTab(QStringLiteral("mole.browser"));
+}
+
 void AppController::openLocation(const QString& uri)
 {
-    const int row = m_tabs->openTab(QStringLiteral("mole.browser"));
+    const int row = browserTabForCurrent();
     if (row < 0)
         return;
     if (auto* controller = m_tabs->controllerAt(row))
@@ -851,12 +867,15 @@ void AppController::openLocation(const QString& uri)
 
 void AppController::revealFile(const QString& fileUri)
 {
-    // A browser tab, because that is what can show a folder; the current one when
-    // it is already a browser, so a search does not leave tabs behind.
+    // A browser tab, because that is what can show a folder. From one already
+    // open it is that tab's pane that moves: the user is looking at a folder
+    // and has asked to look at a different one.
     QObject* current = m_tabs->currentController();
     QObject* pane = current ? current->property("activePane").value<QObject*>() : nullptr;
     if (!pane) {
-        const int row = m_tabs->openTab(QStringLiteral("mole.browser"));
+        // From anywhere else -- a search, above all -- the one browser this tab
+        // opens for, reused. The shape previewFile() has always had.
+        const int row = browserTabForCurrent();
         if (row < 0)
             return;
         QObject* opened = m_tabs->controllerAt(row);

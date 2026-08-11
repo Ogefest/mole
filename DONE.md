@@ -9,6 +9,41 @@ wrong.
 
 ---
 
+## Twenty results examined was twenty browser tabs, and the comment said the opposite
+
+**Asked for:** MOLE-158 — going from a search result to the folder it lives in opened a
+browser tab, every time. The comment above the code said the current tab was reused *so a
+search does not leave tabs behind*, and the code did the reverse: it reused the current tab
+only when that tab had an `activePane`, and a search tab has none. So from a search the
+reuse branch was never the one taken.
+
+**What it turned out to be:** the shape `previewFile()` has had all along, applied to the
+folder side. A tab already records the tab it was opened from — that is how closing it
+hands the user back — so *the browser I opened from this search* needed no new state, only
+`TabsModel::rowOpenedFromCurrent()` to ask the question. `revealFile()` and `openLocation()`
+now both go through one place that answers *the browser this tab opens for*, so a folder
+result routed through `goTo()` lands in the same tab as a file result revealed beside it.
+The comment is gone: one that contradicts its own code is worse than none, and this one is
+why nobody noticed.
+
+**The half that was already right is the half that had to survive.** The search tab is
+never closed, replaced or navigated, so the results, the narrowing filter and the scroll
+position are all still there. The test asserts the first two directly and the third through
+what would destroy it — a model reset, which is what MOLE-32 was about.
+
+**The tab now says where it came from.** Three folders further in, which tab held the
+results is a guess, so a browser opened from another tab carries one line above its
+contents naming that tab and returning to it. It is a model role rather than a lookup, so
+renaming the search renames the way back and closing the search removes it — both of which
+`tst_TabStrip` holds, a new suite that drives the real window because a visible control
+deserves better than a unit test of the property behind it.
+
+**One thing had to move to make room.** A tab's delegate is now a layout rather than the
+loader itself, so `tabStack.itemAt()` no longer answers with something that has an `item`.
+Four places in the shell reached for that, and all four now go through one
+`currentTabItem()` — which is where they should have been anyway. Focus was the first thing
+to break and `tst_KeyboardNavigation` said so immediately.
+
 ## A rescan emptied the index first, and the search said so confidently
 
 **Asked for:** MOLE-146 — `ScanTask` called `clearVolume()` before the walk, so for as

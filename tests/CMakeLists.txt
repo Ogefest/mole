@@ -219,6 +219,11 @@ mole_add_test(tst_Walkthrough       SOURCES app/tst_Walkthrough.cpp     LIBS mol
 # walkthrough's narrative would have to step around.
 mole_add_test(tst_Sidebar           SOURCES app/tst_Sidebar.cpp         LIBS mole_qml_harness)
 
+# What a tab says about where it came from. Its own binary for the same reason
+# as the sidebar's: it opens and closes tabs, which is state a narrative test
+# would have to step around.
+mole_add_test(tst_TabStrip          SOURCES app/tst_TabStrip.cpp        LIBS mole_qml_harness mole_builtin)
+
 # The session log lives in the application target rather than a library, so the
 # test compiles the one file it is about. Exported symbols, so the backtrace it
 # checks for carries names.
@@ -242,6 +247,7 @@ qt_add_resources(tst_KeyboardNavigation "app_qml"
 mole_mark_qml_test(tst_KeyboardNavigation)
 mole_mark_qml_test(tst_Walkthrough)
 mole_mark_qml_test(tst_Sidebar)
+mole_mark_qml_test(tst_TabStrip)
 # Not a QML test: it opens documents through Qt Pdf, which leaks on a failed load.
 mole_mark_qml_test(tst_DocumentMetadata)
 if(MOLE_HAVE_ARCHIVE_PLUGIN)

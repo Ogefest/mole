@@ -70,13 +70,24 @@ ApplicationWindow {
         App.openFeatureTab(featureId)
     }
 
+    // The loaded view of the current tab, or null.
+    //
+    // A tab's delegate is a layout rather than the loader itself, because a
+    // browser opened from a search carries the way back to it above its
+    // contents. So the view is one level in, and everything that speaks to a
+    // tab comes through here rather than reaching into the delegate.
+    function currentTabItem() {
+        var body = tabStack.itemAt(App.tabs.currentIndex)
+        return body ? body.view : null
+    }
+
     // Puts the keyboard back where it belongs. A window manager decides who
     // gets focus when the window is activated, and its answer -- the first
     // focusable control, which is the path bar -- is not ours.
     function focusCurrentTab() {
-        var loader = tabStack.itemAt(App.tabs.currentIndex)
-        if (loader && loader.item && loader.item.focusActivePane)
-            loader.item.focusActivePane()
+        var view = root.currentTabItem()
+        if (view && view.focusActivePane)
+            view.focusActivePane()
     }
 
     onActiveChanged: if (active) Qt.callLater(focusCurrentTab)
@@ -216,9 +227,9 @@ ApplicationWindow {
         // name a browser would use.
         sequences: ["Ctrl+G", "Ctrl+L"]
         onActivated: {
-            var loader = tabStack.itemAt(App.tabs.currentIndex)
-            if (loader && loader.item && loader.item.focusPathBar)
-                loader.item.focusPathBar()
+            var view = root.currentTabItem()
+            if (view && view.focusPathBar)
+                view.focusPathBar()
         }
     }
     DrivesDialog {
@@ -404,8 +415,7 @@ ApplicationWindow {
         }
 
         function currentView() {
-            var loader = tabStack.itemAt(App.tabs.currentIndex)
-            return loader ? loader.item : null
+            return root.currentTabItem()
         }
 
         readonly property bool debugKeys:
@@ -543,19 +553,83 @@ ApplicationWindow {
 
                 Repeater {
                     model: App.tabs
-                    delegate: Loader {
+                    delegate: ColumnLayout {
+                        id: tabBody
+                        required property int index
                         required property url viewSource
                         required property var controller
+                        required property string featureId
+                        required property string openerTitle
 
-                        asynchronous: false
-                        source: viewSource
-                        onLoaded: {
-                            if (item)
-                                item.controller = controller
+                        spacing: 0
+
+                        // Where this tab came from, and the way back to it.
+                        //
+                        // A folder opened from a search is a detour: the list of
+                        // results is the work, and this is one row of it looked
+                        // at more closely. Three folders further in, which tab
+                        // that list was in is a guess -- so the tab that was
+                        // opened says so, and one click undoes the detour.
+                        //
+                        // Only a browser: those are the tabs somebody navigates
+                        // away from until they no longer recognise where they
+                        // started.
+                        Rectangle {
+                            objectName: "backToOpener"
+                            Layout.fillWidth: true
+                            implicitHeight: visible ? backRow.implicitHeight + 8 : 0
+                            visible: tabBody.featureId === "mole.browser" && tabBody.openerTitle !== ""
+                            color: root.panelColor
+
+                            Rectangle {
+                                anchors.bottom: parent.bottom
+                                width: parent.width
+                                height: 1
+                                color: root.borderColor
+                            }
+
+                            RowLayout {
+                                id: backRow
+                                anchors.verticalCenter: parent.verticalCenter
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.leftMargin: 8
+                                spacing: 4
+
+                                ToolButton {
+                                    objectName: "backToOpenerButton"
+                                    text: qsTr("← Back to %1").arg(tabBody.openerTitle)
+                                    font.pixelSize: App.textSize
+                                    implicitHeight: App.minimumTarget
+                                    onClicked: {
+                                        const row = App.tabs.openerRow(tabBody.index)
+                                        if (row >= 0)
+                                            App.tabs.currentIndex = row
+                                    }
+                                }
+                                Item { Layout.fillWidth: true }
+                            }
                         }
+
+                        // What the shell talks to: this tab's loaded view.
+                        property alias view: tabLoader.item
+
+                        Loader {
+                            id: tabLoader
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+
+                            asynchronous: false
+                            source: tabBody.viewSource
+                            onLoaded: {
+                                if (item)
+                                    item.controller = tabBody.controller
+                            }
+                        }
+
                         // Keep the keyboard with the tab the user is looking at.
-                        onVisibleChanged: if (visible && item && item.focusActivePane)
-                                              Qt.callLater(item.focusActivePane)
+                        onVisibleChanged: if (visible && tabLoader.item && tabLoader.item.focusActivePane)
+                                              Qt.callLater(tabLoader.item.focusActivePane)
                     }
                 }
             }
@@ -824,9 +898,9 @@ ApplicationWindow {
         target: App
         function onDialogRequested(actionId) {
             if (actionId === "mole.view.filter") {
-                var loader = tabStack.itemAt(App.tabs.currentIndex)
-                if (loader && loader.item && loader.item.focusFilter)
-                    loader.item.focusFilter()
+                var view = root.currentTabItem()
+                if (view && view.focusFilter)
+                    view.focusFilter()
             }
             else if (actionId === "mole.help.shortcuts")
                 shortcutDialog.open()
