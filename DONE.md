@@ -9,6 +9,36 @@ wrong.
 
 ---
 
+## The form could not say that an index would let you ask more
+
+**Asked for:** MOLE-153 — once the index answers questions the filesystem cannot answer
+cheaply, some of what the form can ask depends on where it is being asked. The author named
+this as the hard part, and it is.
+
+**What it turned out to be:** three rules and one sentence. Never hide a criterion because
+the scope cannot answer it — the section is always there, greyed with a reason, because a
+field nobody can see is a capability nobody discovers. Never silently ignore one either —
+asking for a camera over an unindexed folder **stops** the search, because that question
+does not mean *everything*, it means it could not be put; the two ways out are *index this
+folder* and *search only the indexed part*, both one click. And the plain search stays
+plain: a name, Return, nothing else, which is the regression this was most likely to cause
+and the one the tests hold hardest.
+
+**The sentence is the whole interface problem solved in one place.** *indexed 3 days ago,
+with what the files say about themselves* · *part of this folder is indexed, names only;
+the rest is walked* · *not indexed — names, sizes, dates and contents only*. It is what
+makes a greyed field read as inapplicable rather than as broken.
+
+**Which fields exist follows the keys, not a list written here.** `IndexDatabase::factKeys()`
+answers what a volume was actually recorded as stating, on the same generation join a
+search makes — so a scan in progress cannot offer a field for facts nothing can yet find,
+and a plugin that records a new fact gets a field without anybody editing the form. The
+test proves it with a key nothing in this application has ever heard of.
+
+**Narrowing says what it left out.** A search that quietly shrinks its own scope is the
+same fault as one that quietly widens it, so the status line names the folder that is no
+longer being searched.
+
 ## The index knew nothing about what was inside the files it listed
 
 **Asked for:** MOLE-152 — a name, a path, an extension, a size and a date. So *the

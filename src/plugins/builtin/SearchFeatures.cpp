@@ -51,6 +51,7 @@ void LiveSearchController::setRootUri(const QString& uri)
     m_rootUri = uri;
     setSubtitle(uri);
     emit rootUriChanged();
+    emit coverageChanged();
     emit stateChanged();
 }
 
@@ -97,6 +98,7 @@ void LiveSearchController::setEverywhere(bool everywhere)
     // indexed" is as much an answer to that as a path is.
     setSubtitle(m_everywhere ? QStringLiteral("Everywhere indexed") : m_rootUri);
     emit scopeChanged();
+    emit coverageChanged();
     emit stateChanged();
 }
 
@@ -129,6 +131,7 @@ void LiveSearchController::refreshVolumes()
     if (m_volumeIndex >= m_volumeLabels.size())
         setVolumeIndex(0);
     emit volumesChanged();
+    emit coverageChanged();
 }
 
 void LiveSearchController::scanDirectory(const QString& uri, const QString& label)
@@ -418,6 +421,9 @@ SearchQuery LiveSearchController::buildQuery() const
     inside.includeBinary = m_searchBinary;
     query.addIfSet(inside);
 
+    for (auto it = m_factCriteria.cbegin(); it != m_factCriteria.cend(); ++it)
+        query.addIfSet(SearchPredicate::metadataIs(it.key(), it.value().toString().trimmed()));
+
     query.excluded = splitList(m_excluded);
     query.maxDepth = m_maxDepth;
     return query;
@@ -442,6 +448,100 @@ SearchIo LiveSearchController::searchIoFor(const FileSystemPtr& fileSystem, cons
     // worth much less before it is opened.
     io.ceiling = root.scheme() == QLatin1String("file") ? SearchIo::kLocalCeiling : SearchIo::kRemoteCeiling;
     return io;
+}
+
+QStringList LiveSearchController::factKeys() const
+{
+    if (!m_services.isValid() || !m_services.index || !m_services.index->isOpen())
+        return {};
+
+    // Every volume that covers any of this folder, because a field is worth
+    // offering when anything in scope can answer it.
+    QList<IndexVolume> inScope = volumesInsideRoot();
+    if (const std::optional<IndexVolume> whole = coveringVolume())
+        inScope.append(*whole);
+    if (m_everywhere) {
+        const Result<QStringList> everywhere = m_services.index->factKeys(
+            m_volumeIndex > 0 && m_volumeIndex < m_volumeIds.size() ? m_volumeIds.at(m_volumeIndex) : -1);
+        return everywhere.ok() ? everywhere.value() : QStringList {};
+    }
+
+    QStringList keys;
+    for (const IndexVolume& volume : inScope) {
+        const Result<QStringList> mine = m_services.index->factKeys(volume.id);
+        if (!mine.ok())
+            continue;
+        for (const QString& key : mine.value()) {
+            if (!keys.contains(key))
+                keys.append(key);
+        }
+    }
+    keys.sort();
+    return keys;
+}
+
+QString LiveSearchController::coverageNote() const
+{
+    const bool withMetadata = !factKeys().isEmpty();
+
+    if (m_everywhere) {
+        return withMetadata ? QStringLiteral("every indexed volume, with what the files say about themselves")
+                            : QStringLiteral("every indexed volume, names only");
+    }
+
+    if (const std::optional<IndexVolume> whole = coveringVolume()) {
+        return QStringLiteral("indexed %1, %2")
+            .arg(ageInWords(whole->lastScan),
+                withMetadata ? QStringLiteral("with what the files say about themselves")
+                             : QStringLiteral("names only"));
+    }
+
+    const QList<IndexVolume> partial = volumesInsideRoot();
+    if (!partial.isEmpty()) {
+        return QStringLiteral("part of this folder is indexed (%1), %2; the rest is walked")
+            .arg(oldestScanNote(partial),
+                withMetadata ? QStringLiteral("with what the files say about themselves")
+                             : QStringLiteral("names only"));
+    }
+
+    // The plain case, said plainly: everything the walk can answer is still on
+    // offer, and what it cannot is what the greyed section is about.
+    return QStringLiteral("not indexed — names, sizes, dates and contents only");
+}
+
+void LiveSearchController::setFactCriteria(const QVariantMap& criteria)
+{
+    if (m_factCriteria == criteria)
+        return;
+    m_factCriteria = criteria;
+    emit criteriaChanged();
+    emit stateChanged();
+}
+
+void LiveSearchController::indexThisFolderForMetadata()
+{
+    setScanReadsMetadata(true);
+    scanDirectory(m_rootUri, QString());
+    setStatusText(
+        QStringLiteral("Indexing %1 — the search can be run again when it finishes").arg(m_rootUri));
+    m_blockedReason.clear();
+    emit statusChanged();
+}
+
+void LiveSearchController::narrowToIndexedPart()
+{
+    const QList<IndexVolume> partial = volumesInsideRoot();
+    if (partial.isEmpty())
+        return;
+
+    // Said, not done quietly: a search that shrinks its own scope without
+    // saying so is the same fault as one that widens it.
+    const QString was = m_rootUri;
+    setRootUri(partial.first().rootUri);
+    m_blockedReason.clear();
+    emit coverageChanged();
+    setStatusText(QStringLiteral("Now searching %1 only — everything else under %2 is left out")
+                      .arg(partial.first().rootUri, was));
 }
 
 std::function<QList<SearchFact>(const FileEntry&)> LiveSearchController::factReaderFor(
@@ -554,6 +654,27 @@ void LiveSearchController::start()
 
     // Starting a new search abandons the old one rather than racing it.
     stop();
+
+    // A criterion the scope cannot answer does not mean "everything": it means
+    // the question could not be asked. ADR-0005's own rule, and this is where
+    // it bites hardest -- so the search stops and offers the two ways out.
+    m_blockedReason.clear();
+    QStringList unanswerable;
+    const QStringList answerable = factKeys();
+    for (auto it = m_factCriteria.cbegin(); it != m_factCriteria.cend(); ++it) {
+        if (it.value().toString().trimmed().isEmpty())
+            continue;
+        if (!answerable.contains(it.key()))
+            unanswerable.append(it.key());
+    }
+    if (!unanswerable.isEmpty()) {
+        unanswerable.sort();
+        m_blockedReason = QStringLiteral("Nothing here has %1 recorded, so this cannot be searched for yet.")
+                              .arg(unanswerable.join(QStringLiteral(", ")));
+        setStatusText(m_blockedReason);
+        emit statusChanged();
+        return;
+    }
 
     // One query, whichever engine answers it. The criteria mean the same thing
     // to each of them because there is only one place that says what they mean.
@@ -788,6 +909,7 @@ QVariantMap LiveSearchController::saveState() const
         { QStringLiteral("contentText"), m_contentText },
         { QStringLiteral("contentRegex"), m_contentRegex },
         { QStringLiteral("searchBinary"), m_searchBinary },
+        { QStringLiteral("factCriteria"), m_factCriteria },
         { QStringLiteral("minSize"), m_minSize },
         { QStringLiteral("maxSize"), m_maxSize },
     };
@@ -828,6 +950,7 @@ void LiveSearchController::restoreState(const QVariantMap& state)
     setContentText(state.value(QStringLiteral("contentText")).toString());
     setContentRegex(state.value(QStringLiteral("contentRegex"), false).toBool());
     setSearchBinary(state.value(QStringLiteral("searchBinary"), false).toBool());
+    setFactCriteria(state.value(QStringLiteral("factCriteria")).toMap());
     m_minSize = state.value(QStringLiteral("minSize"), -1).toLongLong();
     m_maxSize = state.value(QStringLiteral("maxSize"), -1).toLongLong();
     // The volume list is rebuilt from the index, so a remembered position may no

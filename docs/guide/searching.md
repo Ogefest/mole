@@ -54,8 +54,22 @@ rather than read, and the line says how many. The line also counts what it opene
 this is the one search that can take minutes and *read 340 of 1,200* is the difference
 between waiting and giving up.
 
+- **It says**, for what the files state about themselves — a camera, an author, a duration.
+  These are the questions only an index can answer cheaply, so the fields offered are the
+  facts that have actually been recorded for the folder you are searching. The section is
+  always there: greyed with a reason where nothing has been indexed, rather than absent,
+  because a field nobody can see is a capability nobody discovers.
+
 Everything is *and*. A criterion the index cannot answer is checked afterwards rather than
 dropped, and the form says which one made that happen.
+
+Under *Search in*, one sentence says what this scope can be asked — *indexed 3 days ago,
+with what the files say about themselves*, or *not indexed — names, sizes, dates and
+contents only*. Asking for something the scope has no record of **stops the search** rather
+than quietly widening it, because *camera = Canon* over an unindexed folder does not mean
+*everything*: it means the question could not be put. Two ways out, both one click: index
+this folder, or search only the part that already is — and narrowing says what it left
+out.
 
 ## The index
 

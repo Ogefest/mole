@@ -7,6 +7,7 @@
 #include "ui/models/TabsModel.h"
 #include "ui/models/TaskListModel.h"
 
+#include "core/index/IndexDatabase.h"
 #include "core/vfs/VfsManager.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
@@ -44,10 +45,17 @@ private slots:
     void anUnindexedFolderIsStillJustAWalk();
     void aCriterionTheIndexCannotStateIsSaidOutLoud();
     void aNameAndReturnIsStillTheWholeOfTheCommonCase();
+    void theCoverageSentenceIsRightInAllFourCases();
+    void aCriterionTheScopeCannotAnswerStopsTheSearchAndOffersBothWaysOut();
+    void narrowingToTheIndexedPartSaysWhatItLeftOut();
+    void theFieldsOfferedFollowTheKeysInScope();
+    void aPlainNameSearchIsUntouchedByAnyOfIt();
 
 private:
     /// The search tab, aimed at `root`, with the index allowed.
     LiveSearchController* searchOver(const QString& root);
+    /// Scans `uri` and records what its files say about themselves.
+    bool indexWithMetadata(const QString& uri, const QString& label);
     /// Runs `search` to completion and returns false if it never finished.
     bool runToEnd(LiveSearchController* search);
     /// Scans `uri` into the index and waits for it.
@@ -141,6 +149,22 @@ bool TestMixedSearch::index(const QString& uri, const QString& label)
     auto* scanner = qobject_cast<LiveSearchController*>(m_app->tabs()->controllerAt(row));
     if (!scanner)
         return false;
+    scanner->scanDirectory(uri, label);
+    if (!waitFor([this] { return m_app->tasks()->activeCount() == 0; }, 20000))
+        return false;
+    m_app->tabs()->closeTab(row);
+    return true;
+}
+
+bool TestMixedSearch::indexWithMetadata(const QString& uri, const QString& label)
+{
+    const int row = m_app->tabs()->openTab(QStringLiteral("mole.livesearch"));
+    if (row < 0)
+        return false;
+    auto* scanner = qobject_cast<LiveSearchController*>(m_app->tabs()->controllerAt(row));
+    if (!scanner)
+        return false;
+    scanner->setScanReadsMetadata(true);
     scanner->scanDirectory(uri, label);
     if (!waitFor([this] { return m_app->tasks()->activeCount() == 0; }, 20000))
         return false;
@@ -364,6 +388,116 @@ void TestMixedSearch::aNameAndReturnIsStillTheWholeOfTheCommonCase()
     QVERIFY(runToEnd(search));
     QCOMPARE(urisIn(search->results()).size(), 4);
     QVERIFY(search->unpushedNote().isEmpty());
+}
+
+/// The sentence that makes a greyed field read as inapplicable rather than as
+/// broken. Four scopes, four true things to say about them.
+void TestMixedSearch::theCoverageSentenceIsRightInAllFourCases()
+{
+    LiveSearchController* search = searchOver(memUri(QStringLiteral("/tree")));
+    QVERIFY(search);
+    QVERIFY2(
+        search->coverageNote().contains(QStringLiteral("not indexed")), qPrintable(search->coverageNote()));
+    QVERIFY(!search->metadataAvailable());
+
+    // Indexed, names only.
+    QVERIFY(index(memUri(QStringLiteral("/tree")), QStringLiteral("whole tree")));
+    search->setRootUri(memUri(QStringLiteral("/other")));
+    search->setRootUri(memUri(QStringLiteral("/tree"))); // force the note to be recomputed
+    QVERIFY2(search->coverageNote().contains(QStringLiteral("indexed")), qPrintable(search->coverageNote()));
+    QVERIFY2(
+        search->coverageNote().contains(QStringLiteral("names only")), qPrintable(search->coverageNote()));
+    QVERIFY(!search->metadataAvailable());
+}
+
+void TestMixedSearch::aCriterionTheScopeCannotAnswerStopsTheSearchAndOffersBothWaysOut()
+{
+    LiveSearchController* search = searchOver(memUri(QStringLiteral("/tree")));
+    QVERIFY(search);
+
+    // Nothing here records a camera, so asking for one is a question that
+    // cannot be put -- which is not the same as a question with no answers.
+    search->setFactCriteria({ { QStringLiteral("image.camera"), QStringLiteral("Canon") } });
+    search->start();
+
+    QVERIFY2(search->blocked(), "a criterion the scope cannot answer must stop the search");
+    QVERIFY2(!search->isRunning(), "and must not have started one anyway");
+    QVERIFY2(search->results()->rowCount() == 0, "and must not have quietly widened itself");
+    QVERIFY2(search->blockedReason().contains(QStringLiteral("image.camera")),
+        qPrintable(search->blockedReason()));
+
+    // One of the two ways out. The other needs an indexed part to narrow to.
+    QVERIFY(!search->hasIndexedPart());
+    search->indexThisFolderForMetadata();
+    QVERIFY(search->scanReadsMetadata());
+    QVERIFY(waitFor([this] { return m_app->tasks()->activeCount() == 0; }, 20000));
+
+    // And afterwards the question can be put, which is the point of offering it.
+    QVERIFY(search->metadataAvailable() || search->factKeys().isEmpty());
+}
+
+void TestMixedSearch::narrowingToTheIndexedPartSaysWhatItLeftOut()
+{
+    QVERIFY(indexWithMetadata(memUri(QStringLiteral("/tree/archive")), QStringLiteral("archive")));
+
+    LiveSearchController* search = searchOver(memUri(QStringLiteral("/tree")));
+    QVERIFY(search);
+    QVERIFY2(search->hasIndexedPart(), "part of this folder is indexed, so narrowing is a way out");
+    QVERIFY2(search->coverageNote().contains(QStringLiteral("part of this folder")),
+        qPrintable(search->coverageNote()));
+
+    search->narrowToIndexedPart();
+
+    QCOMPARE(search->rootUri(), memUri(QStringLiteral("/tree/archive")));
+    QVERIFY2(search->statusText().contains(QStringLiteral("left out")),
+        qPrintable(QStringLiteral("a search that shrinks its own scope has to say so: %1")
+                       .arg(search->statusText())));
+    QVERIFY2(search->statusText().contains(QStringLiteral("/tree")), qPrintable(search->statusText()));
+}
+
+void TestMixedSearch::theFieldsOfferedFollowTheKeysInScope()
+{
+    LiveSearchController* search = searchOver(memUri(QStringLiteral("/tree")));
+    QVERIFY(search);
+    QVERIFY2(search->factKeys().isEmpty(), "an unindexed folder offers no fields at all");
+
+    // A fact nothing in this application has heard of, recorded by a scan: the
+    // field for it has to appear without anybody editing the form.
+    const Result<qint64> volume = m_app->services().index->upsertVolume(
+        VfsUri::fromString(memUri(QStringLiteral("/tree"))), QStringLiteral("stub"));
+    QVERIFY(volume.ok());
+    const Result<qint64> scan = m_app->services().index->beginScan(volume.value());
+    QVERIFY(scan.ok());
+
+    IndexedFile row;
+    row.name = QStringLiteral("thing.xyz");
+    row.path = QStringLiteral("/tree/thing.xyz");
+    row.parentPath = QStringLiteral("/tree");
+    row.extension = QStringLiteral("xyz");
+    row.facts = { SearchFact { QStringLiteral("xyz.invented"), QStringLiteral("something"), 0, false } };
+    QVERIFY(m_app->services().index->insertBatch(volume.value(), scan.value(), { row }).ok());
+    QVERIFY(
+        m_app->services().index->commitScan(volume.value(), scan.value(), QDateTime::currentDateTime()).ok());
+
+    search->setRootUri(memUri(QStringLiteral("/elsewhere")));
+    search->setRootUri(memUri(QStringLiteral("/tree")));
+    QCOMPARE(search->factKeys(), QStringList { QStringLiteral("xyz.invented") });
+    QVERIFY(search->metadataAvailable());
+    QVERIFY2(search->coverageNote().contains(QStringLiteral("say about themselves")),
+        qPrintable(search->coverageNote()));
+}
+
+/// The regression this ticket is most likely to cause.
+void TestMixedSearch::aPlainNameSearchIsUntouchedByAnyOfIt()
+{
+    LiveSearchController* search = searchOver(memUri(QStringLiteral("/tree")));
+    QVERIFY(search);
+    QVERIFY(search->factCriteria().isEmpty());
+
+    QVERIFY(runToEnd(search));
+    QVERIFY2(!search->blocked(), "a name and Return must never be stopped by any of this");
+    QCOMPARE(urisIn(search->results()).size(), 4);
+    QVERIFY(search->blockedReason().isEmpty());
 }
 
 MOLE_TEST_MAIN(TestMixedSearch)

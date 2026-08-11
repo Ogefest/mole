@@ -62,6 +62,19 @@ Item {
                 onActivated: if (controller) controller.volumeIndex = currentIndex
             }
 
+            // One sentence about what this scope can be asked. It is what makes
+            // a greyed field read as inapplicable rather than as broken.
+            Item { width: 1; height: 1 }
+            Label {
+                objectName: "coverageNote"
+                Layout.columnSpan: 3
+                Layout.fillWidth: true
+                text: controller ? controller.coverageNote : ""
+                color: "#6f7788"
+                font.pixelSize: App.smallTextSize
+                elide: Text.ElideRight
+            }
+
             Label { text: "Name contains"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
             TextField {
                 id: queryField
@@ -142,6 +155,47 @@ Item {
                 color: "#8b93a7"
                 elide: Text.ElideRight
                 font.pixelSize: App.secondaryTextSize
+            }
+        }
+
+        // A search that was asked something its scope cannot answer. Stopped
+        // rather than quietly widened, with both ways out one click away.
+        Rectangle {
+            objectName: "blockedBanner"
+            Layout.fillWidth: true
+            visible: controller ? controller.blocked : false
+            implicitHeight: blockedRow.implicitHeight + 12
+            color: "#231f16"
+            border.color: "#4a3f22"
+            border.width: 1
+            radius: 3
+
+            RowLayout {
+                id: blockedRow
+                anchors.fill: parent
+                anchors.margins: 6
+                spacing: 8
+
+                Label {
+                    Layout.fillWidth: true
+                    text: controller ? controller.blockedReason : ""
+                    color: Material.color(Material.Amber)
+                    font.pixelSize: App.secondaryTextSize
+                    wrapMode: Text.Wrap
+                }
+                Button {
+                    objectName: "indexThisFolderButton"
+                    text: "Index this folder"
+                    font.pixelSize: App.secondaryTextSize
+                    onClicked: if (controller) controller.indexThisFolderForMetadata()
+                }
+                Button {
+                    objectName: "narrowToIndexedButton"
+                    text: "Search only the indexed part"
+                    font.pixelSize: App.secondaryTextSize
+                    visible: controller ? controller.hasIndexedPart : false
+                    onClicked: if (controller) controller.narrowToIndexedPart()
+                }
             }
         }
 
@@ -248,6 +302,57 @@ Item {
                 color: "#6f7788"
                 font.pixelSize: App.smallTextSize
                 wrapMode: Text.Wrap
+            }
+
+            // Always visible, greyed when the scope has nothing recorded. A
+            // missing field is a capability nobody ever discovers.
+            Label { text: "It says"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+            ColumnLayout {
+                objectName: "factCriteria"
+                Layout.columnSpan: 5
+                Layout.fillWidth: true
+                spacing: 4
+
+                Repeater {
+                    model: controller ? controller.factKeys : []
+                    delegate: RowLayout {
+                        required property string modelData
+                        spacing: 6
+
+                        Label {
+                            Layout.preferredWidth: 130
+                            text: modelData
+                            color: "#8b93a7"
+                            font.family: App.monospaceFont
+                            font.pixelSize: App.smallTextSize
+                        }
+                        TextField {
+                            objectName: "factField_" + modelData
+                            Layout.preferredWidth: 220
+                            font.pixelSize: App.secondaryTextSize
+                            text: controller ? (controller.factCriteria[modelData] || "") : ""
+                            onTextEdited: {
+                                if (!controller)
+                                    return
+                                var all = Object.assign({}, controller.factCriteria)
+                                all[modelData] = text
+                                controller.factCriteria = all
+                            }
+                        }
+                    }
+                }
+
+                Label {
+                    objectName: "noMetadataHere"
+                    Layout.fillWidth: true
+                    visible: controller ? !controller.metadataAvailable : true
+                    text: "Nothing here has been indexed for what the files say about themselves — "
+                          + "scan this folder with that on and a camera, an author or a duration "
+                          + "becomes something you can search for."
+                    color: "#6f7788"
+                    font.pixelSize: App.smallTextSize
+                    wrapMode: Text.Wrap
+                }
             }
 
             Label { text: "Is a"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }

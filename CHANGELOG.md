@@ -13,6 +13,7 @@ the first release; they stay as they are.
 
 2026-08-11 #MOLE-160 The details are a drawer beside the preview that you can read down, select and copy out of, and put away — one switch for every file rather than one per type
 2026-08-11 #MOLE-159 A file Mole can name — a video, an mp3, a .docx — shows what it is rather than a hex dump, and the bytes are a choice on the strip
+2026-08-11 #MOLE-153 The search says in one line what the folder it is aimed at can be asked, offers a field for every fact that has been recorded there, and stops rather than quietly widening when asked something the scope has no record of
 2026-08-11 #MOLE-152 A scan can record what each file says about itself — a camera, an author, a duration — so those can be searched for later without the file being opened, while the contents themselves stay out of the index
 2026-08-11 #MOLE-151 A search can look inside the files — literal or expression, text files only unless asked otherwise, bounded and cancellable, with each hit showing the line it was found on
 2026-08-11 #MOLE-150 The search asks for time, for what a file is rather than what it is called, for a name as a shape or an expression, for a path, for folders to skip and for depth — nine families of criteria where there were three

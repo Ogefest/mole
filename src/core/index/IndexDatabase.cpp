@@ -642,6 +642,37 @@ Result<QList<IndexSearchHit>> IndexDatabase::search(const SearchQuery& query) co
     return hits;
 }
 
+Result<QStringList> IndexDatabase::factKeys(qint64 volumeId) const
+{
+    QMutexLocker lock(&m_mutex);
+    if (!m_open)
+        return VfsError::make(VfsError::IoError, QStringLiteral("Index is not open"));
+
+    QSqlDatabase db = connectionForCurrentThread();
+    if (!db.isOpen())
+        return sqlError(db, QStringLiteral("No index connection for this thread")).error();
+
+    // The same generation join a search makes, so a scan in progress cannot
+    // offer a field for facts nothing can yet find.
+    QString sql = QStringLiteral("SELECT DISTINCT m.key FROM file_facts m "
+                                 "JOIN files f ON f.id = m.file_id "
+                                 "JOIN volumes v ON v.id = f.volume_id AND v.generation = f.generation");
+    QSqlQuery query(db);
+    if (volumeId >= 0) {
+        query.prepare(sql + QStringLiteral(" WHERE f.volume_id = ? ORDER BY m.key"));
+        query.addBindValue(volumeId);
+    } else {
+        query.prepare(sql + QStringLiteral(" ORDER BY m.key"));
+    }
+    if (!query.exec())
+        return sqlError(db, QStringLiteral("Listing the facts a volume holds")).error();
+
+    QStringList keys;
+    while (query.next())
+        keys.append(query.value(0).toString());
+    return keys;
+}
+
 Result<qint64> IndexDatabase::fileCount(qint64 volumeId) const
 {
     QMutexLocker lock(&m_mutex);

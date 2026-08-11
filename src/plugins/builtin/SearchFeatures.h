@@ -10,6 +10,7 @@
 
 #include <QPointer>
 #include <QStringList>
+#include <QVariantMap>
 
 #include <optional>
 
@@ -162,6 +163,24 @@ public:
     bool scanReadsMetadata() const { return m_scanReadsMetadata; }
     void setScanReadsMetadata(bool read);
 
+    QString coverageNote() const;
+    QStringList factKeys() const;
+    bool metadataAvailable() const { return !factKeys().isEmpty(); }
+    QVariantMap factCriteria() const { return m_factCriteria; }
+    void setFactCriteria(const QVariantMap& criteria);
+    QString blockedReason() const { return m_blockedReason; }
+    bool blocked() const { return !m_blockedReason.isEmpty(); }
+    bool hasIndexedPart() const { return coveringVolume().has_value() || !volumesInsideRoot().isEmpty(); }
+
+    /// The two ways out of a blocked search, both one click.
+    ///
+    /// Indexing this folder with metadata on, or narrowing the search to the
+    /// part that is already indexed -- which says what it is leaving out,
+    /// because a search that quietly shrinks its own scope is the same fault as
+    /// one that quietly widens it.
+    Q_INVOKABLE void indexThisFolderForMetadata();
+    Q_INVOKABLE void narrowToIndexedPart();
+
     qint64 minSize() const { return m_minSize; }
     qint64 maxSize() const { return m_maxSize; }
     bool useIndex() const { return m_useIndex; }
@@ -209,6 +228,7 @@ signals:
     void runningChanged();
     void statusChanged();
     void scopeChanged();
+    void coverageChanged();
     void volumesChanged();
     void volumeIndexChanged();
 
@@ -274,6 +294,8 @@ private:
     bool m_contentRegex = false;
     bool m_searchBinary = false;
     bool m_scanReadsMetadata = false;
+    QVariantMap m_factCriteria;
+    QString m_blockedReason;
     qint64 m_minSize = -1;
     qint64 m_maxSize = -1;
     bool m_useIndex = true;

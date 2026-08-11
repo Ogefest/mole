@@ -137,6 +137,15 @@ public:
     /// written are not among them.
     [[nodiscard]] Result<qint64> fileCount(qint64 volumeId = -1) const;
 
+    /// Which facts this volume's files were recorded as stating, or every
+    /// volume's when -1.
+    ///
+    /// What a form offers has to follow this rather than a list written down in
+    /// the form: a plugin that indexes a new fact should get a field without
+    /// anybody editing the interface, and a key nothing in scope carries should
+    /// not be offered at all.
+    [[nodiscard]] Result<QStringList> factKeys(qint64 volumeId = -1) const;
+
 private:
     /// Opens (or reuses) this thread's connection. Callers must hold m_mutex.
     QSqlDatabase connectionForCurrentThread() const;
