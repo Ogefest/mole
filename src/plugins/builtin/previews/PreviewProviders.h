@@ -589,16 +589,31 @@ private:
 /// metadata reader's now, shown in the details panel that every viewer has and
 /// this one opens by default -- so a file with a viewer gets them too, which is
 /// the whole reason they moved. See ADR-0034.
+///
+/// It also offers the bytes, because for a file with no viewer they are
+/// occasionally the whole reason somebody opened it -- and a choice on the strip
+/// is the right place for that, rather than a default that shows hexadecimal to
+/// somebody who wanted to know how long a video runs. The hex viewer is built
+/// only when it is asked for, so an unopened choice costs no read.
 class FileInfoPreviewController final : public PreviewController
 {
     Q_OBJECT
     Q_PROPERTY(QString headline READ headline NOTIFY factsChanged)
+    /// True when the reader chose Bytes. The view shows the hex window then, and
+    /// the name and the reason there is nothing else otherwise.
+    Q_PROPERTY(bool showingBytes READ isShowingBytes NOTIFY factsChanged)
+    /// The hex viewer's own controller, for the view to bind HexPreview.qml to.
+    /// Null until Bytes is chosen for the first time.
+    Q_PROPERTY(QObject* bytes READ bytes NOTIFY factsChanged)
 
 public:
     explicit FileInfoPreviewController(PluginServices services, QObject* parent = nullptr);
 
     QString headline() const { return m_headline; }
+    bool isShowingBytes() const { return m_showBytes; }
+    QObject* bytes() const;
     void load(const FileEntry& entry) override;
+    void setViewerOption(const QString& key, const QString& value) override;
 
 signals:
     void factsChanged();
@@ -606,6 +621,9 @@ signals:
 private:
     PluginServices m_services;
     QString m_headline;
+    FileEntry m_entry;
+    bool m_showBytes = false;
+    QPointer<HexPreviewController> m_hex;
 };
 
 class FileInfoPreviewProvider final : public IPreviewProvider
@@ -620,6 +638,9 @@ public:
     bool canPreview(const FileEntry& entry) const override { return !entry.isDir; }
     /// The details are all this viewer has, so it opens them.
     bool detailsOpenByDefault() const override { return true; }
+    /// Information or the bytes, remembered per file type like every other
+    /// viewer's choice. See docs/adr/0006-preview-options-and-preferences.md.
+    QList<ViewerOption> options(const FileEntry& entry) const override;
     QUrl viewSource() const override;
     PreviewController* createController(QObject* parent) override;
 

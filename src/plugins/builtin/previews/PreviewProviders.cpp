@@ -816,14 +816,17 @@ bool HexPreviewProvider::canPreview(const FileEntry& entry) const
     if (entry.isDir)
         return false;
 
-    // Claims on the content pass and never on the name pass: this viewer exists
-    // for the files nobody can name, so a guess from a suffix is exactly what it
-    // must not make. No I/O either -- the type arrived in the entry. See ADR-0033.
-    if (entry.mimeType.isEmpty())
-        return false;
-
-    static const QMimeDatabase mimeDatabase;
-    return !mimeDatabase.mimeTypeForName(entry.mimeType).inherits(QStringLiteral("text/plain"));
+    // Only what the content pass could make nothing of. application/octet-stream
+    // is that answer: no magic rule matched, no glob matched, and it is not text.
+    //
+    // Claiming everything binary was this viewer's first rule and it was wrong:
+    // a video, an mp3 and a .docx can all be named, and telling somebody what
+    // their first 64 kB look like in hexadecimal is strictly less than telling
+    // them how long the video runs. A file that can be named goes to the
+    // information viewer, which has the facts -- and offers the bytes as a
+    // choice, because they are occasionally what somebody came for. No I/O here
+    // either: the type arrived in the entry. See ADR-0033.
+    return entry.mimeType == QLatin1String("application/octet-stream");
 }
 
 QUrl HexPreviewProvider::viewSource() const
@@ -1339,19 +1342,64 @@ FileInfoPreviewController::FileInfoPreviewController(PluginServices services, QO
 {
 }
 
+QObject* FileInfoPreviewController::bytes() const
+{
+    return m_hex.data();
+}
+
 void FileInfoPreviewController::load(const FileEntry& entry)
 {
     // The name, and nothing else. What is known about the file is the generic
     // metadata reader's answer now, shown in the details panel this viewer opens
     // by default -- built once, for every viewer, rather than here for the one
     // case where no viewer claimed the file. See ADR-0034.
+    m_entry = entry;
     m_headline = entry.name;
+    if (m_showBytes && m_hex)
+        m_hex->load(entry);
+    emit factsChanged();
+}
+
+void FileInfoPreviewController::setViewerOption(const QString& key, const QString& value)
+{
+    if (key != QLatin1String("mode"))
+        return;
+
+    const bool bytes = value.compare(QLatin1String("Bytes"), Qt::CaseInsensitive) == 0;
+    if (bytes == m_showBytes)
+        return;
+    m_showBytes = bytes;
+
+    // Built the first time it is asked for, and never before: a choice nobody
+    // made must not cost a read. Applied before load() when it was remembered,
+    // and from the strip when it is chosen, so both arrive here.
+    if (m_showBytes) {
+        if (!m_hex)
+            m_hex = new HexPreviewController(m_services, this);
+        if (m_entry.uri.isValid())
+            m_hex->load(m_entry);
+    }
     emit factsChanged();
 }
 
 FileInfoPreviewProvider::FileInfoPreviewProvider(PluginServices services)
     : m_services(services)
 {
+}
+
+QList<ViewerOption> FileInfoPreviewProvider::options(const FileEntry& entry) const
+{
+    if (entry.isDir)
+        return {};
+
+    ViewerOption mode;
+    mode.key = QStringLiteral("mode");
+    mode.title = QStringLiteral("Show");
+    mode.choices = { QStringLiteral("Information"), QStringLiteral("Bytes") };
+    // Information by default: what a file is answers more questions than what
+    // its first page looks like, and the other one is one click away.
+    mode.defaultChoice = QStringLiteral("Information");
+    return { mode };
 }
 
 QUrl FileInfoPreviewProvider::viewSource() const

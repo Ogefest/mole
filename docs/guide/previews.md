@@ -146,20 +146,27 @@ read whole to fill it: a header, and at most one further bounded read.
 
 ## Anything else
 
+![A file nothing else claims](images/23-preview-file-info.png)
+
+A file no viewer can show is described instead: what it is, how big it is, when it was
+touched, and everything the details panel can add — a video's duration and codecs, an audio
+file's tags, a document's author. "Nothing happens" is never the answer, and this is the
+reason: something always claims the file, even when all it can say is what is known about
+it.
+
 ![The bytes of a file](images/25-preview-hex.png)
 
-A file whose format nothing here knows is shown as what it actually is: bytes. The offset,
-sixteen bytes in hex, and the same sixteen as text with a dot for everything that has no
-printable form. Dragging across either column selects a run of bytes; `Ctrl+C` copies it as
-hex and `Ctrl+Shift+C` as text, which is often the whole reason for opening such a file.
+And when there is nothing to say — a format nothing here knows — what is honest to show is
+what the file actually is: bytes. The offset, sixteen bytes in hex, and the same sixteen as
+text with a dot for everything that has no printable form. Dragging across either column
+selects a run of bytes; `Ctrl+C` copies it as hex and `Ctrl+Shift+C` as text, which is often
+the whole reason for opening such a file.
+
+The bytes are also a choice, not only a fallback: **Show: Bytes** on the strip opens this
+window for any file that has no viewer of its own, and the choice is remembered for that
+file type. Somebody who wants the header of an `.mp4` has it in one click; somebody who
+wanted to know how long it runs is not shown hexadecimal to find out.
 
 It is read-only, like every other preview, and windowed like the text viewer — 64 kB at a
 time, with the same paging keys — so a firmware image or a 100 GB disk image opens as fast
 as anything else.
-
-![A file nothing else claims](images/23-preview-file-info.png)
-
-What is left is a file with nothing to show at all — an empty one, or one that cannot be
-read. It gets described instead: its size, its kind, what is known about it. "Nothing
-happens" is never the answer, and this is the reason: something always claims the file,
-even when all it can say is what the filesystem knows.

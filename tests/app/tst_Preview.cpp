@@ -69,6 +69,76 @@ QByteArray linedJson(qsizetype bytes)
     return out;
 }
 
+/// A file with no format anybody knows, and one recognisable string in it so a
+/// selection has something to be about.
+///
+/// Not a run of one repeated byte, which is what this was first: 4096 bytes of
+/// 0x01 match a TGA magic rule, so the "nothing can name this" fixture was
+/// quietly a picture.
+QByteArray unknownBinary(qsizetype bytes)
+{
+    QByteArray out("\x7f\x01\x02\x03MOLE-FIRMWARE\0\0", 19);
+    while (out.size() < bytes)
+        out += QByteArray::number(out.size(), 16).repeated(3) + QByteArray(5, static_cast<char>(0xa7));
+    out.truncate(bytes);
+    return out;
+}
+
+/// Files of three kinds Mole can name and has no viewer for. Only their headers
+/// matter here: what is being tested is which viewer they reach.
+QByteArray mp4File()
+{
+    QByteArray out(4, '\0');
+    out[3] = char(0x20);
+    out += QByteArrayLiteral("ftypisom") + QByteArray(4, '\0') + QByteArrayLiteral("isomiso2mp41");
+    return out + QByteArray(2048, 'v');
+}
+
+QByteArray mp3File()
+{
+    QByteArray out = QByteArrayLiteral("ID3") + QByteArray(1, '\x04') + QByteArray(2, '\0')
+        + QByteArray(4, '\0'); // an empty tag: a synchsafe zero
+    QByteArray frame(4, '\0');
+    frame[0] = char(0xff);
+    frame[1] = char(0xfb);
+    frame[2] = char(0x90);
+    for (int i = 0; i < 8; ++i)
+        out += frame + QByteArray(413, '\0');
+    return out;
+}
+
+QByteArray docxFile()
+{
+    StoredZip zip;
+    zip.add("[Content_Types].xml", "<Types/>");
+    zip.add("docProps/core.xml",
+        QByteArrayLiteral("<cp:coreProperties xmlns:cp=\"x\" xmlns:dc=\"y\">"
+                          "<dc:creator>Ada Lovelace</dc:creator></cp:coreProperties>"));
+    zip.add("word/document.xml", QByteArray(2048, 'w'));
+    return zip.build();
+}
+
+/// The value of one fact in the panel, or empty when nothing said it.
+QString detailNamed(const PreviewTabController* preview, const QString& label)
+{
+    const QVariantList details = preview->details();
+    for (const QVariant& entry : details) {
+        const QVariantMap fact = entry.toMap();
+        if (fact.value(QStringLiteral("label")).toString() == label)
+            return fact.value(QStringLiteral("value")).toString();
+    }
+    return {};
+}
+
+QStringList detailLabels(const PreviewTabController* preview)
+{
+    QStringList labels;
+    const QVariantList details = preview->details();
+    for (const QVariant& entry : details)
+        labels.append(entry.toMap().value(QStringLiteral("label")).toString());
+    return labels;
+}
+
 /// The longest run with no line break in it -- which is what the text engine is
 /// handed as one block, and what has to be laid out whole.
 qsizetype longestLine(const QString& text)
@@ -122,6 +192,7 @@ private slots:
     // ---- the bytes of a file, for the files nothing else can show ---------
     void bytesAreShownForWhatNothingElseClaims_data();
     void bytesAreShownForWhatNothingElseClaims();
+    void theBytesAreAChoiceOnEveryFileThatHasNoViewer();
     void theHexWindowIsOnePageOfSixtyFourKilobytes();
     void ahugeFileIsPagedAndItsTailIsReachable();
     void theOffsetColumnWidensPastFourGigabytes();
@@ -316,7 +387,12 @@ void TestPreview::contentsOutrankAMisleadingName()
     QVERIFY(preview->viewer());
     QVERIFY2(!qobject_cast<TextPreviewController*>(preview->viewer()),
         "a zip called notes.txt must not open in the text viewer");
-    QCOMPARE(preview->viewerName(), QStringLiteral("Bytes"));
+    // And it is named rather than dumped: Mole knows what a zip is, so what it
+    // shows is what the file is.
+    QCOMPARE(preview->viewerName(), QStringLiteral("File information"));
+    preview->setDetailsOpen(true);
+    QVERIFY(waitFor([preview] { return !preview->isDetailsLoading(); }, 5000));
+    QCOMPARE(detailNamed(preview, QStringLiteral("MIME type")), QStringLiteral("application/zip"));
 }
 
 void TestPreview::identifyingAFileIsOneReadOfOnePage()
@@ -326,7 +402,7 @@ void TestPreview::identifyingAFileIsOneReadOfOnePage()
     // is the whole promise: a 100 GB file with no extension has to open as fast
     // as a 100 byte one.
     auto memory = std::make_shared<MemoryFileSystem>();
-    memory->addFile(QStringLiteral("/blob8842"), QByteArray(4 * 1024 * 1024, '\x01'));
+    memory->addFile(QStringLiteral("/blob8842"), unknownBinary(4 * 1024 * 1024));
     auto counted = std::make_shared<FaultyFileSystem>(memory);
 
     Mount mount;
@@ -421,31 +497,6 @@ void TestPreview::theFactListNamesWhatTheFileTurnedOutToBe()
 }
 
 // ------------------------------------------ what a file says about itself
-
-namespace {
-
-/// The value of one fact in the panel, or empty when nothing said it.
-QString detailNamed(const PreviewTabController* preview, const QString& label)
-{
-    const QVariantList details = preview->details();
-    for (const QVariant& entry : details) {
-        const QVariantMap fact = entry.toMap();
-        if (fact.value(QStringLiteral("label")).toString() == label)
-            return fact.value(QStringLiteral("value")).toString();
-    }
-    return {};
-}
-
-QStringList detailLabels(const PreviewTabController* preview)
-{
-    QStringList labels;
-    const QVariantList details = preview->details();
-    for (const QVariant& entry : details)
-        labels.append(entry.toMap().value(QStringLiteral("label")).toString());
-    return labels;
-}
-
-} // namespace
 
 void TestPreview::everyReaderThatClaimsAFileContributes()
 {
@@ -721,31 +772,27 @@ void TestPreview::aDocumentNamesItsAuthorWithoutBeingReadWhole()
 
 // ------------------------------------------------- the bytes themselves
 
-namespace {
-
-/// A file with no format anybody knows, and one recognisable string in it so a
-/// selection has something to be about.
-QByteArray unknownBinary(qsizetype bytes)
-{
-    QByteArray out("\x7f\x01\x02\x03MOLE-FIRMWARE\0\0", 19);
-    while (out.size() < bytes)
-        out += QByteArray::number(out.size(), 16).repeated(3) + QByteArray(5, static_cast<char>(0xa7));
-    out.truncate(bytes);
-    return out;
-}
-
-} // namespace
-
 void TestPreview::bytesAreShownForWhatNothingElseClaims_data()
 {
     QTest::addColumn<QString>("fileName");
     QTest::addColumn<QByteArray>("contents");
     QTest::addColumn<QString>("providerId");
 
+    // The bytes are for what nothing can name -- no magic rule, no glob, not
+    // text -- and for nothing else.
     QTest::newRow("no format anybody knows") << "firmware.dat" << unknownBinary(4096) << "mole.preview.hex";
+    QTest::newRow("no name and no format") << "blob8842" << unknownBinary(4096) << "mole.preview.hex";
+
+    // Everything Mole can name says what it is instead. Showing somebody the
+    // first 64 kB of their holiday video in hexadecimal is strictly less than
+    // telling them how long it runs.
     QTest::newRow("a zip under any name")
-        << "bundle" << (QByteArrayLiteral("PK\x03\x04") + QByteArray(400, '\x01')) << "mole.preview.hex";
-    // Text never lands here, however unrecognisable its name.
+        << "bundle" << (QByteArrayLiteral("PK\x03\x04") + QByteArray(400, '\x01')) << "mole.preview.fileinfo";
+    QTest::newRow("a video") << "holiday.mp4" << mp4File() << "mole.preview.fileinfo";
+    QTest::newRow("an mp3") << "song.mp3" << mp3File() << "mole.preview.fileinfo";
+    QTest::newRow("a document") << "report.docx" << docxFile() << "mole.preview.fileinfo";
+
+    // Text never lands in either, however unrecognisable its name.
     QTest::newRow("text with an odd name")
         << "Jenkinsfile" << QByteArray("pipeline { agent any }\n") << "mole.preview.text";
     // And a format with a viewer of its own keeps it: the hex viewer sits below
@@ -766,10 +813,51 @@ void TestPreview::bytesAreShownForWhatNothingElseClaims()
     PreviewTabController* preview = openPreview(fileName);
     QVERIFY(preview);
     QVERIFY(preview->viewer());
-
-    // A PNG still reaches the image viewer, which claims it on its name and is
-    // never asked a second time.
     QCOMPARE(preview->providerId(), providerId);
+}
+
+void TestPreview::theBytesAreAChoiceOnEveryFileThatHasNoViewer()
+{
+    // The other half of narrowing the claim: the bytes did not go away, they
+    // became a choice -- and one that is remembered, like every other viewer's.
+    QVERIFY(m_tree->writeFile(QStringLiteral("holiday.mp4"), mp4File()));
+    QVERIFY(m_tree->writeFile(QStringLiteral("second.mp4"), mp4File()));
+    QVERIFY(m_tree->writeFile(QStringLiteral("song.mp3"), mp3File()));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("holiday.mp4"));
+    QVERIFY(preview);
+    QCOMPARE(preview->viewerName(), QStringLiteral("File information"));
+
+    const QVariantList options = preview->viewerOptions();
+    QCOMPARE(options.size(), 1);
+    QCOMPARE(
+        options.first().toMap().value(QStringLiteral("chosen")).toString(), QStringLiteral("Information"));
+
+    auto* viewer = qobject_cast<FileInfoPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY2(!viewer->isShowingBytes(), "and nothing is built for a choice nobody made");
+    QVERIFY(viewer->bytes() == nullptr);
+
+    preview->chooseViewerOption(QStringLiteral("mode"), QStringLiteral("Bytes"));
+    QVERIFY(viewer->isShowingBytes());
+    auto* hex = qobject_cast<HexPreviewController*>(viewer->bytes());
+    QVERIFY(hex);
+    QVERIFY(waitFor([hex] { return !hex->rows().isEmpty(); }, 5000));
+    QCOMPARE(
+        hex->rows().first().toMap().value(QStringLiteral("offset")).toString(), QStringLiteral("00000000"));
+
+    // The next file of the same type opens the way the last one was left.
+    PreviewTabController* second = openPreview(QStringLiteral("second.mp4"));
+    QCOMPARE(second->viewerOptions().first().toMap().value(QStringLiteral("chosen")).toString(),
+        QStringLiteral("Bytes"));
+    auto* secondViewer = qobject_cast<FileInfoPreviewController*>(second->viewer());
+    QVERIFY(secondViewer);
+    QVERIFY2(secondViewer->isShowingBytes(), "and it is applied before the file is read, not after");
+
+    // A different type is untouched, which is what per-file-type means.
+    PreviewTabController* other = openPreview(QStringLiteral("song.mp3"));
+    QCOMPARE(other->viewerOptions().first().toMap().value(QStringLiteral("chosen")).toString(),
+        QStringLiteral("Information"));
 }
 
 void TestPreview::theHexWindowIsOnePageOfSixtyFourKilobytes()
