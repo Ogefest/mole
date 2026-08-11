@@ -184,7 +184,10 @@ int TabsModel::restoreSession(const Session& session)
 {
     int restored = 0;
     for (const TabSession& tab : session.tabs) {
-        const int row = openTab(tab.featureId);
+        // A feature merged into another leaves its id in every session written
+        // before the merge. Those tabs reopen as their successor; only a tab
+        // whose feature nobody provides at all is skipped.
+        const int row = openTab(m_registry ? m_registry->currentIdFor(tab.featureId) : tab.featureId);
         if (row < 0)
             continue; // the plugin that provided this tab is gone
         if (auto* controller = m_tabs.at(row).controller)

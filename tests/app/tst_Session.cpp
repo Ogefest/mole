@@ -51,6 +51,7 @@ private slots:
     void searchTabRemembersItsQueryButNotItsResults();
     void currentTabIsRemembered();
     void tabsFromAnUninstalledPluginAreSkipped();
+    void aTabOfTheRetiredIndexSearchComesBackAsTheOneSearch();
     void unreachableFolderStillRestoresTheTab();
 
     void windowSizeIsRemembered();
@@ -359,7 +360,7 @@ void TestSession::currentTabIsRemembered()
 {
     startApp();
     m_app->tabs()->openTab(QStringLiteral("mole.commander"));
-    m_app->tabs()->openTab(QStringLiteral("mole.indexsearch"));
+    m_app->tabs()->openTab(QStringLiteral("mole.livesearch"));
     m_app->tabs()->setCurrentIndex(1);
 
     restartApp();
@@ -387,6 +388,33 @@ void TestSession::tabsFromAnUninstalledPluginAreSkipped()
     QCOMPARE(m_app->tabs()->rowCount(), 1);
     QCOMPARE(
         m_app->tabs()->index(0, 0).data(TabsModel::FeatureIdRole).toString(), QStringLiteral("mole.browser"));
+}
+
+/// A feature merged into another is not a feature nobody provides.
+///
+/// The indexed search was its own tab until the two became one, and its id is
+/// written into every session saved before that. Dropping those tabs would be
+/// the answer an uninstalled plugin deserves; what they meant is this search,
+/// asked of everywhere indexed, and that is where they land.
+void TestSession::aTabOfTheRetiredIndexSearchComesBackAsTheOneSearch()
+{
+    QFile file(sessionPath());
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(R"({"version": 1, "currentIndex": 0, "tabs": [
+                    {"featureId": "mole.indexsearch",
+                     "state": {"query": "quarterly", "volumeIndex": 0}}]})");
+    file.close();
+
+    startApp();
+
+    QCOMPARE(m_app->tabs()->rowCount(), 1);
+    QCOMPARE(m_app->tabs()->index(0, 0).data(TabsModel::FeatureIdRole).toString(),
+        QStringLiteral("mole.livesearch"));
+
+    auto* search = qobject_cast<LiveSearchController*>(m_app->tabs()->controllerAt(0));
+    QVERIFY(search);
+    QCOMPARE(search->queryText(), QStringLiteral("quarterly"));
+    QVERIFY2(search->everywhere(), "the tab came back scoped to one folder, which is not what it asked");
 }
 
 void TestSession::unreachableFolderStillRestoresTheTab()

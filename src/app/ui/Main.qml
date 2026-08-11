@@ -152,8 +152,11 @@ ApplicationWindow {
         onActivated: App.triggerAction("mole.tools.folderSizes")
     }
     Shortcut {
+        // The same search, asked of everywhere that has been scanned. There used
+        // to be a second tab behind this key; the scope it stood for is a field
+        // in the one form now, and the key still lands on it.
         sequence: "Ctrl+Shift+I"
-        onActivated: root.openFeature("mole.indexsearch")
+        onActivated: App.openSearchEverywhere()
     }
     // The two copy-a-location keys. Bound here rather than left to the menu: an
     // action's `shortcut` is only what the menu prints beside it, so a key named
@@ -820,8 +823,8 @@ ApplicationWindow {
                 ["Ctrl+T", "New browser tab"],
                 ["Ctrl+Shift+T", "New dual-pane tab"],
                 ["just start typing", "Filter this folder"],
-                ["Ctrl+F", "Search a whole tree (new tab)"],
-                ["Ctrl+Shift+I", "Search the index (new tab)"],
+                ["Ctrl+F", "Search this folder (new tab)"],
+                ["Ctrl+Shift+I", "Search everywhere indexed (new tab)"],
                 ["F3", "Preview the file under the cursor"],
                 ["Ctrl+Shift+A", "Analyse the selected folders, or this one"],
                 ["Ctrl+R", "Find any command, bookmark or drive"],

@@ -33,7 +33,6 @@ set(MOLE_QML_FILES
     ui/FilePane.qml
     ui/BrowserView.qml
     ui/LiveSearchView.qml
-    ui/IndexSearchView.qml
     ui/SearchResultList.qml
     ui/TextPreview.qml
     ui/HexPreview.qml

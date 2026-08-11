@@ -33,8 +33,13 @@ now, whatever the index remembers. A folder that is only partly covered is walke
 half-answered — a list where some rows are current and some are as old as the last scan
 is an answer nobody can reason about.
 
-`Ctrl+Shift+I` opens a search across *every* indexed volume, which is a different
-question from "search here".
+**Where to search is a field, not a second tool.** *Search in* offers the folder you
+opened the search from, a path you type, or *everywhere indexed* — every volume that has
+ever been scanned, with a picker for one of them and how much is in it. `Ctrl+Shift+I`
+opens the search with that scope already set, because "find this across everything I
+have" is a different question from "search here" rather than a different program.
+*Scan a folder…* is beside the search for the same reason: it is what makes the scope
+mean anything.
 
 ## Doing something with the results
 

@@ -856,6 +856,18 @@ int AppController::browserTabForCurrent()
     return m_tabs->openTab(QStringLiteral("mole.browser"));
 }
 
+int AppController::openSearchEverywhere()
+{
+    const int row = openFeatureTab(QStringLiteral("mole.livesearch"));
+    if (row < 0)
+        return row;
+    // By property, not by type: the shell has never had to know what a search
+    // is, and one preset is not a reason to start.
+    if (QObject* controller = m_tabs->controllerAt(row))
+        controller->setProperty("everywhere", true);
+    return row;
+}
+
 void AppController::openLocation(const QString& uri)
 {
     const int row = browserTabForCurrent();
@@ -1048,7 +1060,6 @@ void AppController::registerShellActions()
         { QStringLiteral("mole.browser"), QStringLiteral("Ctrl+T") },
         { QStringLiteral("mole.commander"), QStringLiteral("Ctrl+Shift+T") },
         { QStringLiteral("mole.livesearch"), QStringLiteral("Ctrl+F") },
-        { QStringLiteral("mole.indexsearch"), QStringLiteral("Ctrl+Shift+I") },
     };
 
     // In the order somebody reaches for them -- the two browsers, then the two

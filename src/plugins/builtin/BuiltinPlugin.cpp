@@ -62,7 +62,6 @@ void BuiltinPlugin::registerExtensions(PluginRegistry& registry)
     registry.addFeature(
         std::make_unique<BrowserFeature>(services, m_defaultUri, BrowserFeature::dualPaneConfig()));
     registry.addFeature(std::make_unique<LiveSearchFeature>(services, m_defaultUri));
-    registry.addFeature(std::make_unique<IndexSearchFeature>(services));
     registry.addFeature(std::make_unique<PreviewFeature>(services));
 
     registry.addFeature(std::make_unique<AnalysisFeature>(services));

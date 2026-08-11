@@ -33,6 +33,17 @@ IFeature* FeatureRegistry::feature(const QString& id) const
     return nullptr;
 }
 
+QString FeatureRegistry::currentIdFor(const QString& id) const
+{
+    if (feature(id))
+        return id;
+    for (const auto& candidate : m_features) {
+        if (candidate->absorbedIds().contains(id))
+            return candidate->id();
+    }
+    return id;
+}
+
 QList<IFeature*> FeatureRegistry::features() const
 {
     QList<IFeature*> out;

@@ -35,6 +35,11 @@ public:
     bool registerFeature(std::unique_ptr<IFeature> feature);
 
     IFeature* feature(const QString& id) const;
+    /// The id to use in place of `id`, which is `id` itself unless it belongs
+    /// to a feature that was merged into another. A session written before a
+    /// merge names tabs that no longer exist, and reopening them as nothing is
+    /// the answer an uninstalled plugin deserves rather than a renamed one.
+    QString currentIdFor(const QString& id) const;
     QList<IFeature*> features() const;
 
     int rowCount(const QModelIndex& parent = {}) const override;

@@ -3,6 +3,7 @@
 #include "sdk/PluginServices.h"
 
 #include <QString>
+#include <QStringList>
 #include <QUrl>
 
 namespace mole {
@@ -62,6 +63,18 @@ public:
     /// suggestion — `everyFeatureIsReachableFromTheMenu` in `tst_AppIntegration`
     /// fails when a registered feature is named by no action at all.
     virtual bool opensFromNothing() const { return false; }
+
+    /// Ids this feature has taken over from features that no longer exist.
+    ///
+    /// An id is written into every saved session, so retiring one turns every
+    /// tab of it into a tab that reopens as nothing — which is indistinguishable
+    /// from an uninstalled plugin and is the wrong answer when the feature was
+    /// merged into another rather than removed. Naming the old id here is what
+    /// lets the session restore land on the tab that replaced it.
+    ///
+    /// The successor is responsible for reading the old tab's state as well as
+    /// its own; see LiveSearchController::restoreState() for what that costs.
+    virtual QStringList absorbedIds() const { return {}; }
 
     /// QML component rendering the tab body. It is instantiated with a
     /// `controller` property holding the object from createController().

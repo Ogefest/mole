@@ -1,7 +1,9 @@
 # ADR-0005: The search form decides whether to walk or to ask the index
 
 - **Date:** 2026-08-08
-- **Status:** Accepted
+- **Status:** Accepted. The *index-search tab stays as it is* paragraph below is
+  superseded by [ADR-0037](0037-the-scope-is-a-field-not-a-second-tab.md) — the
+  scope is a field on the one search now. Everything else here still holds.
 
 ## Context
 

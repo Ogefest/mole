@@ -16,12 +16,26 @@ namespace mole {
 
 class IndexSearchTask;
 
-/// Walks the filesystem now. Always current, costs a traversal.
+/// The search.
+///
+/// One tab, one form, one idea of what a search is. Which engine answers it is a
+/// fact about the question -- *what is there now* against *what did we last see*
+/// -- rather than a choice of tool: there used to be a second tab for the index,
+/// and the only thing it really offered that this one could not was a scope of
+/// *everywhere I have scanned*, which is a field here.
 class LiveSearchController final : public FeatureController
 {
     Q_OBJECT
     Q_PROPERTY(mole::FileListModel* results READ results CONSTANT)
     Q_PROPERTY(QString rootUri READ rootUri WRITE setRootUri NOTIFY rootUriChanged)
+    /// Search every indexed volume instead of one folder. What the retired
+    /// second tab meant, and the only question it could ask that this one could
+    /// not: a walk of "everywhere" is not a thing anybody can wait for.
+    Q_PROPERTY(bool everywhere READ everywhere WRITE setEverywhere NOTIFY scopeChanged)
+    /// "All volumes" and then each scanned root with how much is in it. Only
+    /// meaningful while `everywhere` is set.
+    Q_PROPERTY(QStringList volumeLabels READ volumeLabels NOTIFY volumesChanged)
+    Q_PROPERTY(int volumeIndex READ volumeIndex WRITE setVolumeIndex NOTIFY volumeIndexChanged)
     Q_PROPERTY(QString queryText READ queryText WRITE setQueryText NOTIFY queryTextChanged)
     Q_PROPERTY(QString extension READ extension WRITE setExtension NOTIFY criteriaChanged)
     Q_PROPERTY(bool caseSensitive READ caseSensitive WRITE setCaseSensitive NOTIFY criteriaChanged)
@@ -67,6 +81,18 @@ public:
     bool indexCoversRoot() const;
     QString indexNote() const;
 
+    bool everywhere() const { return m_everywhere; }
+    void setEverywhere(bool everywhere);
+    QStringList volumeLabels() const { return m_volumeLabels; }
+    int volumeIndex() const { return m_volumeIndex; }
+    void setVolumeIndex(int index);
+    /// Rebuilds the volume list from the index. Called on its own when a scan
+    /// finishes anywhere, so a folder just indexed is searchable without the
+    /// user knowing there is a list to reload.
+    Q_INVOKABLE void refreshVolumes();
+    /// Queues a background scan that fills the index for `uri`.
+    Q_INVOKABLE void scanDirectory(const QString& uri, const QString& label);
+
     /// Takes what a person types -- "10M", "1.5 GB", "500k", or nothing at all --
     /// and returns the bytes, or -1 for anything it cannot make sense of. A form
     /// should not make someone count zeros.
@@ -94,11 +120,18 @@ signals:
     void criteriaChanged();
     void runningChanged();
     void statusChanged();
+    void scopeChanged();
+    void volumesChanged();
+    void volumeIndexChanged();
 
 private:
     /// The deepest indexed volume whose root is a prefix of the search root, if
     /// any covers it at all.
     std::optional<IndexVolume> coveringVolume() const;
+    /// Asks the index and reports the count through `doneFormat`, which takes
+    /// it as %1. Both scopes that reach the index come through here, so the two
+    /// differ in what they say and in nothing else.
+    void startIndexSearch(const SearchQuery& query, const QString& doneFormat);
     void setRunning(bool running);
     void setStatusText(const QString& text);
 
@@ -111,6 +144,10 @@ private:
     qint64 m_minSize = -1;
     qint64 m_maxSize = -1;
     bool m_useIndex = true;
+    bool m_everywhere = false;
+    QStringList m_volumeLabels;
+    QList<qint64> m_volumeIds;
+    int m_volumeIndex = 0;
     bool m_running = false;
     bool m_truncated = false;
     QString m_statusText;
@@ -119,76 +156,23 @@ private:
     QPointer<IndexSearchTask> m_indexTask;
 };
 
-/// Queries what a previous scan recorded. Instant, possibly stale.
-class IndexSearchController final : public FeatureController
-{
-    Q_OBJECT
-    Q_PROPERTY(mole::FileListModel* results READ results CONSTANT)
-    Q_PROPERTY(QString queryText READ queryText WRITE setQueryText NOTIFY queryTextChanged)
-    Q_PROPERTY(QStringList volumeLabels READ volumeLabels NOTIFY volumesChanged)
-    Q_PROPERTY(int volumeIndex READ volumeIndex WRITE setVolumeIndex NOTIFY volumeIndexChanged)
-    Q_PROPERTY(QString statusText READ statusText NOTIFY statusChanged)
-    Q_PROPERTY(bool running READ isRunning NOTIFY runningChanged)
-
-public:
-    explicit IndexSearchController(PluginServices services, QObject* parent = nullptr);
-    ~IndexSearchController() override;
-
-    FileListModel* results() const { return m_results; }
-    QString queryText() const { return m_queryText; }
-    void setQueryText(const QString& text);
-    /// "All volumes" followed by each scanned root.
-    QStringList volumeLabels() const { return m_volumeLabels; }
-    int volumeIndex() const { return m_volumeIndex; }
-    void setVolumeIndex(int index);
-    QString statusText() const { return m_statusText; }
-    bool isRunning() const { return m_running; }
-
-    Q_INVOKABLE void search();
-    Q_INVOKABLE void refreshVolumes();
-
-    QVariantMap saveState() const override;
-    void restoreState(const QVariantMap& state) override;
-    /// Queues a background scan that fills the index for `uri`.
-    Q_INVOKABLE void scanDirectory(const QString& uri, const QString& label);
-
-signals:
-    void queryTextChanged();
-    void volumesChanged();
-    void volumeIndexChanged();
-    void statusChanged();
-    void runningChanged();
-
-private:
-    void setStatusText(const QString& text);
-    void setRunning(bool running);
-
-    PluginServices m_services;
-    FileListModel* m_results = nullptr;
-    QString m_queryText;
-    QStringList m_volumeLabels;
-    QList<qint64> m_volumeIds;
-    int m_volumeIndex = 0;
-    QString m_statusText;
-    bool m_running = false;
-    QPointer<IndexSearchTask> m_task;
-};
-
 class LiveSearchFeature final : public IFeature
 {
 public:
     LiveSearchFeature(PluginServices services, QString defaultRoot);
 
     QString id() const override { return QStringLiteral("mole.livesearch"); }
-    QString title() const override { return QStringLiteral("Quick search"); }
+    QString title() const override { return QStringLiteral("Search"); }
     QString description() const override
     {
-        return QStringLiteral("Walk a tree and find files by name, right now.");
+        return QStringLiteral("Find files by name, in a folder or across everything indexed.");
     }
     QString iconText() const override { return QStringLiteral("\U0001F50D"); }
     int sortOrder() const override { return 20; }
     /// One search per question, and people ask several at once.
     bool opensFromNothing() const override { return true; }
+    /// The indexed search was a second tab for a scope this one has as a field.
+    QStringList absorbedIds() const override { return { QStringLiteral("mole.indexsearch") }; }
 
     QUrl viewSource() const override;
     FeatureController* createController(QObject* parent) override;
@@ -196,28 +180,6 @@ public:
 private:
     PluginServices m_services;
     QString m_defaultRoot;
-};
-
-class IndexSearchFeature final : public IFeature
-{
-public:
-    explicit IndexSearchFeature(PluginServices services);
-
-    QString id() const override { return QStringLiteral("mole.indexsearch"); }
-    QString title() const override { return QStringLiteral("Indexed search"); }
-    QString description() const override
-    {
-        return QStringLiteral("Search volumes you scanned earlier, without touching the disk.");
-    }
-    QString iconText() const override { return QStringLiteral("\U0001F5C2"); }
-    int sortOrder() const override { return 30; }
-    bool opensFromNothing() const override { return true; }
-
-    QUrl viewSource() const override;
-    FeatureController* createController(QObject* parent) override;
-
-private:
-    PluginServices m_services;
 };
 
 } // namespace mole

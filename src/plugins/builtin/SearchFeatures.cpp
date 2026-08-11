@@ -25,6 +25,14 @@ LiveSearchController::LiveSearchController(PluginServices services, QString root
 {
     m_results->setShowHidden(true);
     setSubtitle(m_rootUri);
+
+    // A finished scan should make its results searchable at once, without the
+    // user knowing there is a list to reload. Announced on the bus, so every
+    // open search hears it rather than only the one that started the scan.
+    if (m_services.events)
+        connect(m_services.events, &EventBus::indexUpdated, this, [this] { refreshVolumes(); });
+
+    refreshVolumes();
 }
 
 LiveSearchController::~LiveSearchController()
@@ -75,6 +83,75 @@ void LiveSearchController::setUseIndex(bool use)
         return;
     m_useIndex = use;
     emit criteriaChanged();
+}
+
+void LiveSearchController::setEverywhere(bool everywhere)
+{
+    if (m_everywhere == everywhere)
+        return;
+    m_everywhere = everywhere;
+    // The subtitle is where the tab says what it is aimed at, and "everywhere
+    // indexed" is as much an answer to that as a path is.
+    setSubtitle(m_everywhere ? QStringLiteral("Everywhere indexed") : m_rootUri);
+    emit scopeChanged();
+    emit stateChanged();
+}
+
+void LiveSearchController::setVolumeIndex(int index)
+{
+    const int clamped = qBound(0, index, static_cast<int>(m_volumeLabels.size()) - 1);
+    if (m_volumeIndex == clamped)
+        return;
+    m_volumeIndex = clamped;
+    emit volumeIndexChanged();
+    emit stateChanged();
+}
+
+void LiveSearchController::refreshVolumes()
+{
+    m_volumeLabels = { QStringLiteral("All volumes") };
+    m_volumeIds = { -1 };
+
+    if (m_services.index) {
+        Result<QList<IndexVolume>> volumes = m_services.index->volumes();
+        if (volumes.ok()) {
+            for (const IndexVolume& volume : volumes.value()) {
+                m_volumeLabels.append(
+                    QStringLiteral("%1 (%2 entries)").arg(volume.label).arg(volume.fileCount));
+                m_volumeIds.append(volume.id);
+            }
+        }
+    }
+
+    if (m_volumeIndex >= m_volumeLabels.size())
+        setVolumeIndex(0);
+    emit volumesChanged();
+}
+
+void LiveSearchController::scanDirectory(const QString& uri, const QString& label)
+{
+    if (!m_services.isValid())
+        return;
+
+    const VfsUri root = VfsUri::fromString(uri);
+    FileSystemPtr fs = m_services.vfs->resolve(root);
+    if (!fs) {
+        setStatusText(QStringLiteral("No drive is mounted for %1").arg(uri));
+        return;
+    }
+
+    auto* task = new ScanTask(std::move(fs), root, label.isEmpty() ? uri : label, m_services.index);
+
+    // Announced on the bus rather than called back directly, so every open
+    // search refreshes and not only the one that asked for the scan.
+    connect(task, &Task::finished, this, [this, task] {
+        if (task->state() == Task::State::Succeeded && m_services.events)
+            m_services.events->postIndexUpdated(-1, task->filesIndexed());
+        setStatusText(task->statusText());
+    });
+
+    setStatusText(QStringLiteral("Scanning %1...").arg(uri));
+    m_services.tasks->submit(task);
 }
 
 qint64 LiveSearchController::parseSize(const QString& text)
@@ -178,6 +255,30 @@ QString LiveSearchController::indexNote() const
     return QStringLiteral("%1 is indexed, scanned %2").arg(volume->label, age);
 }
 
+void LiveSearchController::startIndexSearch(const SearchQuery& query, const QString& doneFormat)
+{
+    auto* indexTask = new IndexSearchTask(m_services.index, query);
+    m_indexTask = indexTask;
+
+    connect(indexTask, &IndexSearchTask::resultsReady, this, [this, indexTask](const FileEntryList& hits) {
+        if (m_indexTask == indexTask)
+            m_results->setEntries(hits);
+    });
+    connect(indexTask, &Task::finished, this, [this, indexTask, doneFormat] {
+        if (m_indexTask != indexTask)
+            return;
+        setRunning(false);
+        setStatusText(indexTask->state() == Task::State::Failed
+                ? indexTask->error().message
+                : doneFormat.arg(QLocale().toString(m_results->totalCount())));
+        m_indexTask.clear();
+    });
+
+    setRunning(true);
+    setStatusText(QStringLiteral("Asking the index…"));
+    m_services.tasks->submit(indexTask);
+}
+
 void LiveSearchController::start()
 {
     if (!m_services.isValid())
@@ -185,6 +286,26 @@ void LiveSearchController::start()
 
     // Starting a new search abandons the old one rather than racing it.
     stop();
+
+    // One query, whichever engine answers it. The criteria mean the same thing
+    // to each of them because there is only one place that says what they mean.
+    SearchQuery query;
+    query.addIfSet(SearchPredicate::name(m_queryText, m_caseSensitive));
+    query.addIfSet(SearchPredicate::extension(m_extension));
+    query.addIfSet(SearchPredicate::minSize(m_minSize));
+    query.addIfSet(SearchPredicate::maxSize(m_maxSize));
+
+    // Everywhere indexed is a question only the index can answer -- a walk of
+    // every volume anybody ever scanned is not something to wait for -- so the
+    // scope decides the engine here rather than coverage doing it below.
+    if (m_everywhere) {
+        m_results->clear();
+        m_truncated = false;
+        query.volumeId
+            = m_volumeIndex >= 0 && m_volumeIndex < m_volumeIds.size() ? m_volumeIds.at(m_volumeIndex) : -1;
+        startIndexSearch(query, QStringLiteral("%1 from the index"));
+        return;
+    }
 
     const VfsUri root = VfsUri::fromString(m_rootUri);
     FileSystemPtr fs = m_services.vfs->resolve(root);
@@ -196,13 +317,6 @@ void LiveSearchController::start()
     m_results->clear();
     m_truncated = false;
 
-    // One query, whichever engine answers it. The criteria mean the same thing
-    // to each of them because there is only one place that says what they mean.
-    SearchQuery query;
-    query.addIfSet(SearchPredicate::name(m_queryText, m_caseSensitive));
-    query.addIfSet(SearchPredicate::extension(m_extension));
-    query.addIfSet(SearchPredicate::minSize(m_minSize));
-    query.addIfSet(SearchPredicate::maxSize(m_maxSize));
     // The folder the question was about. A walk is already inside it; the index
     // is not, because a volume can be a whole disk -- and rather than the answer
     // being narrowed by hand afterwards, the narrowing is part of the question.
@@ -212,28 +326,7 @@ void LiveSearchController::start()
     // whole subtree and has not been turned off, a walk otherwise.
     if (const std::optional<IndexVolume> volume = m_useIndex ? coveringVolume() : std::nullopt) {
         query.volumeId = volume->id;
-
-        auto* indexTask = new IndexSearchTask(m_services.index, query);
-        m_indexTask = indexTask;
-        connect(
-            indexTask, &IndexSearchTask::resultsReady, this, [this, indexTask](const FileEntryList& hits) {
-                if (m_indexTask == indexTask)
-                    m_results->setEntries(hits);
-            });
-        connect(indexTask, &Task::finished, this, [this, indexTask] {
-            if (m_indexTask != indexTask)
-                return;
-            setRunning(false);
-            setStatusText(indexTask->state() == Task::State::Failed
-                    ? indexTask->error().message
-                    : QStringLiteral("%1 from the index — %2")
-                          .arg(QLocale().toString(m_results->totalCount()), indexNote()));
-            m_indexTask.clear();
-        });
-
-        setRunning(true);
-        setStatusText(QStringLiteral("Asking the index…"));
-        m_services.tasks->submit(indexTask);
+        startIndexSearch(query, QStringLiteral("%1 from the index — ") + indexNote());
         return;
     }
 
@@ -307,6 +400,8 @@ QVariantMap LiveSearchController::saveState() const
         { QStringLiteral("query"), m_queryText },
         { QStringLiteral("extension"), m_extension },
         { QStringLiteral("caseSensitive"), m_caseSensitive },
+        { QStringLiteral("everywhere"), m_everywhere },
+        { QStringLiteral("volumeIndex"), m_volumeIndex },
     };
 }
 
@@ -318,6 +413,15 @@ void LiveSearchController::restoreState(const QVariantMap& state)
     setQueryText(state.value(QStringLiteral("query")).toString());
     setExtension(state.value(QStringLiteral("extension")).toString());
     setCaseSensitive(state.value(QStringLiteral("caseSensitive"), false).toBool());
+
+    // A tab of the retired indexed search, in a session written before the two
+    // became one. It saved a volume and no root, which nothing else ever did,
+    // and what it meant was this search asked of everywhere indexed.
+    const bool wasTheIndexTab = root.isEmpty() && state.contains(QStringLiteral("volumeIndex"));
+    setEverywhere(state.value(QStringLiteral("everywhere"), wasTheIndexTab).toBool());
+    // The volume list is rebuilt from the index, so a remembered position may no
+    // longer exist; setVolumeIndex clamps.
+    setVolumeIndex(state.value(QStringLiteral("volumeIndex"), 0).toInt());
 }
 
 void LiveSearchController::setRunning(bool running)
@@ -337,165 +441,6 @@ void LiveSearchController::setStatusText(const QString& text)
     emit statusChanged();
 }
 
-// --------------------------------------------------------------- index search
-
-IndexSearchController::IndexSearchController(PluginServices services, QObject* parent)
-    : FeatureController(QStringLiteral("Indexed search"), parent)
-    , m_services(services)
-    , m_results(new FileListModel(this))
-{
-    m_results->setShowHidden(true);
-
-    // A finished scan should make its results searchable immediately, without
-    // the user knowing they have to reload a dropdown.
-    if (m_services.events) {
-        connect(m_services.events, &EventBus::indexUpdated, this, [this] { refreshVolumes(); });
-    }
-
-    refreshVolumes();
-}
-
-IndexSearchController::~IndexSearchController()
-{
-    if (m_task)
-        m_task->requestCancel();
-}
-
-void IndexSearchController::setQueryText(const QString& text)
-{
-    if (m_queryText == text)
-        return;
-    m_queryText = text;
-    emit queryTextChanged();
-    emit stateChanged();
-}
-
-void IndexSearchController::setVolumeIndex(int index)
-{
-    const int clamped = qBound(0, index, static_cast<int>(m_volumeLabels.size()) - 1);
-    if (m_volumeIndex == clamped)
-        return;
-    m_volumeIndex = clamped;
-    emit volumeIndexChanged();
-}
-
-void IndexSearchController::refreshVolumes()
-{
-    m_volumeLabels = { QStringLiteral("All volumes") };
-    m_volumeIds = { -1 };
-
-    if (m_services.index) {
-        Result<QList<IndexVolume>> volumes = m_services.index->volumes();
-        if (volumes.ok()) {
-            for (const IndexVolume& volume : volumes.value()) {
-                m_volumeLabels.append(
-                    QStringLiteral("%1 (%2 entries)").arg(volume.label).arg(volume.fileCount));
-                m_volumeIds.append(volume.id);
-            }
-        }
-    }
-
-    if (m_volumeIndex >= m_volumeLabels.size())
-        setVolumeIndex(0);
-    emit volumesChanged();
-}
-
-void IndexSearchController::search()
-{
-    if (!m_services.isValid())
-        return;
-
-    if (m_task) {
-        m_task->requestCancel();
-        m_task.clear();
-    }
-
-    SearchQuery query;
-    query.addIfSet(SearchPredicate::name(m_queryText));
-    query.volumeId
-        = m_volumeIndex >= 0 && m_volumeIndex < m_volumeIds.size() ? m_volumeIds.at(m_volumeIndex) : -1;
-
-    auto* task = new IndexSearchTask(m_services.index, query);
-    m_task = task;
-
-    connect(task, &IndexSearchTask::resultsReady, this, [this, task](const FileEntryList& entries) {
-        if (m_task == task)
-            m_results->setEntries(entries);
-    });
-
-    connect(task, &Task::finished, this, [this, task] {
-        if (m_task != task)
-            return;
-        setRunning(false);
-        setStatusText(task->state() == Task::State::Failed ? task->error().message : task->statusText());
-        m_task.clear();
-    });
-
-    setRunning(true);
-    setTitle(
-        m_queryText.isEmpty() ? QStringLiteral("Indexed search") : QStringLiteral("\"%1\"").arg(m_queryText));
-    m_services.tasks->submit(task);
-}
-
-void IndexSearchController::scanDirectory(const QString& uri, const QString& label)
-{
-    if (!m_services.isValid())
-        return;
-
-    const VfsUri root = VfsUri::fromString(uri);
-    FileSystemPtr fs = m_services.vfs->resolve(root);
-    if (!fs) {
-        setStatusText(QStringLiteral("No drive is mounted for %1").arg(uri));
-        return;
-    }
-
-    auto* task = new ScanTask(std::move(fs), root, label.isEmpty() ? uri : label, m_services.index);
-
-    // Announcing on the bus rather than calling back directly means every open
-    // indexed-search tab refreshes, not just the one that started the scan.
-    connect(task, &Task::finished, this, [this, task] {
-        if (task->state() == Task::State::Succeeded && m_services.events)
-            m_services.events->postIndexUpdated(-1, task->filesIndexed());
-        setStatusText(task->statusText());
-    });
-
-    setStatusText(QStringLiteral("Scanning %1...").arg(uri));
-    m_services.tasks->submit(task);
-}
-
-QVariantMap IndexSearchController::saveState() const
-{
-    return {
-        { QStringLiteral("query"), m_queryText },
-        { QStringLiteral("volumeIndex"), m_volumeIndex },
-    };
-}
-
-void IndexSearchController::restoreState(const QVariantMap& state)
-{
-    setQueryText(state.value(QStringLiteral("query")).toString());
-    // The volume list is rebuilt from the index, so the remembered position
-    // may no longer exist; setVolumeIndex clamps.
-    setVolumeIndex(state.value(QStringLiteral("volumeIndex"), 0).toInt());
-}
-
-void IndexSearchController::setStatusText(const QString& text)
-{
-    if (m_statusText == text)
-        return;
-    m_statusText = text;
-    emit statusChanged();
-}
-
-void IndexSearchController::setRunning(bool running)
-{
-    if (m_running == running)
-        return;
-    m_running = running;
-    setBusy(running);
-    emit runningChanged();
-}
-
 // -------------------------------------------------------------------features
 
 LiveSearchFeature::LiveSearchFeature(PluginServices services, QString defaultRoot)
@@ -512,21 +457,6 @@ QUrl LiveSearchFeature::viewSource() const
 FeatureController* LiveSearchFeature::createController(QObject* parent)
 {
     return new LiveSearchController(m_services, m_defaultRoot, parent);
-}
-
-IndexSearchFeature::IndexSearchFeature(PluginServices services)
-    : m_services(services)
-{
-}
-
-QUrl IndexSearchFeature::viewSource() const
-{
-    return QUrl(QStringLiteral("qrc:/qt/qml/Mole/ui/IndexSearchView.qml"));
-}
-
-FeatureController* IndexSearchFeature::createController(QObject* parent)
-{
-    return new IndexSearchController(m_services, parent);
 }
 
 } // namespace mole

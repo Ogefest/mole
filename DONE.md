@@ -9,6 +9,38 @@ wrong.
 
 ---
 
+## There were two searches, and which one you were in was your problem
+
+**Asked for:** MOLE-148 — `Ctrl+F` walked a folder and `Ctrl+Shift+I` queried the index,
+in two tabs with two forms and two result views. The difference between them was which
+engine answered, which is an implementation detail wearing a keyboard shortcut.
+
+**What it turned out to be:** a field. *Search in* offers this folder, a typed path, or
+everywhere indexed; picking the last is what turns the search into the question the second
+tab existed for, and the volume picker sits beside it as a filter rather than as a screen.
+`Ctrl+F` is untouched — a box, a name, Return — and `Ctrl+Shift+I` opens the same search
+with that scope preset, so the key in anybody's fingers still lands somewhere that answers.
+[ADR-0037](docs/adr/0037-the-scope-is-a-field-not-a-second-tab.md) records it and supersedes
+the one paragraph of ADR-0005 that kept the tab.
+
+**The merge is a merge, not a deletion.** Everything the retired tab had is in the form:
+the name box, the volume picker with its per-volume counts, the search button, the status
+line, the busy indicator, *Scan a folder…* and its dialog, and the refresh that makes a
+folder searchable the moment a scan of it finishes anywhere. It gained something too — the
+results can become a file set, which that tab never could.
+
+**A retired id is not a missing plugin.** Every session saved before this names
+`mole.indexsearch`, and dropping those tabs would be the answer an uninstalled plugin
+deserves. `IFeature` gained `absorbedIds()`, so the feature that did the absorbing is what
+says so, and the restore lands on the merged search with the scope the old tab meant —
+which it works out from the state that tab saved, since only it ever wrote a volume and no
+root.
+
+**What the engine choice still is.** ADR-0005's rule is untouched for a folder: the index
+when it covers the subtree and the toggle is on, a walk otherwise, and the status line says
+which answered. The toggle is hidden for the everywhere scope because there is nothing
+there to turn off — searching everything ever scanned is the index by definition.
+
 ## A query was described twice, and nothing kept the two in step
 
 **Asked for:** MOLE-147 — `IndexSearchQuery` and `LiveSearchTask::Criteria` held the same

@@ -26,14 +26,40 @@ Item {
             columnSpacing: 8
             rowSpacing: 6
 
+            // Where to search is a field, not a tab. Searching everything ever
+            // scanned used to be a separate window with its own form and its own
+            // idea of what a search was; it is a scope, and the difference
+            // between the two was only ever which engine could answer.
             Label { text: "Search in"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+            ComboBox {
+                objectName: "searchScope"
+                Layout.preferredWidth: 200
+                model: ["This folder", "Everywhere indexed"]
+                currentIndex: controller && controller.everywhere ? 1 : 0
+                font.pixelSize: App.secondaryTextSize
+                onActivated: if (controller) controller.everywhere = (currentIndex === 1)
+            }
             TextField {
+                objectName: "searchRootField"
                 Layout.fillWidth: true
-                Layout.columnSpan: 3
+                Layout.columnSpan: 2
+                visible: !(controller && controller.everywhere)
                 text: controller ? controller.rootUri : ""
                 selectByMouse: true
                 font.pixelSize: App.secondaryTextSize
                 onEditingFinished: if (controller) controller.rootUri = text
+            }
+            // In its place when the scope is everywhere: which of the scanned
+            // volumes, and how much each holds. The retired tab's one control.
+            ComboBox {
+                objectName: "searchVolume"
+                Layout.fillWidth: true
+                Layout.columnSpan: 2
+                visible: controller && controller.everywhere === true
+                model: controller ? controller.volumeLabels : []
+                currentIndex: controller ? controller.volumeIndex : 0
+                font.pixelSize: App.secondaryTextSize
+                onActivated: if (controller) controller.volumeIndex = currentIndex
             }
 
             Label { text: "Name contains"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
@@ -80,6 +106,17 @@ Item {
                 font.pixelSize: App.secondaryTextSize
                 checked: controller ? controller.caseSensitive : false
                 onToggled: if (controller) controller.caseSensitive = checked
+            }
+
+            // Indexing a folder is what makes "everywhere indexed" mean
+            // anything, so the way to do it belongs beside the search rather
+            // than in a tab somebody has to know about.
+            Button {
+                objectName: "scanFolderButton"
+                text: "Scan a folder…"
+                flat: true
+                font.pixelSize: App.secondaryTextSize
+                onClicked: scanDialog.open()
             }
 
             BusyIndicator {
@@ -184,10 +221,13 @@ Item {
             Item { Layout.fillWidth: true }
 
             // The index answers instantly and might be out of date, so the toggle
-            // sits with the criteria and says how old it is. See ADR-0005.
+            // sits with the criteria and says how old it is. See ADR-0005. It is
+            // about a folder: searching everywhere indexed is the index by
+            // definition, so there is nothing there to turn off.
             CheckBox {
                 objectName: "useIndexToggle"
                 Layout.columnSpan: 2
+                visible: !(controller && controller.everywhere)
                 text: "Use the index"
                 enabled: controller ? controller.indexCoversRoot : false
                 checked: controller ? controller.useIndex : true
@@ -195,11 +235,14 @@ Item {
                 onToggled: if (controller) controller.useIndex = checked
             }
             Label {
-                Layout.columnSpan: 3
+                objectName: "indexNote"
+                Layout.columnSpan: controller && controller.everywhere ? 5 : 3
                 Layout.fillWidth: true
-                text: controller && controller.indexNote.length > 0
-                      ? controller.indexNote
-                      : "This folder is not indexed, so searching walks it."
+                text: controller && controller.everywhere
+                      ? "Answered from what the last scan of each volume recorded."
+                      : (controller && controller.indexNote.length > 0
+                            ? controller.indexNote
+                            : "This folder is not indexed, so searching walks it.")
                 color: "#6f7788"
                 font.pixelSize: App.smallTextSize
                 elide: Text.ElideRight
@@ -264,6 +307,69 @@ Item {
             visible: !(controller && controller.running === true
                        && (controller.results ? controller.results.count === 0 : true))
             resultsModel: controller ? controller.results : null
+        }
+    }
+
+    Dialog {
+        id: scanDialog
+        objectName: "scanDialog"
+        // Without this the popup never becomes a focus scope, so nothing inside it
+        // can hold the keyboard and the footer's focus quietly does nothing.
+        focus: true
+        title: "Index a folder"
+        modal: true
+        anchors.centerIn: parent
+        width: 520
+
+        footer: ConfirmButtons {
+            acceptText: "Index"
+            // Nothing to index without a path, and a button that acts on nothing
+            // is worse than one that says it cannot.
+            acceptEnabled: scanPath.text.trim().length > 0
+            // Typed into first, so the field wins over the button.
+            keyboardOn: "none"
+        }
+
+        onOpened: scanPath.forceActiveFocus()
+
+        onAccepted: {
+            if (controller && scanPath.text.length > 0) {
+                var uri = scanPath.text.trim()
+                if (uri.indexOf("://") < 0)
+                    uri = "file://" + uri
+                controller.scanDirectory(uri, scanLabel.text)
+            }
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 8
+
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                text: "Walks the tree once in the background and records it, so searching it later never touches the disk."
+                color: "#8b93a7"
+                font.pixelSize: App.secondaryTextSize
+            }
+
+            TextField {
+                id: scanPath
+                objectName: "scanPath"
+                Layout.fillWidth: true
+                placeholderText: "/home/you/big-archive"
+                selectByMouse: true
+                // The keyboard starts here, so Return has to answer from here.
+                onAccepted: if (text.trim().length > 0) scanDialog.accept()
+            }
+
+            TextField {
+                id: scanLabel
+                Layout.fillWidth: true
+                placeholderText: "Label (optional)"
+                selectByMouse: true
+                onAccepted: if (scanPath.text.trim().length > 0) scanDialog.accept()
+            }
         }
     }
 }

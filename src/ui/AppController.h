@@ -231,6 +231,13 @@ public:
     /// should search that folder, not a default nobody asked for.
     Q_INVOKABLE int openFeatureTab(const QString& featureId);
 
+    /// Opens the search with its scope set to every indexed volume.
+    ///
+    /// There used to be a second search tab behind Ctrl+Shift+I. The question it
+    /// asked is a field on the one form now, and this is the key still landing
+    /// on it -- a preset, not a second tool. Returns the row, or -1.
+    Q_INVOKABLE int openSearchEverywhere();
+
     /// Opens a preview tab for `uri`, reusing one that is already open rather
     /// than piling up a tab per file.
     Q_INVOKABLE void previewFile(const QString& uri);

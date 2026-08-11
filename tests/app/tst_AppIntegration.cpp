@@ -50,6 +50,7 @@ private slots:
     void browserTabRenamesItselfWhileNavigating();
     void directoryChangedEventRefreshesOpenPanes();
     void scanThenIndexSearchFindsTheFile();
+    void theIndexShortcutOpensTheOneSearchScopedToEverything();
     void liveSearchFindsFilesOnDisk();
     void searchSizesAreTypedTheWayPeopleWriteThem();
     void searchWalksWhenNothingIsIndexed();
@@ -145,7 +146,11 @@ void TestAppIntegration::startsWithBuiltinFeaturesAndDrives()
 
     QVERIFY(m_app->features()->feature(QStringLiteral("mole.browser")) != nullptr);
     QVERIFY(m_app->features()->feature(QStringLiteral("mole.livesearch")) != nullptr);
-    QVERIFY(m_app->features()->feature(QStringLiteral("mole.indexsearch")) != nullptr);
+    // One search, not two. The retired id still resolves, because a session
+    // written before the merge names it and those tabs must land somewhere.
+    QVERIFY(m_app->features()->feature(QStringLiteral("mole.indexsearch")) == nullptr);
+    QCOMPARE(m_app->features()->currentIdFor(QStringLiteral("mole.indexsearch")),
+        QStringLiteral("mole.livesearch"));
 
     // Home and Filesystem are always there.
     QVERIFY(m_app->drives()->rowCount() >= 2);
@@ -310,11 +315,16 @@ void TestAppIntegration::directoryChangedEventRefreshesOpenPanes()
     QVERIFY(waitFor([pane] { return pane->files()->rowCount() == 4; }));
 }
 
+/// The question the retired second tab existed to ask, asked of the one search.
+///
+/// Scanning a folder, seeing it in the volume list with what is in it, and
+/// finding a file across everything indexed: those were the whole of that tab,
+/// and every one of them is a field or a button on this form now.
 void TestAppIntegration::scanThenIndexSearchFindsTheFile()
 {
-    const int row = m_app->tabs()->openTab(QStringLiteral("mole.indexsearch"));
+    const int row = m_app->tabs()->openTab(QStringLiteral("mole.livesearch"));
     QVERIFY(row >= 0);
-    auto* search = qobject_cast<IndexSearchController*>(m_app->tabs()->controllerAt(row));
+    auto* search = qobject_cast<LiveSearchController*>(m_app->tabs()->controllerAt(row));
     QVERIFY(search);
 
     search->scanDirectory(m_tree->rootUri().toString(), QStringLiteral("fixture"));
@@ -322,14 +332,44 @@ void TestAppIntegration::scanThenIndexSearchFindsTheFile()
 
     search->refreshVolumes();
     QVERIFY2(search->volumeLabels().size() >= 2, "the scanned volume must appear in the picker");
+    QVERIFY2(search->volumeLabels().at(1).contains(QStringLiteral("entries")),
+        "and say how much is in it, which is what the retired tab's picker did");
 
+    // Everywhere indexed, from a search rooted nowhere near the fixture: the
+    // scope is what decides, not where the tab happened to be opened from.
+    search->setEverywhere(true);
     search->setQueryText(QStringLiteral("quarterly"));
-    search->search();
+    search->start();
     QVERIFY(waitFor([search] { return !search->isRunning(); }, 10000));
 
     QCOMPARE(search->results()->rowCount(), 1);
     QCOMPARE(search->results()->index(0, 0).data(FileListModel::NameRole).toString(),
         QStringLiteral("quarterly.txt"));
+    QVERIFY2(search->statusText().contains(QStringLiteral("from the index")),
+        "an answer that might be stale has to say where it came from");
+}
+
+/// Ctrl+Shift+I used to open a second search tab. It opens this one, with the
+/// scope it stood for already set — the key in anybody's fingers still works and
+/// lands somewhere that answers the same question.
+void TestAppIntegration::theIndexShortcutOpensTheOneSearchScopedToEverything()
+{
+    const int row = m_app->openSearchEverywhere();
+    QVERIFY(row >= 0);
+    QCOMPARE(m_app->tabs()->index(row, 0).data(TabsModel::FeatureIdRole).toString(),
+        QStringLiteral("mole.livesearch"));
+
+    auto* search = qobject_cast<LiveSearchController*>(m_app->tabs()->controllerAt(row));
+    QVERIFY(search);
+    QVERIFY(search->everywhere());
+
+    // And Ctrl+F opens the same feature scoped to a folder, which is the whole
+    // of the difference between the two keys now.
+    const int folder = m_app->openFeatureTab(QStringLiteral("mole.livesearch"));
+    QVERIFY(folder >= 0);
+    auto* here = qobject_cast<LiveSearchController*>(m_app->tabs()->controllerAt(folder));
+    QVERIFY(here);
+    QVERIFY(!here->everywhere());
 }
 
 void TestAppIntegration::liveSearchFindsFilesOnDisk()
@@ -393,10 +433,10 @@ void TestAppIntegration::searchWalksWhenNothingIsIndexed()
 
 void TestAppIntegration::searchAsksTheIndexWhenItCoversTheFolder()
 {
-    // Indexed first, through the same path the index-search tab uses.
-    const int indexRow = m_app->tabs()->openTab(QStringLiteral("mole.indexsearch"));
+    // Indexed first, from the same form that will search it.
+    const int indexRow = m_app->tabs()->openTab(QStringLiteral("mole.livesearch"));
     QVERIFY(indexRow >= 0);
-    auto* indexed = qobject_cast<IndexSearchController*>(m_app->tabs()->controllerAt(indexRow));
+    auto* indexed = qobject_cast<LiveSearchController*>(m_app->tabs()->controllerAt(indexRow));
     QVERIFY(indexed);
     indexed->scanDirectory(m_tree->rootUri().toString(), QStringLiteral("fixture"));
     QVERIFY(waitFor([this] { return m_app->tasks()->activeCount() == 0; }, 20000));
@@ -422,8 +462,8 @@ void TestAppIntegration::searchAsksTheIndexWhenItCoversTheFolder()
 
 void TestAppIntegration::turningTheIndexOffForcesAWalk()
 {
-    const int indexRow = m_app->tabs()->openTab(QStringLiteral("mole.indexsearch"));
-    auto* indexed = qobject_cast<IndexSearchController*>(m_app->tabs()->controllerAt(indexRow));
+    const int indexRow = m_app->tabs()->openTab(QStringLiteral("mole.livesearch"));
+    auto* indexed = qobject_cast<LiveSearchController*>(m_app->tabs()->controllerAt(indexRow));
     QVERIFY(indexed);
     indexed->scanDirectory(m_tree->rootUri().toString(), QStringLiteral("fixture"));
     QVERIFY(waitFor([this] { return m_app->tasks()->activeCount() == 0; }, 20000));
@@ -1097,7 +1137,7 @@ void TestAppIntegration::menuOffersANewTabOnlyForWhatOpensFromNothing()
     }
     QCOMPARE(inMenuOrder,
         QStringList({ QStringLiteral("mole.browser"), QStringLiteral("mole.commander"),
-            QStringLiteral("mole.livesearch"), QStringLiteral("mole.indexsearch") }));
+            QStringLiteral("mole.livesearch") }));
 
     // Plus Drives, Close tab and Quit.
     QCOMPARE(menuSection(menu, QStringLiteral("File")).size(), offered.size() + 3);

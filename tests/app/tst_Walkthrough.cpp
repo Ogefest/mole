@@ -2019,7 +2019,7 @@ void TestWalkthrough::forgettingEveryReportForAFolderAsksInRed()
 
 void TestWalkthrough::indexingAFolderIsAskedForWithTheVerbAndTypedInto()
 {
-    QVERIFY(m_harness->app()->openFeatureTab(QStringLiteral("mole.indexsearch")) >= 0);
+    QVERIFY(m_harness->app()->openFeatureTab(QStringLiteral("mole.livesearch")) >= 0);
     m_harness->settle(6);
 
     QObject* dialog = m_harness->object(QStringLiteral("scanDialog"));
@@ -3157,7 +3157,6 @@ void TestWalkthrough::everyFeatureAndPreviewHasAPictureInTheGuide()
         { QStringLiteral("mole.browser"), QStringLiteral("01-browser") },
         { QStringLiteral("mole.commander"), QStringLiteral("05-dual-pane") },
         { QStringLiteral("mole.livesearch"), QStringLiteral("12b-search-results") },
-        { QStringLiteral("mole.indexsearch"), QStringLiteral("12-search-box") },
         { QStringLiteral("mole.preview"), QStringLiteral("03-preview-text") },
         { QStringLiteral("mole.analysis"), QStringLiteral("07-analysis") },
         { QStringLiteral("core.automation"), QStringLiteral("08-automation") },
