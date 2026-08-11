@@ -9,6 +9,40 @@ wrong.
 
 ---
 
+## A selection had no form anything outside Mole could take
+
+**Asked for:** MOLE-84 — the first piece of dragging, and the one with no gesture in it.
+`grep -rn "QDrag\|DropArea\|text/uri-list" src/` found nothing, so handing a file to a
+browser's upload box meant leaving Mole and finding the file a second time in another
+manager.
+
+**What it turned out to be:** `src/ui/DragSource`, one `QMimeData` carrying `text/uri-list`,
+built the way `FileLauncher` hands a single file to the desktop — including the seam. The
+step that gives the payload to the platform is a hook, so `src/ui` constructs no `QDrag` and
+`tests/ui` stays on a `QCoreApplication`, headless, like every other binary there. A `QDrag`
+wants a real window as its source, a pointer to follow and a platform to block on; none of
+that exists in a test and the platform half exists on no runner.
+
+**`Qt::CopyAction` and nothing else, which is the decision rather than a default.** A move
+is something the *receiver* performs — it takes the bytes and then trusts the source to
+delete. Offering one would make Mole's behaviour depend on which modifier a user held while
+releasing over a window that need not report what it did. The worst case of a misunderstood
+copy is a duplicate the user can see; the worst case of a misunderstood move is a file that
+is gone.
+[ADR-0040](docs/adr/0040-what-leaves-the-window-is-a-path-and-it-leaves-as-a-copy.md)
+records it with the two escape hatches that lost: a lazy `QMimeData` filling itself from
+`retrieveData()` — which runs on the UI thread at the moment the receiver asks, so a 2 GB
+SFTP read becomes a hang with no progress and no cancel — and `XdndDirectSave0`, which is
+X11-only, unimplemented by most receivers and dead on Wayland.
+
+**Rows that are not on disk are left out, and counted out loud.** A `text/uri-list` names a
+file the receiver opens for itself and there is nothing to open inside a zip. Where that
+empties the selection nothing starts and the reason is reported; where it only thins it, the
+drag goes with what is left and how many stayed behind is reported too. A drag has no result
+to inspect afterwards, so silence there is indistinguishable from a broken pointer — and
+half a selection leaving quietly is the one outcome this must not have. Giving those rows a
+path of their own is MOLE-88.
+
 ## The guide described two searches and a form with three criteria
 
 **Asked for:** MOLE-157 — the page described two tabs, three criteria and an index that was

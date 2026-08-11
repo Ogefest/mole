@@ -187,6 +187,11 @@ mole_add_test(tst_TaskListModel        SOURCES ui/tst_TaskListModel.cpp        L
 mole_add_test(tst_TabsModel            SOURCES ui/tst_TabsModel.cpp            LIBS mole_ui)
 mole_add_test(tst_BrowserPaneController SOURCES ui/tst_BrowserPaneController.cpp LIBS mole_ui)
 mole_add_test(tst_FileLauncher         SOURCES ui/tst_FileLauncher.cpp         LIBS mole_ui)
+
+# What a selection looks like once it has left the window. No window and no
+# pointer in here: the step that hands the payload to the platform is a hook,
+# and this replaces it with a recorder.
+mole_add_test(tst_DragSource           SOURCES ui/tst_DragSource.cpp           LIBS mole_ui)
 mole_add_test(tst_Bookmarks            SOURCES ui/tst_Bookmarks.cpp            LIBS mole_ui)
 mole_add_test(tst_CommandPalette       SOURCES ui/tst_CommandPalette.cpp       LIBS mole_ui)
 
