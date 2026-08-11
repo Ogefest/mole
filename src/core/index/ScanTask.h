@@ -25,6 +25,30 @@ public:
     /// goes when it is asked to.
     qint64 filesRead() const { return m_filesRead; }
 
+    /// Keeps what has not changed rather than rewriting it.
+    ///
+    /// A directory whose modification time has not moved since the last scan
+    /// has the same children, so its subtree is carried across and not walked.
+    /// On the trees this exists for that is the difference between minutes and
+    /// hours to learn that nothing much has moved.
+    ///
+    /// **Nothing is carried forward that this walk did not just see in a
+    /// listing.** That is what makes it correct rather than only fast: a
+    /// directory that has been deleted is not in its parent's listing, so it is
+    /// not carried, so it goes -- whatever its parent's timestamp says.
+    ///
+    /// A full rescan is this turned off, and is what somebody reaches for when
+    /// they suspect the index.
+    void setIncremental(bool incremental) { m_incremental = incremental; }
+
+    /// How many entries came across untouched, and whether the drive gave the
+    /// scan anything to go on.
+    qint64 carriedForward() const { return m_carried; }
+    /// True when the drive dates none of its folders, so the scan could not
+    /// skip anything and walked the lot. Said out loud rather than left to look
+    /// like a slow incremental scan.
+    bool datesFolders() const { return m_datesFolders; }
+
     /// Rows for what lives inside a file that is a container.
     ///
     /// A zip of years-old projects holds a great deal of what somebody is
@@ -65,6 +89,9 @@ private:
     qint64 m_filesIndexed = 0;
     qint64 m_filesRead = 0;
     qint64 m_containedEntries = 0;
+    bool m_incremental = false;
+    bool m_datesFolders = false;
+    qint64 m_carried = 0;
     std::function<QList<IndexedFile>(const FileEntry&, bool*)> m_containers;
     qint64 m_skippedDirectories = 0;
     std::function<QList<SearchFact>(const FileEntry&)> m_facts;

@@ -58,6 +58,14 @@ void ScanTask::run()
         fail(error);
     };
 
+    // What the last finished scan recorded about the folders, which is the only
+    // thing an incremental scan has to go on.
+    QHash<QString, qint64> knownFolders;
+    if (m_incremental) {
+        if (Result<QHash<QString, qint64>> previous = m_index->directoryTimes(volumeId); previous.ok())
+            knownFolders = previous.value();
+    }
+
     QList<IndexedFile> batch;
     batch.reserve(kBatchSize);
     VfsError writeError;
@@ -90,6 +98,27 @@ void ScanTask::run()
             row.facts = m_facts(entry);
             ++m_filesRead;
         }
+        // Unchanged since the last scan, so everything under it is what it
+        // was. Carried across rather than re-walked -- and only because this
+        // walk just saw the folder in its parent's listing, which is what makes
+        // a deleted subtree disappear rather than linger.
+        if (entry.isDir && m_incremental && entry.modified.isValid()) {
+            m_datesFolders = true;
+            const auto known = knownFolders.constFind(entry.uri.path());
+            if (known != knownFolders.constEnd() && *known == entry.modified.toSecsSinceEpoch()) {
+                batch.append(row);
+                ++m_filesIndexed;
+                if (!flush()) // the carry has to land after the folder's own row
+                    return DirectoryWalker::Action::Stop;
+                if (Result<qint64> carried = m_index->carryForward(volumeId, generation, entry.uri.path());
+                    carried.ok()) {
+                    m_carried += carried.value();
+                    m_filesIndexed += carried.value();
+                }
+                return DirectoryWalker::Action::SkipSubtree;
+            }
+        }
+
         // What is inside it, when it is a container and somebody can open one.
         // A member is an ordinary row with its own uri, so everything that
         // works on a row -- the preview, the operations, a file set -- works on
@@ -150,6 +179,13 @@ void ScanTask::run()
 
     setProgress(100);
     QStringList extras;
+    if (m_incremental && m_carried > 0)
+        extras.append(QStringLiteral("%1 unchanged and kept").arg(m_carried));
+    if (m_incremental && !m_datesFolders) {
+        // A drive that does not date its folders gives an incremental scan
+        // nothing to work from. Saying so beats looking like a slow one.
+        extras.append(QStringLiteral("this drive does not date its folders, so all of it was walked"));
+    }
     if (m_facts)
         extras.append(QStringLiteral("%1 read for what they say about themselves").arg(m_filesRead));
     if (m_containedEntries > 0)

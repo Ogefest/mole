@@ -2,6 +2,7 @@
 #include "plugins/builtin/AnalysisJob.h"
 #include "plugins/builtin/AutomationFeature.h"
 #include "plugins/builtin/BuiltinPlugin.h"
+#include "plugins/builtin/SearchFeatures.h"
 #include "support/TestSupport.h"
 #include "ui/AppController.h"
 #include "ui/models/TabsModel.h"
@@ -37,8 +38,11 @@ private slots:
     void aFailedRunShowsUpInTheTrackingList();
     void theTrackingTabPutsFailuresFirst();
     void ruleSurvivesARestartOfTheApplication();
+    void aScheduledRescanRunsSurvivesARestartAndCatchesUp();
 
 private:
+    /// The search tab, which is where a folder is put on a clock for indexing.
+    LiveSearchController* search();
     AnalysisTarget* analyse(const QString& uri);
     AutomationController* openAutomation();
 
@@ -78,6 +82,12 @@ void TestAutomation::cleanup()
 {
     m_app.reset();
     m_tree.reset();
+}
+
+LiveSearchController* TestAutomation::search()
+{
+    const int row = m_app->tabs()->openTab(QStringLiteral("mole.livesearch"));
+    return row < 0 ? nullptr : qobject_cast<LiveSearchController*>(m_app->tabs()->controllerAt(row));
 }
 
 AnalysisTarget* TestAutomation::analyse(const QString& uri)
@@ -256,6 +266,57 @@ void TestAutomation::ruleSurvivesARestartOfTheApplication()
     AnalysisTarget* reopened = analyse(uri);
     QVERIFY(reopened);
     QCOMPARE(reopened->scheduleText(), QStringLiteral("Every week"));
+}
+
+/// An index is only ever as fresh as the last time somebody remembered, and for
+/// the volume it matters most on that is "not very". This is the answer to
+/// staleness the search deliberately does not have.
+void TestAutomation::aScheduledRescanRunsSurvivesARestartAndCatchesUp()
+{
+    const QString uri = m_tree->rootUri().toString();
+    LiveSearchController* form = search();
+    QVERIFY(form);
+    QVERIFY(!form->scheduleScan(uri, 24).isEmpty());
+    QCOMPARE(form->scheduledScanId(uri).isEmpty(), false);
+
+    // Survives a restart, which is the scheduler's own behaviour and has to
+    // hold for this job type like any other.
+    m_app.reset();
+    m_app = std::make_unique<AppController>();
+    std::vector<std::unique_ptr<IPlugin>> builtIns;
+    builtIns.push_back(std::make_unique<BuiltinPlugin>(uri));
+    QString error;
+    QVERIFY2(m_app->initialise(std::move(builtIns), &error), qPrintable(error));
+    m_app->scheduler()->stop();
+
+    QCOMPARE(m_app->schedules()->rules().size(), 1);
+    const ScheduleRule restored = m_app->schedules()->rules().first();
+    QCOMPARE(restored.jobKind, QStringLiteral("index"));
+    QCOMPARE(restored.intervalSeconds, 24 * 3600);
+
+    // A rule created and never run is due at once, so the restart may already
+    // have caught it. Let that settle before staging the missed night.
+    QVERIFY(waitFor([this] { return m_app->scheduler()->runningRules().isEmpty(); }, 30000));
+
+    // Overdue, the way a rule is after a night with the machine off.
+    ScheduleRule missed = m_app->schedules()->rules().first();
+    missed.lastRunAt = QDateTime::currentDateTime().addSecs(-2 * 24 * 3600);
+    missed.lastStatus = RunStatus::Succeeded;
+    m_app->schedules()->put(missed);
+
+    QCOMPARE(m_app->scheduler()->checkDue(), 1);
+    QVERIFY(waitFor([this] { return m_app->scheduler()->runningRules().isEmpty(); }, 30000));
+
+    const ScheduleRule after = m_app->schedules()->rules().first();
+    QCOMPARE(after.lastStatus, RunStatus::Succeeded);
+    QVERIFY(after.lastSuccessAt.isValid());
+
+    // And it really indexed: the folder is searchable without a tab having been
+    // open at any point.
+    LiveSearchController* reopened = search();
+    QVERIFY(reopened);
+    QVERIFY2(reopened->indexCoversRoot() || !reopened->volumeLabels().isEmpty(),
+        "a scheduled scan has to leave a volume behind");
 }
 
 int main(int argc, char** argv)

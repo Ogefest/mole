@@ -32,6 +32,10 @@ private slots:
     void aScanCanRecordWhatEachFileSaysAboutItself();
     void aScanWithoutItWritesWhatItAlwaysWrote();
     void aFileWhoseReaderFindsNothingIsStillIndexed();
+    void aSecondScanOfAnUnchangedTreeWalksNothing();
+    void whatChangedIsReflectedAndWhatWentIsGone();
+    void aDriveThatDoesNotDateItsFoldersIsWalkedInFullAndSaysSo();
+    void aFullRescanDoesWhatItSays();
     void whatIsInsideAContainerIsIndexedBesideIt();
     void aContainerNothingCanOpenCostsItsOwnRowsAndNoMore();
 
@@ -455,6 +459,127 @@ void TestScanTask::aContainerNothingCanOpenCostsItsOwnRowsAndNoMore()
 
     QCOMPARE(task->state(), Task::State::Succeeded);
     QCOMPARE(task->containedEntries(), 0);
+    QCOMPARE(m_index->fileCount().value(), 2);
+}
+
+/// Hours to learn that nothing much has moved is what this exists to stop.
+void TestScanTask::aSecondScanOfAnUnchangedTreeWalksNothing()
+{
+    for (int i = 0; i < 5; ++i)
+        m_fs->addFile(QStringLiteral("/deep/branch%1/leaf.txt").arg(i));
+
+    // Dated before the scan, because a folder changed in the same second the
+    // scan read it is one the scan is right to distrust for ever after.
+    const QDateTime settled = QDateTime::currentDateTime().addSecs(-3600);
+    m_fs->setModified(QStringLiteral("/"), settled);
+    m_fs->setModified(QStringLiteral("/deep"), settled);
+    for (int i = 0; i < 5; ++i)
+        m_fs->setModified(QStringLiteral("/deep/branch%1").arg(i), settled);
+
+    QVERIFY(waitForTask(startScan()));
+    const int listedInFull = m_fs->listCallCount();
+    const qint64 rows = m_index->fileCount().value();
+    QVERIFY(rows > 5);
+
+    auto* again = new ScanTask(m_fs, VfsUri(QStringLiteral("mem"), QString(), QStringLiteral("/")),
+        QStringLiteral("scratch"), m_index.get());
+    again->setIncremental(true);
+    m_tasks->submit(again);
+    QVERIFY(waitForTask(again));
+
+    QCOMPARE(again->state(), Task::State::Succeeded);
+    QVERIFY2(again->datesFolders(), "the memory drive dates its folders, so there was something to skip");
+    QVERIFY2(again->carriedForward() > 0, "an unchanged tree has to be kept rather than rewritten");
+
+    // The same index afterwards, at a fraction of the listings.
+    QCOMPARE(m_index->fileCount().value(), rows);
+    const int listedIncrementally = m_fs->listCallCount() - listedInFull;
+    QVERIFY2(listedIncrementally < listedInFull,
+        qPrintable(QStringLiteral("the second scan listed %1 directories and the first listed %2")
+                       .arg(listedIncrementally)
+                       .arg(listedInFull)));
+    QVERIFY2(
+        again->statusText().contains(QStringLiteral("unchanged and kept")), qPrintable(again->statusText()));
+}
+
+void TestScanTask::whatChangedIsReflectedAndWhatWentIsGone()
+{
+    m_fs->addFile(QStringLiteral("/keep/steady.txt"));
+    m_fs->addFile(QStringLiteral("/churn/old.txt"));
+    m_fs->addFile(QStringLiteral("/doomed/inside.txt"));
+    const QDateTime settled = QDateTime::currentDateTime().addSecs(-3600);
+    for (const QString& folder : { QStringLiteral("/"), QStringLiteral("/keep"), QStringLiteral("/churn"),
+             QStringLiteral("/doomed") }) {
+        m_fs->setModified(folder, settled);
+    }
+    QVERIFY(waitForTask(startScan()));
+    QCOMPARE(m_index->fileCount().value(), 6); // three folders, three files
+
+    // Added, changed, deleted, and a whole subtree removed.
+    m_fs->addFile(QStringLiteral("/churn/new.txt"));
+    QVERIFY(m_fs->remove(VfsUri::fromString(QStringLiteral("mem:///churn/old.txt")), false).ok());
+    QVERIFY(m_fs->remove(VfsUri::fromString(QStringLiteral("mem:///doomed")), true).ok());
+
+    auto* again = new ScanTask(m_fs, VfsUri(QStringLiteral("mem"), QString(), QStringLiteral("/")),
+        QStringLiteral("scratch"), m_index.get());
+    again->setIncremental(true);
+    m_tasks->submit(again);
+    QVERIFY(waitForTask(again));
+
+    const auto found = [this](const QString& text) {
+        SearchQuery query;
+        query.add(SearchPredicate::name(text));
+        const Result<QList<IndexSearchHit>> hits = m_index->search(query);
+        return hits.ok() ? hits.value().size() : -1;
+    };
+
+    QCOMPARE(found(QStringLiteral("new.txt")), 1);
+    QCOMPARE(found(QStringLiteral("old.txt")), 0);
+    QCOMPARE(found(QStringLiteral("steady.txt")), 1);
+    // The case that makes this correct rather than fast: a subtree that is gone
+    // is not in its parent's listing, so nothing carried it forward.
+    QCOMPARE(found(QStringLiteral("inside.txt")), 0);
+    QCOMPARE(found(QStringLiteral("doomed")), 0);
+}
+
+void TestScanTask::aDriveThatDoesNotDateItsFoldersIsWalkedInFullAndSaysSo()
+{
+    // A backend that reports no times at all: there is nothing to compare, so
+    // the scan walks the lot rather than being quietly wrong about it.
+    m_fs->addDirectory(QStringLiteral("/undated"));
+    m_fs->addFile(QStringLiteral("/undated/a.txt"));
+    QVERIFY(waitForTask(startScan()));
+
+    auto* again = new ScanTask(m_fs, VfsUri(QStringLiteral("mem"), QString(), QStringLiteral("/")),
+        QStringLiteral("scratch"), m_index.get());
+    again->setIncremental(true);
+    m_tasks->submit(again);
+    QVERIFY(waitForTask(again));
+
+    // The memory drive does date its folders, so this holds the other half:
+    // when it can be trusted, nothing is said about it.
+    if (again->datesFolders()) {
+        QVERIFY(!again->statusText().contains(QStringLiteral("does not date")));
+    } else {
+        QVERIFY2(again->statusText().contains(QStringLiteral("does not date")),
+            "a drive that gives the scan nothing to go on has to say so");
+        QCOMPARE(again->carriedForward(), 0);
+    }
+}
+
+void TestScanTask::aFullRescanDoesWhatItSays()
+{
+    m_fs->addFile(QStringLiteral("/tree/a.txt"));
+    QVERIFY(waitForTask(startScan()));
+    const int listedInFull = m_fs->listCallCount();
+
+    // The default, which is what "full rescan" is: nothing kept, everything
+    // walked, for when somebody suspects the index.
+    ScanTask* again = startScan();
+    QVERIFY(waitForTask(again));
+
+    QCOMPARE(again->carriedForward(), 0);
+    QCOMPARE(m_fs->listCallCount() - listedInFull, listedInFull);
     QCOMPARE(m_index->fileCount().value(), 2);
 }
 

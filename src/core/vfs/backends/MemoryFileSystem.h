@@ -35,6 +35,10 @@ public:
     /// Creates a file and every missing parent directory.
     void addFile(const QString& path, const QByteArray& contents = {}, const QDateTime& modified = {});
     void addDirectory(const QString& path);
+    /// Dates an entry, folders included. A tree built a moment ago is a tree
+    /// nothing can tell apart from one changed a moment ago, and an incremental
+    /// scan is entirely about that difference.
+    void setModified(const QString& path, const QDateTime& when);
 
     /// Makes every operation touching `path` fail with `error`. Pass
     /// VfsError::None to clear. This is how the tests cover "the NAS went away
@@ -73,6 +77,9 @@ private:
     };
 
     static QString normalise(const QString& path);
+    /// Moves a directory's own modification time, the way adding to or removing
+    /// from a real one does. Callers must hold m_mutex.
+    void touchParent(const QString& path);
     VfsUri uriFor(const QString& path) const;
     Result<void> faultFor(const QString& path) const;
 

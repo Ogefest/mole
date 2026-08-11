@@ -13,6 +13,8 @@ add_library(mole_builtin STATIC
     builtin/AnalysisFeature.cpp
     builtin/AnalysisJob.h
     builtin/AnalysisJob.cpp
+    builtin/IndexScanJob.h
+    builtin/IndexScanJob.cpp
     builtin/AutomationFeature.h
     builtin/AutomationFeature.cpp
     builtin/AlertsFeature.h

@@ -7,6 +7,7 @@
 namespace mole {
 
 class AnalysisJob;
+class IndexScanJob;
 
 /// Registers everything that ships in the box.
 ///
@@ -29,6 +30,7 @@ private:
     /// Outlives every tab: a scheduled report must run whether or not the user
     /// has an analysis tab open.
     std::unique_ptr<AnalysisJob> m_analysisJob;
+    std::unique_ptr<IndexScanJob> m_indexJob;
 };
 
 } // namespace mole

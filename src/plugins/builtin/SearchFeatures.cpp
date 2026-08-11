@@ -1,8 +1,10 @@
 #include "plugins/builtin/SearchFeatures.h"
 
+#include "plugins/builtin/IndexScanJob.h"
 #include "sdk/IMetadataReader.h"
 #include "ui/models/FileListModel.h"
 
+#include "core/automation/ScheduleStore.h"
 #include "core/data/FileType.h"
 #include "core/events/EventBus.h"
 #include "core/index/IndexDatabase.h"
@@ -17,6 +19,7 @@
 #include <QLocale>
 #include <QRegularExpression>
 #include <QUrl>
+#include <QUuid>
 
 namespace mole {
 
@@ -136,7 +139,49 @@ void LiveSearchController::refreshVolumes()
     emit coverageChanged();
 }
 
-void LiveSearchController::scanDirectory(const QString& uri, const QString& label)
+QString LiveSearchController::scheduleScan(const QString& uri, int hours)
+{
+    if (!m_services.isValid() || !m_services.scheduler->store())
+        return {};
+    if (const QString existing = scheduledScanId(uri); !existing.isEmpty())
+        return existing;
+
+    ScheduleRule rule;
+    rule.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    rule.jobKind = IndexScanJob::kind();
+    rule.label = QStringLiteral("Re-index %1").arg(uri);
+    rule.parameters
+        = { { IndexScanJob::rootUriParameter(), uri }, { IndexScanJob::incrementalParameter(), true } };
+    rule.intervalSeconds = qMax(1, hours) * 3600LL;
+    m_services.scheduler->store()->put(rule);
+    m_services.scheduler->store()->save();
+    return rule.id;
+}
+
+QString LiveSearchController::scheduledScanId(const QString& uri) const
+{
+    if (!m_services.isValid() || !m_services.scheduler->store())
+        return {};
+    for (const ScheduleRule& rule : m_services.scheduler->store()->rules()) {
+        if (rule.jobKind == IndexScanJob::kind()
+            && rule.parameters.value(IndexScanJob::rootUriParameter()).toString() == uri) {
+            return rule.id;
+        }
+    }
+    return {};
+}
+
+void LiveSearchController::unscheduleScan(const QString& uri)
+{
+    if (!m_services.isValid() || !m_services.scheduler->store())
+        return;
+    if (const QString id = scheduledScanId(uri); !id.isEmpty()) {
+        m_services.scheduler->store()->remove(id);
+        m_services.scheduler->store()->save();
+    }
+}
+
+void LiveSearchController::scanDirectory(const QString& uri, const QString& label, bool full)
 {
     if (!m_services.isValid())
         return;
@@ -149,6 +194,8 @@ void LiveSearchController::scanDirectory(const QString& uri, const QString& labe
     }
 
     auto* task = new ScanTask(fs, root, label.isEmpty() ? uri : label, m_services.index);
+    // Keeps what has not changed, unless somebody asked for the whole thing.
+    task->setIncremental(!full);
     // Asked for per scan rather than assumed: reading every file in a tree is
     // bounded per file and unbounded in aggregate. See ADR-0039.
     if (m_scanReadsMetadata)

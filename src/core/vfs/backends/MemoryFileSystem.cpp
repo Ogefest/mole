@@ -39,6 +39,19 @@ Result<void> MemoryFileSystem::faultFor(const QString& path) const
     return Result<void>::failure(*it, QStringLiteral("Injected fault on %1").arg(path));
 }
 
+void MemoryFileSystem::touchParent(const QString& path)
+{
+    // A real filesystem moves a directory's modification time when something is
+    // added to it or taken out of it, and an incremental scan reads exactly
+    // that. A fixture that did not would make the scan look correct here and
+    // wrong on a disk.
+    const int slash = path.lastIndexOf(QLatin1Char('/'));
+    const QString parent = slash > 0 ? path.left(slash) : QStringLiteral("/");
+    const auto node = m_nodes.find(parent);
+    if (node != m_nodes.end() && node->isDir)
+        node->modified = QDateTime::currentDateTime();
+}
+
 void MemoryFileSystem::addDirectory(const QString& path)
 {
     QMutexLocker lock(&m_mutex);
@@ -47,8 +60,10 @@ void MemoryFileSystem::addDirectory(const QString& path)
     QString accumulated;
     for (const QString& part : normalised.split(QLatin1Char('/'), Qt::SkipEmptyParts)) {
         accumulated += QLatin1Char('/') + part;
-        if (!m_nodes.contains(accumulated))
+        if (!m_nodes.contains(accumulated)) {
+            touchParent(accumulated);
             m_nodes.insert(accumulated, Node { true, {}, QDateTime::currentDateTime() });
+        }
     }
 }
 
@@ -60,8 +75,18 @@ void MemoryFileSystem::addFile(const QString& path, const QByteArray& contents, 
         addDirectory(normalised.left(slash));
 
     QMutexLocker lock(&m_mutex);
+    if (!m_nodes.contains(normalised))
+        touchParent(normalised);
     m_nodes.insert(
         normalised, Node { false, contents, modified.isValid() ? modified : QDateTime::currentDateTime() });
+}
+
+void MemoryFileSystem::setModified(const QString& path, const QDateTime& when)
+{
+    QMutexLocker lock(&m_mutex);
+    const auto node = m_nodes.find(normalise(path));
+    if (node != m_nodes.end())
+        node->modified = when;
 }
 
 void MemoryFileSystem::setFault(const QString& path, VfsError::Code error)
@@ -182,6 +207,7 @@ Result<void> MemoryFileSystem::remove(const VfsUri& target, bool recursive)
 
     if (!node->isDir) {
         m_nodes.remove(path);
+        touchParent(path);
         return {};
     }
 
@@ -198,6 +224,7 @@ Result<void> MemoryFileSystem::remove(const VfsUri& target, bool recursive)
     for (const QString& child : children)
         m_nodes.remove(child);
     m_nodes.remove(path);
+    touchParent(path);
     return {};
 }
 

@@ -380,6 +380,98 @@ Result<qint64> IndexDatabase::beginScan(qint64 volumeId)
     return generation;
 }
 
+Result<QHash<QString, qint64>> IndexDatabase::directoryTimes(qint64 volumeId) const
+{
+    QMutexLocker lock(&m_mutex);
+    if (!m_open)
+        return VfsError::make(VfsError::IoError, QStringLiteral("Index is not open"));
+
+    QSqlDatabase db = connectionForCurrentThread();
+    if (!db.isOpen())
+        return sqlError(db, QStringLiteral("No index connection for this thread")).error();
+
+    QSqlQuery query(db);
+    // Only folders that were already settled when the last scan ran.
+    //
+    // A folder changed in the same second the scan read it has the scan's own
+    // timestamp and would look unchanged for ever after. Requiring it to be
+    // strictly older costs one clause and closes a window that is small,
+    // permanent, and impossible to notice from the outside.
+    query.prepare(QStringLiteral("SELECT f.path, f.mtime FROM files f "
+                                 "JOIN volumes v ON v.id = f.volume_id AND v.generation = f.generation "
+                                 "WHERE f.volume_id = ? AND f.is_dir = 1 "
+                                 "AND v.last_scan IS NOT NULL AND f.mtime < v.last_scan"));
+    query.addBindValue(volumeId);
+    if (!query.exec())
+        return sqlError(db, QStringLiteral("Reading the last scan's folders")).error();
+
+    QHash<QString, qint64> times;
+    while (query.next())
+        times.insert(query.value(0).toString(), query.value(1).toLongLong());
+    return times;
+}
+
+Result<qint64> IndexDatabase::carryForward(qint64 volumeId, qint64 generation, const QString& path)
+{
+    QMutexLocker lock(&m_mutex);
+    if (!m_open)
+        return VfsError::make(VfsError::IoError, QStringLiteral("Index is not open"));
+
+    QSqlDatabase db = connectionForCurrentThread();
+    if (!db.isOpen())
+        return sqlError(db, QStringLiteral("No index connection for this thread")).error();
+    if (!db.transaction())
+        return sqlError(db, QStringLiteral("Carrying a subtree forward")).error();
+
+    // The rows first, then their facts against the copies -- a fact belongs to
+    // a row and the copy is a different row.
+    QSqlQuery rows(db);
+    rows.prepare(QStringLiteral(
+        "INSERT INTO files (volume_id, generation, name, name_folded, path, parent_path, extension, "
+        "is_dir, size, mtime, uri) "
+        "SELECT f.volume_id, ?, f.name, f.name_folded, f.path, f.parent_path, f.extension, "
+        "f.is_dir, f.size, f.mtime, f.uri "
+        "FROM files f JOIN volumes v ON v.id = f.volume_id AND v.generation = f.generation "
+        // Under it, not it: the walk saw the folder itself and has already
+        // written its own row, which is the only reason it knows to carry the
+        // rest across.
+        "WHERE f.volume_id = ? AND f.path LIKE ? ESCAPE '\\'"));
+    rows.addBindValue(generation);
+    rows.addBindValue(volumeId);
+    QString prefix = path;
+    prefix.replace(QLatin1Char('\\'), QStringLiteral("\\\\"))
+        .replace(QLatin1Char('%'), QStringLiteral("\\%"))
+        .replace(QLatin1Char('_'), QStringLiteral("\\_"));
+    rows.addBindValue(prefix + QStringLiteral("/%"));
+    if (!rows.exec()) {
+        db.rollback();
+        return sqlError(db, QStringLiteral("Carrying rows forward")).error();
+    }
+    const qint64 carried = rows.numRowsAffected();
+
+    QSqlQuery facts(db);
+    facts.prepare(QStringLiteral("INSERT INTO file_facts (file_id, key, text, num) "
+                                 "SELECT copy.id, m.key, m.text, m.num FROM file_facts m "
+                                 "JOIN files old ON old.id = m.file_id "
+                                 "JOIN volumes v ON v.id = old.volume_id AND v.generation = old.generation "
+                                 "JOIN files copy ON copy.volume_id = old.volume_id AND copy.generation = ? "
+                                 "AND copy.path = old.path "
+                                 "WHERE old.volume_id = ? AND old.path LIKE ? ESCAPE '\\'"));
+    facts.addBindValue(generation);
+    facts.addBindValue(volumeId);
+    facts.addBindValue(prefix + QStringLiteral("/%"));
+    if (!facts.exec()) {
+        db.rollback();
+        return sqlError(db, QStringLiteral("Carrying a subtree's facts forward")).error();
+    }
+
+    if (!db.commit()) {
+        db.rollback();
+        return sqlError(db, QStringLiteral("Carrying a subtree forward")).error();
+    }
+    return carried;
+}
+
 Result<void> IndexDatabase::commitScan(qint64 volumeId, qint64 generation, const QDateTime& when)
 {
     QMutexLocker lock(&m_mutex);

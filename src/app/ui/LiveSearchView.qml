@@ -626,7 +626,9 @@ Item {
                 var uri = scanPath.text.trim()
                 if (uri.indexOf("://") < 0)
                     uri = "file://" + uri
-                controller.scanDirectory(uri, scanLabel.text)
+                controller.scanDirectory(uri, scanLabel.text, fullRescan.checked)
+                if (nightly.checked)
+                    controller.scheduleScan(uri, 24)
             }
         }
 
@@ -670,6 +672,32 @@ Item {
                 checked: controller ? controller.scanReadsMetadata : false
                 onToggled: if (controller) controller.scanReadsMetadata = checked
             }
+            // A re-scan keeps what has not changed, which is the difference
+            // between minutes and hours on the trees this exists for. The full
+            // one is what somebody reaches for when they suspect the index.
+            CheckBox {
+                objectName: "fullRescanToggle"
+                id: fullRescan
+                text: "Full rescan — walk everything, keep nothing"
+                font.pixelSize: App.secondaryTextSize
+            }
+            CheckBox {
+                objectName: "nightlyScanToggle"
+                id: nightly
+                text: "Keep it up to date every night"
+                font.pixelSize: App.secondaryTextSize
+                checked: controller && scanPath.text.length > 0
+                         && controller.scheduledScanId(scanPath.text.trim()).length > 0
+            }
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                text: "A nightly run keeps what has not changed, so it costs a walk of what moved. "
+                      + "It survives a restart and catches up on a night the machine was off."
+                color: "#6f7788"
+                font.pixelSize: App.smallTextSize
+            }
+
             CheckBox {
                 objectName: "scanArchivesToggle"
                 text: "Also list what is inside archives"

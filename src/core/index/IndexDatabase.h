@@ -129,6 +129,24 @@ public:
     /// is where a search stops seeing the old scan and starts seeing this one.
     [[nodiscard]] Result<void> commitScan(qint64 volumeId, qint64 generation, const QDateTime& when);
 
+    /// Every directory the volume's last finished scan recorded, by path,
+    /// against the time it was last changed.
+    ///
+    /// A directory whose modification time has not moved has the same children,
+    /// which is the cheap signal an incremental scan turns on. Loaded once at
+    /// the start of a scan: a tree with a million files has thousands of
+    /// directories, not millions.
+    [[nodiscard]] Result<QHash<QString, qint64>> directoryTimes(qint64 volumeId) const;
+
+    /// Copies the last finished scan's rows for `path` and everything under it
+    /// into `generation`, facts included.
+    ///
+    /// What "keep what has not changed" means: a subtree the walk decided not
+    /// to descend into is carried across rather than re-walked. Nothing is ever
+    /// carried forward that the walk did not just see in a listing, which is
+    /// what makes a deleted subtree disappear rather than linger.
+    [[nodiscard]] Result<qint64> carryForward(qint64 volumeId, qint64 generation, const QString& path);
+
     /// Throws away what a scan wrote without committing it. A cancelled or
     /// failed scan leaves the volume exactly as it was, `last_scan` included --
     /// and one killed with the process does too, because nothing it wrote was

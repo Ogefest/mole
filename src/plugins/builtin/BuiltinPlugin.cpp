@@ -8,6 +8,7 @@
 #include "plugins/builtin/BulkRenameFeature.h"
 #include "plugins/builtin/DuplicatesFeature.h"
 #include "plugins/builtin/FileSetsFeature.h"
+#include "plugins/builtin/IndexScanJob.h"
 #include "plugins/builtin/PreviewFeature.h"
 #include "plugins/builtin/ReportsFeature.h"
 #include "plugins/builtin/SearchFeatures.h"
@@ -87,6 +88,12 @@ void BuiltinPlugin::registerExtensions(PluginRegistry& registry)
     if (services.scheduler) {
         m_analysisJob = std::make_unique<AnalysisJob>(services, analysisStore);
         services.scheduler->registerJob(AnalysisJob::kind(), m_analysisJob.get());
+
+        // The index goes stale on its own, and nothing else in the application
+        // notices. A schedule per volume is the answer to that, rather than a
+        // heuristic somewhere deciding an index is too old to use.
+        m_indexJob = std::make_unique<IndexScanJob>(services);
+        services.scheduler->registerJob(IndexScanJob::kind(), m_indexJob.get());
         registry.addFeature(
             std::make_unique<AutomationFeature>(services.scheduler->store(), services.scheduler));
     }

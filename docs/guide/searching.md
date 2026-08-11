@@ -71,6 +71,25 @@ than quietly widening it, because *camera = Canon* over an unindexed folder does
 this folder, or search only the part that already is — and narrowing says what it left
 out.
 
+## Keeping an index fresh
+
+A re-scan keeps what has not changed. A folder whose modification time has not moved since
+the last scan has the same contents, so its subtree is carried across rather than walked
+again — which on the trees this exists for is the difference between minutes and hours to
+learn that nothing much has moved. Nothing is ever carried forward that the scan did not
+just see in its parent's listing, which is why a folder that has been deleted disappears
+rather than lingering.
+
+Two honesty rules go with it. A drive that does not date its folders gives the scan nothing
+to work from, so it walks the lot and says so. And *Full rescan* walks everything and keeps
+nothing, which is what to reach for when you suspect the index.
+
+*Keep it up to date every night* puts the folder on the same clock every other repeating
+job in Mole uses: it survives a restart and catches up on a night the machine was off.
+That is deliberately where freshness is decided — nothing anywhere judges an index to be
+too old to use, because a folder that changes often is one you index often, or do not index
+at all and search directly.
+
 ## Inside archives
 
 A scan of a local drive also lists what is inside the zips, tarballs and 7z files it meets,

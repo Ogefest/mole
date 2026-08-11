@@ -9,6 +9,41 @@ wrong.
 
 ---
 
+## Re-indexing walked the whole tree again, and nothing ran a scan on a clock
+
+**Asked for:** MOLE-155 — a re-scan wrote every entry whether or not anything had changed,
+which on a 4 TB tree is hours to learn that nothing much has moved. And a scan was only ever
+started by hand, so an index was as fresh as the last time somebody remembered.
+
+**What it turned out to be:** a carry-forward and a job kind. A folder whose modification
+time has not moved has the same children, so its subtree is copied into the new generation
+rather than re-walked — which composes with MOLE-146's rule exactly as the ticket said it
+would: an incremental scan touches less, so the swap at the end is smaller and not
+different.
+
+**The property that makes it correct rather than only fast:** nothing is ever carried
+forward that the walk did not just see in a listing. A deleted folder is not in its
+parent's listing, so nothing carries it, so it goes — whatever any timestamp says.
+
+**Two honesty rules, and one of them was found by the test.** A drive that dates none of
+its folders is walked in full and says so. And a folder is only trusted when its recorded
+time is *strictly older* than the last scan: a folder changed in the same second the scan
+read it carries the scan's own timestamp and would look unchanged for ever after. That
+window is small, permanent and impossible to notice from outside, and the first version had
+it — the test that adds a file to a folder and re-scans caught it immediately.
+
+**The fixture was lying, in the same shape a backend can.** `MemoryFileSystem` did not move
+a folder's own time when something was added to or removed from it, which is exactly what
+an incremental scan reads. A fixture that did not would have made this look right here and
+be wrong on a disk, so it moves now — and it grew a `setModified` so a test can date a tree
+that was, unavoidably, built a moment ago.
+
+**Scheduling goes through the automation that exists**, not a second scheduler: one job
+kind, registered beside the analysis one, incremental by default. It survives a restart and
+catches up on a missed run because that is what the scheduler already does; the test holds
+it for this job type. That is deliberately where freshness is decided — nothing judges an
+index too old to use, because a folder that changes often is one somebody indexes often.
+
 ## A file inside a zip could be found by no means at all
 
 **Asked for:** MOLE-154 — `report.pdf` inside `backup.zip` did not appear in a search, was

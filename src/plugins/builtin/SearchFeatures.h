@@ -200,7 +200,21 @@ public:
     /// user knowing there is a list to reload.
     Q_INVOKABLE void refreshVolumes();
     /// Queues a background scan that fills the index for `uri`.
-    Q_INVOKABLE void scanDirectory(const QString& uri, const QString& label);
+    ///
+    /// Incremental by default: a re-scan keeps what has not changed rather than
+    /// walking the tree again. `full` is what somebody reaches for when they
+    /// suspect the index.
+    Q_INVOKABLE void scanDirectory(const QString& uri, const QString& label, bool full = false);
+
+    /// Asks for `uri` to be re-indexed every `hours`, through the same
+    /// scheduler every other repeating job goes through -- so it survives a
+    /// restart and catches up on a run missed while the machine was off.
+    /// Returns the rule's id, or empty when there is no scheduler.
+    Q_INVOKABLE QString scheduleScan(const QString& uri, int hours);
+    /// Whether a rule already exists for this folder, so the form can offer to
+    /// stop rather than to start again.
+    Q_INVOKABLE QString scheduledScanId(const QString& uri) const;
+    Q_INVOKABLE void unscheduleScan(const QString& uri);
 
     /// Takes what a person types -- "10M", "1.5 GB", "500k", or nothing at all --
     /// and returns the bytes, or -1 for anything it cannot make sense of. A form
