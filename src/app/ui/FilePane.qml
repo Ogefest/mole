@@ -260,6 +260,19 @@ FocusScope {
             list.forceActiveFocus()
     }
 
+    // A press that has become a drag, on `row`.
+    //
+    // What goes is what the controller says goes: the ticked rows when `row` is
+    // one of them, that row alone when it is not. Nothing here ticks anything and
+    // nothing here moves the cursor -- dragging is not selecting, and somebody who
+    // drags one file out of a ticked ten has to find the ten still ticked
+    // afterwards.
+    function beginDrag(row) {
+        if (!paneController || row < 0)
+            return
+        App.startDrag(paneController.dragTargets(row))
+    }
+
     // Directories open in place, a file that some plugin can mount becomes a
     // drive of its own, anything else goes to the desktop's default handler.
     function openRow(index) {
@@ -688,6 +701,18 @@ FocusScope {
                 }
                 onDoubleClicked: pane.openRow(index)
 
+                // `target: null`, so the row is not dragged out of the layout:
+                // this handler exists to report that a press has become a drag,
+                // not to move anything. Qt's own threshold decides when that
+                // happened, and until it does the delegate keeps the click and
+                // the double click it already had -- both load-bearing, and both
+                // easy to break from on top.
+                DragHandler {
+                    objectName: "rowDragHandler"
+                    target: null
+                    onActiveChanged: if (active) pane.beginDrag(index)
+                }
+
                 // Ticked rows stay obvious even when the cursor is elsewhere.
                 Rectangle {
                     anchors.fill: parent
@@ -817,6 +842,15 @@ FocusScope {
                     paneController.currentIndex = index
                 }
                 onDoubleClicked: pane.openRow(index)
+
+                // The same handler as the list delegate's, for the same reason:
+                // grid is a way of looking at this pane rather than a different
+                // pane, so every gesture has to work in both.
+                DragHandler {
+                    objectName: "tileDragHandler"
+                    target: null
+                    onActiveChanged: if (active) pane.beginDrag(index)
+                }
 
                 ColumnLayout {
                     anchors.fill: parent

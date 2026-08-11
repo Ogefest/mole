@@ -9,6 +9,37 @@ wrong.
 
 ---
 
+## Nothing in the window ever asked what a selection looked like from outside
+
+**Asked for:** MOLE-85 — `DragSource` could say what a selection looks like to the rest of
+the desktop, and no gesture anywhere reached it. Press a row, move the pointer, and the
+files are on their way to whatever is underneath.
+
+**What it turned out to be:** a `DragHandler` with `target: null` on both delegates, which
+is the whole trick. The row is not dragged out of the layout and the handler moves nothing —
+it reports that Qt's own threshold has been crossed, and until it is, the delegate keeps the
+click and the double click it already had. Both are load-bearing and both are what a
+gesture added on top breaks first, so both are asserted in the same file.
+
+**What goes is decided in the controller, not in the markup.** `dragTargets(row)` answers
+the ticked rows when `row` is one of them and that row alone when it is not — the same
+selection `targets()` reads, so the two cannot disagree about what is ticked. What differs
+is the fallback, and deliberately: F5 acts on the row under the *cursor*, a drag on the row
+under the *pointer*. Dragging an unticked row while ten are ticked must send one file, and
+must leave the ten ticked and the cursor where it was. A drag is not a selection.
+
+**The harness had no pointer at all, and now has one.** Press, move, release and a
+`dragFrom()` that steps past the platform's drag distance rather than jumping — a single
+large move can arrive as a teleport that no handler reads as a drag. Delivered to the
+`QQuickWindow` through `QTest`, the same path `key()` uses, so it works offscreen where
+`xdotool` never did. Rows are found through the view's own `itemAtIndex()`, which is what
+knows where a row ended up after layout and item reuse.
+
+**The `QDrag` itself is four lines in the shell**, with the window as its source and
+`exec(Qt::CopyAction)`, plus a badge saying how many when it is more than one — a cursor
+with nothing attached says nothing about whether forty files are moving. That is the part no
+test can reach, which is exactly why the seam was put above it.
+
 ## A selection had no form anything outside Mole could take
 
 **Asked for:** MOLE-84 — the first piece of dragging, and the one with no gesture in it.

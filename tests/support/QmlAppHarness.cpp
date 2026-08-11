@@ -6,11 +6,13 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QRegularExpression>
+#include <QStyleHints>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -259,6 +261,74 @@ void QmlAppHarness::type(const QString& text)
         QTest::keyClick(m_window, c.toLatin1(), Qt::NoModifier);
         settle(1);
     }
+}
+
+void QmlAppHarness::press(const QPoint& where, Qt::MouseButton button)
+{
+    if (!m_window)
+        return;
+    QTest::mousePress(m_window, button, Qt::NoModifier, where);
+    settle(1);
+}
+
+void QmlAppHarness::moveTo(const QPoint& where)
+{
+    if (!m_window)
+        return;
+    // QTest remembers which buttons are down, so a move between a press and a
+    // release carries the button state a drag needs.
+    QTest::mouseMove(m_window, where);
+    settle(1);
+}
+
+void QmlAppHarness::release(const QPoint& where, Qt::MouseButton button)
+{
+    if (!m_window)
+        return;
+    QTest::mouseRelease(m_window, button, Qt::NoModifier, where);
+    settle(2);
+}
+
+void QmlAppHarness::click(const QPoint& where)
+{
+    if (!m_window)
+        return;
+    QTest::mouseClick(m_window, Qt::LeftButton, Qt::NoModifier, where);
+    settle(3);
+}
+
+void QmlAppHarness::doubleClick(const QPoint& where)
+{
+    if (!m_window)
+        return;
+    QTest::mouseDClick(m_window, Qt::LeftButton, Qt::NoModifier, where);
+    settle(3);
+}
+
+void QmlAppHarness::dragFrom(const QPoint& from, const QPoint& to)
+{
+    if (!m_window)
+        return;
+
+    // Comfortably past whatever the platform calls a drag: the threshold is a
+    // style hint, so a test that moved exactly that far would be asserting the
+    // hint rather than the behaviour.
+    const int threshold = QGuiApplication::styleHints()->startDragDistance();
+    const QPoint destination = to.isNull() ? from + QPoint(0, threshold * 3) : to;
+
+    press(from);
+    // In steps, because one jump can be delivered as a single move that a
+    // handler treats as a teleport rather than as a drag.
+    for (int step = 1; step <= 4; ++step)
+        moveTo(from + (destination - from) * step / 4);
+}
+
+QPoint QmlAppHarness::centreOf(const QQuickItem* item) const
+{
+    if (!item || !m_window)
+        return {};
+    const QPointF centre = item->mapToScene(QPointF(item->width() / 2, item->height() / 2));
+    return centre.toPoint();
 }
 
 QQuickItem* QmlAppHarness::item(const QString& objectName) const

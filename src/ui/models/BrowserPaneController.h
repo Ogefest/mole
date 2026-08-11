@@ -84,6 +84,15 @@ public:
     Q_INVOKABLE void deleteTargets();
     /// The selection, or the row under the cursor when nothing is ticked.
     QList<VfsUri> targets() const;
+    /// What a drag that started on `row` carries: the ticked rows when `row` is
+    /// one of them, and that row alone when it is not.
+    ///
+    /// The same selection targets() reads, so the two can never disagree about
+    /// what is ticked; what differs is the fallback, and deliberately. F5 acts on
+    /// the row under the *cursor*, a drag on the row under the *pointer* -- and
+    /// dragging an unticked row must not quietly send a selection the user made
+    /// somewhere else in the list.
+    Q_INVOKABLE QStringList dragTargets(int row) const;
     Q_INVOKABLE int targetCount() const;
     Q_INVOKABLE QString targetSummary() const;
     /// Exactly what an operation would act on -- name, folder or not, and size --

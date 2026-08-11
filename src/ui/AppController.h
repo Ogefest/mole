@@ -32,6 +32,7 @@ class PreviewRegistry;
 class MetadataRegistry;
 class PluginManager;
 class FileLauncher;
+class DragSource;
 class ActionRegistry;
 class SessionStore;
 class ScheduleStore;
@@ -336,8 +337,16 @@ public:
     /// on a remote or archive drive are extracted to a scratch copy first.
     Q_INVOKABLE void openExternally(const QString& uri);
 
+    /// Hands `uris` to whatever the pointer is over, as a copy. Called when a
+    /// press in a listing has become a drag; what it turns into is
+    /// `DragSource`'s business and what it may not do is delete anything.
+    Q_INVOKABLE void startDrag(const QStringList& uris);
+
     QString defaultLocation() const;
     FileLauncher* launcher() const { return m_launcher; }
+    /// Exposed so the shell can install the step that builds the real `QDrag`,
+    /// and so a test can install a recorder instead -- see ADR-0040.
+    DragSource* dragSource() const { return m_dragSource; }
 
     // ---- window geometry --------------------------------------------------
 
@@ -458,6 +467,7 @@ private:
     MetadataRegistry* m_metadata = nullptr;
     PluginManager* m_plugins = nullptr;
     FileLauncher* m_launcher = nullptr;
+    DragSource* m_dragSource = nullptr;
     ActionRegistry* m_actions = nullptr;
     TerminalController* m_terminal = nullptr;
     ScheduleStore* m_schedules = nullptr;

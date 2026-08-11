@@ -6,6 +6,7 @@
 #include <QDateTime>
 #include <QImage>
 #include <QList>
+#include <QPoint>
 #include <QString>
 
 #include <memory>
@@ -100,6 +101,26 @@ public:
 
     void key(int key, Qt::KeyboardModifiers modifiers = Qt::NoModifier);
     void type(const QString& text);
+
+    // ---- the pointer -----------------------------------------------------
+    //
+    // Delivered to the QQuickWindow through QTest, the same path `key()` uses and
+    // for the same reason: no X server, no window manager, no focus lottery.
+    // Positions are in window coordinates -- `centreOf()` turns an item into one.
+
+    void press(const QPoint& where, Qt::MouseButton button = Qt::LeftButton);
+    void moveTo(const QPoint& where);
+    void release(const QPoint& where, Qt::MouseButton button = Qt::LeftButton);
+    void click(const QPoint& where);
+    void doubleClick(const QPoint& where);
+    /// Presses at `from` and moves well past the platform's drag threshold, which
+    /// is what turns a press into a drag. The button is still down when this
+    /// returns: a drag in flight is the state most of these tests are about.
+    void dragFrom(const QPoint& from, const QPoint& to = {});
+    /// Where an item is, in window coordinates. Empty items and items outside
+    /// the window are still answered for -- what a test does with that is its
+    /// own business.
+    QPoint centreOf(const QQuickItem* item) const;
     /// Lets bindings, queued task results and the render loop catch up.
     void settle(int rounds = 5);
     /// Spins until `predicate` holds, or the timeout expires.

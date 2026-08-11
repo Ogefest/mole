@@ -5,6 +5,7 @@
 #include "host/MetadataRegistry.h"
 #include "host/PluginManager.h"
 #include "host/PreviewRegistry.h"
+#include "ui/DragSource.h"
 #include "ui/FileLauncher.h"
 #include "ui/SessionStore.h"
 #include "ui/models/CommandPaletteModel.h"
@@ -305,6 +306,22 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
         if (m_drives) {
             m_drives->noteFailureAt(VfsUri::fromString(uri), VfsError::make(VfsError::IoError, reason));
         }
+    });
+
+    // A drag has no result to look at afterwards, so both outcomes it can have
+    // besides working are said out loud. Silence would be indistinguishable from
+    // a pointer that missed.
+    m_dragSource = new DragSource(this);
+    connect(m_dragSource, &DragSource::refused, this, [this](const QString& reason) {
+        emit notification(
+            static_cast<int>(EventBus::Severity::Warning), QStringLiteral("Nothing was dragged"), reason);
+    });
+    connect(m_dragSource, &DragSource::leftBehind, this, [this](int sent, int left) {
+        emit notification(static_cast<int>(EventBus::Severity::Warning),
+            QStringLiteral("Dragging %1 of %2").arg(sent).arg(sent + left),
+            QStringLiteral("%1 of them are not on this computer, so nothing outside Mole can reach "
+                           "them yet.")
+                .arg(left));
     });
 
     // Whatever failed, wherever it was tried from. A listing that came back
@@ -2095,6 +2112,18 @@ void AppController::openExternally(const QString& uri)
 {
     if (m_launcher)
         m_launcher->open(VfsUri::fromString(uri));
+}
+
+void AppController::startDrag(const QStringList& uris)
+{
+    if (!m_dragSource)
+        return;
+
+    QList<VfsUri> rows;
+    rows.reserve(uris.size());
+    for (const QString& uri : uris)
+        rows.append(VfsUri::fromString(uri));
+    m_dragSource->start(rows);
 }
 
 void AppController::queueScan(const QString& uri, const QString& label)

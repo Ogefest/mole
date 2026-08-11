@@ -2,16 +2,22 @@
 #include "host/PluginManager.h"
 #include "plugins/builtin/BuiltinPlugin.h"
 #include "ui/AppController.h"
+#include "ui/DragSource.h"
 
 #include "core/CoreMetaTypes.h"
 #include "core/diagnostics/Diagnostics.h"
 
 #include <QDir>
+#include <QDrag>
 #include <QGuiApplication>
 #include <QLoggingCategory>
+#include <QMimeData>
+#include <QPainter>
+#include <QPixmap>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
+#include <QQuickWindow>
 #include <QTextStream>
 
 namespace {
@@ -41,6 +47,59 @@ int runDiagnostics(mole::AppController& controller, bool listPlugins)
             out << "  " << line << Qt::endl;
     }
     return problems.isEmpty() ? 0 : 1;
+}
+
+/// What the pointer carries while a drag of more than one file is in flight.
+///
+/// A cursor with nothing attached to it says nothing about how much is going, and
+/// the difference between dragging one file and dragging forty is exactly what
+/// somebody wants confirmed before they let go over another window.
+QPixmap countBadge(int count)
+{
+    const QString text = QStringLiteral("%1 items").arg(count);
+    QFont font;
+    font.setPixelSize(13);
+    const QFontMetrics metrics(font);
+    const int width = metrics.horizontalAdvance(text) + 18;
+    const int height = metrics.height() + 10;
+
+    QPixmap badge(width, height);
+    badge.fill(Qt::transparent);
+    QPainter painter(&badge);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setBrush(QColor(0x2b, 0x35, 0x47));
+    painter.setPen(QColor(0x4a, 0x53, 0x64));
+    painter.drawRoundedRect(QRectF(0.5, 0.5, width - 1, height - 1), 3, 3);
+    painter.setFont(font);
+    painter.setPen(QColor(0xe6, 0xeb, 0xf5));
+    painter.drawText(QRect(0, 0, width, height), Qt::AlignCenter, text);
+    return badge;
+}
+
+/// The one call this application makes to the platform's drag machinery.
+///
+/// Everything that is Mole's own behaviour -- which rows go, what the payload
+/// holds, which action is offered -- happened before this and is tested without a
+/// platform. See ADR-0040 for why the seam is here.
+void installDragHook(mole::AppController& controller, QQuickWindow* window)
+{
+    mole::DragSource* source = controller.dragSource();
+    if (!source || !window)
+        return;
+
+    source->setStartHook([window](std::unique_ptr<QMimeData> mime, Qt::DropActions actions) {
+        const int count = static_cast<int>(mime->urls().size());
+        // Parented to the window, which is also what the receiving application
+        // is told the drag came from.
+        auto* drag = new QDrag(window);
+        drag->setMimeData(mime.release());
+        if (count > 1)
+            drag->setPixmap(countBadge(count));
+        // Blocks until the gesture ends, which is what QDrag is: the nested loop
+        // is the drag.
+        drag->exec(actions);
+        return true;
+    });
 }
 
 } // namespace
@@ -105,6 +164,9 @@ int main(int argc, char* argv[])
         qCritical("Mole could not load its user interface");
         return 1;
     }
+
+    // Once there is a window: a QDrag needs a real one as its source.
+    installDragHook(controller, qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst()));
 
     const int code = app.exec();
 

@@ -192,6 +192,30 @@ QList<VfsUri> BrowserPaneController::targets() const
     return m_files->targets(m_currentIndex);
 }
 
+QStringList BrowserPaneController::dragTargets(int row) const
+{
+    QStringList uris;
+    if (row < 0)
+        return uris;
+
+    // Dragging one of the ticked rows takes all of them; dragging any other row
+    // takes that row alone. Passing no fallback is what says "the ticked rows and
+    // nothing else" -- targets() would offer the cursor row instead, which is the
+    // right answer for a key and the wrong one for a pointer.
+    if (m_files->isSelected(row)) {
+        const QList<VfsUri> ticked = m_files->targets(-1);
+        uris.reserve(static_cast<int>(ticked.size()));
+        for (const VfsUri& uri : ticked)
+            uris.append(uri.toString());
+        return uris;
+    }
+
+    const QString uri = m_files->uriAt(row);
+    if (!uri.isEmpty())
+        uris.append(uri);
+    return uris;
+}
+
 int BrowserPaneController::targetCount() const
 {
     return static_cast<int>(targets().size());

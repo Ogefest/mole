@@ -238,6 +238,11 @@ mole_add_test(tst_Walkthrough       SOURCES app/tst_Walkthrough.cpp     LIBS mol
 # walkthrough's narrative would have to step around.
 mole_add_test(tst_Sidebar           SOURCES app/tst_Sidebar.cpp         LIBS mole_qml_harness)
 
+# Dragging rows out of a listing, through the real window. Its own binary
+# because it holds a pointer button down across assertions and ticks rows, which
+# is state the walkthrough's narrative would have to step around.
+mole_add_test(tst_Dragging          SOURCES app/tst_Dragging.cpp         LIBS mole_qml_harness mole_builtin)
+
 # What a tab says about where it came from. Its own binary for the same reason
 # as the sidebar's: it opens and closes tabs, which is state a narrative test
 # would have to step around.
@@ -267,6 +272,7 @@ mole_mark_qml_test(tst_KeyboardNavigation)
 mole_mark_qml_test(tst_Walkthrough)
 mole_mark_qml_test(tst_Sidebar)
 mole_mark_qml_test(tst_TabStrip)
+mole_mark_qml_test(tst_Dragging)
 # Not a QML test: it opens documents through Qt Pdf, which leaks on a failed load.
 mole_mark_qml_test(tst_DocumentMetadata)
 if(MOLE_HAVE_ARCHIVE_PLUGIN)

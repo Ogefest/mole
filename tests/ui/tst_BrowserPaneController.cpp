@@ -40,6 +40,8 @@ private slots:
     void insertTicksAndAdvances();
     void targetsAreListedByNameAndNotJustCounted();
     void targetDetailsFollowTheCursorWhenNothingIsTicked();
+    void aDragOfATickedRowCarriesTheWholeSelection();
+    void aDragOfAnUntickedRowCarriesThatRowAlone();
     void createDirectoryAnnouncesItself();
     void renameMovesTheEntry();
     void deleteRemovesTheTargets();
@@ -374,6 +376,51 @@ void TestBrowserPaneController::targetDetailsFollowTheCursorWhenNothingIsTicked(
     QCOMPARE(details.size(), 1);
     QCOMPARE(details.first().toMap().value(QStringLiteral("name")).toString(),
         pane->files()->nameAt(pane->currentIndex()));
+}
+
+void TestBrowserPaneController::aDragOfATickedRowCarriesTheWholeSelection()
+{
+    BrowserPaneController* pane = makePane();
+    pane->navigateTo(QStringLiteral("mem:///docs"));
+    QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() == 2; }));
+
+    pane->files()->selectAll();
+    // Starting on either of them takes both: a drag that began inside the
+    // selection is a drag of the selection.
+    QCOMPARE(pane->dragTargets(0).size(), 2);
+    QCOMPARE(pane->dragTargets(1).size(), 2);
+
+    QStringList names;
+    for (const QString& uri : pane->dragTargets(0))
+        names.append(VfsUri::fromString(uri).fileName());
+    names.sort();
+    QCOMPARE(names, QStringList({ QStringLiteral("a.txt"), QStringLiteral("deep") }));
+}
+
+void TestBrowserPaneController::aDragOfAnUntickedRowCarriesThatRowAlone()
+{
+    BrowserPaneController* pane = makePane();
+    pane->navigateTo(QStringLiteral("mem:///docs"));
+    QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() == 2; }));
+
+    pane->files()->setSelected(0, true);
+    pane->setCurrentIndex(0);
+
+    // Row 1 is ticked by nothing and is not where the cursor is, and it is still
+    // the whole answer -- otherwise dragging one file out of a ticked set would
+    // silently send the set, or worse, send whatever the keyboard was last on.
+    const QStringList dragged = pane->dragTargets(1);
+    QCOMPARE(dragged.size(), 1);
+    QCOMPARE(VfsUri::fromString(dragged.first()).fileName(), pane->files()->nameAt(1));
+
+    // And the drag changed neither of the two things a user can see.
+    QCOMPARE(pane->currentIndex(), 0);
+    QCOMPARE(pane->files()->selectionCount(), 1);
+    QVERIFY(pane->files()->isSelected(0));
+
+    // A row that does not exist is not a row: no payload rather than a guess.
+    QVERIFY(pane->dragTargets(-1).isEmpty());
+    QVERIFY(pane->dragTargets(99).isEmpty());
 }
 
 void TestBrowserPaneController::createDirectoryAnnouncesItself()
