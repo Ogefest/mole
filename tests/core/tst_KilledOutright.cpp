@@ -222,13 +222,38 @@ void TestKilledOutright::preferencesKilledMidSaveAreTheOldOnesRatherThanHalfOfTh
 /// A scan interrupted is a scan to run again, not an index to rebuild.
 ///
 /// The index is written in batches inside transactions, on a database in WAL
-/// mode. Both of those are choices about exactly this moment: a kill lands
-/// between two transactions or inside one, and either way what is on disk has to
-/// be a database that opens. If it does not, every drive the user has ever
-/// scanned has to be walked again — which on the sizes this program exists for
-/// is hours.
+/// mode, and a scan's rows only become the volume's contents in the one
+/// transaction that ends it. All three are choices about exactly this moment: a
+/// kill lands between two transactions or inside one, and either way what is on
+/// disk has to be a database that opens and still answers with the last scan
+/// that finished. If it does not, every drive the user has ever scanned has to
+/// be walked again — which on the sizes this program exists for is hours.
+///
+/// So the victim finishes one scan and is killed during the next. What it had
+/// before the kill is what it must still have after it.
 void TestKilledOutright::anIndexKilledMidWriteOpensAgainAndAnswers()
 {
+    const auto rowsNamed = [](const QString& prefix, int count) {
+        QList<IndexedFile> files;
+        files.reserve(count);
+        for (int i = 0; i < count; ++i) {
+            IndexedFile file;
+            file.name = QStringLiteral("%1-%2.txt").arg(prefix).arg(i);
+            file.path = QStringLiteral("/tmp/%1").arg(file.name);
+            file.parentPath = QStringLiteral("/tmp");
+            file.extension = QStringLiteral("txt");
+            file.size = 1234;
+            files.append(file);
+        }
+        return files;
+    };
+    // The database and its write-ahead log together: a batch lands in the log
+    // and is moved into the database at a checkpoint, so either alone stops
+    // growing at moments that have nothing to do with the scan.
+    const auto indexBytes = [](const QString& path) {
+        return QFileInfo(path).size() + QFileInfo(path + QStringLiteral("-wal")).size();
+    };
+
     if (Victim::isThisProcess()) {
         IndexDatabase database(Victim::instruction());
         if (!database.open().ok())
@@ -238,18 +263,33 @@ void TestKilledOutright::anIndexKilledMidWriteOpensAgainAndAnswers()
         if (!volume.ok())
             return;
 
+        // One finished scan, which is what there is to lose.
+        const Result<qint64> settled = database.beginScan(volume.value());
+        if (!settled.ok())
+            return;
+        if (!database.insertBatch(volume.value(), settled.value(), rowsNamed(QStringLiteral("settled"), 500))
+                 .ok())
+            return;
+        if (!database.commitScan(volume.value(), settled.value(), QDateTime::currentDateTime()).ok())
+            return;
+
+        // Said with a file rather than a message, because the parent has to
+        // know the first scan is committed before it starts watching for the
+        // second, and a pipe from a process about to be killed is not a thing
+        // to make that decision on.
+        QFile marker(Victim::instruction() + QStringLiteral(".settled"));
+        if (!marker.open(QIODevice::WriteOnly))
+            return;
+        marker.close();
+
+        const Result<qint64> rescan = database.beginScan(volume.value());
+        if (!rescan.ok())
+            return;
         for (int batch = 0; batch < 100000; ++batch) {
-            QList<IndexedFile> files;
-            for (int i = 0; i < 500; ++i) {
-                IndexedFile file;
-                file.name = QStringLiteral("file-%1-%2.txt").arg(batch).arg(i);
-                file.path = QStringLiteral("/tmp/%1").arg(file.name);
-                file.parentPath = QStringLiteral("/tmp");
-                file.extension = QStringLiteral("txt");
-                file.size = 1234;
-                files.append(file);
-            }
-            if (!database.insertBatch(volume.value(), files).ok())
+            if (!database
+                     .insertBatch(
+                         volume.value(), rescan.value(), rowsNamed(QStringLiteral("file-%1").arg(batch), 500))
+                     .ok())
                 return;
         }
         return;
@@ -257,17 +297,24 @@ void TestKilledOutright::anIndexKilledMidWriteOpensAgainAndAnswers()
 
     TempTree tree;
     const QString path = tree.absolute(QStringLiteral("index.sqlite"));
+    const QString marker = path + QStringLiteral(".settled");
 
     Victim victim(QStringLiteral("anIndexKilledMidWriteOpensAgainAndAnswers"), path);
     QVERIFY(victim.started());
 
-    // Killed once rows are actually going in, so the kill lands during a write
-    // rather than before the schema exists.
-    const bool writing = victim.waitUntil([&path] { return QFileInfo(path).size() > 32 * 1024; });
+    // The kill has to land inside the second scan: after the first is
+    // committed, and once the second is really putting rows on the disk.
+    const bool committed = victim.waitUntil([&marker] { return QFileInfo::exists(marker); });
+    const qint64 settledBytes = indexBytes(path);
+    const bool rescanning
+        = committed && victim.waitUntil([&] { return indexBytes(path) > settledBytes + 256 * 1024; });
     victim.kill();
 
-    QVERIFY2(writing,
-        qPrintable(QStringLiteral("the victim never wrote an index. It said: %1").arg(victim.transcript())));
+    QVERIFY2(committed,
+        qPrintable(QStringLiteral("the victim never finished a scan. It said: %1").arg(victim.transcript())));
+    QVERIFY2(rescanning,
+        qPrintable(QStringLiteral("the victim never started the rescan the kill has to land in. It said: %1")
+                       .arg(victim.transcript())));
 
     IndexDatabase reopened(path);
     const Result<void> opened = reopened.open();
@@ -282,11 +329,19 @@ void TestKilledOutright::anIndexKilledMidWriteOpensAgainAndAnswers()
     QCOMPARE(volumes.value().size(), 1);
 
     IndexSearchQuery query;
-    query.text = QStringLiteral("file-0-");
+    query.text = QStringLiteral("settled-");
     const Result<QList<IndexSearchHit>> hits = reopened.search(query);
     QVERIFY2(hits.ok(), qPrintable(hits.error().message));
     QVERIFY2(!hits.value().isEmpty(),
         "the index opened and knows nothing, which is an index that has to be built again");
+    QCOMPARE(reopened.fileCount().value(), 500);
+
+    // And nothing from the scan that was killed: it was never committed, so it
+    // was never the volume's contents, and a half-walked tree must not become
+    // the answer merely because the process that was walking it died.
+    query.text = QStringLiteral("file-0-");
+    QVERIFY2(reopened.search(query).value().isEmpty(),
+        "half of an interrupted rescan became the index, which is a search answering short and sure");
 }
 
 MOLE_TEST_MAIN(TestKilledOutright)

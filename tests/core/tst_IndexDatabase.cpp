@@ -4,6 +4,9 @@
 #include "core/index/IndexDatabase.h"
 
 #include <QDir>
+#include <QSqlDatabase>
+#include <QSqlQuery>
+#include <QVariant>
 
 #include <atomic>
 #include <thread>
@@ -32,15 +35,31 @@ private slots:
     void searchScopesToVolume();
     void searchRespectsLimit();
     void searchReturnsResolvableUris();
-    void clearVolumeDropsOnlyItsRows();
+    void rowsFromAnUnfinishedScanAreNotVisible();
+    void anAbandonedScanLeavesThePreviousContents();
+    void abandoningTheVolumesOwnScanDoesNothing();
+    void aScanNothingFinishedIsSweptUpByTheNext();
+    void aRescanTouchesOnlyItsOwnVolume();
     void removeVolumeDropsEverything();
-    void markVolumeScannedRecordsCount();
+    void commitScanRecordsTheCountAndTheTime();
+    void anIndexWrittenBeforeGenerationsStaysVisible();
     void survivesAccessFromSeveralThreads();
     void operationsFailCleanlyWhenClosed();
 
 private:
     IndexedFile makeFile(const QString& path, qint64 size = 0, bool isDir = false) const;
+    /// A volume whose one finished scan holds `paths`.
     qint64 seedVolume(const QString& uri, const QStringList& paths);
+    /// Writes rows into `volume` as one finished scan -- begun, filled and
+    /// committed -- which is the only way anything becomes searchable.
+    bool rescan(qint64 volume, const QList<IndexedFile>& rows);
+    bool rescan(qint64 volume, const QStringList& paths);
+    /// Rows in the table, whether or not a search can reach them.
+    ///
+    /// The whole arrangement rests on this differing from fileCount() while a
+    /// scan is running, and a test that only ever asked fileCount() could not
+    /// tell a row written and waiting from one never written at all.
+    qint64 rowsInTable() const;
 
     std::unique_ptr<QTemporaryDir> m_dir;
     std::unique_ptr<IndexDatabase> m_db;
@@ -79,11 +98,45 @@ qint64 TestIndexDatabase::seedVolume(const QString& uri, const QStringList& path
     Result<qint64> volume = m_db->upsertVolume(VfsUri::fromString(uri), QStringLiteral("vol"));
     if (!volume.ok())
         return -1;
+    return rescan(volume.value(), paths) ? volume.value() : -1;
+}
 
+bool TestIndexDatabase::rescan(qint64 volume, const QList<IndexedFile>& rows)
+{
+    const Result<qint64> scan = m_db->beginScan(volume);
+    if (!scan.ok())
+        return false;
+    if (!m_db->insertBatch(volume, scan.value(), rows).ok())
+        return false;
+    return m_db->commitScan(volume, scan.value(), QDateTime::currentDateTime()).ok();
+}
+
+bool TestIndexDatabase::rescan(qint64 volume, const QStringList& paths)
+{
     QList<IndexedFile> rows;
+    rows.reserve(paths.size());
     for (const QString& path : paths)
         rows.append(makeFile(path));
-    return m_db->insertBatch(volume.value(), rows).ok() ? volume.value() : -1;
+    return rescan(volume, rows);
+}
+
+qint64 TestIndexDatabase::rowsInTable() const
+{
+    // Its own connection, deliberately: this asks the file what is in it
+    // rather than asking the class under test what it will admit to.
+    const QString name = QStringLiteral("raw_count");
+    qint64 rows = -1;
+    {
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), name);
+        db.setDatabaseName(QDir(m_dir->path()).filePath(QStringLiteral("index.sqlite")));
+        if (db.open()) {
+            QSqlQuery query(db);
+            if (query.exec(QStringLiteral("SELECT COUNT(*) FROM files")) && query.next())
+                rows = query.value(0).toLongLong();
+        }
+    }
+    QSqlDatabase::removeDatabase(name);
+    return rows;
 }
 
 void TestIndexDatabase::opensAndCreatesSchema()
@@ -129,7 +182,7 @@ void TestIndexDatabase::insertBatchStoresRows()
 
     QCOMPARE(m_db->fileCount(volume).value(), 2);
     // An empty batch is a legal no-op, not an error.
-    QVERIFY(m_db->insertBatch(volume, {}).ok());
+    QVERIFY(m_db->insertBatch(volume, 1, {}).ok());
     QCOMPARE(m_db->fileCount(volume).value(), 2);
 }
 
@@ -183,10 +236,9 @@ void TestIndexDatabase::searchFiltersByExtensionAndKind()
     Result<qint64> volume
         = m_db->upsertVolume(VfsUri::fromString(QStringLiteral("file:///data")), QStringLiteral("vol"));
     QVERIFY(volume.ok());
-    QVERIFY(m_db->insertBatch(volume.value(),
-                    { makeFile(QStringLiteral("/data/a.pdf")), makeFile(QStringLiteral("/data/a.txt")),
-                        makeFile(QStringLiteral("/data/subdir"), 0, true) })
-                .ok());
+    QVERIFY(rescan(volume.value(),
+        { makeFile(QStringLiteral("/data/a.pdf")), makeFile(QStringLiteral("/data/a.txt")),
+            makeFile(QStringLiteral("/data/subdir"), 0, true) }));
 
     IndexSearchQuery byExtension;
     byExtension.extension = QStringLiteral("PDF"); // matching must not be case sensitive
@@ -211,10 +263,9 @@ void TestIndexDatabase::searchFiltersBySize()
     Result<qint64> volume
         = m_db->upsertVolume(VfsUri::fromString(QStringLiteral("file:///data")), QStringLiteral("vol"));
     QVERIFY(volume.ok());
-    QVERIFY(m_db->insertBatch(volume.value(),
-                    { makeFile(QStringLiteral("/data/small.bin"), 100),
-                        makeFile(QStringLiteral("/data/big.bin"), 10'000) })
-                .ok());
+    QVERIFY(rescan(volume.value(),
+        { makeFile(QStringLiteral("/data/small.bin"), 100),
+            makeFile(QStringLiteral("/data/big.bin"), 10'000) }));
 
     IndexSearchQuery large;
     large.minSize = 1000;
@@ -273,17 +324,124 @@ void TestIndexDatabase::searchReturnsResolvableUris()
     QCOMPARE(uri.path(), QStringLiteral("/volume1/deep/a.txt"));
 }
 
-void TestIndexDatabase::clearVolumeDropsOnlyItsRows()
+/// What a search may see while a scan is running, which is the whole point of
+/// there being a generation on the row at all.
+void TestIndexDatabase::rowsFromAnUnfinishedScanAreNotVisible()
+{
+    const qint64 volume = seedVolume(QStringLiteral("file:///data"), { QStringLiteral("/data/settled.txt") });
+    QVERIFY(volume >= 0);
+
+    const Result<qint64> scan = m_db->beginScan(volume);
+    QVERIFY2(scan.ok(), qPrintable(scan.error().message));
+    QVERIFY(m_db->insertBatch(volume, scan.value(), { makeFile(QStringLiteral("/data/arriving.txt")) }).ok());
+
+    // Written, and belonging to no volume yet: in the table, out of every answer.
+    QCOMPARE(rowsInTable(), 2);
+    QCOMPARE(m_db->fileCount(volume).value(), 1);
+
+    IndexSearchQuery query;
+    query.text = QStringLiteral("arriving");
+    QVERIFY2(m_db->search(query).value().isEmpty(), "a scan in progress answered a search");
+    query.text = QStringLiteral("settled");
+    QCOMPARE(m_db->search(query).value().size(), 1);
+
+    const QDateTime when = QDateTime::fromSecsSinceEpoch(1700000000);
+    QVERIFY(m_db->commitScan(volume, scan.value(), when).ok());
+
+    // And the swap is total in both directions: what arrived is the contents,
+    // what it replaced is gone rather than lingering alongside it.
+    QCOMPARE(rowsInTable(), 1);
+    QCOMPARE(m_db->fileCount(volume).value(), 1);
+    query.text = QStringLiteral("arriving");
+    QCOMPARE(m_db->search(query).value().size(), 1);
+    query.text = QStringLiteral("settled");
+    QVERIFY(m_db->search(query).value().isEmpty());
+}
+
+void TestIndexDatabase::anAbandonedScanLeavesThePreviousContents()
+{
+    const qint64 volume = seedVolume(QStringLiteral("file:///data"), { QStringLiteral("/data/settled.txt") });
+    QVERIFY(volume >= 0);
+    const IndexVolume before = m_db->volumes().value().first();
+
+    const Result<qint64> scan = m_db->beginScan(volume);
+    QVERIFY(scan.ok());
+    QVERIFY(m_db->insertBatch(volume, scan.value(), { makeFile(QStringLiteral("/data/arriving.txt")) }).ok());
+    QVERIFY(m_db->abandonScan(volume, scan.value()).ok());
+
+    QCOMPARE(rowsInTable(), 1);
+    QCOMPARE(m_db->fileCount(volume).value(), 1);
+    IndexSearchQuery query;
+    query.text = QStringLiteral("settled");
+    QCOMPARE(m_db->search(query).value().size(), 1);
+
+    // Nothing about the volume moved either: an abandoned scan is one that did
+    // not happen, so the last one that did is still the last one.
+    const IndexVolume after = m_db->volumes().value().first();
+    QCOMPARE(after.fileCount, before.fileCount);
+    QCOMPARE(after.lastScan, before.lastScan);
+}
+
+/// Handed the generation the volume is actually serving, abandoning must be a
+/// no-op. It is a tidy-up, and a tidy-up able to empty a 4 TB index is exactly
+/// the fault the generations were added to remove.
+void TestIndexDatabase::abandoningTheVolumesOwnScanDoesNothing()
+{
+    Result<qint64> volume
+        = m_db->upsertVolume(VfsUri::fromString(QStringLiteral("file:///data")), QStringLiteral("vol"));
+    QVERIFY(volume.ok());
+    const Result<qint64> scan = m_db->beginScan(volume.value());
+    QVERIFY(scan.ok());
+    QVERIFY(
+        m_db->insertBatch(volume.value(), scan.value(), { makeFile(QStringLiteral("/data/a.txt")) }).ok());
+    QVERIFY(m_db->commitScan(volume.value(), scan.value(), QDateTime::currentDateTime()).ok());
+
+    QVERIFY(m_db->abandonScan(volume.value(), scan.value()).ok());
+    QCOMPARE(m_db->fileCount(volume.value()).value(), 1);
+    QCOMPARE(rowsInTable(), 1);
+}
+
+/// A scan killed with the process commits nothing and abandons nothing: no
+/// error path ran. Its rows are invisible for ever, so the next scan of the
+/// volume sweeps them out -- otherwise the file grows by a dead scan each time.
+void TestIndexDatabase::aScanNothingFinishedIsSweptUpByTheNext()
+{
+    const qint64 volume = seedVolume(QStringLiteral("file:///data"), { QStringLiteral("/data/settled.txt") });
+    QVERIFY(volume >= 0);
+
+    const Result<qint64> lost = m_db->beginScan(volume);
+    QVERIFY(lost.ok());
+    QVERIFY(m_db->insertBatch(volume, lost.value(),
+                    { makeFile(QStringLiteral("/data/x.txt")), makeFile(QStringLiteral("/data/y.txt")) })
+                .ok());
+    QCOMPARE(rowsInTable(), 3);
+
+    const Result<qint64> next = m_db->beginScan(volume);
+    QVERIFY(next.ok());
+    QVERIFY2(next.value() != lost.value(), "a second scan reused the generation of the first");
+    QCOMPARE(rowsInTable(), 1); // the settled row, and nothing the lost scan wrote
+
+    // And the contents it was going to replace are still the contents.
+    QCOMPARE(m_db->fileCount(volume).value(), 1);
+}
+
+void TestIndexDatabase::aRescanTouchesOnlyItsOwnVolume()
 {
     const qint64 first = seedVolume(QStringLiteral("file:///one"), { QStringLiteral("/one/a.txt") });
     const qint64 second = seedVolume(QStringLiteral("file:///two"), { QStringLiteral("/two/b.txt") });
     QVERIFY(first >= 0 && second >= 0);
 
-    QVERIFY(m_db->clearVolume(first).ok());
-    QCOMPARE(m_db->fileCount(first).value(), 0);
+    QVERIFY(rescan(first, QStringList { QStringLiteral("/one/c.txt") }));
+    QCOMPARE(m_db->fileCount(first).value(), 1);
     QCOMPARE(m_db->fileCount(second).value(), 1);
     // The volume row itself survives so a rescan reuses the same id.
     QCOMPARE(m_db->volumes().value().size(), 2);
+
+    IndexSearchQuery query;
+    query.text = QStringLiteral("b.txt");
+    QCOMPARE(m_db->search(query).value().size(), 1);
+    query.text = QStringLiteral("a.txt");
+    QVERIFY(m_db->search(query).value().isEmpty());
 }
 
 void TestIndexDatabase::removeVolumeDropsEverything()
@@ -296,19 +454,86 @@ void TestIndexDatabase::removeVolumeDropsEverything()
     QCOMPARE(m_db->fileCount().value(), 0);
 }
 
-void TestIndexDatabase::markVolumeScannedRecordsCount()
+void TestIndexDatabase::commitScanRecordsTheCountAndTheTime()
 {
-    const qint64 volume = seedVolume(
-        QStringLiteral("file:///one"), { QStringLiteral("/one/a.txt"), QStringLiteral("/one/b.txt") });
-    QVERIFY(volume >= 0);
+    Result<qint64> volume
+        = m_db->upsertVolume(VfsUri::fromString(QStringLiteral("file:///one")), QStringLiteral("vol"));
+    QVERIFY(volume.ok());
+
+    const Result<qint64> scan = m_db->beginScan(volume.value());
+    QVERIFY(scan.ok());
+    QVERIFY(m_db->insertBatch(volume.value(), scan.value(),
+                    { makeFile(QStringLiteral("/one/a.txt")), makeFile(QStringLiteral("/one/b.txt")) })
+                .ok());
+
+    // The volume says nothing has been scanned until the scan is committed --
+    // a date on it is a claim that what it holds is that old, and while a scan
+    // is running the claim would be for contents nobody can see yet.
+    QVERIFY(!m_db->volumes().value().first().lastScan.isValid());
+    QCOMPARE(m_db->volumes().value().first().fileCount, 0);
 
     const QDateTime when = QDateTime::fromSecsSinceEpoch(1700000000);
-    QVERIFY(m_db->markVolumeScanned(volume, when).ok());
+    QVERIFY(m_db->commitScan(volume.value(), scan.value(), when).ok());
 
     const QList<IndexVolume> volumes = m_db->volumes().value();
     QCOMPARE(volumes.size(), 1);
     QCOMPARE(volumes.first().fileCount, 2);
     QCOMPARE(volumes.first().lastScan, when);
+}
+
+/// An index a user already has, opened by a version that knows about
+/// generations. Both columns default to nought, which is what every row and
+/// every volume in it already reads as -- so it stays visible in full. Getting
+/// this wrong empties every index in the world on upgrade, silently.
+void TestIndexDatabase::anIndexWrittenBeforeGenerationsStaysVisible()
+{
+    const QString path = QDir(m_dir->path()).filePath(QStringLiteral("old.sqlite"));
+    const QString name = QStringLiteral("schema_one");
+    {
+        // The schema exactly as version 1 shipped it, written by hand: the
+        // migration cannot be tested against a database the migration built.
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), name);
+        db.setDatabaseName(path);
+        QVERIFY(db.open());
+        QSqlQuery query(db);
+        QVERIFY(query.exec(QStringLiteral("CREATE TABLE volumes (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                                          "root_uri TEXT NOT NULL UNIQUE, label TEXT NOT NULL, "
+                                          "last_scan INTEGER, file_count INTEGER NOT NULL DEFAULT 0)")));
+        QVERIFY(query.exec(QStringLiteral(
+            "CREATE TABLE files (id INTEGER PRIMARY KEY AUTOINCREMENT, volume_id INTEGER NOT NULL "
+            "REFERENCES volumes(id) ON DELETE CASCADE, name TEXT NOT NULL, name_folded TEXT NOT NULL, "
+            "path TEXT NOT NULL, parent_path TEXT NOT NULL, extension TEXT, "
+            "is_dir INTEGER NOT NULL DEFAULT 0, size INTEGER NOT NULL DEFAULT 0, "
+            "mtime INTEGER NOT NULL DEFAULT 0)")));
+        QVERIFY(query.exec(QStringLiteral(
+            "INSERT INTO volumes (root_uri, label, last_scan, file_count) VALUES ('file:///old', 'old', "
+            "1700000000, 2)")));
+        QVERIFY(query.exec(QStringLiteral(
+            "INSERT INTO files (volume_id, name, name_folded, path, parent_path, extension) VALUES "
+            "(1, 'kept.txt', 'kept.txt', '/old/kept.txt', '/old', 'txt'), "
+            "(1, 'also.txt', 'also.txt', '/old/also.txt', '/old', 'txt')")));
+        QVERIFY(query.exec(QStringLiteral("PRAGMA user_version=1")));
+    }
+    QSqlDatabase::removeDatabase(name);
+
+    IndexDatabase upgraded(path);
+    QVERIFY2(upgraded.open().ok(), "an index from the previous schema must still open");
+
+    QCOMPARE(upgraded.fileCount().value(), 2);
+    IndexSearchQuery query;
+    query.text = QStringLiteral("kept");
+    QCOMPARE(upgraded.search(query).value().size(), 1);
+    QCOMPARE(upgraded.volumes().value().first().fileCount, 2);
+
+    // And it can still be rescanned, which is where its rows finally get a
+    // generation of their own.
+    const qint64 volume = upgraded.volumes().value().first().id;
+    const Result<qint64> scan = upgraded.beginScan(volume);
+    QVERIFY(scan.ok());
+    QVERIFY(upgraded.insertBatch(volume, scan.value(), { makeFile(QStringLiteral("/old/new.txt")) }).ok());
+    QCOMPARE(upgraded.fileCount().value(), 2); // still the old two, mid-scan
+    QVERIFY(upgraded.commitScan(volume, scan.value(), QDateTime::currentDateTime()).ok());
+    QCOMPARE(upgraded.fileCount().value(), 1);
 }
 
 void TestIndexDatabase::survivesAccessFromSeveralThreads()
@@ -320,6 +545,8 @@ void TestIndexDatabase::survivesAccessFromSeveralThreads()
     Result<qint64> volume
         = m_db->upsertVolume(VfsUri::fromString(QStringLiteral("file:///data")), QStringLiteral("vol"));
     QVERIFY(volume.ok());
+    const Result<qint64> scan = m_db->beginScan(volume.value());
+    QVERIFY(scan.ok());
 
     constexpr int kWriters = 4;
     constexpr int kRowsEach = 50;
@@ -329,11 +556,11 @@ void TestIndexDatabase::survivesAccessFromSeveralThreads()
     writers.reserve(kWriters);
 
     for (int w = 0; w < kWriters; ++w) {
-        writers.emplace_back([this, &failures, volumeId = volume.value(), w] {
+        writers.emplace_back([this, &failures, volumeId = volume.value(), generation = scan.value(), w] {
             QList<IndexedFile> rows;
             for (int i = 0; i < kRowsEach; ++i)
                 rows.append(makeFile(QStringLiteral("/data/w%1-f%2.txt").arg(w).arg(i)));
-            if (!m_db->insertBatch(volumeId, rows).ok())
+            if (!m_db->insertBatch(volumeId, generation, rows).ok())
                 ++failures;
         });
     }
@@ -341,6 +568,7 @@ void TestIndexDatabase::survivesAccessFromSeveralThreads()
         writer.join();
 
     QCOMPARE(failures.load(), 0);
+    QVERIFY(m_db->commitScan(volume.value(), scan.value(), QDateTime::currentDateTime()).ok());
     QCOMPARE(m_db->fileCount().value(), kWriters * kRowsEach);
 
     // Reading from yet another thread must work too.
@@ -366,8 +594,10 @@ void TestIndexDatabase::operationsFailCleanlyWhenClosed()
     QVERIFY(!m_db->fileCount().ok());
     QVERIFY(!m_db->search(IndexSearchQuery {}).ok());
     QVERIFY(!m_db->upsertVolume(VfsUri::fromString(QStringLiteral("file:///x")), QString()).ok());
-    QVERIFY(!m_db->insertBatch(1, { makeFile(QStringLiteral("/x/a")) }).ok());
-    QVERIFY(!m_db->clearVolume(1).ok());
+    QVERIFY(!m_db->beginScan(1).ok());
+    QVERIFY(!m_db->insertBatch(1, 1, { makeFile(QStringLiteral("/x/a")) }).ok());
+    QVERIFY(!m_db->commitScan(1, 1, QDateTime::currentDateTime()).ok());
+    QVERIFY(!m_db->abandonScan(1, 1).ok());
 }
 
 MOLE_TEST_MAIN(TestIndexDatabase)

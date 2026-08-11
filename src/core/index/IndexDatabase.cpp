@@ -13,7 +13,7 @@
 namespace mole {
 namespace {
 
-    constexpr int kSchemaVersion = 1;
+    constexpr int kSchemaVersion = 2;
 
     /// SQLite's LIKE and NOCASE only fold ASCII, so "Łódź" would never match
     /// "łódź". We store a Qt-lowercased copy of the name and match against
@@ -165,6 +165,24 @@ Result<void> IndexDatabase::applyMigrations()
     if (version >= kSchemaVersion)
         return {};
 
+    // Each block runs on its own so a database part way up the sequence gets
+    // only what it is missing, and each is one transaction so a migration that
+    // fails leaves the schema it started from rather than half of the next.
+    const auto apply = [&db](int number, const QStringList& statements) -> Result<void> {
+        if (!db.transaction())
+            return sqlError(db, QStringLiteral("Starting migration %1").arg(number));
+        for (const QString& statement : statements) {
+            QSqlQuery migration(db);
+            if (!migration.exec(statement)) {
+                db.rollback();
+                return sqlError(db, QStringLiteral("Applying migration %1").arg(number));
+            }
+        }
+        if (!db.commit())
+            return sqlError(db, QStringLiteral("Committing migration %1").arg(number));
+        return {};
+    };
+
     // Migrations are append-only: add a new `if (version < N)` block and bump
     // kSchemaVersion. Never edit an existing block -- users have it applied.
     if (version < 1) {
@@ -196,17 +214,31 @@ Result<void> IndexDatabase::applyMigrations()
             QStringLiteral("CREATE INDEX IF NOT EXISTS idx_files_size ON files(size)"),
         };
 
-        if (!db.transaction())
-            return sqlError(db, QStringLiteral("Starting migration"));
-        for (const QString& statement : statements) {
-            QSqlQuery migration(db);
-            if (!migration.exec(statement)) {
-                db.rollback();
-                return sqlError(db, QStringLiteral("Applying migration 1"));
-            }
-        }
-        if (!db.commit())
-            return sqlError(db, QStringLiteral("Committing migration"));
+        if (Result<void> applied = apply(1, statements); !applied.ok())
+            return applied;
+    }
+
+    if (version < 2) {
+        // A scan writes its rows beside the ones already there and swaps them
+        // in when it finishes; see the scanning section of the header for what
+        // the two generation columns mean to a search.
+        //
+        // Both default to nought, which is what every row and every volume
+        // already in an index will read as -- so an index built before this
+        // migration stays visible in full, and its next rescan is the first
+        // one to hand out a generation.
+        const QStringList statements = {
+            QStringLiteral("ALTER TABLE files ADD COLUMN generation INTEGER NOT NULL DEFAULT 0"),
+            QStringLiteral("ALTER TABLE volumes ADD COLUMN generation INTEGER NOT NULL DEFAULT 0"),
+            QStringLiteral("ALTER TABLE volumes ADD COLUMN next_generation INTEGER NOT NULL DEFAULT 0"),
+            // Every search joins on this pair, and so does the sweep that ends
+            // a scan; without it both are a scan of the volume's whole extent.
+            QStringLiteral("CREATE INDEX IF NOT EXISTS idx_files_generation "
+                           "ON files(volume_id, generation)"),
+        };
+
+        if (Result<void> applied = apply(2, statements); !applied.ok())
+            return applied;
     }
 
     QSqlQuery bump(db);
@@ -245,23 +277,6 @@ Result<qint64> IndexDatabase::upsertVolume(const VfsUri& root, const QString& la
     return insert.lastInsertId().toLongLong();
 }
 
-Result<void> IndexDatabase::clearVolume(qint64 volumeId)
-{
-    QMutexLocker lock(&m_mutex);
-    if (!m_open)
-        return Result<void>::failure(VfsError::IoError, QStringLiteral("Index is not open"));
-
-    QSqlDatabase db = connectionForCurrentThread();
-    if (!db.isOpen())
-        return sqlError(db, QStringLiteral("No index connection for this thread"));
-    QSqlQuery query(db);
-    query.prepare(QStringLiteral("DELETE FROM files WHERE volume_id = ?"));
-    query.addBindValue(volumeId);
-    if (!query.exec())
-        return sqlError(db, QStringLiteral("Clearing volume"));
-    return {};
-}
-
 Result<void> IndexDatabase::removeVolume(qint64 volumeId)
 {
     QMutexLocker lock(&m_mutex);
@@ -285,7 +300,102 @@ Result<void> IndexDatabase::removeVolume(qint64 volumeId)
     return {};
 }
 
-Result<void> IndexDatabase::markVolumeScanned(qint64 volumeId, const QDateTime& when)
+Result<qint64> IndexDatabase::beginScan(qint64 volumeId)
+{
+    QMutexLocker lock(&m_mutex);
+    if (!m_open)
+        return VfsError::make(VfsError::IoError, QStringLiteral("Index is not open"));
+
+    QSqlDatabase db = connectionForCurrentThread();
+    if (!db.isOpen())
+        return sqlError(db, QStringLiteral("No index connection for this thread")).error();
+    if (!db.transaction())
+        return sqlError(db, QStringLiteral("Opening a scan")).error();
+
+    QSqlQuery take(db);
+    take.prepare(QStringLiteral("UPDATE volumes SET next_generation = next_generation + 1 WHERE id = ?"));
+    take.addBindValue(volumeId);
+    if (!take.exec()) {
+        db.rollback();
+        return sqlError(db, QStringLiteral("Taking a scan generation")).error();
+    }
+
+    QSqlQuery read(db);
+    read.prepare(QStringLiteral("SELECT generation, next_generation FROM volumes WHERE id = ?"));
+    read.addBindValue(volumeId);
+    if (!read.exec() || !read.next()) {
+        db.rollback();
+        return VfsError::make(VfsError::NotFound, QStringLiteral("No indexed volume %1").arg(volumeId));
+    }
+    const qint64 visible = read.value(0).toLongLong();
+    const qint64 generation = read.value(1).toLongLong();
+
+    // Rows from a scan that never finished: one killed with the process leaves
+    // them behind, because nothing ran afterwards to drop them. No search can
+    // reach them and no commit will ever claim them, so this is where they go
+    // -- otherwise a database grows by a dead scan every time one is killed.
+    QSqlQuery sweep(db);
+    sweep.prepare(QStringLiteral("DELETE FROM files WHERE volume_id = ? AND generation <> ?"));
+    sweep.addBindValue(volumeId);
+    sweep.addBindValue(visible);
+    if (!sweep.exec()) {
+        db.rollback();
+        return sqlError(db, QStringLiteral("Clearing an abandoned scan")).error();
+    }
+
+    if (!db.commit()) {
+        db.rollback();
+        return sqlError(db, QStringLiteral("Opening a scan")).error();
+    }
+    return generation;
+}
+
+Result<void> IndexDatabase::commitScan(qint64 volumeId, qint64 generation, const QDateTime& when)
+{
+    QMutexLocker lock(&m_mutex);
+    if (!m_open)
+        return Result<void>::failure(VfsError::IoError, QStringLiteral("Index is not open"));
+
+    QSqlDatabase db = connectionForCurrentThread();
+    if (!db.isOpen())
+        return sqlError(db, QStringLiteral("No index connection for this thread"));
+    // One transaction for the whole swap. A search runs either before it or
+    // after it; there is no moment at which the volume holds some of each, and
+    // a process that dies part way through leaves the previous scan intact.
+    if (!db.transaction())
+        return sqlError(db, QStringLiteral("Committing a scan"));
+
+    QSqlQuery previous(db);
+    previous.prepare(QStringLiteral("DELETE FROM files WHERE volume_id = ? AND generation <> ?"));
+    previous.addBindValue(volumeId);
+    previous.addBindValue(generation);
+    if (!previous.exec()) {
+        db.rollback();
+        return sqlError(db, QStringLiteral("Dropping the previous scan"));
+    }
+
+    QSqlQuery swap(db);
+    swap.prepare(QStringLiteral(
+        "UPDATE volumes SET generation = ?, last_scan = ?, "
+        "file_count = (SELECT COUNT(*) FROM files WHERE volume_id = ? AND generation = ?) WHERE id = ?"));
+    swap.addBindValue(generation);
+    swap.addBindValue(when.toSecsSinceEpoch());
+    swap.addBindValue(volumeId);
+    swap.addBindValue(generation);
+    swap.addBindValue(volumeId);
+    if (!swap.exec()) {
+        db.rollback();
+        return sqlError(db, QStringLiteral("Updating volume"));
+    }
+
+    if (!db.commit()) {
+        db.rollback();
+        return sqlError(db, QStringLiteral("Committing a scan"));
+    }
+    return {};
+}
+
+Result<void> IndexDatabase::abandonScan(qint64 volumeId, qint64 generation)
 {
     QMutexLocker lock(&m_mutex);
     if (!m_open)
@@ -295,14 +405,16 @@ Result<void> IndexDatabase::markVolumeScanned(qint64 volumeId, const QDateTime& 
     if (!db.isOpen())
         return sqlError(db, QStringLiteral("No index connection for this thread"));
     QSqlQuery query(db);
-    query.prepare(
-        QStringLiteral("UPDATE volumes SET last_scan = ?, "
-                       "file_count = (SELECT COUNT(*) FROM files WHERE volume_id = ?) WHERE id = ?"));
-    query.addBindValue(when.toSecsSinceEpoch());
+    // Never the generation the volume is currently serving, whatever it is
+    // handed. Abandoning a scan is a tidy-up, and a tidy-up that can empty a
+    // 4 TB index is the fault this whole arrangement exists to remove.
+    query.prepare(QStringLiteral("DELETE FROM files WHERE volume_id = ? AND generation = ? "
+                                 "AND generation <> (SELECT generation FROM volumes WHERE id = ?)"));
     query.addBindValue(volumeId);
+    query.addBindValue(generation);
     query.addBindValue(volumeId);
     if (!query.exec())
-        return sqlError(db, QStringLiteral("Updating volume"));
+        return sqlError(db, QStringLiteral("Abandoning a scan"));
     return {};
 }
 
@@ -335,7 +447,7 @@ Result<QList<IndexVolume>> IndexDatabase::volumes() const
     return out;
 }
 
-Result<void> IndexDatabase::insertBatch(qint64 volumeId, const QList<IndexedFile>& files)
+Result<void> IndexDatabase::insertBatch(qint64 volumeId, qint64 generation, const QList<IndexedFile>& files)
 {
     if (files.isEmpty())
         return {};
@@ -351,12 +463,13 @@ Result<void> IndexDatabase::insertBatch(qint64 volumeId, const QList<IndexedFile
         return sqlError(db, QStringLiteral("Starting insert batch"));
 
     QSqlQuery query(db);
-    query.prepare(QStringLiteral(
-        "INSERT INTO files (volume_id, name, name_folded, path, parent_path, extension, is_dir, size, mtime) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"));
+    query.prepare(QStringLiteral("INSERT INTO files (volume_id, generation, name, name_folded, path, "
+                                 "parent_path, extension, is_dir, size, mtime) "
+                                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"));
 
     for (const IndexedFile& file : files) {
         query.addBindValue(volumeId);
+        query.addBindValue(generation);
         query.addBindValue(file.name);
         query.addBindValue(foldForSearch(file.name));
         query.addBindValue(file.path);
@@ -390,9 +503,11 @@ Result<QList<IndexSearchHit>> IndexDatabase::search(const IndexSearchQuery& quer
     if (!db.isOpen())
         return sqlError(db, QStringLiteral("No index connection for this thread")).error();
 
+    // The generations having to agree is what keeps a scan in progress out of
+    // the answer: its rows are in the table and belong to no volume yet.
     QString sql = QStringLiteral(
         "SELECT f.name, v.root_uri, f.path, f.parent_path, f.is_dir, f.size, f.mtime, v.label "
-        "FROM files f JOIN volumes v ON v.id = f.volume_id WHERE 1=1");
+        "FROM files f JOIN volumes v ON v.id = f.volume_id AND v.generation = f.generation WHERE 1=1");
     QVariantList bindings;
 
     if (!query.text.isEmpty()) {
@@ -463,12 +578,17 @@ Result<qint64> IndexDatabase::fileCount(qint64 volumeId) const
     QSqlDatabase db = connectionForCurrentThread();
     if (!db.isOpen())
         return sqlError(db, QStringLiteral("No index connection for this thread")).error();
+    // What a search can reach, on the same join it uses, rather than every row
+    // in the table -- a count that included a scan in progress would say the
+    // index holds files nothing can find.
+    const QString sql = QStringLiteral("SELECT COUNT(*) FROM files f JOIN volumes v "
+                                       "ON v.id = f.volume_id AND v.generation = f.generation");
     QSqlQuery query(db);
     if (volumeId >= 0) {
-        query.prepare(QStringLiteral("SELECT COUNT(*) FROM files WHERE volume_id = ?"));
+        query.prepare(sql + QStringLiteral(" WHERE f.volume_id = ?"));
         query.addBindValue(volumeId);
     } else {
-        query.prepare(QStringLiteral("SELECT COUNT(*) FROM files"));
+        query.prepare(sql);
     }
     if (!query.exec())
         return sqlError(db, QStringLiteral("Counting files")).error();

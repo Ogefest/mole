@@ -92,20 +92,48 @@ public:
 
     /// Creates the volume row or returns the existing one for this root.
     [[nodiscard]] Result<qint64> upsertVolume(const VfsUri& root, const QString& label);
-    [[nodiscard]] Result<void> clearVolume(qint64 volumeId);
     [[nodiscard]] Result<void> removeVolume(qint64 volumeId);
-    [[nodiscard]] Result<void> markVolumeScanned(qint64 volumeId, const QDateTime& when);
     [[nodiscard]] Result<QList<IndexVolume>> volumes() const;
 
-    // ---- writing ---------------------------------------------------------
+    // ---- scanning --------------------------------------------------------
+    //
+    // A rescan builds the new contents beside the old ones and swaps them in
+    // when it finishes. Every row carries the generation of the scan that
+    // wrote it, a volume names the one generation that is its contents, and a
+    // search reads the rows where the two agree -- so it sees the whole of the
+    // previous scan or the whole of the new one, never the half that has been
+    // re-walked so far.
+    //
+    // Emptying the volume first, which is what this used to do, meant a rescan
+    // of a large tree answered every search with a fast, confident, short
+    // answer for as long as it ran: no error, no warning, just fewer files
+    // than there are. The window is hours on the sizes worth indexing.
+
+    /// Opens a scan of `volumeId` and returns the generation its rows carry.
+    /// Nothing written under it is visible to a search until commitScan().
+    [[nodiscard]] Result<qint64> beginScan(qint64 volumeId);
 
     /// Inserts one batch inside a single transaction. Call repeatedly from a
     /// scan; keep batches around a couple of thousand rows.
-    [[nodiscard]] Result<void> insertBatch(qint64 volumeId, const QList<IndexedFile>& files);
+    [[nodiscard]] Result<void> insertBatch(
+        qint64 volumeId, qint64 generation, const QList<IndexedFile>& files);
+
+    /// Makes `generation` the volume's contents and records the scan time,
+    /// dropping what the previous one left. One transaction, so this instant
+    /// is where a search stops seeing the old scan and starts seeing this one.
+    [[nodiscard]] Result<void> commitScan(qint64 volumeId, qint64 generation, const QDateTime& when);
+
+    /// Throws away what a scan wrote without committing it. A cancelled or
+    /// failed scan leaves the volume exactly as it was, `last_scan` included --
+    /// and one killed with the process does too, because nothing it wrote was
+    /// ever visible and the next beginScan() sweeps it out.
+    [[nodiscard]] Result<void> abandonScan(qint64 volumeId, qint64 generation);
 
     // ---- reading ---------------------------------------------------------
 
     [[nodiscard]] Result<QList<IndexSearchHit>> search(const IndexSearchQuery& query) const;
+    /// How many rows a search can currently reach. Rows an unfinished scan has
+    /// written are not among them.
     [[nodiscard]] Result<qint64> fileCount(qint64 volumeId = -1) const;
 
 private:

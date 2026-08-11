@@ -118,6 +118,15 @@ public:
     /// operation on this drive -- listing, stat, open, remove -- is denied.
     FaultyFileSystem& accessRevokedAt(qint64 offset, const QString& path = {});
 
+    // ---- what goes wrong while listing ------------------------------------
+
+    /// Stops before listing `path` and stays stopped until release().
+    ///
+    /// A walk opens no files, so a read stall never fires on one -- and a scan
+    /// held still is the only honest way to look at what a half-finished scan
+    /// has done to the index. Waiting is on isStalled(), as it is for a read.
+    FaultyFileSystem& listStalls(const QString& path);
+
     // ---- what goes wrong while deleting -----------------------------------
 
     /// Refuses to delete `path`, or everything when it is empty.

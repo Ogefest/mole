@@ -9,6 +9,49 @@ wrong.
 
 ---
 
+## A rescan emptied the index first, and the search said so confidently
+
+**Asked for:** MOLE-146 — `ScanTask` called `clearVolume()` before the walk, so for as
+long as a rescan ran the index held only the part already re-walked. A search over that
+volume came back fast, sure and short: no error, no warning, no *still scanning*.
+
+**What it turned out to be:** a generation on the row. Every row carries the generation of
+the scan that wrote it, every volume names the one generation that is its contents, and a
+search reads where the two agree — so it is answered by the whole of the previous scan or
+the whole of the new one, never by the half that has been reached. `commitScan()` drops the
+old generation and points the volume at the new one in a single transaction, which makes
+the swap an instant rather than an interval. `clearVolume()` and `markVolumeScanned()` are
+gone; the first cannot be called without bringing the fault back, and the second was only
+ever the second half of a commit. [ADR-0035](docs/adr/0035-a-scan-is-swapped-in-not-cleared-and-refilled.md)
+records why a column beat a shadow table.
+
+**The same fault had three more endings, and they are all one fix.** A cancelled rescan, a
+failed one and one killed with the process each used to leave the index emptied, because
+each of them stopped after the delete and before the refill. Now none of them commits, so
+none of them changes what a search can see — and `last_scan` moves only on a scan that
+finished, so *when this was last indexed* stopped meaning *when one was last attempted*.
+
+**Holding a scan still needed something the fixture did not have.** `FaultyFileSystem`
+stalls at a byte offset, and a scan opens no files — it only lists. So it gained
+`listStalls(path)`, in the same shape as the read stall: the walk stops before that
+directory and stays stopped until `release()`, and the test waits on `isStalled()` rather
+than on a clock. The tree it is held in has more entries than one insert batch holds, so
+the scan has genuinely written rows by the time the assertions run — a smaller tree would
+have passed against a version that had merely moved the `DELETE`.
+
+**The test that was already there had its premise changed rather than its assertion
+weakened.** `tst_KilledOutright` used to kill a first scan and check its rows were
+searchable, which is now the wrong expectation: a first scan that never committed is
+nothing, correctly. The victim now finishes one scan and is killed during the next, and
+what it had before the kill is what it must still have after it — a stronger claim than
+the one it replaced.
+
+**The migration is the part that could have gone silently wrong.** Both new columns default
+to nought, which is what every row and every volume in an existing index already reads as,
+so nothing goes blank on upgrade. `tst_IndexDatabase` builds a version 1 database by hand
+and opens it, because a migration tested against a database the migration built proves
+nothing.
+
 ## The guide described the fact list as the last resort, and it had stopped being one
 
 **Asked for:** MOLE-137 — after this epic the guide's *Anything else* section was wrong, the

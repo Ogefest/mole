@@ -74,6 +74,7 @@ private slots:
     void accessIsRevokedPartWayThrough();
 
     void aListingThatLiesAboutASize();
+    void aListingStallsUntilItIsReleased();
     void everyStreamGetsTheWholeFault();
     void aFaultCanBeLimitedToOnePath();
 
@@ -297,6 +298,34 @@ void TestFaultyFileSystem::aListingThatLiesAboutASize()
     Result<std::unique_ptr<QIODevice>> stream = m_faulty->openRead(uri("/data/file.bin"));
     QVERIFY(stream.ok());
     QCOMPARE(drain(*stream.value(), 256).data.size(), 1000);
+}
+
+/// The stall a walk can be caught by. A scan opens no files, so the read stall
+/// above never fires on one, and a scan held still is the only honest way to
+/// look at what a half-finished one has done.
+void TestFaultyFileSystem::aListingStallsUntilItIsReleased()
+{
+    m_faulty->listStalls(QStringLiteral("/data"));
+
+    std::atomic_bool finished { false };
+    std::atomic_int entries { -1 };
+    std::thread walker([&] {
+        const Result<FileEntryList> listing = m_faulty->list(uri("/data"), CancelToken());
+        entries.store(listing.ok() ? static_cast<int>(listing.value().size()) : -1);
+        finished.store(true);
+    });
+
+    QVERIFY(waitFor([this] { return m_faulty->isStalled(); }));
+    QVERIFY2(!finished.load(), "the listing was answered by a drive that was told to stop before it");
+
+    // A directory it was not told about is answered while the other is held.
+    QVERIFY(m_faulty->list(uri("/out"), CancelToken()).ok());
+
+    m_faulty->release();
+    walker.join();
+
+    QCOMPARE(entries.load(), 1);
+    QVERIFY(!m_faulty->isStalled());
 }
 
 void TestFaultyFileSystem::everyStreamGetsTheWholeFault()

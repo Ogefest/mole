@@ -1,3 +1,4 @@
+#include "support/FaultyFileSystem.h"
 #include "support/MoleTestMain.h"
 #include "support/TestSupport.h"
 
@@ -21,6 +22,9 @@ private slots:
     void indexesWholeTree();
     void indexedEntriesAreSearchable();
     void rescanReplacesPreviousContents();
+    void aSearchDuringARescanSeesThePreviousContents();
+    void aCancelledRescanLeavesTheIndexAsItWas();
+    void aRescanThatFailsHalfWayLeavesTheIndexAsItWas();
     void unreadableSubtreeIsReportedButScanSucceeds();
     void failingIndexWriteFailsTheTask();
     void cancellationLeavesTaskCancelled();
@@ -28,11 +32,33 @@ private slots:
 
 private:
     ScanTask* startScan(const QString& rootPath = QStringLiteral("/"));
+    ScanTask* startScanOn(FileSystemPtr fileSystem);
+    /// The three files a first scan settles into the index, and the count they
+    /// come to. A rescan running over them must keep answering with these.
+    void addSettledFiles();
+    /// A tree with more entries in it than one insert batch holds, so a scan of
+    /// it has really written rows by the time it is held still at /bulk/held --
+    /// and more again below that point, so releasing it goes back to writing.
+    void addTreeThatOutgrowsOneBatch();
+    /// Starts a scan over `m_fs` wrapped in a drive that stalls at /bulk/held
+    /// and returns once it is stopped there, with the drive in `m_held`. Null
+    /// means it never got that far, which is a failed test rather than a
+    /// reason to carry on.
+    ScanTask* startScanHeldMidWalk();
+
+    static constexpr int kSettledFiles = 3;
+    /// ScanTask writes every 2000 rows, so each half of the tree is a little
+    /// over that: enough for one flush before the hold and one after it.
+    static constexpr int kBulkFiles = 2100;
+    /// Every entry the second scan finds: the settled files, /bulk and its
+    /// files, /bulk/held and its files.
+    static constexpr int kRescanEntries = kSettledFiles + 1 + kBulkFiles + 1 + kBulkFiles;
 
     std::unique_ptr<QTemporaryDir> m_dir;
     std::unique_ptr<IndexDatabase> m_index;
     std::unique_ptr<TaskManager> m_tasks;
     std::shared_ptr<MemoryFileSystem> m_fs;
+    std::shared_ptr<FaultyFileSystem> m_held;
 };
 
 void TestScanTask::init()
@@ -48,6 +74,12 @@ void TestScanTask::init()
 
 void TestScanTask::cleanup()
 {
+    // A scan left stalled holds a pool thread for ever, and the task manager
+    // waits for it on the way out. A test that fails before its own release()
+    // has to fail, not hang.
+    if (m_held)
+        m_held->release();
+    m_held.reset();
     m_tasks.reset();
     m_index.reset();
     m_fs.reset();
@@ -60,6 +92,45 @@ ScanTask* TestScanTask::startScan(const QString& rootPath)
         m_fs, VfsUri(QStringLiteral("mem"), QString(), rootPath), QStringLiteral("scratch"), m_index.get());
     m_tasks->submit(task);
     return task;
+}
+
+ScanTask* TestScanTask::startScanOn(FileSystemPtr fileSystem)
+{
+    // The same root as startScan(), so the second scan is a rescan of the same
+    // volume rather than a scan of a new one.
+    auto* task
+        = new ScanTask(std::move(fileSystem), VfsUri(QStringLiteral("mem"), QString(), QStringLiteral("/")),
+            QStringLiteral("scratch"), m_index.get());
+    m_tasks->submit(task);
+    return task;
+}
+
+void TestScanTask::addSettledFiles()
+{
+    for (int i = 0; i < kSettledFiles; ++i)
+        m_fs->addFile(QStringLiteral("/settled-%1.txt").arg(i));
+}
+
+void TestScanTask::addTreeThatOutgrowsOneBatch()
+{
+    // Nested rather than side by side: a walk lists /bulk in full before it
+    // descends, so the hold below it lands after the first batch has gone in
+    // whatever order the backend returns entries.
+    for (int i = 0; i < kBulkFiles; ++i) {
+        m_fs->addFile(QStringLiteral("/bulk/f%1.txt").arg(i));
+        m_fs->addFile(QStringLiteral("/bulk/held/g%1.txt").arg(i));
+    }
+}
+
+ScanTask* TestScanTask::startScanHeldMidWalk()
+{
+    m_held = std::make_shared<FaultyFileSystem>(m_fs);
+    m_held->listStalls(QStringLiteral("/bulk/held"));
+
+    ScanTask* task = startScanOn(m_held);
+    // On the condition, never on a clock: the scan really is stopped part way
+    // through, with rows written and nothing committed.
+    return waitFor([this] { return m_held->isStalled(); }) ? task : nullptr;
 }
 
 void TestScanTask::indexesWholeTree()
@@ -112,6 +183,87 @@ void TestScanTask::rescanReplacesPreviousContents()
     IndexSearchQuery query;
     query.text = QStringLiteral("gone");
     QVERIFY(m_index->search(query).value().isEmpty());
+}
+
+/// The fault this pair of scans exists for.
+///
+/// A rescan used to empty the index before walking, so for as long as it ran a
+/// search over that volume answered from the part already re-walked -- fast,
+/// confident and short. On a 4 TB tree that window is hours, and large trees
+/// are the ones people index.
+void TestScanTask::aSearchDuringARescanSeesThePreviousContents()
+{
+    addSettledFiles();
+    QVERIFY(waitForTask(startScan()));
+    QCOMPARE(m_index->fileCount().value(), kSettledFiles);
+
+    addTreeThatOutgrowsOneBatch();
+    ScanTask* task = startScanHeldMidWalk();
+    QVERIFY2(task != nullptr, "the rescan never reached the point it was to be held at");
+
+    // The rescan has written rows by now and not one of them may be visible,
+    // and nothing it is going to replace may have gone missing yet.
+    QCOMPARE(m_index->fileCount().value(), kSettledFiles);
+    IndexSearchQuery settled;
+    settled.text = QStringLiteral("settled-");
+    QCOMPARE(m_index->search(settled).value().size(), kSettledFiles);
+    IndexSearchQuery arriving;
+    arriving.text = QStringLiteral("f1"); // only the /bulk files are named this way
+    QVERIFY2(m_index->search(arriving).value().isEmpty(),
+        "half a scan became visible, which is a search answering from a tree it has not finished reading");
+
+    m_held->release();
+    QVERIFY(waitForTask(task));
+    QCOMPARE(task->state(), Task::State::Succeeded);
+    QCOMPARE(m_index->fileCount().value(), kRescanEntries);
+}
+
+void TestScanTask::aCancelledRescanLeavesTheIndexAsItWas()
+{
+    addSettledFiles();
+    QVERIFY(waitForTask(startScan()));
+    const IndexVolume before = m_index->volumes().value().first();
+
+    addTreeThatOutgrowsOneBatch();
+    ScanTask* task = startScanHeldMidWalk();
+    QVERIFY2(task != nullptr, "the rescan never reached the point it was to be held at");
+
+    task->requestCancel();
+    m_held->release();
+    QVERIFY(waitForTask(task));
+    QCOMPARE(task->state(), Task::State::Cancelled);
+
+    // A cancelled rescan losing the index is the same fault wearing a hat.
+    QCOMPARE(m_index->fileCount().value(), kSettledFiles);
+    const IndexVolume after = m_index->volumes().value().first();
+    QCOMPARE(after.fileCount, before.fileCount);
+    QCOMPARE(after.lastScan, before.lastScan);
+}
+
+void TestScanTask::aRescanThatFailsHalfWayLeavesTheIndexAsItWas()
+{
+    addSettledFiles();
+    QVERIFY(waitForTask(startScan()));
+    const IndexVolume before = m_index->volumes().value().first();
+
+    addTreeThatOutgrowsOneBatch();
+    ScanTask* task = startScanHeldMidWalk();
+    QVERIFY2(task != nullptr, "the rescan never reached the point it was to be held at");
+
+    // The index goes away under the scan while it is stopped, so the next batch
+    // it tries to write is refused. Nothing it wrote before that can tidy
+    // itself up afterwards -- which is the point: what is visible has to be
+    // decided by what was committed, not by a cleanup path having run.
+    m_index->close();
+    m_held->release();
+    QVERIFY(waitForTask(task));
+    QCOMPARE(task->state(), Task::State::Failed);
+
+    QVERIFY(m_index->open().ok());
+    QCOMPARE(m_index->fileCount().value(), kSettledFiles);
+    const IndexVolume after = m_index->volumes().value().first();
+    QCOMPARE(after.fileCount, before.fileCount);
+    QCOMPARE(after.lastScan, before.lastScan);
 }
 
 void TestScanTask::unreadableSubtreeIsReportedButScanSucceeds()

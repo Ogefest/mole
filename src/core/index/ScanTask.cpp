@@ -29,11 +29,24 @@ void ScanTask::run()
     const qint64 volumeId = volume.value();
 
     // A rescan replaces the previous contents rather than merging, so deleted
-    // files disappear from search results instead of lingering forever.
-    if (Result<void> cleared = m_index->clearVolume(volumeId); !cleared.ok()) {
-        fail(cleared.error());
+    // files disappear from search results instead of lingering forever. It
+    // builds them beside the old ones and swaps at the end: a search running
+    // while a 4 TB tree is re-walked is answered from the previous scan, in
+    // full, rather than from the part that has been reached so far.
+    Result<qint64> opened = m_index->beginScan(volumeId);
+    if (!opened.ok()) {
+        fail(opened.error());
         return;
     }
+    const qint64 generation = opened.value();
+
+    // Every way out of here except a finished walk. What this scan wrote was
+    // never visible and never will be, so it goes -- and if that fails too, it
+    // stays invisible and the next scan of this volume sweeps it out.
+    const auto giveUp = [&](const VfsError& error) {
+        (void)m_index->abandonScan(volumeId, generation);
+        fail(error);
+    };
 
     QList<IndexedFile> batch;
     batch.reserve(kBatchSize);
@@ -42,7 +55,7 @@ void ScanTask::run()
     const auto flush = [&]() -> bool {
         if (batch.isEmpty())
             return true;
-        Result<void> written = m_index->insertBatch(volumeId, batch);
+        Result<void> written = m_index->insertBatch(volumeId, generation, batch);
         batch.clear();
         if (!written.ok()) {
             writeError = written.error();
@@ -77,19 +90,21 @@ void ScanTask::run()
         flush();
 
     if (writeError.isError()) {
-        fail(writeError);
+        giveUp(writeError);
         return;
     }
     if (!walked.ok()) {
-        fail(walked.error());
+        giveUp(walked.error());
         return;
     }
 
     m_skippedDirectories = walker.errors().size();
 
-    if (Result<void> marked = m_index->markVolumeScanned(volumeId, QDateTime::currentDateTime());
-        !marked.ok()) {
-        fail(marked.error());
+    // The one moment the volume changes: the new contents become the answer
+    // and the old ones go, in a single transaction.
+    if (Result<void> committed = m_index->commitScan(volumeId, generation, QDateTime::currentDateTime());
+        !committed.ok()) {
+        giveUp(committed.error());
         return;
     }
 

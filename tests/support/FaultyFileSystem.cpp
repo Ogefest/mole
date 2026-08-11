@@ -106,6 +106,8 @@ struct FaultyFileSystem::Policy
             readSizes[stream] += bytes;
     }
     qint64 listingSizeDelta = 0;
+    /// Directories whose listing stalls until release().
+    QStringList listStallPaths;
     std::atomic_bool noRandomAccess { false };
     bool failOnClose = false;
     QString closeMessage;
@@ -405,6 +407,13 @@ FaultyFileSystem& FaultyFileSystem::readStallsAt(qint64 offset, const QString& p
     return *this;
 }
 
+FaultyFileSystem& FaultyFileSystem::listStalls(const QString& path)
+{
+    QMutexLocker lock(&m_policy->mutex);
+    m_policy->listStallPaths.append(path);
+    return *this;
+}
+
 FaultyFileSystem& FaultyFileSystem::whenReadReaches(
     qint64 offset, std::function<void()> action, const QString& path)
 {
@@ -587,6 +596,16 @@ Result<FileEntryList> FaultyFileSystem::list(const VfsUri& dir, const CancelToke
 {
     if (m_policy->revoked.load())
         return revokedError();
+
+    bool hold = false;
+    {
+        QMutexLocker lock(&m_policy->mutex);
+        hold = m_policy->listStallPaths.contains(dir.path());
+    }
+    // Outside the lock: stall() takes it itself, and holding it here would stop
+    // the test asking isStalled() -- which is the condition it is waiting on.
+    if (hold)
+        m_policy->stall();
 
     Result<FileEntryList> listed = m_inner->list(dir, cancel);
     qint64 delta = 0;
