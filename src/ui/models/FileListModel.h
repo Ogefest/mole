@@ -55,6 +55,9 @@ public:
         /// can mark it rather than leave somebody to find it again.
         MatchColumnRole,
         MatchLengthRole,
+        /// The container this row lives inside, named rather than left as a
+        /// uri nobody recognises. Empty for an ordinary file.
+        ContainerNameRole,
     };
 
     /// Where a row came from.

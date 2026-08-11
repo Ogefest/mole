@@ -2,6 +2,7 @@
 
 #include <QCollator>
 #include <QLocale>
+#include <QUrl>
 
 #include <algorithm>
 
@@ -433,6 +434,15 @@ QVariant FileListModel::data(const QModelIndex& index, int role) const
         return m_matches.value(entry.uri.toString()).column;
     case MatchLengthRole:
         return m_matches.value(entry.uri.toString()).length;
+    case ContainerNameRole: {
+        // An archive addresses itself in the authority of its members' uris. A
+        // result whose path is a uri nobody recognises is a puzzle rather than
+        // an answer, so the row says which file it came out of.
+        if (entry.uri.authority().isEmpty() || entry.uri.scheme() == QLatin1String("file"))
+            return QString();
+        const QString host = QUrl::fromPercentEncoding(entry.uri.authority().toUtf8());
+        return host.contains(QLatin1Char('/')) ? host.section(QLatin1Char('/'), -1) : QString();
+    }
     case IsDirRole:
         return entry.isDir;
     case IsHiddenRole:
@@ -497,6 +507,7 @@ QHash<int, QByteArray> FileListModel::roleNames() const
         { MatchLineNumberRole, "matchLineNumber" },
         { MatchColumnRole, "matchColumn" },
         { MatchLengthRole, "matchLength" },
+        { ContainerNameRole, "containerName" },
     };
 }
 

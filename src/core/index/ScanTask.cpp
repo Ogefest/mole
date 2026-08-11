@@ -14,6 +14,11 @@ ScanTask::ScanTask(
 {
 }
 
+void ScanTask::setContainerReader(std::function<QList<IndexedFile>(const FileEntry&, bool*)> reader)
+{
+    m_containers = std::move(reader);
+}
+
 void ScanTask::setFactReader(std::function<QList<SearchFact>(const FileEntry&)> reader)
 {
     m_facts = std::move(reader);
@@ -85,8 +90,30 @@ void ScanTask::run()
             row.facts = m_facts(entry);
             ++m_filesRead;
         }
+        // What is inside it, when it is a container and somebody can open one.
+        // A member is an ordinary row with its own uri, so everything that
+        // works on a row -- the preview, the operations, a file set -- works on
+        // it without learning what an archive is.
+        QList<IndexedFile> members;
+        if (m_containers && !entry.isDir) {
+            bool truncated = false;
+            members = m_containers(entry, &truncated);
+            // Said on the container's own row: a listing trimmed in silence
+            // reads as a complete one.
+            if (truncated) {
+                row.facts.append(SearchFact { QStringLiteral("archive.truncated"),
+                    QStringLiteral("more entries than the index will take"), 0, false });
+            }
+        }
+
         batch.append(row);
         ++m_filesIndexed;
+
+        for (IndexedFile& member : members) {
+            batch.append(std::move(member));
+            ++m_filesIndexed;
+            ++m_containedEntries;
+        }
 
         if (batch.size() >= kBatchSize && !flush())
             return DirectoryWalker::Action::Stop;
@@ -122,10 +149,15 @@ void ScanTask::run()
     }
 
     setProgress(100);
-    if (m_facts) {
-        setStatusText(QStringLiteral("%1 entries indexed, %2 read for what they say about themselves")
+    QStringList extras;
+    if (m_facts)
+        extras.append(QStringLiteral("%1 read for what they say about themselves").arg(m_filesRead));
+    if (m_containedEntries > 0)
+        extras.append(QStringLiteral("%1 from inside containers").arg(m_containedEntries));
+    if (!extras.isEmpty()) {
+        setStatusText(QStringLiteral("%1 entries indexed, %2")
                           .arg(m_filesIndexed)
-                          .arg(m_filesRead));
+                          .arg(extras.join(QStringLiteral(", "))));
         return;
     }
     setStatusText(m_skippedDirectories > 0 ? QStringLiteral("%1 entries indexed, %2 directories unreadable")

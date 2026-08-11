@@ -25,6 +25,25 @@ public:
     /// goes when it is asked to.
     qint64 filesRead() const { return m_filesRead; }
 
+    /// Rows for what lives inside a file that is a container.
+    ///
+    /// A zip of years-old projects holds a great deal of what somebody is
+    /// looking for, and none of it could be found by any means at all. Core has
+    /// no idea what an archive is -- the backend that mounts one is a plugin --
+    /// so the rows come from whoever does, the same way the facts do.
+    ///
+    /// Returning nothing is normal: an ordinary file, a container nothing can
+    /// open, a corrupt one, or one that needs a password. None of those is a
+    /// reason for the scan to stop.
+    /// `truncatedOut` is set when the container held more than the reader was
+    /// willing to take, so the container's own row can say it was cut rather
+    /// than being trimmed in silence.
+    void setContainerReader(std::function<QList<IndexedFile>(const FileEntry&, bool*)> reader);
+
+    /// How many entries a scan took out of containers, and how many containers
+    /// gave up more than the ceiling allows.
+    qint64 containedEntries() const { return m_containedEntries; }
+
     /// What the files say about themselves, recorded alongside them.
     ///
     /// Off by default and stated per scan, because the cost is bounded per file
@@ -45,6 +64,8 @@ private:
     IndexDatabase* m_index = nullptr;
     qint64 m_filesIndexed = 0;
     qint64 m_filesRead = 0;
+    qint64 m_containedEntries = 0;
+    std::function<QList<IndexedFile>(const FileEntry&, bool*)> m_containers;
     qint64 m_skippedDirectories = 0;
     std::function<QList<SearchFact>(const FileEntry&)> m_facts;
 };

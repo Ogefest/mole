@@ -162,6 +162,8 @@ public:
     bool readsFileContents() const { return !m_contentText.isEmpty(); }
     bool scanReadsMetadata() const { return m_scanReadsMetadata; }
     void setScanReadsMetadata(bool read);
+    bool scanOpensArchives() const { return m_scanOpensArchives; }
+    void setScanOpensArchives(bool open);
 
     QString coverageNote() const;
     QStringList factKeys() const;
@@ -263,6 +265,13 @@ private:
     /// What a file says about itself, through the readers that fill the details
     /// panel. The same readers, so the index and the panel can never disagree.
     std::function<QList<SearchFact>(const FileEntry&)> factReaderFor(const FileSystemPtr& fileSystem) const;
+    /// Rows for what lives inside a container, through whichever mounted
+    /// backend claims that kind of file. Null when nothing can open one, which
+    /// is what a build without the archive plugin looks like from here.
+    std::function<QList<IndexedFile>(const FileEntry&, bool*)> containerReaderFor(const VfsUri& root) const;
+    /// The backend that owns `uri`, mounting a container on demand. What lets a
+    /// content search reach inside an archive nobody has opened.
+    FileSystemPtr backendFor(const VfsUri& uri) const;
     /// Records what `source` could not state, for the form to show.
     void notePlan(const SearchQuery& query, SearchSource source);
     void setRunning(bool running);
@@ -294,6 +303,7 @@ private:
     bool m_contentRegex = false;
     bool m_searchBinary = false;
     bool m_scanReadsMetadata = false;
+    bool m_scanOpensArchives = true;
     QVariantMap m_factCriteria;
     QString m_blockedReason;
     qint64 m_minSize = -1;

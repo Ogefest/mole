@@ -20,6 +20,16 @@ struct IndexedFile
 {
     QString name;
     QString path; ///< absolute path inside the volume, uri-normalised
+
+    /// The whole uri, when this row is not addressed the way its volume is.
+    ///
+    /// Empty for almost everything: a row's uri is the volume's scheme and
+    /// authority with `path` on the end, which is true of every file in a
+    /// walked tree. It is not true of a file inside an archive, which lives on
+    /// an `archive://` authority naming the container -- and rebuilding that
+    /// row's uri from the volume's scheme is how a member came back addressed
+    /// as if it sat loose on the disk.
+    QString uri;
     QString parentPath;
     QString extension; ///< lowercased, no dot
     bool isDir = false;

@@ -65,6 +65,7 @@ private slots:
     void compressActsOnTheCursorWhenNothingIsTicked();
     void textPreviewProviderClaimsTextFiles();
     void archivePluginMountsAZip();
+    void aScanIndexesWhatIsInsideAnArchive();
     void dualPaneIsItsOwnFeature();
     void copyBetweenPanesMovesRealFiles();
     void moveBetweenPanesRemovesTheSource();
@@ -838,6 +839,61 @@ void TestAppIntegration::archivePluginMountsAZip()
     // Mounting the same archive again must reuse the existing drive.
     QCOMPARE(m_app->openArchive(archiveUri), root);
     QCOMPARE(m_app->drives()->rowCount(), mountsBefore + 1);
+}
+
+/// A file inside a zip could be found by no means at all.
+///
+/// The pieces were all here: a plugin mounts the archive as a drive, and a uri
+/// inside one is an ordinary uri every part of the application understands. The
+/// scan simply never looked.
+void TestAppIntegration::aScanIndexesWhatIsInsideAnArchive()
+{
+    if (!QDir(QStringLiteral(MOLE_TEST_PLUGIN_DIR)).exists())
+        QSKIP("archive plugin was not built");
+    const QString tar = QStandardPaths::findExecutable(QStringLiteral("tar"));
+    if (tar.isEmpty())
+        QSKIP("tar is not available to build a fixture");
+
+    // A tree with one archive in it, holding a file whose name appears nowhere
+    // else -- so a hit can only have come from inside.
+    QVERIFY(m_tree->writeFile(QStringLiteral("packing/buried-treasure.txt"), QByteArray("x")));
+    const QString archivePath = m_tree->absolute(QStringLiteral("bundle.tar.gz"));
+    QProcess pack;
+    pack.setWorkingDirectory(m_tree->absolute(QStringLiteral("packing")));
+    pack.start(tar, { QStringLiteral("-czf"), archivePath, QStringLiteral(".") });
+    QVERIFY(pack.waitForFinished(30000));
+    QCOMPARE(pack.exitCode(), 0);
+    QVERIFY(QFile::remove(m_tree->absolute(QStringLiteral("packing/buried-treasure.txt"))));
+
+    const int row = m_app->tabs()->openTab(QStringLiteral("mole.livesearch"));
+    auto* search = qobject_cast<LiveSearchController*>(m_app->tabs()->controllerAt(row));
+    QVERIFY(search);
+    QVERIFY2(search->scanOpensArchives(), "a local drive opens them by default");
+
+    search->scanDirectory(m_tree->rootUri().toString(), QStringLiteral("fixture"));
+    QVERIFY(waitFor([this] { return m_app->tasks()->activeCount() == 0; }, 30000));
+
+    search->setEverywhere(true);
+    search->setQueryText(QStringLiteral("buried-treasure"));
+    search->start();
+    QVERIFY(waitFor([search] { return !search->isRunning(); }, 15000));
+
+    QCOMPARE(search->results()->rowCount(), 1);
+    const QModelIndex hit = search->results()->index(0, 0);
+    QCOMPARE(hit.data(FileListModel::NameRole).toString(), QStringLiteral("buried-treasure.txt"));
+
+    // Addressed inside the archive, so opening it is the ordinary path, and the
+    // row says which file it came out of rather than showing a uri nobody
+    // recognises.
+    const QString uri = hit.data(FileListModel::UriRole).toString();
+    QVERIFY2(uri.startsWith(QStringLiteral("archive://")), qPrintable(uri));
+    QCOMPARE(hit.data(FileListModel::ContainerNameRole).toString(), QStringLiteral("bundle.tar.gz"));
+
+    // And the archive itself is still a row of its own.
+    search->setQueryText(QStringLiteral("bundle.tar.gz"));
+    search->start();
+    QVERIFY(waitFor([search] { return !search->isRunning(); }, 15000));
+    QCOMPARE(search->results()->rowCount(), 1);
 }
 
 void TestAppIntegration::dualPaneIsItsOwnFeature()

@@ -10,11 +10,13 @@
 #include "core/index/ScanTask.h"
 #include "core/sets/FileSetStore.h"
 #include "core/tasks/TaskManager.h"
+#include "core/vfs/DirectoryWalker.h"
 #include "core/vfs/VfsManager.h"
 
 #include <QIODevice>
 #include <QLocale>
 #include <QRegularExpression>
+#include <QUrl>
 
 namespace mole {
 
@@ -151,6 +153,10 @@ void LiveSearchController::scanDirectory(const QString& uri, const QString& labe
     // bounded per file and unbounded in aggregate. See ADR-0039.
     if (m_scanReadsMetadata)
         task->setFactReader(factReaderFor(fs));
+    // On for a local drive, where a zip is one read; off for a remote one,
+    // where listing an archive means fetching it whole.
+    if (m_scanOpensArchives)
+        task->setContainerReader(containerReaderFor(root));
 
     // Announced on the bus rather than called back directly, so every open
     // search refreshes and not only the one that asked for the scan.
@@ -368,6 +374,7 @@ MOLE_SEARCH_SETTER(setContentText, m_contentText, const QString&)
 MOLE_SEARCH_SETTER(setContentRegex, m_contentRegex, bool)
 MOLE_SEARCH_SETTER(setSearchBinary, m_searchBinary, bool)
 MOLE_SEARCH_SETTER(setScanReadsMetadata, m_scanReadsMetadata, bool)
+MOLE_SEARCH_SETTER(setScanOpensArchives, m_scanOpensArchives, bool)
 
 #undef MOLE_SEARCH_SETTER
 
@@ -435,8 +442,14 @@ SearchIo LiveSearchController::searchIoFor(const FileSystemPtr& fileSystem, cons
         return {};
 
     SearchIo io;
-    io.read = [fileSystem](const VfsUri& uri, qint64 offset, qint64 bytes) -> QByteArray {
-        Result<std::unique_ptr<QIODevice>> stream = fileSystem->openRead(uri, offset + bytes);
+    // Resolved per uri rather than captured once, because a hit can live inside
+    // an archive that nobody has mounted -- and a member is a file like any
+    // other once something can open the container.
+    io.read = [this, fileSystem, root](const VfsUri& uri, qint64 offset, qint64 bytes) -> QByteArray {
+        FileSystemPtr backend = uri.scheme() == root.scheme() ? fileSystem : backendFor(uri);
+        if (!backend)
+            return {};
+        Result<std::unique_ptr<QIODevice>> stream = backend->openRead(uri, offset + bytes);
         if (!stream.ok() || !stream.value())
             return {};
         if (offset > 0 && !stream.value()->seek(offset) && stream.value()->read(offset).size() != offset) {
@@ -542,6 +555,127 @@ void LiveSearchController::narrowToIndexedPart()
     emit coverageChanged();
     setStatusText(QStringLiteral("Now searching %1 only — everything else under %2 is left out")
                       .arg(partial.first().rootUri, was));
+}
+
+namespace {
+
+    /// What one container may contribute.
+    ///
+    /// Twenty thousand rather than everything, because one file holding a
+    /// million entries would put a million rows in the index and make every
+    /// search over that volume answer for it. A container that gives up more
+    /// says so on its own row rather than being trimmed in silence.
+    constexpr int kMaxContainerEntries = 20000;
+    /// And how big a container is worth opening on a drive where opening it
+    /// means fetching it whole.
+    constexpr qint64 kRemoteContainerCeiling = 32 * 1024 * 1024;
+
+} // namespace
+
+FileSystemPtr LiveSearchController::backendFor(const VfsUri& uri) const
+{
+    if (!m_services.vfs)
+        return {};
+    if (FileSystemPtr mounted = m_services.vfs->resolve(uri))
+        return mounted;
+
+    // Not mounted, and a container's own uri says which file it is. Built here
+    // rather than added to the sidebar: a search reaching inside an archive is
+    // not somebody asking for a new drive.
+    for (IFileSystemFactory* factory : m_services.vfs->factories()) {
+        if (factory->scheme() != uri.scheme())
+            continue;
+        const QString host = uri.authority();
+        if (host.isEmpty())
+            continue;
+        QString error;
+        // configForFile takes the path of the file being opened, which is what
+        // the authority encodes; the factory is the only thing that knows how.
+        if (FileSystemPtr built
+            = factory->create(factory->configForFile(QUrl::fromPercentEncoding(host.toUtf8())), &error)) {
+            return built;
+        }
+    }
+    return {};
+}
+
+std::function<QList<IndexedFile>(const FileEntry&, bool*)> LiveSearchController::containerReaderFor(
+    const VfsUri& root) const
+{
+    if (!m_services.vfs)
+        return {};
+
+    // Whichever backend claims this kind of file, which is a plugin's business
+    // and not this one's. A build without one simply has no factory that does.
+    QList<IFileSystemFactory*> openers;
+    for (IFileSystemFactory* factory : m_services.vfs->factories()) {
+        if (!factory->mountableFileSuffixes().isEmpty())
+            openers.append(factory);
+    }
+    if (openers.isEmpty())
+        return {};
+
+    const bool remote = root.scheme() != QLatin1String("file");
+    return [openers, remote](const FileEntry& entry, bool* truncatedOut) -> QList<IndexedFile> {
+        // Nested containers are rows and nothing more. Following one is an
+        // unbounded recursion with a bad failure mode, and a container inside a
+        // container is a member like any other.
+        if (entry.uri.scheme() == QLatin1String("archive"))
+            return {};
+        // Listing one on a remote drive means fetching it.
+        if (remote && entry.size > kRemoteContainerCeiling)
+            return {};
+
+        const QString suffix = entry.uri.suffix();
+        IFileSystemFactory* opener = nullptr;
+        for (IFileSystemFactory* factory : openers) {
+            if (factory->mountableFileSuffixes().contains(suffix)) {
+                opener = factory;
+                break;
+            }
+        }
+        const QString localPath = entry.uri.toLocalPath();
+        if (!opener || localPath.isEmpty())
+            return {};
+
+        QString error;
+        FileSystemPtr inside = opener->create(opener->configForFile(localPath), &error);
+        if (!inside)
+            return {}; // corrupt, encrypted, or nothing this build can open
+
+        QList<IndexedFile> rows;
+        bool cut = false;
+        DirectoryWalker walker(inside);
+        const Result<void> walked = walker.walk(
+            opener->rootUriForFile(localPath), CancelToken {}, [&](const FileEntry& member, int) {
+                if (rows.size() >= kMaxContainerEntries) {
+                    cut = true;
+                    return DirectoryWalker::Action::Stop;
+                }
+                IndexedFile row;
+                row.name = member.name;
+                row.path = member.uri.path();
+                row.parentPath = member.uri.parent().path();
+                row.extension = member.uri.suffix();
+                row.isDir = member.isDir;
+                row.size = member.size;
+                row.modifiedEpoch = member.modified.isValid() ? member.modified.toSecsSinceEpoch() : 0;
+                // Addressed as it really is, not as the volume is: a member
+                // lives on the archive's own authority, and rebuilding its uri
+                // from the volume's scheme would put it loose on the disk.
+                row.uri = member.uri.toString();
+                rows.append(row);
+                return DirectoryWalker::Action::Continue;
+            });
+        // A container that could not be read costs its own rows and nothing
+        // else; the scan carries on either way.
+        if (!walked.ok() && rows.isEmpty())
+            return {};
+
+        if (truncatedOut)
+            *truncatedOut = cut;
+        return rows;
+    };
 }
 
 std::function<QList<SearchFact>(const FileEntry&)> LiveSearchController::factReaderFor(

@@ -9,6 +9,47 @@ wrong.
 
 ---
 
+## A file inside a zip could be found by no means at all
+
+**Asked for:** MOLE-154 — `report.pdf` inside `backup.zip` did not appear in a search, was
+not in the index, and the only way to know it was there was to remember the archive. On a
+disk with years of zipped-up projects, that is where a great deal of what somebody is
+looking for actually lives.
+
+**What it turned out to be:** the scan looking, and one column. Every piece was already
+here — a plugin mounts an archive as a drive, and a uri inside one is an ordinary uri the
+preview, the operations and the file sets already understand. Core has no idea what an
+archive is, so the rows come from whoever does: `ScanTask` takes a container reader the
+same way it takes a fact reader, and the plugin layer builds one out of whichever mounted
+factory claims that kind of file. A build without the archive plugin has no such factory
+and indexes nothing, silently, which is what the ticket asked for.
+
+**The column is the part that was actually broken.** A hit's uri was rebuilt from the
+volume's scheme and authority plus the stored path — true of every file in a walked tree
+and false of a file inside an archive, which lives on an `archive://` authority naming the
+container. The first version of this found the member and handed back
+`file:///buried-treasure.txt`, a path to a file that does not exist. Schema 4 adds a
+nullable `uri`, used only by rows not addressed the way their volume is, and the test holds
+both kinds side by side.
+
+**The bounds are in one place with a comment each.** Twenty thousand entries per container,
+because one file holding a million would make every search over that volume answer for it.
+Nothing over thirty-two megabytes on a drive where listing means fetching. And a container
+inside a container is a row and is never opened — following one is a recursion with no
+floor and a bad failure mode.
+
+**A content search reaches inside too.** The reader resolves per uri rather than being
+captured once, mounting a container on demand, so a member is a file like any other to the
+`Content` cost class — bounded by the same ceiling, which applies to what comes out rather
+than to what is stored.
+
+**One of the two failures on the way was in the test, and read exactly like a product
+bug.** Every hit came back with an empty uri, which looked like the new column not being
+written. It was a range-`for` over `Result::value()` of a temporary: the Result dies at the
+end of the full expression and the loop reads memory that has gone. Every other loop of
+that shape in the repository ranges over a named local, which is why this had never bitten
+before.
+
 ## The form could not say that an index would let you ask more
 
 **Asked for:** MOLE-153 — once the index answers questions the filesystem cannot answer

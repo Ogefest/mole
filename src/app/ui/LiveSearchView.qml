@@ -670,6 +670,23 @@ Item {
                 checked: controller ? controller.scanReadsMetadata : false
                 onToggled: if (controller) controller.scanReadsMetadata = checked
             }
+            CheckBox {
+                objectName: "scanArchivesToggle"
+                text: "Also list what is inside archives"
+                font.pixelSize: App.secondaryTextSize
+                checked: controller ? controller.scanOpensArchives : true
+                onToggled: if (controller) controller.scanOpensArchives = checked
+            }
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                text: "A zip's own listing is one read; a tar.gz is a pass over the whole file. "
+                      + "On a drive that is not local, listing one means fetching it, so large ones "
+                      + "are left alone. Archives inside archives are listed and not opened."
+                color: "#6f7788"
+                font.pixelSize: App.smallTextSize
+            }
+
             Label {
                 Layout.fillWidth: true
                 wrapMode: Text.Wrap

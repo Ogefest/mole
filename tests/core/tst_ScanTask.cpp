@@ -32,6 +32,8 @@ private slots:
     void aScanCanRecordWhatEachFileSaysAboutItself();
     void aScanWithoutItWritesWhatItAlwaysWrote();
     void aFileWhoseReaderFindsNothingIsStillIndexed();
+    void whatIsInsideAContainerIsIndexedBesideIt();
+    void aContainerNothingCanOpenCostsItsOwnRowsAndNoMore();
 
 private:
     ScanTask* startScan(const QString& rootPath = QStringLiteral("/"));
@@ -396,6 +398,64 @@ void TestScanTask::aFileWhoseReaderFindsNothingIsStillIndexed()
     SearchQuery awkward;
     awkward.add(SearchPredicate::name(QStringLiteral("awkward")));
     QCOMPARE(m_index->search(awkward).value().size(), 1);
+}
+
+/// A zip of years-old projects holds a great deal of what somebody is looking
+/// for, and none of it could be found by any means at all.
+void TestScanTask::whatIsInsideAContainerIsIndexedBesideIt()
+{
+    m_fs->addFile(QStringLiteral("/backup.zip"));
+    m_fs->addFile(QStringLiteral("/loose.txt"));
+
+    auto* task = new ScanTask(m_fs, VfsUri(QStringLiteral("mem"), QString(), QStringLiteral("/")),
+        QStringLiteral("scratch"), m_index.get());
+    task->setContainerReader([](const FileEntry& entry, bool* truncated) -> QList<IndexedFile> {
+        if (entry.uri.suffix() != QLatin1String("zip"))
+            return {};
+        // More than this reader is willing to take, said on the container's row.
+        *truncated = true;
+        IndexedFile member;
+        member.name = QStringLiteral("report.pdf");
+        member.path = QStringLiteral("/report.pdf");
+        member.parentPath = QStringLiteral("/");
+        member.extension = QStringLiteral("pdf");
+        member.size = 4096;
+        return { member };
+    });
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(task->state(), Task::State::Succeeded);
+    QCOMPARE(task->containedEntries(), 1);
+
+    // Found by name, like anything else.
+    SearchQuery byName;
+    byName.add(SearchPredicate::name(QStringLiteral("report")));
+    QCOMPARE(m_index->search(byName).value().size(), 1);
+    QCOMPARE(m_index->search(byName).value().first().name, QStringLiteral("report.pdf"));
+
+    // The container itself is still a row, and the count includes both.
+    QCOMPARE(m_index->fileCount().value(), 3);
+    QVERIFY2(
+        task->statusText().contains(QStringLiteral("inside containers")), qPrintable(task->statusText()));
+}
+
+void TestScanTask::aContainerNothingCanOpenCostsItsOwnRowsAndNoMore()
+{
+    m_fs->addFile(QStringLiteral("/broken.zip"));
+    m_fs->addFile(QStringLiteral("/fine.txt"));
+
+    auto* task = new ScanTask(m_fs, VfsUri(QStringLiteral("mem"), QString(), QStringLiteral("/")),
+        QStringLiteral("scratch"), m_index.get());
+    // What a corrupt, encrypted or unsupported container looks like from here:
+    // nothing at all, and no reason for the scan to stop.
+    task->setContainerReader([](const FileEntry&, bool*) -> QList<IndexedFile> { return {}; });
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(task->state(), Task::State::Succeeded);
+    QCOMPARE(task->containedEntries(), 0);
+    QCOMPARE(m_index->fileCount().value(), 2);
 }
 
 MOLE_TEST_MAIN(TestScanTask)

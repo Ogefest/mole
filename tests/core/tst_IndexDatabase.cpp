@@ -44,6 +44,7 @@ private slots:
     void commitScanRecordsTheCountAndTheTime();
     void anIndexWrittenBeforeGenerationsStaysVisible();
     void whatAFileSaysAboutItselfIsStoredAndAskedFor();
+    void aRowInsideAContainerKeepsItsOwnAddress();
     void anIndexWrittenBeforeFactsMigratesWithoutLosingARow();
     void survivesAccessFromSeveralThreads();
     void operationsFailCleanlyWhenClosed();
@@ -590,6 +591,36 @@ void TestIndexDatabase::whatAFileSaysAboutItselfIsStoredAndAskedFor()
     QCOMPARE(rowsInTable(), 1);
 }
 
+/// A file inside an archive does not live on the volume's own scheme, and
+/// rebuilding its uri from the volume's would put it loose on the disk.
+void TestIndexDatabase::aRowInsideAContainerKeepsItsOwnAddress()
+{
+    Result<qint64> volume
+        = m_db->upsertVolume(VfsUri::fromString(QStringLiteral("file:///data")), QStringLiteral("vol"));
+    QVERIFY(volume.ok());
+
+    IndexedFile loose = makeFile(QStringLiteral("/data/notes.txt"));
+    IndexedFile member = makeFile(QStringLiteral("/inside.txt"));
+    member.uri = QStringLiteral("archive://%2Fdata%2Fbackup.zip/inside.txt");
+
+    QVERIFY(rescan(volume.value(), { loose, member }));
+
+    SearchQuery all;
+    all.add(SearchPredicate::name(QStringLiteral(".txt")));
+    // Held in a local: Result hands back a reference into itself, so ranging
+    // over the value of a temporary reads memory that has already gone.
+    const Result<QList<IndexSearchHit>> found = m_db->search(all);
+    QVERIFY(found.ok());
+    QStringList uris;
+    for (const IndexSearchHit& hit : found.value())
+        uris.append(hit.uri);
+    uris.sort();
+
+    QCOMPARE(uris.size(), 2);
+    QCOMPARE(uris.at(0), QStringLiteral("archive://%2Fdata%2Fbackup.zip/inside.txt"));
+    QCOMPARE(uris.at(1), QStringLiteral("file:///data/notes.txt"));
+}
+
 /// The migration every user takes, from the schema the generations arrived in.
 void TestIndexDatabase::anIndexWrittenBeforeFactsMigratesWithoutLosingARow()
 {
@@ -609,6 +640,13 @@ void TestIndexDatabase::anIndexWrittenBeforeFactsMigratesWithoutLosingARow()
         QSqlQuery query(db);
         QVERIFY(query.exec(QStringLiteral("DROP TABLE IF EXISTS file_facts")));
         QVERIFY(query.exec(QStringLiteral("PRAGMA user_version=2")));
+        // Version 2 had no `uri` column either; SQLite cannot drop one, so the
+        // table is rebuilt the way the previous schema really had it.
+        QVERIFY(query.exec(QStringLiteral("CREATE TABLE files_v2 AS SELECT id, volume_id, generation, "
+                                          "name, name_folded, path, parent_path, extension, is_dir, "
+                                          "size, mtime FROM files")));
+        QVERIFY(query.exec(QStringLiteral("DROP TABLE files")));
+        QVERIFY(query.exec(QStringLiteral("ALTER TABLE files_v2 RENAME TO files")));
     }
     QSqlDatabase::removeDatabase(name);
 

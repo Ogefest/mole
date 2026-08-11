@@ -71,6 +71,19 @@ than quietly widening it, because *camera = Canon* over an unindexed folder does
 this folder, or search only the part that already is — and narrowing says what it left
 out.
 
+## Inside archives
+
+A scan of a local drive also lists what is inside the zips, tarballs and 7z files it meets,
+so `report.pdf` inside `backup.zip` is found by name like anything else. The row says which
+archive it came out of, and opening it mounts that archive and lands on the file — which is
+what opening a `.zip` from a listing has always done.
+
+The bounds are deliberate. An archive inside an archive is a row and is not opened, because
+following one is a recursion with no floor. A container that gives up more entries than the
+ceiling contributes the ceiling. On a drive that is not local, listing an archive means
+fetching it, so large ones are left alone and the switch is off. A corrupt or password-locked
+archive costs its own rows and never the scan.
+
 ## The index
 
 Indexing a folder (`Operations → Index this folder`) records what is in it, and a search

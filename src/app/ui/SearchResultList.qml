@@ -148,6 +148,7 @@ Rectangle {
             required property var indexedAt
             required property string matchLine
             required property int matchLineNumber
+            required property string containerName
 
             width: ListView.view.width
             height: 34
@@ -169,6 +170,16 @@ Rectangle {
                 spacing: 8
 
                 Label { text: iconText; font.pixelSize: App.textSize }
+
+                // Which archive this came out of. A row whose path is a uri
+                // nobody recognises is a puzzle rather than an answer.
+                Label {
+                    objectName: "containerBadge"
+                    visible: containerName.length > 0
+                    text: "\u{1F5DC} " + containerName
+                    color: "#8b93a7"
+                    font.pixelSize: App.smallTextSize
+                }
 
                 // A row a scan remembered rather than one anything has just
                 // looked at. Quiet, because most rows in a mixed list are this

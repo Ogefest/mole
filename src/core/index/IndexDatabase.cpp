@@ -13,7 +13,7 @@
 namespace mole {
 namespace {
 
-    constexpr int kSchemaVersion = 3;
+    constexpr int kSchemaVersion = 4;
 
 } // namespace
 
@@ -260,6 +260,17 @@ Result<void> IndexDatabase::applyMigrations()
             return applied;
     }
 
+    if (version < 4) {
+        // A row that is not addressed the way its volume is: a file inside an
+        // archive. Null for everything else, which is almost every row, so the
+        // column costs a byte apiece and answers a question nothing else can.
+        const QStringList statements = {
+            QStringLiteral("ALTER TABLE files ADD COLUMN uri TEXT"),
+        };
+        if (Result<void> applied = apply(4, statements); !applied.ok())
+            return applied;
+    }
+
     QSqlQuery bump(db);
     if (!bump.exec(QStringLiteral("PRAGMA user_version=%1").arg(kSchemaVersion)))
         return sqlError(db, QStringLiteral("Writing schema version"));
@@ -483,8 +494,8 @@ Result<void> IndexDatabase::insertBatch(qint64 volumeId, qint64 generation, cons
 
     QSqlQuery query(db);
     query.prepare(QStringLiteral("INSERT INTO files (volume_id, generation, name, name_folded, path, "
-                                 "parent_path, extension, is_dir, size, mtime) "
-                                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"));
+                                 "parent_path, extension, is_dir, size, mtime, uri) "
+                                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"));
     QSqlQuery fact(db);
     fact.prepare(QStringLiteral("INSERT INTO file_facts (file_id, key, text, num) VALUES (?, ?, ?, ?)"));
 
@@ -499,6 +510,7 @@ Result<void> IndexDatabase::insertBatch(qint64 volumeId, qint64 generation, cons
         query.addBindValue(file.isDir ? 1 : 0);
         query.addBindValue(file.size);
         query.addBindValue(file.modifiedEpoch);
+        query.addBindValue(file.uri.isEmpty() ? QVariant() : QVariant(file.uri));
         if (!query.exec()) {
             db.rollback();
             return sqlError(db, QStringLiteral("Inserting indexed file"));
@@ -539,7 +551,7 @@ Result<QList<IndexSearchHit>> IndexDatabase::search(const SearchQuery& query) co
     // The generations having to agree is what keeps a scan in progress out of
     // the answer: its rows are in the table and belong to no volume yet.
     QString sql = QStringLiteral(
-        "SELECT f.name, v.root_uri, f.path, f.parent_path, f.is_dir, f.size, f.mtime, v.label "
+        "SELECT f.name, v.root_uri, f.path, f.parent_path, f.is_dir, f.size, f.mtime, v.label, f.uri "
         "FROM files f JOIN volumes v ON v.id = f.volume_id AND v.generation = f.generation WHERE 1=1");
     // f.id is selected by nothing and needed by the fact subqueries below.
     QVariantList bindings;
@@ -630,8 +642,13 @@ Result<QList<IndexSearchHit>> IndexDatabase::search(const SearchQuery& query) co
     while (statement.next()) {
         IndexSearchHit hit;
         hit.name = statement.value(0).toString();
-        const VfsUri root = VfsUri::fromString(statement.value(1).toString());
-        hit.uri = VfsUri(root.scheme(), root.authority(), statement.value(2).toString()).toString();
+        const QString own = statement.value(8).toString();
+        if (!own.isEmpty()) {
+            hit.uri = own;
+        } else {
+            const VfsUri root = VfsUri::fromString(statement.value(1).toString());
+            hit.uri = VfsUri(root.scheme(), root.authority(), statement.value(2).toString()).toString();
+        }
         hit.parentPath = statement.value(3).toString();
         hit.isDir = statement.value(4).toInt() != 0;
         hit.size = statement.value(5).toLongLong();
