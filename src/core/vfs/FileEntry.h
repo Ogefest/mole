@@ -28,6 +28,15 @@ public:
     bool isWritable = false;
     qint64 size = 0;
     QDateTime modified;
+    /// When the drive says the file was made, and when it was last read.
+    ///
+    /// Invalid where the backend does not report them, which most do not: a
+    /// listing over SFTP or S3 carries a modification time and nothing else.
+    /// Invalid means *no answer*, never *the beginning of time* -- a search for
+    /// files made this week must not sweep up everything on a drive that cannot
+    /// say.
+    QDateTime created;
+    QDateTime accessed;
 
     /// "rwxr-xr--" when the backend knows it, empty when it does not. Watching
     /// this is how a permission change on a shared folder gets noticed at all;

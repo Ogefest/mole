@@ -15,11 +15,36 @@ A search over a large tree returns more than anyone wants to read, so the result
 narrowed where they are — straight onto the matches already found, with no walk and no
 second query. The count reads "3 of 41" while a filter is on.
 
-## Size, and the other criteria
+## The other criteria
 
-*More* folds out the criteria that are not needed most of the time. Sizes are typed the
-way people write them — `10M`, `1.5 GiB`, `500k`, `1,5M` — and an empty field means no
-limit rather than zero.
+*More* folds out everything that is not needed most of the time, so the common case stays
+one field and one key.
+
+- **Time.** *Changed* takes a range, and both ends are typed the way people say them:
+  `today`, `yesterday`, `this week`, `this month`, `last 7 days`, `>30d`, or a plain
+  `2026-03-01`. Anything it cannot read is ignored rather than guessed at. *Made* and
+  *read* are there too, where the drive reports them — most drives report only when a
+  file changed, and a search by a date they do not keep finds nothing rather than
+  everything.
+- **What it is.** *Image*, *video*, *audio*, *document*, *archive*, *code*, *folder* —
+  from what is inside the file rather than what it is called, so a `Dockerfile` is code
+  and a photograph saved as `.txt` is a picture. Reading them costs something, so it is
+  the last thing checked and only on what everything else has already kept.
+- **Extension**, which now takes a list: `jpg, jpeg, heic`.
+- **Name**, read three ways — *contains*, *matches* a shape like `report-*.pdf`, or an
+  *expression*. Chosen rather than guessed at, because a file really called `a.b` is not a
+  pattern. *Whole words* stops `report` matching `reporting`.
+- **Path has**, which is a different question from the name and does most of the work when
+  you remember the folder and not the file. *not* inverts it, as it does for the name.
+- **Skip folders**, a list of names not to go into: `node_modules, .git, build`. It stops
+  the walk descending rather than filtering what came back, which is the whole difference
+  on a disk with source code on it.
+- **Shape**: files, folders, or both; empty files; hidden files; and *this folder only*.
+- **Size**, typed the way people write it — `10M`, `1.5 GiB`, `500k`, `1,5M` — where an
+  empty field means no limit rather than zero.
+
+Everything is *and*. A criterion the index cannot answer is checked afterwards rather than
+dropped, and the form says which one made that happen.
 
 ## The index
 

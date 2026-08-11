@@ -9,6 +9,44 @@ wrong.
 
 ---
 
+## The search asked for a name, an extension and a size, and that was all
+
+**Asked for:** MOLE-150 — three criteria and three toggles, in an application whose subject
+is files at scale. Every one of the missing ones is something somebody looks for weekly.
+
+**What it turned out to be:** nine families, all through the query model from MOLE-147, so
+each is one predicate with one meaning and one test. Time, with both ends typed the way
+people say them — `today`, `last 7 days`, `>30d`, `2026-03-01` — and `created` and
+`accessed` where the drive reports them. A type class taken from what is inside the file
+rather than from its name, so a `Dockerfile` is code and a photograph saved as `.txt` is a
+picture. A name read as a substring, a shape or an expression, chosen rather than guessed
+at. A path field, which is a different question. A list of folders not to descend into.
+Files, folders, empty, hidden, and a depth. And the extension field takes a list, which it
+never should not have.
+
+**The one new mechanism is a reader.** A type class cannot be answered from a listing, so
+the evaluator grew a way to ask for a page of the file — used only for entries that
+survived every cheaper criterion, which is exactly the ladder ADR-0036 built the cost
+classes for. `PredicateCost::Metadata` had been a declared rung with nothing standing on
+it; this is the first criterion that does. No new ADR: the decision it rests on is
+ADR-0033's, that a file is what is in it.
+
+**Two things are refused rather than guessed at.** A date the parser cannot read adds no
+criterion at all — narrowing by something the user did not manage to state would be worse
+than ignoring it, and matching everything would be worse still. And a regular expression
+that does not compile matches nothing, because a typo must not turn into a search of the
+whole disk.
+
+**Exclusions are counted in directories entered.** The test asserts the pruned walk listed
+strictly fewer directories than the whole one, because a filter applied to what came back
+would return the same list at the same cost — and the cost is the entire point on a disk
+with `node_modules` on it.
+
+**Every criterion round-trips through the tab's state**, because a query built out of nine
+fields is not something to make somebody build again after a restart. And the form left
+alone still behaves exactly as it did with three fields: a name, Return, and nothing else
+to decide.
+
 ## A folder whose subfolder was indexed was treated as if nothing had been
 
 **Asked for:** MOLE-149 — ADR-0005 ruled that partial coverage counts as none, and gave a

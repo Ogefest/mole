@@ -50,6 +50,7 @@ private slots:
     void bothPanesAndActivePaneAreRemembered();
     void searchTabRemembersItsQueryButNotItsResults();
     void currentTabIsRemembered();
+    void everyCriterionSurvivesARestart();
     void tabsFromAnUninstalledPluginAreSkipped();
     void aTabOfTheRetiredIndexSearchComesBackAsTheOneSearch();
     void unreachableFolderStillRestoresTheTab();
@@ -354,6 +355,60 @@ void TestSession::searchTabRemembersItsQueryButNotItsResults()
     // hits would be worse than showing none.
     QCOMPARE(restored->results()->rowCount(), 0);
     QVERIFY(!restored->isRunning());
+}
+
+/// A query built out of nine fields is not something to make somebody build
+/// again because they restarted.
+void TestSession::everyCriterionSurvivesARestart()
+{
+    startApp();
+    const int row = m_app->tabs()->openTab(QStringLiteral("mole.livesearch"));
+    auto* search = qobject_cast<LiveSearchController*>(m_app->tabs()->controllerAt(row));
+    QVERIFY(search);
+
+    search->setRootUri(m_tree->rootUri().toString());
+    search->setQueryText(QStringLiteral("report-*.pdf"));
+    search->setNameMode(1);
+    search->setWholeWord(true);
+    search->setExcludeName(true);
+    search->setPathText(QStringLiteral("invoices"));
+    search->setExcludePath(true);
+    search->setExtension(QStringLiteral("jpg, jpeg"));
+    search->setTypeClasses({ QStringLiteral("image"), QStringLiteral("document") });
+    search->setModifiedFrom(QStringLiteral("last 7 days"));
+    search->setModifiedTo(QStringLiteral("today"));
+    search->setCreatedFrom(QStringLiteral("2026-01-01"));
+    search->setAccessedFrom(QStringLiteral("30d"));
+    search->setKindMode(1);
+    search->setEmptyOnly(true);
+    search->setIncludeHidden(false);
+    search->setMaxDepth(0);
+    search->setExcluded(QStringLiteral("node_modules, .git"));
+    search->setSizeRange(QStringLiteral("10k"), QStringLiteral("2M"));
+
+    restartApp();
+
+    auto* restored = qobject_cast<LiveSearchController*>(m_app->tabs()->controllerAt(row));
+    QVERIFY(restored);
+    QCOMPARE(restored->queryText(), QStringLiteral("report-*.pdf"));
+    QCOMPARE(restored->nameMode(), 1);
+    QVERIFY(restored->wholeWord());
+    QVERIFY(restored->excludeName());
+    QCOMPARE(restored->pathText(), QStringLiteral("invoices"));
+    QVERIFY(restored->excludePath());
+    QCOMPARE(restored->extension(), QStringLiteral("jpg, jpeg"));
+    QCOMPARE(restored->typeClasses(), QStringList({ QStringLiteral("image"), QStringLiteral("document") }));
+    QCOMPARE(restored->modifiedFrom(), QStringLiteral("last 7 days"));
+    QCOMPARE(restored->modifiedTo(), QStringLiteral("today"));
+    QCOMPARE(restored->createdFrom(), QStringLiteral("2026-01-01"));
+    QCOMPARE(restored->accessedFrom(), QStringLiteral("30d"));
+    QCOMPARE(restored->kindMode(), 1);
+    QVERIFY(restored->emptyOnly());
+    QVERIFY(!restored->includeHidden());
+    QCOMPARE(restored->maxDepth(), 0);
+    QCOMPARE(restored->excluded(), QStringLiteral("node_modules, .git"));
+    QCOMPARE(restored->minSize(), 10 * 1024);
+    QCOMPARE(restored->maxSize(), 2 * 1024 * 1024);
 }
 
 void TestSession::currentTabIsRemembered()

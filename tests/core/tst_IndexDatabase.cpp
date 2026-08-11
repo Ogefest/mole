@@ -247,7 +247,7 @@ void TestIndexDatabase::searchFiltersByExtensionAndKind()
             makeFile(QStringLiteral("/data/subdir"), 0, true) }));
 
     SearchQuery byExtension; // matching must not be case sensitive
-    byExtension.add(SearchPredicate::extension(QStringLiteral("PDF")));
+    byExtension.add(SearchPredicate::extensions({ QStringLiteral("PDF") }));
     QCOMPARE(m_db->search(byExtension).value().size(), 1);
 
     SearchQuery filesOnly;

@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-11 #MOLE-150 The search asks for time, for what a file is rather than what it is called, for a name as a shape or an expression, for a path, for folders to skip and for depth — nine families of criteria where there were three
 2026-08-11 #MOLE-149 A folder with an indexed subtree in it is answered by both at once — the indexed part appears instantly and marked as remembered, and the walk replaces each row as it reaches it, removing what has been deleted since the scan
 2026-08-11 #MOLE-148 One search, with where to look as a field on it — this folder, a path, or everywhere indexed — and the index as a way of answering it rather than a separate tab
 2026-08-11 #MOLE-158 Examining a search's results leaves one browser tab rather than one per result, the results stay where they were, and the tab it opens says which search it came from

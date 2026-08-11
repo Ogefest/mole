@@ -19,6 +19,13 @@ public:
     /// `index` is borrowed and must outlive the task.
     IndexSearchTask(IndexDatabase* index, SearchQuery query, QObject* parent = nullptr);
 
+    /// How to read a page of a hit, for the criteria a row cannot answer.
+    ///
+    /// A row records a name, a size and a date; what a file *is* comes from
+    /// what is in it. Without this such a criterion matches nothing, which is
+    /// the honest answer for a source that cannot look.
+    void setSampleReader(SampleReader reader);
+
     int hitCount() const { return m_hitCount; }
 
 signals:
@@ -31,6 +38,7 @@ protected:
 private:
     IndexDatabase* m_index = nullptr;
     SearchQuery m_query;
+    SampleReader m_sample;
     int m_hitCount = 0;
 };
 

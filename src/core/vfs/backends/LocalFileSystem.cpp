@@ -115,6 +115,12 @@ namespace {
         e.isWritable = info.isWritable();
         e.size = info.isDir() ? 0 : info.size();
         e.modified = info.lastModified();
+        // Both are left invalid where the filesystem does not keep them, which
+        // is what QFileInfo already answers: birthTime is empty on filesystems
+        // with no birth time, and lastRead is the mount's business. A search by
+        // either has to see the absence rather than a date that means nothing.
+        e.created = info.birthTime();
+        e.accessed = info.lastRead();
         e.permissions = permissionString(info.permissions());
         return e;
     }

@@ -513,10 +513,17 @@ Result<QList<IndexSearchHit>> IndexDatabase::search(const SearchQuery& query) co
                 bindings.append(foldForSearch(predicate.text));
             }
             break;
-        case SearchPredicate::Field::Extension:
-            sql += QStringLiteral(" AND f.extension = ?");
-            bindings.append(predicate.text);
+        case SearchPredicate::Field::Extension: {
+            // A list, so a search for photographs can say jpg, jpeg and heic
+            // and mean one question. (`slots` would be a Qt macro.)
+            QStringList placeholders;
+            for (const QString& one : predicate.list) {
+                placeholders.append(QStringLiteral("?"));
+                bindings.append(one);
+            }
+            sql += QStringLiteral(" AND f.extension IN (%1)").arg(placeholders.join(QStringLiteral(", ")));
             break;
+        }
         case SearchPredicate::Field::Size:
             sql += predicate.match == SearchPredicate::Match::AtMost ? QStringLiteral(" AND f.size <= ?")
                                                                      : QStringLiteral(" AND f.size >= ?");
@@ -527,7 +534,12 @@ Result<QList<IndexSearchHit>> IndexDatabase::search(const SearchQuery& query) co
             bindings.append(predicate.flag ? 1 : 0);
             break;
         case SearchPredicate::Field::Modified:
+        case SearchPredicate::Field::Created:
+        case SearchPredicate::Field::Accessed:
+        case SearchPredicate::Field::Hidden:
+        case SearchPredicate::Field::TypeClass:
         case SearchPredicate::Field::Path:
+        case SearchPredicate::Field::Under:
             // Never pushed down; the planner does not hand these over.
             break;
         }

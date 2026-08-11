@@ -4,6 +4,9 @@
 
 #include <QList>
 #include <QString>
+#include <QStringList>
+
+#include <functional>
 
 namespace mole {
 
@@ -20,37 +23,62 @@ enum class PredicateCost {
     Content, ///< a read of the file, always
 };
 
+/// The first page of a file, for the criteria an entry cannot answer.
+///
+/// Empty when it could not be read, which is not the same as a file that does
+/// not match -- see SearchPredicate::matches().
+using SampleReader = std::function<QByteArray(const VfsUri&)>;
+
 /// One criterion of a search.
 ///
-/// A predicate rather than a field on a struct of options, because the set is
-/// about to grow -- a date range, a type class, a metadata field, a content
-/// match -- and because the planner has to reason about them one at a time. A
-/// struct of optionals cannot say *this one is expensive, do it last*.
+/// A predicate rather than a field on a struct of options, because the set has
+/// grown and will keep growing, and because the planner has to reason about
+/// them one at a time. A struct of optionals cannot say *this one is expensive,
+/// do it last*.
 struct SearchPredicate
 {
     enum class Field {
-        Name, ///< a substring of the file's name
-        Extension, ///< exact, lowercased, no dot
+        Name, ///< the file's name
+        Path, ///< the whole uri
+        Extension, ///< one of a list, lowercased, no dot
         Size, ///< bytes
         Modified, ///< seconds since the epoch
+        Created, ///< the same, where the drive reports it
+        Accessed, ///< the same, where the drive reports it
         Kind, ///< a directory, or a file
-        Path, ///< the entry sits under this uri
+        Hidden, ///< what the drive calls hidden
+        /// What sort of file it is, from what is in it rather than what it is
+        /// called: images, video, audio, documents, archives, code, folders.
+        TypeClass,
+        Under, ///< the entry sits under this uri
     };
 
     enum class Match {
-        Contains,
+        Contains, ///< a substring, folded unless caseSensitive
         Equals,
         AtLeast,
         AtMost,
-        StartsWith,
+        Glob, ///< report-*.pdf
+        Regex, ///< anchored nowhere; what the user typed
+        OneOf, ///< `text` holds a comma-separated list
     };
 
     Field field = Field::Name;
     Match match = Match::Contains;
-    QString text; ///< Name, Extension, Path
-    qint64 number = 0; ///< Size, Modified
-    bool flag = false; ///< Kind: true means a directory
-    bool caseSensitive = false; ///< Name
+    QString text;
+    QStringList list; ///< Extension, TypeClass
+    qint64 number = 0; ///< Size, Modified, Created, Accessed
+    bool flag = false; ///< Kind: a directory. Hidden: hidden.
+    bool caseSensitive = false; ///< Name, Path
+    /// Whole words only, for a name or a path matched as a substring. "report"
+    /// stops matching "reporting", which is what somebody looking for a
+    /// document called Report means and never gets from a substring.
+    bool wholeWord = false;
+    /// Everything this would have matched, and nothing it would. The one
+    /// negation there is: *not* on a name or a path does most of what a general
+    /// boolean builder would, and a general boolean builder is a different
+    /// feature.
+    bool negate = false;
 
     /// What answering this costs.
     ///
@@ -63,25 +91,42 @@ struct SearchPredicate
     // ---- the criteria there are ------------------------------------------
 
     static SearchPredicate name(const QString& text, bool caseSensitive = false);
-    static SearchPredicate extension(const QString& extension);
+    static SearchPredicate nameGlob(const QString& pattern, bool caseSensitive = false);
+    static SearchPredicate nameRegex(const QString& pattern, bool caseSensitive = false);
+    /// Anywhere in the uri, which is what somebody who remembers the folder and
+    /// not the file is asking about.
+    static SearchPredicate pathContains(const QString& text, bool caseSensitive = false);
+    /// Any of these extensions. A list because it never should have been one.
+    static SearchPredicate extensions(const QStringList& extensions);
+    /// Any of these classes -- "image", "video", "audio", "document",
+    /// "archive", "code", "folder".
+    static SearchPredicate typeClasses(const QStringList& classes);
     static SearchPredicate minSize(qint64 bytes);
     static SearchPredicate maxSize(qint64 bytes);
     static SearchPredicate modifiedAfter(qint64 epochSeconds);
     static SearchPredicate modifiedBefore(qint64 epochSeconds);
+    static SearchPredicate createdAfter(qint64 epochSeconds);
+    static SearchPredicate createdBefore(qint64 epochSeconds);
+    static SearchPredicate accessedAfter(qint64 epochSeconds);
+    static SearchPredicate accessedBefore(qint64 epochSeconds);
     /// Only directories, or only files. Both kinds are wanted when neither is
     /// asked for, and neither is wanted when both are -- which is what asking
     /// for a directory that is also a file has to mean.
     static SearchPredicate kind(bool directories);
+    static SearchPredicate hidden(bool hidden);
     /// The entry's uri begins with this. What *search inside this folder* means
     /// to a source whose rows cover a whole volume.
     static SearchPredicate underPath(const QString& uri);
 
     /// Whether `entry` satisfies this.
     ///
-    /// Pure: no I/O, no state, nothing that can differ between two calls. Every
-    /// criterion the search grows proves itself here, once, rather than twice
-    /// in two languages.
-    [[nodiscard]] bool matches(const FileEntry& entry) const;
+    /// Pure for everything a listing already answered. `sample` supplies the
+    /// first page of the file for the criteria that need what is inside it; a
+    /// predicate that needs one and is given none **does not match**, because
+    /// the alternative is quietly answering a question nobody asked.
+    [[nodiscard]] bool matches(const FileEntry& entry, const SampleReader& sample = {}) const;
+    /// True when answering this needs the file rather than the listing.
+    [[nodiscard]] bool needsSample() const;
 };
 
 /// Everything one search asks for.
@@ -102,10 +147,26 @@ struct SearchQuery
     /// the list read as complete.
     int limit = 10000;
 
+    /// Directory names a walk must not descend into, as globs: `node_modules`,
+    /// `.git`, `build`.
+    ///
+    /// Not a predicate, because a predicate says what to keep and this says
+    /// where not to go. Nothing else makes a search of a developer's disk
+    /// usable, and the difference shows in directories entered rather than in
+    /// results returned.
+    QStringList excluded;
+
+    /// How far down to go. -1 is everything; 0 is the folder itself and nothing
+    /// under it, which is how *just here* is asked for.
+    int maxDepth = -1;
+
     SearchQuery& add(SearchPredicate predicate);
     /// Adds it only when there is something to ask -- an empty name or an
     /// absent size limit is not a criterion, it is a criterion left blank.
     SearchQuery& addIfSet(const SearchPredicate& predicate);
+
+    /// Whether a directory called `name` is one the walk should not enter.
+    [[nodiscard]] bool isExcluded(const QString& name) const;
 };
 
 /// Which engine a plan is for.
@@ -133,9 +194,15 @@ public:
     /// True when the source answered the whole question by itself.
     [[nodiscard]] bool pushedDownEverything() const { return m_remainder.isEmpty(); }
 
-    /// Whether `entry` satisfies every criterion left over. A source applies
-    /// this to what its own query returned.
-    [[nodiscard]] bool matches(const FileEntry& entry) const;
+    /// True when something left over needs the file itself, so a source that
+    /// cannot read one is going to answer short.
+    [[nodiscard]] bool needsSample() const;
+
+    /// Whether `entry` satisfies every criterion left over.
+    ///
+    /// Cheapest first, so the expensive ones are only reached by what survived
+    /// everything else: filter to the PDFs, then open them.
+    [[nodiscard]] bool matches(const FileEntry& entry, const SampleReader& sample = {}) const;
 
 private:
     QList<SearchPredicate> m_pushedDown;
@@ -163,5 +230,27 @@ private:
 /// "łódź". Both engines fold through this, so a name means the same thing to
 /// each of them.
 [[nodiscard]] QString foldForSearch(const QString& text);
+
+/// What sort of file a MIME type is: "image", "video", "audio", "document",
+/// "archive", "code", or empty for anything that is none of them.
+///
+/// Extensions are how a file is stored; a class is how anybody thinks about it.
+/// The mapping is here rather than in the form so that the answer is the same
+/// wherever it is asked.
+[[nodiscard]] QString classOfMimeType(const QString& mimeType);
+
+/// Every class a search can ask for, in the order a form should offer them.
+[[nodiscard]] QStringList knownTypeClasses();
+
+/// Turns what somebody typed about time into a moment.
+///
+/// `today`, `yesterday`, `this week`, `this month`, `this year`, `last 7 days`,
+/// `>30d`, `7d`, `24h`, or a plain `2026-08-11`. Everything else is refused
+/// with an invalid QDateTime, because a date nobody can parse must narrow
+/// nothing rather than match everything.
+///
+/// The precedent is `LiveSearchController::parseSize()`: a form should not make
+/// somebody count zeros, and it should not make them work out a date either.
+[[nodiscard]] QDateTime parseWhen(const QString& text, const QDateTime& now);
 
 } // namespace mole

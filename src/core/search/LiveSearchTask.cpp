@@ -1,8 +1,10 @@
 #include "core/search/LiveSearchTask.h"
 
+#include "core/data/FileType.h"
 #include "core/vfs/DirectoryWalker.h"
 
 #include <QElapsedTimer>
+#include <QIODevice>
 #include <QSet>
 
 namespace mole {
@@ -50,11 +52,31 @@ void LiveSearchTask::run()
     // index claimed for it can be checked off against what is really there.
     QSet<QString> matchedHere;
 
-    DirectoryWalker walker(m_fileSystem);
+    // A criterion that needs the file itself gets a page of it, and only for
+    // the entries that survived everything cheaper -- which is the whole point
+    // of the plan handing them over in cost order.
+    SampleReader sample;
+    if (m_plan.needsSample()) {
+        sample = [this](const VfsUri& uri) -> QByteArray {
+            Result<std::unique_ptr<QIODevice>> stream = m_fileSystem->openRead(uri, FileType::kSampleBytes);
+            if (!stream.ok() || !stream.value())
+                return {};
+            return stream.value()->read(FileType::kSampleBytes);
+        };
+    }
+
+    DirectoryWalker::Options options;
+    options.maxDepth = m_query.maxDepth;
+    DirectoryWalker walker(m_fileSystem, options);
     Result<void> walked = walker.walk(
         m_root, cancelToken(),
         [&](const FileEntry& entry, int) {
-            if (m_plan.matches(entry)) {
+            // Told not to go in here, so it is neither a match nor a place to
+            // look. Counted as visited, because it was.
+            if (entry.isDir && m_query.isExcluded(entry.name))
+                return DirectoryWalker::Action::SkipSubtree;
+
+            if (m_plan.matches(entry, sample)) {
                 batch.append(entry);
                 matchedHere.insert(entry.uri.toString());
                 ++m_hitCount;

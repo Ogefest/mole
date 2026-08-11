@@ -6,6 +6,7 @@
 
 #include "core/index/IndexDatabase.h"
 #include "core/search/LiveSearchTask.h"
+#include "core/search/SearchQuery.h"
 
 #include <QPointer>
 #include <QStringList>
@@ -37,8 +38,40 @@ class LiveSearchController final : public FeatureController
     Q_PROPERTY(QStringList volumeLabels READ volumeLabels NOTIFY volumesChanged)
     Q_PROPERTY(int volumeIndex READ volumeIndex WRITE setVolumeIndex NOTIFY volumeIndexChanged)
     Q_PROPERTY(QString queryText READ queryText WRITE setQueryText NOTIFY queryTextChanged)
+    /// A comma-separated list, because a search for photographs means jpg and
+    /// jpeg and heic and is one question.
     Q_PROPERTY(QString extension READ extension WRITE setExtension NOTIFY criteriaChanged)
     Q_PROPERTY(bool caseSensitive READ caseSensitive WRITE setCaseSensitive NOTIFY criteriaChanged)
+    /// How the name is read: 0 a substring, 1 a glob, 2 an expression. Chosen
+    /// rather than guessed at from the text -- guessing turns a file called
+    /// `a.b` into a pattern.
+    Q_PROPERTY(int nameMode READ nameMode WRITE setNameMode NOTIFY criteriaChanged)
+    Q_PROPERTY(bool wholeWord READ wholeWord WRITE setWholeWord NOTIFY criteriaChanged)
+    Q_PROPERTY(bool excludeName READ excludeName WRITE setExcludeName NOTIFY criteriaChanged)
+    /// Anywhere in the uri. Different from the name, and what does the work
+    /// when somebody remembers the folder and not the file.
+    Q_PROPERTY(QString pathText READ pathText WRITE setPathText NOTIFY criteriaChanged)
+    Q_PROPERTY(bool excludePath READ excludePath WRITE setExcludePath NOTIFY criteriaChanged)
+    /// Any of "image", "video", "audio", "document", "archive", "code",
+    /// "folder" -- from what is in the file rather than what it is called.
+    Q_PROPERTY(QStringList typeClasses READ typeClasses WRITE setTypeClasses NOTIFY criteriaChanged)
+    Q_PROPERTY(QStringList allTypeClasses READ allTypeClasses CONSTANT)
+    /// Typed the way people say it: `today`, `last 7 days`, `>30d`, `2026-08-01`.
+    Q_PROPERTY(QString modifiedFrom READ modifiedFrom WRITE setModifiedFrom NOTIFY criteriaChanged)
+    Q_PROPERTY(QString modifiedTo READ modifiedTo WRITE setModifiedTo NOTIFY criteriaChanged)
+    Q_PROPERTY(QString createdFrom READ createdFrom WRITE setCreatedFrom NOTIFY criteriaChanged)
+    Q_PROPERTY(QString accessedFrom READ accessedFrom WRITE setAccessedFrom NOTIFY criteriaChanged)
+    /// 0 both, 1 files only, 2 folders only.
+    Q_PROPERTY(int kindMode READ kindMode WRITE setKindMode NOTIFY criteriaChanged)
+    Q_PROPERTY(bool emptyOnly READ emptyOnly WRITE setEmptyOnly NOTIFY criteriaChanged)
+    Q_PROPERTY(bool includeHidden READ includeHidden WRITE setIncludeHidden NOTIFY criteriaChanged)
+    /// -1 for the whole tree, 0 for this folder alone.
+    Q_PROPERTY(int maxDepth READ maxDepth WRITE setMaxDepth NOTIFY criteriaChanged)
+    /// Directory globs the walk must not enter: `node_modules, .git, build`.
+    Q_PROPERTY(QString excluded READ excluded WRITE setExcluded NOTIFY criteriaChanged)
+    /// What the last search could not ask its source, in words, for the form to
+    /// show beside the criteria. Empty when everything was pushed down.
+    Q_PROPERTY(QString unpushedNote READ unpushedNote NOTIFY statusChanged)
     /// Bytes; -1 for "no limit". Set through setSizeRange() from the form, which
     /// takes what a person types.
     Q_PROPERTY(qint64 minSize READ minSize NOTIFY criteriaChanged)
@@ -73,6 +106,39 @@ public:
     bool isRunning() const { return m_running; }
     bool isTruncated() const { return m_truncated; }
     QString statusText() const { return m_statusText; }
+
+    int nameMode() const { return m_nameMode; }
+    void setNameMode(int mode);
+    bool wholeWord() const { return m_wholeWord; }
+    void setWholeWord(bool whole);
+    bool excludeName() const { return m_excludeName; }
+    void setExcludeName(bool exclude);
+    QString pathText() const { return m_pathText; }
+    void setPathText(const QString& text);
+    bool excludePath() const { return m_excludePath; }
+    void setExcludePath(bool exclude);
+    QStringList typeClasses() const { return m_typeClasses; }
+    void setTypeClasses(const QStringList& classes);
+    static QStringList allTypeClasses() { return knownTypeClasses(); }
+    QString modifiedFrom() const { return m_modifiedFrom; }
+    void setModifiedFrom(const QString& text);
+    QString modifiedTo() const { return m_modifiedTo; }
+    void setModifiedTo(const QString& text);
+    QString createdFrom() const { return m_createdFrom; }
+    void setCreatedFrom(const QString& text);
+    QString accessedFrom() const { return m_accessedFrom; }
+    void setAccessedFrom(const QString& text);
+    int kindMode() const { return m_kindMode; }
+    void setKindMode(int mode);
+    bool emptyOnly() const { return m_emptyOnly; }
+    void setEmptyOnly(bool empty);
+    bool includeHidden() const { return m_includeHidden; }
+    void setIncludeHidden(bool include);
+    int maxDepth() const { return m_maxDepth; }
+    void setMaxDepth(int depth);
+    QString excluded() const { return m_excluded; }
+    void setExcluded(const QString& text);
+    QString unpushedNote() const { return m_unpushedNote; }
 
     qint64 minSize() const { return m_minSize; }
     qint64 maxSize() const { return m_maxSize; }
@@ -146,6 +212,12 @@ private:
     /// it as %1. Both scopes that reach the index come through here, so the two
     /// differ in what they say and in nothing else.
     void startIndexSearch(const SearchQuery& query, const QString& doneFormat);
+    /// Everything the form is asking for, as one query.
+    SearchQuery buildQuery() const;
+    /// How to read a page of a file, for the criteria an entry cannot answer.
+    SampleReader sampleReaderFor(const FileSystemPtr& fileSystem) const;
+    /// Records what `source` could not state, for the form to show.
+    void notePlan(const SearchQuery& query, SearchSource source);
     void setRunning(bool running);
     void setStatusText(const QString& text);
 
@@ -155,6 +227,22 @@ private:
     QString m_queryText;
     QString m_extension;
     bool m_caseSensitive = false;
+    int m_nameMode = 0;
+    bool m_wholeWord = false;
+    bool m_excludeName = false;
+    QString m_pathText;
+    bool m_excludePath = false;
+    QStringList m_typeClasses;
+    QString m_modifiedFrom;
+    QString m_modifiedTo;
+    QString m_createdFrom;
+    QString m_accessedFrom;
+    int m_kindMode = 0;
+    bool m_emptyOnly = false;
+    bool m_includeHidden = true;
+    int m_maxDepth = -1;
+    QString m_excluded;
+    QString m_unpushedNote;
     qint64 m_minSize = -1;
     qint64 m_maxSize = -1;
     bool m_useIndex = true;

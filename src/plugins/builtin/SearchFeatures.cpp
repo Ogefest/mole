@@ -2,6 +2,7 @@
 
 #include "ui/models/FileListModel.h"
 
+#include "core/data/FileType.h"
 #include "core/events/EventBus.h"
 #include "core/index/IndexDatabase.h"
 #include "core/index/IndexSearchTask.h"
@@ -10,6 +11,7 @@
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/VfsManager.h"
 
+#include <QIODevice>
 #include <QLocale>
 #include <QRegularExpression>
 
@@ -310,9 +312,157 @@ QString LiveSearchController::walkStatus(const QString& walkText, bool finished)
     return QStringLiteral("%1 · every row current").arg(walkText);
 }
 
+namespace {
+
+    /// A comma or newline separated list, trimmed, with the blanks dropped.
+    QStringList splitList(const QString& text)
+    {
+        QStringList out;
+        for (const QString& part : text.split(QRegularExpression(QStringLiteral("[,;\n]")))) {
+            const QString trimmed = part.trimmed();
+            if (!trimmed.isEmpty())
+                out.append(trimmed);
+        }
+        return out;
+    }
+
+} // namespace
+
+#define MOLE_SEARCH_SETTER(Setter, Member, Type)                                                             \
+    void LiveSearchController::Setter(Type value)                                                            \
+    {                                                                                                        \
+        if (Member == value)                                                                                 \
+            return;                                                                                          \
+        Member = value;                                                                                      \
+        emit criteriaChanged();                                                                              \
+        emit stateChanged();                                                                                 \
+    }
+
+// One shape, sixteen times. Written out by hand it would be two hundred lines
+// of the same four, and a reader checking that one of them notifies would have
+// to check all of them.
+MOLE_SEARCH_SETTER(setNameMode, m_nameMode, int)
+MOLE_SEARCH_SETTER(setWholeWord, m_wholeWord, bool)
+MOLE_SEARCH_SETTER(setExcludeName, m_excludeName, bool)
+MOLE_SEARCH_SETTER(setPathText, m_pathText, const QString&)
+MOLE_SEARCH_SETTER(setExcludePath, m_excludePath, bool)
+MOLE_SEARCH_SETTER(setTypeClasses, m_typeClasses, const QStringList&)
+MOLE_SEARCH_SETTER(setModifiedFrom, m_modifiedFrom, const QString&)
+MOLE_SEARCH_SETTER(setModifiedTo, m_modifiedTo, const QString&)
+MOLE_SEARCH_SETTER(setCreatedFrom, m_createdFrom, const QString&)
+MOLE_SEARCH_SETTER(setAccessedFrom, m_accessedFrom, const QString&)
+MOLE_SEARCH_SETTER(setKindMode, m_kindMode, int)
+MOLE_SEARCH_SETTER(setEmptyOnly, m_emptyOnly, bool)
+MOLE_SEARCH_SETTER(setIncludeHidden, m_includeHidden, bool)
+MOLE_SEARCH_SETTER(setMaxDepth, m_maxDepth, int)
+MOLE_SEARCH_SETTER(setExcluded, m_excluded, const QString&)
+
+#undef MOLE_SEARCH_SETTER
+
+SearchQuery LiveSearchController::buildQuery() const
+{
+    const QDateTime now = QDateTime::currentDateTime();
+    SearchQuery query;
+
+    // The name, read the way the form was told to read it.
+    SearchPredicate named = m_nameMode == 1 ? SearchPredicate::nameGlob(m_queryText, m_caseSensitive)
+        : m_nameMode == 2                   ? SearchPredicate::nameRegex(m_queryText, m_caseSensitive)
+                                            : SearchPredicate::name(m_queryText, m_caseSensitive);
+    named.wholeWord = m_wholeWord;
+    named.negate = m_excludeName;
+    query.addIfSet(named);
+
+    SearchPredicate inPath = SearchPredicate::pathContains(m_pathText, m_caseSensitive);
+    inPath.negate = m_excludePath;
+    query.addIfSet(inPath);
+
+    query.addIfSet(SearchPredicate::extensions(splitList(m_extension)));
+    query.addIfSet(SearchPredicate::typeClasses(m_typeClasses));
+    query.addIfSet(SearchPredicate::minSize(m_minSize));
+    query.addIfSet(SearchPredicate::maxSize(m_emptyOnly ? 0 : m_maxSize));
+
+    // A date nobody could parse is not a date, so nothing is added for it --
+    // narrowing by a criterion the user did not manage to state would be worse
+    // than ignoring it, and matching everything would be worse still.
+    const auto when = [&](const QString& text) { return parseWhen(text, now); };
+    if (const QDateTime from = when(m_modifiedFrom); from.isValid())
+        query.add(SearchPredicate::modifiedAfter(from.toSecsSinceEpoch()));
+    if (const QDateTime to = when(m_modifiedTo); to.isValid())
+        query.add(SearchPredicate::modifiedBefore(to.toSecsSinceEpoch()));
+    if (const QDateTime from = when(m_createdFrom); from.isValid())
+        query.add(SearchPredicate::createdAfter(from.toSecsSinceEpoch()));
+    if (const QDateTime from = when(m_accessedFrom); from.isValid())
+        query.add(SearchPredicate::accessedAfter(from.toSecsSinceEpoch()));
+
+    if (m_kindMode == 1)
+        query.add(SearchPredicate::kind(false));
+    else if (m_kindMode == 2)
+        query.add(SearchPredicate::kind(true));
+    if (!m_includeHidden)
+        query.add(SearchPredicate::hidden(false));
+
+    query.excluded = splitList(m_excluded);
+    query.maxDepth = m_maxDepth;
+    return query;
+}
+
+SampleReader LiveSearchController::sampleReaderFor(const FileSystemPtr& fileSystem) const
+{
+    if (!fileSystem)
+        return {};
+    return [fileSystem](const VfsUri& uri) -> QByteArray {
+        Result<std::unique_ptr<QIODevice>> stream = fileSystem->openRead(uri, FileType::kSampleBytes);
+        if (!stream.ok() || !stream.value())
+            return {};
+        return stream.value()->read(FileType::kSampleBytes);
+    };
+}
+
+void LiveSearchController::notePlan(const SearchQuery& query, SearchSource source)
+{
+    const SearchPlan plan = planSearch(query, source);
+    if (source == SearchSource::Walk || plan.pushedDownEverything()) {
+        m_unpushedNote.clear();
+        return;
+    }
+
+    // Named rather than counted: "3 criteria" tells nobody which of the things
+    // they typed made the search slower. ADR-0005 asked for this out loud.
+    static const QHash<int, QString> names {
+        { int(SearchPredicate::Field::Name), QStringLiteral("the name") },
+        { int(SearchPredicate::Field::Path), QStringLiteral("the path") },
+        { int(SearchPredicate::Field::Extension), QStringLiteral("the extension") },
+        { int(SearchPredicate::Field::Size), QStringLiteral("the size") },
+        { int(SearchPredicate::Field::Modified), QStringLiteral("the date changed") },
+        { int(SearchPredicate::Field::Created), QStringLiteral("the date made") },
+        { int(SearchPredicate::Field::Accessed), QStringLiteral("the date read") },
+        { int(SearchPredicate::Field::Kind), QStringLiteral("files or folders") },
+        { int(SearchPredicate::Field::Hidden), QStringLiteral("hidden files") },
+        { int(SearchPredicate::Field::TypeClass), QStringLiteral("what the file is") },
+    };
+
+    QStringList said;
+    for (const SearchPredicate& predicate : plan.remainder()) {
+        if (predicate.field == SearchPredicate::Field::Under)
+            continue; // the folder itself, which nobody typed
+        const QString name = names.value(int(predicate.field));
+        if (!name.isEmpty() && !said.contains(name))
+            said.append(name);
+    }
+    m_unpushedNote = said.isEmpty()
+        ? QString()
+        : QStringLiteral("the index cannot answer %1, so it was checked afterwards")
+              .arg(said.join(QStringLiteral(", ")));
+}
+
 void LiveSearchController::startIndexSearch(const SearchQuery& query, const QString& doneFormat)
 {
     auto* indexTask = new IndexSearchTask(m_services.index, query);
+    // What a row cannot say about a file, read from the file. Only reached by
+    // hits that survived everything the database could state.
+    if (planSearch(query, SearchSource::Index).needsSample() && m_services.vfs) {
+        indexTask->setSampleReader(sampleReaderFor(m_services.vfs->resolve(VfsUri::fromString(m_rootUri))));
+    }
     m_indexTask = indexTask;
 
     connect(indexTask, &IndexSearchTask::resultsReady, this, [this, indexTask](const FileEntryList& hits) {
@@ -344,11 +494,7 @@ void LiveSearchController::start()
 
     // One query, whichever engine answers it. The criteria mean the same thing
     // to each of them because there is only one place that says what they mean.
-    SearchQuery query;
-    query.addIfSet(SearchPredicate::name(m_queryText, m_caseSensitive));
-    query.addIfSet(SearchPredicate::extension(m_extension));
-    query.addIfSet(SearchPredicate::minSize(m_minSize));
-    query.addIfSet(SearchPredicate::maxSize(m_maxSize));
+    SearchQuery query = buildQuery();
 
     // Everywhere indexed is a question only the index can answer -- a walk of
     // every volume anybody ever scanned is not something to wait for -- so the
@@ -358,6 +504,7 @@ void LiveSearchController::start()
         m_truncated = false;
         query.volumeId
             = m_volumeIndex >= 0 && m_volumeIndex < m_volumeIds.size() ? m_volumeIds.at(m_volumeIndex) : -1;
+        notePlan(query, SearchSource::Index);
         startIndexSearch(query, QStringLiteral("%1 from the index"));
         return;
     }
@@ -383,6 +530,7 @@ void LiveSearchController::start()
     // whole subtree and has not been turned off, a walk otherwise.
     if (const std::optional<IndexVolume> volume = m_useIndex ? coveringVolume() : std::nullopt) {
         query.volumeId = volume->id;
+        notePlan(query, SearchSource::Index);
         startIndexSearch(query, QStringLiteral("%1 from the index — ") + indexNote());
         return;
     }
@@ -394,9 +542,11 @@ void LiveSearchController::start()
     // ADR-0038; ADR-0005 used to call this no coverage at all.
     const QList<IndexVolume> partial = m_useIndex ? volumesInsideRoot() : QList<IndexVolume> {};
     if (partial.isEmpty()) {
+        notePlan(query, SearchSource::Walk);
         startWalk(std::move(fs), root, query, {});
         return;
     }
+    notePlan(query, SearchSource::Index);
 
     SearchQuery primingQuery = query;
     primingQuery.volumeId = -1; // any volume, narrowed to the folder by the path
@@ -452,7 +602,7 @@ void LiveSearchController::start()
 void LiveSearchController::startWalk(FileSystemPtr fileSystem, const VfsUri& root, const SearchQuery& query,
     const QHash<QString, QStringList>& primed)
 {
-    auto* task = new LiveSearchTask(std::move(fileSystem), root, query);
+    auto* task = new LiveSearchTask(fileSystem, root, query);
     task->supersede(primed);
     m_task = task;
 
@@ -550,6 +700,23 @@ QVariantMap LiveSearchController::saveState() const
         { QStringLiteral("caseSensitive"), m_caseSensitive },
         { QStringLiteral("everywhere"), m_everywhere },
         { QStringLiteral("volumeIndex"), m_volumeIndex },
+        { QStringLiteral("nameMode"), m_nameMode },
+        { QStringLiteral("wholeWord"), m_wholeWord },
+        { QStringLiteral("excludeName"), m_excludeName },
+        { QStringLiteral("pathText"), m_pathText },
+        { QStringLiteral("excludePath"), m_excludePath },
+        { QStringLiteral("typeClasses"), m_typeClasses },
+        { QStringLiteral("modifiedFrom"), m_modifiedFrom },
+        { QStringLiteral("modifiedTo"), m_modifiedTo },
+        { QStringLiteral("createdFrom"), m_createdFrom },
+        { QStringLiteral("accessedFrom"), m_accessedFrom },
+        { QStringLiteral("kindMode"), m_kindMode },
+        { QStringLiteral("emptyOnly"), m_emptyOnly },
+        { QStringLiteral("includeHidden"), m_includeHidden },
+        { QStringLiteral("maxDepth"), m_maxDepth },
+        { QStringLiteral("excluded"), m_excluded },
+        { QStringLiteral("minSize"), m_minSize },
+        { QStringLiteral("maxSize"), m_maxSize },
     };
 }
 
@@ -567,6 +734,26 @@ void LiveSearchController::restoreState(const QVariantMap& state)
     // and what it meant was this search asked of everywhere indexed.
     const bool wasTheIndexTab = root.isEmpty() && state.contains(QStringLiteral("volumeIndex"));
     setEverywhere(state.value(QStringLiteral("everywhere"), wasTheIndexTab).toBool());
+
+    // Every criterion, because a query somebody built out of eight fields is
+    // not something to make them build again after a restart.
+    setNameMode(state.value(QStringLiteral("nameMode"), 0).toInt());
+    setWholeWord(state.value(QStringLiteral("wholeWord"), false).toBool());
+    setExcludeName(state.value(QStringLiteral("excludeName"), false).toBool());
+    setPathText(state.value(QStringLiteral("pathText")).toString());
+    setExcludePath(state.value(QStringLiteral("excludePath"), false).toBool());
+    setTypeClasses(state.value(QStringLiteral("typeClasses")).toStringList());
+    setModifiedFrom(state.value(QStringLiteral("modifiedFrom")).toString());
+    setModifiedTo(state.value(QStringLiteral("modifiedTo")).toString());
+    setCreatedFrom(state.value(QStringLiteral("createdFrom")).toString());
+    setAccessedFrom(state.value(QStringLiteral("accessedFrom")).toString());
+    setKindMode(state.value(QStringLiteral("kindMode"), 0).toInt());
+    setEmptyOnly(state.value(QStringLiteral("emptyOnly"), false).toBool());
+    setIncludeHidden(state.value(QStringLiteral("includeHidden"), true).toBool());
+    setMaxDepth(state.value(QStringLiteral("maxDepth"), -1).toInt());
+    setExcluded(state.value(QStringLiteral("excluded")).toString());
+    m_minSize = state.value(QStringLiteral("minSize"), -1).toLongLong();
+    m_maxSize = state.value(QStringLiteral("maxSize"), -1).toLongLong();
     // The volume list is rebuilt from the index, so a remembered position may no
     // longer exist; setVolumeIndex clamps.
     setVolumeIndex(state.value(QStringLiteral("volumeIndex"), 0).toInt());

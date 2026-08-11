@@ -77,10 +77,20 @@ Item {
                 Keys.onDownPressed: resultList.takeFocus()
             }
 
+            ComboBox {
+                objectName: "nameMode"
+                Layout.preferredWidth: 120
+                model: ["contains", "matches", "expression"]
+                currentIndex: controller ? controller.nameMode : 0
+                font.pixelSize: App.secondaryTextSize
+                onActivated: if (controller) controller.nameMode = currentIndex
+            }
+
             Label { text: "Extension"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
             TextField {
-                Layout.preferredWidth: 120
-                placeholderText: "pdf"
+                objectName: "extensionField"
+                Layout.preferredWidth: 160
+                placeholderText: "jpg, jpeg, heic"
                 text: controller ? controller.extension : ""
                 font.pixelSize: App.secondaryTextSize
                 onTextChanged: if (controller) controller.extension = text
@@ -196,9 +206,132 @@ Item {
             objectName: "advancedCriteria"
             Layout.fillWidth: true
             visible: false
-            columns: 5
+            columns: 6
             columnSpacing: 8
             rowSpacing: 6
+
+            Label { text: "Is a"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+            Flow {
+                objectName: "typeClasses"
+                Layout.columnSpan: 4
+                Layout.fillWidth: true
+                spacing: 6
+
+                Repeater {
+                    model: controller ? controller.allTypeClasses : []
+                    delegate: CheckBox {
+                        required property string modelData
+                        text: modelData
+                        font.pixelSize: App.secondaryTextSize
+                        checked: controller && controller.typeClasses.indexOf(modelData) >= 0
+                        onToggled: {
+                            if (!controller)
+                                return
+                            var picked = controller.typeClasses.slice()
+                            const at = picked.indexOf(modelData)
+                            if (checked && at < 0)
+                                picked.push(modelData)
+                            else if (!checked && at >= 0)
+                                picked.splice(at, 1)
+                            controller.typeClasses = picked
+                        }
+                    }
+                }
+            }
+
+            Label { text: "Changed"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+            TextField {
+                objectName: "modifiedFromField"
+                Layout.preferredWidth: 130
+                placeholderText: "last 7 days"
+                text: controller ? controller.modifiedFrom : ""
+                font.pixelSize: App.secondaryTextSize
+                onTextEdited: if (controller) controller.modifiedFrom = text
+            }
+            Label { text: "to"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+            TextField {
+                objectName: "modifiedToField"
+                Layout.preferredWidth: 130
+                placeholderText: "today"
+                text: controller ? controller.modifiedTo : ""
+                font.pixelSize: App.secondaryTextSize
+                onTextEdited: if (controller) controller.modifiedTo = text
+            }
+            Item { Layout.fillWidth: true }
+
+            Label { text: "Path has"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+            TextField {
+                objectName: "pathField"
+                Layout.columnSpan: 3
+                Layout.fillWidth: true
+                placeholderText: "invoices/2026"
+                text: controller ? controller.pathText : ""
+                font.pixelSize: App.secondaryTextSize
+                onTextEdited: if (controller) controller.pathText = text
+            }
+            CheckBox {
+                objectName: "excludePathToggle"
+                text: "not"
+                font.pixelSize: App.secondaryTextSize
+                checked: controller ? controller.excludePath : false
+                onToggled: if (controller) controller.excludePath = checked
+            }
+
+            Label { text: "Skip folders"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+            TextField {
+                objectName: "excludedField"
+                Layout.columnSpan: 4
+                Layout.fillWidth: true
+                placeholderText: "node_modules, .git, build"
+                text: controller ? controller.excluded : ""
+                font.pixelSize: App.secondaryTextSize
+                onTextEdited: if (controller) controller.excluded = text
+            }
+
+            Label { text: "Shape"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+            RowLayout {
+                Layout.columnSpan: 4
+                Layout.fillWidth: true
+                spacing: 8
+
+                ComboBox {
+                    objectName: "kindMode"
+                    Layout.preferredWidth: 150
+                    model: ["files and folders", "files only", "folders only"]
+                    currentIndex: controller ? controller.kindMode : 0
+                    font.pixelSize: App.secondaryTextSize
+                    onActivated: if (controller) controller.kindMode = currentIndex
+                }
+                CheckBox {
+                    objectName: "wholeWordToggle"
+                    text: "whole words"
+                    font.pixelSize: App.secondaryTextSize
+                    checked: controller ? controller.wholeWord : false
+                    onToggled: if (controller) controller.wholeWord = checked
+                }
+                CheckBox {
+                    objectName: "emptyOnlyToggle"
+                    text: "empty only"
+                    font.pixelSize: App.secondaryTextSize
+                    checked: controller ? controller.emptyOnly : false
+                    onToggled: if (controller) controller.emptyOnly = checked
+                }
+                CheckBox {
+                    objectName: "hiddenToggle"
+                    text: "hidden files"
+                    font.pixelSize: App.secondaryTextSize
+                    checked: controller ? controller.includeHidden : true
+                    onToggled: if (controller) controller.includeHidden = checked
+                }
+                CheckBox {
+                    objectName: "thisFolderOnlyToggle"
+                    text: "this folder only"
+                    font.pixelSize: App.secondaryTextSize
+                    checked: controller ? controller.maxDepth === 0 : false
+                    onToggled: if (controller) controller.maxDepth = checked ? 0 : -1
+                }
+                Item { Layout.fillWidth: true }
+            }
 
             Label { text: "Size from"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
             TextField {
@@ -234,6 +367,17 @@ Item {
                 font.pixelSize: App.secondaryTextSize
                 onToggled: if (controller) controller.useIndex = checked
             }
+            Label {
+                objectName: "unpushedNote"
+                Layout.columnSpan: 6
+                Layout.fillWidth: true
+                visible: controller ? controller.unpushedNote.length > 0 : false
+                text: controller ? controller.unpushedNote : ""
+                color: "#6f7788"
+                font.pixelSize: App.smallTextSize
+                wrapMode: Text.Wrap
+            }
+
             Label {
                 objectName: "indexNote"
                 Layout.columnSpan: controller && controller.everywhere ? 5 : 3

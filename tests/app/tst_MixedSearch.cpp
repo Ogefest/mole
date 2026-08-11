@@ -42,6 +42,8 @@ private slots:
     void cancellingLeavesWhatWasShownAndSaysItStopped();
     void aFullyCoveredFolderIsStillAnsweredByTheIndexAlone();
     void anUnindexedFolderIsStillJustAWalk();
+    void aCriterionTheIndexCannotStateIsSaidOutLoud();
+    void aNameAndReturnIsStillTheWholeOfTheCommonCase();
 
 private:
     /// The search tab, aimed at `root`, with the index allowed.
@@ -313,6 +315,55 @@ void TestMixedSearch::anUnindexedFolderIsStillJustAWalk()
         "a walk must not claim to have come from the index");
     QVERIFY2(search->statusText().contains(QStringLiteral("matches")),
         "it says what a walk says, exactly as it did before any of this");
+}
+
+/// The rule ADR-0005 set: what the index could not answer is checked afterwards
+/// rather than dropped, and the form says which criterion made that happen.
+void TestMixedSearch::aCriterionTheIndexCannotStateIsSaidOutLoud()
+{
+    QVERIFY(index(memUri(QStringLiteral("/tree")), QStringLiteral("whole tree")));
+
+    LiveSearchController* search = searchOver(memUri(QStringLiteral("/tree")));
+    QVERIFY(search);
+    QVERIFY(search->indexCoversRoot());
+
+    // A name alone is a column, so there is nothing to admit to.
+    QVERIFY(runToEnd(search));
+    QVERIFY(search->unpushedNote().isEmpty());
+
+    // A date is not, and neither is a path.
+    search->setModifiedFrom(QStringLiteral("2000-01-01"));
+    search->setPathText(QStringLiteral("/archive/"));
+    QVERIFY(runToEnd(search));
+
+    const QString note = search->unpushedNote();
+    QVERIFY2(!note.isEmpty(), "a criterion the index cannot state has to be said out loud");
+    QVERIFY2(note.contains(QStringLiteral("date changed")), qPrintable(note));
+    QVERIFY2(note.contains(QStringLiteral("path")), qPrintable(note));
+
+    // Said, and also honoured: the answer is narrowed by both.
+    for (const QString& uri : urisIn(search->results()))
+        QVERIFY2(uri.contains(QStringLiteral("/archive/")), qPrintable(uri));
+    QVERIFY(!urisIn(search->results()).isEmpty());
+}
+
+void TestMixedSearch::aNameAndReturnIsStillTheWholeOfTheCommonCase()
+{
+    // Nine families of criteria later, the form left alone has to behave the
+    // way it did when it had three fields.
+    LiveSearchController* search = searchOver(memUri(QStringLiteral("/tree")));
+    QVERIFY(search);
+    QCOMPARE(search->nameMode(), 0);
+    QVERIFY(!search->wholeWord());
+    QVERIFY(!search->excludeName());
+    QVERIFY(search->typeClasses().isEmpty());
+    QVERIFY(search->excluded().isEmpty());
+    QCOMPARE(search->maxDepth(), -1);
+    QVERIFY(search->includeHidden());
+
+    QVERIFY(runToEnd(search));
+    QCOMPARE(urisIn(search->results()).size(), 4);
+    QVERIFY(search->unpushedNote().isEmpty());
 }
 
 MOLE_TEST_MAIN(TestMixedSearch)

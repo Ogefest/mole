@@ -26,6 +26,9 @@ private slots:
     void filtersBySize();
     void caseInsensitiveByDefault();
     void stopsAtResultLimit();
+    void excludedFoldersAreNeverEntered();
+    void depthStopsTheWalkAtTheFolderItWasGiven();
+    void aTypeClassOpensOnlyWhatSurvivedEverythingElse();
     void cancellationStopsSearch();
     void missingBackendFailsTask();
 
@@ -153,7 +156,7 @@ void TestLiveSearchTask::filtersByExtension()
     m_fs->addFile(QStringLiteral("/x/data.parquet"));
 
     SearchQuery query;
-    query.add(SearchPredicate::extension(QStringLiteral("PARQUET")));
+    query.add(SearchPredicate::extensions({ QStringLiteral("PARQUET") }));
 
     LiveSearchTask* task = start(query);
     QVERIFY(waitForTask(task));
@@ -231,6 +234,82 @@ void TestLiveSearchTask::stopsAtResultLimit()
     QCOMPARE(task->hitCount(), 10);
     QCOMPARE(m_hits.size(), 10);
     QVERIFY(task->statusText().contains(QStringLiteral("limit")));
+}
+
+/// Counted in directories entered, not in results returned.
+///
+/// A search of a developer's disk is unusable without this, and the difference
+/// it makes is the walk not going in -- a filter applied to what came back
+/// would return the same list at the same cost.
+void TestLiveSearchTask::excludedFoldersAreNeverEntered()
+{
+    m_fs->addFile(QStringLiteral("/src/main-file.cpp"));
+    m_fs->addFile(QStringLiteral("/node_modules/left-pad/index-file.js"));
+    m_fs->addFile(QStringLiteral("/node_modules/react/deep/nested/thing-file.js"));
+    m_fs->addFile(QStringLiteral("/build/generated/out-file.cpp"));
+
+    SearchQuery everything;
+    everything.add(SearchPredicate::name(QStringLiteral("-file")));
+    LiveSearchTask* all = start(everything);
+    QVERIFY(waitForTask(all));
+    QCOMPARE(m_hits.size(), 4);
+
+    const int listedEverything = m_fs->listCallCount();
+    m_hits.clear();
+
+    SearchQuery pruned = everything;
+    pruned.excluded = { QStringLiteral("node_modules"), QStringLiteral("build*") };
+    LiveSearchTask* task = start(pruned);
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(m_hits.size(), 1);
+    QCOMPARE(m_hits.first().name, QStringLiteral("main-file.cpp"));
+
+    // The excluded folders were seen and not opened, so the second walk cost
+    // strictly fewer listings than the first.
+    const int listedPruned = m_fs->listCallCount() - listedEverything;
+    QVERIFY2(listedPruned < listedEverything,
+        qPrintable(QStringLiteral("the pruned walk listed %1 directories and the whole one listed %2, so "
+                                  "nothing was actually skipped")
+                       .arg(listedPruned)
+                       .arg(listedEverything)));
+}
+
+void TestLiveSearchTask::depthStopsTheWalkAtTheFolderItWasGiven()
+{
+    m_fs->addFile(QStringLiteral("/here-file.txt"));
+    m_fs->addFile(QStringLiteral("/below/there-file.txt"));
+    m_fs->addFile(QStringLiteral("/below/deeper/further-file.txt"));
+
+    SearchQuery here;
+    here.add(SearchPredicate::name(QStringLiteral("-file")));
+    here.add(SearchPredicate::kind(false));
+    here.maxDepth = 0; // this folder, and nothing under it
+
+    LiveSearchTask* task = start(here);
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(m_hits.size(), 1);
+    QCOMPARE(m_hits.first().name, QStringLiteral("here-file.txt"));
+}
+
+void TestLiveSearchTask::aTypeClassOpensOnlyWhatSurvivedEverythingElse()
+{
+    // A picture whose name says text, and a text file whose name says picture:
+    // the pair an extension can never get right.
+    const QByteArray png = QByteArrayLiteral("\x89PNG\r\n\x1a\n") + QByteArray(64, '\0');
+    m_fs->addFile(QStringLiteral("/mixed/holiday.txt"), png);
+    m_fs->addFile(QStringLiteral("/mixed/notes.png"), QByteArrayLiteral("just some words\n"));
+
+    SearchQuery pictures;
+    pictures.add(SearchPredicate::typeClasses({ QStringLiteral("image") }));
+    pictures.add(SearchPredicate::kind(false));
+
+    LiveSearchTask* task = start(pictures);
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(m_hits.size(), 1);
+    QCOMPARE(m_hits.first().name, QStringLiteral("holiday.txt"));
 }
 
 void TestLiveSearchTask::cancellationStopsSearch()

@@ -22,6 +22,11 @@ IndexSearchTask::IndexSearchTask(IndexDatabase* index, SearchQuery query, QObjec
 {
 }
 
+void IndexSearchTask::setSampleReader(SampleReader reader)
+{
+    m_sample = std::move(reader);
+}
+
 void IndexSearchTask::run()
 {
     if (!m_index) {
@@ -52,7 +57,7 @@ void IndexSearchTask::run()
         entry.size = hit.size;
         if (hit.modifiedEpoch > 0)
             entry.modified = QDateTime::fromSecsSinceEpoch(hit.modifiedEpoch);
-        if (!plan.matches(entry))
+        if (!plan.matches(entry, m_sample))
             continue;
         entries.append(entry);
     }
