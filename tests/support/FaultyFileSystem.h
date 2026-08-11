@@ -151,6 +151,11 @@ public:
     /// in the middle of a file has to answer for what it does when refused.
     FaultyFileSystem& cannotSeek();
 
+    /// The drive stops advertising Write: it can be listed and read and nothing
+    /// else. What a mounted archive and a bucket somebody has read access to
+    /// really are, and the answer every operation that writes has to have ready.
+    FaultyFileSystem& readOnly();
+
     // ---- what went through it ---------------------------------------------
     //
     // The wrapper already counts every byte through every stream to fire its

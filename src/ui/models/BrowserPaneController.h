@@ -99,6 +99,25 @@ public:
     /// so a dialog can show it instead of a count. Same source as targets(), so
     /// what is listed is what would happen and not a second opinion about it.
     Q_INVOKABLE QVariantList targetDetails() const;
+    // ---- what a drop means ----------------------------------------------
+    //
+    // A drop is a copy into the folder this pane is showing, and it is never a
+    // move: Mole does not delete another application's file because something
+    // was dragged out of it, whatever action the source offered.
+
+    /// What a drop of `urls` would do here: `count`, `sizeText`, `targetPath`,
+    /// `singleName`, `writable`, and the `collisions` -- names already taken in
+    /// this folder.
+    ///
+    /// Answered from the listing this pane has already loaded and one stat per
+    /// dropped file, so it costs nothing and can be shown while the pointer is
+    /// still moving, which is the only moment it can change what somebody does.
+    Q_INVOKABLE QVariantMap dropPlan(const QStringList& urls) const;
+    /// Copies `urls` into the folder this pane is showing. `conflict` is "skip",
+    /// "overwrite" or "stop", exactly as `runTransfer()` takes them; "stop" is
+    /// the default and means nothing is overwritten without an answer.
+    Q_INVOKABLE void dropHere(const QStringList& urls, const QString& conflict = QStringLiteral("stop"));
+
     /// Enters the row if it is a directory. Returns false for files, letting
     /// the caller decide what "open" means for them.
     Q_INVOKABLE bool activate(int row);
@@ -118,6 +137,12 @@ signals:
     void fileActivated(const QString& uri);
 
 private:
+    /// The rows of a dropped payload this pane could actually take: the `file://`
+    /// ones that are not already sitting in this folder. `alreadyHereOut` counts
+    /// the ones left out for being here already, which is a different answer from
+    /// a payload with no files in it and has to be told apart from it.
+    QList<VfsUri> droppedRows(const QStringList& urls, int* alreadyHereOut = nullptr) const;
+
     void load(const VfsUri& uri, bool recordHistory);
     /// Notes where the cursor is before leaving `from` for `to`, so coming back
     /// -- or stepping up out of a folder -- lands where the user was rather

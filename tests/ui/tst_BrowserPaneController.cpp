@@ -1,3 +1,4 @@
+#include "support/FaultyFileSystem.h"
 #include "support/MoleTestMain.h"
 #include "support/TestSupport.h"
 #include "ui/models/BrowserPaneController.h"
@@ -6,11 +7,15 @@
 #include "core/index/IndexDatabase.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/VfsManager.h"
+#include "core/vfs/backends/LocalFileSystem.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
 #include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QUrl>
 
 using namespace mole;
 using namespace mole::test;
@@ -42,6 +47,16 @@ private slots:
     void targetDetailsFollowTheCursorWhenNothingIsTicked();
     void aDragOfATickedRowCarriesTheWholeSelection();
     void aDragOfAnUntickedRowCarriesThatRowAlone();
+
+    void droppedFilesArriveWithTheirContents();
+    void aDroppedFolderArrivesWithEverythingUnderneathIt();
+    void aDropOfAddressesRatherThanFilesIsRefusedOutLoud();
+    void aDropOfWhatIsAlreadyHereDoesNothingAndSaysNothing();
+    void aCollidingNameIsReportedBeforeAnythingIsWritten();
+    void stopKeepsTheFileThatWasAlreadyThere();
+    void skipKeepsTheFileThatWasAlreadyThere();
+    void overwriteReplacesIt();
+    void aReadOnlyDestinationRefusesAndQueuesNothing();
     void createDirectoryAnnouncesItself();
     void renameMovesTheEntry();
     void deleteRemovesTheTargets();
@@ -53,6 +68,17 @@ private slots:
 
 private:
     BrowserPaneController* makePane();
+    /// Mounts `path` as a local drive and answers with its uri. `writable` false
+    /// wraps it so the drive says it cannot be written to, which is what a
+    /// mounted archive is.
+    QString mountLocal(const QString& path, bool writable = true);
+    /// A pane pointed at `uri`, with the listing already loaded.
+    BrowserPaneController* paneOn(const QString& uri);
+    static QByteArray contentsOf(const QString& path);
+    /// How many tasks have been submitted so far. TaskManager keeps a task after
+    /// it has finished -- the strip shows what has just run -- so "queued
+    /// nothing" is a number that did not change rather than a number that is zero.
+    int queuedSoFar() const { return static_cast<int>(m_tasks->tasks().size()); }
 
     std::unique_ptr<QTemporaryDir> m_dir;
     VfsManager* m_vfs = nullptr;
@@ -102,6 +128,41 @@ void TestBrowserPaneController::cleanup()
 BrowserPaneController* TestBrowserPaneController::makePane()
 {
     return new BrowserPaneController(m_services, this);
+}
+
+QString TestBrowserPaneController::mountLocal(const QString& path, bool writable)
+{
+    Mount mount;
+    mount.id = QStringLiteral("disk-%1").arg(path);
+    mount.displayName = QStringLiteral("disk");
+    mount.root = VfsUri::fromLocalPath(path);
+
+    FileSystemPtr fs = std::make_shared<LocalFileSystem>();
+    if (!writable) {
+        auto declared = std::make_shared<FaultyFileSystem>(fs);
+        declared->readOnly();
+        fs = declared;
+    }
+    mount.fileSystem = std::move(fs);
+    m_vfs->addMount(mount);
+    return mount.root.toString();
+}
+
+BrowserPaneController* TestBrowserPaneController::paneOn(const QString& uri)
+{
+    BrowserPaneController* pane = makePane();
+    pane->navigateTo(uri);
+    if (!waitFor([pane] { return !pane->isLoading(); }))
+        return nullptr;
+    return pane;
+}
+
+QByteArray TestBrowserPaneController::contentsOf(const QString& path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return {};
+    return file.readAll();
 }
 
 void TestBrowserPaneController::navigateLoadsTheListing()
@@ -421,6 +482,218 @@ void TestBrowserPaneController::aDragOfAnUntickedRowCarriesThatRowAlone()
     // A row that does not exist is not a row: no payload rather than a guess.
     QVERIFY(pane->dragTargets(-1).isEmpty());
     QVERIFY(pane->dragTargets(99).isEmpty());
+}
+
+// ---- what a drop means -----------------------------------------------------
+//
+// No window and no gesture in any of these: the urls are handed straight to the
+// controller, which is where every rule about what a drop means lives. The
+// destination is a mounted local folder and the source is a second folder under
+// no mount at all -- an ordinary download folder, and the case VfsManager cannot
+// answer for.
+
+void TestBrowserPaneController::droppedFilesArriveWithTheirContents()
+{
+    TempTree here;
+    TempTree downloads;
+    QVERIFY(here.isValid());
+    QVERIFY(downloads.isValid());
+    QVERIFY(downloads.writeFile(QStringLiteral("invoice.pdf"), QByteArray("%PDF-1.4 invoice")));
+    QVERIFY(downloads.writeFile(QStringLiteral("photo.jpg"), QByteArray("\xff\xd8\xff jpeg")));
+
+    const QString destination = mountLocal(here.path());
+    BrowserPaneController* pane = paneOn(destination);
+    QVERIFY(pane);
+
+    // The premise of this test: the source really is outside every mount, which
+    // is what an ordinary download folder is and the one case resolve() cannot
+    // answer for.
+    QVERIFY(!m_vfs->resolve(VfsUri::fromLocalPath(downloads.absolute(QStringLiteral("invoice.pdf")))));
+
+    pane->dropHere({ QUrl::fromLocalFile(downloads.absolute(QStringLiteral("invoice.pdf"))).toString(),
+        QUrl::fromLocalFile(downloads.absolute(QStringLiteral("photo.jpg"))).toString() });
+
+    QVERIFY(waitFor([&here] {
+        return QFileInfo::exists(here.absolute(QStringLiteral("invoice.pdf")))
+            && QFileInfo::exists(here.absolute(QStringLiteral("photo.jpg")));
+    }));
+
+    // Arrived, and arrived whole: a file that is present and empty is the
+    // failure this is really about.
+    QCOMPARE(contentsOf(here.absolute(QStringLiteral("invoice.pdf"))), QByteArray("%PDF-1.4 invoice"));
+    QCOMPARE(contentsOf(here.absolute(QStringLiteral("photo.jpg"))), QByteArray("\xff\xd8\xff jpeg"));
+
+    // And the source is untouched, because a drop is a copy however the sending
+    // application would have preferred it.
+    QVERIFY(QFileInfo::exists(downloads.absolute(QStringLiteral("invoice.pdf"))));
+}
+
+void TestBrowserPaneController::aDroppedFolderArrivesWithEverythingUnderneathIt()
+{
+    TempTree here;
+    TempTree downloads;
+    QVERIFY(here.isValid());
+    QVERIFY(downloads.isValid());
+    QVERIFY(downloads.writeFile(QStringLiteral("holiday/beach.jpg"), QByteArray("sand")));
+    QVERIFY(downloads.writeFile(QStringLiteral("holiday/raw/beach.dng"), QByteArray("negative")));
+
+    BrowserPaneController* pane = paneOn(mountLocal(here.path()));
+    QVERIFY(pane);
+
+    pane->dropHere({ QUrl::fromLocalFile(downloads.absolute(QStringLiteral("holiday"))).toString() });
+
+    QVERIFY(waitFor(
+        [&here] { return QFileInfo::exists(here.absolute(QStringLiteral("holiday/raw/beach.dng"))); }));
+    QCOMPARE(contentsOf(here.absolute(QStringLiteral("holiday/beach.jpg"))), QByteArray("sand"));
+    QCOMPARE(contentsOf(here.absolute(QStringLiteral("holiday/raw/beach.dng"))), QByteArray("negative"));
+}
+
+void TestBrowserPaneController::aDropOfAddressesRatherThanFilesIsRefusedOutLoud()
+{
+    TempTree here;
+    QVERIFY(here.isValid());
+    BrowserPaneController* pane = paneOn(mountLocal(here.path()));
+    QVERIFY(pane);
+    QSignalSpy failed(pane, &BrowserPaneController::operationFailed);
+    const int queued = queuedSoFar();
+
+    // What a web browser hands over when a picture is dragged out of a page.
+    pane->dropHere({ QStringLiteral("https://example.invalid/cat.png"),
+        QStringLiteral("https://example.invalid/page.html") });
+
+    QCOMPARE(failed.count(), 1);
+    QVERIFY(!failed.first().first().toString().isEmpty());
+    QCOMPARE(queuedSoFar(), queued);
+    QCOMPARE(QDir(here.path()).entryList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot).size(), 0);
+}
+
+void TestBrowserPaneController::aDropOfWhatIsAlreadyHereDoesNothingAndSaysNothing()
+{
+    TempTree here;
+    QVERIFY(here.isValid());
+    QVERIFY(here.writeFile(QStringLiteral("already.txt"), QByteArray("mine")));
+
+    BrowserPaneController* pane = paneOn(mountLocal(here.path()));
+    QVERIFY(pane);
+    QSignalSpy failed(pane, &BrowserPaneController::operationFailed);
+    const int queued = queuedSoFar();
+
+    // A drag that ended over the folder it started in. Asking the user about a
+    // collision with itself would be the alternative.
+    pane->dropHere({ QUrl::fromLocalFile(here.absolute(QStringLiteral("already.txt"))).toString() });
+
+    QCOMPARE(failed.count(), 0);
+    QCOMPARE(queuedSoFar(), queued);
+    QCOMPARE(contentsOf(here.absolute(QStringLiteral("already.txt"))), QByteArray("mine"));
+}
+
+void TestBrowserPaneController::aCollidingNameIsReportedBeforeAnythingIsWritten()
+{
+    TempTree here;
+    TempTree downloads;
+    QVERIFY(here.isValid());
+    QVERIFY(downloads.isValid());
+    QVERIFY(here.writeFile(QStringLiteral("report.txt"), QByteArray("the one already here")));
+    QVERIFY(downloads.writeFile(QStringLiteral("report.txt"), QByteArray("the dropped one")));
+    QVERIFY(downloads.writeFile(QStringLiteral("notes.txt"), QByteArray("no clash")));
+
+    BrowserPaneController* pane = paneOn(mountLocal(here.path()));
+    QVERIFY(pane);
+    const int queued = queuedSoFar();
+
+    const QVariantMap plan
+        = pane->dropPlan({ QUrl::fromLocalFile(downloads.absolute(QStringLiteral("report.txt"))).toString(),
+            QUrl::fromLocalFile(downloads.absolute(QStringLiteral("notes.txt"))).toString() });
+
+    QCOMPARE(plan.value(QStringLiteral("count")).toInt(), 2);
+    QCOMPARE(plan.value(QStringLiteral("collisions")).toStringList(),
+        QStringList { QStringLiteral("report.txt") });
+    QCOMPARE(plan.value(QStringLiteral("targetPath")).toString(), pane->displayPath());
+    QVERIFY(plan.value(QStringLiteral("writable")).toBool());
+    // Asked, and nothing written by the asking: a plan is a question.
+    QCOMPARE(contentsOf(here.absolute(QStringLiteral("report.txt"))), QByteArray("the one already here"));
+    QCOMPARE(queuedSoFar(), queued);
+}
+
+void TestBrowserPaneController::stopKeepsTheFileThatWasAlreadyThere()
+{
+    TempTree here;
+    TempTree downloads;
+    QVERIFY(here.writeFile(QStringLiteral("report.txt"), QByteArray("the one already here")));
+    QVERIFY(downloads.writeFile(QStringLiteral("report.txt"), QByteArray("the dropped one")));
+
+    BrowserPaneController* pane = paneOn(mountLocal(here.path()));
+    QVERIFY(pane);
+    QSignalSpy failed(pane, &BrowserPaneController::operationFailed);
+
+    pane->dropHere({ QUrl::fromLocalFile(downloads.absolute(QStringLiteral("report.txt"))).toString() },
+        QStringLiteral("stop"));
+
+    // Stopped, and it says so: a refusal nobody is told about is the same as a
+    // file quietly lost.
+    QVERIFY(waitFor([&failed] { return failed.count() > 0; }));
+    QCOMPARE(contentsOf(here.absolute(QStringLiteral("report.txt"))), QByteArray("the one already here"));
+}
+
+void TestBrowserPaneController::skipKeepsTheFileThatWasAlreadyThere()
+{
+    TempTree here;
+    TempTree downloads;
+    QVERIFY(here.writeFile(QStringLiteral("report.txt"), QByteArray("the one already here")));
+    QVERIFY(downloads.writeFile(QStringLiteral("report.txt"), QByteArray("the dropped one")));
+    QVERIFY(downloads.writeFile(QStringLiteral("notes.txt"), QByteArray("no clash")));
+
+    BrowserPaneController* pane = paneOn(mountLocal(here.path()));
+    QVERIFY(pane);
+
+    pane->dropHere({ QUrl::fromLocalFile(downloads.absolute(QStringLiteral("report.txt"))).toString(),
+                       QUrl::fromLocalFile(downloads.absolute(QStringLiteral("notes.txt"))).toString() },
+        QStringLiteral("skip"));
+
+    // The one that did not clash still arrives: skip is about the collision, not
+    // about the drop.
+    QVERIFY(waitFor([&here] { return QFileInfo::exists(here.absolute(QStringLiteral("notes.txt"))); }));
+    QCOMPARE(contentsOf(here.absolute(QStringLiteral("report.txt"))), QByteArray("the one already here"));
+}
+
+void TestBrowserPaneController::overwriteReplacesIt()
+{
+    TempTree here;
+    TempTree downloads;
+    QVERIFY(here.writeFile(QStringLiteral("report.txt"), QByteArray("the one already here")));
+    QVERIFY(downloads.writeFile(QStringLiteral("report.txt"), QByteArray("the dropped one")));
+
+    BrowserPaneController* pane = paneOn(mountLocal(here.path()));
+    QVERIFY(pane);
+
+    pane->dropHere({ QUrl::fromLocalFile(downloads.absolute(QStringLiteral("report.txt"))).toString() },
+        QStringLiteral("overwrite"));
+
+    QVERIFY(waitFor([&here] {
+        return contentsOf(here.absolute(QStringLiteral("report.txt"))) == QByteArray("the dropped one");
+    }));
+}
+
+void TestBrowserPaneController::aReadOnlyDestinationRefusesAndQueuesNothing()
+{
+    TempTree here;
+    TempTree downloads;
+    QVERIFY(downloads.writeFile(QStringLiteral("invoice.pdf"), QByteArray("%PDF")));
+
+    BrowserPaneController* pane = paneOn(mountLocal(here.path(), false));
+    QVERIFY(pane);
+    QVERIFY(!pane->isWritable());
+    QSignalSpy failed(pane, &BrowserPaneController::operationFailed);
+    const int queued = queuedSoFar();
+
+    pane->dropHere({ QUrl::fromLocalFile(downloads.absolute(QStringLiteral("invoice.pdf"))).toString() });
+
+    // Refused before anything is queued, and in the wording a transfer to a
+    // read-only destination already uses.
+    QCOMPARE(failed.count(), 1);
+    QVERIFY(failed.first().first().toString().contains(QStringLiteral("read-only")));
+    QCOMPARE(queuedSoFar(), queued);
+    QVERIFY(!QFileInfo::exists(here.absolute(QStringLiteral("invoice.pdf"))));
 }
 
 void TestBrowserPaneController::createDirectoryAnnouncesItself()

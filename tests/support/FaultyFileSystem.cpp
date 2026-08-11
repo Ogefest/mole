@@ -109,6 +109,7 @@ struct FaultyFileSystem::Policy
     /// Directories whose listing stalls until release().
     QStringList listStallPaths;
     std::atomic_bool noRandomAccess { false };
+    std::atomic_bool cannotWrite { false };
     bool failOnClose = false;
     QString closeMessage;
 };
@@ -543,6 +544,12 @@ FaultyFileSystem& FaultyFileSystem::cannotSeek()
     return *this;
 }
 
+FaultyFileSystem& FaultyFileSystem::readOnly()
+{
+    m_policy->cannotWrite.store(true);
+    return *this;
+}
+
 int FaultyFileSystem::openReadCount() const
 {
     QMutexLocker lock(&m_policy->mutex);
@@ -589,6 +596,8 @@ VfsCapabilities FaultyFileSystem::capabilities() const
     VfsCapabilities capabilities = m_inner->capabilities();
     if (m_policy->noRandomAccess.load())
         capabilities.setFlag(VfsCapability::RandomAccessRead, false);
+    if (m_policy->cannotWrite.load())
+        capabilities.setFlag(VfsCapability::Write, false);
     return capabilities;
 }
 

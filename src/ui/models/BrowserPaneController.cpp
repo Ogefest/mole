@@ -9,6 +9,12 @@
 #include "core/tasks/TaskManager.h"
 #include "core/tasks/TransferTask.h"
 #include "core/vfs/VfsManager.h"
+#include "core/vfs/backends/LocalFileSystem.h"
+
+#include <QFileInfo>
+#include <QLocale>
+#include <QSet>
+#include <QUrl>
 
 namespace mole {
 
@@ -315,6 +321,142 @@ void BrowserPaneController::deleteTargets()
     });
 
     m_files->clearSelection();
+    m_services.tasks->submit(task);
+}
+
+QList<VfsUri> BrowserPaneController::droppedRows(const QStringList& urls, int* alreadyHereOut) const
+{
+    QList<VfsUri> rows;
+    int alreadyHere = 0;
+
+    for (const QString& text : urls) {
+        // Only files. A browser offers http urls and a scrap of HTML beside
+        // them; no backend here could fetch either, and fetching from the web is
+        // not something this project does.
+        const QUrl url(text);
+        if (!url.isLocalFile())
+            continue;
+
+        const VfsUri uri = VfsUri::fromLocalPath(url.toLocalFile());
+        if (!uri.isValid())
+            continue;
+
+        // Already in this folder, which is what a drag onto the folder it came
+        // from looks like from here. Taking it would mean asking the user about
+        // collisions with itself.
+        if (uri.parent() == m_current) {
+            ++alreadyHere;
+            continue;
+        }
+
+        rows.append(uri);
+    }
+
+    if (alreadyHereOut)
+        *alreadyHereOut = alreadyHere;
+    return rows;
+}
+
+QVariantMap BrowserPaneController::dropPlan(const QStringList& urls) const
+{
+    QVariantMap plan;
+    const QList<VfsUri> rows = droppedRows(urls);
+
+    plan.insert(QStringLiteral("count"), static_cast<int>(rows.size()));
+    plan.insert(QStringLiteral("targetPath"), displayPath());
+    plan.insert(QStringLiteral("writable"), isWritable());
+    // A single item could be given a different name on arrival; a batch could
+    // not, because there would be nothing sensible to call the rest.
+    plan.insert(QStringLiteral("singleName"), rows.size() == 1 ? rows.first().fileName() : QString());
+
+    QSet<QString> existing;
+    for (int row = 0; row < m_files->rowCount(); ++row)
+        existing.insert(m_files->nameAt(row));
+
+    QStringList collisions;
+    qint64 bytes = 0;
+    for (const VfsUri& row : rows) {
+        if (existing.contains(row.fileName()))
+            collisions.append(row.fileName());
+
+        // A dropped url is a local path by construction, which is what makes
+        // this cheap enough to answer mid-gesture. A folder claims nothing: its
+        // own size says nothing about what is inside it, and walking it to find
+        // out is exactly what must not happen while the pointer is moving.
+        const QFileInfo info(row.toLocalPath());
+        if (info.isFile())
+            bytes += info.size();
+    }
+
+    plan.insert(QStringLiteral("collisions"), collisions);
+    plan.insert(QStringLiteral("sizeText"), QLocale().formattedDataSize(bytes));
+    return plan;
+}
+
+void BrowserPaneController::dropHere(const QStringList& urls, const QString& conflict)
+{
+    if (!m_current.isValid())
+        return;
+
+    // Refused while the answer is still cheap. A destination that cannot be
+    // written to has to say so rather than accept the drop and fail afterwards.
+    if (!isWritable()) {
+        emit operationFailed(QStringLiteral("%1 is read-only").arg(displayPath()));
+        return;
+    }
+
+    int alreadyHere = 0;
+    const QList<VfsUri> rows = droppedRows(urls, &alreadyHere);
+    if (rows.isEmpty()) {
+        // Nothing to do and nothing to say: the files are already where they
+        // were dropped.
+        if (alreadyHere > 0)
+            return;
+        // A drop that silently does nothing reads as a bug and gets reported as
+        // one, so the commonest way to get here -- dragging a picture out of a
+        // web page, which is a link rather than a file -- is named.
+        emit operationFailed(QStringLiteral("Nothing here is a file. A link or a picture dragged out "
+                                            "of a web page is an address, not a file to copy."));
+        return;
+    }
+
+    FileSystemPtr target = m_services.vfs->resolve(m_current);
+    if (!target) {
+        emit operationFailed(QStringLiteral("No drive is mounted here"));
+        return;
+    }
+
+    // The source is usually under no mount at all -- an ordinary download folder
+    // is neither Home nor a system volume, and resolve() answers from the mount
+    // table. The local backend is stateless, so constructing one is the right
+    // answer rather than refusing a perfectly ordinary file.
+    FileSystemPtr source = m_services.vfs->resolve(rows.first());
+    if (!source)
+        source = std::make_shared<LocalFileSystem>();
+
+    TransferTask::Request request;
+    request.sourceFileSystem = std::move(source);
+    request.targetFileSystem = std::move(target);
+    request.sources = rows;
+    request.targetDirectory = m_current;
+    // Never Move, whatever the source offered. Deleting somebody else's file
+    // because of a gesture that looks exactly like the one that copies is the
+    // one outcome a drop may not have -- see ADR-0040.
+    request.mode = TransferTask::Mode::Copy;
+    request.onConflict = conflict == QLatin1String("overwrite") ? TransferTask::Conflict::Overwrite
+        : conflict == QLatin1String("skip")                     ? TransferTask::Conflict::Skip
+                                                                : TransferTask::Conflict::Fail;
+
+    const VfsUri destination = m_current;
+    auto* task = new TransferTask(request);
+    connect(task, &Task::finished, this, [this, task, destination] {
+        if (!task->failures().isEmpty())
+            emit operationFailed(task->failures().join(QLatin1String("; ")));
+        // Announced rather than refreshed directly: every pane showing this
+        // folder has to see what arrived, not only the one that was dropped on.
+        m_services.events->postDirectoryChanged(destination);
+    });
+
     m_services.tasks->submit(task);
 }
 

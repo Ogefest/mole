@@ -9,6 +9,40 @@ wrong.
 
 ---
 
+## A dropped file had nowhere to land
+
+**Asked for:** MOLE-86 — the other direction, and the more common one. Something has just
+come out of a mail client or a download folder and belongs in the folder already open. Mole
+accepted nothing, so the file went somewhere else first and was moved afterwards.
+
+**What it turned out to be:** `dropPlan()` and `dropHere()` on the pane controller, and six
+rules decided here rather than left for the window to guess at. **A drop is a copy**, even
+when the source offers a move — Mole does not delete another application's file because
+something was dragged out of it. **Only `file://` urls are taken**, and a payload with
+nothing local in it is refused *out loud*, because the commonest way to produce one is
+dragging a picture out of a web page and a drop that silently does nothing gets reported as
+a bug. **Nothing is overwritten without an answer**: `Fail` is the default, `dropPlan()`
+names the collisions from the listing the pane has already loaded, and the caller passes back
+`skip`, `overwrite` or `stop` — the same three words `runTransfer()` already takes. **A
+read-only destination refuses** in the wording a transfer already uses.
+
+**The rule that would have been missed is the source under no mount at all.**
+`VfsManager::resolve()` answers from the mount table, and Home plus the system volumes are
+not the whole disk — an ordinary download folder is under nothing. The local backend is
+stateless, so the answer is to construct one rather than refuse a perfectly ordinary file.
+That case has its own test, and the test asserts the premise as well as the outcome: that
+`resolve()` really does answer nothing for the source it then copies from.
+
+**A drag that ends over the folder it started in does nothing, and says nothing.** Those
+rows are left out by parent path, which is also what keeps a pane-to-pane drag from asking
+the user about collisions with itself. It is told apart from a payload with no files in it,
+because one of the two deserves a message and the other does not.
+
+**`FaultyFileSystem` gained `readOnly()`.** A drive that declares it cannot be written to is
+what a mounted archive is, and every operation that writes needs an answer ready for one.
+One line in the shared wrapper rather than a fourth hand-written fake — the same argument
+the wrapper was built on.
+
 ## Nothing in the window ever asked what a selection looked like from outside
 
 **Asked for:** MOLE-85 — `DragSource` could say what a selection looks like to the rest of
