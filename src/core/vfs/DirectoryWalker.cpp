@@ -17,6 +17,12 @@ DirectoryWalker::DirectoryWalker(FileSystemPtr fileSystem, Options options)
 
 Result<void> DirectoryWalker::walk(const VfsUri& root, const CancelToken& cancel, const Visitor& visit)
 {
+    return walk(root, cancel, visit, {});
+}
+
+Result<void> DirectoryWalker::walk(const VfsUri& root, const CancelToken& cancel, const Visitor& visit,
+    const DirectoryVisitor& directoryDone)
+{
     m_visited = 0;
     m_stoppedEarly = false;
     m_errors.clear();
@@ -78,6 +84,11 @@ Result<void> DirectoryWalker::walk(const VfsUri& root, const CancelToken& cancel
 
             stack.append({ entry.uri, current.depth + 1 });
         }
+
+        // Reached only by the loop running out: a cancel and a Stop both return
+        // from inside it, so getting here means the whole listing was seen.
+        if (directoryDone)
+            directoryDone(current.uri, listing.value());
     }
 
     return {};

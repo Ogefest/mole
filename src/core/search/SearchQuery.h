@@ -151,6 +151,12 @@ private:
 /// telling you something.
 [[nodiscard]] SearchPlan planSearch(const SearchQuery& query, SearchSource source);
 
+/// Whether `uri` is `prefix` or sits under it.
+///
+/// A plain prefix test is wrong and quietly so: "mem:///database" begins with
+/// "mem:///data" and is not inside it. The boundary has to be a separator.
+[[nodiscard]] bool isUnder(const QString& uri, const QString& prefix);
+
 /// The lowercase form names are matched in.
 ///
 /// SQLite's LIKE and NOCASE only fold ASCII, so "Łódź" would never match

@@ -41,6 +41,15 @@ namespace {
 
 } // namespace
 
+bool isUnder(const QString& uri, const QString& prefix)
+{
+    if (prefix.isEmpty() || uri == prefix)
+        return true;
+    if (prefix.endsWith(QLatin1Char('/')))
+        return uri.startsWith(prefix);
+    return uri.startsWith(prefix) && uri.at(prefix.size()) == QLatin1Char('/');
+}
+
 QString foldForSearch(const QString& text)
 {
     return text.toLower();
@@ -146,7 +155,7 @@ bool SearchPredicate::matches(const FileEntry& entry) const
     case Field::Kind:
         return entry.isDir == flag;
     case Field::Path:
-        return text.isEmpty() || entry.uri.toString().startsWith(text);
+        return isUnder(entry.uri.toString(), text);
     }
     return true;
 }

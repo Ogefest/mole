@@ -128,6 +128,20 @@ private:
     /// The deepest indexed volume whose root is a prefix of the search root, if
     /// any covers it at all.
     std::optional<IndexVolume> coveringVolume() const;
+    /// Volumes whose root sits *inside* the search root, so each covers part of
+    /// it and none covers the whole. The ordinary case: people index the big
+    /// slow tree, not the disk it is on.
+    QList<IndexVolume> volumesInsideRoot() const;
+    /// Runs the walk over `root`, superseding whatever the index already put on
+    /// screen. `primed` is the rows it did, keyed by their parent directory.
+    void startWalk(FileSystemPtr fileSystem, const VfsUri& root, const SearchQuery& query,
+        const QHash<QString, QStringList>& primed);
+    /// "scanned 3 days ago", taken from the oldest of `volumes` -- the age a
+    /// mixed list has to admit to is the age of its stalest part.
+    static QString oldestScanNote(const QList<IndexVolume>& volumes);
+    /// The status line for a walk, accounting for the indexed half when there
+    /// was one. Unchanged text when there was not.
+    QString walkStatus(const QString& walkText, bool finished) const;
     /// Asks the index and reports the count through `doneFormat`, which takes
     /// it as %1. Both scopes that reach the index come through here, so the two
     /// differ in what they say and in nothing else.
@@ -152,8 +166,12 @@ private:
     bool m_truncated = false;
     QString m_statusText;
     QPointer<LiveSearchTask> m_task;
-    /// The other engine. Only ever one of the two is running.
+    /// The other engine. Both run for a partly indexed folder, one after the
+    /// other: the index primes the list and the walk corrects it.
     QPointer<IndexSearchTask> m_indexTask;
+    /// How the status line accounts for a search answered by both halves.
+    int m_primedFromIndex = 0;
+    QString m_primedNote;
 };
 
 class LiveSearchFeature final : public IFeature

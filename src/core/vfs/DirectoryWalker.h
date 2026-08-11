@@ -30,6 +30,16 @@ public:
     /// Called for every entry found, in no guaranteed order.
     using Visitor = std::function<Action(const FileEntry& entry, int depth)>;
 
+    /// Called once every entry of `dir` has been through the visitor, with the
+    /// whole listing -- including what the visitor declined.
+    ///
+    /// A caller holding an older record of a directory needs to know what is
+    /// in it now, not what matched: the difference between the two is what has
+    /// been deleted since. Not called for a directory the walk could not read,
+    /// or for one it stopped in the middle of, because neither is a directory
+    /// anybody has seen the whole of.
+    using DirectoryVisitor = std::function<void(const VfsUri& dir, const FileEntryList& entries)>;
+
     // Two overloads rather than a defaulted argument: Options carries default
     // member initializers, and those are not usable in a default argument of
     // the class that encloses them.
@@ -40,6 +50,9 @@ public:
     /// and skipped rather than aborting the whole traversal -- one permission
     /// denied deep in /var must not kill a 300k-file scan.
     Result<void> walk(const VfsUri& root, const CancelToken& cancel, const Visitor& visit);
+    /// The same, telling `directoryDone` when each directory has been seen whole.
+    Result<void> walk(const VfsUri& root, const CancelToken& cancel, const Visitor& visit,
+        const DirectoryVisitor& directoryDone);
 
     qint64 visitedCount() const { return m_visited; }
     const QList<VfsError>& errors() const { return m_errors; }

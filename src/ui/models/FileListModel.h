@@ -3,6 +3,7 @@
 #include "core/vfs/FileEntry.h"
 
 #include <QAbstractListModel>
+#include <QDateTime>
 #include <QHash>
 #include <QSet>
 
@@ -41,7 +42,22 @@ public:
         /// An alert is watching this entry, and whether it has tripped.
         HasAlertRole,
         AlertTriggeredRole,
+        /// Whether this row is what is on disk now or what a scan recorded.
+        ProvenanceRole,
+        /// When that scan ran. Invalid for a row seen now.
+        IndexedAtRole,
     };
+
+    /// Where a row came from.
+    ///
+    /// A list that mixes what is on disk now with what a scan recorded is only
+    /// an answer anybody can reason about if the row says which it is. The
+    /// marking is not a decoration on the feature -- it is the feature.
+    enum Provenance {
+        SeenNow = 0, ///< a listing or a walk found it, just now
+        FromIndex, ///< a previous scan recorded it, and nothing has checked since
+    };
+    Q_ENUM(Provenance)
 
     enum class SortKey { Name, Size, Modified, Type };
     Q_ENUM(SortKey)
@@ -66,6 +82,24 @@ public:
     /// Appends without disturbing what is already shown -- used by searches
     /// that stream their results in.
     void appendEntries(const FileEntryList& entries);
+    /// The same, except that a row already here for the same uri is replaced
+    /// where it sits rather than added again.
+    ///
+    /// What a search does when it primed its list from an index and is now
+    /// walking the same tree: the walk's answer supersedes the scan's, in
+    /// place, so the row stops being marked as remembered and starts being
+    /// what is there.
+    void mergeEntries(const FileEntryList& entries);
+    /// Withdraws rows by uri. What a search does when the walk reaches a
+    /// directory and finds that something the index claimed is not there.
+    void removeEntries(const QStringList& uris);
+
+    /// Marks rows as recorded by a scan that ran at `scannedAt`. Anything not
+    /// marked is what it always was: seen now.
+    void markFromIndex(const QStringList& uris, const QDateTime& scannedAt);
+    /// How many rows are still only what a scan remembered.
+    Q_INVOKABLE int fromIndexCount() const { return static_cast<int>(m_indexed.size()); }
+
     Q_INVOKABLE void clear();
 
     /// Directories first, then by the current sort key.
@@ -78,7 +112,7 @@ public:
     QString filterText() const { return m_filterText; }
     void setFilterText(const QString& text);
     /// Rows before filtering, for "12 of 340" in the status line.
-    int totalCount() const { return static_cast<int>(m_all.size()); }
+    int totalCount() const { return static_cast<int>(m_all.size() - m_withdrawn.size()); }
     SortKey sortKey() const { return m_sortKey; }
     void setSortKey(SortKey key);
     bool sortDescending() const { return m_sortDescending; }
@@ -156,6 +190,16 @@ private:
 
     QHash<QString, int> m_annotations;
 
+    struct IndexedRow
+    {
+        int offset = -1; ///< into m_all
+        QDateTime scannedAt;
+    };
+    /// The rows a scan supplied, by uri. Only these can be superseded or
+    /// withdrawn, so only these need an index into m_all -- keeping the map to
+    /// the indexed half rather than to every row a long search finds.
+    QHash<QString, IndexedRow> m_indexed;
+
     /// Drops selected uris that are no longer present.
     void pruneSelection();
 
@@ -174,6 +218,12 @@ private:
     /// Safe because m_all only ever grows or is replaced wholesale -- nothing
     /// removes a single entry from it, which is what would strand an offset.
     QList<int> m_visible;
+    /// Offsets in m_all that have been taken back.
+    ///
+    /// Withdrawn rather than erased: m_visible holds offsets into m_all, so
+    /// erasing one entry would strand every offset after it. Nothing else in
+    /// this class removes a single entry, and this is why.
+    QSet<int> m_withdrawn;
     QSet<QString> m_selected;
     /// Dropped whenever the listing is replaced: a measurement belongs to the
     /// tree as it was when it was taken.

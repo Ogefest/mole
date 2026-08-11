@@ -9,6 +9,40 @@ wrong.
 
 ---
 
+## A folder whose subfolder was indexed was treated as if nothing had been
+
+**Asked for:** MOLE-149 — ADR-0005 ruled that partial coverage counts as none, and gave a
+good reason: a list of which some rows are current and some are as old as the last scan,
+with nothing on the row to say which. Partial coverage is also the ordinary case — people
+index the big slow tree, not the disk it sits on.
+
+**What it turned out to be:** the answer was in the objection. *Nothing on the row to say
+which* — so it goes on the row. The index answers first and its rows appear at once, each
+marked as a memory and carrying the date of the scan that recorded it; the walk then goes
+over the whole folder and supersedes them one path at a time, so the list converges on the
+truth while somebody is reading it. Once the walk has listed a directory it knows
+everything in it, which is what lets a file deleted since the scan be taken back at the
+moment that becomes knowable. [ADR-0038](docs/adr/0038-a-mixed-list-says-which-rows-are-remembered.md)
+records it and supersedes that one rule of ADR-0005.
+
+**The ticket contradicted itself, and the author settled it.** It asked for the walk to
+skip the covered subtree *and* for the walk to supersede rows the index reported — which
+cannot both hold, since a skipped subtree is one the walk never reaches. Three of the seven
+acceptance criteria needed the overlap. Asked, the answer was to walk it: the index buys
+time to the first answer rather than less work, and the case where the work really is
+avoided is full coverage, where there is no walk at all.
+
+**The marking is the feature.** Every assertion in the new `tst_MixedSearch` is about a
+row's provenance rather than a count, because a build that mixed the two halves silently
+would be the thing ADR-0005 refused. The suite covers all three shapes — fully covered,
+partly, not at all — and the first two are unchanged from what they were.
+
+**Two smaller things came out of it.** `DirectoryWalker` gained a callback for *this
+directory has now been seen whole*, which is the only moment a walk can honestly say
+something is missing. And the path-prefix test the scope rests on was a plain
+`startsWith`, so a search of `/data` counted `/database` as inside it; it now requires the
+boundary to be a separator.
+
 ## There were two searches, and which one you were in was your problem
 
 **Asked for:** MOLE-148 — `Ctrl+F` walked a folder and `Ctrl+Shift+I` queried the index,

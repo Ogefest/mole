@@ -84,8 +84,10 @@ void FileListModel::setEntries(FileEntryList entries)
     beginResetModel();
     m_all = std::move(entries);
     // A measurement describes the tree as it was when it was taken, so a new
-    // listing starts without any.
+    // listing starts without any. The same goes for where rows came from.
     m_measured.clear();
+    m_indexed.clear();
+    m_withdrawn.clear();
     rebuildVisible();
     pruneSelection();
     endResetModel();
@@ -176,6 +178,88 @@ void FileListModel::appendEntries(const FileEntryList& entries)
     emit countChanged();
 }
 
+void FileListModel::mergeEntries(const FileEntryList& entries)
+{
+    FileEntryList fresh;
+    fresh.reserve(entries.size());
+
+    for (const FileEntry& entry : entries) {
+        const QString uri = entry.uri.toString();
+        const auto known = m_indexed.constFind(uri);
+        if (known == m_indexed.constEnd()) {
+            fresh.append(entry);
+            continue;
+        }
+
+        // The walk found what the scan remembered. The row keeps its place --
+        // moving it would pull the list out from under whoever is reading it --
+        // and stops being a memory: these are the facts on disk.
+        const int offset = known->offset;
+        m_indexed.erase(known);
+        if (offset < 0 || offset >= m_all.size())
+            continue;
+        m_all[offset] = entry;
+
+        const int row = static_cast<int>(m_visible.indexOf(offset));
+        if (row < 0)
+            continue;
+        const QModelIndex changed = index(row, 0);
+        emit dataChanged(changed, changed);
+    }
+
+    appendEntries(fresh);
+}
+
+void FileListModel::removeEntries(const QStringList& uris)
+{
+    bool any = false;
+    for (const QString& uri : uris) {
+        const auto known = m_indexed.constFind(uri);
+        if (known == m_indexed.constEnd())
+            continue;
+        const int offset = known->offset;
+        m_indexed.erase(known);
+        if (offset < 0 || offset >= m_all.size() || m_withdrawn.contains(offset))
+            continue;
+
+        m_withdrawn.insert(offset);
+        any = true;
+        const int row = static_cast<int>(m_visible.indexOf(offset));
+        if (row < 0)
+            continue;
+        beginRemoveRows(QModelIndex(), row, row);
+        m_visible.removeAt(row);
+        endRemoveRows();
+    }
+
+    if (any)
+        emit countChanged();
+}
+
+void FileListModel::markFromIndex(const QStringList& uris, const QDateTime& scannedAt)
+{
+    if (uris.isEmpty() || m_all.isEmpty())
+        return;
+
+    // One pass over the rows rather than a lookup per uri: this is called once
+    // per volume that contributed, which is a handful of times, and the rows
+    // have no uri map of their own to spend memory on.
+    const QSet<QString> wanted(uris.cbegin(), uris.cend());
+    bool any = false;
+    for (int offset = 0; offset < m_all.size(); ++offset) {
+        const QString uri = m_all.at(offset).uri.toString();
+        if (!wanted.contains(uri))
+            continue;
+        m_indexed.insert(uri, IndexedRow { offset, scannedAt });
+        any = true;
+    }
+
+    if (any && !m_visible.isEmpty()) {
+        emit dataChanged(
+            index(0, 0), index(static_cast<int>(m_visible.size()) - 1, 0), { ProvenanceRole, IndexedAtRole });
+    }
+}
+
 void FileListModel::clear()
 {
     if (m_all.isEmpty())
@@ -185,6 +269,8 @@ void FileListModel::clear()
     m_visible.clear();
     m_selected.clear();
     m_measured.clear();
+    m_indexed.clear();
+    m_withdrawn.clear();
     endResetModel();
     emit countChanged();
     emit selectionChanged();
@@ -291,6 +377,8 @@ void FileListModel::rebuildVisible()
             continue;
         if (!m_filterFolded.isEmpty() && !entry.name.toLower().contains(m_filterFolded))
             continue;
+        if (m_withdrawn.contains(static_cast<int>(row)))
+            continue;
         m_visible.append(static_cast<int>(row));
     }
 
@@ -317,6 +405,10 @@ QVariant FileListModel::data(const QModelIndex& index, int role) const
         return entry.uri.toString();
     case ParentUriRole:
         return entry.uri.parent().toString();
+    case ProvenanceRole:
+        return m_indexed.contains(entry.uri.toString()) ? FromIndex : SeenNow;
+    case IndexedAtRole:
+        return m_indexed.value(entry.uri.toString()).scannedAt;
     case IsDirRole:
         return entry.isDir;
     case IsHiddenRole:
@@ -375,6 +467,8 @@ QHash<int, QByteArray> FileListModel::roleNames() const
         { HasReportRole, "hasReport" },
         { HasAlertRole, "hasAlert" },
         { AlertTriggeredRole, "alertTriggered" },
+        { ProvenanceRole, "provenance" },
+        { IndexedAtRole, "indexedAt" },
     };
 }
 

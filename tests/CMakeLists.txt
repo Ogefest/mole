@@ -184,6 +184,11 @@ mole_add_test(tst_CommandPalette       SOURCES ui/tst_CommandPalette.cpp       L
 
 # --- the assembled application ----------------------------------------------
 mole_add_test(tst_AppIntegration    SOURCES app/tst_AppIntegration.cpp   LIBS mole_builtin)
+
+# A folder with an indexed subtree in it, answered by both engines at once. Its
+# own binary because it fills an in-memory drive and interferes with it between
+# the scan and the search, which is state the integration suite would trip over.
+mole_add_test(tst_MixedSearch       SOURCES app/tst_MixedSearch.cpp      LIBS mole_builtin)
 mole_add_test(tst_Session           SOURCES app/tst_Session.cpp          LIBS mole_builtin)
 mole_add_test(tst_Preview           SOURCES app/tst_Preview.cpp          LIBS mole_builtin)
 

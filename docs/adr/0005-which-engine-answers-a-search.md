@@ -1,9 +1,14 @@
 # ADR-0005: The search form decides whether to walk or to ask the index
 
 - **Date:** 2026-08-08
-- **Status:** Accepted. The *index-search tab stays as it is* paragraph below is
-  superseded by [ADR-0037](0037-the-scope-is-a-field-not-a-second-tab.md) — the
-  scope is a field on the one search now. Everything else here still holds.
+- **Status:** Accepted, with two rules below since superseded. The *index-search
+  tab stays as it is* paragraph is superseded by
+  [ADR-0037](0037-the-scope-is-a-field-not-a-second-tab.md) — the scope is a
+  field on the one search now. *Partial coverage counts as no coverage* is
+  superseded by
+  [ADR-0038](0038-a-mixed-list-says-which-rows-are-remembered.md) — both halves
+  answer and every row says which half it came from. Everything else here,
+  including the toggle and the rule that the engine is always named, still holds.
 
 ## Context
 

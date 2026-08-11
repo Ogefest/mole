@@ -143,6 +143,9 @@ Rectangle {
             required property bool isDir
             required property string sizeText
             required property string iconText
+            /// 0 seen now, 1 from a previous scan. See FileListModel::Provenance.
+            required property int provenance
+            required property var indexedAt
 
             width: ListView.view.width
             height: 34
@@ -164,6 +167,24 @@ Rectangle {
                 spacing: 8
 
                 Label { text: iconText; font.pixelSize: App.textSize }
+
+                // A row a scan remembered rather than one anything has just
+                // looked at. Quiet, because most rows in a mixed list are this
+                // for a moment and then stop being it; and marked at all,
+                // because a list that mixes the two without saying which is an
+                // answer nobody can reason about. See ADR-0038.
+                Label {
+                    objectName: "rememberedMarker"
+                    visible: provenance === 1
+                    text: "\u25CB" // an open circle: seen once, not just now
+                    color: "#8b93a7"
+                    font.pixelSize: App.smallTextSize
+                    ToolTip.visible: hovered.hovered
+                    ToolTip.text: indexedAt && !isNaN(indexedAt.getTime())
+                                  ? "From the index, scanned " + indexedAt.toLocaleString(Qt.locale())
+                                  : "From the index"
+                    HoverHandler { id: hovered }
+                }
 
                 ColumnLayout {
                     Layout.fillWidth: true

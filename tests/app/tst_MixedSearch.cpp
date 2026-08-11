@@ -1,0 +1,319 @@
+#include "plugins/builtin/BuiltinPlugin.h"
+#include "plugins/builtin/SearchFeatures.h"
+#include "support/MoleTestMain.h"
+#include "support/TestSupport.h"
+#include "ui/AppController.h"
+#include "ui/models/FileListModel.h"
+#include "ui/models/TabsModel.h"
+#include "ui/models/TaskListModel.h"
+
+#include "core/vfs/VfsManager.h"
+#include "core/vfs/backends/MemoryFileSystem.h"
+
+#include <QFile>
+
+using namespace mole;
+using namespace mole::test;
+
+/// A folder with an indexed subtree in it, which is the ordinary case.
+///
+/// People index the big slow tree, not the whole disk, so a search over the
+/// folder above it used to be treated as if nothing had been indexed at all.
+/// ADR-0005 said why — a list of which some rows are current and some are as
+/// old as the last scan, with nothing on the row to say which. ADR-0038 answers
+/// it the way the objection points at: put it on the row.
+///
+/// **The marking is the feature.** A build of this that mixes the two halves
+/// without saying which is which has not done the work, so every assertion here
+/// is about a row's provenance rather than only about the count.
+class TestMixedSearch : public QObject
+{
+    Q_OBJECT
+
+private slots:
+    void initTestCase();
+    void init();
+    void cleanup();
+
+    void theIndexedPartArrivesFirstAndIsMarkedAsRemembered();
+    void aFileDeletedSinceTheScanIsTakenBackWhenTheWalkPassesIt();
+    void aFileChangedSinceTheScanEndsUpShowingWhatIsOnDisk();
+    void nothingIsListedTwiceWhenAPathIsInBothHalves();
+    void cancellingLeavesWhatWasShownAndSaysItStopped();
+    void aFullyCoveredFolderIsStillAnsweredByTheIndexAlone();
+    void anUnindexedFolderIsStillJustAWalk();
+
+private:
+    /// The search tab, aimed at `root`, with the index allowed.
+    LiveSearchController* searchOver(const QString& root);
+    /// Runs `search` to completion and returns false if it never finished.
+    bool runToEnd(LiveSearchController* search);
+    /// Scans `uri` into the index and waits for it.
+    bool index(const QString& uri, const QString& label);
+
+    QStringList urisIn(const FileListModel* results) const;
+    int provenanceOf(const FileListModel* results, const QString& uri) const;
+    qint64 sizeOf(const FileListModel* results, const QString& uri) const;
+
+    QString memUri(const QString& path) const { return QStringLiteral("mem://") + path; }
+
+    PrivateProfile m_profile;
+    std::unique_ptr<TempTree> m_tree;
+    std::unique_ptr<AppController> m_app;
+    std::shared_ptr<MemoryFileSystem> m_mem;
+};
+
+void TestMixedSearch::initTestCase()
+{
+    QVERIFY(m_profile.isValid());
+    qputenv("MOLE_PLUGIN_PATH", QByteArray(MOLE_TEST_PLUGIN_DIR));
+}
+
+void TestMixedSearch::init()
+{
+    // A fresh profile per test, index included: what one of these scans would
+    // otherwise still be covering the folder the next one expects to walk.
+    m_profile.clearVolatileState();
+    QFile::remove(QString::fromLocal8Bit(qgetenv("MOLE_INDEX_PATH")));
+    QFile::remove(QString::fromLocal8Bit(qgetenv("MOLE_BOOKMARKS_PATH")));
+
+    m_tree = std::make_unique<TempTree>();
+    QVERIFY(m_tree->isValid());
+
+    std::vector<std::unique_ptr<IPlugin>> plugins;
+    plugins.push_back(std::make_unique<BuiltinPlugin>(m_tree->rootUri().toString()));
+    m_app = std::make_unique<AppController>();
+    QString error;
+    QVERIFY2(m_app->initialise(std::move(plugins), &error), qPrintable(error));
+
+    // The backend is built here and handed over, rather than asked for back
+    // through resolve(): every real mount is wrapped for logging, so what comes
+    // back out is not the object the fixture has to interfere with.
+    m_mem = std::make_shared<MemoryFileSystem>();
+    Mount scratch;
+    scratch.id = QStringLiteral("scratch");
+    scratch.displayName = QStringLiteral("Scratch");
+    scratch.root = VfsUri::fromString(QStringLiteral("mem:///"));
+    scratch.fileSystem = m_mem;
+    QVERIFY(!m_app->services().vfs->addMount(scratch).isEmpty());
+    QVERIFY(m_app->services().vfs->resolve(VfsUri::fromString(QStringLiteral("mem:///"))) != nullptr);
+
+    // /tree/plain is walked; /tree/archive is scanned and then walked over.
+    m_mem->addFile(QStringLiteral("/tree/plain/loose-note.txt"), QByteArray("x"));
+    m_mem->addFile(QStringLiteral("/tree/archive/kept-note.txt"), QByteArray("x"));
+    m_mem->addFile(QStringLiteral("/tree/archive/gone-note.txt"), QByteArray("x"));
+    m_mem->addFile(QStringLiteral("/tree/archive/grown-note.txt"), QByteArray(10, 'x'));
+}
+
+void TestMixedSearch::cleanup()
+{
+    m_app.reset();
+    m_mem.reset();
+    m_tree.reset();
+}
+
+LiveSearchController* TestMixedSearch::searchOver(const QString& root)
+{
+    const int row = m_app->tabs()->openTab(QStringLiteral("mole.livesearch"));
+    if (row < 0)
+        return nullptr;
+    auto* search = qobject_cast<LiveSearchController*>(m_app->tabs()->controllerAt(row));
+    if (!search)
+        return nullptr;
+    search->setRootUri(root);
+    search->setQueryText(QStringLiteral("-note"));
+    return search;
+}
+
+bool TestMixedSearch::runToEnd(LiveSearchController* search)
+{
+    search->start();
+    return waitFor([search] { return !search->isRunning(); }, 20000);
+}
+
+bool TestMixedSearch::index(const QString& uri, const QString& label)
+{
+    const int row = m_app->tabs()->openTab(QStringLiteral("mole.livesearch"));
+    if (row < 0)
+        return false;
+    auto* scanner = qobject_cast<LiveSearchController*>(m_app->tabs()->controllerAt(row));
+    if (!scanner)
+        return false;
+    scanner->scanDirectory(uri, label);
+    if (!waitFor([this] { return m_app->tasks()->activeCount() == 0; }, 20000))
+        return false;
+    m_app->tabs()->closeTab(row);
+    return true;
+}
+
+QStringList TestMixedSearch::urisIn(const FileListModel* results) const
+{
+    QStringList uris;
+    for (int row = 0; row < results->rowCount(); ++row)
+        uris.append(results->index(row, 0).data(FileListModel::UriRole).toString());
+    uris.sort();
+    return uris;
+}
+
+int TestMixedSearch::provenanceOf(const FileListModel* results, const QString& uri) const
+{
+    for (int row = 0; row < results->rowCount(); ++row) {
+        const QModelIndex at = results->index(row, 0);
+        if (at.data(FileListModel::UriRole).toString() == uri)
+            return at.data(FileListModel::ProvenanceRole).toInt();
+    }
+    return -1; // not in the list at all, which no assertion here should mistake
+}
+
+qint64 TestMixedSearch::sizeOf(const FileListModel* results, const QString& uri) const
+{
+    for (int row = 0; row < results->rowCount(); ++row) {
+        const QModelIndex at = results->index(row, 0);
+        if (at.data(FileListModel::UriRole).toString() == uri)
+            return at.data(FileListModel::SizeRole).toLongLong();
+    }
+    return -1;
+}
+
+void TestMixedSearch::theIndexedPartArrivesFirstAndIsMarkedAsRemembered()
+{
+    QVERIFY(index(memUri(QStringLiteral("/tree/archive")), QStringLiteral("archive")));
+
+    // Slow enough to list that the walk cannot have overtaken the index by the
+    // time the assertion runs. Waited for on the condition, never on the clock.
+    m_mem->setListDelayMs(60);
+
+    LiveSearchController* search = searchOver(memUri(QStringLiteral("/tree")));
+    QVERIFY(search);
+    search->start();
+
+    QVERIFY2(waitFor([search] { return search->results()->fromIndexCount() > 0; }, 10000),
+        "the indexed part has to be on screen before the walk has been anywhere");
+
+    // Every row on screen at this moment came from the scan, and says so.
+    for (const QString& uri : urisIn(search->results())) {
+        QCOMPARE(provenanceOf(search->results(), uri), int(FileListModel::FromIndex));
+        QVERIFY2(uri.contains(QStringLiteral("/tree/archive/")),
+            "only the scanned subtree can be answered from the index");
+    }
+    QVERIFY2(search->statusText().contains(QStringLiteral("from the index")),
+        "and the line says how much of the list is a memory");
+
+    m_mem->setListDelayMs(0);
+    QVERIFY(waitFor([search] { return !search->isRunning(); }, 20000));
+
+    // By the end the walk has been over all of it, so nothing is a memory.
+    QCOMPARE(search->results()->fromIndexCount(), 0);
+    QVERIFY2(search->statusText().contains(QStringLiteral("every row current")),
+        "a finished walk means every row is what is on disk, and may say so");
+}
+
+void TestMixedSearch::aFileDeletedSinceTheScanIsTakenBackWhenTheWalkPassesIt()
+{
+    QVERIFY(index(memUri(QStringLiteral("/tree/archive")), QStringLiteral("archive")));
+    QVERIFY(
+        m_mem->remove(VfsUri::fromString(memUri(QStringLiteral("/tree/archive/gone-note.txt"))), false).ok());
+
+    LiveSearchController* search = searchOver(memUri(QStringLiteral("/tree")));
+    QVERIFY(search);
+    QVERIFY(runToEnd(search));
+
+    const QStringList uris = urisIn(search->results());
+    QVERIFY2(!uris.contains(memUri(QStringLiteral("/tree/archive/gone-note.txt"))),
+        "a file deleted since the scan stayed on the list after the walk passed its folder");
+    QCOMPARE(uris.size(), 3); // kept, grown, loose
+    QCOMPARE(search->results()->fromIndexCount(), 0);
+}
+
+void TestMixedSearch::aFileChangedSinceTheScanEndsUpShowingWhatIsOnDisk()
+{
+    QVERIFY(index(memUri(QStringLiteral("/tree/archive")), QStringLiteral("archive")));
+
+    const QString grown = memUri(QStringLiteral("/tree/archive/grown-note.txt"));
+    m_mem->addFile(QStringLiteral("/tree/archive/grown-note.txt"), QByteArray(9000, 'x'));
+
+    LiveSearchController* search = searchOver(memUri(QStringLiteral("/tree")));
+    QVERIFY(search);
+    QVERIFY(runToEnd(search));
+
+    // The row is the one the index put there, replaced in place by the walk:
+    // one row, current facts, and no longer marked as remembered.
+    QCOMPARE(urisIn(search->results()).count(grown), 1);
+    QCOMPARE(sizeOf(search->results(), grown), 9000);
+    QCOMPARE(provenanceOf(search->results(), grown), int(FileListModel::SeenNow));
+}
+
+void TestMixedSearch::nothingIsListedTwiceWhenAPathIsInBothHalves()
+{
+    QVERIFY(index(memUri(QStringLiteral("/tree/archive")), QStringLiteral("archive")));
+
+    LiveSearchController* search = searchOver(memUri(QStringLiteral("/tree")));
+    QVERIFY(search);
+    QVERIFY(runToEnd(search));
+
+    const QStringList uris = urisIn(search->results());
+    QCOMPARE(uris.size(), QSet<QString>(uris.cbegin(), uris.cend()).size());
+    QCOMPARE(uris.size(), 4);
+    // And the total behind the filter agrees, so "4 of 4" cannot hide a double.
+    QCOMPARE(search->results()->totalCount(), 4);
+}
+
+void TestMixedSearch::cancellingLeavesWhatWasShownAndSaysItStopped()
+{
+    QVERIFY(index(memUri(QStringLiteral("/tree/archive")), QStringLiteral("archive")));
+    for (int i = 0; i < 30; ++i)
+        m_mem->addFile(QStringLiteral("/tree/plain/deep%1/filler-note.txt").arg(i), QByteArray("x"));
+    m_mem->setListDelayMs(40);
+
+    LiveSearchController* search = searchOver(memUri(QStringLiteral("/tree")));
+    QVERIFY(search);
+    search->start();
+
+    QVERIFY(waitFor([search] { return search->results()->rowCount() > 0; }, 10000));
+    const int shown = search->results()->rowCount();
+    search->stop();
+    QVERIFY(waitFor([search] { return !search->isRunning(); }, 20000));
+
+    QVERIFY2(
+        search->results()->rowCount() >= shown, "cancelling threw away results that had already been shown");
+    QVERIFY2(search->statusText().contains(QStringLiteral("stopped")),
+        "a stopped search must not read like a finished one");
+    QVERIFY2(!search->statusText().contains(QStringLiteral("every row current")),
+        "and must not claim the list is current when the walk never got there");
+}
+
+void TestMixedSearch::aFullyCoveredFolderIsStillAnsweredByTheIndexAlone()
+{
+    // Unchanged by all of the above: the whole folder is covered, so there is
+    // nothing to walk and nothing to mark.
+    QVERIFY(index(memUri(QStringLiteral("/tree")), QStringLiteral("whole tree")));
+
+    LiveSearchController* search = searchOver(memUri(QStringLiteral("/tree")));
+    QVERIFY(search);
+    QVERIFY(search->indexCoversRoot());
+    QVERIFY(runToEnd(search));
+
+    QCOMPARE(urisIn(search->results()).size(), 4);
+    QVERIFY2(search->statusText().contains(QStringLiteral("from the index")),
+        "an answer that might be stale has to say where it came from");
+    QVERIFY2(search->statusText().contains(QStringLiteral("scanned")), "and how old it is");
+    QCOMPARE(search->results()->fromIndexCount(), 0); // nothing walked, so nothing to mark
+}
+
+void TestMixedSearch::anUnindexedFolderIsStillJustAWalk()
+{
+    LiveSearchController* search = searchOver(memUri(QStringLiteral("/tree")));
+    QVERIFY(search);
+    QVERIFY(!search->indexCoversRoot());
+    QVERIFY(runToEnd(search));
+
+    QCOMPARE(urisIn(search->results()).size(), 4);
+    QCOMPARE(search->results()->fromIndexCount(), 0);
+    QVERIFY2(!search->statusText().contains(QStringLiteral("index")),
+        "a walk must not claim to have come from the index");
+    QVERIFY2(search->statusText().contains(QStringLiteral("matches")),
+        "it says what a walk says, exactly as it did before any of this");
+}
+
+MOLE_TEST_MAIN(TestMixedSearch)
+#include "tst_MixedSearch.moc"

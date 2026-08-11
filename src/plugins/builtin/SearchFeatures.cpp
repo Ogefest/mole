@@ -233,26 +233,81 @@ bool LiveSearchController::indexCoversRoot() const
     return coveringVolume().has_value();
 }
 
+namespace {
+
+    /// How long ago, in words. The whole reason the index is safe to default to is
+    /// that it admits its own age, so this is said rather than implied.
+    QString ageInWords(const QDateTime& when)
+    {
+        const qint64 seconds = when.secsTo(QDateTime::currentDateTime());
+        if (seconds < 120)
+            return QStringLiteral("just now");
+        if (seconds < 7200)
+            return QStringLiteral("%1 minutes ago").arg(seconds / 60);
+        if (seconds < 172800)
+            return QStringLiteral("%1 hours ago").arg(seconds / 3600);
+        return QStringLiteral("%1 days ago").arg(seconds / 86400);
+    }
+
+} // namespace
+
 QString LiveSearchController::indexNote() const
 {
     const std::optional<IndexVolume> volume = coveringVolume();
     if (!volume)
         return {};
+    return QStringLiteral("%1 is indexed, scanned %2").arg(volume->label, ageInWords(volume->lastScan));
+}
 
-    // How stale it might be, in words: the whole reason the index is safe to
-    // default to is that it admits its own age.
-    const qint64 seconds = volume->lastScan.secsTo(QDateTime::currentDateTime());
-    QString age;
-    if (seconds < 120)
-        age = QStringLiteral("just now");
-    else if (seconds < 7200)
-        age = QStringLiteral("%1 minutes ago").arg(seconds / 60);
-    else if (seconds < 172800)
-        age = QStringLiteral("%1 hours ago").arg(seconds / 3600);
-    else
-        age = QStringLiteral("%1 days ago").arg(seconds / 86400);
+QList<IndexVolume> LiveSearchController::volumesInsideRoot() const
+{
+    if (!m_services.isValid() || !m_services.index || !m_services.index->isOpen())
+        return {};
 
-    return QStringLiteral("%1 is indexed, scanned %2").arg(volume->label, age);
+    Result<QList<IndexVolume>> volumes = m_services.index->volumes();
+    if (!volumes.ok())
+        return {};
+
+    QList<IndexVolume> inside;
+    for (const IndexVolume& volume : volumes.value()) {
+        if (volume.fileCount <= 0 || !volume.lastScan.isValid())
+            continue;
+        // Inside the folder, not around it: a volume that contains the search
+        // root covers the whole of it and is the other case entirely.
+        if (volume.rootUri != m_rootUri && isUnder(volume.rootUri, m_rootUri))
+            inside.append(volume);
+    }
+    return inside;
+}
+
+QString LiveSearchController::oldestScanNote(const QList<IndexVolume>& volumes)
+{
+    QDateTime oldest;
+    for (const IndexVolume& volume : volumes) {
+        if (!oldest.isValid() || volume.lastScan < oldest)
+            oldest = volume.lastScan;
+    }
+    return oldest.isValid() ? QStringLiteral("scanned %1").arg(ageInWords(oldest)) : QString();
+}
+
+QString LiveSearchController::walkStatus(const QString& walkText, bool finished) const
+{
+    if (m_primedFromIndex <= 0)
+        return walkText;
+
+    const int remembered = m_results->fromIndexCount();
+    if (!finished) {
+        return QStringLiteral("%1 from the index, %2 · %3")
+            .arg(QLocale().toString(remembered), m_primedNote, walkText);
+    }
+    if (remembered > 0) {
+        // A directory the walk could not read leaves its rows as the scan left
+        // them, and calling that current would be the lie this whole
+        // arrangement exists to avoid.
+        return QStringLiteral("%1 · %2 still only from the index, %3")
+            .arg(walkText, QLocale().toString(remembered), m_primedNote);
+    }
+    return QStringLiteral("%1 · every row current").arg(walkText);
 }
 
 void LiveSearchController::startIndexSearch(const SearchQuery& query, const QString& doneFormat)
@@ -316,6 +371,8 @@ void LiveSearchController::start()
 
     m_results->clear();
     m_truncated = false;
+    m_primedFromIndex = 0;
+    m_primedNote.clear();
 
     // The folder the question was about. A walk is already inside it; the index
     // is not, because a volume can be a whole disk -- and rather than the answer
@@ -330,17 +387,92 @@ void LiveSearchController::start()
         return;
     }
 
-    auto* task = new LiveSearchTask(std::move(fs), root, query);
+    // Partly covered: volumes sitting inside the folder cover some of it and
+    // none of it whole. The index answers for what it has -- instantly, and
+    // marked as a memory -- and the walk goes over the lot and corrects it, so
+    // the list converges on the truth while somebody is reading it. See
+    // ADR-0038; ADR-0005 used to call this no coverage at all.
+    const QList<IndexVolume> partial = m_useIndex ? volumesInsideRoot() : QList<IndexVolume> {};
+    if (partial.isEmpty()) {
+        startWalk(std::move(fs), root, query, {});
+        return;
+    }
+
+    SearchQuery primingQuery = query;
+    primingQuery.volumeId = -1; // any volume, narrowed to the folder by the path
+
+    auto* indexTask = new IndexSearchTask(m_services.index, primingQuery);
+    m_indexTask = indexTask;
+
+    connect(indexTask, &IndexSearchTask::resultsReady, this,
+        [this, indexTask, partial](const FileEntryList& hits) {
+            if (m_indexTask != indexTask)
+                return;
+            m_results->setEntries(hits);
+            // Per volume, because two volumes under one folder were scanned at
+            // different times and a row may not claim its neighbour's age.
+            for (const IndexVolume& volume : partial) {
+                QStringList mine;
+                for (const FileEntry& entry : hits) {
+                    if (isUnder(entry.uri.toString(), volume.rootUri))
+                        mine.append(entry.uri.toString());
+                }
+                m_results->markFromIndex(mine, volume.lastScan);
+            }
+            m_primedFromIndex = static_cast<int>(hits.size());
+            m_primedNote = oldestScanNote(partial);
+            // Said now rather than when the walk gets round to its first status:
+            // between those two moments the list is on screen, and a line still
+            // reading "asking the index" is a line describing the past.
+            setStatusText(walkStatus(QStringLiteral("walking the rest"), false));
+        });
+
+    connect(indexTask, &Task::finished, this, [this, indexTask, fs, root, query, partial]() mutable {
+        if (m_indexTask != indexTask)
+            return;
+        m_indexTask.clear();
+
+        // What the index put on screen, grouped by the directory it is in,
+        // so the walk can tell each of those directories what is missing.
+        QHash<QString, QStringList> primed;
+        for (int row = 0; row < m_results->rowCount(); ++row) {
+            const QModelIndex at = m_results->index(row, 0);
+            primed[at.data(FileListModel::ParentUriRole).toString()].append(
+                at.data(FileListModel::UriRole).toString());
+        }
+
+        startWalk(std::move(fs), root, query, primed);
+    });
+
+    setRunning(true);
+    setStatusText(QStringLiteral("Asking the index…"));
+    m_services.tasks->submit(indexTask);
+}
+
+void LiveSearchController::startWalk(FileSystemPtr fileSystem, const VfsUri& root, const SearchQuery& query,
+    const QHash<QString, QStringList>& primed)
+{
+    auto* task = new LiveSearchTask(std::move(fileSystem), root, query);
+    task->supersede(primed);
     m_task = task;
 
     connect(task, &LiveSearchTask::hitsFound, this, [this, task](const FileEntryList& batch) {
+        if (m_task != task)
+            return;
+        // Merged rather than appended: a row the index already put here is
+        // replaced where it sits, so nothing is listed twice and the marking
+        // on it stops saying "remembered".
+        m_results->mergeEntries(batch);
+    });
+
+    connect(task, &LiveSearchTask::hitsGone, this, [this, task](const QStringList& uris) {
         if (m_task == task)
-            m_results->appendEntries(batch);
+            m_results->removeEntries(uris);
     });
 
     connect(task, &Task::statusTextChanged, this, [this, task] {
         if (m_task == task)
-            setStatusText(task->statusText());
+            setStatusText(walkStatus(task->statusText(), false));
     });
 
     connect(task, &Task::finished, this, [this, task] {
@@ -348,7 +480,16 @@ void LiveSearchController::start()
             return;
         m_truncated = task->truncated();
         setRunning(false);
-        setStatusText(task->state() == Task::State::Failed ? task->error().message : task->statusText());
+
+        if (task->state() == Task::State::Failed) {
+            setStatusText(task->error().message);
+        } else if (task->state() == Task::State::Cancelled) {
+            // Cancelled from the task strip rather than from the form, which is
+            // the one route that does not come through stop().
+            setStatusText(walkStatus(QStringLiteral("stopped — %1").arg(task->statusText()), false));
+        } else {
+            setStatusText(walkStatus(task->statusText(), true));
+        }
         m_task.clear();
     });
 
@@ -380,6 +521,8 @@ QString LiveSearchController::buildSetFromResults(const QString& name)
 
 void LiveSearchController::stop()
 {
+    // The index task's own completion is what starts the walk, so a stopped
+    // search has to forget it rather than let it finish and carry on.
     if (m_indexTask) {
         m_indexTask->requestCancel();
         m_indexTask.clear();
@@ -387,6 +530,11 @@ void LiveSearchController::stop()
     if (m_task) {
         m_task->requestCancel();
         m_task.clear();
+        // Said here rather than when the pool thread notices: the user pressed
+        // Stop, and what is on the line until then reads like a search still
+        // running. What was found stays on screen; only the line changes.
+        setStatusText(walkStatus(
+            QStringLiteral("stopped — %1 found").arg(QLocale().toString(m_results->totalCount())), false));
     }
     setRunning(false);
 }
