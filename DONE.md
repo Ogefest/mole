@@ -9,6 +9,44 @@ wrong.
 
 ---
 
+## There was no way to search for what is inside a file
+
+**Asked for:** MOLE-151 — the missing half of a search tool. The name is what you have
+forgotten; the contents are what you remember.
+
+**What it turned out to be:** a predicate in the `Content` cost class, which MOLE-147 built
+the ladder for and nothing had yet stood on the top rung of. Because the contents are
+deliberately never indexed, it is a filter over candidates rather than a lookup, and every
+other decision follows from that: it runs last, so *PDFs containing "invoice"* opens only
+the PDFs; it is bounded, so a 40 GB disk image is not searched by accident; and it says
+what it left rather than passing over it.
+
+**Windows with an overlap, and the test that proves the overlap.** A file is read a
+window at a time, the way the preview layer reads one, with a page of the previous window
+carried in front of the next so a match lying across the boundary is still found. Removing
+the overlap was tried on purpose: the test fails, which is what makes it a test.
+
+**Binary is decided by the sniffer, not the suffix.** `FileType::looksLikeText` already
+answers exactly this question for the preview layer, and a suffix list would be wrong
+about the files people actually have — a program called `.txt` is skipped and a note
+called `.dat` is searched. *Binary too* does a plain byte search, which is occasionally
+the only way to find something and never the default.
+
+**A hit says why it is a hit** — the line, trimmed, its number, and where in it the match
+starts. A content search that answers with a list of names makes somebody open every one
+of them to find out which it meant. The column is counted in the trimmed line, because a
+position measured from an indent nobody can see marks the wrong characters.
+
+**Several files at once.** The walk stays on one thread; the reads are what is worth
+overlapping, so candidates are held in batches and opened together. Cancelling stops the
+reads between windows, asserted through the token rather than by timing.
+
+**One thing was nearly wrong in an invisible way.** The first version decided which
+entries to hold back for reading by asking whether the plan reads *whole* files — which is
+true of a content search and false of a type class, so a type-class search silently stopped
+opening anything and matched everything that got that far. The existing test caught it. The
+two questions are separate now and named separately.
+
 ## The search asked for a name, an extension and a size, and that was all
 
 **Asked for:** MOLE-150 — three criteria and three toggles, in an application whose subject

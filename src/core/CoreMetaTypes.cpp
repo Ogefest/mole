@@ -1,6 +1,7 @@
 #include "core/CoreMetaTypes.h"
 
 #include "core/duplicates/FindDuplicatesTask.h"
+#include "core/search/SearchQuery.h"
 #include "core/sync/SyncTask.h"
 #include "core/vfs/FileEntry.h"
 #include "core/vfs/VfsTypes.h"
@@ -15,6 +16,10 @@ void registerCoreMetaTypes()
     qRegisterMetaType<VfsUri>("mole::VfsUri");
     qRegisterMetaType<FileEntry>("mole::FileEntry");
     qRegisterMetaType<FileEntryList>("mole::FileEntryList");
+    // Crosses a thread boundary: a content search finds its reason on a pool
+    // thread and the row that shows it is drawn on the other one.
+    qRegisterMetaType<ContentMatch>("mole::ContentMatch");
+    qRegisterMetaType<QList<ContentMatch>>("QList<mole::ContentMatch>");
     // Crosses a thread boundary: an operation fails on whichever thread was
     // running it, and what failed decides who should care.
     qRegisterMetaType<VfsError>("mole::VfsError");

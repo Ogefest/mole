@@ -356,6 +356,9 @@ MOLE_SEARCH_SETTER(setEmptyOnly, m_emptyOnly, bool)
 MOLE_SEARCH_SETTER(setIncludeHidden, m_includeHidden, bool)
 MOLE_SEARCH_SETTER(setMaxDepth, m_maxDepth, int)
 MOLE_SEARCH_SETTER(setExcluded, m_excluded, const QString&)
+MOLE_SEARCH_SETTER(setContentText, m_contentText, const QString&)
+MOLE_SEARCH_SETTER(setContentRegex, m_contentRegex, bool)
+MOLE_SEARCH_SETTER(setSearchBinary, m_searchBinary, bool)
 
 #undef MOLE_SEARCH_SETTER
 
@@ -401,21 +404,38 @@ SearchQuery LiveSearchController::buildQuery() const
     if (!m_includeHidden)
         query.add(SearchPredicate::hidden(false));
 
+    // Last, because it is written last and the planner sorts by cost anyway --
+    // but written last as well, so a reader of this function meets the criteria
+    // in the order they are paid for.
+    SearchPredicate inside = SearchPredicate::content(m_contentText, m_contentRegex, m_caseSensitive);
+    inside.wholeWord = m_wholeWord;
+    inside.includeBinary = m_searchBinary;
+    query.addIfSet(inside);
+
     query.excluded = splitList(m_excluded);
     query.maxDepth = m_maxDepth;
     return query;
 }
 
-SampleReader LiveSearchController::sampleReaderFor(const FileSystemPtr& fileSystem) const
+SearchIo LiveSearchController::searchIoFor(const FileSystemPtr& fileSystem, const VfsUri& root) const
 {
     if (!fileSystem)
         return {};
-    return [fileSystem](const VfsUri& uri) -> QByteArray {
-        Result<std::unique_ptr<QIODevice>> stream = fileSystem->openRead(uri, FileType::kSampleBytes);
+
+    SearchIo io;
+    io.read = [fileSystem](const VfsUri& uri, qint64 offset, qint64 bytes) -> QByteArray {
+        Result<std::unique_ptr<QIODevice>> stream = fileSystem->openRead(uri, offset + bytes);
         if (!stream.ok() || !stream.value())
             return {};
-        return stream.value()->read(FileType::kSampleBytes);
+        if (offset > 0 && !stream.value()->seek(offset) && stream.value()->read(offset).size() != offset) {
+            return {};
+        }
+        return stream.value()->read(bytes);
     };
+    // On anything but the local disk a read is a download, so a file has to be
+    // worth much less before it is opened.
+    io.ceiling = root.scheme() == QLatin1String("file") ? SearchIo::kLocalCeiling : SearchIo::kRemoteCeiling;
+    return io;
 }
 
 void LiveSearchController::notePlan(const SearchQuery& query, SearchSource source)
@@ -460,8 +480,9 @@ void LiveSearchController::startIndexSearch(const SearchQuery& query, const QStr
     auto* indexTask = new IndexSearchTask(m_services.index, query);
     // What a row cannot say about a file, read from the file. Only reached by
     // hits that survived everything the database could state.
-    if (planSearch(query, SearchSource::Index).needsSample() && m_services.vfs) {
-        indexTask->setSampleReader(sampleReaderFor(m_services.vfs->resolve(VfsUri::fromString(m_rootUri))));
+    if (planSearch(query, SearchSource::Index).needsFile() && m_services.vfs) {
+        const VfsUri root = VfsUri::fromString(m_rootUri);
+        indexTask->setSearchIo(searchIoFor(m_services.vfs->resolve(root), root));
     }
     m_indexTask = indexTask;
 
@@ -604,16 +625,23 @@ void LiveSearchController::startWalk(FileSystemPtr fileSystem, const VfsUri& roo
 {
     auto* task = new LiveSearchTask(fileSystem, root, query);
     task->supersede(primed);
+    task->setContentCeiling(
+        root.scheme() == QLatin1String("file") ? SearchIo::kLocalCeiling : SearchIo::kRemoteCeiling);
     m_task = task;
 
-    connect(task, &LiveSearchTask::hitsFound, this, [this, task](const FileEntryList& batch) {
-        if (m_task != task)
-            return;
-        // Merged rather than appended: a row the index already put here is
-        // replaced where it sits, so nothing is listed twice and the marking
-        // on it stops saying "remembered".
-        m_results->mergeEntries(batch);
-    });
+    connect(task, &LiveSearchTask::hitsFound, this,
+        [this, task](const FileEntryList& batch, const QList<ContentMatch>& why) {
+            if (m_task != task)
+                return;
+            // Merged rather than appended: a row the index already put here is
+            // replaced where it sits, so nothing is listed twice and the marking
+            // on it stops saying "remembered".
+            m_results->mergeEntries(batch);
+            for (qsizetype i = 0; i < why.size() && i < batch.size(); ++i) {
+                if (why.at(i).isValid())
+                    m_results->setContentMatch(batch.at(i).uri.toString(), why.at(i));
+            }
+        });
 
     connect(task, &LiveSearchTask::hitsGone, this, [this, task](const QStringList& uris) {
         if (m_task == task)
@@ -715,6 +743,9 @@ QVariantMap LiveSearchController::saveState() const
         { QStringLiteral("includeHidden"), m_includeHidden },
         { QStringLiteral("maxDepth"), m_maxDepth },
         { QStringLiteral("excluded"), m_excluded },
+        { QStringLiteral("contentText"), m_contentText },
+        { QStringLiteral("contentRegex"), m_contentRegex },
+        { QStringLiteral("searchBinary"), m_searchBinary },
         { QStringLiteral("minSize"), m_minSize },
         { QStringLiteral("maxSize"), m_maxSize },
     };
@@ -752,6 +783,9 @@ void LiveSearchController::restoreState(const QVariantMap& state)
     setIncludeHidden(state.value(QStringLiteral("includeHidden"), true).toBool());
     setMaxDepth(state.value(QStringLiteral("maxDepth"), -1).toInt());
     setExcluded(state.value(QStringLiteral("excluded")).toString());
+    setContentText(state.value(QStringLiteral("contentText")).toString());
+    setContentRegex(state.value(QStringLiteral("contentRegex"), false).toBool());
+    setSearchBinary(state.value(QStringLiteral("searchBinary"), false).toBool());
     m_minSize = state.value(QStringLiteral("minSize"), -1).toLongLong();
     m_maxSize = state.value(QStringLiteral("maxSize"), -1).toLongLong();
     // The volume list is rebuilt from the index, so a remembered position may no

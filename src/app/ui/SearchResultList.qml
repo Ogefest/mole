@@ -146,6 +146,8 @@ Rectangle {
             /// 0 seen now, 1 from a previous scan. See FileListModel::Provenance.
             required property int provenance
             required property var indexedAt
+            required property string matchLine
+            required property int matchLineNumber
 
             width: ListView.view.width
             height: 34
@@ -196,8 +198,22 @@ Rectangle {
                         elide: Text.ElideMiddle
                         font.pixelSize: App.textSize
                     }
+                    // Why this is a hit, when the search asked what is inside
+                    // the file. A list of names would make somebody open every
+                    // one of them to find out which it meant.
+                    Label {
+                        objectName: "matchLine"
+                        Layout.fillWidth: true
+                        visible: matchLine.length > 0
+                        text: matchLineNumber + ":  " + matchLine
+                        elide: Text.ElideRight
+                        color: "#8b93a7"
+                        font.family: App.monospaceFont
+                        font.pixelSize: App.smallTextSize
+                    }
                     Label {
                         Layout.fillWidth: true
+                        visible: matchLine.length === 0
                         text: parentUri
                         elide: Text.ElideLeft
                         color: "#6f7788"

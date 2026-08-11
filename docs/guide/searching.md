@@ -42,6 +42,17 @@ one field and one key.
 - **Shape**: files, folders, or both; empty files; hidden files; and *this folder only*.
 - **Size**, typed the way people write it — `10M`, `1.5 GiB`, `500k`, `1,5M` — where an
   empty field means no limit rather than zero.
+- **Text inside**, which is the other half of a search tool: the name is what you have
+  forgotten and the contents are what you remember. Literal by default, an *expression*
+  when asked, and text files only unless *binary too* — decided by what is in the file
+  rather than by its suffix. Each hit shows the line it was found on, with its number.
+
+The contents are never indexed — a full-text index over a disk of files at scale is a
+second disk — so a content search reads the files, and it is the last thing done: narrow
+it with the criteria above and it opens only what they kept. Files past a ceiling are left
+rather than read, and the line says how many. The line also counts what it opened, because
+this is the one search that can take minutes and *read 340 of 1,200* is the difference
+between waiting and giving up.
 
 Everything is *and*. A criterion the index cannot answer is checked afterwards rather than
 dropped, and the form says which one made that happen.

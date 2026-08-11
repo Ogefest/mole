@@ -87,6 +87,7 @@ void FileListModel::setEntries(FileEntryList entries)
     // listing starts without any. The same goes for where rows came from.
     m_measured.clear();
     m_indexed.clear();
+    m_matches.clear();
     m_withdrawn.clear();
     rebuildVisible();
     pruneSelection();
@@ -236,6 +237,20 @@ void FileListModel::removeEntries(const QStringList& uris)
         emit countChanged();
 }
 
+void FileListModel::setContentMatch(const QString& uri, const ContentMatch& match)
+{
+    // Recorded even when the row is not visible: a filter can be hiding it, and
+    // clearing the filter should not lose a reason already paid for.
+    m_matches.insert(uri, match);
+
+    const int row = rowOfUri(uri);
+    if (row < 0)
+        return;
+    const QModelIndex changed = index(row, 0);
+    emit dataChanged(
+        changed, changed, { MatchLineRole, MatchLineNumberRole, MatchColumnRole, MatchLengthRole });
+}
+
 void FileListModel::markFromIndex(const QStringList& uris, const QDateTime& scannedAt)
 {
     if (uris.isEmpty() || m_all.isEmpty())
@@ -270,6 +285,7 @@ void FileListModel::clear()
     m_selected.clear();
     m_measured.clear();
     m_indexed.clear();
+    m_matches.clear();
     m_withdrawn.clear();
     endResetModel();
     emit countChanged();
@@ -409,6 +425,14 @@ QVariant FileListModel::data(const QModelIndex& index, int role) const
         return m_indexed.contains(entry.uri.toString()) ? FromIndex : SeenNow;
     case IndexedAtRole:
         return m_indexed.value(entry.uri.toString()).scannedAt;
+    case MatchLineRole:
+        return m_matches.value(entry.uri.toString()).line;
+    case MatchLineNumberRole:
+        return m_matches.value(entry.uri.toString()).lineNumber;
+    case MatchColumnRole:
+        return m_matches.value(entry.uri.toString()).column;
+    case MatchLengthRole:
+        return m_matches.value(entry.uri.toString()).length;
     case IsDirRole:
         return entry.isDir;
     case IsHiddenRole:
@@ -469,6 +493,10 @@ QHash<int, QByteArray> FileListModel::roleNames() const
         { AlertTriggeredRole, "alertTriggered" },
         { ProvenanceRole, "provenance" },
         { IndexedAtRole, "indexedAt" },
+        { MatchLineRole, "matchLine" },
+        { MatchLineNumberRole, "matchLineNumber" },
+        { MatchColumnRole, "matchColumn" },
+        { MatchLengthRole, "matchLength" },
     };
 }
 

@@ -24,7 +24,7 @@ public:
     /// A row records a name, a size and a date; what a file *is* comes from
     /// what is in it. Without this such a criterion matches nothing, which is
     /// the honest answer for a source that cannot look.
-    void setSampleReader(SampleReader reader);
+    void setSearchIo(SearchIo io);
 
     int hitCount() const { return m_hitCount; }
 
@@ -38,7 +38,7 @@ protected:
 private:
     IndexDatabase* m_index = nullptr;
     SearchQuery m_query;
-    SampleReader m_sample;
+    SearchIo m_io;
     int m_hitCount = 0;
 };
 

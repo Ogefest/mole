@@ -105,6 +105,10 @@ mole_add_test(tst_IndexDatabase     SOURCES core/tst_IndexDatabase.cpp LIBS Qt6:
 mole_add_test(tst_ScanTask          SOURCES core/tst_ScanTask.cpp)
 mole_add_test(tst_LiveSearchTask    SOURCES core/tst_LiveSearchTask.cpp)
 mole_add_test(tst_SearchQuery       SOURCES core/tst_SearchQuery.cpp)
+
+# Looking inside the files: the window loop, the overlap, the encodings and the
+# ceiling are each a thing that can be wrong on its own.
+mole_add_test(tst_ContentSearch     SOURCES core/tst_ContentSearch.cpp)
 mole_add_test(tst_EventBus          SOURCES core/tst_EventBus.cpp)
 mole_add_test(tst_TransferTask      SOURCES core/tst_TransferTask.cpp)
 

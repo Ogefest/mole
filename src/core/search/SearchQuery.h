@@ -23,11 +23,60 @@ enum class PredicateCost {
     Content, ///< a read of the file, always
 };
 
-/// The first page of a file, for the criteria an entry cannot answer.
+/// What a criterion needs when the listing cannot answer it.
 ///
-/// Empty when it could not be read, which is not the same as a file that does
-/// not match -- see SearchPredicate::matches().
-using SampleReader = std::function<QByteArray(const VfsUri&)>;
+/// One reader rather than two, because the two questions differ only in how
+/// much they ask for: what a file *is* comes from its first page, and what is
+/// *in* it comes from that page and every one after.
+struct SearchIo
+{
+    /// `bytes` from `offset`. Shorter than asked for at the end of the file,
+    /// and empty when it could not be read -- which is not the same as a file
+    /// that does not match.
+    std::function<QByteArray(const VfsUri&, qint64 offset, qint64 bytes)> read;
+
+    /// Whether the search has been called off. Polled between windows, because
+    /// this is the one search that can take minutes and stopping it has to stop
+    /// the reading rather than only the listing.
+    std::function<bool()> cancelled;
+
+    /// The most of one file that may be read.
+    ///
+    /// A 40 GB disk image is not searched by accident, and on a remote drive
+    /// reading is downloading -- so the number is smaller there. A file over
+    /// it is skipped and said to be skipped, never quietly passed over.
+    qint64 ceiling = kLocalCeiling;
+
+    /// What one file may cost. Sixteen megabytes locally: larger than anything
+    /// anybody greps on purpose and small enough that a stray video costs a
+    /// moment rather than a minute. A megabyte over a network, where the same
+    /// read is a download somebody is paying for.
+    static constexpr qint64 kLocalCeiling = 16 * 1024 * 1024;
+    static constexpr qint64 kRemoteCeiling = 1024 * 1024;
+
+    /// How much is read at a time, and how much of the previous window is kept
+    /// in front of the next one. The overlap is what finds a match lying across
+    /// a boundary; it bounds the longest match that can be found, which is why
+    /// it is a page rather than a handful of bytes.
+    static constexpr qint64 kWindowBytes = 256 * 1024;
+    static constexpr qint64 kOverlapBytes = 4096;
+
+    explicit operator bool() const { return static_cast<bool>(read); }
+};
+
+/// Why a file is a hit, when the search asked about what is inside it.
+///
+/// A content search that answers with a list of names makes somebody open every
+/// one of them to find out which it meant.
+struct ContentMatch
+{
+    QString line; ///< the matching line, trimmed
+    int lineNumber = 0; ///< counting from one
+    int column = -1; ///< where the match starts in `line`, or -1
+    int length = 0;
+
+    bool isValid() const { return lineNumber > 0; }
+};
 
 /// One criterion of a search.
 ///
@@ -50,6 +99,9 @@ struct SearchPredicate
         /// What sort of file it is, from what is in it rather than what it is
         /// called: images, video, audio, documents, archives, code, folders.
         TypeClass,
+        /// What is inside it. The dearest criterion there is, and the reason
+        /// the cost ladder exists.
+        Content,
         Under, ///< the entry sits under this uri
     };
 
@@ -79,6 +131,9 @@ struct SearchPredicate
     /// boolean builder would, and a general boolean builder is a different
     /// feature.
     bool negate = false;
+    /// Whether a file the sniffer calls binary is searched as bytes. Never the
+    /// default, and occasionally the only way to find something.
+    bool includeBinary = false;
 
     /// What answering this costs.
     ///
@@ -101,6 +156,11 @@ struct SearchPredicate
     /// Any of these classes -- "image", "video", "audio", "document",
     /// "archive", "code", "folder".
     static SearchPredicate typeClasses(const QStringList& classes);
+    /// Text inside the file. Literal unless `asRegex`, folded unless
+    /// `caseSensitive`, and text files only unless `includeBinary` -- decided
+    /// by what is in the file rather than by its suffix, because a suffix list
+    /// is wrong about the files people actually have.
+    static SearchPredicate content(const QString& text, bool asRegex = false, bool caseSensitive = false);
     static SearchPredicate minSize(qint64 bytes);
     static SearchPredicate maxSize(qint64 bytes);
     static SearchPredicate modifiedAfter(qint64 epochSeconds);
@@ -120,13 +180,20 @@ struct SearchPredicate
 
     /// Whether `entry` satisfies this.
     ///
-    /// Pure for everything a listing already answered. `sample` supplies the
-    /// first page of the file for the criteria that need what is inside it; a
-    /// predicate that needs one and is given none **does not match**, because
-    /// the alternative is quietly answering a question nobody asked.
-    [[nodiscard]] bool matches(const FileEntry& entry, const SampleReader& sample = {}) const;
+    /// Pure for everything a listing already answered. `io` supplies the file
+    /// for the criteria that need it; a predicate that needs it and is given
+    /// none **does not match**, because the alternative is quietly answering a
+    /// question nobody asked.
+    ///
+    /// `whyOut`, when given, is filled in by a content match with the line it
+    /// was found on.
+    [[nodiscard]] bool matches(
+        const FileEntry& entry, const SearchIo& io = {}, ContentMatch* whyOut = nullptr) const;
     /// True when answering this needs the file rather than the listing.
-    [[nodiscard]] bool needsSample() const;
+    [[nodiscard]] bool needsFile() const;
+    /// True when it needs the whole file rather than a page of it, which is
+    /// what makes a search worth warning somebody about before it starts.
+    [[nodiscard]] bool readsWholeFile() const { return field == Field::Content; }
 };
 
 /// Everything one search asks for.
@@ -196,13 +263,23 @@ public:
 
     /// True when something left over needs the file itself, so a source that
     /// cannot read one is going to answer short.
-    [[nodiscard]] bool needsSample() const;
+    [[nodiscard]] bool needsFile() const;
+    /// True when something left over reads whole files.
+    [[nodiscard]] bool readsWholeFiles() const;
 
     /// Whether `entry` satisfies every criterion left over.
     ///
     /// Cheapest first, so the expensive ones are only reached by what survived
     /// everything else: filter to the PDFs, then open them.
-    [[nodiscard]] bool matches(const FileEntry& entry, const SampleReader& sample = {}) const;
+    [[nodiscard]] bool matches(
+        const FileEntry& entry, const SearchIo& io = {}, ContentMatch* whyOut = nullptr) const;
+
+    /// The two halves of that, for a source that wants to do the second one
+    /// several files at a time. Everything answerable from the listing, and
+    /// then everything that needs the file.
+    [[nodiscard]] bool matchesWithoutFile(const FileEntry& entry) const;
+    [[nodiscard]] bool matchesNeedingFile(
+        const FileEntry& entry, const SearchIo& io, ContentMatch* whyOut = nullptr) const;
 
 private:
     QList<SearchPredicate> m_pushedDown;
@@ -253,4 +330,26 @@ private:
 /// somebody count zeros, and it should not make them work out a date either.
 [[nodiscard]] QDateTime parseWhen(const QString& text, const QDateTime& now);
 
+/// Looks for `predicate` inside the bytes `io` can read of `entry`.
+///
+/// Exposed for its own test: the window loop, the overlap that finds a match
+/// across a boundary, the decoding and the ceiling are each a thing that can be
+/// wrong on its own.
+///
+/// Returns an invalid match when there is none, when the file is binary and the
+/// predicate did not ask for those, when it is over the ceiling, or when it
+/// will not decode. `skippedOut`, when given, says which of those happened.
+enum class ContentSkip {
+    None,
+    TooBig,
+    Binary,
+    Undecodable,
+    Unreadable,
+};
+[[nodiscard]] ContentMatch findInContents(const FileEntry& entry, const SearchPredicate& predicate,
+    const SearchIo& io, ContentSkip* skippedOut = nullptr);
+
 } // namespace mole
+
+Q_DECLARE_METATYPE(mole::ContentMatch)
+Q_DECLARE_METATYPE(QList<mole::ContentMatch>)

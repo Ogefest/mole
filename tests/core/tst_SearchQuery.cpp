@@ -315,7 +315,8 @@ void TestSearchQuery::aTypeClassComesFromWhatIsInTheFile()
     const QByteArray png = QByteArrayLiteral("\x89PNG\r\n\x1a\n") + QByteArray(64, '\0');
     const QByteArray script = QByteArrayLiteral("FROM debian:bookworm\nRUN apt-get update\n");
 
-    const SampleReader reader = [&](const VfsUri& uri) -> QByteArray {
+    SearchIo reader;
+    reader.read = [&](const VfsUri& uri, qint64, qint64) -> QByteArray {
         return uri.fileName() == QLatin1String("Dockerfile") ? script : png;
     };
 
@@ -341,7 +342,7 @@ void TestSearchQuery::aTypeClassWithNothingToReadMatchesNothing()
     // The honest answer for a source that cannot look inside: not a match, and
     // certainly not everything.
     const SearchPredicate images = SearchPredicate::typeClasses({ QStringLiteral("image") });
-    QVERIFY(images.needsSample());
+    QVERIFY(images.needsFile());
     QVERIFY(!images.matches(entryFor(QStringLiteral("mem:///a.png"))));
 }
 

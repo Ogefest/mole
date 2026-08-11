@@ -27,11 +27,23 @@ public:
 
     qint64 hitCount() const { return m_hitCount; }
     bool truncated() const { return m_truncated; }
+    /// How many files were opened, and how many were left because they were
+    /// over the ceiling.
+    qint64 candidatesRead() const { return m_candidates; }
+    qint64 skippedTooBig() const { return m_skippedTooBig; }
+
+    /// The most of one file to read. Smaller on a drive where reading is
+    /// downloading; see SearchIo.
+    void setContentCeiling(qint64 bytes) { m_ceiling = bytes; }
 
 signals:
     /// Emitted in batches on the UI thread while the walk is still running, so
     /// results stream in instead of appearing all at once at the end.
-    void hitsFound(const mole::FileEntryList& batch);
+    /// `why` is the same length as `batch` when the search asked about what is
+    /// inside a file, and empty when it did not. One signal rather than two,
+    /// because a hit and its reason arriving separately is an ordering nobody
+    /// should have to get right.
+    void hitsFound(const mole::FileEntryList& batch, const QList<mole::ContentMatch>& why);
     /// Rows the index reported that the walk has now disproved: it listed the
     /// directory they are in and they were not among the matches.
     void hitsGone(const QStringList& uris);
@@ -47,6 +59,11 @@ private:
     /// was missing: a search finding a dozen matches used to show none of them
     /// until the whole walk finished, because the batch never reached two hundred.
     static constexpr int kEmitIntervalMs = 120;
+    /// How many files are opened in one go. Enough to keep the pool busy,
+    /// small enough that results still stream in rather than arriving in
+    /// lumps -- a content search is the one that can take minutes, and a list
+    /// that fills as it goes is the difference between waiting and giving up.
+    static constexpr int kReadBatchSize = 32;
 
     FileSystemPtr m_fileSystem;
     VfsUri m_root;
@@ -57,6 +74,9 @@ private:
     /// came back -- so every criterion is in here, cheapest first.
     SearchPlan m_plan;
     qint64 m_hitCount = 0;
+    qint64 m_candidates = 0;
+    qint64 m_skippedTooBig = 0;
+    qint64 m_ceiling = SearchIo::kLocalCeiling;
     bool m_truncated = false;
 };
 

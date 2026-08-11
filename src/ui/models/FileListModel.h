@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/search/SearchQuery.h"
 #include "core/vfs/FileEntry.h"
 
 #include <QAbstractListModel>
@@ -46,6 +47,14 @@ public:
         ProvenanceRole,
         /// When that scan ran. Invalid for a row seen now.
         IndexedAtRole,
+        /// The line a content search matched, trimmed; empty when the search
+        /// asked nothing about what is inside the file.
+        MatchLineRole,
+        MatchLineNumberRole,
+        /// Where the match starts in that line, and how long it is, so the row
+        /// can mark it rather than leave somebody to find it again.
+        MatchColumnRole,
+        MatchLengthRole,
     };
 
     /// Where a row came from.
@@ -97,6 +106,13 @@ public:
     /// Marks rows as recorded by a scan that ran at `scannedAt`. Anything not
     /// marked is what it always was: seen now.
     void markFromIndex(const QStringList& uris, const QDateTime& scannedAt);
+
+    /// Records why a row is a hit: the line a content search found, where in it
+    /// the match was, and which line it is.
+    ///
+    /// A content search that answers with a list of names makes somebody open
+    /// every one of them to find out which it meant.
+    void setContentMatch(const QString& uri, const ContentMatch& match);
     /// How many rows are still only what a scan remembered.
     Q_INVOKABLE int fromIndexCount() const { return static_cast<int>(m_indexed.size()); }
 
@@ -199,6 +215,8 @@ private:
     /// withdrawn, so only these need an index into m_all -- keeping the map to
     /// the indexed half rather than to every row a long search finds.
     QHash<QString, IndexedRow> m_indexed;
+    /// Why each row is a hit, by uri. Only a content search fills it.
+    QHash<QString, ContentMatch> m_matches;
 
     /// Drops selected uris that are no longer present.
     void pruneSelection();

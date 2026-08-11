@@ -157,7 +157,10 @@ add_library(mole::core ALIAS mole_core)
 target_include_directories(mole_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
 target_link_libraries(mole_core
-    PUBLIC Qt6::Core Qt6::Sql
+    # Concurrent for the one thing that is worth overlapping: a content search
+    # spends its time waiting for storage, so the candidate files are opened
+    # several at a time.
+    PUBLIC Qt6::Core Qt6::Sql Qt6::Concurrent
     PRIVATE mole_flags)
 
 # forkpty lives in libutil on Linux. The terminal panel is the only thing that

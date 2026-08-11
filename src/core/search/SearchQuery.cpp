@@ -4,6 +4,7 @@
 
 #include <QMimeDatabase>
 #include <QRegularExpression>
+#include <QStringDecoder>
 
 #include <algorithm>
 
@@ -46,10 +47,13 @@ namespace {
             return false;
         case SearchPredicate::Field::Hidden:
         case SearchPredicate::Field::TypeClass:
+        case SearchPredicate::Field::Content:
         case SearchPredicate::Field::Path:
         case SearchPredicate::Field::Under:
             // Rows hold the path inside their volume rather than the whole uri,
-            // nothing records what a file is, and nothing records hidden.
+            // nothing records what a file is, and the contents are deliberately
+            // not indexed at all -- a full-text index over a disk of files at
+            // scale is a second disk.
             return false;
         }
         return false;
@@ -312,6 +316,19 @@ SearchPredicate SearchPredicate::typeClasses(const QStringList& classes)
     return predicate;
 }
 
+SearchPredicate SearchPredicate::content(const QString& text, bool asRegex, bool caseSensitive)
+{
+    SearchPredicate predicate;
+    predicate.field = Field::Content;
+    predicate.match = asRegex ? Match::Regex : Match::Contains;
+    predicate.text = text;
+    predicate.caseSensitive = caseSensitive;
+    // The dearest rung there is, so the planner leaves it until everything
+    // else has narrowed the candidates: filter to the PDFs, then read them.
+    predicate.cost = PredicateCost::Content;
+    return predicate;
+}
+
 SearchPredicate SearchPredicate::minSize(qint64 bytes)
 {
     SearchPredicate predicate;
@@ -389,12 +406,12 @@ SearchPredicate SearchPredicate::underPath(const QString& uri)
     return predicate;
 }
 
-bool SearchPredicate::needsSample() const
+bool SearchPredicate::needsFile() const
 {
-    return field == Field::TypeClass;
+    return field == Field::TypeClass || field == Field::Content;
 }
 
-bool SearchPredicate::matches(const FileEntry& entry, const SampleReader& sample) const
+bool SearchPredicate::matches(const FileEntry& entry, const SearchIo& io, ContentMatch* whyOut) const
 {
     const bool hit = [&] {
         switch (field) {
@@ -426,9 +443,20 @@ bool SearchPredicate::matches(const FileEntry& entry, const SampleReader& sample
             // would say so.
             if (entry.isDir)
                 return list.contains(QStringLiteral("folder"));
-            if (!sample)
+            if (!io)
                 return false;
-            return list.contains(classOfMimeType(FileType::identify(entry.name, sample(entry.uri))));
+            return list.contains(classOfMimeType(
+                FileType::identify(entry.name, io.read(entry.uri, 0, FileType::kSampleBytes))));
+        }
+        case Field::Content: {
+            if (text.isEmpty())
+                return true;
+            if (!io)
+                return false;
+            const ContentMatch found = findInContents(entry, *this, io);
+            if (found.isValid() && whyOut)
+                *whyOut = found;
+            return found.isValid();
         }
         case Field::Under:
             return isUnder(entry.uri.toString(), text);
@@ -437,6 +465,112 @@ bool SearchPredicate::matches(const FileEntry& entry, const SampleReader& sample
     }();
 
     return negate ? !hit : hit;
+}
+
+ContentMatch findInContents(
+    const FileEntry& entry, const SearchPredicate& predicate, const SearchIo& io, ContentSkip* skippedOut)
+{
+    const auto give = [skippedOut](ContentSkip why) {
+        if (skippedOut)
+            *skippedOut = why;
+        return ContentMatch {};
+    };
+
+    if (skippedOut)
+        *skippedOut = ContentSkip::None;
+    if (entry.isDir || predicate.text.isEmpty() || !io)
+        return give(ContentSkip::None);
+    if (entry.size > io.ceiling)
+        return give(ContentSkip::TooBig);
+
+    const QByteArray head = io.read(entry.uri, 0, FileType::kSampleBytes);
+    if (head.isEmpty() && entry.size > 0)
+        return give(ContentSkip::Unreadable);
+    // Decided by what is in the file, never by its suffix: a suffix list is
+    // wrong about the files people actually have, and the sniffer is already
+    // answering exactly this question for the preview layer.
+    if (!predicate.includeBinary && !FileType::looksLikeText(head))
+        return give(ContentSkip::Binary);
+
+    // The byte order mark decides the encoding, and a decoder is kept across
+    // windows so a character split by one is not mangled by the next.
+    auto decoder = QStringDecoder(QStringDecoder::Utf8);
+    if (head.startsWith(QByteArrayLiteral("\xff\xfe")) || head.startsWith(QByteArrayLiteral("\xfe\xff")))
+        decoder = QStringDecoder(QStringDecoder::Utf16);
+    else if (head.startsWith(QByteArrayLiteral("\xef\xbb\xbf")))
+        decoder = QStringDecoder(QStringDecoder::Utf8);
+
+    const auto options = predicate.caseSensitive ? QRegularExpression::NoPatternOption
+                                                 : QRegularExpression::CaseInsensitiveOption;
+    QRegularExpression pattern(predicate.match == SearchPredicate::Match::Regex
+            ? predicate.text
+            : QRegularExpression::escape(predicate.text),
+        options);
+    if (predicate.wholeWord) {
+        pattern.setPattern(QStringLiteral("(?<![\\p{L}\\p{N}])%1(?![\\p{L}\\p{N}])").arg(pattern.pattern()));
+    }
+    if (!pattern.isValid())
+        return give(ContentSkip::None);
+
+    // Windows rather than the whole file, the same rule the preview layer
+    // follows, with the tail of one window carried in front of the next so a
+    // match lying across the boundary is still found.
+    QString carried;
+    qint64 offset = 0;
+    int linesBefore = 0;
+    const qint64 ceiling = qMin(io.ceiling, entry.size > 0 ? entry.size : io.ceiling);
+
+    while (offset < ceiling) {
+        if (io.cancelled && io.cancelled())
+            return give(ContentSkip::None);
+
+        const QByteArray window = io.read(entry.uri, offset, SearchIo::kWindowBytes);
+        if (window.isEmpty())
+            break;
+        offset += window.size();
+
+        const QString text = carried + QString(decoder.decode(window));
+        if (decoder.hasError())
+            return give(ContentSkip::Undecodable);
+
+        const QRegularExpressionMatch found = pattern.match(text);
+        if (found.hasMatch()) {
+            const qsizetype at = found.capturedStart();
+            const qsizetype lineStart = text.lastIndexOf(QLatin1Char('\n'), at) + 1;
+            qsizetype lineEnd = text.indexOf(QLatin1Char('\n'), at);
+            if (lineEnd < 0)
+                lineEnd = text.size();
+
+            const QString whole = text.mid(lineStart, lineEnd - lineStart);
+            // The line is trimmed for showing, so the column has to move with
+            // it -- a position counted from an indent nobody can see would
+            // mark the wrong characters.
+            qsizetype indent = 0;
+            while (indent < whole.size() && whole.at(indent).isSpace())
+                ++indent;
+
+            ContentMatch match;
+            match.line = whole.trimmed();
+            match.lineNumber
+                = linesBefore + static_cast<int>(QStringView(text).left(at).count(QLatin1Char('\n'))) + 1;
+            match.column = static_cast<int>(qMax<qsizetype>(0, at - lineStart - indent));
+            match.length = static_cast<int>(found.capturedLength());
+            return match;
+        }
+
+        if (offset >= ceiling || window.size() < SearchIo::kWindowBytes)
+            break;
+
+        // What is carried forward, and the lines that are not.
+        const qsizetype keep = qMin<qsizetype>(SearchIo::kOverlapBytes, text.size());
+        const QString tail = text.right(keep);
+        linesBefore += static_cast<int>(QStringView(text).left(text.size() - keep).count(QLatin1Char('\n')));
+        carried = tail;
+    }
+
+    if (entry.size > ceiling)
+        return give(ContentSkip::TooBig);
+    return give(ContentSkip::None);
 }
 
 // ----------------------------------------------------------------- the query
@@ -459,6 +593,10 @@ SearchQuery& SearchQuery::addIfSet(const SearchPredicate& predicate)
     case SearchPredicate::Field::Extension:
     case SearchPredicate::Field::TypeClass:
         if (predicate.list.isEmpty())
+            return *this;
+        break;
+    case SearchPredicate::Field::Content:
+        if (predicate.text.isEmpty())
             return *this;
         break;
     case SearchPredicate::Field::Size:
@@ -500,16 +638,40 @@ SearchPlan::SearchPlan(QList<SearchPredicate> pushedDown, QList<SearchPredicate>
 {
 }
 
-bool SearchPlan::needsSample() const
+bool SearchPlan::needsFile() const
 {
     return std::any_of(m_remainder.cbegin(), m_remainder.cend(),
-        [](const SearchPredicate& predicate) { return predicate.needsSample(); });
+        [](const SearchPredicate& predicate) { return predicate.needsFile(); });
 }
 
-bool SearchPlan::matches(const FileEntry& entry, const SampleReader& sample) const
+bool SearchPlan::readsWholeFiles() const
+{
+    return std::any_of(m_remainder.cbegin(), m_remainder.cend(),
+        [](const SearchPredicate& predicate) { return predicate.readsWholeFile(); });
+}
+
+bool SearchPlan::matches(const FileEntry& entry, const SearchIo& io, ContentMatch* whyOut) const
+{
+    return matchesWithoutFile(entry) && matchesNeedingFile(entry, io, whyOut);
+}
+
+bool SearchPlan::matchesWithoutFile(const FileEntry& entry) const
 {
     for (const SearchPredicate& predicate : m_remainder) {
-        if (!predicate.matches(entry, sample))
+        if (predicate.needsFile())
+            continue;
+        if (!predicate.matches(entry))
+            return false;
+    }
+    return true;
+}
+
+bool SearchPlan::matchesNeedingFile(const FileEntry& entry, const SearchIo& io, ContentMatch* whyOut) const
+{
+    for (const SearchPredicate& predicate : m_remainder) {
+        if (!predicate.needsFile())
+            continue;
+        if (!predicate.matches(entry, io, whyOut))
             return false;
     }
     return true;

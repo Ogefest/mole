@@ -210,6 +210,46 @@ Item {
             columnSpacing: 8
             rowSpacing: 6
 
+            // The other half of a search tool: the name is what you have
+            // forgotten and the contents are what you remember. Last in the
+            // form because it is last to be paid for.
+            Label { text: "Text inside"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+            TextField {
+                objectName: "contentField"
+                Layout.columnSpan: 3
+                Layout.fillWidth: true
+                placeholderText: "words in the file itself"
+                text: controller ? controller.contentText : ""
+                font.pixelSize: App.secondaryTextSize
+                onTextEdited: if (controller) controller.contentText = text
+            }
+            CheckBox {
+                objectName: "contentRegexToggle"
+                text: "expression"
+                font.pixelSize: App.secondaryTextSize
+                checked: controller ? controller.contentRegex : false
+                onToggled: if (controller) controller.contentRegex = checked
+            }
+            CheckBox {
+                objectName: "searchBinaryToggle"
+                text: "binary too"
+                font.pixelSize: App.secondaryTextSize
+                checked: controller ? controller.searchBinary : false
+                onToggled: if (controller) controller.searchBinary = checked
+            }
+
+            Label {
+                objectName: "contentCost"
+                Layout.columnSpan: 6
+                Layout.fillWidth: true
+                visible: controller ? controller.readsFileContents : false
+                text: "This one opens files, so narrow it with the criteria above first — "
+                      + "the contents are never indexed."
+                color: "#6f7788"
+                font.pixelSize: App.smallTextSize
+                wrapMode: Text.Wrap
+            }
+
             Label { text: "Is a"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
             Flow {
                 objectName: "typeClasses"

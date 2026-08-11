@@ -72,6 +72,14 @@ class LiveSearchController final : public FeatureController
     /// What the last search could not ask its source, in words, for the form to
     /// show beside the criteria. Empty when everything was pushed down.
     Q_PROPERTY(QString unpushedNote READ unpushedNote NOTIFY statusChanged)
+    /// Text to look for inside the files. The dearest criterion there is, so it
+    /// runs last and only over what everything else has kept.
+    Q_PROPERTY(QString contentText READ contentText WRITE setContentText NOTIFY criteriaChanged)
+    Q_PROPERTY(bool contentRegex READ contentRegex WRITE setContentRegex NOTIFY criteriaChanged)
+    Q_PROPERTY(bool searchBinary READ searchBinary WRITE setSearchBinary NOTIFY criteriaChanged)
+    /// True while the search is one that opens files, so the form can say what
+    /// it is about to cost before it starts rather than after.
+    Q_PROPERTY(bool readsFileContents READ readsFileContents NOTIFY criteriaChanged)
     /// Bytes; -1 for "no limit". Set through setSizeRange() from the form, which
     /// takes what a person types.
     Q_PROPERTY(qint64 minSize READ minSize NOTIFY criteriaChanged)
@@ -139,6 +147,13 @@ public:
     QString excluded() const { return m_excluded; }
     void setExcluded(const QString& text);
     QString unpushedNote() const { return m_unpushedNote; }
+    QString contentText() const { return m_contentText; }
+    void setContentText(const QString& text);
+    bool contentRegex() const { return m_contentRegex; }
+    void setContentRegex(bool asRegex);
+    bool searchBinary() const { return m_searchBinary; }
+    void setSearchBinary(bool include);
+    bool readsFileContents() const { return !m_contentText.isEmpty(); }
 
     qint64 minSize() const { return m_minSize; }
     qint64 maxSize() const { return m_maxSize; }
@@ -214,8 +229,10 @@ private:
     void startIndexSearch(const SearchQuery& query, const QString& doneFormat);
     /// Everything the form is asking for, as one query.
     SearchQuery buildQuery() const;
-    /// How to read a page of a file, for the criteria an entry cannot answer.
-    SampleReader sampleReaderFor(const FileSystemPtr& fileSystem) const;
+    /// How to read a file, for the criteria an entry cannot answer. The ceiling
+    /// is smaller for anything that is not the local disk, where reading is
+    /// downloading.
+    SearchIo searchIoFor(const FileSystemPtr& fileSystem, const VfsUri& root) const;
     /// Records what `source` could not state, for the form to show.
     void notePlan(const SearchQuery& query, SearchSource source);
     void setRunning(bool running);
@@ -243,6 +260,9 @@ private:
     int m_maxDepth = -1;
     QString m_excluded;
     QString m_unpushedNote;
+    QString m_contentText;
+    bool m_contentRegex = false;
+    bool m_searchBinary = false;
     qint64 m_minSize = -1;
     qint64 m_maxSize = -1;
     bool m_useIndex = true;

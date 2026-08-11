@@ -29,6 +29,7 @@ private slots:
     void excludedFoldersAreNeverEntered();
     void depthStopsTheWalkAtTheFolderItWasGiven();
     void aTypeClassOpensOnlyWhatSurvivedEverythingElse();
+    void aContentSearchCarriesItsReasonAndSaysWhatItLeft();
     void cancellationStopsSearch();
     void missingBackendFailsTask();
 
@@ -38,6 +39,7 @@ private:
     std::unique_ptr<TaskManager> m_tasks;
     std::shared_ptr<MemoryFileSystem> m_fs;
     FileEntryList m_hits;
+    QList<ContentMatch> m_reasons;
 };
 
 void TestLiveSearchTask::init()
@@ -45,6 +47,7 @@ void TestLiveSearchTask::init()
     m_tasks = std::make_unique<TaskManager>();
     m_fs = std::make_shared<MemoryFileSystem>();
     m_hits.clear();
+    m_reasons.clear();
 }
 
 void TestLiveSearchTask::cleanup()
@@ -57,8 +60,11 @@ LiveSearchTask* TestLiveSearchTask::start(SearchQuery query, FileSystemPtr fs)
 {
     auto* task
         = new LiveSearchTask(fs ? fs : m_fs, VfsUri::fromString(QStringLiteral("mem:///")), std::move(query));
-    connect(
-        task, &LiveSearchTask::hitsFound, this, [this](const FileEntryList& batch) { m_hits.append(batch); });
+    connect(task, &LiveSearchTask::hitsFound, this,
+        [this](const FileEntryList& batch, const QList<ContentMatch>& why) {
+            m_hits.append(batch);
+            m_reasons.append(why);
+        });
     m_tasks->submit(task);
     return task;
 }
@@ -310,6 +316,49 @@ void TestLiveSearchTask::aTypeClassOpensOnlyWhatSurvivedEverythingElse()
 
     QCOMPARE(m_hits.size(), 1);
     QCOMPARE(m_hits.first().name, QStringLiteral("holiday.txt"));
+}
+
+/// The whole path: cheap criteria narrow, the survivors are opened, and every
+/// hit comes back knowing why it is one.
+void TestLiveSearchTask::aContentSearchCarriesItsReasonAndSaysWhatItLeft()
+{
+    m_fs->addFile(QStringLiteral("/docs/wanted.txt"),
+        QByteArrayLiteral("preamble\nthe invoice number is 4471\ntrailer\n"));
+    m_fs->addFile(QStringLiteral("/docs/unwanted.txt"), QByteArrayLiteral("nothing of the sort\n"));
+    // Padded well past the ceiling below, so it is left rather than read.
+    m_fs->addFile(QStringLiteral("/docs/skipped.txt"),
+        QByteArrayLiteral("the invoice is in here\n") + QByteArray(400, 'x'));
+
+    SearchQuery query;
+    query.add(SearchPredicate::content(QStringLiteral("invoice")));
+    query.add(SearchPredicate::kind(false));
+
+    auto* task = new LiveSearchTask(m_fs, VfsUri::fromString(QStringLiteral("mem:///")), query);
+    // Small enough that one of the three is over it, which is the case the
+    // report exists for, and large enough that the other two are read.
+    task->setContentCeiling(100);
+    connect(task, &LiveSearchTask::hitsFound, this,
+        [this](const FileEntryList& batch, const QList<ContentMatch>& why) {
+            m_hits.append(batch);
+            m_reasons.append(why);
+        });
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(m_hits.size(), 1);
+    QCOMPARE(m_hits.first().name, QStringLiteral("wanted.txt"));
+
+    // The reason travels with the hit, in the same order.
+    QCOMPARE(m_reasons.size(), 1);
+    QCOMPARE(m_reasons.first().lineNumber, 2);
+    QCOMPARE(m_reasons.first().line, QStringLiteral("the invoice number is 4471"));
+
+    // And what it left is said rather than passed over in silence.
+    QCOMPARE(task->skippedTooBig(), 1);
+    QVERIFY2(task->statusText().contains(QStringLiteral("too big")), qPrintable(task->statusText()));
+    QVERIFY2(task->statusText().contains(QStringLiteral("read")),
+        "a search that opens files says how many it opened, not just how many it found");
+    QCOMPARE(task->candidatesRead(), 2);
 }
 
 void TestLiveSearchTask::cancellationStopsSearch()
