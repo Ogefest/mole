@@ -311,7 +311,7 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     // A drag has no result to look at afterwards, so both outcomes it can have
     // besides working are said out loud. Silence would be indistinguishable from
     // a pointer that missed.
-    m_dragSource = new DragSource(this);
+    m_dragSource = new DragSource(m_services, this);
     connect(m_dragSource, &DragSource::refused, this, [this](const QString& reason) {
         emit notification(
             static_cast<int>(EventBus::Severity::Warning), QStringLiteral("Nothing was dragged"), reason);
@@ -319,9 +319,18 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     connect(m_dragSource, &DragSource::leftBehind, this, [this](int sent, int left) {
         emit notification(static_cast<int>(EventBus::Severity::Warning),
             QStringLiteral("Dragging %1 of %2").arg(sent).arg(sent + left),
-            QStringLiteral("%1 of them are not on this computer, so nothing outside Mole can reach "
-                           "them yet.")
+            QStringLiteral("No drive is mounted for the other %1, so there is nothing to fetch them "
+                           "from.")
                 .arg(left));
+    });
+    // Not a failure: the drag will work, a moment from now. Said in the same place
+    // as the rest, because a gesture that appears to have done nothing is the
+    // thing this sentence exists to prevent.
+    connect(m_dragSource, &DragSource::staging, this, [this](int count) {
+        emit notification(static_cast<int>(EventBus::Severity::Info),
+            count == 1 ? QStringLiteral("Fetching 1 file") : QStringLiteral("Fetching %1 files").arg(count),
+            QStringLiteral("These are not on this computer yet. The drag will work once they are "
+                           "here -- the task strip shows how far it has got."));
     });
 
     // Whatever failed, wherever it was tried from. A listing that came back

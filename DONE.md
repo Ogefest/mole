@@ -9,6 +9,41 @@ wrong.
 
 ---
 
+## A file that was not on disk could not be dragged anywhere
+
+**Asked for:** MOLE-88 — Mole's own argument is that a bucket, a NAS and an archive are the
+same kind of drive as the disk. Dragging is where that stopped being true: `text/uri-list`
+carries a url the receiver opens for itself, and there is nothing to open inside a zip.
+MOLE-84 left those rows out of the payload on purpose; this gives them one.
+
+**What it turned out to be:** a scratch directory `DragSource` owns, filled by a
+`TransferTask`, and one rule about *when*. **A drag cannot wait.** The gesture is over long
+before a hundred megabytes arrive, there is no way to start a `QDrag` once the button is up,
+and blocking is not available either — this is the UI thread, and a 2 GB read over SFTP
+would freeze the window with no progress and no cancel. So the first drag of a row that is
+not on disk starts the fetch and says so, in the task strip like any other transfer plus a
+line saying the drag will work once the files are here; the next drag carries them.
+
+**`TransferTask` rather than `ReadFileTask`**, because it streams instead of holding the
+file in memory, it expands a folder into everything underneath it, and it is what weighs the
+arrival at the destination ([ADR-0016](docs/adr/0016-a-copy-is-weighed-at-the-destination.md)).
+A file that leaves Mole half-copied is worse than one that could not be dragged at all,
+because nothing downstream will ever question it.
+
+**Dragging the same file twice fetches it once.** A staged copy is reused while the source's
+size and modification time still match what they were when the copy was made — recorded at
+staging time rather than read off the copy, because a transfer does not carry a modification
+time across and comparing against one that was never set would re-fetch every time. The
+stat that checks it happens only on a drag that already has a copy to reuse, so a first
+drag never pays for it. A staged *folder* is reused as it stands: deciding whether a tree is
+still the same tree costs what fetching it again costs.
+
+**What is left behind now means something narrower.** Before this, every row that was not on
+disk was reported as left behind; now only the ones no drive is mounted for are, because
+those are the ones nothing could fetch. The tests from MOLE-84 still hold unchanged, which
+is the evidence that the line moved rather than blurred — they name unmounted drives, and
+those are exactly the rows that still cannot go.
+
 ## Nothing on screen took a drop
 
 **Asked for:** MOLE-87 — `dropHere()` could copy what was dropped and there was no

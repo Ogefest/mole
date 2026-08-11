@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-11 #MOLE-88 A file on an archive or a network drive can be dragged out too: the first drag fetches it and says so, the next one carries it, and dragging the same file twice fetches it once
 2026-08-11 #MOLE-87 Files dropped onto a listing are copied into the folder it is showing, with the pane saying how many and where while the pointer is still moving, and the copy confirmation asking before any name is overwritten
 2026-08-11 #MOLE-85 Files can be dragged out of a listing onto anything that takes files — the ticked rows when you start on one of them, that row alone when you do not, always as a copy
 2026-08-11 #MOLE-160 The details are a drawer beside the preview that you can read down, select and copy out of, and put away — one switch for every file rather than one per type
