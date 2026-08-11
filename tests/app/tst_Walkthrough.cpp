@@ -118,6 +118,8 @@ private slots:
     void theCommandPaletteFindsAndRunsThings();
     void theHeaderAdvertisesTheCommandPalette();
     void ctrlFIsASearchBoxYouCanTypeInto();
+    void aPartlyIndexedFolderShowsWhereEachRowCameFrom();
+    void aContentSearchSaysHowMuchItHasOpened();
     void searchResultsAreWalkableAndLeadSomewhere();
     void bulkRenameShowsThePreviewAsYouType();
     void breadcrumbsClimbTheTree();
@@ -1335,6 +1337,77 @@ void TestWalkthrough::theHeaderAdvertisesTheCommandPalette()
         m_harness->window()->contentItem()->mapFromScene(centre).toPoint());
     QVERIFY2(m_harness->until([palette] { return palette->property("opened").toBool(); }),
         "the bar opens the palette");
+}
+
+/// The picture the guide needs for the case the author cares about: a folder
+/// whose subfolder was indexed, answered by both halves, with the rows saying
+/// which is which.
+void TestWalkthrough::aPartlyIndexedFolderShowsWhereEachRowCameFrom()
+{
+    QVERIFY(m_harness->makeDirs(QStringLiteral("archive/2025")));
+    for (int i = 0; i < 6; ++i) {
+        QVERIFY(m_harness->writeFile(QStringLiteral("archive/2025/quarterly-report-%1.txt").arg(i),
+            QByteArray("an archived report")));
+    }
+    QVERIFY(m_harness->writeFile(QStringLiteral("loose-report.txt"), QByteArray("a fresh report")));
+
+    m_harness->key(Qt::Key_F, Qt::ControlModifier);
+    auto* search = qobject_cast<LiveSearchController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY(search);
+    m_harness->settle(6);
+
+    // Only the subfolder is indexed, which is what people actually do: the big
+    // slow tree, not the disk it sits on.
+    search->scanDirectory(m_harness->fixtureUri() + QStringLiteral("/archive"),
+        QStringLiteral("archive"));
+    QVERIFY(m_harness->until(
+        [this] { return m_harness->app()->tasks()->activeCount() == 0; }, 30000));
+
+    search->setRootUri(m_harness->fixtureUri());
+    m_harness->settle(4);
+    QVERIFY2(search->coverageNote().contains(QStringLiteral("part of this folder")),
+        qPrintable(search->coverageNote()));
+
+    search->setQueryText(QStringLiteral("report"));
+    search->start();
+    QVERIFY(m_harness->until([search] { return !search->isRunning(); }, 20000));
+    m_harness->settle(6);
+
+    QVERIFY2(search->results()->rowCount() >= 6, "both halves have to be in the list");
+    m_harness->screenshot(QStringLiteral("12c-search-mixed"));
+}
+
+/// And the one that can take minutes, saying how much of it is done.
+void TestWalkthrough::aContentSearchSaysHowMuchItHasOpened()
+{
+    for (int i = 0; i < 8; ++i) {
+        QVERIFY(m_harness->writeFile(QStringLiteral("notes/entry-%1.txt").arg(i),
+            i % 2 == 0 ? QByteArray("nothing of interest\n")
+                       : QByteArray("preamble\nthe invoice number is 4471\n")));
+    }
+
+    m_harness->key(Qt::Key_F, Qt::ControlModifier);
+    auto* search = qobject_cast<LiveSearchController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY(search);
+    m_harness->settle(6);
+
+    QQuickItem* toggle = m_harness->item(QStringLiteral("advancedToggle"));
+    QVERIFY(toggle);
+    QVERIFY(QMetaObject::invokeMethod(toggle, "clicked"));
+    m_harness->settle(4);
+
+    search->setRootUri(m_harness->fixtureUri() + QStringLiteral("/notes"));
+    search->setContentText(QStringLiteral("invoice"));
+    QVERIFY2(search->readsFileContents(), "the form has to say this one opens files");
+
+    search->start();
+    QVERIFY(m_harness->until([search] { return !search->isRunning(); }, 30000));
+    m_harness->settle(6);
+
+    QCOMPARE(search->results()->rowCount(), 4);
+    QVERIFY2(search->statusText().contains(QStringLiteral("read")),
+        qPrintable(QStringLiteral("a search that opens files says how many: %1").arg(search->statusText())));
+    m_harness->screenshot(QStringLiteral("12d-search-content"));
 }
 
 void TestWalkthrough::ctrlFIsASearchBoxYouCanTypeInto()

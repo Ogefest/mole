@@ -9,6 +9,37 @@ wrong.
 
 ---
 
+## The guide described two searches and a form with three criteria
+
+**Asked for:** MOLE-157 — the page described two tabs, three criteria and an index that was
+either used or not. After this epic it had to describe one search that can be asked a dozen
+things, an index that answers some of them, a content search that reads files, and results
+that come from two places at once and say which.
+
+**What it turned out to be:** the page rewritten around the four questions the project
+answers rather than around the two tabs that no longer exist — where, what you know about
+the file, what is in it, and what about the things that are not files. Each of the earlier
+tickets had already left its own paragraph behind; this is the pass that made them one
+argument instead of seven additions.
+
+**The paragraph the ticket really wanted is the one about not indexing contents.** A
+camera, a lens and a date taken are a few dozen bytes; the photograph is eight megabytes.
+An index of what a file says about itself sits beside your files; an index of what is in
+them is the files again. It is in the guide in the user's terms, in one paragraph, because
+that is the question that gets asked again otherwise — and the sentence that the index can
+be deleted without losing anything but time is the other half of the same point.
+
+**Two new pictures, generated rather than taken.** A folder answered by both halves with
+the provenance visible, and a content search with its progress. Both come from walkthrough
+tests that assert what the picture is supposed to show before taking it, so a picture
+cannot quietly stop matching the application.
+
+**All forty-eight are regenerated, and that is not only the new two.** The search form grew
+a query line and a coverage sentence, and the result rows grew a marker — both of which
+appear in more pictures than the search's own. Regenerating the lot is right for an epic
+that changed what a search looks like; it would not be right for a two-picture change, and
+[TODO.md](TODO.md) says why.
+
 ## Every criterion was a widget, and a search run twice was a form filled in twice
 
 **Asked for:** MOLE-156 — a proposal rather than a request. For somebody who reaches for

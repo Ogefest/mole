@@ -23,11 +23,17 @@ being added on top of it.
   archives (zip, tar, 7z, ...) are all mounts of the same `IFileSystem`
   interface. Activating an archive mounts it and browses inside.
 - **Tabs as workflows.** Browser (single pane, dual pane or a grid of icons),
-  live search and indexed search — each a separate feature, opened from the
-  same menu.
+  search, previews, reports and the rest — each a separate feature, opened from
+  the same menu.
 - **Filter by typing.** Start typing in a listing and it narrows to what you
   typed — no shortcut, no storage access. A search that walks the tree is a
   separate tab on `Ctrl+F`.
+- **One search, asked a dozen ways.** A name as text, a shape or an expression;
+  a path; a size; dates typed the way people say them (`last 7 days`, `>30d`);
+  what a file *is* rather than what it is called; folders to skip; and the text
+  inside the files themselves. Where to look is a field — this folder,
+  everywhere indexed, or a path — and a query line above the form is the same
+  query seen twice, so `report ext:pdf size>10M` is the whole of it.
 - **Preview with F3.** Source code coloured for twenty-odd languages, Markdown
   rendered, images, CSV/TSV, SQLite databases and Parquet files as a grid with
   filtering and copyable cells, and the bytes of anything else. What a file *is*
@@ -43,7 +49,12 @@ being added on top of it.
 - **Background everything.** Listing, scanning and searching run on a thread
   pool with progress and cancellation. The UI thread never touches storage.
 - **A file index.** Scan a tree once, then search it instantly without going
-  back to the disk (or the network).
+  back to the disk (or the network). A scan can also record what each file says
+  about itself — a camera, an author, a duration — and list what is inside the
+  archives it meets; the contents themselves are deliberately never indexed. A
+  folder with an indexed subfolder is answered by both at once, and every row
+  says whether it is what is on disk now or what a scan remembered. Re-scans keep
+  what has not changed, and a folder can be put on a nightly clock.
 - **Sessions.** Open tabs, their folders, their layout and the window's own
   size come back after a restart. Each tab kind decides what it remembers,
   plugins included.
@@ -168,7 +179,7 @@ Check a packaged build without a display:
 | `F4` | open the application menu (arrows and Enter from there) |
 | *just start typing* | filter this folder |
 | `F3` | preview the file under the cursor |
-| `Ctrl+F` / `Ctrl+Shift+I` | search a tree / search the index (new tab) |
+| `Ctrl+F` / `Ctrl+Shift+I` | search this folder / search everywhere indexed (new tab) |
 | `Ctrl+Shift+C` / `Ctrl+Shift+F` | copy this folder's path / the selected file's path |
 | `Ctrl+D` | bookmark this folder |
 | `Ctrl+G` or `Ctrl+L` | type a destination in the path bar |
