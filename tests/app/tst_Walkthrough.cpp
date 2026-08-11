@@ -1346,8 +1346,8 @@ void TestWalkthrough::aPartlyIndexedFolderShowsWhereEachRowCameFrom()
 {
     QVERIFY(m_harness->makeDirs(QStringLiteral("archive/2025")));
     for (int i = 0; i < 6; ++i) {
-        QVERIFY(m_harness->writeFile(QStringLiteral("archive/2025/quarterly-report-%1.txt").arg(i),
-            QByteArray("an archived report")));
+        QVERIFY(m_harness->writeFile(
+            QStringLiteral("archive/2025/quarterly-report-%1.txt").arg(i), QByteArray("an archived report")));
     }
     QVERIFY(m_harness->writeFile(QStringLiteral("loose-report.txt"), QByteArray("a fresh report")));
 
@@ -1358,10 +1358,8 @@ void TestWalkthrough::aPartlyIndexedFolderShowsWhereEachRowCameFrom()
 
     // Only the subfolder is indexed, which is what people actually do: the big
     // slow tree, not the disk it sits on.
-    search->scanDirectory(m_harness->fixtureUri() + QStringLiteral("/archive"),
-        QStringLiteral("archive"));
-    QVERIFY(m_harness->until(
-        [this] { return m_harness->app()->tasks()->activeCount() == 0; }, 30000));
+    search->scanDirectory(m_harness->fixtureUri() + QStringLiteral("/archive"), QStringLiteral("archive"));
+    QVERIFY(m_harness->until([this] { return m_harness->app()->tasks()->activeCount() == 0; }, 30000));
 
     search->setRootUri(m_harness->fixtureUri());
     m_harness->settle(4);
