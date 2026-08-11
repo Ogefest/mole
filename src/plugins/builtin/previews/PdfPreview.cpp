@@ -251,7 +251,10 @@ namespace {
             }
             const QString text = value.toString().trimmed();
             if (!text.isEmpty())
-                facts.append({ label, text });
+                facts.append({ label, text,
+                    label == QLatin1String("Author")      ? QStringLiteral("doc.author")
+                        : label == QLatin1String("Title") ? QStringLiteral("doc.title")
+                                                          : QString() });
         };
 
         append(QPdfDocument::MetaDataField::Title, QStringLiteral("Title"));
@@ -266,7 +269,8 @@ namespace {
         // "How many pages" is the question people actually ask of a PDF, and how
         // big a page is answers the other one.
         if (document.pageCount() > 0) {
-            facts.append({ QStringLiteral("Pages"), QString::number(document.pageCount()) });
+            facts.append({ QStringLiteral("Pages"), QString::number(document.pageCount()),
+                QStringLiteral("doc.pages"), double(document.pageCount()) });
             const QSizeF points = document.pagePointSize(0);
             if (!points.isEmpty()) {
                 // A point is 1/72 inch; millimetres is what a page size is

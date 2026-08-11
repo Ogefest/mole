@@ -43,6 +43,8 @@ private slots:
     void removeVolumeDropsEverything();
     void commitScanRecordsTheCountAndTheTime();
     void anIndexWrittenBeforeGenerationsStaysVisible();
+    void whatAFileSaysAboutItselfIsStoredAndAskedFor();
+    void anIndexWrittenBeforeFactsMigratesWithoutLosingARow();
     void survivesAccessFromSeveralThreads();
     void operationsFailCleanlyWhenClosed();
 
@@ -535,6 +537,91 @@ void TestIndexDatabase::anIndexWrittenBeforeGenerationsStaysVisible()
     QCOMPARE(upgraded.fileCount().value(), 2); // still the old two, mid-scan
     QVERIFY(upgraded.commitScan(volume, scan.value(), QDateTime::currentDateTime()).ok());
     QCOMPARE(upgraded.fileCount().value(), 1);
+}
+
+/// Metadata is the one thing worth indexing precisely because the contents are
+/// not: a camera and a date taken are a few dozen bytes where the photograph is
+/// eight megabytes.
+void TestIndexDatabase::whatAFileSaysAboutItselfIsStoredAndAskedFor()
+{
+    Result<qint64> volume
+        = m_db->upsertVolume(VfsUri::fromString(QStringLiteral("file:///photos")), QStringLiteral("vol"));
+    QVERIFY(volume.ok());
+
+    IndexedFile canon = makeFile(QStringLiteral("/photos/a.jpg"));
+    canon.facts = { SearchFact { QStringLiteral("image.camera"), QStringLiteral("Canon EOS 5D"), 0, false },
+        SearchFact { QStringLiteral("image.iso"), QStringLiteral("ISO 400"), 400, true } };
+    IndexedFile nikon = makeFile(QStringLiteral("/photos/b.jpg"));
+    nikon.facts = { SearchFact { QStringLiteral("image.camera"), QStringLiteral("Nikon Z6"), 0, false },
+        SearchFact { QStringLiteral("image.iso"), QStringLiteral("ISO 3200"), 3200, true } };
+    IndexedFile plain = makeFile(QStringLiteral("/photos/notes.txt"));
+
+    QVERIFY(rescan(volume.value(), { canon, nikon, plain }));
+
+    // Text, folded, and only the file that said it.
+    SearchQuery byCamera;
+    byCamera.add(SearchPredicate::metadataIs(QStringLiteral("image.camera"), QStringLiteral("canon")));
+    QCOMPARE(m_db->search(byCamera).value().size(), 1);
+    QCOMPARE(m_db->search(byCamera).value().first().name, QStringLiteral("a.jpg"));
+
+    // A range, which is what the number column exists for.
+    SearchQuery fast;
+    fast.add(SearchPredicate::metadataAtLeast(QStringLiteral("image.iso"), 1000));
+    QCOMPARE(m_db->search(fast).value().size(), 1);
+    QCOMPARE(m_db->search(fast).value().first().name, QStringLiteral("b.jpg"));
+
+    SearchQuery slow;
+    slow.add(SearchPredicate::metadataAtMost(QStringLiteral("image.iso"), 1000));
+    QCOMPARE(m_db->search(slow).value().size(), 1);
+    QCOMPARE(m_db->search(slow).value().first().name, QStringLiteral("a.jpg"));
+
+    // A file that says nothing is not a file that says everything.
+    SearchQuery anyCamera;
+    anyCamera.add(SearchPredicate::metadataIs(QStringLiteral("image.camera"), QStringLiteral("o")));
+    QCOMPARE(m_db->search(anyCamera).value().size(), 2);
+
+    // And the index answers it rather than handing it back to be checked.
+    QVERIFY(planSearch(byCamera, SearchSource::Index).pushedDownEverything());
+    QVERIFY(planSearch(fast, SearchSource::Index).pushedDownEverything());
+
+    // A rescan replaces the facts with the rows they belong to.
+    QVERIFY(rescan(volume.value(), { plain }));
+    QVERIFY(m_db->search(byCamera).value().isEmpty());
+    QCOMPARE(rowsInTable(), 1);
+}
+
+/// The migration every user takes, from the schema the generations arrived in.
+void TestIndexDatabase::anIndexWrittenBeforeFactsMigratesWithoutLosingARow()
+{
+    const qint64 volume = seedVolume(
+        QStringLiteral("file:///data"), { QStringLiteral("/data/a.txt"), QStringLiteral("/data/b.txt") });
+    QVERIFY(volume >= 0);
+    const QString path = QDir(m_dir->path()).filePath(QStringLiteral("index.sqlite"));
+    m_db.reset();
+
+    // Wound back to the schema before this one, the way a database written by
+    // the previous version really is.
+    const QString name = QStringLiteral("wound_back");
+    {
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), name);
+        db.setDatabaseName(path);
+        QVERIFY(db.open());
+        QSqlQuery query(db);
+        QVERIFY(query.exec(QStringLiteral("DROP TABLE IF EXISTS file_facts")));
+        QVERIFY(query.exec(QStringLiteral("PRAGMA user_version=2")));
+    }
+    QSqlDatabase::removeDatabase(name);
+
+    auto upgraded = std::make_unique<IndexDatabase>(path);
+    QVERIFY2(upgraded->open().ok(), "an index from the previous schema must still open");
+    QCOMPARE(upgraded->fileCount().value(), 2);
+    QCOMPARE(upgraded->search(named(QStringLiteral("a.txt"))).value().size(), 1);
+
+    // And opening it a second time changes nothing.
+    upgraded.reset();
+    auto again = std::make_unique<IndexDatabase>(path);
+    QVERIFY(again->open().ok());
+    QCOMPARE(again->fileCount().value(), 2);
 }
 
 void TestIndexDatabase::survivesAccessFromSeveralThreads()

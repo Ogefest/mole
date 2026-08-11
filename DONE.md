@@ -9,6 +9,36 @@ wrong.
 
 ---
 
+## The index knew nothing about what was inside the files it listed
+
+**Asked for:** MOLE-152 — a name, a path, an extension, a size and a date. So *the
+photographs from that camera*, *the documents this person wrote*, *the videos longer than
+an hour* could not be asked at all, at any price.
+
+**What it turned out to be:** one narrow table and a key on a fact. `file_facts(file_id,
+key, text, num)` with an index for each way of asking, because the fields come from readers
+plugins may add and a migration per EXIF tag is not a design. `FileFact` gained a
+namespaced `key` and a `number`, so the reader that fills the details panel is the reader
+that fills the index and the two can never disagree.
+[ADR-0039](docs/adr/0039-what-a-file-says-about-itself-is-indexed.md) records the keys, the
+shape and the line: metadata is indexed precisely because the contents are not, and the
+asymmetry — a camera is a few dozen bytes where the photograph is eight megabytes — is the
+whole argument rather than a convenience.
+
+**It is version 3, not the version 2 the ticket asked for.** Version 2 was already spent on
+the scan generations from MOLE-146. The append-only rule the migration code states in a
+comment is what made that a non-event: a database written by the previous version gains an
+empty table and loses nothing, and the test winds one back and opens it to hold that.
+
+**Off by default, with the cost said in files.** Reading metadata is bounded per file and
+unbounded in aggregate, so it is a choice made where the number of files is known — at the
+scan — and the dialog says *one read per file* rather than calling it slow. A scan with it
+off writes exactly what it wrote before, asserted down to the status line.
+
+**The same criterion works on a drive nobody scanned**, by reading the file instead. Same
+readers, so the answer cannot differ; what differs is the cost, which is what
+`PredicateCost` was built to say and what the planner uses to leave it until last.
+
 ## There was no way to search for what is inside a file
 
 **Asked for:** MOLE-151 — the missing half of a search tool. The name is what you have

@@ -14,6 +14,11 @@ ScanTask::ScanTask(
 {
 }
 
+void ScanTask::setFactReader(std::function<QList<SearchFact>(const FileEntry&)> reader)
+{
+    m_facts = std::move(reader);
+}
+
 void ScanTask::run()
 {
     if (!m_fileSystem || !m_index) {
@@ -74,6 +79,12 @@ void ScanTask::run()
         row.isDir = entry.isDir;
         row.size = entry.size;
         row.modifiedEpoch = entry.modified.isValid() ? entry.modified.toSecsSinceEpoch() : 0;
+        // A file whose readers find nothing, or fail, is indexed without them:
+        // a reader costs its own rows and never the scan.
+        if (m_facts && !entry.isDir) {
+            row.facts = m_facts(entry);
+            ++m_filesRead;
+        }
         batch.append(row);
         ++m_filesIndexed;
 
@@ -82,7 +93,9 @@ void ScanTask::run()
 
         // Total size is unknown up front, so report throughput instead of a
         // percentage and leave the bar indeterminate.
-        setStatusText(QStringLiteral("%1 entries indexed").arg(m_filesIndexed));
+        setStatusText(m_facts
+                ? QStringLiteral("%1 entries indexed, %2 read").arg(m_filesIndexed).arg(m_filesRead)
+                : QStringLiteral("%1 entries indexed").arg(m_filesIndexed));
         return DirectoryWalker::Action::Continue;
     });
 
@@ -109,6 +122,12 @@ void ScanTask::run()
     }
 
     setProgress(100);
+    if (m_facts) {
+        setStatusText(QStringLiteral("%1 entries indexed, %2 read for what they say about themselves")
+                          .arg(m_filesIndexed)
+                          .arg(m_filesRead));
+        return;
+    }
     setStatusText(m_skippedDirectories > 0 ? QStringLiteral("%1 entries indexed, %2 directories unreadable")
                                                  .arg(m_filesIndexed)
                                                  .arg(m_skippedDirectories)

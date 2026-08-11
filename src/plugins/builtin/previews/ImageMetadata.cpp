@@ -390,15 +390,19 @@ namespace {
             camera = make;
         else if (!model.startsWith(make, Qt::CaseInsensitive))
             camera = QStringLiteral("%1 %2").arg(make, model);
-        appendIf(facts, QStringLiteral("Camera"), camera);
-        appendIf(facts, QStringLiteral("Lens"), text(exif, 0xa434));
+        if (!camera.isEmpty())
+            facts.append({ QStringLiteral("Camera"), camera, QStringLiteral("image.camera") });
+        if (const QString lens = text(exif, 0xa434); !lens.isEmpty())
+            facts.append({ QStringLiteral("Lens"), lens, QStringLiteral("image.lens") });
 
         if (const std::optional<double> seconds = number(exif, 0x829a))
             appendIf(facts, QStringLiteral("Exposure"), exposureText(*seconds));
         if (const std::optional<double> fNumber = number(exif, 0x829d))
             appendIf(facts, QStringLiteral("Aperture"), apertureText(*fNumber));
-        if (const std::optional<double> iso = number(exif, 0x8827))
-            appendIf(facts, QStringLiteral("Sensitivity"), QStringLiteral("ISO %1").arg(qRound(*iso)));
+        if (const std::optional<double> iso = number(exif, 0x8827)) {
+            facts.append({ QStringLiteral("Sensitivity"), QStringLiteral("ISO %1").arg(qRound(*iso)),
+                QStringLiteral("image.iso"), *iso });
+        }
         if (const std::optional<double> focal = number(exif, 0x920a))
             appendIf(facts, QStringLiteral("Focal length"), QStringLiteral("%1 mm").arg(qRound(*focal)));
         if (const std::optional<double> bias = number(exif, 0x9204))
@@ -409,9 +413,14 @@ namespace {
         }
 
         const QString taken = text(exif, 0x9003);
-        appendIf(facts, QStringLiteral("Taken"), taken.isEmpty() ? QString() : dateText(taken));
-        if (taken.isEmpty())
-            appendIf(facts, QStringLiteral("Taken"), dateText(text(ifd0, 0x0132)));
+        const QString when = taken.isEmpty() ? text(ifd0, 0x0132) : taken;
+        if (const QDateTime moment = QDateTime::fromString(when, QStringLiteral("yyyy:MM:dd HH:mm:ss"));
+            moment.isValid()) {
+            // Seconds since the epoch as the number, so "taken last summer" is
+            // a range in SQL rather than string comparisons on a date format.
+            facts.append({ QStringLiteral("Taken"), dateText(when), QStringLiteral("image.taken"),
+                double(moment.toSecsSinceEpoch()) });
+        }
 
         if (const std::optional<double> orientation = number(ifd0, 0x0112))
             appendIf(facts, QStringLiteral("Orientation"), orientationText(qRound(*orientation)));
@@ -473,7 +482,10 @@ QList<FileFact> ImageMetadataReader::factsFor(QByteArrayView bytes, const QStrin
         const QSize size = reader.size();
         if (size.isValid()) {
             facts.append({ QStringLiteral("Dimensions"),
-                QStringLiteral("%1 × %2").arg(size.width()).arg(size.height()) });
+                QStringLiteral("%1 × %2").arg(size.width()).arg(size.height()), QStringLiteral("image.width"),
+                double(size.width()) });
+            facts.append({ QStringLiteral("Height"), QString::number(size.height()),
+                QStringLiteral("image.height"), double(size.height()) });
         }
     }
 

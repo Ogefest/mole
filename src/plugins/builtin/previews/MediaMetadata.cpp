@@ -196,7 +196,10 @@ namespace {
             }
         }
 
-        appendIf(facts, QStringLiteral("Duration"), durationText(seconds));
+        if (seconds > 0) {
+            facts.append({ QStringLiteral("Duration"), durationText(seconds),
+                QStringLiteral("media.duration"), seconds });
+        }
         if (picture && picture->width > 0 && picture->height > 0) {
             facts.append({ QStringLiteral("Picture"),
                 QStringLiteral("%1 × %2").arg(picture->width).arg(picture->height) });
@@ -212,7 +215,8 @@ namespace {
                 codecs.append(codecName(track.codec));
         }
         if (!codecs.isEmpty())
-            facts.append({ QStringLiteral("Codecs"), codecs.join(QStringLiteral(", ")) });
+            facts.append({ QStringLiteral("Codecs"), codecs.join(QStringLiteral(", ")),
+                QStringLiteral("media.codec") });
         if (!tracks.isEmpty())
             facts.append({ QStringLiteral("Tracks"), QString::number(tracks.size()) });
         return facts;

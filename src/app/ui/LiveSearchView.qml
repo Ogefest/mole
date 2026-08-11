@@ -554,6 +554,26 @@ Item {
                 selectByMouse: true
                 onAccepted: if (scanPath.text.trim().length > 0) scanDialog.accept()
             }
+
+            // Off by default, and the cost said in files rather than in
+            // adjectives: this is one read per file, and the trees worth
+            // indexing have a hundred thousand of them.
+            CheckBox {
+                objectName: "scanMetadataToggle"
+                text: "Also record what each file says about itself"
+                font.pixelSize: App.secondaryTextSize
+                checked: controller ? controller.scanReadsMetadata : false
+                onToggled: if (controller) controller.scanReadsMetadata = checked
+            }
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                text: "Cameras, authors, durations — a few dozen bytes each, and one read per file. "
+                      + "It makes the scan slower and lets you search for them afterwards. "
+                      + "The contents themselves are never indexed."
+                color: "#6f7788"
+                font.pixelSize: App.smallTextSize
+            }
         }
     }
 }

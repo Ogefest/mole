@@ -77,6 +77,11 @@ class LiveSearchController final : public FeatureController
     Q_PROPERTY(QString contentText READ contentText WRITE setContentText NOTIFY criteriaChanged)
     Q_PROPERTY(bool contentRegex READ contentRegex WRITE setContentRegex NOTIFY criteriaChanged)
     Q_PROPERTY(bool searchBinary READ searchBinary WRITE setSearchBinary NOTIFY criteriaChanged)
+    /// Whether a scan also records what each file says about itself. Off by
+    /// default: the cost is bounded per file and unbounded in aggregate, so it
+    /// is a choice made per scan with the number of files in front of it.
+    Q_PROPERTY(
+        bool scanReadsMetadata READ scanReadsMetadata WRITE setScanReadsMetadata NOTIFY criteriaChanged)
     /// True while the search is one that opens files, so the form can say what
     /// it is about to cost before it starts rather than after.
     Q_PROPERTY(bool readsFileContents READ readsFileContents NOTIFY criteriaChanged)
@@ -154,6 +159,8 @@ public:
     bool searchBinary() const { return m_searchBinary; }
     void setSearchBinary(bool include);
     bool readsFileContents() const { return !m_contentText.isEmpty(); }
+    bool scanReadsMetadata() const { return m_scanReadsMetadata; }
+    void setScanReadsMetadata(bool read);
 
     qint64 minSize() const { return m_minSize; }
     qint64 maxSize() const { return m_maxSize; }
@@ -233,6 +240,9 @@ private:
     /// is smaller for anything that is not the local disk, where reading is
     /// downloading.
     SearchIo searchIoFor(const FileSystemPtr& fileSystem, const VfsUri& root) const;
+    /// What a file says about itself, through the readers that fill the details
+    /// panel. The same readers, so the index and the panel can never disagree.
+    std::function<QList<SearchFact>(const FileEntry&)> factReaderFor(const FileSystemPtr& fileSystem) const;
     /// Records what `source` could not state, for the form to show.
     void notePlan(const SearchQuery& query, SearchSource source);
     void setRunning(bool running);
@@ -263,6 +273,7 @@ private:
     QString m_contentText;
     bool m_contentRegex = false;
     bool m_searchBinary = false;
+    bool m_scanReadsMetadata = false;
     qint64 m_minSize = -1;
     qint64 m_maxSize = -1;
     bool m_useIndex = true;

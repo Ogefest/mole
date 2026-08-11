@@ -13,7 +13,7 @@
 namespace mole {
 namespace {
 
-    constexpr int kSchemaVersion = 2;
+    constexpr int kSchemaVersion = 3;
 
 } // namespace
 
@@ -230,6 +230,33 @@ Result<void> IndexDatabase::applyMigrations()
         };
 
         if (Result<void> applied = apply(2, statements); !applied.ok())
+            return applied;
+    }
+
+    if (version < 3) {
+        // What a file says about itself. Key and value rather than a column
+        // apiece, because the fields come from readers that plugins may add and
+        // a schema migration per new EXIF tag is not a design.
+        //
+        // Numbers go in their own column so a range is a range in SQL; text
+        // goes in the other; a fact is written to whichever fits and to both
+        // when it makes sense -- an exposure is text to read and a number to
+        // compare.
+        const QStringList statements = {
+            QStringLiteral(R"(
+                CREATE TABLE IF NOT EXISTS file_facts (
+                    file_id   INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+                    key       TEXT NOT NULL,
+                    text      TEXT,
+                    num       REAL
+                ))"),
+            // One index per way of asking: a camera by name, an ISO by range.
+            QStringLiteral("CREATE INDEX IF NOT EXISTS idx_facts_key_text ON file_facts(key, text)"),
+            QStringLiteral("CREATE INDEX IF NOT EXISTS idx_facts_key_num ON file_facts(key, num)"),
+            QStringLiteral("CREATE INDEX IF NOT EXISTS idx_facts_file ON file_facts(file_id)"),
+        };
+
+        if (Result<void> applied = apply(3, statements); !applied.ok())
             return applied;
     }
 
@@ -458,6 +485,8 @@ Result<void> IndexDatabase::insertBatch(qint64 volumeId, qint64 generation, cons
     query.prepare(QStringLiteral("INSERT INTO files (volume_id, generation, name, name_folded, path, "
                                  "parent_path, extension, is_dir, size, mtime) "
                                  "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"));
+    QSqlQuery fact(db);
+    fact.prepare(QStringLiteral("INSERT INTO file_facts (file_id, key, text, num) VALUES (?, ?, ?, ?)"));
 
     for (const IndexedFile& file : files) {
         query.addBindValue(volumeId);
@@ -473,6 +502,20 @@ Result<void> IndexDatabase::insertBatch(qint64 volumeId, qint64 generation, cons
         if (!query.exec()) {
             db.rollback();
             return sqlError(db, QStringLiteral("Inserting indexed file"));
+        }
+
+        if (file.facts.isEmpty())
+            continue;
+        const qint64 fileId = query.lastInsertId().toLongLong();
+        for (const SearchFact& one : file.facts) {
+            fact.addBindValue(fileId);
+            fact.addBindValue(one.key);
+            fact.addBindValue(one.text.isEmpty() ? QVariant() : QVariant(one.text));
+            fact.addBindValue(one.hasNumber ? QVariant(one.number) : QVariant());
+            if (!fact.exec()) {
+                db.rollback();
+                return sqlError(db, QStringLiteral("Inserting a file's own facts"));
+            }
         }
     }
 
@@ -498,6 +541,7 @@ Result<QList<IndexSearchHit>> IndexDatabase::search(const SearchQuery& query) co
     QString sql = QStringLiteral(
         "SELECT f.name, v.root_uri, f.path, f.parent_path, f.is_dir, f.size, f.mtime, v.label "
         "FROM files f JOIN volumes v ON v.id = f.volume_id AND v.generation = f.generation WHERE 1=1");
+    // f.id is selected by nothing and needed by the fact subqueries below.
     QVariantList bindings;
 
     for (const SearchPredicate& predicate : planSearch(query, SearchSource::Index).pushedDown()) {
@@ -533,6 +577,27 @@ Result<QList<IndexSearchHit>> IndexDatabase::search(const SearchQuery& query) co
             sql += QStringLiteral(" AND f.is_dir = ?");
             bindings.append(predicate.flag ? 1 : 0);
             break;
+        case SearchPredicate::Field::Metadata: {
+            // An EXISTS over the fact table rather than a join, so a file with
+            // two cameras named in it comes back once. Both indexes are on
+            // (key, …), so the key narrows first whichever way it is asked.
+            const QString key = predicate.list.value(0);
+            if (predicate.match == SearchPredicate::Match::AtLeast
+                || predicate.match == SearchPredicate::Match::AtMost) {
+                sql += QStringLiteral(" AND EXISTS (SELECT 1 FROM file_facts m WHERE m.file_id = f.id "
+                                      "AND m.key = ? AND m.num %1 ?)")
+                           .arg(predicate.match == SearchPredicate::Match::AtMost ? QStringLiteral("<=")
+                                                                                  : QStringLiteral(">="));
+                bindings.append(key);
+                bindings.append(predicate.numberValue);
+            } else {
+                sql += QStringLiteral(" AND EXISTS (SELECT 1 FROM file_facts m WHERE m.file_id = f.id "
+                                      "AND m.key = ? AND instr(lower(m.text), ?) > 0)");
+                bindings.append(key);
+                bindings.append(foldForSearch(predicate.text));
+            }
+            break;
+        }
         case SearchPredicate::Field::Modified:
         case SearchPredicate::Field::Created:
         case SearchPredicate::Field::Accessed:

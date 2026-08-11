@@ -511,9 +511,14 @@ QList<FileFact> AudioMetadataReader::factsFor(QByteArrayView head, QByteArrayVie
         }
     }
 
-    appendIf(facts, QStringLiteral("Title"), tags.title);
-    appendIf(facts, QStringLiteral("Artist"), tags.artist);
-    appendIf(facts, QStringLiteral("Album"), tags.album);
+    // The four somebody searches by. The rest are shown and not asked about,
+    // which is what an empty key means.
+    if (!tags.title.isEmpty())
+        facts.append({ QStringLiteral("Title"), tags.title, QStringLiteral("audio.title") });
+    if (!tags.artist.isEmpty())
+        facts.append({ QStringLiteral("Artist"), tags.artist, QStringLiteral("audio.artist") });
+    if (!tags.album.isEmpty())
+        facts.append({ QStringLiteral("Album"), tags.album, QStringLiteral("audio.album") });
     appendIf(facts, QStringLiteral("Album artist"), tags.albumArtist);
     appendIf(facts, QStringLiteral("Year"), tags.year);
     appendIf(facts, QStringLiteral("Track"), tags.track);

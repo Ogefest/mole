@@ -45,6 +45,11 @@ namespace {
             // not recorded at all. All three are evaluated rather than ignored,
             // which is the whole point of the plan saying so.
             return false;
+        case SearchPredicate::Field::Metadata:
+            // Its own table, with an index for each way of asking. This is the
+            // one criterion the index answers that a walk has to open a file
+            // for, which is the whole reason it is indexed at all.
+            return true;
         case SearchPredicate::Field::Hidden:
         case SearchPredicate::Field::TypeClass:
         case SearchPredicate::Field::Content:
@@ -329,6 +334,38 @@ SearchPredicate SearchPredicate::content(const QString& text, bool asRegex, bool
     return predicate;
 }
 
+SearchPredicate SearchPredicate::metadataIs(const QString& key, const QString& value)
+{
+    SearchPredicate predicate;
+    predicate.field = Field::Metadata;
+    predicate.match = Match::Contains;
+    predicate.list = { key };
+    predicate.text = value;
+    // A column on an indexed volume and a bounded read on one that was never
+    // scanned. PushedDown is the claim that the index can state it; a source
+    // that cannot say so demotes it, which is what the planner is for.
+    predicate.cost = PredicateCost::PushedDown;
+    return predicate;
+}
+
+SearchPredicate SearchPredicate::metadataAtLeast(const QString& key, double value)
+{
+    SearchPredicate predicate = metadataIs(key, QString());
+    predicate.match = Match::AtLeast;
+    predicate.number = 0;
+    predicate.numberValue = value;
+    return predicate;
+}
+
+SearchPredicate SearchPredicate::metadataAtMost(const QString& key, double value)
+{
+    SearchPredicate predicate = metadataIs(key, QString());
+    predicate.match = Match::AtMost;
+    predicate.number = 0;
+    predicate.numberValue = value;
+    return predicate;
+}
+
 SearchPredicate SearchPredicate::minSize(qint64 bytes)
 {
     SearchPredicate predicate;
@@ -408,7 +445,7 @@ SearchPredicate SearchPredicate::underPath(const QString& uri)
 
 bool SearchPredicate::needsFile() const
 {
-    return field == Field::TypeClass || field == Field::Content;
+    return field == Field::TypeClass || field == Field::Content || field == Field::Metadata;
 }
 
 bool SearchPredicate::matches(const FileEntry& entry, const SearchIo& io, ContentMatch* whyOut) const
@@ -457,6 +494,22 @@ bool SearchPredicate::matches(const FileEntry& entry, const SearchIo& io, Conten
             if (found.isValid() && whyOut)
                 *whyOut = found;
             return found.isValid();
+        }
+        case Field::Metadata: {
+            if (list.isEmpty() || !io.facts)
+                return false;
+            const QString wanted = list.first();
+            for (const SearchFact& fact : io.facts(entry)) {
+                if (fact.key != wanted)
+                    continue;
+                if (match == Match::AtLeast)
+                    return fact.hasNumber && fact.number >= numberValue;
+                if (match == Match::AtMost)
+                    return fact.hasNumber && fact.number <= numberValue;
+                if (containsText(fact.text, text, caseSensitive, wholeWord))
+                    return true;
+            }
+            return false;
         }
         case Field::Under:
             return isUnder(entry.uri.toString(), text);
@@ -598,6 +651,12 @@ SearchQuery& SearchQuery::addIfSet(const SearchPredicate& predicate)
     case SearchPredicate::Field::Content:
         if (predicate.text.isEmpty())
             return *this;
+        break;
+    case SearchPredicate::Field::Metadata:
+        if (predicate.list.isEmpty()
+            || (predicate.match == SearchPredicate::Match::Contains && predicate.text.isEmpty())) {
+            return *this;
+        }
         break;
     case SearchPredicate::Field::Size:
     case SearchPredicate::Field::Modified:

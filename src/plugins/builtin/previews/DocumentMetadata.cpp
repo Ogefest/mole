@@ -142,6 +142,35 @@ bool DocumentMetadataReader::canRead(const FileEntry& entry) const
         || entry.mimeType.contains(QLatin1String("openxmlformats"));
 }
 
+namespace {
+
+    /// Names the facts worth asking about, beside the table that produced them.
+    ///
+    /// A key is an interface and a label is prose, so they are decided in one
+    /// place rather than matched up by whoever reads the index later.
+    void nameAskable(QList<FileFact>& facts)
+    {
+        static const QHash<QString, QString> keys {
+            { QStringLiteral("Author"), QStringLiteral("doc.author") },
+            { QStringLiteral("Title"), QStringLiteral("doc.title") },
+            { QStringLiteral("Pages"), QStringLiteral("doc.pages") },
+            { QStringLiteral("Words"), QStringLiteral("doc.words") },
+        };
+        for (FileFact& fact : facts) {
+            fact.key = keys.value(fact.label);
+            if (fact.key.isEmpty())
+                continue;
+            // A count is a number as well as a line of text, so "more than two
+            // hundred pages" is a range rather than a string comparison.
+            bool isNumber = false;
+            const double value = fact.value.toDouble(&isNumber);
+            if (isNumber)
+                fact.number = value;
+        }
+    }
+
+} // namespace
+
 QList<FileFact> DocumentMetadataReader::factsFor(QByteArrayView prefix)
 {
     QList<FileFact> facts;
@@ -187,6 +216,7 @@ QList<FileFact> DocumentMetadataReader::factsFor(QByteArrayView prefix)
 
     if (facts.isEmpty() && !members.isEmpty())
         facts.append({ QStringLiteral("Properties"), QStringLiteral("none recorded") });
+    nameAskable(facts);
 #else
     Q_UNUSED(prefix);
 #endif

@@ -25,6 +25,14 @@ struct IndexedFile
     bool isDir = false;
     qint64 size = 0;
     qint64 modifiedEpoch = 0; ///< seconds since epoch, 0 when unknown
+
+    /// What the file says about itself, from the readers that fill the details
+    /// panel. Only the facts carrying a key ever get here; see ADR-0039.
+    ///
+    /// Metadata is the one thing worth indexing precisely because the contents
+    /// are not: a camera, a lens and a date taken are a few dozen bytes where
+    /// the photograph is eight megabytes. That asymmetry is the whole argument.
+    QList<SearchFact> facts;
 };
 
 /// A previously scanned root, e.g. "the /a/b/c tree on the NAS".

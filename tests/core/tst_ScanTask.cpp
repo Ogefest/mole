@@ -29,6 +29,9 @@ private slots:
     void failingIndexWriteFailsTheTask();
     void cancellationLeavesTaskCancelled();
     void reportsProgressText();
+    void aScanCanRecordWhatEachFileSaysAboutItself();
+    void aScanWithoutItWritesWhatItAlwaysWrote();
+    void aFileWhoseReaderFindsNothingIsStillIndexed();
 
 private:
     ScanTask* startScan(const QString& rootPath = QStringLiteral("/"));
@@ -320,6 +323,79 @@ void TestScanTask::reportsProgressText()
 
     QCOMPARE(task->progress(), 100);
     QVERIFY(task->statusText().contains(QStringLiteral("5 entries indexed")));
+}
+
+void TestScanTask::aScanCanRecordWhatEachFileSaysAboutItself()
+{
+    m_fs->addFile(QStringLiteral("/photos/a.jpg"));
+    m_fs->addFile(QStringLiteral("/photos/b.jpg"));
+
+    auto* task = new ScanTask(m_fs, VfsUri(QStringLiteral("mem"), QString(), QStringLiteral("/")),
+        QStringLiteral("scratch"), m_index.get());
+    task->setFactReader([](const FileEntry& entry) -> QList<SearchFact> {
+        if (entry.uri.suffix() != QLatin1String("jpg"))
+            return {};
+        return { SearchFact { QStringLiteral("image.camera"), QStringLiteral("Canon EOS 5D"), 0, false },
+            SearchFact { QStringLiteral("image.iso"), QStringLiteral("ISO 400"), 400, true } };
+    });
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task));
+    QCOMPARE(task->state(), Task::State::Succeeded);
+
+    SearchQuery byCamera;
+    byCamera.add(SearchPredicate::metadataIs(QStringLiteral("image.camera"), QStringLiteral("canon")));
+    QCOMPARE(m_index->search(byCamera).value().size(), 2);
+
+    SearchQuery fast;
+    fast.add(SearchPredicate::metadataAtLeast(QStringLiteral("image.iso"), 1000));
+    QVERIFY(m_index->search(fast).value().isEmpty());
+
+    // Where the time goes is where the progress has to look.
+    QCOMPARE(task->filesRead(), 2);
+    QVERIFY2(task->statusText().contains(QStringLiteral("read")),
+        qPrintable(QStringLiteral("the line said: %1").arg(task->statusText())));
+}
+
+void TestScanTask::aScanWithoutItWritesWhatItAlwaysWrote()
+{
+    m_fs->addFile(QStringLiteral("/photos/a.jpg"));
+
+    ScanTask* task = startScan();
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(task->filesRead(), 0);
+    QCOMPARE(m_index->fileCount().value(), 2); // the folder and the file
+    QCOMPARE(task->statusText(), QStringLiteral("2 entries indexed"));
+
+    // Nothing to ask about, and asking is not an error.
+    SearchQuery byCamera;
+    byCamera.add(SearchPredicate::metadataIs(QStringLiteral("image.camera"), QStringLiteral("canon")));
+    QVERIFY(m_index->search(byCamera).ok());
+    QVERIFY(m_index->search(byCamera).value().isEmpty());
+}
+
+void TestScanTask::aFileWhoseReaderFindsNothingIsStillIndexed()
+{
+    m_fs->addFile(QStringLiteral("/mixed/readable.jpg"));
+    m_fs->addFile(QStringLiteral("/mixed/awkward.bin"));
+
+    auto* task = new ScanTask(m_fs, VfsUri(QStringLiteral("mem"), QString(), QStringLiteral("/")),
+        QStringLiteral("scratch"), m_index.get());
+    task->setFactReader([](const FileEntry& entry) -> QList<SearchFact> {
+        // What a reader that gave up looks like from here: nothing at all.
+        if (entry.uri.suffix() == QLatin1String("bin"))
+            return {};
+        return { SearchFact { QStringLiteral("image.camera"), QStringLiteral("Canon"), 0, false } };
+    });
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(task->state(), Task::State::Succeeded);
+    // Both files and both folders are in the index; only one said anything.
+    QCOMPARE(m_index->fileCount().value(), 3);
+    SearchQuery awkward;
+    awkward.add(SearchPredicate::name(QStringLiteral("awkward")));
+    QCOMPARE(m_index->search(awkward).value().size(), 1);
 }
 
 MOLE_TEST_MAIN(TestScanTask)

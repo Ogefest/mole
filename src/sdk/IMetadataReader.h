@@ -9,6 +9,9 @@
 #include <QList>
 #include <QString>
 
+#include <cmath>
+#include <limits>
+
 namespace mole {
 
 /// One thing a file says about itself: "Camera", "Canon EOS 5D".
@@ -20,6 +23,27 @@ struct FileFact
 {
     QString label;
     QString value;
+
+    /// A stable, namespaced name for this fact, for the index and for whoever
+    /// asks about it: `image.camera`, `image.iso`, `media.duration`.
+    ///
+    /// Empty for a fact worth showing and not worth asking about, which is most
+    /// of them. A key is an interface: name it once, write it down where a
+    /// plugin author will find it, and never rename it. The ones the built-in
+    /// readers hand out are listed in
+    /// docs/adr/0039-what-a-file-says-about-itself-is-indexed.md.
+    QString key;
+
+    /// The same fact as a number, when comparing it means anything: an ISO, a
+    /// duration in seconds, a page count, a pixel width. NaN when it does not.
+    ///
+    /// Both rather than one or the other, because an exposure is text to read
+    /// and a number to compare, and neither is the lesser answer.
+    double number = std::numeric_limits<double>::quiet_NaN();
+
+    bool hasNumber() const { return !std::isnan(number); }
+    /// Whether this fact can be searched for, rather than only shown.
+    bool isAskable() const { return !key.isEmpty(); }
 };
 
 /// Reads what a file says about itself: a photograph's camera and exposure, a

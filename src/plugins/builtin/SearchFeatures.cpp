@@ -1,5 +1,6 @@
 #include "plugins/builtin/SearchFeatures.h"
 
+#include "sdk/IMetadataReader.h"
 #include "ui/models/FileListModel.h"
 
 #include "core/data/FileType.h"
@@ -142,7 +143,11 @@ void LiveSearchController::scanDirectory(const QString& uri, const QString& labe
         return;
     }
 
-    auto* task = new ScanTask(std::move(fs), root, label.isEmpty() ? uri : label, m_services.index);
+    auto* task = new ScanTask(fs, root, label.isEmpty() ? uri : label, m_services.index);
+    // Asked for per scan rather than assumed: reading every file in a tree is
+    // bounded per file and unbounded in aggregate. See ADR-0039.
+    if (m_scanReadsMetadata)
+        task->setFactReader(factReaderFor(fs));
 
     // Announced on the bus rather than called back directly, so every open
     // search refreshes and not only the one that asked for the scan.
@@ -359,6 +364,7 @@ MOLE_SEARCH_SETTER(setExcluded, m_excluded, const QString&)
 MOLE_SEARCH_SETTER(setContentText, m_contentText, const QString&)
 MOLE_SEARCH_SETTER(setContentRegex, m_contentRegex, bool)
 MOLE_SEARCH_SETTER(setSearchBinary, m_searchBinary, bool)
+MOLE_SEARCH_SETTER(setScanReadsMetadata, m_scanReadsMetadata, bool)
 
 #undef MOLE_SEARCH_SETTER
 
@@ -436,6 +442,42 @@ SearchIo LiveSearchController::searchIoFor(const FileSystemPtr& fileSystem, cons
     // worth much less before it is opened.
     io.ceiling = root.scheme() == QLatin1String("file") ? SearchIo::kLocalCeiling : SearchIo::kRemoteCeiling;
     return io;
+}
+
+std::function<QList<SearchFact>(const FileEntry&)> LiveSearchController::factReaderFor(
+    const FileSystemPtr& fileSystem) const
+{
+    if (!fileSystem || !m_services.metadata)
+        return {};
+
+    IMetadataLookup* lookup = m_services.metadata;
+    return [fileSystem, lookup](const FileEntry& entry) -> QList<SearchFact> {
+        const QList<IMetadataReader*> readers = lookup->readersFor(entry);
+        if (readers.isEmpty())
+            return {};
+
+        // The page the type sniff would have read, read once and handed to
+        // every reader -- which is the contract IMetadataReader already states.
+        QByteArray head;
+        if (Result<std::unique_ptr<QIODevice>> stream
+            = fileSystem->openRead(entry.uri, FileType::kSampleBytes);
+            stream.ok() && stream.value()) {
+            head = stream.value()->read(FileType::kSampleBytes);
+        }
+
+        QList<SearchFact> out;
+        for (IMetadataReader* reader : readers) {
+            // A reader that throws its hands up costs its own rows and nobody
+            // else's, which is what the extension point promises.
+            for (const FileFact& fact : reader->read(entry, head, PluginServices {}, CancelToken {})) {
+                if (!fact.isAskable())
+                    continue;
+                out.append(SearchFact {
+                    fact.key, fact.value, fact.hasNumber() ? fact.number : 0, fact.hasNumber() });
+            }
+        }
+        return out;
+    };
 }
 
 void LiveSearchController::notePlan(const SearchQuery& query, SearchSource source)

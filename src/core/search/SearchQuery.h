@@ -23,6 +23,20 @@ enum class PredicateCost {
     Content, ///< a read of the file, always
 };
 
+/// One thing a file says about itself, as a search sees it.
+///
+/// Narrower than the SDK's FileFact on purpose: a label and a display string
+/// are what a panel shows, and a search needs only what can be asked about. The
+/// plugin layer converts, which keeps this layer from depending on the
+/// extension point that feeds it.
+struct SearchFact
+{
+    QString key; ///< namespaced and stable: "image.camera", "media.duration"
+    QString text; ///< what a text query is compared against
+    double number = 0; ///< the same fact as a number, when it is one
+    bool hasNumber = false;
+};
+
 /// What a criterion needs when the listing cannot answer it.
 ///
 /// One reader rather than two, because the two questions differ only in how
@@ -34,6 +48,12 @@ struct SearchIo
     /// and empty when it could not be read -- which is not the same as a file
     /// that does not match.
     std::function<QByteArray(const VfsUri&, qint64 offset, qint64 bytes)> read;
+
+    /// What the file says about itself, for a criterion an unscanned drive has
+    /// no row to answer from. Supplied by whoever holds the reader registry;
+    /// absent means the criterion cannot be answered here rather than that
+    /// every file passes it.
+    std::function<QList<SearchFact>(const FileEntry&)> facts;
 
     /// Whether the search has been called off. Polled between windows, because
     /// this is the one search that can take minutes and stopping it has to stop
@@ -102,6 +122,10 @@ struct SearchPredicate
         /// What is inside it. The dearest criterion there is, and the reason
         /// the cost ladder exists.
         Content,
+        /// Something the file says about itself: `image.camera`, `image.iso`,
+        /// `media.duration`. A column on an indexed volume and a bounded read
+        /// on one that was never scanned, which is why the cost is a member.
+        Metadata,
         Under, ///< the entry sits under this uri
     };
 
@@ -120,6 +144,7 @@ struct SearchPredicate
     QString text;
     QStringList list; ///< Extension, TypeClass
     qint64 number = 0; ///< Size, Modified, Created, Accessed
+    double numberValue = 0; ///< Metadata, where the fact is a number
     bool flag = false; ///< Kind: a directory. Hidden: hidden.
     bool caseSensitive = false; ///< Name, Path
     /// Whole words only, for a name or a path matched as a substring. "report"
@@ -161,6 +186,11 @@ struct SearchPredicate
     /// by what is in the file rather than by its suffix, because a suffix list
     /// is wrong about the files people actually have.
     static SearchPredicate content(const QString& text, bool asRegex = false, bool caseSensitive = false);
+    /// A fact the file states about itself, matched as text.
+    static SearchPredicate metadataIs(const QString& key, const QString& value);
+    /// The same fact as a number, in a range. Either bound on its own.
+    static SearchPredicate metadataAtLeast(const QString& key, double value);
+    static SearchPredicate metadataAtMost(const QString& key, double value);
     static SearchPredicate minSize(qint64 bytes);
     static SearchPredicate maxSize(qint64 bytes);
     static SearchPredicate modifiedAfter(qint64 epochSeconds);
