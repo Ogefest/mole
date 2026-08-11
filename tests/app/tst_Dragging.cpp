@@ -1,24 +1,31 @@
 #include "plugins/builtin/BrowserFeature.h"
 #include "support/MoleTestMain.h"
 #include "support/QmlAppHarness.h"
+#include "support/ZipFixtures.h"
 #include "ui/AppController.h"
 #include "ui/DragSource.h"
 #include "ui/models/FileListModel.h"
 #include "ui/models/TabsModel.h"
 
 #include "core/CoreMetaTypes.h"
+#include "core/tasks/TaskManager.h"
 
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QMimeData>
 #include <QQuickItem>
 #include <QQuickStyle>
+#include <QTemporaryDir>
 #include <QTest>
 #include <QUrl>
 
 using namespace mole;
 using namespace mole::test;
 
-/// Dragging rows out of a listing, driven through the real window.
+/// Dragging rows out of a listing and dropping files into one, driven through the
+/// real window.
 ///
 /// The gesture is the half that cannot be unit tested: a press, a move past
 /// whatever the platform calls a threshold, and a payload built from whichever
@@ -45,6 +52,13 @@ private slots:
     void aDoubleClickStillOpensTheRow();
     void theGridDelegateDragsTheSameWay();
 
+    void aDropOfTwoFilesCopiesThemIntoTheFolderInView();
+    void thePaneSaysWhatWouldHappenWhileTheDragIsOverIt();
+    void aDragThatLeavesWithoutDroppingSaysNothingMore();
+    void aReadOnlyPaneDoesNotTakeTheDragAtAll();
+    void aCollidingNameOpensTheConfirmationAndWritesNothingUntilItIsAnswered();
+    void aDropOnTheInactivePaneMakesItActive();
+
 private:
     BrowserPaneController* pane() const;
     FileListModel* files() const;
@@ -58,7 +72,21 @@ private:
     /// The names the recorder was handed, in the order they went.
     QStringList sent() const;
 
+    /// The middle of the listing, which is where a drop lands.
+    QPoint overTheListing(const QString& viewName = QStringLiteral("fileList")) const;
+    /// A file in a folder that is under no mount at all -- a download folder.
+    /// Returns its absolute path.
+    QString elsewhere(const QString& name, const QByteArray& contents);
+    /// The one visible item with this name. Both panes have one of most things and
+    /// one of them is hidden, so asking for "the" item picks whichever came first.
+    QQuickItem* visibleItem(const QString& objectName) const;
+    static QByteArray contentsOf(const QString& path);
+
     std::unique_ptr<QmlAppHarness> m_harness;
+    /// Where dropped files come from: a directory outside the fixture, so it is
+    /// outside every mount the application has -- which is what a download folder
+    /// is, and the case VfsManager cannot answer for.
+    std::unique_ptr<QTemporaryDir> m_downloads;
     QList<QUrl> m_urls;
     Qt::DropActions m_actions = Qt::IgnoreAction;
     int m_handovers = 0;
@@ -98,6 +126,41 @@ void TestDragging::init()
 void TestDragging::cleanup()
 {
     m_harness.reset();
+    m_downloads.reset();
+}
+
+QPoint TestDragging::overTheListing(const QString& viewName) const
+{
+    return m_harness->centreOf(m_harness->item(viewName));
+}
+
+QString TestDragging::elsewhere(const QString& name, const QByteArray& contents)
+{
+    if (!m_downloads)
+        m_downloads = std::make_unique<QTemporaryDir>();
+    const QString path = QDir(m_downloads->path()).filePath(name);
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return {};
+    file.write(contents);
+    return path;
+}
+
+QQuickItem* TestDragging::visibleItem(const QString& objectName) const
+{
+    for (QQuickItem* candidate : m_harness->items(objectName)) {
+        if (candidate->isVisible())
+            return candidate;
+    }
+    return nullptr;
+}
+
+QByteArray TestDragging::contentsOf(const QString& path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return {};
+    return file.readAll();
 }
 
 BrowserPaneController* TestDragging::pane() const
@@ -314,6 +377,189 @@ void TestDragging::theGridDelegateDragsTheSameWay()
     m_harness->click(m_harness->centreOf(otherTile));
     QCOMPARE(pane()->currentIndex(), other);
     QCOMPARE(m_handovers, 2);
+}
+
+// ---- the other direction ---------------------------------------------------
+//
+// A real drag from another application cannot be driven from here -- it wants a
+// platform, a pointer and a nested event loop. What can be driven is everything
+// downstream of the events one produces, which is all of Mole's own behaviour:
+// the harness builds the payload and delivers the three events by hand.
+
+void TestDragging::aDropOfTwoFilesCopiesThemIntoTheFolderInView()
+{
+    const QString one = elsewhere(QStringLiteral("invoice.pdf"), QByteArray("%PDF-1.4 invoice"));
+    const QString two = elsewhere(QStringLiteral("photo.jpg"), QByteArray("jpeg bytes"));
+    QVERIFY(!one.isEmpty() && !two.isEmpty());
+
+    const QPoint where = overTheListing();
+    m_harness->dragEnter({ one, two }, where);
+    m_harness->dragMove(where);
+    m_harness->dropAt(where);
+
+    const QString here = m_harness->fixturePath();
+    QVERIFY(m_harness->until([&here] {
+        return QFileInfo::exists(QDir(here).filePath(QStringLiteral("invoice.pdf")))
+            && QFileInfo::exists(QDir(here).filePath(QStringLiteral("photo.jpg")));
+    }));
+
+    // Arrived whole, and the originals are still there: a drop is a copy however
+    // the sending application would have preferred it.
+    QCOMPARE(contentsOf(QDir(here).filePath(QStringLiteral("invoice.pdf"))), QByteArray("%PDF-1.4 invoice"));
+    QVERIFY(QFileInfo::exists(one));
+}
+
+void TestDragging::thePaneSaysWhatWouldHappenWhileTheDragIsOverIt()
+{
+    const QString one = elsewhere(QStringLiteral("one.txt"), QByteArray("1"));
+    const QString two = elsewhere(QStringLiteral("two.txt"), QByteArray("2"));
+
+    const QPoint where = overTheListing();
+    m_harness->dragEnter({ one, two }, where);
+    m_harness->dragMove(where);
+
+    QQuickItem* hint = visibleItem(QStringLiteral("dropHint"));
+    QVERIFY2(hint, "the pane says nothing while a drag is over it");
+
+    QQuickItem* text = visibleItem(QStringLiteral("dropHintText"));
+    QVERIFY(text);
+    const QString said = text->property("text").toString();
+    // How many, and into which folder. A count with no destination is the half
+    // of the sentence that does not help when two panes are open.
+    QVERIFY2(said.contains(QStringLiteral("2 items")), qPrintable(said));
+    QVERIFY2(said.contains(pane()->displayPath()), qPrintable(said));
+
+    m_harness->dragLeave();
+}
+
+void TestDragging::aDragThatLeavesWithoutDroppingSaysNothingMore()
+{
+    const QString one = elsewhere(QStringLiteral("one.txt"), QByteArray("1"));
+
+    const QPoint where = overTheListing();
+    m_harness->dragEnter({ one }, where);
+    m_harness->dragMove(where);
+    QVERIFY(visibleItem(QStringLiteral("dropHint")));
+
+    m_harness->dragLeave();
+
+    // The banner goes with the drag. One left behind would be a pane claiming
+    // something is about to arrive that never will.
+    QVERIFY(!visibleItem(QStringLiteral("dropHint")));
+    QVERIFY(!QFileInfo::exists(QDir(m_harness->fixturePath()).filePath(QStringLiteral("one.txt"))));
+}
+
+void TestDragging::aReadOnlyPaneDoesNotTakeTheDragAtAll()
+{
+    // A mounted archive is the read-only drive in Mole, so that is what this uses
+    // rather than a wrapper that only declares itself one -- which would test the
+    // binding and not the case.
+    StoredZip zip;
+    zip.add(QByteArrayLiteral("inside/note.txt"), QByteArrayLiteral("a file in an archive"));
+    QVERIFY(m_harness->writeFile(QStringLiteral("bundle.zip"), zip.build()));
+
+    const QString archive = m_harness->fixtureUri() + QStringLiteral("/bundle.zip");
+    if (!m_harness->app()->isMountableArchive(archive))
+        QSKIP("no plugin in this build can mount a zip");
+
+    const QString root = m_harness->app()->openArchive(archive);
+    QVERIFY(!root.isEmpty());
+    QVERIFY(m_harness->until([this] { return pane() && !pane()->isWritable(); }));
+    m_harness->settle(3);
+
+    const QString one = elsewhere(QStringLiteral("one.txt"), QByteArray("1"));
+    // The strip keeps a task after it has finished, and mounting the archive was
+    // one, so "queued nothing" is a number that did not move.
+    const int queued = m_harness->app()->tasks()->rowCount();
+
+    const QPoint where = overTheListing();
+    m_harness->dragEnter({ one }, where);
+    m_harness->dragMove(where);
+
+    // Not accepted, so the desktop shows it cannot be dropped here -- and nothing
+    // is claimed about what would happen, because nothing would.
+    QQuickItem* area = visibleItem(QStringLiteral("paneDropArea"));
+    QVERIFY(area);
+    QVERIFY(!area->property("containsDrag").toBool());
+    QVERIFY(!visibleItem(QStringLiteral("dropHint")));
+
+    // And the drop that follows anyway changes nothing.
+    m_harness->dropAt(where);
+    m_harness->settle(4);
+    QCOMPARE(m_harness->app()->tasks()->rowCount(), queued);
+}
+
+void TestDragging::aCollidingNameOpensTheConfirmationAndWritesNothingUntilItIsAnswered()
+{
+    const QString here = m_harness->fixturePath();
+    const QString clashing = elsewhere(QStringLiteral("alpha.txt"), QByteArray("the dropped one"));
+    QVERIFY(!clashing.isEmpty());
+    // alpha.txt is already in the fixture, from init().
+    QVERIFY(QFileInfo::exists(QDir(here).filePath(QStringLiteral("alpha.txt"))));
+
+    const QPoint where = overTheListing();
+    m_harness->dragEnter({ clashing }, where);
+    m_harness->dropAt(where);
+
+    QObject* dialog = m_harness->object(QStringLiteral("transferDialog"));
+    QVERIFY(dialog);
+    QVERIFY(m_harness->until([dialog] { return dialog->property("opened").toBool(); }));
+
+    // The dialog names what clashes, and nothing has been written while it stands.
+    const QVariantMap plan = dialog->property("plan").toMap();
+    QCOMPARE(
+        plan.value(QStringLiteral("collisions")).toStringList(), QStringList { QStringLiteral("alpha.txt") });
+    QVERIFY(dialog->property("isDrop").toBool());
+    m_harness->settle(4);
+    QVERIFY2(contentsOf(QDir(here).filePath(QStringLiteral("alpha.txt"))) != QByteArray("the dropped one"),
+        "the file was replaced before anybody agreed to it");
+
+    // Answered with overwrite, which is the answer that has to be asked for.
+    QObject* conflict = m_harness->object(QStringLiteral("conflictStrategy"));
+    QVERIFY(conflict);
+    conflict->setProperty("currentIndex", 2);
+    m_harness->settle(2);
+    QCOMPARE(conflict->property("currentValue").toString(), QStringLiteral("overwrite"));
+
+    QVERIFY(QMetaObject::invokeMethod(dialog, "accept"));
+    QVERIFY(m_harness->until([&here] {
+        return contentsOf(QDir(here).filePath(QStringLiteral("alpha.txt"))) == QByteArray("the dropped one");
+    }));
+}
+
+void TestDragging::aDropOnTheInactivePaneMakesItActive()
+{
+    auto* browser = qobject_cast<BrowserController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY(browser);
+    browser->setViewMode(BrowserController::ViewMode::Dual);
+    m_harness->settle(5);
+    QVERIFY(browser->splitEnabled());
+
+    // The right pane starts inactive and shows a different folder, so which pane
+    // took the files is a question with an answer.
+    browser->setActivePaneIndex(0);
+    browser->right()->navigateTo(m_harness->fixtureUri() + QStringLiteral("/epsilon"));
+    QVERIFY(m_harness->until([browser] { return !browser->right()->isLoading(); }));
+    m_harness->settle(3);
+    QCOMPARE(browser->activePaneIndex(), 0);
+
+    QQuickItem* rightListing = nullptr;
+    const QList<QQuickItem*> listings = m_harness->items(QStringLiteral("fileList"));
+    QVERIFY(listings.size() >= 2);
+    rightListing = listings.last();
+    QVERIFY(rightListing->isVisible());
+
+    const QString one = elsewhere(QStringLiteral("landed.txt"), QByteArray("over there"));
+    const QPoint where = m_harness->centreOf(rightListing);
+    m_harness->dragEnter({ one }, where);
+    m_harness->dropAt(where);
+
+    // The files are in the right pane's folder now, so that is where the user is.
+    QVERIFY(m_harness->until([this] {
+        return QFileInfo::exists(
+            QDir(m_harness->fixturePath()).filePath(QStringLiteral("epsilon/landed.txt")));
+    }));
+    QCOMPARE(browser->activePaneIndex(), 1);
 }
 
 // A real window, so a real QGuiApplication rather than the guiless one every

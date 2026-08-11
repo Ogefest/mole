@@ -294,6 +294,9 @@ Item {
                 active: controller ? controller.activePaneIndex === 0 : true
                 onFocusRequested: if (controller) controller.activePaneIndex = 0
                 onTransferRequested: function(move) { view.requestTransfer(move) }
+                onDropNeedsAnswer: function(urls, plan) {
+                    transferDialog.prepareDrop(leftPane.paneController, urls, plan)
+                }
                 onSwitchPaneRequested: {
                     if (controller && controller.splitEnabled) {
                         controller.focusOtherPane()
@@ -312,6 +315,9 @@ Item {
                 active: controller ? controller.activePaneIndex === 1 : false
                 onFocusRequested: if (controller) controller.activePaneIndex = 1
                 onTransferRequested: function(move) { view.requestTransfer(move) }
+                onDropNeedsAnswer: function(urls, plan) {
+                    transferDialog.prepareDrop(rightPane.paneController, urls, plan)
+                }
                 onSwitchPaneRequested: {
                     if (controller) {
                         controller.focusOtherPane()
@@ -334,6 +340,14 @@ Item {
         /// Read once when the dialog opens; the panes cannot change underneath
         /// a modal prompt, and re-reading per binding would re-scan the listing.
         property var plan: ({})
+        /// Set when the question came from a drop rather than from F5. The same
+        /// dialog either way -- a count, a size, a destination, the names that
+        /// clash and what to do about them are the same question however it was
+        /// asked, and a second dialog that looked like this one would be one more
+        /// place for the wording to drift.
+        property bool isDrop: false
+        property var dropTargetPane: null
+        property var droppedUrls: []
 
         title: isMove ? "Move" : "Copy"
         modal: true
@@ -354,10 +368,27 @@ Item {
 
         function prepare(move) {
             isMove = move
+            isDrop = false
+            dropTargetPane = null
+            droppedUrls = []
             plan = controller ? controller.transferPlan() : ({})
             nameField.text = plan.singleName ? plan.singleName : ""
             // Default to stopping. A prompt whose safe answer is not the default
             // is a prompt that will one day overwrite something by reflex.
+            conflictBox.currentIndex = 0
+            open()
+        }
+
+        /// The same question, asked by a drop. `paneDropped` is the pane the files
+        /// landed on and `dropPlan` is what it said would happen -- read at the
+        /// moment of the drop, so what is agreed to and what happens are the same
+        /// files.
+        function prepareDrop(paneDropped, urls, dropPlan) {
+            isMove = false
+            isDrop = true
+            dropTargetPane = paneDropped
+            droppedUrls = urls
+            plan = dropPlan
             conflictBox.currentIndex = 0
             open()
         }
@@ -367,8 +398,13 @@ Item {
         onOpened: if (nameRow.visible) nameField.forceActiveFocus()
 
         onAccepted: {
-            controller.runTransfer(isMove, nameRow.visible ? nameField.text : "",
-                                   conflictBox.currentValue)
+            if (isDrop) {
+                if (dropTargetPane)
+                    dropTargetPane.dropHere(droppedUrls, conflictBox.currentValue)
+            } else {
+                controller.runTransfer(isMove, nameRow.visible ? nameField.text : "",
+                                       conflictBox.currentValue)
+            }
             view.focusActivePane()
         }
         onRejected: view.focusActivePane()
@@ -401,7 +437,11 @@ Item {
             RowLayout {
                 id: nameRow
                 Layout.fillWidth: true
-                visible: (transferDialog.plan.singleName || "").length > 0
+                // Not for a drop: what arrives keeps the name it had. Renaming on
+                // the way in is a rename after the copy, and it is one keystroke
+                // away once the file is here.
+                visible: !transferDialog.isDrop
+                         && (transferDialog.plan.singleName || "").length > 0
                 Label {
                     text: "Name"
                     color: "#8b93a7"

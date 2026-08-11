@@ -27,6 +27,15 @@ project, and a contributor should never hit a wall of text they cannot read.
 
 ## Notes
 
+- **A drag that started inside Mole is refused by a check no test can reach.** The
+  pane's `DropArea` ignores a drop whose `drag.source` is not null, because pane to
+  pane is `F5` and `F6`; and a synthetic drop cannot be given a source, since
+  `QDropEvent::source()` answers from the `QDrag` that is in flight and there is no
+  way to have one without a platform and a pointer. The damaging half of that rule
+  is held one layer down instead: `dropHere()` leaves out rows that are already in
+  the destination folder, which is what a drag onto the folder it came from
+  amounts to, and `tst_BrowserPaneController` asserts it.
+
 - **The guide's pictures are in the locale of whoever ran the suite.** Sizes,
   numbers and dates go through `QLocale`, so the details panel in
   `23-preview-file-info.png` currently reads *"wtorek, 10 marca 2026"* in an

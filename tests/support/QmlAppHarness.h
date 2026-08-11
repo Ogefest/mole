@@ -12,6 +12,7 @@
 #include <memory>
 #include <vector>
 
+class QMimeData;
 class QQmlApplicationEngine;
 class QQuickItem;
 class QQuickWindow;
@@ -121,6 +122,28 @@ public:
     /// the window are still answered for -- what a test does with that is its
     /// own business.
     QPoint centreOf(const QQuickItem* item) const;
+
+    // ---- a drag from another application ---------------------------------
+    //
+    // A real drag cannot be driven from a test: QDrag::exec() wants a platform, a
+    // pointer and a nested event loop, and this binary has none of them. What can
+    // be driven is everything downstream of the events a real drag produces --
+    // which is all of Mole's own behaviour -- so the payload is built here and
+    // delivered to the window as QDragEnterEvent, QDragMoveEvent and QDropEvent.
+    //
+    // The offered actions are copy *and* move, the way a file manager sending a
+    // drag proposes both. A receiver that took the proposed action would be
+    // telling the sender it may delete; what Mole does instead is asserted rather
+    // than assumed.
+
+    /// Starts a drag of `localPaths` over the window at `where`. The payload is
+    /// kept until dropAt() or dragLeave(), the way one real drag holds one.
+    void dragEnter(const QStringList& localPaths, const QPoint& where);
+    void dragMove(const QPoint& where);
+    /// Takes the drag away without dropping it.
+    void dragLeave();
+    /// Drops what dragEnter() is carrying. Does nothing without one.
+    void dropAt(const QPoint& where);
     /// Lets bindings, queued task results and the render loop catch up.
     void settle(int rounds = 5);
     /// Spins until `predicate` holds, or the timeout expires.
@@ -169,6 +192,8 @@ private:
     std::unique_ptr<QQmlApplicationEngine> m_engine;
     QQuickWindow* m_window = nullptr;
     QString m_screenshotDirectory;
+    /// The payload of a drag in flight. One at a time, because a pointer is one.
+    std::unique_ptr<QMimeData> m_dragged;
 };
 
 } // namespace mole::test

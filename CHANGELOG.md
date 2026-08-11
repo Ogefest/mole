@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-11 #MOLE-87 Files dropped onto a listing are copied into the folder it is showing, with the pane saying how many and where while the pointer is still moving, and the copy confirmation asking before any name is overwritten
 2026-08-11 #MOLE-85 Files can be dragged out of a listing onto anything that takes files — the ticked rows when you start on one of them, that row alone when you do not, always as a copy
 2026-08-11 #MOLE-160 The details are a drawer beside the preview that you can read down, select and copy out of, and put away — one switch for every file rather than one per type
 2026-08-11 #MOLE-159 A file Mole can name — a video, an mp3, a .docx — shows what it is rather than a hex dump, and the bytes are a choice on the strip

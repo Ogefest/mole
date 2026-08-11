@@ -278,6 +278,9 @@ mole_mark_qml_test(tst_DocumentMetadata)
 if(MOLE_HAVE_ARCHIVE_PLUGIN)
     add_dependencies(tst_AppIntegration mole_plugin_archive)
     add_dependencies(tst_PluginManager mole_plugin_archive)
+    # A mounted archive is the read-only drive in Mole, and what a read-only pane
+    # does with a drop is one of the things dragging has to answer for.
+    add_dependencies(tst_Dragging mole_plugin_archive)
 endif()
 
 # These load the shipped plugins out of the build tree, so the plugins have to

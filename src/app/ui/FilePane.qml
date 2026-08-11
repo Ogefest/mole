@@ -18,6 +18,9 @@ FocusScope {
     signal focusRequested()
     signal transferRequested(bool move)
     signal switchPaneRequested()
+    /// A drop that would overwrite something. The pane does not own the
+    /// confirmation -- the view does, and it is the same one F5 uses.
+    signal dropNeedsAnswer(var urls, var plan)
 
     // A FocusScope, not a plain Rectangle, and the key handling lives here
     // rather than on the list.
@@ -910,6 +913,105 @@ FocusScope {
             }
 
             Item { Layout.fillWidth: true }
+        }
+    }
+
+    // --- taking a drop -------------------------------------------------
+    //
+    // One area over the whole pane rather than one per view: a pane is one place
+    // to put something, whether its rows are drawn as lines or as tiles. Last in
+    // the file so it sits above them both, and it takes no pointer events -- a
+    // click still belongs to the row underneath.
+    DropArea {
+        id: dropTarget
+        objectName: "paneDropArea"
+        anchors.fill: parent
+        keys: ["text/uri-list"]
+
+        // A read-only pane takes no part at all. Refusing while the pointer is
+        // still moving is honest -- the desktop shows it cannot be dropped here --
+        // and refusing after the button has been released is a failure message
+        // about something the user has already committed to. The pane says
+        // "read-only" in its status line throughout, which is the sentence that
+        // explains the cursor.
+        enabled: paneController !== null && paneController.writable
+
+        /// What the drop would do, read on entry and shown while it is over us.
+        property var plan: ({})
+
+        function addressesIn(event) {
+            var out = []
+            for (var i = 0; i < event.urls.length; ++i)
+                out.push(String(event.urls[i]))
+            return out
+        }
+
+        onEntered: function(drag) {
+            // A drag that started in this window is not a drop. Pane to pane is
+            // F5 and F6, and taking it here would mean a drag onto the folder it
+            // came from asking the user about collisions with itself.
+            if (!paneController || drag.source !== null) {
+                drag.accepted = false
+                return
+            }
+            dropTarget.plan = paneController.dropPlan(dropTarget.addressesIn(drag))
+        }
+
+        onExited: dropTarget.plan = ({})
+
+        onDropped: function(drop) {
+            dropTarget.plan = ({})
+            if (!paneController)
+                return
+
+            var urls = dropTarget.addressesIn(drop)
+            var plan = paneController.dropPlan(urls)
+
+            // The files are here now, so this is where the user is.
+            pane.takeFocus()
+
+            // A copy, and said so explicitly. Accepting the *proposed* action
+            // would tell a source that offered a move that its file may be
+            // deleted -- see ADR-0040.
+            drop.accept(Qt.CopyAction)
+
+            if ((plan.collisions || []).length > 0) {
+                pane.dropNeedsAnswer(urls, plan)
+                return
+            }
+            paneController.dropHere(urls, "stop")
+        }
+
+        // What would happen, while it can still change what the user does. In the
+        // pane's own palette rather than a system tooltip: it is a statement about
+        // this folder.
+        Rectangle {
+            objectName: "dropHint"
+            visible: dropTarget.containsDrag && (dropTarget.plan.count || 0) > 0
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 34
+            radius: 4
+            color: "#1b2029"
+            border.color: Material.accent
+            border.width: 1
+            implicitWidth: dropHintText.implicitWidth + 24
+            implicitHeight: dropHintText.implicitHeight + 16
+
+            Label {
+                id: dropHintText
+                objectName: "dropHintText"
+                anchors.centerIn: parent
+                font.pixelSize: App.secondaryTextSize
+                color: "#e6ebf5"
+                text: {
+                    var count = dropTarget.plan.count || 0
+                    var size = dropTarget.plan.sizeText || ""
+                    var where = dropTarget.plan.targetPath || ""
+                    var what = (count === 1 ? "1 item" : count + " items")
+                    return "Copy " + what + (size.length > 0 ? " · " + size : "") + " → " + where
+                }
+            }
         }
     }
 

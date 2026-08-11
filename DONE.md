@@ -9,6 +9,45 @@ wrong.
 
 ---
 
+## Nothing on screen took a drop
+
+**Asked for:** MOLE-87 — `dropHere()` could copy what was dropped and there was no
+`DropArea` anywhere in the application, so a file dragged over the window was refused by
+the desktop before Mole ever heard about it. This is the half the user meets.
+
+**What it turned out to be:** one `DropArea` over the whole pane rather than one per view —
+a pane is one place to put something whether its rows are drawn as lines or as tiles. It
+reads `dropPlan()` on entry and shows what would happen while the pointer is still moving:
+*Copy 2 items · 3.4 kB → Documents*. That sentence is the point of the feature, because the
+count and the destination are exactly what somebody wants confirmed before they let go over
+a window with two panes in it.
+
+**A read-only pane takes no part at all.** `enabled` is bound to the pane's `writable`, so
+the desktop shows a drag that cannot be dropped there rather than Mole showing a failure
+about something the user has already committed to — and the pane says *read-only* in its
+status line throughout, which is the sentence that explains the cursor. The test uses a
+mounted archive, because that is what a read-only drive in Mole actually is, and not a
+wrapper that only declares itself one.
+
+**A collision opens the confirmation that already exists.** `transferDialog` gained a second
+way in rather than a second dialog that looks like it: a count, a size, a destination, the
+names that clash and what to do about them are the same question however it was asked, and
+two dialogs would be one more place for the wording to drift. Its rename-on-arrival field is
+the one thing a drop does not offer, because what arrives keeps its name and renaming is a
+keystroke away once it is here.
+
+**`drop.accept(Qt.CopyAction)`, never `acceptProposedAction()`.** The proposed action of a
+drag out of another file manager is frequently a move, and accepting it tells the sender its
+file may be deleted. That one line is the difference between a copy and somebody else's data
+loss.
+
+**The harness gained a synthetic drag** — a `QMimeData` of urls delivered as
+`QDragEnterEvent`, `QDragMoveEvent`, `QDragLeaveEvent` and `QDropEvent`, offering copy *and*
+move so what Mole does with the proposal is asserted rather than assumed. One rule stays out
+of reach: a drop whose `drag.source` is not null is ignored, and a synthetic drop cannot be
+given a source. [TODO.md](TODO.md) says so, and says which controller-level rule holds the
+damaging half of it instead.
+
 ## A dropped file had nowhere to land
 
 **Asked for:** MOLE-86 — the other direction, and the more common one. Something has just

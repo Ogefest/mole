@@ -4,9 +4,11 @@
 #include "ui/AppController.h"
 
 #include <QDir>
+#include <QDragEnterEvent>
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QMimeData>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickItem>
@@ -15,6 +17,7 @@
 #include <QStyleHints>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QUrl>
 
 #ifdef Q_OS_UNIX
 #include <utime.h>
@@ -321,6 +324,55 @@ void QmlAppHarness::dragFrom(const QPoint& from, const QPoint& to)
     // handler treats as a teleport rather than as a drag.
     for (int step = 1; step <= 4; ++step)
         moveTo(from + (destination - from) * step / 4);
+}
+
+void QmlAppHarness::dragEnter(const QStringList& localPaths, const QPoint& where)
+{
+    if (!m_window)
+        return;
+
+    QList<QUrl> urls;
+    urls.reserve(localPaths.size());
+    for (const QString& path : localPaths)
+        urls.append(QUrl::fromLocalFile(path));
+
+    m_dragged = std::make_unique<QMimeData>();
+    m_dragged->setUrls(urls);
+
+    QDragEnterEvent enter(
+        where, Qt::CopyAction | Qt::MoveAction, m_dragged.get(), Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(m_window, &enter);
+    settle(2);
+}
+
+void QmlAppHarness::dragMove(const QPoint& where)
+{
+    if (!m_window || !m_dragged)
+        return;
+    QDragMoveEvent move(
+        where, Qt::CopyAction | Qt::MoveAction, m_dragged.get(), Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(m_window, &move);
+    settle(2);
+}
+
+void QmlAppHarness::dragLeave()
+{
+    if (!m_window || !m_dragged)
+        return;
+    QDragLeaveEvent leave;
+    QCoreApplication::sendEvent(m_window, &leave);
+    settle(2);
+    m_dragged.reset();
+}
+
+void QmlAppHarness::dropAt(const QPoint& where)
+{
+    if (!m_window || !m_dragged)
+        return;
+    QDropEvent drop(where, Qt::CopyAction | Qt::MoveAction, m_dragged.get(), Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(m_window, &drop);
+    settle(3);
+    m_dragged.reset();
 }
 
 QPoint QmlAppHarness::centreOf(const QQuickItem* item) const
