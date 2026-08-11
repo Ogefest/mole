@@ -7,10 +7,22 @@ without going back to the listing.
 Whichever viewer suits the file claims it. The strip along the top says which one you
 got, and offers whatever that viewer lets you choose.
 
-Under the strip, **Details** is what the file says about itself — a photograph's camera and
-exposure, a document's size and dates. It is read only when you open it, and whether it is
-open is remembered per file type, so EXIF on every photograph does not mean a panel on
-every log.
+## What a file is
+
+A file's type is decided by **what is in it**, not by what it is called. When the name is
+enough — `.png`, `.csv`, `.pdf` — that is the end of it. When it is not, Mole reads the
+first four kilobytes and asks again:
+
+![A Dockerfile, coloured](images/03g-preview-dockerfile.png)
+
+So a `Dockerfile`, a `.gitignore`, a `LICENSE` or a `.bashrc` opens as text although no
+suffix says so — and where the name is itself the type, it is coloured for it: Dockerfiles,
+makefiles and `CMakeLists.txt` as much as anything ending in `.py`. It works the other way
+round too: a zip renamed `notes.txt` is not shown as text, because the bytes say what a file
+is and the name is only a label somebody typed.
+
+One page is read to decide, whatever the file's size, and nothing else changes: a file that
+already had a viewer still gets it, and an empty file is not read at all.
 
 ## Text and code
 
@@ -109,6 +121,28 @@ Parquet the same, when the build has Apache Arrow — it is optional, and a buil
 it says so on the file rather than pretending the file is broken. Column types come from
 the file's own schema, and only the row groups needed for what is on screen are read, so
 a file of millions of rows opens as fast as one of ten.
+
+## Details
+
+Under the strip of every viewer, **Details** is what the file says about itself:
+
+- a **photograph** — its dimensions, format and colour depth, and what the camera wrote:
+  the make and model, the lens, the exposure, the aperture, the ISO, the focal length, when
+  it was taken, and the position if the camera recorded one
+- a **document** — a PDF's title, author, page count and page size; a `.docx` or `.odt`'s
+  author, who saved it last, when, and how many words
+- a **video** — how long it runs, how big the picture is, the frame rate and the codecs
+- an **audio file** — title, artist, album, year, track and genre, with the duration, the
+  bitrate, the sample rate and the channels
+
+The panel is **closed until you open it**, and nothing is read for a panel nobody opened —
+so stepping through a folder of photographs stays as quick as it is. Whether it is open is
+remembered per file type: EXIF on every photograph does not mean a panel on every log.
+
+Reading it puts **nothing on the network**, which is the same rule a rendered page follows.
+A picture's position is shown as the numbers in the file and is not looked up anywhere; a
+document's properties are parsed without resolving anything the XML names. And nothing is
+read whole to fill it: a header, and at most one further bounded read.
 
 ## Anything else
 

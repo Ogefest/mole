@@ -9,6 +9,31 @@ wrong.
 
 ---
 
+## The guide described the fact list as the last resort, and it had stopped being one
+
+**Asked for:** MOLE-137 — after this epic the guide's *Anything else* section was wrong, the
+README's roadmap promised two libraries that were not taken, and two more preview providers
+had arrived since MOLE-115 counted the guide's coverage.
+
+**What it turned out to be:** three sections and three pictures. *What a file is* explains
+the content pass with a coloured `Dockerfile` in front of it; *Details* says what a
+photograph, a document, a video and an audio file each add, that it is closed until asked
+for, and that reading it puts nothing on the network — a picture's position is the numbers
+in the file and is not looked up anywhere. The hex window's section was written when it
+landed and says what it is for, that it pages, that a selection copies as hex or as text,
+and that it is read-only, in the same words the page uses for PDF and SQLite.
+
+**The roadmap now says what is true.** Image metadata and audio tags are done and neither
+`exiv2` nor `taglib` was linked, for the reason ADR-0034 gives; video *playback* is still
+owed and MOLE-37 is still its ticket. The extension-point table gained the fifth point and
+lost the heading that called it three.
+
+**All forty-six pictures are regenerated, and that is not only the new one.** Every preview
+picture now carries the Details header, the fixture gained a `Dockerfile`, and the sidebar
+prints the machine's free space in every window — which is the churn [TODO.md](TODO.md)
+warns about. Regenerating the lot is right for an epic that changed the preview strip; it
+would not be right for a one-picture change.
+
 ## An audio file's tags were inside it and never on the screen
 
 **Asked for:** MOLE-136 — an audio file carries its title, artist and album inside it and

@@ -161,6 +161,7 @@ private slots:
     void aParquetFileOpensItsColumns();
     void aFileNothingClaimsStillReportsItself();
     void theBytesOfAFileNothingElseCanShow();
+    void aFileIsWhatIsInItRatherThanWhatItIsCalled();
     void aTransferInFlightShowsASpeedAndABar();
     void everyFeatureAndPreviewHasAPictureInTheGuide();
 
@@ -342,6 +343,21 @@ void TestWalkthrough::buildFixture()
     QVERIFY(m_harness->writeSparseFile(QStringLiteral("exports/catalogue.ndjson"), 86LL * 1000 * 1000));
     QVERIFY(m_harness->writeFile(QStringLiteral("code/build.sh"),
         QByteArray("#!/bin/sh\nset -eu\ncmake --preset release\ncmake --build build/release\n")));
+    // A name shared-mime-info has no glob for: text, and nothing but the bytes
+    // says so. It is in a picture, so its contents are worth reading.
+    QVERIFY(m_harness->writeFile(QStringLiteral("code/Dockerfile"),
+        QByteArray("# The build image, which is also the test image.\n"
+                   "FROM debian:bookworm-slim\n\n"
+                   "RUN apt-get update \\\n"
+                   " && apt-get install -y --no-install-recommends \\\n"
+                   "      build-essential cmake ninja-build qt6-base-dev \\\n"
+                   " && rm -rf /var/lib/apt/lists/*\n\n"
+                   "WORKDIR /src\n"
+                   "COPY . .\n\n"
+                   "ENV MOLE_LOG=task,drive\n"
+                   "ARG PRESET=release\n\n"
+                   "RUN cmake --preset \"$PRESET\" && cmake --build \"build/$PRESET\"\n\n"
+                   "ENTRYPOINT [\"/src/build/release/mole\"]\n")));
 
     // Enough more to fill the pane at 900 pixels rather than stopping two thirds
     // of the way down. None of them contains a "j", so the filter test's "only
@@ -399,6 +415,7 @@ void TestWalkthrough::buildFixture()
         { QStringLiteral("backups/laptop.img"), when(9, 3, 15) },
         { QStringLiteral("code"), when(62, 17, 41) },
         { QStringLiteral("code/build.sh"), when(62, 17, 41) },
+        { QStringLiteral("code/Dockerfile"), when(62, 17, 41) },
         { QStringLiteral("documents"), when(21, 9, 30) },
         { QStringLiteral("documents/report.txt"), when(21, 9, 30) },
         { QStringLiteral("documents/prices.csv"), when(23, 16, 5) },
@@ -3023,6 +3040,23 @@ void TestWalkthrough::aFileNothingClaimsStillReportsItself()
     m_harness->settle(6);
     QVERIFY2(m_harness->item(QStringLiteral("detailsPanel")), "the panel is what shows them");
     m_harness->screenshot(QStringLiteral("23-preview-file-info"));
+}
+
+void TestWalkthrough::aFileIsWhatIsInItRatherThanWhatItIsCalled()
+{
+    // No suffix and no glob for the name, so nothing but the bytes says this is
+    // text -- and once they have, the name says which language to colour it as.
+    PreviewTabController* preview = previewOf(QStringLiteral("code/Dockerfile"));
+    QCOMPARE(preview->viewerName(), QStringLiteral("Text"));
+
+    auto* viewer = qobject_cast<TextPreviewController*>(viewerOf(preview));
+    QVERIFY(viewer);
+    QVERIFY(m_harness->until([viewer] { return !viewer->text().isEmpty(); }));
+    QCOMPARE(viewer->languageName(), QStringLiteral("Dockerfile"));
+    QVERIFY(viewer->isHighlighted());
+
+    m_harness->settle(6);
+    m_harness->screenshot(QStringLiteral("03g-preview-dockerfile"));
 }
 
 void TestWalkthrough::theBytesOfAFileNothingElseCanShow()

@@ -30,9 +30,12 @@ being added on top of it.
   separate tab on `Ctrl+F`.
 - **Preview with F3.** Source code coloured for twenty-odd languages, Markdown
   rendered, images, CSV/TSV, SQLite databases and Parquet files as a grid with
-  filtering and copyable cells, and a description of anything else. A file of any
-  size opens at once — only the part being shown is ever read. Left and right
-  step through the folder.
+  filtering and copyable cells, and the bytes of anything else. What a file *is*
+  comes from what is in it rather than from its name, so a `Dockerfile` opens as
+  a coloured Dockerfile. Every viewer has a details panel: a photograph's camera
+  and exposure, a document's author, a video's codecs, an audio file's tags. A
+  file of any size opens at once — only the part being shown is ever read. Left
+  and right step through the folder.
 - **Commander-style file operations.** Copy and move between panes with F5/F6,
   across *any* two drives; rename, create and delete with F2/F7/F8.
 - **Full keyboard control.** Arrows, Enter, Insert to select, function keys for
@@ -237,13 +240,14 @@ wrong, `3` a drive could not be reached, `130` interrupted.
 - [`docs/WRITING_PLUGINS.md`](docs/WRITING_PLUGINS.md) — adding a drive, a tab
   or a preview.
 
-The three extension points:
+The extension points:
 
 | To add | Implement |
 |---|---|
 | a drive (SFTP, S3, WebDAV, a git forge) | `IFileSystemFactory` + `IFileSystem` |
 | a tab (duplicates, analytics, bulk rename) | `IFeature` + `FeatureController` |
-| a viewer (PDF, SQLite, Parquet, audio tags) | `IPreviewProvider` + `PreviewController` |
+| a viewer (PDF, SQLite, Parquet, bytes) | `IPreviewProvider` + `PreviewController` |
+| what a file says about itself (EXIF, tags) | `IMetadataReader` |
 | a menu entry under File / View / Tools / Help | `MenuAction` |
 
 Built-in functionality is registered through the identical `PluginRegistry`
@@ -341,9 +345,12 @@ object past the part size so the upload is a multipart one, sized by
 Backends: SFTP, FTP, S3 and WebDAV ship today; NFS and SMB are not written yet.
 Google Drive, Dropbox and OneDrive speak proprietary APIs and would each need a
 plugin of their own — see [ADR-0011](docs/adr/0011-network-drives-without-rclone.md).
-Previews: video (needs `qt6-multimedia-dev`, not yet installed here), audio tags
-(`taglib`), image metadata (`exiv2`), DuckDB tables. PDF, SQLite and Parquet are
-done.
+Previews: video *playback* (needs `qt6-multimedia-dev`, not installed here) and
+DuckDB tables. PDF, SQLite and Parquet are done; so are image metadata and audio
+tags, which read a header rather than linking `exiv2` or `taglib` — a reader is
+handed a bounded prefix of a file that may be on a remote drive, and neither
+library works that way. See
+[ADR-0034](docs/adr/0034-what-a-file-says-about-itself.md).
 
 Cross-platform: nothing in the codebase is Linux-specific, but Windows and
 macOS have not been built or tested yet.
