@@ -18,6 +18,8 @@ add_library(mole_test_support STATIC
     support/TableFixtures.cpp
     support/Victim.h
     support/Victim.cpp
+    support/GitFixture.h
+    support/GitFixture.cpp
 )
 
 # The QML-driving harness needs Quick and the application's QML; kept in its
@@ -41,6 +43,15 @@ target_include_directories(mole_test_support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(mole_test_support
     PUBLIC mole_core mole_sdk Qt6::Test Qt6::Network Qt6::Sql Qt6::Gui
     PRIVATE mole_flags)
+
+# The git fixtures build their repositories through libgit2 itself, so the support
+# library links it as well as core does. Core exports where it found it, because
+# this directory is configured in a scope of its own.
+if(MOLE_GIT2_FOUND)
+    target_include_directories(mole_test_support PRIVATE ${MOLE_GIT2_INCLUDE_DIRS})
+    target_link_directories(mole_test_support PRIVATE ${MOLE_GIT2_LIBRARY_DIRS})
+    target_link_libraries(mole_test_support PRIVATE ${MOLE_GIT2_LIBRARIES})
+endif()
 
 # Where the user guide keeps its pictures, so a test can hold the rule that every
 # feature has one -- see everyFeatureAndPreviewHasAPictureInTheGuide.
@@ -163,6 +174,11 @@ mole_add_test(tst_Sync             SOURCES core/tst_Sync.cpp)
 mole_add_test(tst_Terminal         SOURCES core/tst_Terminal.cpp)
 mole_add_test(tst_SecretStore      SOURCES core/tst_SecretStore.cpp)
 mole_add_test(tst_RemoteRegistry   SOURCES core/tst_RemoteRegistry.cpp)
+
+# What git says about a folder. Fixture repositories are built through libgit2 in
+# a temporary directory, so this needs no installed git and no network; without
+# libgit2 every case skips itself and says why.
+mole_add_test(tst_Repository        SOURCES core/tst_Repository.cpp)
 mole_add_test(tst_Analysis          SOURCES core/tst_Analysis.cpp)
 mole_add_test(tst_Scheduler         SOURCES core/tst_Scheduler.cpp)
 mole_add_test(tst_Alerts            SOURCES core/tst_Alerts.cpp)

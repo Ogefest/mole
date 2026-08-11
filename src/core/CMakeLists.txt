@@ -142,6 +142,9 @@ add_library(mole_core STATIC
     text/ImportDelimitedTask.h
     text/ImportDelimitedTask.cpp
 
+    vcs/Repository.h
+    vcs/Repository.cpp
+
     analysis/AnalysisReport.h
     analysis/AnalysisReport.cpp
     analysis/AnalyseDirectoryTask.h
@@ -200,6 +203,39 @@ if(VTERM_FOUND)
     message(STATUS "Terminal: libvterm ${VTERM_VERSION}")
 else()
     message(STATUS "Terminal: built-in parser (install libvterm-dev for full support)")
+endif()
+
+# Git state, when libgit2 is available. Without it a folder inside a checkout
+# looks exactly like one that is not -- no band, no markers, and nothing that
+# fails: Repository::isSupported() answers no and every caller shows nothing.
+# See docs/adr/0041-git-state-is-read-through-libgit2.md.
+#
+# MOLE_WITH_GIT2 exists so a machine that has the library can still build the way
+# a machine without it does. That build is the one nobody would otherwise try
+# until a contributor hit it.
+option(MOLE_WITH_GIT2 "Read git state through libgit2 when it is available" ON)
+if(PkgConfig_FOUND AND MOLE_WITH_GIT2)
+    pkg_check_modules(GIT2 QUIET libgit2)
+endif()
+if(GIT2_FOUND)
+    target_compile_definitions(mole_core PUBLIC MOLE_HAVE_GIT2)
+    target_include_directories(mole_core PRIVATE ${GIT2_INCLUDE_DIRS})
+    target_link_libraries(mole_core PRIVATE ${GIT2_LIBRARIES})
+    message(STATUS "Git state: libgit2 ${GIT2_VERSION}")
+    # The tests build their fixture repositories through libgit2 themselves, so
+    # they need what core links rather than only what it defines. Cached, because
+    # the test tree is configured from a different directory scope.
+    set(MOLE_GIT2_FOUND ON CACHE INTERNAL "")
+    set(MOLE_GIT2_INCLUDE_DIRS "${GIT2_INCLUDE_DIRS}" CACHE INTERNAL "")
+    set(MOLE_GIT2_LIBRARIES "${GIT2_LIBRARIES}" CACHE INTERNAL "")
+    set(MOLE_GIT2_LIBRARY_DIRS "${GIT2_LIBRARY_DIRS}" CACHE INTERNAL "")
+else()
+    if(MOLE_WITH_GIT2)
+        message(STATUS "Git state: disabled (install libgit2-dev)")
+    else()
+        message(STATUS "Git state: disabled (MOLE_WITH_GIT2=OFF)")
+    endif()
+    set(MOLE_GIT2_FOUND OFF CACHE INTERNAL "")
 endif()
 
 # Credentials are encrypted with OpenSSL, which Qt already depends on. Without it
