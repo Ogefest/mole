@@ -9,6 +9,39 @@ wrong.
 
 ---
 
+## Every criterion was a widget, and a search run twice was a form filled in twice
+
+**Asked for:** MOLE-156 — a proposal rather than a request. For somebody who reaches for
+`Ctrl+F` twenty times a day the fastest interface is a line of text, and every search tool
+of the last twenty years converged on the same answer.
+
+**What it turned out to be:** a parser, a printer, and a rule that neither the line nor the
+form is the master. Typing in the line moves the fields; changing a field rewrites the
+line. That is the whole point: the line teaches the form's vocabulary to somebody who
+started with the mouse, and the form explains the line to somebody who started by typing.
+One flag guards the loop, because without it the two chase each other while somebody is
+still typing.
+
+**The syntax is the field names and nothing clever.** Bare words are a name substring,
+`key:value` with the four comparisons, `-` to negate, quotes for a space, commas for a
+list, and slashes for a pattern — which is the one place a pattern is guessed at, and the
+reason the name field has an explicit mode everywhere else. The metadata keys are keys like
+any other, which is what makes the vocabulary one thing rather than two.
+
+**Everything is `and`, and the parser's own header says so** — no `or`, no brackets, no
+precedence. A general boolean language is a different feature with a different interface,
+and stating its absence where somebody would add it is the point of writing it down.
+
+**A query nobody can read does not run.** `size>10Q` is a complaint with the word marked,
+and `extn:pdf` asks whether `ext` was meant rather than quietly becoming a name search.
+The vocabulary check lives with the criteria rather than in the parser, because it grows
+with the index: a camera is a key on a volume that recorded one and not on one that did
+not.
+
+**Round-tripping is a test rather than a hope.** Parse, print, parse gives the same terms
+for every example in the ticket — a drift there would have the line and the form
+disagreeing about what was asked.
+
 ## Re-indexing walked the whole tree again, and nothing ran a scan on a clock
 
 **Asked for:** MOLE-155 — a re-scan wrote every entry whether or not anything had changed,

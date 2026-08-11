@@ -66,6 +66,7 @@ void LiveSearchController::setQueryText(const QString& text)
         return;
     m_queryText = text;
     setTitle(text.isEmpty() ? QStringLiteral("Quick search") : QStringLiteral("\"%1\"").arg(text));
+    rewriteQueryLine();
     emit queryTextChanged();
     emit stateChanged();
 }
@@ -75,6 +76,7 @@ void LiveSearchController::setExtension(const QString& extension)
     if (m_extension == extension)
         return;
     m_extension = extension;
+    rewriteQueryLine();
     emit criteriaChanged();
 }
 
@@ -262,6 +264,7 @@ void LiveSearchController::setSizeRange(const QString& minText, const QString& m
         return;
     m_minSize = low;
     m_maxSize = high;
+    rewriteQueryLine();
     emit criteriaChanged();
 }
 
@@ -395,6 +398,7 @@ namespace {
         if (Member == value)                                                                                 \
             return;                                                                                          \
         Member = value;                                                                                      \
+        rewriteQueryLine();                                                                                  \
         emit criteriaChanged();                                                                              \
         emit stateChanged();                                                                                 \
     }
@@ -510,6 +514,285 @@ SearchIo LiveSearchController::searchIoFor(const FileSystemPtr& fileSystem, cons
     return io;
 }
 
+namespace {
+
+    /// The vocabulary the line accepts, and the field each word moves.
+    ///
+    /// Written down once, in the order somebody meets them, because this list
+    /// is what the completion offers and what an unknown key is measured
+    /// against.
+    const QList<QPair<QString, QString>>& queryVocabulary()
+    {
+        static const QList<QPair<QString, QString>> words {
+            { QStringLiteral("name"), QStringLiteral("the file's name") },
+            { QStringLiteral("ext"), QStringLiteral("one of a list of extensions") },
+            { QStringLiteral("type"), QStringLiteral("image, video, audio, document, archive, code") },
+            { QStringLiteral("size"), QStringLiteral("10M, 1.5 GiB") },
+            { QStringLiteral("modified"), QStringLiteral("today, last 7 days, 2026-03-01") },
+            { QStringLiteral("created"), QStringLiteral("the same, where the drive says") },
+            { QStringLiteral("accessed"), QStringLiteral("the same, where the drive says") },
+            { QStringLiteral("path"), QStringLiteral("anywhere in the folder path") },
+            { QStringLiteral("content"), QStringLiteral("text inside the file") },
+            { QStringLiteral("kind"), QStringLiteral("file or folder") },
+            { QStringLiteral("hidden"), QStringLiteral("yes or no") },
+            { QStringLiteral("depth"), QStringLiteral("0 for this folder alone") },
+            { QStringLiteral("skip"), QStringLiteral("folders not to go into") },
+        };
+        return words;
+    }
+
+    /// How far apart two words are, for suggesting what somebody meant. A plain
+    /// edit distance: the keys are short and the list is small.
+    int distanceBetween(const QString& a, const QString& b)
+    {
+        QList<int> previous(b.size() + 1);
+        QList<int> current(b.size() + 1);
+        for (int j = 0; j <= b.size(); ++j)
+            previous[j] = j;
+        for (int i = 1; i <= a.size(); ++i) {
+            current[0] = i;
+            for (int j = 1; j <= b.size(); ++j) {
+                const int cost = a.at(i - 1) == b.at(j - 1) ? 0 : 1;
+                current[j] = qMin(qMin(current[j - 1] + 1, previous[j] + 1), previous[j - 1] + cost);
+            }
+            previous = current;
+        }
+        return previous[b.size()];
+    }
+
+} // namespace
+
+QStringList LiveSearchController::queryKeys() const
+{
+    QStringList keys;
+    for (const auto& [word, help] : queryVocabulary())
+        keys.append(word);
+    // The facts this scope actually records are keys like any other, which is
+    // what makes the vocabulary one thing rather than two.
+    keys += factKeys();
+    return keys;
+}
+
+QStringList LiveSearchController::queryValuesFor(const QString& key) const
+{
+    if (key == QLatin1String("type"))
+        return knownTypeClasses();
+    if (key == QLatin1String("kind"))
+        return { QStringLiteral("file"), QStringLiteral("folder") };
+    if (key == QLatin1String("hidden"))
+        return { QStringLiteral("yes"), QStringLiteral("no") };
+    return {};
+}
+
+void LiveSearchController::setQueryLine(const QString& text)
+{
+    if (m_queryLine == text)
+        return;
+    m_queryLine = text;
+    m_queryLineError.clear();
+    m_queryLineErrorAt = -1;
+
+    const ParsedQueryLine parsed = parseQueryLine(text);
+    if (!parsed.ok()) {
+        m_queryLineError = parsed.errors.first().message;
+        m_queryLineErrorAt = parsed.errors.first().position;
+        emit queryLineChanged();
+        return;
+    }
+
+    // Applied to the fields, which are the query. The guard is what stops the
+    // rewrite below coming back round and overwriting what is being typed.
+    m_rewriting = true;
+    const QStringList known = queryKeys();
+    QStringList names;
+    QStringList content;
+    QStringList paths;
+    QVariantMap facts;
+    m_extension.clear();
+    m_typeClasses.clear();
+    m_modifiedFrom.clear();
+    m_modifiedTo.clear();
+    m_createdFrom.clear();
+    m_accessedFrom.clear();
+    m_excluded.clear();
+    m_minSize = -1;
+    m_maxSize = -1;
+    m_kindMode = 0;
+    m_maxDepth = -1;
+    m_nameMode = 0;
+    m_excludeName = false;
+    m_excludePath = false;
+
+    for (const QueryTerm& term : parsed.terms) {
+        // A bare word is a name substring, which is what a bare word means
+        // everywhere else -- and so is one containing a colon whose left half
+        // nobody has heard of, so a file really called `notes:2026.txt` is
+        // findable.
+        if (term.key.isEmpty() || !known.contains(term.key)) {
+            if (!term.key.isEmpty()) {
+                // Close to a real key is a typo; far from every one is a name.
+                QString nearest;
+                int best = 3;
+                for (const QString& candidate : known) {
+                    const int distance = distanceBetween(term.key.toLower(), candidate.toLower());
+                    if (distance < best) {
+                        best = distance;
+                        nearest = candidate;
+                    }
+                }
+                if (!nearest.isEmpty()) {
+                    m_queryLineError
+                        = QStringLiteral("There is no %1. Did you mean %2?").arg(term.key, nearest);
+                    m_queryLineErrorAt = term.position;
+                    m_rewriting = false;
+                    emit queryLineChanged();
+                    return;
+                }
+                names.append(term.key + QLatin1Char(':') + term.value);
+                continue;
+            }
+            names.append(term.value);
+            if (term.isRegex)
+                m_nameMode = 2;
+            continue;
+        }
+
+        const QString key = term.key;
+        const QString value = term.value;
+        const auto asWhen = [&](QString& into) { into = value; };
+
+        if (key == QLatin1String("name")) {
+            names.append(value);
+            m_nameMode = term.isRegex ? 2 : (value.contains(QLatin1Char('*')) ? 1 : 0);
+            m_excludeName = term.negate;
+        } else if (key == QLatin1String("ext")) {
+            m_extension = value;
+        } else if (key == QLatin1String("type")) {
+            m_typeClasses = value.split(QLatin1Char(','), Qt::SkipEmptyParts);
+        } else if (key == QLatin1String("size")) {
+            const qint64 bytes = parseSize(value);
+            if (bytes < 0) {
+                m_queryLineError = QStringLiteral("%1 is not a size").arg(value);
+                m_queryLineErrorAt = term.position;
+                m_rewriting = false;
+                emit queryLineChanged();
+                return;
+            }
+            if (term.op == QueryTerm::Op::Below || term.op == QueryTerm::Op::AtMost)
+                m_maxSize = bytes;
+            else
+                m_minSize = bytes;
+        } else if (key == QLatin1String("modified") || key == QLatin1String("created")
+            || key == QLatin1String("accessed")) {
+            if (!parseWhen(value, QDateTime::currentDateTime()).isValid()) {
+                m_queryLineError = QStringLiteral("%1 is not a date anybody can read").arg(value);
+                m_queryLineErrorAt = term.position;
+                m_rewriting = false;
+                emit queryLineChanged();
+                return;
+            }
+            if (key == QLatin1String("created"))
+                asWhen(m_createdFrom);
+            else if (key == QLatin1String("accessed"))
+                asWhen(m_accessedFrom);
+            else if (term.op == QueryTerm::Op::Below || term.op == QueryTerm::Op::AtMost)
+                asWhen(m_modifiedFrom); // "changed in the last 30 days"
+            else
+                asWhen(m_modifiedFrom);
+        } else if (key == QLatin1String("path")) {
+            paths.append(value);
+            m_excludePath = term.negate;
+        } else if (key == QLatin1String("content")) {
+            content.append(value);
+        } else if (key == QLatin1String("kind")) {
+            m_kindMode = value.startsWith(QLatin1String("f"), Qt::CaseInsensitive)
+                    && !value.startsWith(QLatin1String("fo"), Qt::CaseInsensitive)
+                ? 1
+                : 2;
+        } else if (key == QLatin1String("hidden")) {
+            m_includeHidden = !value.startsWith(QLatin1Char('n'), Qt::CaseInsensitive);
+        } else if (key == QLatin1String("depth")) {
+            m_maxDepth = value.toInt();
+        } else if (key == QLatin1String("skip")) {
+            m_excluded = value;
+        } else {
+            facts.insert(key, value);
+        }
+    }
+
+    m_queryText = names.join(QLatin1Char(' '));
+    m_pathText = paths.join(QLatin1Char(' '));
+    m_contentText = content.join(QLatin1Char(' '));
+    m_factCriteria = facts;
+    m_rewriting = false;
+
+    setTitle(
+        m_queryText.isEmpty() ? QStringLiteral("Quick search") : QStringLiteral("\"%1\"").arg(m_queryText));
+    emit queryTextChanged();
+    emit criteriaChanged();
+    emit queryLineChanged();
+    emit stateChanged();
+}
+
+void LiveSearchController::rewriteQueryLine()
+{
+    if (m_rewriting)
+        return;
+
+    QList<QueryTerm> terms;
+    const auto add = [&terms](const QString& key, const QString& value, QueryTerm::Op op = QueryTerm::Op::Is,
+                         bool negate = false) {
+        if (value.isEmpty())
+            return;
+        QueryTerm term;
+        term.key = key;
+        term.value = value;
+        term.op = op;
+        term.negate = negate;
+        term.wasQuoted = value.contains(QLatin1Char(' '));
+        terms.append(term);
+    };
+
+    if (!m_queryText.isEmpty()) {
+        QueryTerm name;
+        name.value = m_queryText;
+        name.isRegex = m_nameMode == 2;
+        name.negate = m_excludeName;
+        name.wasQuoted = m_queryText.contains(QLatin1Char(' '));
+        terms.append(name);
+    }
+    add(QStringLiteral("ext"), m_extension);
+    add(QStringLiteral("type"), m_typeClasses.join(QLatin1Char(',')));
+    if (m_minSize >= 0)
+        add(QStringLiteral("size"), FileListModel::formatSize(m_minSize), QueryTerm::Op::AtLeast);
+    if (m_maxSize >= 0)
+        add(QStringLiteral("size"), FileListModel::formatSize(m_maxSize), QueryTerm::Op::AtMost);
+    add(QStringLiteral("modified"), m_modifiedFrom);
+    add(QStringLiteral("created"), m_createdFrom);
+    add(QStringLiteral("accessed"), m_accessedFrom);
+    add(QStringLiteral("path"), m_pathText, QueryTerm::Op::Is, m_excludePath);
+    add(QStringLiteral("content"), m_contentText);
+    if (m_kindMode == 1)
+        add(QStringLiteral("kind"), QStringLiteral("file"));
+    else if (m_kindMode == 2)
+        add(QStringLiteral("kind"), QStringLiteral("folder"));
+    if (!m_includeHidden)
+        add(QStringLiteral("hidden"), QStringLiteral("no"));
+    if (m_maxDepth >= 0)
+        add(QStringLiteral("depth"), QString::number(m_maxDepth));
+    add(QStringLiteral("skip"), m_excluded);
+    for (auto it = m_factCriteria.cbegin(); it != m_factCriteria.cend(); ++it)
+        add(it.key(), it.value().toString());
+
+    const QString written = printQueryLine(terms);
+    if (written == m_queryLine)
+        return;
+    m_queryLine = written;
+    m_queryLineError.clear();
+    m_queryLineErrorAt = -1;
+    emit queryLineChanged();
+}
+
 QStringList LiveSearchController::factKeys() const
 {
     if (!m_services.isValid() || !m_services.index || !m_services.index->isOpen())
@@ -574,6 +857,7 @@ void LiveSearchController::setFactCriteria(const QVariantMap& criteria)
     if (m_factCriteria == criteria)
         return;
     m_factCriteria = criteria;
+    rewriteQueryLine();
     emit criteriaChanged();
     emit stateChanged();
 }
@@ -836,6 +1120,13 @@ void LiveSearchController::start()
     // Starting a new search abandons the old one rather than racing it.
     stop();
 
+    // A line nobody could read does not run. Matching everything because of a
+    // typo is how somebody spends ten minutes doubting their disk.
+    if (!m_queryLineError.isEmpty()) {
+        setStatusText(m_queryLineError);
+        return;
+    }
+
     // A criterion the scope cannot answer does not mean "everything": it means
     // the question could not be asked. ADR-0005's own rule, and this is where
     // it bites hardest -- so the search stops and offers the two ways out.
@@ -1091,6 +1382,7 @@ QVariantMap LiveSearchController::saveState() const
         { QStringLiteral("contentRegex"), m_contentRegex },
         { QStringLiteral("searchBinary"), m_searchBinary },
         { QStringLiteral("factCriteria"), m_factCriteria },
+        { QStringLiteral("queryLine"), m_queryLine },
         { QStringLiteral("minSize"), m_minSize },
         { QStringLiteral("maxSize"), m_maxSize },
     };

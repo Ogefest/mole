@@ -50,6 +50,9 @@ private slots:
     void narrowingToTheIndexedPartSaysWhatItLeftOut();
     void theFieldsOfferedFollowTheKeysInScope();
     void aPlainNameSearchIsUntouchedByAnyOfIt();
+    void theLineAndTheFormAreOneQuerySeenTwice();
+    void aLineNobodyCanReadSaysSoAndDoesNotRun();
+    void theLineCanBeLeftEmptyAndTheFormUsedAlone();
 
 private:
     /// The search tab, aimed at `root`, with the index allowed.
@@ -498,6 +501,70 @@ void TestMixedSearch::aPlainNameSearchIsUntouchedByAnyOfIt()
     QVERIFY2(!search->blocked(), "a name and Return must never be stopped by any of this");
     QCOMPARE(urisIn(search->results()).size(), 4);
     QVERIFY(search->blockedReason().isEmpty());
+}
+
+void TestMixedSearch::theLineAndTheFormAreOneQuerySeenTwice()
+{
+    LiveSearchController* search = searchOver(memUri(QStringLiteral("/tree")));
+    QVERIFY(search);
+
+    // Typed into the line: the fields move.
+    search->setQueryLine(QStringLiteral("report ext:pdf size>10M type:image,document -path:node_modules"));
+    QVERIFY2(search->queryLineError().isEmpty(), qPrintable(search->queryLineError()));
+    QCOMPARE(search->queryText(), QStringLiteral("report"));
+    QCOMPARE(search->extension(), QStringLiteral("pdf"));
+    QCOMPARE(search->minSize(), 10 * 1024 * 1024);
+    QCOMPARE(search->typeClasses(), QStringList({ QStringLiteral("image"), QStringLiteral("document") }));
+    QCOMPARE(search->pathText(), QStringLiteral("node_modules"));
+    QVERIFY(search->excludePath());
+
+    // Changed in a field: the line is rewritten, and rewritten to something
+    // that reads back the same way.
+    search->setExtension(QStringLiteral("md"));
+    QVERIFY2(search->queryLine().contains(QStringLiteral("ext:md")), qPrintable(search->queryLine()));
+    QVERIFY2(!search->queryLine().contains(QStringLiteral("ext:pdf")), qPrintable(search->queryLine()));
+
+    const QString written = search->queryLine();
+    search->setQueryLine(written);
+    QCOMPARE(search->extension(), QStringLiteral("md"));
+    QCOMPARE(search->queryText(), QStringLiteral("report"));
+    QVERIFY2(search->queryLineError().isEmpty(), qPrintable(search->queryLineError()));
+}
+
+void TestMixedSearch::aLineNobodyCanReadSaysSoAndDoesNotRun()
+{
+    LiveSearchController* search = searchOver(memUri(QStringLiteral("/tree")));
+    QVERIFY(search);
+
+    // A size nobody can read. Matching everything here is how somebody spends
+    // ten minutes doubting their disk.
+    search->setQueryLine(QStringLiteral("report size>10Q"));
+    QVERIFY(!search->queryLineError().isEmpty());
+    QVERIFY(search->queryLineErrorAt() >= 0);
+
+    search->start();
+    QVERIFY2(!search->isRunning(), "a query that could not be read must not run");
+    QCOMPARE(search->results()->rowCount(), 0);
+
+    // A key nobody has heard of, with the nearest one suggested rather than the
+    // whole thing quietly turning into a name search.
+    search->setQueryLine(QStringLiteral("extn:pdf"));
+    QVERIFY2(search->queryLineError().contains(QStringLiteral("ext")), qPrintable(search->queryLineError()));
+
+    // An unterminated quote, with a place to point at.
+    search->setQueryLine(QStringLiteral("content:\"never ends"));
+    QVERIFY(!search->queryLineError().isEmpty());
+}
+
+void TestMixedSearch::theLineCanBeLeftEmptyAndTheFormUsedAlone()
+{
+    LiveSearchController* search = searchOver(memUri(QStringLiteral("/tree")));
+    QVERIFY(search);
+    QVERIFY(search->queryLine().contains(QStringLiteral("-note")));
+
+    QVERIFY(runToEnd(search));
+    QCOMPARE(urisIn(search->results()).size(), 4);
+    QVERIFY(search->queryLineError().isEmpty());
 }
 
 MOLE_TEST_MAIN(TestMixedSearch)

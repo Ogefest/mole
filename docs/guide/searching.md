@@ -9,6 +9,34 @@ to save.
 `Enter` starts it. While there is nothing to show yet the view says it is searching,
 and matches appear as they are found rather than in one lump at the end.
 
+## Typing the whole thing
+
+Above the form is a line, and the two are one query seen twice: typing here moves the
+fields, and changing a field rewrites this. Neither is the master — the line teaches the
+form's vocabulary to somebody who started with the mouse, and the form explains the line to
+somebody who started by typing.
+
+```
+report ext:pdf size>10M modified:<30d
+holiday type:image image.camera:"X100V" image.iso>800
+ext:cpp,h content:"TODO(perf)"
+name:/^IMG_\d{4}/ -path:node_modules
+```
+
+Bare words are a name substring, as they are in every search box. `key:value`, with `>`,
+`<`, `>=` and `<=` for anything numeric or dated. A `-` in front negates. Quotes hold a
+space, commas hold a list, and `/…/` holds a regular expression — which is the one place a
+pattern is guessed at rather than chosen, and why the name field has a mode of its own. The
+metadata keys are keys like any other, so the vocabulary is one thing rather than two.
+
+Everything is *and*. There is no *or*, no brackets and no precedence to learn, which is a
+decision rather than an omission. And a line nobody can read says what is wrong and does
+not run: `size>10Q` is a complaint with the offending word marked, and `extn:pdf` asks
+whether you meant `ext` — a typo that quietly searched names is how somebody spends ten
+minutes doubting their disk.
+
+The line can be left empty and the form used on its own, exactly as before.
+
 ## Narrowing what came back
 
 A search over a large tree returns more than anyone wants to read, so the results can be

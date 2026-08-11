@@ -6,6 +6,7 @@
 
 #include "core/index/IndexDatabase.h"
 #include "core/search/LiveSearchTask.h"
+#include "core/search/QueryLine.h"
 #include "core/search/SearchQuery.h"
 
 #include <QPointer>
@@ -165,6 +166,16 @@ public:
     bool scanOpensArchives() const { return m_scanOpensArchives; }
     void setScanOpensArchives(bool open);
 
+    QString queryLine() const { return m_queryLine; }
+    void setQueryLine(const QString& text);
+    QString queryLineError() const { return m_queryLineError; }
+    int queryLineErrorAt() const { return m_queryLineErrorAt; }
+    QStringList queryKeys() const;
+    /// The values worth completing for `key`, where the set is small and known:
+    /// the type classes, the cameras actually in the index. Empty otherwise,
+    /// which is most keys.
+    Q_INVOKABLE QStringList queryValuesFor(const QString& key) const;
+
     QString coverageNote() const;
     QStringList factKeys() const;
     bool metadataAvailable() const { return !factKeys().isEmpty(); }
@@ -245,6 +256,7 @@ signals:
     void statusChanged();
     void scopeChanged();
     void coverageChanged();
+    void queryLineChanged();
     void volumesChanged();
     void volumeIndexChanged();
 
@@ -288,6 +300,8 @@ private:
     FileSystemPtr backendFor(const VfsUri& uri) const;
     /// Records what `source` could not state, for the form to show.
     void notePlan(const SearchQuery& query, SearchSource source);
+    /// Writes the line out of the fields. Called whenever one of them moves.
+    void rewriteQueryLine();
     void setRunning(bool running);
     void setStatusText(const QString& text);
 
@@ -320,6 +334,13 @@ private:
     bool m_scanOpensArchives = true;
     QVariantMap m_factCriteria;
     QString m_blockedReason;
+    QString m_queryLine;
+    QString m_queryLineError;
+    int m_queryLineErrorAt = -1;
+    /// Guards the loop: the line writes the fields and the fields rewrite the
+    /// line, and without this the two would chase each other while somebody
+    /// types.
+    bool m_rewriting = false;
     qint64 m_minSize = -1;
     qint64 m_maxSize = -1;
     bool m_useIndex = true;

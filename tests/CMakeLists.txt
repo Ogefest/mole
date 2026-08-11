@@ -109,6 +109,10 @@ mole_add_test(tst_SearchQuery       SOURCES core/tst_SearchQuery.cpp)
 # Looking inside the files: the window loop, the overlap, the encodings and the
 # ceiling are each a thing that can be wrong on its own.
 mole_add_test(tst_ContentSearch     SOURCES core/tst_ContentSearch.cpp)
+
+# The line above the form. Its own binary because a parser is worth breaking on
+# its own rather than through a controller.
+mole_add_test(tst_QueryLine         SOURCES core/tst_QueryLine.cpp)
 mole_add_test(tst_EventBus          SOURCES core/tst_EventBus.cpp)
 mole_add_test(tst_TransferTask      SOURCES core/tst_TransferTask.cpp)
 

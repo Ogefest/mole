@@ -13,6 +13,7 @@ the first release; they stay as they are.
 
 2026-08-11 #MOLE-160 The details are a drawer beside the preview that you can read down, select and copy out of, and put away — one switch for every file rather than one per type
 2026-08-11 #MOLE-159 A file Mole can name — a video, an mp3, a .docx — shows what it is rather than a hex dump, and the bytes are a choice on the strip
+2026-08-11 #MOLE-156 A query line above the form, where the two are one query seen twice — typing moves the fields and changing a field rewrites the line, and a query nobody can read says so instead of matching everything
 2026-08-11 #MOLE-155 A re-scan keeps what has not changed instead of walking the tree again, and a folder can be put on a nightly clock that survives a restart and catches up on a run it missed
 2026-08-11 #MOLE-154 A scan lists what is inside the archives it meets, so a file in a zip is found by name and opening the row lands on it inside the archive
 2026-08-11 #MOLE-153 The search says in one line what the folder it is aimed at can be asked, offers a field for every fact that has been recorded there, and stops rather than quietly widening when asked something the scope has no record of

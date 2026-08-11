@@ -20,6 +20,38 @@ Item {
         anchors.margins: 8
         spacing: 8
 
+        // The line and the form are one query seen twice. Typing here moves the
+        // fields; changing a field rewrites this. Neither is the master: the
+        // line teaches the form's vocabulary to somebody who started with the
+        // mouse, and the form explains the line to somebody who started typing.
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 2
+
+            TextField {
+                objectName: "queryLineField"
+                Layout.fillWidth: true
+                placeholderText: "report ext:pdf size>10M modified:<30d"
+                font.family: App.monospaceFont
+                font.pixelSize: App.secondaryTextSize
+                text: controller ? controller.queryLine : ""
+                selectByMouse: true
+                onTextEdited: if (controller) controller.queryLine = text
+                onAccepted: if (controller) controller.start()
+                Keys.onDownPressed: resultList.takeFocus()
+            }
+
+            Label {
+                objectName: "queryLineError"
+                Layout.fillWidth: true
+                visible: controller ? controller.queryLineError.length > 0 : false
+                text: controller ? controller.queryLineError : ""
+                color: Material.color(Material.Amber)
+                font.pixelSize: App.smallTextSize
+                wrapMode: Text.Wrap
+            }
+        }
+
         GridLayout {
             Layout.fillWidth: true
             columns: 4
