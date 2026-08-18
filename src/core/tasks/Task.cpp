@@ -5,6 +5,8 @@
 #include <QDateTime>
 #include <QElapsedTimer>
 #include <QLocale>
+#include <QMutexLocker>
+#include <QTimer>
 #include <QUuid>
 
 #include <algorithm>
@@ -59,6 +61,11 @@ void Task::execute()
     }
     const qint64 elapsed = clock.elapsed();
 
+    // Before the state change, so anything watching finished() reads the line
+    // and the counts the task ended on rather than the ones the clock happened
+    // to let through.
+    flushReports();
+
     const char* outcome = "finished";
     if (m_cancel.isCancelled()) {
         setState(State::Cancelled);
@@ -102,7 +109,11 @@ void Task::setProgress(int percent)
     }
 
     // Called once per processed item on hot paths, so drop no-op updates
-    // before they ever reach the event queue.
+    // before they ever reach the event queue. This needs no box and no clock,
+    // and must not grow either: a percentage has a hundred and one distinct
+    // values however many files there are, so the check below is already a bound
+    // on what the drawing thread can be asked to do. The status line and the
+    // metrics carry running totals, which is why those two go through the box.
     if (percent == m_lastPostedProgress)
         return;
     m_lastPostedProgress = percent;
@@ -120,19 +131,86 @@ void Task::setProgress(int percent)
 
 void Task::setStatusText(const QString& text)
 {
+    // The only check that ever stood between a caller and the event queue, and
+    // a status line with a running total in it defeats it: the text differs on
+    // every entry, so every call used to post. A metadata walk answers tens of
+    // thousands of entries a second, and each post cost the drawing thread a
+    // dataChanged on the task list, a delegate update and a text relayout -- so
+    // the queue grew for as long as the walk ran and the window never got a
+    // frame in. What follows is why there is a box.
     if (text == m_lastPostedStatus)
         return;
     m_lastPostedStatus = text;
 
-    QMetaObject::invokeMethod(
-        this,
-        [this, text] {
-            if (m_statusText == text)
-                return;
-            m_statusText = text;
-            emit statusTextChanged();
-        },
-        Qt::QueuedConnection);
+    {
+        const QMutexLocker locked(&m_pendingGuard);
+        m_pendingStatus = text;
+    }
+    scheduleDrain();
+}
+
+void Task::scheduleDrain()
+{
+    // At most one of these outstanding at a time. That is the bound: whatever
+    // the worker's rate, the window has one event of ours to get through, and
+    // it carries whatever the box holds by the time it is read rather than a
+    // reading from when it was posted.
+    if (!m_drainScheduled.exchange(true))
+        QMetaObject::invokeMethod(this, [this] { drainReports(); }, Qt::QueuedConnection);
+}
+
+void Task::drainReports()
+{
+    const qint64 nowMs = m_since.isValid() ? m_since.elapsed() : 0;
+    const qint64 sinceLast = m_lastDrainMs < 0 ? kDrainIntervalMs : nowMs - m_lastDrainMs;
+    if (sinceLast < kDrainIntervalMs) {
+        // Too soon after the last one to be worth a repaint. Come back when the
+        // window opens, and leave the flag standing while we wait: a second
+        // wake-up queued behind this one would buy nothing.
+        QTimer::singleShot(kDrainIntervalMs - sinceLast, this, [this] { drainReports(); });
+        return;
+    }
+
+    // Cleared before the box is read, never after. A reading written between the
+    // two is one the worker will ask for another drain for; a reading written
+    // after the clear and before the lock is one this drain still picks up. The
+    // other order is how the last reading of a task that then goes quiet gets
+    // left in the box for ever.
+    m_drainScheduled.store(false);
+    applyPending();
+}
+
+void Task::applyPending()
+{
+    std::optional<QString> status;
+    QMap<QString, TaskMetric> metrics;
+    {
+        const QMutexLocker locked(&m_pendingGuard);
+        status.swap(m_pendingStatus);
+        metrics.swap(m_pendingMetrics);
+    }
+    m_lastDrainMs = m_since.isValid() ? m_since.elapsed() : 0;
+
+    if (status && m_statusText != *status) {
+        m_statusText = *status;
+        emit statusTextChanged();
+    }
+    if (!metrics.isEmpty()) {
+        for (const TaskMetric& metric : std::as_const(metrics))
+            m_metrics.insert(metric.key, metric);
+        // One signal for the lot: a strip that redraws once for four figures
+        // that arrived together is a strip that redraws once.
+        emit metricsChanged();
+    }
+}
+
+void Task::flushReports()
+{
+    // Queued from the worker thread before the state change is, so a reader
+    // watching finished() sees the line and the counts the task ended on. The
+    // scheduled drain may be most of kDrainIntervalMs away, and a row that has
+    // stopped must not be left holding a figure from the middle of the run.
+    QMetaObject::invokeMethod(this, [this] { applyPending(); }, Qt::QueuedConnection);
 }
 
 void Task::fail(const VfsError& error)
@@ -218,6 +296,16 @@ double Task::bytesPerSecond() const
     return position == m_metrics.constEnd() ? 0.0 : position->value;
 }
 
+namespace {
+
+    /// Whether two readings of the same metric say the same thing to a reader.
+    bool saysTheSame(const TaskMetric& a, const TaskMetric& b)
+    {
+        return a.text == b.text && qFuzzyCompare(a.value + 1.0, b.value + 1.0);
+    }
+
+} // namespace
+
 void Task::report(TaskMetric metric)
 {
     if (metric.key.isEmpty())
@@ -225,20 +313,24 @@ void Task::report(TaskMetric metric)
     if (metric.text.isEmpty())
         metric.text = TaskMetric::format(metric.value, metric.kind);
 
-    // Posted to the UI thread like progress and status, for the same reason:
-    // the metric map belongs to whoever reads it, and that is not this thread.
-    QMetaObject::invokeMethod(
-        this,
-        [this, metric = std::move(metric)] {
-            const auto existing = m_metrics.constFind(metric.key);
-            if (existing != m_metrics.constEnd() && existing->text == metric.text
-                && qFuzzyCompare(existing->value + 1.0, metric.value + 1.0)) {
-                return; // nothing a reader could see has changed
-            }
-            m_metrics.insert(metric.key, metric);
-            emit metricsChanged();
-        },
-        Qt::QueuedConnection);
+    // Decided here rather than inside a queued lambda, where it used to be: by
+    // then the event had been posted and delivered, so the check saved a signal
+    // and none of the cost of getting there -- which is what the comment on
+    // report() promised and did not do. The same fault as the status line, one
+    // door along: a rename publishes the number renamed per entry and a sync the
+    // number applied per step, and that number differs on every call.
+    const auto handed = m_lastPostedMetrics.constFind(metric.key);
+    if (handed != m_lastPostedMetrics.constEnd() && saysTheSame(*handed, metric))
+        return; // nothing a reader could see has changed
+    m_lastPostedMetrics.insert(metric.key, metric);
+
+    {
+        // Keyed, so the box holds the latest reading of each metric rather than
+        // the latest reading of one of them.
+        const QMutexLocker locked(&m_pendingGuard);
+        m_pendingMetrics.insert(metric.key, std::move(metric));
+    }
+    scheduleDrain();
 }
 
 void Task::reportCount(const QString& key, const QString& label, double value, int order)

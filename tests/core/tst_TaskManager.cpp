@@ -48,6 +48,9 @@ private slots:
     void bytesDoneIsWhatTheTaskActuallyMoved();
     void aTaskWhoseBodyThrowsIsReportedFailedAndThePoolSurvives();
     void tenThousandMetricUpdatesDoNotFloodTheQueue();
+    void tenThousandStatusLinesDoNotFloodTheQueue();
+    void aCountReportedPerItemIsCoalescedTheSameWay();
+    void theLastReadingOfATaskThatGoesQuietStillArrives();
     void aTaskOutlivesTheDriveItWasGiven();
 };
 
@@ -595,6 +598,93 @@ void TestTaskManager::tenThousandMetricUpdatesDoNotFloodTheQueue()
     QVERIFY2(notifications < 500,
         qPrintable(
             QStringLiteral("%1 notifications for 10000 updates is not coalescing").arg(notifications)));
+}
+
+void TestTaskManager::tenThousandStatusLinesDoNotFloodTheQueue()
+{
+    // Analysing a folder wrote a status line per entry it walked. The text
+    // carries a running total, so it differs on every call and the value check
+    // never fires; a metadata walk opens no file, so it produces those lines
+    // tens of thousands a second. Each one became a queued event, and each event
+    // cost the drawing thread a row change, a delegate update and a relayout, so
+    // the queue grew for the length of the walk and the window never got a frame.
+    TaskManager manager;
+    auto* task = new ScriptedTask(QStringLiteral("analyse"), [](ScriptedTask& self) {
+        for (int i = 1; i <= 10000; ++i)
+            self.setStatusText(QStringLiteral("%1 files, %2 folders").arg(i).arg(i / 10));
+    });
+
+    QSignalSpy status(task, &Task::statusTextChanged);
+    manager.submit(task);
+
+    QVERIFY(waitForTask(task));
+    drainEvents();
+
+    // Whatever the clock let through, the line the task ended on is the one the
+    // row is left holding. A finished task showing a figure from the middle of
+    // its run reads as one that stopped early.
+    QTRY_COMPARE(task->statusText(), QStringLiteral("10000 files, 1000 folders"));
+    QVERIFY2(status.count() < 100,
+        qPrintable(
+            QStringLiteral("%1 notifications for 10000 status lines is not coalescing").arg(status.count())));
+}
+
+void TestTaskManager::aCountReportedPerItemIsCoalescedTheSameWay()
+{
+    // The same fault one door along. A rename publishes the number renamed per
+    // entry and a sync the number applied per step, and that number differs on
+    // every call, so the no-op check never fires. It used to be taken inside the
+    // queued lambda -- after the event had been posted and delivered, which saved
+    // the signal and none of the cost of getting there.
+    TaskManager manager;
+    auto* task = new ScriptedTask(QStringLiteral("rename"), [](ScriptedTask& self) {
+        for (int i = 1; i <= 10000; ++i) {
+            self.reportCount(QStringLiteral("renamed"), QStringLiteral("Renamed"), i, 10);
+            self.reportCount(QStringLiteral("failed"), QStringLiteral("Failed"), i / 100, 20);
+        }
+    });
+
+    QSignalSpy metrics(task, &Task::metricsChanged);
+    manager.submit(task);
+
+    QVERIFY(waitForTask(task));
+    drainEvents();
+
+    // Both keys arrive, and both hold the last figure the task published: the
+    // window holds one reading per metric rather than one in total.
+    QTRY_COMPARE(task->metric(QStringLiteral("renamed")).value, 10000.0);
+    QCOMPARE(task->metric(QStringLiteral("failed")).value, 100.0);
+    QVERIFY2(metrics.count() < 100,
+        qPrintable(
+            QStringLiteral("%1 notifications for 20000 reports is not coalescing").arg(metrics.count())));
+}
+
+void TestTaskManager::theLastReadingOfATaskThatGoesQuietStillArrives()
+{
+    // A stalled transfer is the case this exists for: it publishes a rate, an
+    // estimate and a byte count in one breath and then says nothing more for as
+    // long as the connection is down. Coalescing that waits for the caller's
+    // next update leaves those last figures in the task's hand for the rest of
+    // the run, with the strip showing the reading before them -- and the reading
+    // before them is the one that says the transfer is still moving.
+    TaskManager manager;
+    auto* task = new ScriptedTask(QStringLiteral("copy"), [](ScriptedTask& self) {
+        // Two in the same breath, so the second falls inside the window the
+        // first opened and cannot go out alongside it.
+        self.setStatusText(QStringLiteral("connected"));
+        self.setStatusText(QStringLiteral("stalled at 4 MB"));
+        self.reportCount(QStringLiteral("moved"), QStringLiteral("Moved"), 4194304);
+        while (!self.isCancelRequested())
+            QThread::msleep(5);
+    });
+    manager.submit(task);
+
+    QTRY_COMPARE(task->statusText(), QStringLiteral("stalled at 4 MB"));
+    QTRY_COMPARE(task->metric(QStringLiteral("moved")).value, 4194304.0);
+    QVERIFY2(!task->isFinished(), "the claim is that it arrived while the task was still running");
+
+    task->requestCancel();
+    QVERIFY(waitForTask(task));
 }
 
 void TestTaskManager::aTaskOutlivesTheDriveItWasGiven()

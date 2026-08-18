@@ -5,8 +5,12 @@
 #include <QDateTime>
 #include <QElapsedTimer>
 #include <QMap>
+#include <QMutex>
 #include <QObject>
 #include <QString>
+
+#include <atomic>
+#include <optional>
 
 namespace mole {
 
@@ -147,8 +151,8 @@ protected:
     const CancelToken& cancelToken() const { return m_cancel; }
     void setBackground(bool background) { m_background = background; }
 
-    /// Publishes or updates a metric. Safe from the worker thread; coalesced,
-    /// so a report per chunk does not flood the event queue.
+    /// Publishes or updates a metric. Safe from the worker thread; coalesced on
+    /// the worker thread, so a report per chunk does not flood the event queue.
     void report(TaskMetric metric);
     /// Shorthand for the common shapes.
     void reportCount(const QString& key, const QString& label, double value, int order = 100);
@@ -162,12 +166,27 @@ protected:
     /// none of them itself.
     void setBytesDone(qint64 done);
     void setProgress(int percent);
+    /// The line under the task's title. Coalesced on the worker thread, so a
+    /// caller may write one per entry of a walk; whatever it writes last is
+    /// always what the row ends up showing.
     void setStatusText(const QString& text);
     /// Mark the task failed. The first failure wins.
     void fail(const VfsError& error);
 
 private:
     void setState(State state);
+    /// Asks the drawing thread to empty the box, unless it has already been
+    /// asked and not yet got to it. Called from the worker thread.
+    void scheduleDrain();
+    /// Empties the box if the window is open, and asks to be called again when
+    /// it opens if it is not. Runs on the drawing thread.
+    void drainReports();
+    /// Empties the box, whatever the clock says. Drawing thread.
+    void applyPending();
+    /// Empties the box once the task body has returned, ahead of the state
+    /// change: a row that has stopped must not be left showing a line -- or a
+    /// count -- from the middle of its run. Called from the worker thread.
+    void flushReports();
     /// Publishes how long is left, from the smoothed rate and the total. Called
     /// from setBytesDone() so every task that measures bytes gets it at once
     /// rather than each one growing its own arithmetic.
@@ -179,6 +198,12 @@ private:
     /// by multiples rather than by percent. A wrong estimate is worse than none:
     /// it is read once, believed, and remembered.
     static constexpr int kSettledRateSamples = 3;
+
+    /// The shortest gap between two updates handed to the drawing thread, in
+    /// milliseconds. Ten a second is more than anybody reads and few enough that
+    /// the thread has time left to draw; the figure matches the one
+    /// setBytesDone() has always used for the same reason.
+    static constexpr qint64 kDrainIntervalMs = 100;
 
     // --- owned by the UI thread ---
     bool m_background = false;
@@ -200,11 +225,39 @@ private:
     QString m_statusText;
 
     // --- owned by the worker thread running run() ---
-    // Last values we bothered to post. Keeping them here lets a scan call
-    // setProgress() per file without flooding the event queue.
+    // Last values we bothered to hand over. Keeping them here is what lets a
+    // scan call these per file without flooding the event queue: an update that
+    // says nothing new is dropped before it costs anything.
+    //
+    // setProgress() posts an event of its own and needs no box and no clock,
+    // and must not grow either: a percentage has a hundred and one distinct
+    // values however many files there are, so the value check is already a
+    // bound. A status line with a running total in it has as many distinct
+    // values as the walk has entries, and a metric carries a number that
+    // changes on every chunk, which is why those two go through the box.
     int m_lastPostedProgress = -2;
     QString m_lastPostedStatus;
+    /// What the drawing thread has been handed, by key, so a report carrying
+    /// nothing new is dropped before it reaches the box.
+    QMap<QString, TaskMetric> m_lastPostedMetrics;
     VfsError m_error;
+
+    // --- the box: filled by the worker thread, emptied by the drawing one ---
+    //
+    // A shared box under a mutex rather than an event per update, because there
+    // must be a bound on what the drawing thread has to get through, and a
+    // queue of events is bounded by nothing but the speed of the walk. What is
+    // in the box is always the latest of everything, so a drain that arrives
+    // late costs nothing but the readings nobody could have read anyway.
+    mutable QMutex m_pendingGuard;
+    std::optional<QString> m_pendingStatus;
+    QMap<QString, TaskMetric> m_pendingMetrics;
+    /// Whether a drain is already on its way. One at a time is the mechanism:
+    /// however fast the worker reports, this object never has more than a
+    /// single event of its own waiting in front of the window.
+    std::atomic<bool> m_drainScheduled { false };
+    /// When the box was last emptied. Drawing thread only.
+    qint64 m_lastDrainMs = -1;
 
     // --- throughput sampling, touched only by the worker thread ---
     qint64 m_byteTotal = -1;

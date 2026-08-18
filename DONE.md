@@ -9,6 +9,45 @@ wrong.
 
 ---
 
+## Analysing a folder posted a status update for every entry it walked
+
+**Asked for:** MOLE-188 — Analyse over a large folder stopped the whole window answering until it
+finished, while compressing the same folder stayed responsive throughout. The walk was already on
+the right thread; the reporting was not.
+
+**What it turned out to be:** `Task`, not the analysis. `setStatusText()` dropped an update only
+when the text matched the last one posted, and a status line carrying a running total never
+matches, so every entry became a queued event — and `TaskListModel` turns each one into a
+`dataChanged`, a delegate update and a text relayout. Compression posts the same shape of line and
+gets away with it only because it has to read and compress each item first. Four other tasks post
+per entry over the same walker, so fixing the analysis would have left the fault standing.
+
+**The first answer was a clock on the worker thread**, exactly as the card described: at most one
+post every 100 ms, latest text winning, the rest held back and flushed when the body returned.
+It works for a task that keeps reporting and fails for one that stops. `tst_Walkthrough` caught
+it: a task publishes a rate, an estimate and a byte count in one breath and then runs on without
+saying anything more, and the estimate never reached the strip — held back by a window that only
+closes when somebody calls again. A stalled transfer is that task, which makes it the case the
+strip matters most in.
+
+**So the coalescing is a box rather than a queue.** The worker writes the latest status line and
+the latest reading of each metric into a small guarded box and asks for a drain; the drawing
+thread empties it and stamps the clock, and a drain that arrives inside the 100 ms window comes
+back when it opens. At most one wake-up is ever outstanding, so what the window has to get
+through is bounded by the interval rather than by the speed of the walk, and nothing can be left
+in the box: whatever is in it when the drain runs is what goes out. The flag is cleared before
+the box is read, never after — the other order is precisely how the last reading of a task that
+then goes quiet gets stranded.
+
+**`report()` promised the same thing and did not do it.** Its no-op check ran inside the queued
+lambda, after the event had been posted and delivered, so it saved a signal and none of the cost.
+It is now taken on the worker thread, against what that thread last handed over, and the box is
+keyed so four metrics arriving together cost one `metricsChanged` rather than four.
+
+**`setProgress()` has no clock and must not grow one**, which is now written beside the box: a
+percentage has a hundred and one distinct values however many files there are, so its value check
+is already the bound. The two that carry running totals are the two that needed one.
+
 ## Identical contents compared sixteen kilobytes of head
 
 **Asked for:** MOLE-191 — 16 kB is not enough to separate the files people actually have a lot

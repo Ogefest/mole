@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-18 #MOLE-188 Analysing a large folder no longer freezes the window while it runs — every task's status line and published counts are now handed to the interface ten times a second at most, however fast the work produces them
 2026-08-18 #MOLE-191 Identical contents compares the first megabyte instead of the first 16 kB, so video, RAW photographs, PDFs and disk images that merely share a header stop reaching the whole-file hash
 2026-08-18 #MOLE-190 Fix every dropdown in Mole cutting its longest name in half — the list is now as wide as the names in it, in the same text size as the control
 2026-08-18 #MOLE-72 Choosing what to keep is a panel rather than four flat buttons — a rule says what it did across every group, each copy reads keeping or remove, and any group can be overridden with one click
