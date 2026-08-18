@@ -69,6 +69,43 @@ Rectangle {
             font.pixelSize: App.secondaryTextSize
         }
 
-        Item { Layout.fillWidth: true }
+        // How far the branch is from what it tracks, as it was last fetched -- nothing
+        // here talks to a network, so the words are "2 ahead, 1 behind" rather than
+        // anything implying a check just happened.
+        Label {
+            objectName: "repositoryTracking"
+            visible: text.length > 0
+            text: band.info ? band.info.trackingText : ""
+            color: "#d9a441"
+            font.pixelSize: App.secondaryTextSize
+        }
+
+        // The commit HEAD is on: which one, what it was, and how long ago. The subject
+        // is the part that gives way -- it takes the space that is left and elides,
+        // rather than wrapping the band to two lines.
+        Label {
+            objectName: "repositoryCommitId"
+            visible: band.info ? band.info.hasCommit : false
+            text: band.info ? band.info.shortId : ""
+            color: "#6f7788"
+            font.pixelSize: App.secondaryTextSize
+        }
+
+        Label {
+            objectName: "repositoryCommitSubject"
+            Layout.fillWidth: true
+            text: band.info && band.info.hasCommit ? band.info.commitSubject : ""
+            elide: Text.ElideRight
+            color: "#8b93a7"
+            font.pixelSize: App.secondaryTextSize
+        }
+
+        Label {
+            objectName: "repositoryCommitAge"
+            visible: band.info ? band.info.hasCommit : false
+            text: band.info ? band.info.commitAge : ""
+            color: "#6f7788"
+            font.pixelSize: App.secondaryTextSize
+        }
     }
 }

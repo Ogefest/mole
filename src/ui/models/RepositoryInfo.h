@@ -33,6 +33,15 @@ class RepositoryInfo : public QObject
     Q_PROPERTY(bool statusKnown READ isStatusKnown NOTIFY changed)
     Q_PROPERTY(int changedCount READ changedCount NOTIFY changed)
     Q_PROPERTY(QString changesText READ changesText NOTIFY changed)
+    /// How far the branch is from what it tracks, in words. Empty when there is no
+    /// upstream and when the two agree -- both of which mean there is nothing to do.
+    Q_PROPERTY(QString trackingText READ trackingText NOTIFY changed)
+    /// Whether there is a commit to name at all. False in a repository with no
+    /// commits, which is what leaves the band with no commit line rather than an
+    /// empty one.
+    Q_PROPERTY(bool hasCommit READ hasCommit NOTIFY changed)
+    Q_PROPERTY(QString commitSubject READ commitSubject NOTIFY changed)
+    Q_PROPERTY(QString commitAge READ commitAge NOTIFY changed)
 
 public:
     explicit RepositoryInfo(QObject* parent = nullptr);
@@ -62,6 +71,12 @@ public:
     /// "0 changed", because a count of nought is a sentence about arithmetic and
     /// what somebody wants to know is whether there is anything to deal with.
     QString changesText() const;
+
+    QString trackingText() const;
+    bool hasCommit() const { return m_present && m_head.committedAt.isValid(); }
+    QString commitSubject() const { return hasCommit() ? m_head.subject : QString {}; }
+    /// How long ago the commit was made, in the shape the rest of Mole uses.
+    QString commitAge() const;
 
     /// What the walk found, for whoever marks the rows. Empty until it has.
     const RepositoryStatus& status() const { return m_status; }

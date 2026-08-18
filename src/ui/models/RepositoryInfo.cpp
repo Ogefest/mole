@@ -1,5 +1,9 @@
 #include "ui/models/RepositoryInfo.h"
 
+#include <QStringList>
+
+#include <algorithm>
+
 namespace mole {
 
 RepositoryInfo::RepositoryInfo(QObject* parent)
@@ -19,6 +23,50 @@ QString RepositoryInfo::headText() const
                                         : QStringLiteral("detached at %1").arg(m_head.shortId);
     }
     return m_head.branch;
+}
+
+namespace {
+
+    /// "12 min ago", "3 h ago", "yesterday", "40 days ago".
+    ///
+    /// The same shape the reports list and the drive rows use. It is spelled out in
+    /// each of those places too; the fourth copy is the one that should have been an
+    /// extraction, and TODO.md says so rather than pretending otherwise.
+    QString relativeTime(const QDateTime& when)
+    {
+        if (!when.isValid())
+            return {};
+        const qint64 seconds = when.secsTo(QDateTime::currentDateTime());
+        if (seconds < 0)
+            return QStringLiteral("just now");
+        if (seconds < 3600)
+            return QStringLiteral("%1 min ago").arg(std::max<qint64>(1, seconds / 60));
+        if (seconds < 86400)
+            return QStringLiteral("%1 h ago").arg(seconds / 3600);
+        const qint64 days = seconds / 86400;
+        return days == 1 ? QStringLiteral("yesterday") : QStringLiteral("%1 days ago").arg(days);
+    }
+
+} // namespace
+
+QString RepositoryInfo::trackingText() const
+{
+    if (!m_present || !m_head.hasUpstream)
+        return {};
+
+    // Nothing when the two agree. "0 ahead, 0 behind" is a sentence about arithmetic,
+    // and there is no decision for anybody to take from it.
+    QStringList parts;
+    if (m_head.ahead > 0)
+        parts.append(QStringLiteral("%1 ahead").arg(m_head.ahead));
+    if (m_head.behind > 0)
+        parts.append(QStringLiteral("%1 behind").arg(m_head.behind));
+    return parts.join(QStringLiteral(", "));
+}
+
+QString RepositoryInfo::commitAge() const
+{
+    return hasCommit() ? relativeTime(m_head.committedAt) : QString {};
 }
 
 QString RepositoryInfo::changesText() const

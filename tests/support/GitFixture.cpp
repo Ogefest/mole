@@ -84,7 +84,7 @@ namespace {
     git_signature* fixtureSignature()
     {
         git_signature* who = nullptr;
-        if (git_signature_new(&who, "Mole Tests", "tests@mole.invalid", 1700000000, 0) != 0)
+        if (git_signature_new(&who, "Mole Tests", "tests@mole.invalid", GitFixture::kCommitTime, 0) != 0)
             return nullptr;
         return who;
     }
@@ -265,6 +265,25 @@ bool GitFixture::detachHead()
         return false;
     return git_repository_set_head_detached(m_repo, &headId) == 0;
 #else
+    return false;
+#endif
+}
+
+bool GitFixture::setUpstream(const QString& branch, const QString& upstream)
+{
+#ifdef MOLE_HAVE_GIT2
+    if (!m_repo)
+        return false;
+
+    git_reference* local = nullptr;
+    if (git_branch_lookup(&local, m_repo, branch.toUtf8().constData(), GIT_BRANCH_LOCAL) != 0)
+        return false;
+    const int rc = git_branch_set_upstream(local, upstream.toUtf8().constData());
+    git_reference_free(local);
+    return rc == 0;
+#else
+    Q_UNUSED(branch);
+    Q_UNUSED(upstream);
     return false;
 #endif
 }

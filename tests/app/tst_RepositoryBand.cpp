@@ -43,6 +43,10 @@ private slots:
     void movingBetweenTwoCheckoutsShowsEachBranch();
     void theBandCountsWhatHasChangedAndSaysWhenNothingHas();
     void aChangedRowIsMarkedInTheListing();
+    void theBandNamesTheLastCommit();
+    void aLongSubjectElidesRatherThanWrappingTheBand();
+    void aRepositoryWithNoCommitsHasNoCommitLine();
+    void aBranchAheadAndBehindSaysSoAndOneWithNoUpstreamSaysNothing();
 
 private:
     BrowserPaneController* pane() const;
@@ -58,6 +62,8 @@ private:
     /// Every git letter drawn in the listing right now, sorted so the assertion
     /// does not depend on what order the delegates were built in.
     QStringList markers() const;
+    /// The text of the one visible label called `name`, empty when none is visible.
+    QString labelText(const QString& name) const;
     /// How tall the listing is right now, which is the measurement the "no strip
     /// reserving height" claim is made of.
     qreal listingHeight() const;
@@ -152,6 +158,15 @@ QString TestRepositoryBand::headText() const
 QString TestRepositoryBand::changesText() const
 {
     for (QQuickItem* label : m_harness->items(QStringLiteral("repositoryChanges"))) {
+        if (label->isVisible())
+            return label->property("text").toString();
+    }
+    return {};
+}
+
+QString TestRepositoryBand::labelText(const QString& name) const
+{
+    for (QQuickItem* label : m_harness->items(name)) {
         if (label->isVisible())
             return label->property("text").toString();
     }
@@ -317,6 +332,116 @@ void TestRepositoryBand::aChangedRowIsMarkedInTheListing()
     // And a folder in no checkout draws none at all, so there is no column there.
     goTo(QStringLiteral("plain"), QString());
     QVERIFY(m_harness->until([this] { return markers().isEmpty(); }));
+}
+
+void TestRepositoryBand::theBandNamesTheLastCommit()
+{
+    const std::unique_ptr<GitFixture> checkout = checkoutAt(QStringLiteral("work"));
+    QVERIFY(checkout);
+    QVERIFY(checkout->writeFile(QStringLiteral("second.txt"), "2"));
+    const QString second = checkout->commitAll(QStringLiteral("the thing I did last"));
+    QVERIFY(!second.isEmpty());
+
+    goTo(QStringLiteral("work"), QStringLiteral("main"));
+
+    QVERIFY(m_harness->until(
+        [this, second] { return labelText(QStringLiteral("repositoryCommitId")) == second; }));
+    QCOMPARE(labelText(QStringLiteral("repositoryCommitSubject")), QStringLiteral("the thing I did last"));
+    // The fixture stamps a fixed instant well in the past, so the age is a count of
+    // days. What matters is that it is there and reads as an age.
+    QVERIFY2(labelText(QStringLiteral("repositoryCommitAge")).endsWith(QStringLiteral("ago")),
+        qPrintable(
+            QStringLiteral("the age reads \"%1\"").arg(labelText(QStringLiteral("repositoryCommitAge")))));
+}
+
+void TestRepositoryBand::aLongSubjectElidesRatherThanWrappingTheBand()
+{
+    const std::unique_ptr<GitFixture> shortSubject = checkoutAt(QStringLiteral("terse"));
+    QVERIFY(shortSubject);
+    goTo(QStringLiteral("terse"), QStringLiteral("main"));
+    QVERIFY(m_harness->until(
+        [this] { return labelText(QStringLiteral("repositoryCommitSubject")) == QStringLiteral("first"); }));
+    const qreal tidyHeight = band()->height();
+    QVERIFY(tidyHeight > 0);
+
+    // A subject far wider than any pane. It has to give way by eliding: a band that
+    // grew a second line would take that height off the listing for good.
+    const std::unique_ptr<GitFixture> wordy = checkoutAt(QStringLiteral("wordy"));
+    QVERIFY(wordy);
+    QVERIFY(wordy->writeFile(QStringLiteral("more.txt"), "x"));
+    const QString subject
+        = QStringLiteral("a commit message subject line written by somebody who had a great deal to say "
+                         "about a very small change and no intention of stopping before the end of the pane");
+    QVERIFY(!wordy->commitAll(subject).isEmpty());
+
+    goTo(QStringLiteral("wordy"), QStringLiteral("main"));
+    QVERIFY(m_harness->until([this] {
+        return labelText(QStringLiteral("repositoryCommitSubject"))
+            .startsWith(QStringLiteral("a commit message"));
+    }));
+
+    QCOMPARE(band()->height(), tidyHeight);
+    // And the label really is narrower than the text it holds, which is what eliding
+    // means -- otherwise this would pass on a window wide enough to fit the lot.
+    QQuickItem* label = nullptr;
+    for (QQuickItem* candidate : m_harness->items(QStringLiteral("repositoryCommitSubject"))) {
+        if (candidate->isVisible())
+            label = candidate;
+    }
+    QVERIFY(label);
+    QVERIFY2(label->implicitWidth() > label->width(), "the subject fitted, so nothing was elided");
+}
+
+void TestRepositoryBand::aRepositoryWithNoCommitsHasNoCommitLine()
+{
+    // `git init` and nothing else: a branch that exists as a name with nothing to
+    // point at.
+    QVERIFY(m_harness->makeDirs(QStringLiteral("fresh")));
+    GitFixture fresh(QDir(m_harness->fixturePath()).filePath(QStringLiteral("fresh")));
+    QVERIFY(fresh.init(QStringLiteral("main")));
+
+    goTo(QStringLiteral("fresh"), QStringLiteral("main"));
+
+    // The band is there and names the branch, because that is true.
+    QVERIFY(band()->isVisible());
+    QCOMPARE(headText(), QStringLiteral("main"));
+    // The commit line is not, because there is no commit -- an empty one would read as
+    // a commit whose message nobody wrote.
+    QVERIFY(labelText(QStringLiteral("repositoryCommitId")).isEmpty());
+    QVERIFY(labelText(QStringLiteral("repositoryCommitSubject")).isEmpty());
+    QVERIFY(labelText(QStringLiteral("repositoryCommitAge")).isEmpty());
+}
+
+void TestRepositoryBand::aBranchAheadAndBehindSaysSoAndOneWithNoUpstreamSaysNothing()
+{
+    const std::unique_ptr<GitFixture> checkout = checkoutAt(QStringLiteral("work"));
+    QVERIFY(checkout);
+
+    // No upstream yet, so no counter at all -- not "0 ahead, 0 behind", which reads as
+    // up to date when the truth is that there is nothing to compare against.
+    goTo(QStringLiteral("work"), QStringLiteral("main"));
+    QVERIFY(m_harness->until([this] { return !headText().isEmpty(); }));
+    QVERIFY(labelText(QStringLiteral("repositoryTracking")).isEmpty());
+
+    // Fork, move both sides, and make one track the other.
+    QVERIFY(checkout->createBranch(QStringLiteral("trunk")));
+    QVERIFY(checkout->checkoutBranch(QStringLiteral("trunk")));
+    QVERIFY(checkout->writeFile(QStringLiteral("theirs.txt"), "t"));
+    QVERIFY(!checkout->commitAll(QStringLiteral("one on trunk")).isEmpty());
+    QVERIFY(checkout->checkoutBranch(QStringLiteral("main")));
+    QVERIFY(checkout->writeFile(QStringLiteral("mine.txt"), "m"));
+    QVERIFY(!checkout->commitAll(QStringLiteral("one on main")).isEmpty());
+    QVERIFY(checkout->writeFile(QStringLiteral("mine-again.txt"), "m"));
+    QVERIFY(!checkout->commitAll(QStringLiteral("two on main")).isEmpty());
+    QVERIFY(checkout->setUpstream(QStringLiteral("main"), QStringLiteral("trunk")));
+
+    goTo(QStringLiteral("plain"), QString());
+    goTo(QStringLiteral("work"), QStringLiteral("main"));
+    QVERIFY2(m_harness->until([this] {
+        return labelText(QStringLiteral("repositoryTracking")) == QStringLiteral("2 ahead, 1 behind");
+    }),
+        qPrintable(
+            QStringLiteral("the band says \"%1\"").arg(labelText(QStringLiteral("repositoryTracking")))));
 }
 
 // A real window, so a real QGuiApplication rather than the guiless one every

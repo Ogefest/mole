@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-18 #MOLE-106 The band says how far the branch is from what it tracks and what the last commit was — the subject elided rather than wrapping, and nothing at all when there is no upstream or no commit
 2026-08-18 #MOLE-105 Git markers keep up with the tree: an operation that writes, or a commit made in the terminal or another window, refreshes them without losing the cursor or the ticked rows
 2026-08-18 #MOLE-185 Fix every index search iterating a list that had already been destroyed
 2026-08-18 #MOLE-104 Rows in a checkout carry git's own letter — M, A, D, ??, R, U — and a folder says when something inside it has changed, at every level up to the one on screen

@@ -7,6 +7,7 @@
 #include "core/vcs/ReadStatusTask.h"
 #include "core/vcs/Repository.h"
 
+#include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
 #include <QThread>
@@ -51,6 +52,12 @@ private slots:
     void aDirectoryIsMarkedForWhatIsInsideItAtEveryLevel();
     void anUntrackedFolderIsOneChangeRatherThanItsContents();
     void aCancelledWalkAnswersWithNothingRatherThanWithHalf();
+    void aBranchSaysHowFarItIsFromWhatItTracks();
+    void aBranchWithNoUpstreamSaysThatRatherThanZero();
+    void aBranchLevelWithItsUpstreamCountsNothing();
+    void theLastCommitIsNamedAndDated();
+    void aRepositoryWithNoCommitsHasNoCommitToName();
+
     void aStagedRenameIsNamedAsOne();
     void theWalkTaskCountsAndCaches();
     void aSecondWalkOfOneWorkTreeTakesTheAnswerAlreadyThere();
@@ -504,6 +511,136 @@ void TestRepository::aCancelledWalkAnswersWithNothingRatherThanWithHalf()
     const RepositoryStatus full = handle->readStatus(CancelToken {});
     QVERIFY(full.complete);
     QCOMPARE(full.changedCount, 20);
+}
+
+void TestRepository::aBranchSaysHowFarItIsFromWhatItTracks()
+{
+    MOLE_REQUIRE_GIT();
+
+    TempTree tree;
+    QVERIFY(tree.isValid());
+    GitFixture repository(tree.path());
+    QVERIFY(repository.init(QStringLiteral("main")));
+    QVERIFY(repository.writeFile(QStringLiteral("shared.txt"), "base\n"));
+    QVERIFY(!repository.commitAll(QStringLiteral("shared history")).isEmpty());
+
+    // trunk forks here, then both sides move: main gains two commits, trunk one.
+    QVERIFY(repository.createBranch(QStringLiteral("trunk")));
+    QVERIFY(repository.checkoutBranch(QStringLiteral("trunk")));
+    QVERIFY(repository.writeFile(QStringLiteral("on-trunk.txt"), "theirs\n"));
+    QVERIFY(!repository.commitAll(QStringLiteral("one on trunk")).isEmpty());
+
+    QVERIFY(repository.checkoutBranch(QStringLiteral("main")));
+    QVERIFY(repository.writeFile(QStringLiteral("one.txt"), "mine\n"));
+    QVERIFY(!repository.commitAll(QStringLiteral("first on main")).isEmpty());
+    QVERIFY(repository.writeFile(QStringLiteral("two.txt"), "mine again\n"));
+    QVERIFY(!repository.commitAll(QStringLiteral("second on main")).isEmpty());
+
+    QVERIFY(repository.setUpstream(QStringLiteral("main"), QStringLiteral("trunk")));
+
+    const std::shared_ptr<Repository> handle = RepositoryCache::shared().forPath(tree.path());
+    QVERIFY(handle);
+    const RepositoryHead head = handle->head();
+
+    QCOMPARE(head.branch, QStringLiteral("main"));
+    QVERIFY(head.hasUpstream);
+    QCOMPARE(head.ahead, 2);
+    QCOMPARE(head.behind, 1);
+}
+
+void TestRepository::aBranchWithNoUpstreamSaysThatRatherThanZero()
+{
+    MOLE_REQUIRE_GIT();
+
+    TempTree tree;
+    QVERIFY(tree.isValid());
+    GitFixture repository(tree.path());
+    QVERIFY(repository.init(QStringLiteral("main")));
+    QVERIFY(repository.writeFile(QStringLiteral("a.txt"), "a"));
+    QVERIFY(!repository.commitAll(QStringLiteral("only commit")).isEmpty());
+
+    const std::shared_ptr<Repository> handle = RepositoryCache::shared().forPath(tree.path());
+    QVERIFY(handle);
+    const RepositoryHead head = handle->head();
+
+    // The counts are nought either way, so the flag is the whole difference between
+    // "level with the remote" and "there is no remote to be level with".
+    QVERIFY(!head.hasUpstream);
+    QCOMPARE(head.ahead, 0);
+    QCOMPARE(head.behind, 0);
+}
+
+void TestRepository::aBranchLevelWithItsUpstreamCountsNothing()
+{
+    MOLE_REQUIRE_GIT();
+
+    TempTree tree;
+    QVERIFY(tree.isValid());
+    GitFixture repository(tree.path());
+    QVERIFY(repository.init(QStringLiteral("main")));
+    QVERIFY(repository.writeFile(QStringLiteral("a.txt"), "a"));
+    QVERIFY(!repository.commitAll(QStringLiteral("only commit")).isEmpty());
+    QVERIFY(repository.createBranch(QStringLiteral("trunk")));
+    QVERIFY(repository.setUpstream(QStringLiteral("main"), QStringLiteral("trunk")));
+
+    const std::shared_ptr<Repository> handle = RepositoryCache::shared().forPath(tree.path());
+    QVERIFY(handle);
+    const RepositoryHead head = handle->head();
+
+    QVERIFY(head.hasUpstream);
+    QCOMPARE(head.ahead, 0);
+    QCOMPARE(head.behind, 0);
+}
+
+void TestRepository::theLastCommitIsNamedAndDated()
+{
+    MOLE_REQUIRE_GIT();
+
+    TempTree tree;
+    QVERIFY(tree.isValid());
+    GitFixture repository(tree.path());
+    QVERIFY(repository.init(QStringLiteral("main")));
+    QVERIFY(repository.writeFile(QStringLiteral("a.txt"), "a"));
+    QVERIFY(!repository.commitAll(QStringLiteral("the first thing that happened")).isEmpty());
+    QVERIFY(repository.writeFile(QStringLiteral("b.txt"), "b"));
+    const QString second = repository.commitAll(QStringLiteral("what I was doing last"));
+    QVERIFY(!second.isEmpty());
+
+    const std::shared_ptr<Repository> handle = RepositoryCache::shared().forPath(tree.path());
+    QVERIFY(handle);
+    const RepositoryHead head = handle->head();
+
+    // The commit HEAD is on, not the first one: this is how somebody recognises
+    // where they left off.
+    QCOMPARE(head.shortId, second);
+    QCOMPARE(head.subject, QStringLiteral("what I was doing last"));
+    QVERIFY(head.committedAt.isValid());
+    // The exact instant the fixture stamps, rather than a window around "now": a date
+    // read with the wrong offset, or in the wrong units, lands somewhere else entirely
+    // and a comparison against a constant says so.
+    QCOMPARE(head.committedAt.toSecsSinceEpoch(), GitFixture::kCommitTime);
+}
+
+void TestRepository::aRepositoryWithNoCommitsHasNoCommitToName()
+{
+    MOLE_REQUIRE_GIT();
+
+    TempTree tree;
+    QVERIFY(tree.isValid());
+    GitFixture repository(tree.path());
+    QVERIFY(repository.init(QStringLiteral("main")));
+
+    const std::shared_ptr<Repository> handle = RepositoryCache::shared().forPath(tree.path());
+    QVERIFY(handle);
+    const RepositoryHead head = handle->head();
+
+    // The branch exists as a name with nothing to point at. An invalid date is what
+    // tells the band to draw no commit line rather than an empty one.
+    QVERIFY(head.unborn);
+    QCOMPARE(head.branch, QStringLiteral("main"));
+    QVERIFY(head.subject.isEmpty());
+    QVERIFY(!head.committedAt.isValid());
+    QVERIFY(!head.hasUpstream);
 }
 
 void TestRepository::aStagedRenameIsNamedAsOne()

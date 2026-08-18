@@ -203,6 +203,54 @@ namespace {
         return {};
     }
 
+    /// The subject and date of the commit `oid` names, written into `out`.
+    ///
+    /// One object read on a repository that is already open, which is why this belongs
+    /// with the branch rather than with the work tree walk: it should appear as
+    /// promptly as the branch does.
+    void readCommit(git_repository* repo, const git_oid* oid, RepositoryHead& out)
+    {
+        if (!oid)
+            return;
+        git_commit* commit = nullptr;
+        if (git_commit_lookup(&commit, repo, oid) != 0 || !commit)
+            return;
+
+        if (const char* summary = git_commit_summary(commit))
+            out.subject = QString::fromUtf8(summary);
+        // The committer's own clock and offset, which is the time git shows. Kept as
+        // UTC plus that offset rather than converted, so "3 days ago" is measured
+        // against the same instant wherever it is read.
+        out.committedAt = QDateTime::fromSecsSinceEpoch(
+            git_commit_time(commit), Qt::OffsetFromUTC, git_commit_time_offset(commit) * 60);
+        git_commit_free(commit);
+    }
+
+    /// How far `branch` is from the reference it tracks, written into `out`.
+    ///
+    /// Silent when there is no upstream configured, which leaves `hasUpstream` false
+    /// and the counts at nought -- a band must be able to tell "level with the remote"
+    /// apart from "nothing to compare against".
+    void readTracking(git_repository* repo, git_reference* branch, RepositoryHead& out)
+    {
+        git_reference* upstream = nullptr;
+        if (git_branch_upstream(&upstream, branch) != 0 || !upstream)
+            return;
+
+        const git_oid* local = git_reference_target(branch);
+        const git_oid* remote = git_reference_target(upstream);
+        if (local && remote) {
+            size_t ahead = 0;
+            size_t behind = 0;
+            if (git_graph_ahead_behind(&ahead, &behind, repo, local, remote) == 0) {
+                out.hasUpstream = true;
+                out.ahead = static_cast<int>(ahead);
+                out.behind = static_cast<int>(behind);
+            }
+        }
+        git_reference_free(upstream);
+    }
+
     /// The work tree path libgit2 answers with, in the form the rest of Mole uses:
     /// no trailing separator, so it can be compared with a uri's path and used as a
     /// map key without two spellings of one directory.
@@ -359,6 +407,11 @@ RepositoryHead Repository::head() const
         out.branch = QString::fromUtf8(name);
 
     out.shortId = shortIdOf(git_reference_target(ref));
+    readCommit(m_repo, git_reference_target(ref), out);
+    // Only a branch can track anything. A detached HEAD has no upstream by
+    // definition, and asking would be asking about the literal reference "HEAD".
+    if (!out.detached)
+        readTracking(m_repo, ref, out);
     git_reference_free(ref);
 #endif
     return out;

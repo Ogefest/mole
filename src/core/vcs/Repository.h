@@ -2,6 +2,7 @@
 
 #include "core/vfs/VfsTypes.h"
 
+#include <QDateTime>
 #include <QHash>
 #include <QMetaType>
 #include <QMutex>
@@ -49,6 +50,28 @@ struct RepositoryHead
     /// and so does a first clone that has not fetched.
     bool unborn = false;
     RepositoryState state = RepositoryState::None;
+
+    /// Whether the branch has a tracking branch configured at all.
+    ///
+    /// Reported separately from the counts because without an upstream there is
+    /// nothing to be ahead or behind *of*, and a bare `0/0` reads as up to date when
+    /// the truth is that there is nothing to compare against.
+    bool hasUpstream = false;
+    /// How far the branch is from its remote-tracking reference **as it was last
+    /// fetched**.
+    ///
+    /// Not a question about the remote as it is now: nothing in this class talks to a
+    /// network, and a band implying that it had would be the most misleading thing on
+    /// the screen. Both nought when the branch and its upstream agree.
+    int ahead = 0;
+    int behind = 0;
+
+    /// The subject line of the commit HEAD points at -- the first line of its
+    /// message, which is how somebody recognises where they left off.
+    QString subject;
+    /// When that commit was made. Invalid in a repository with no commits, which is
+    /// what tells a band to draw no commit line rather than an empty one.
+    QDateTime committedAt;
 
     /// Whether anything at all could be read. False for a path outside a work
     /// tree, and for a build without git support.

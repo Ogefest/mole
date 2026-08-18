@@ -26,6 +26,14 @@ public:
     /// and a suite without it should skip rather than fail.
     static bool isSupported();
 
+    /// The instant every commit here is stamped with, in seconds since the epoch,
+    /// at no offset from UTC.
+    ///
+    /// Fixed rather than "now", so a test that reads a commit date is comparing
+    /// against a constant instead of against a clock. Named so that a test asserting
+    /// on it does not carry the same magic number a second time.
+    static constexpr qint64 kCommitTime = 1700000000;
+
     /// Wraps `path`, which must already exist. Nothing happens on disk until
     /// init().
     explicit GitFixture(QString path);
@@ -67,6 +75,14 @@ public:
     bool checkoutBranch(const QString& name);
     /// Points HEAD at the commit it is already on, rather than at the branch.
     bool detachHead();
+
+    /// Makes `branch` track `upstream`, another branch in this same repository.
+    ///
+    /// A local branch as the upstream rather than a fetched remote-tracking one,
+    /// because that needs no network and no second repository: git configures it with
+    /// `remote = .`, and everything that reads an upstream -- including
+    /// git_branch_upstream -- resolves it the same way.
+    bool setUpstream(const QString& branch, const QString& upstream);
 
     /// Starts a rebase of `branch` onto `upstream` and walks away from it.
     ///

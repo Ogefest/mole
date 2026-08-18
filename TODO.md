@@ -27,6 +27,12 @@ project, and a contributor should never hit a wall of text they cannot read.
 
 ## Notes
 
+- **"3 days ago" is spelled out in four places.** `ReportsFeature`, `BrowserFeature`,
+  `SearchFeatures` and now `RepositoryInfo` each have their own copy of the same
+  relative-time formatting, and the wordings have already drifted apart slightly. Not
+  extracted yet because each one's exact strings are asserted by its own suite, so the
+  extraction is a change to four sets of expectations rather than a move. Whoever next
+  has reason to touch one of them should take the other three with it.
 - **A git status walk cannot be interrupted part way, only abandoned.** libgit2 offers
   no hook inside the stat pass: `git_status_list_new` does the whole of the work
   before the first entry is available, and `git_status_foreach_ext` is that same call

@@ -9,6 +9,47 @@ wrong.
 
 ---
 
+## The band said which branch, not whether it was behind
+
+**Asked for:** MOLE-106 — which branch was on the band; whether it is behind the one it
+tracks was not, and that is the fact that decides whether to pull before starting work. Nor
+what the last commit was, which is how somebody recognises where they left off.
+
+**What it turned out to be:** four more fields on `RepositoryHead`, filled by the same
+`head()` call that already read the branch. Both facts are reference and object reads on a
+repository that is open, so they cost no work tree walk and appear as promptly as the branch —
+which is why they belong there rather than with the status query.
+
+**"No upstream" and "level with the upstream" are different answers and both show nothing.**
+The counts are nought in each case, so a flag carries the difference: `hasUpstream`. A bare
+`0/0` reads as up to date when the truth is that there is nothing to compare against, and
+"level" needs no counter because there is no decision to take from it. Three tests, because
+those are three states that a single integer pair cannot distinguish.
+
+**The band must not imply a network round trip it did not make.** These counts are against the
+remote-tracking reference *as it was last fetched* — nothing in this class talks to a network.
+So the words are "2 ahead, 1 behind" rather than anything suggesting a check just happened.
+
+**The subject is the part that gives way.** The commit line is short id, subject and age; the
+subject takes the space that is left and elides, because a band that grew a second line would
+take that height off the listing for good. Asserted by measuring: the band's height with a
+subject far wider than the pane equals its height with the word "first", *and* the label's
+implicit width exceeds its actual width — otherwise the test would pass on a window wide enough
+to fit the lot and prove nothing.
+
+**A repository with no commits draws no commit line at all**, which falls out of an invalid
+date rather than an empty-string check. `git init` and nothing else is a branch that exists as
+a name with nothing to point at: the band still says `main`, because that is true, and says
+nothing about a commit, because there is not one.
+
+**Two things the fixtures needed.** An upstream without a network or a second repository:
+git configures a local branch as an upstream with `remote = .`, and `git_branch_upstream`
+resolves it the same way, so `GitFixture::setUpstream()` is four lines. And the commit date the
+fixture stamps is a fixed instant rather than "now", which was already true and undocumented —
+the first version of the date test compared against a window around the current time and
+failed. It is now `GitFixture::kCommitTime`, so a test asserting on it compares against a named
+constant instead of carrying the same magic number a second time.
+
 ## Status read once was status that went stale
 
 **Asked for:** MOLE-105 — a listing that says a file is unchanged after Mole itself has
