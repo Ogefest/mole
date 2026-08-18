@@ -648,7 +648,15 @@ Result<QList<IndexSearchHit>> IndexDatabase::search(const SearchQuery& query) co
     // f.id is selected by nothing and needed by the fact subqueries below.
     QVariantList bindings;
 
-    for (const SearchPredicate& predicate : planSearch(query, SearchSource::Index).pushedDown()) {
+    // Named rather than called inline. A range-for extends the lifetime of the range
+    // expression's *result*, not of the temporaries that produced it -- and
+    // pushedDown() hands back a reference into the plan, so a plan built on that line
+    // is destroyed before the first iteration and the loop walks a QList whose
+    // storage is gone. It reads as working, because the freed stack still holds the
+    // old bytes; what it does instead is decided by whatever the compiler puts there
+    // next. See MOLE-185.
+    const SearchPlan plan = planSearch(query, SearchSource::Index);
+    for (const SearchPredicate& predicate : plan.pushedDown()) {
         switch (predicate.field) {
         case SearchPredicate::Field::Name:
             // instr() instead of LIKE: no wildcard escaping to get wrong, and

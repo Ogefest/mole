@@ -12,3 +12,12 @@ leak:libQt6Gui.so
 # no overload to choose instead and nothing of ours to free. Suppressed by module
 # like the rest: a leak in our own code still fails the build.
 leak:libQt6Pdf.so
+
+# libgit2 keeps its error text in per-thread state, allocated the first time a call
+# on that thread fails -- which happens routinely, because discovery walking up from
+# a folder that is in no work tree *is* a failed call. That state is freed when the
+# thread exits or when git_libgit2_shutdown() runs on the same thread, and a task
+# pool thread still alive at process exit satisfies neither. Nothing of ours to free
+# and no API to force it: git_error_clear() drops the message and keeps the buffer.
+# Suppressed by module like the rest.
+leak:libgit2.so

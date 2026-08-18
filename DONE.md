@@ -9,6 +9,49 @@ wrong.
 
 ---
 
+## Every index search iterated a destroyed list, and nothing said so for six days
+
+**Asked for:** MOLE-185 — found by running `make asan` while finishing MOLE-105, which is
+six days later than it should have been run. It had been red since MOLE-102 landed, and the
+reason it went unnoticed is simply that the sanitizer build was not run for MOLE-102, -103 or
+-104. `make test` was green throughout, which is exactly the trap: undefined behaviour that
+reads as working.
+
+**What it turned out to be:** two faults, one of them serious.
+
+**The serious one is a dangling reference in every index search.**
+
+```cpp
+for (const SearchPredicate& predicate : planSearch(query, SearchSource::Index).pushedDown())
+```
+
+`planSearch()` returns a plan by value, `pushedDown()` returns a reference into it, and a
+range-`for` extends the lifetime of the range expression's *result* rather than of the
+temporaries that produced it. So the plan died at the end of that line and the loop walked a
+`QList` whose storage was gone. It appeared to work because the freed stack still held the old
+bytes; what it can do instead is drop a predicate or match on rubbish, and which of those
+depends on what the compiler put in that slot next. Named the plan, which is the whole fix.
+This predates the git epic entirely.
+
+**The other is libgit2's per-thread error text**, allocated the first time a call on a task
+pool thread fails — which happens constantly, because discovery walking up from a folder in no
+work tree *is* a failed call. libgit2 frees that state when the thread exits or when
+`git_libgit2_shutdown()` runs on the same thread, and a pool thread still alive at process exit
+satisfies neither. Nothing of ours to free, and no API to force it: `git_error_clear()` drops
+the message and keeps the buffer. Suppressed by module, like Qt's scene graph already is.
+
+**Which made the opt-in suppression list worth deleting.** It was applied by name, so that a
+suite driving one of those stacks got the suppressions deliberately rather than by accident.
+That reasoning stopped holding the moment git state was read on every navigation: the suites
+that drive libgit2 became most of them, and the list turned into a trap that goes red for
+whoever adds the next suite, for a reason they did not cause. Every entry in the file is scoped
+to a third-party module, so applying it everywhere hides no leak of ours — the opt-in was
+protecting nothing. `lsan-qt.supp` is now `lsan.supp`, since it is no longer only about Qt.
+
+**The lesson is the process one, and it is worth writing down**: `make test` green is not the
+same as green. Three commits went in over a subsystem that runs library code on pool threads
+without the sanitizer build being run once.
+
 ## The listing did not say which files had changed
 
 **Asked for:** MOLE-104 — the band said three files changed; the listing did not say which

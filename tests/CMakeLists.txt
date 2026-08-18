@@ -67,20 +67,14 @@ target_compile_definitions(mole_test_support
 target_compile_definitions(mole_test_support
     PUBLIC MOLE_TASKS_BINARY="${CMAKE_BINARY_DIR}/mole-tasks")
 
-# Tests that spin up a real QQuickWindow need the Qt scene-graph leak
-# suppressions: Qt does not release its textures when a window is torn down in
-# process, and QPdfDocument keeps its loader's buffer when a load fails. Neither
-# is ours to free and neither has an API to force. Applied by name, so a test
-# that drives one of those stacks gets the suppressions by being listed here
-# rather than by somebody remembering -- and a leak in our own code still fails
-# every other suite.
-function(mole_mark_qml_test name)
-    set_tests_properties(${name} PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/lsan-qt.supp")
-endfunction()
+# Every suite gets the leak suppressions in lsan.supp rather than a list of suites
+# opting in by name. Two reasons. Every entry there is scoped to a third-party module
+# -- Qt's scene graph, QPdfDocument, libgit2 -- so a leak in our own code still fails
+# the build; the opt-in was protecting nothing. And now that git state is read on
+# every navigation, the suites that drive libgit2 are most of them, so a by-name list
+# is a trap: it goes red for whoever adds the next suite, for a reason they did not
+# cause. See lsan.supp for what each entry is and why it cannot be freed here.
 
-# One binary per unit under test: a crash in one suite cannot hide the others,
-# and ctest -j runs them all in parallel.
 function(mole_add_test name)
     cmake_parse_arguments(ARG "" "" "SOURCES;LIBS" ${ARGN})
     if(NOT ARG_SOURCES)
@@ -91,7 +85,7 @@ function(mole_add_test name)
     target_link_libraries(${name} PRIVATE mole_test_support ${ARG_LIBS} mole_flags)
     add_test(NAME ${name} COMMAND ${name})
     set_tests_properties(${name} PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/lsan.supp"
         TIMEOUT 180)
 endfunction()
 
@@ -288,15 +282,6 @@ qt_add_resources(tst_KeyboardNavigation "app_qml"
     BASE "${CMAKE_SOURCE_DIR}/src/app"
     FILES ${MOLE_APP_QML})
 
-# After both are registered: set_tests_properties needs the test to exist.
-mole_mark_qml_test(tst_KeyboardNavigation)
-mole_mark_qml_test(tst_Walkthrough)
-mole_mark_qml_test(tst_Sidebar)
-mole_mark_qml_test(tst_TabStrip)
-mole_mark_qml_test(tst_Dragging)
-mole_mark_qml_test(tst_RepositoryBand)
-# Not a QML test: it opens documents through Qt Pdf, which leaks on a failed load.
-mole_mark_qml_test(tst_DocumentMetadata)
 if(MOLE_HAVE_ARCHIVE_PLUGIN)
     add_dependencies(tst_AppIntegration mole_plugin_archive)
     add_dependencies(tst_PluginManager mole_plugin_archive)
