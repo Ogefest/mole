@@ -223,6 +223,46 @@ Item {
                 }
             }
 
+            // ---- what the scan is doing ------------------------------------
+            //
+            // Only once there is something on screen to be beside. Before that the
+            // progress has the whole body and there is nothing to compete with.
+
+            RowLayout {
+                objectName: "duplicateProgressStrip"
+                Layout.fillWidth: true
+                visible: view.scanning && view.showingResults
+                spacing: 8
+
+                BusyIndicator {
+                    running: parent.visible
+                    implicitWidth: 16
+                    implicitHeight: 16
+                }
+                Label {
+                    objectName: "duplicateProgressText"
+                    Layout.fillWidth: true
+                    text: controller ? controller.progressText : ""
+                    color: view.mutedColor
+                    font.pixelSize: 12
+                    elide: Text.ElideRight
+                }
+                // The results below are what has been confirmed so far, and saying
+                // so is the difference between a list that is still filling and one
+                // that is the answer.
+                Label {
+                    text: "still searching"
+                    color: "#d9a441"
+                    font.pixelSize: 12
+                }
+                Button {
+                    text: "Stop"
+                    flat: true
+                    font.pixelSize: 12
+                    onClicked: controller.cancel()
+                }
+            }
+
             // ---- what to keep ----------------------------------------------
 
             RowLayout {
@@ -361,9 +401,11 @@ Item {
                     }
                 }
 
-                // Scanning. The space belongs to progress -- there was a
-                // BusyIndicator in the header and nothing else, which on a large
-                // tree is a spinner and a silence.
+                // Scanning, with nothing found yet. The space belongs to progress --
+                // there was a BusyIndicator in the header and nothing else, which
+                // on a large tree is a spinner and a silence. Once the first group
+                // is confirmed the results take the space and progress carries on
+                // in the strip below the options.
                 ColumnLayout {
                     objectName: "duplicateScanningState"
                     anchors.centerIn: parent
@@ -391,10 +433,10 @@ Item {
                         wrapMode: Text.WordWrap
                         font.pixelSize: App.secondaryTextSize
                         color: view.mutedColor
-                        // What the scan has to say for itself. Thin today -- the
-                        // stage it is on and how much is left is MOLE-70's job,
-                        // and this is the place it will land.
-                        text: controller ? controller.summary : ""
+                        // Which stage is running and over how much. "whole file:
+                        // 87 of 412 files" is something somebody can decide to
+                        // wait for; a spinner is not.
+                        text: controller ? controller.progressText : ""
                     }
                     Button {
                         Layout.alignment: Qt.AlignHCenter
@@ -416,10 +458,14 @@ Item {
 
                     Label {
                         Layout.alignment: Qt.AlignHCenter
-                        text: "✓"
+                        text: controller && controller.wasCancelled ? "⏹" : "✓"
                         font.pixelSize: 40
                         color: "#3a4152"
                     }
+                    // A scan that was stopped has not searched the tree, so the
+                    // advice below would be answering a question nobody asked --
+                    // "nothing matched" is a claim only a scan that ran to the end
+                    // is entitled to make.
                     Label {
                         objectName: "duplicateNoMatchText"
                         Layout.fillWidth: true
@@ -427,9 +473,12 @@ Item {
                         color: view.mutedColor
                         wrapMode: Text.WordWrap
                         font.pixelSize: App.secondaryTextSize
-                        text: "Nothing matched. A different strategy may still find something — " +
-                              "'Identical contents' proves files are the same, while 'Same name' " +
-                              "finds copies that were edited apart."
+                        text: controller && controller.wasCancelled
+                              ? "Stopped before anything was found. The rest of the tree has not " +
+                                "been searched — scanning again starts from the beginning."
+                              : "Nothing matched. A different strategy may still find something — " +
+                                "'Identical contents' proves files are the same, while 'Same name' " +
+                                "finds copies that were edited apart."
                     }
                 }
 

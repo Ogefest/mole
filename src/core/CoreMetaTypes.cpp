@@ -27,6 +27,7 @@ void registerCoreMetaTypes()
     // Crosses a thread boundary: the space query answers from a pool thread.
     qRegisterMetaType<SpaceInfo>("mole::SpaceInfo");
     qRegisterMetaType<AccessInfo>("mole::AccessInfo");
+    qRegisterMetaType<DuplicateGroup>("mole::DuplicateGroup");
     qRegisterMetaType<QList<DuplicateGroup>>("QList<mole::DuplicateGroup>");
     qRegisterMetaType<SyncPlan>("mole::SyncPlan");
     // Crosses a thread boundary: git state is read on a pool thread and shown by

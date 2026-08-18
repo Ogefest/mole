@@ -120,20 +120,30 @@ QVariantList DuplicatesController::groups() const
 
 QString DuplicatesController::summary() const
 {
-    if (isScanning())
-        return QStringLiteral("scanning…");
-    if (!m_hasRun)
-        return {};
-    if (m_groups.isEmpty())
-        return QStringLiteral("no duplicates found");
-
     qint64 reclaimable = 0;
     for (const DuplicateGroup& group : m_groups)
         reclaimable += group.reclaimable;
+    const QString found = QStringLiteral("%1 groups · %2 could be freed")
+                              .arg(m_groups.size())
+                              .arg(QLocale().formattedDataSize(reclaimable));
 
-    return QStringLiteral("%1 groups · %2 could be freed")
-        .arg(m_groups.size())
-        .arg(QLocale().formattedDataSize(reclaimable));
+    // Groups arrive as they are confirmed, so a scan in flight has something to
+    // say about itself beyond "scanning…" -- and what it has found so far is
+    // already on screen, which would make a summary that ignored it read wrong.
+    if (isScanning())
+        return m_groups.isEmpty() ? QStringLiteral("scanning…") : found + QStringLiteral(" so far");
+    if (!m_hasRun)
+        return {};
+    // A stopped scan says so. What it found is kept -- every group of it agreed
+    // at every stage -- but "no duplicates found" about a scan that was cut off
+    // after ten seconds of a ten-minute tree is not true.
+    if (m_wasCancelled) {
+        return m_groups.isEmpty() ? QStringLiteral("stopped before anything was found")
+                                  : found + QStringLiteral(" · stopped early");
+    }
+    if (m_groups.isEmpty())
+        return QStringLiteral("no duplicates found");
+    return found;
 }
 
 QStringList DuplicatesController::selectedUris() const
@@ -182,22 +192,45 @@ void DuplicatesController::scan()
 
     m_groups.clear();
     m_selected.clear();
+    m_wasCancelled = false;
+    m_progressText.clear();
     emit resultsChanged();
     emit selectionChanged();
+    emit progressChanged();
 
     auto* task = new FindDuplicatesTask(m_services.vfs, roots, strategyById(m_strategyId));
     task->setMinimumSize(m_minimumSize);
     m_task = task;
     setBusy(true);
 
-    connect(task, &FindDuplicatesTask::groupsReady, this,
-        [this](const QList<DuplicateGroup>& groups) { m_groups = groups; });
+    // One group at a time, as the scan confirms it, in the place the task worked
+    // out for it -- so the list is sorted largest-first at every instant rather
+    // than only once the walk has finished. See ADR-0043.
+    connect(
+        task, &FindDuplicatesTask::groupFound, this, [this, task](const DuplicateGroup& group, int position) {
+            if (m_task != task)
+                return;
+            m_groups.insert(qBound(0, position, static_cast<int>(m_groups.size())), group);
+            emit resultsChanged();
+        });
+    connect(task, &Task::statusTextChanged, this, [this, task] {
+        if (m_task != task)
+            return;
+        m_progressText = task->statusText();
+        emit progressChanged();
+    });
     connect(task, &Task::finished, this, [this, task] {
         if (m_task != task)
             return;
         m_task.clear();
         setBusy(false);
         m_hasRun = true;
+        // Whatever was confirmed before the stop stays. A cancelled walk is not a
+        // wrong answer, only a short one, and the alternative -- throwing away
+        // groups somebody is already looking at -- is the surprising behaviour.
+        m_wasCancelled = task->state() == Task::State::Cancelled;
+        m_progressText.clear();
+        emit progressChanged();
         emit resultsChanged();
         emit selectionChanged();
     });

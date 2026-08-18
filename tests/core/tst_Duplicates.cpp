@@ -38,6 +38,11 @@ private slots:
     void theExpensiveStageOnlySeesWhatSurvivedTheCheapOnes();
     void aFileThatChangesWhileItIsBeingComparedIsLeftOutOfEveryGroup();
 
+    void groupsArriveAsTheyAreConfirmedRatherThanAllAtTheEnd();
+    void aGroupIsNeverAnnouncedAndThenTakenBack();
+    void theListIsInOrderAtEveryInstantAndNotOnlyAtTheEnd();
+    void aScanStoppedPartWayKeepsWhatItHadAlreadyConfirmed();
+
 private:
     QList<DuplicateGroup> find(std::unique_ptr<IDuplicateStrategy> strategy, qint64 minimumSize = 1);
 
@@ -370,6 +375,175 @@ void TestDuplicates::theExpensiveStageOnlySeesWhatSurvivedTheCheapOnes()
 
     QCOMPARE(watched->seen.value(0), 10);
     QCOMPARE(watched->seen.value(1), 2);
+}
+
+// ---- results as they are found ------------------------------------------
+
+namespace {
+
+/// Two groups of three files each, at two different sizes.
+///
+/// Two sizes rather than one is the whole point: the cheap first stage puts
+/// them in separate buckets, and separate buckets are what the last stage can
+/// finish at different moments. One size would be one bucket and one answer,
+/// which is the behaviour this is meant to distinguish from.
+bool writeTwoGroupsOfDifferentSizes(TempTree& tree)
+{
+    const QByteArray small(2048, 'a');
+    const QByteArray large(9000, 'b');
+    return tree.writeFile(QStringLiteral("small/one.bin"), small)
+        && tree.writeFile(QStringLiteral("small/two.bin"), small)
+        && tree.writeFile(QStringLiteral("small/three.bin"), small)
+        && tree.writeFile(QStringLiteral("large/one.bin"), large)
+        && tree.writeFile(QStringLiteral("large/two.bin"), large)
+        && tree.writeFile(QStringLiteral("large/three.bin"), large);
+}
+
+} // namespace
+
+void TestDuplicates::groupsArriveAsTheyAreConfirmedRatherThanAllAtTheEnd()
+{
+    QVERIFY(writeTwoGroupsOfDifferentSizes(*m_tree));
+
+    auto* task
+        = new FindDuplicatesTask(m_vfs.get(), { m_tree->rootUri() }, std::make_unique<SameContentStrategy>());
+    task->setMinimumSize(1);
+
+    // The order things were *announced* in, not the order they were noticed. Both
+    // signals are queued to this thread and dispatched in the order they were
+    // emitted, so a "finished" sitting after two groups is proof the task emitted
+    // them before it ended -- and it is proof taken from the data, with no clock
+    // anywhere in it.
+    QStringList announcements;
+    connect(task, &FindDuplicatesTask::groupFound, this,
+        [&announcements](const DuplicateGroup&, int) { announcements.append(QStringLiteral("group")); });
+    connect(
+        task, &Task::finished, this, [&announcements] { announcements.append(QStringLiteral("finished")); });
+
+    m_tasks->submit(task);
+    QVERIFY(waitFor([task] { return task->isFinished(); }, 30000));
+
+    const QStringList expected { QStringLiteral("group"), QStringLiteral("group"),
+        QStringLiteral("finished") };
+    QCOMPARE(announcements, expected);
+}
+
+void TestDuplicates::aGroupIsNeverAnnouncedAndThenTakenBack()
+{
+    QVERIFY(writeTwoGroupsOfDifferentSizes(*m_tree));
+    // And one file that looks like a candidate at the first stage and separates at
+    // the last: it shares a size with the small group and nothing else. If a group
+    // could be announced before its last stage had run, this is the file that would
+    // make one wrong.
+    QByteArray impostor(2048, 'a');
+    impostor[2047] = 'z';
+    QVERIFY(m_tree->writeFile(QStringLiteral("small/impostor.bin"), impostor));
+
+    auto* task
+        = new FindDuplicatesTask(m_vfs.get(), { m_tree->rootUri() }, std::make_unique<SameContentStrategy>());
+    task->setMinimumSize(1);
+
+    QList<DuplicateGroup> announced;
+    connect(task, &FindDuplicatesTask::groupFound, this,
+        [&announced](const DuplicateGroup& group, int) { announced.append(group); });
+
+    m_tasks->submit(task);
+    QVERIFY(waitFor([task] { return task->isFinished(); }, 30000));
+
+    // What was announced is exactly what the scan ended up with -- nothing extra
+    // that had to be withdrawn, and nothing held back.
+    const QList<DuplicateGroup> settled = task->groups();
+    QCOMPARE(announced.size(), settled.size());
+    QCOMPARE(announced.size(), 2);
+    for (const DuplicateGroup& group : std::as_const(announced)) {
+        QVERIFY(group.files.size() == 3);
+        bool found = false;
+        for (const DuplicateGroup& settledGroup : settled) {
+            if (settledGroup.files.size() == group.files.size()
+                && settledGroup.reclaimable == group.reclaimable
+                && settledGroup.files.first().uri == group.files.first().uri) {
+                found = true;
+            }
+        }
+        QVERIFY2(found, "a group was announced and is not in the answer");
+    }
+    // The impostor is in none of them, which is what proves the last stage ran
+    // before anything went out.
+    for (const DuplicateGroup& group : settled) {
+        for (const FileEntry& entry : group.files)
+            QVERIFY(entry.name != QStringLiteral("impostor.bin"));
+    }
+}
+
+void TestDuplicates::theListIsInOrderAtEveryInstantAndNotOnlyAtTheEnd()
+{
+    QVERIFY(writeTwoGroupsOfDifferentSizes(*m_tree));
+
+    auto* task
+        = new FindDuplicatesTask(m_vfs.get(), { m_tree->rootUri() }, std::make_unique<SameContentStrategy>());
+    task->setMinimumSize(1);
+
+    // Rebuilt here from the positions the task hands out, exactly as the tab does.
+    // Sorted after every insertion rather than only at the end, because a list that
+    // is in arrival order for the whole of a long scan and then rearranges itself
+    // is the thing this ordering exists to avoid.
+    QList<qint64> mirrored;
+    bool everOutOfOrder = false;
+    connect(task, &FindDuplicatesTask::groupFound, this,
+        [&mirrored, &everOutOfOrder](const DuplicateGroup& group, int position) {
+            mirrored.insert(qBound(0, position, static_cast<int>(mirrored.size())), group.reclaimable);
+            for (int i = 1; i < mirrored.size(); ++i) {
+                if (mirrored.at(i) > mirrored.at(i - 1))
+                    everOutOfOrder = true;
+            }
+        });
+
+    m_tasks->submit(task);
+    QVERIFY(waitFor([task] { return task->isFinished(); }, 30000));
+
+    QVERIFY2(!everOutOfOrder, "the list was out of order part-way through the scan");
+    QList<qint64> settled;
+    for (const DuplicateGroup& group : task->groups())
+        settled.append(group.reclaimable);
+    QCOMPARE(mirrored, settled);
+    QVERIFY(settled.size() == 2);
+    QVERIFY2(settled.first() > settled.last(), "the biggest saving is not at the top");
+}
+
+void TestDuplicates::aScanStoppedPartWayKeepsWhatItHadAlreadyConfirmed()
+{
+    // Three groups at three sizes, so the last stage has three buckets to get
+    // through and stopping after the first leaves two.
+    const QByteArray a(2048, 'a');
+    const QByteArray b(5000, 'b');
+    const QByteArray c(9000, 'c');
+    QVERIFY(m_tree->writeFile(QStringLiteral("a/one.bin"), a));
+    QVERIFY(m_tree->writeFile(QStringLiteral("a/two.bin"), a));
+    QVERIFY(m_tree->writeFile(QStringLiteral("b/one.bin"), b));
+    QVERIFY(m_tree->writeFile(QStringLiteral("b/two.bin"), b));
+    QVERIFY(m_tree->writeFile(QStringLiteral("c/one.bin"), c));
+    QVERIFY(m_tree->writeFile(QStringLiteral("c/two.bin"), c));
+
+    auto* task
+        = new FindDuplicatesTask(m_vfs.get(), { m_tree->rootUri() }, std::make_unique<SameContentStrategy>());
+    task->setMinimumSize(1);
+
+    // Stopped by the data rather than by a clock: the moment the first group is
+    // confirmed, and on the task's own thread, so the stop is in place before it
+    // looks at the next bucket. A test that slept for 200 ms would stop somewhere
+    // different on every machine.
+    connect(
+        task, &FindDuplicatesTask::groupFound, task,
+        [task](const DuplicateGroup&, int) { task->requestCancel(); }, Qt::DirectConnection);
+
+    m_tasks->submit(task);
+    QVERIFY(waitFor([task] { return task->isFinished(); }, 30000));
+
+    QCOMPARE(task->state(), Task::State::Cancelled);
+    // What it had is kept. Every group of it agreed at every stage, and the scan
+    // stopping does not make that less true -- it only means there may be more.
+    QCOMPARE(task->groups().size(), 1);
+    QCOMPARE(task->groups().first().files.size(), 2);
 }
 
 MOLE_TEST_MAIN(TestDuplicates)

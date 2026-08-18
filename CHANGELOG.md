@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-18 #MOLE-70 Duplicate groups appear as the scan confirms them instead of all at the end, largest saving first at every instant, with the stage and file count on screen — and stopping keeps what was found rather than claiming nothing matched
 2026-08-18 #MOLE-69 A duplicates tab fills its own space in every state and says which one it is in — what will be searched and what it costs before a scan, progress during one, and one row per folder instead of an elided join
 2026-08-18 #MOLE-184 The count of changed files in the git band can now be opened, which is the only way to see a file git has been told to delete
 2026-08-18 #MOLE-107 The guide explains the git band and the letters on the rows, and the read-only boundary is written down as a decision rather than a gap

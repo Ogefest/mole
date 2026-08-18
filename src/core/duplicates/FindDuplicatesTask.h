@@ -5,6 +5,8 @@
 
 #include <QList>
 
+#include <functional>
+
 namespace mole {
 
 class VfsManager;
@@ -38,8 +40,14 @@ public:
     /// identical files nobody wants listed.
     void setMinimumSize(qint64 bytes) { m_minimumSize = bytes; }
 
-    /// Valid once finished. Largest reclaimable first, because that is the
-    /// order anybody clearing space wants them in.
+    /// Every group confirmed so far, largest reclaimable first -- because that is
+    /// the order anybody clearing space wants them in.
+    ///
+    /// Readable while the scan is still running, and sorted at every instant
+    /// rather than only at the end: a group is inserted in its place as it is
+    /// confirmed. See docs/adr/0043-a-duplicate-group-is-reported-when-it-is-
+    /// confirmed.md for why rows moving beat a list that is in arrival order for
+    /// the whole of a scan and then jumps.
     QList<DuplicateGroup> groups() const { return m_groups; }
     qint64 reclaimableBytes() const { return m_reclaimable; }
     /// Files that changed while they were being compared, and were therefore
@@ -48,12 +56,31 @@ public:
     int changedDuringTheScan() const { return m_movedUnderfoot; }
 
 signals:
-    void groupsReady(const QList<mole::DuplicateGroup>& groups);
+    /// One group, confirmed: it has agreed at every stage, so nothing later in
+    /// this scan can withdraw it or add to it.
+    ///
+    /// Emitted as the scan runs rather than at the end. A row that appears and
+    /// then vanishes is worse than a row that appears late -- it teaches people
+    /// not to believe the list -- so nothing goes out until it is settled.
+    ///
+    /// `position` is where it belongs in groups(), which is kept in order as it
+    /// fills. Handed over rather than left to be worked out again, because the
+    /// task has just worked it out.
+    void groupFound(const mole::DuplicateGroup& group, int position);
 
 protected:
     void run() override;
 
 private:
+    /// Splits `bucket` by the key `stage` gives each file, dropping whatever is
+    /// left alone. `examined` and `total` are carried through only to say what the
+    /// scan is doing.
+    QList<QList<FileEntry>> splitAtStage(const QList<FileEntry>& bucket, int stage,
+        const std::function<IFileSystem*(const FileEntry&)>& driveFor, int& examined, int total);
+    /// Files that agreed all the way through are a group. Inserted in its place
+    /// and announced.
+    void confirm(const QList<FileEntry>& files);
+
     VfsManager* m_vfs = nullptr;
     QList<VfsUri> m_roots;
     std::unique_ptr<IDuplicateStrategy> m_strategy;
@@ -65,4 +92,7 @@ private:
 
 } // namespace mole
 
+// Crosses a thread boundary one at a time now as well as in a list: a group is
+// confirmed on a pool thread and the tab that shows it lives on the other one.
+Q_DECLARE_METATYPE(mole::DuplicateGroup)
 Q_DECLARE_METATYPE(QList<mole::DuplicateGroup>)

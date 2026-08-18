@@ -43,6 +43,8 @@ private slots:
     void everyRootBeingSearchedGetsARowOfItsOwn();
     void aScanThatMatchedNothingFillsTheSpaceAndSaysSo();
     void resultsTakeTheSpaceTheEmptyStateWasHolding();
+    void aStoppedScanKeepsWhatItFoundAndSaysItWasStopped();
+    void aStoppedScanThatFoundNothingDoesNotClaimNothingMatched();
 
 private:
     /// Builds the whole window. Files go in *its* fixture and not in `m_tree`:
@@ -347,6 +349,84 @@ void TestDuplicatesTab::resultsTakeTheSpaceTheEmptyStateWasHolding()
     QQuickItem* list = shown(QStringLiteral("duplicateGroupList"));
     QVERIFY(list);
     QCOMPARE(list->height(), bodyHeight());
+}
+
+void TestDuplicatesTab::aStoppedScanKeepsWhatItFoundAndSaysItWasStopped()
+{
+    // Ten groups, each at a size of its own, so the last stage has ten buckets and
+    // stopping after the first leaves nine.
+    QVERIFY(startWindow());
+    for (int i = 0; i < 10; ++i) {
+        const QByteArray body(1024 + i, 'x');
+        QVERIFY(m_harness->writeFile(QStringLiteral("pile/%1/one.bin").arg(i), body));
+        QVERIFY(m_harness->writeFile(QStringLiteral("pile/%1/two.bin").arg(i), body));
+    }
+
+    DuplicatesController* controller = openTabOn({ fixtureRoot(QStringLiteral("pile")) });
+    QVERIFY(controller);
+    controller->setStrategyId(QStringLiteral("content"));
+    controller->setMinimumSize(1);
+
+    // Stopped by the data, on the scan's own thread: the moment the first group is
+    // confirmed, before the task has looked at its next bucket. Asking from this
+    // thread instead would be asking a clock -- the window wakes on a 15 ms tick,
+    // by which time a scan of twenty small files has long since finished, and the
+    // test would prove nothing while looking as though it had.
+    //
+    // The task is caught as it is submitted, which is the only moment anything
+    // outside the controller has a pointer to it.
+    connect(m_harness->app()->services().tasks, &TaskManager::taskAppended, this, [](Task* task) {
+        auto* scan = qobject_cast<FindDuplicatesTask*>(task);
+        if (!scan)
+            return;
+        connect(
+            scan, &FindDuplicatesTask::groupFound, scan,
+            [scan](const DuplicateGroup&, int) { scan->requestCancel(); }, Qt::DirectConnection);
+    });
+
+    controller->scan();
+    QVERIFY(m_harness->until([controller] { return !controller->isScanning() && controller->hasRun(); }));
+
+    QVERIFY2(controller->wasCancelled(), "the scan ran to the end, so this proved nothing");
+    QVERIFY2(controller->groupCount() > 0, "a stopped scan threw away what it had already confirmed");
+    QVERIFY2(controller->groupCount() < 10, "the scan finished everything, so it was not stopped early");
+    // And says so rather than reading as a completed scan. "no duplicates found"
+    // or a bare count would both claim the tree was searched.
+    QVERIFY2(controller->summary().contains(QStringLiteral("stopped")),
+        qPrintable(QStringLiteral("the tab says \"%1\"").arg(controller->summary())));
+    // What it did find is still on screen, in the results state.
+    QVERIFY(m_harness->until([this] { return shown(QStringLiteral("duplicateGroupList")) != nullptr; }));
+}
+
+void TestDuplicatesTab::aStoppedScanThatFoundNothingDoesNotClaimNothingMatched()
+{
+    QVERIFY(startWindow());
+    const QByteArray same(4096, 'a');
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/one.bin"), same));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/two.bin"), same));
+
+    DuplicatesController* controller = openTabOn({ fixtureRoot(QStringLiteral("pile")) });
+    QVERIFY(controller);
+    controller->setStrategyId(QStringLiteral("content"));
+    controller->setMinimumSize(1);
+
+    // Stopped as it is submitted, which is before the pool can have read a byte --
+    // so there is no clock in this either.
+    connect(m_harness->app()->services().tasks, &TaskManager::taskAppended, this, [](Task* task) {
+        if (qobject_cast<FindDuplicatesTask*>(task))
+            task->requestCancel();
+    });
+    controller->scan();
+    QVERIFY(m_harness->until([controller] { return !controller->isScanning() && controller->hasRun(); }));
+    QVERIFY(controller->wasCancelled());
+    QCOMPARE(controller->groupCount(), 0);
+
+    // "Nothing matched" is a claim about the tree, and only a scan that ran to the
+    // end may make it. This one searched almost none of it.
+    QVERIFY(m_harness->until([this] { return shown(QStringLiteral("duplicateNoMatchText")) != nullptr; }));
+    const QString said = shown(QStringLiteral("duplicateNoMatchText"))->property("text").toString();
+    QVERIFY2(!said.contains(QStringLiteral("Nothing matched")), qPrintable(said));
+    QVERIFY2(said.contains(QStringLiteral("Stopped")), qPrintable(said));
 }
 
 // A real window, so a real QGuiApplication rather than the guiless one

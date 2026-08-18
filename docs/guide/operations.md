@@ -154,9 +154,19 @@ what *the same* means: identical contents, or the same size, or the same name. I
 contents is the default and does the work in the cheapest order — same size first, then
 the first 16 kB, then a hash of the whole file — so almost nothing gets hashed.
 
-What comes back is groups. The controls above them tick a whole answer at once — keep the
-newest of each group, or the oldest, or the copy nearest the top of the tree — and
-nothing is deleted until that is confirmed, with the files named.
+What comes back is groups, and they appear as the scan finds them rather than all at the
+end. A group is only shown once it has agreed at every step, so nothing on the list is
+ever taken back — and the biggest saving stays at the top as the rest arrive. While it is
+still running the tab says which step it is on and over how many files, so a long scan on
+a NAS is something you can decide to wait for.
+
+**Stopping keeps what was found.** `Stop` leaves every group already confirmed on screen
+and says the scan was stopped rather than that it finished — the rest of the tree has not
+been searched, and scanning again starts from the beginning.
+
+The controls above the groups tick a whole answer at once — keep the newest of each group,
+or the oldest, or the copy nearest the top of the tree — and nothing is deleted until that
+is confirmed, with the files named.
 
 ## Syncing two folders
 
