@@ -2,6 +2,8 @@
 #include "support/MoleTestMain.h"
 #include "support/TestSupport.h"
 
+#include "core/tasks/TaskManager.h"
+#include "core/vcs/ReadRepositoryTask.h"
 #include "core/vcs/Repository.h"
 
 #include <QDir>
@@ -38,6 +40,10 @@ private slots:
     void anInterruptedRebaseIsNamed();
     void oneHandleServesEveryFolderInOneWorkTree();
     void twoCheckoutsAreTwoRepositories();
+
+    void theTaskAnswersWithTheRootAndTheBranch();
+    void theTaskAnswersThatThereIsNoRepositoryRatherThanFailing();
+
     void withoutGitSupportNothingIsClaimed();
 
 private:
@@ -244,6 +250,77 @@ void TestRepository::twoCheckoutsAreTwoRepositories()
     QVERIFY(handleOne.get() != handleTwo.get());
     QCOMPARE(handleOne->head().branch, QStringLiteral("main"));
     QCOMPARE(handleTwo->head().branch, QStringLiteral("release"));
+}
+
+void TestRepository::theTaskAnswersWithTheRootAndTheBranch()
+{
+    MOLE_REQUIRE_GIT();
+
+    TempTree tree;
+    QVERIFY(tree.isValid());
+
+    GitFixture repository(tree.path());
+    QVERIFY(repository.init(QStringLiteral("main")));
+    QVERIFY(repository.writeFile(QStringLiteral("src/a.txt"), "a"));
+    const QString committed = repository.commitAll(QStringLiteral("first"));
+    QVERIFY(!committed.isEmpty());
+
+    TaskManager tasks;
+    auto* task = new ReadRepositoryTask(repository.absolute(QStringLiteral("src")));
+    // Housekeeping nobody asked for. QuerySpaceTask is marked the same way and for
+    // the same reason: it must not scroll the user's own copy off the task strip.
+    QVERIFY(task->isBackground());
+
+    QString seenRoot;
+    RepositoryHead seenHead;
+    connect(task, &ReadRepositoryTask::repositoryRead, this,
+        [&](const QString&, const QString& root, const RepositoryHead& head) {
+            seenRoot = root;
+            seenHead = head;
+        });
+
+    tasks.submit(task);
+    QVERIFY(waitForTask(task));
+    QCOMPARE(task->state(), Task::State::Succeeded);
+
+    QCOMPARE(canonical(seenRoot), canonical(tree.path()));
+    QCOMPARE(seenHead.branch, QStringLiteral("main"));
+    QCOMPARE(seenHead.shortId, committed);
+    // The same answer the task kept, so a caller that missed the signal is not
+    // left guessing.
+    QCOMPARE(canonical(task->root()), canonical(tree.path()));
+    QCOMPARE(task->head().branch, QStringLiteral("main"));
+}
+
+void TestRepository::theTaskAnswersThatThereIsNoRepositoryRatherThanFailing()
+{
+    MOLE_REQUIRE_GIT();
+
+    TempTree tree;
+    QVERIFY(tree.isValid());
+    QVERIFY(tree.makeDirs(QStringLiteral("plain")));
+
+    TaskManager tasks;
+    auto* task = new ReadRepositoryTask(tree.absolute(QStringLiteral("plain")));
+
+    int answers = 0;
+    QString seenRoot = QStringLiteral("not touched");
+    connect(task, &ReadRepositoryTask::repositoryRead, this,
+        [&](const QString&, const QString& root, const RepositoryHead&) {
+            ++answers;
+            seenRoot = root;
+        });
+
+    tasks.submit(task);
+    QVERIFY(waitForTask(task));
+
+    // Succeeded, and it did answer: a folder in no work tree is the ordinary case,
+    // and something has to hear about it or the band would go on showing the
+    // branch of the checkout somebody has just navigated out of.
+    QCOMPARE(task->state(), Task::State::Succeeded);
+    QCOMPARE(answers, 1);
+    QVERIFY(seenRoot.isEmpty());
+    QVERIFY(!task->head().isValid());
 }
 
 void TestRepository::withoutGitSupportNothingIsClaimed()

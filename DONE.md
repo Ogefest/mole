@@ -9,6 +9,52 @@ wrong.
 
 ---
 
+## A folder that was a checkout looked exactly like one that was not
+
+**Asked for:** MOLE-102 — the branch is the single most useful thing to know about a
+directory somebody is working in, and Mole was the one window on that directory that did not
+show it. A band above the listing, saying which branch and nothing else yet.
+
+**What it turned out to be:** three pieces, and the interesting one is the third. A
+`ReadRepositoryTask` on a worker, because discovery walks up the tree and opening a
+repository reads its references — on a cold cache, or a directory somebody has just plugged
+in, either is long enough to be felt as a window that stopped drawing. A `RepositoryInfo` per
+pane holding the answer, passive the way `FileListModel` is, so all of it can be asserted
+without a window. And `RepositoryBand.qml`, which is **absent rather than empty** when there
+is nothing to say.
+
+**Absent rather than empty is the half that is easy to get wrong**, so it is the half with a
+measurement rather than a visibility check. The test reads how tall the listing is outside a
+checkout, walks into one and asserts the listing gave height up, then walks back out and
+asserts it got every pixel back. An empty strip reserving its height would pass "the band is
+hidden" and fail that.
+
+**What the band says is not always the branch.** During a rebase or a merge the branch name is
+either the old one or a detached head, and both readings are wrong about what is going on, so
+the state wins — in words as well as in amber, because colour is never the only signal
+([ADR-0010](docs/adr/0010-telling-the-two-buttons-apart.md)). A detached HEAD says
+`detached at a1b2c3d`, because an empty branch name reads as a fault in Mole rather than as a
+fact about the checkout.
+
+**Local drives only, and the rule is one line rather than a check.** A uri that is not a real
+filesystem path has no local path, so an archive, an SFTP volume and a bucket all leave the
+pane with nothing to say — the same shape as the sidebar drawing no capacity bar for a bucket
+that cannot report one. The test that holds it puts a real checkout on disk and reaches it
+through the memory drive at the same absolute path, then asserts that no read was even
+submitted: a band that stayed away because the answer was thrown out on arrival would still
+have walked a work tree over the network to get it.
+
+**An answer about a folder somebody has already left must not reach the band**, so there are
+two guards rather than one — the read in flight is the only one whose answer counts, and its
+path still has to be the folder in view. Navigating between two checkouts in one pane is the
+test, and it goes back to the first one afterwards, because a band that only ever changed
+once would pass two navigations.
+
+**The band's own test waits for the band, not for the event loop.** The git read is a task of
+its own and lands after the listing, so a number of rounds of `settle()` would have been
+waiting on a clock — enough on this machine and not enough on a slower one. It waits until
+the strip says what it is supposed to say, and reports both texts when it does not.
+
 ## The guide did not mention dragging
 
 **Asked for:** MOLE-89 — `operations.md` covered copying, moving, deleting and packing,

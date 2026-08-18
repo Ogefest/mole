@@ -1,4 +1,5 @@
 #include "support/FaultyFileSystem.h"
+#include "support/GitFixture.h"
 #include "support/MoleTestMain.h"
 #include "support/TestSupport.h"
 #include "ui/models/BrowserPaneController.h"
@@ -6,6 +7,8 @@
 #include "core/events/EventBus.h"
 #include "core/index/IndexDatabase.h"
 #include "core/tasks/TaskManager.h"
+#include "core/vcs/ReadRepositoryTask.h"
+#include "core/vcs/Repository.h"
 #include "core/vfs/VfsManager.h"
 #include "core/vfs/backends/LocalFileSystem.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
@@ -62,12 +65,21 @@ private slots:
     void deleteRemovesTheTargets();
     void readOnlyDriveIsReported();
 
+    void aFolderInsideACheckoutIsReportedWithItsBranch();
+    void aFolderOutsideAnyCheckoutReportsNothing();
+    void leavingACheckoutTakesTheAnswerWithIt();
+    void aCheckoutReachedOverADriveThatIsNotLocalReportsNothing();
+    void twoCheckoutsInOnePaneEachReportTheirOwnBranch();
+
     void goingUpLandsOnTheFolderJustLeft();
     void goingBackRestoresTheCursor();
     void aForgottenEntryFallsBackToTheFirstRow();
 
 private:
     BrowserPaneController* makePane();
+    /// A pane whose git answer has arrived -- the read is a background task, so
+    /// what is waited on is the answer rather than the listing.
+    BrowserPaneController* paneOnCheckout(const QString& uri);
     /// Mounts `path` as a local drive and answers with its uri. `writable` false
     /// wraps it so the drive says it cannot be written to, which is what a
     /// mounted archive is.
@@ -774,6 +786,154 @@ void TestBrowserPaneController::readOnlyDriveIsReported()
 
     // The in-memory drive is writable; the UI greys out actions based on this.
     QVERIFY(pane->isWritable());
+}
+
+BrowserPaneController* TestBrowserPaneController::paneOnCheckout(const QString& uri)
+{
+    BrowserPaneController* pane = makePane();
+    pane->navigateTo(uri);
+    if (!waitFor([pane] { return !pane->isLoading(); }))
+        return nullptr;
+    // The git read is a task of its own and finishes after the listing does, so
+    // waiting for the listing alone would assert against a band that has not been
+    // told anything yet.
+    waitFor([pane] { return pane->repository()->isPresent(); });
+    return pane;
+}
+
+void TestBrowserPaneController::aFolderInsideACheckoutIsReportedWithItsBranch()
+{
+    if (!Repository::isSupported())
+        QSKIP("built without libgit2");
+
+    QTemporaryDir work;
+    QVERIFY(work.isValid());
+    GitFixture checkout(work.path());
+    QVERIFY(checkout.init(QStringLiteral("main")));
+    QVERIFY(checkout.writeFile(QStringLiteral("src/a.txt"), "a"));
+    QVERIFY(!checkout.commitAll(QStringLiteral("first")).isEmpty());
+
+    const QString root = mountLocal(work.path());
+    BrowserPaneController* pane = paneOnCheckout(root + QStringLiteral("/src"));
+    QVERIFY(pane);
+
+    QVERIFY(pane->repository()->isPresent());
+    QCOMPARE(pane->repository()->branch(), QStringLiteral("main"));
+    QCOMPARE(pane->repository()->headText(), QStringLiteral("main"));
+    QCOMPARE(QFileInfo(pane->repository()->root()).canonicalFilePath(),
+        QFileInfo(work.path()).canonicalFilePath());
+    RepositoryCache::shared().clear();
+}
+
+void TestBrowserPaneController::aFolderOutsideAnyCheckoutReportsNothing()
+{
+    if (!Repository::isSupported())
+        QSKIP("built without libgit2");
+
+    QTemporaryDir work;
+    QVERIFY(work.isValid());
+    QVERIFY(QDir(work.path()).mkpath(QStringLiteral("plain")));
+
+    const QString root = mountLocal(work.path());
+    BrowserPaneController* pane = makePane();
+    pane->navigateTo(root + QStringLiteral("/plain"));
+    QVERIFY(waitFor([pane] { return !pane->isLoading(); }));
+    drainEvents();
+
+    // Nothing, and nothing is what the band binds to: absent rather than an empty
+    // strip reserving height above the listing.
+    QVERIFY(!pane->repository()->isPresent());
+    QVERIFY(pane->repository()->headText().isEmpty());
+    RepositoryCache::shared().clear();
+}
+
+void TestBrowserPaneController::leavingACheckoutTakesTheAnswerWithIt()
+{
+    if (!Repository::isSupported())
+        QSKIP("built without libgit2");
+
+    QTemporaryDir work;
+    QVERIFY(work.isValid());
+    QVERIFY(QDir(work.path()).mkpath(QStringLiteral("elsewhere")));
+    GitFixture checkout(QDir(work.path()).filePath(QStringLiteral("checkout")));
+    QVERIFY(QDir(work.path()).mkpath(QStringLiteral("checkout")));
+    QVERIFY(checkout.init(QStringLiteral("main")));
+    QVERIFY(checkout.writeFile(QStringLiteral("a.txt"), "a"));
+    QVERIFY(!checkout.commitAll(QStringLiteral("first")).isEmpty());
+
+    const QString root = mountLocal(work.path());
+    BrowserPaneController* pane = paneOnCheckout(root + QStringLiteral("/checkout"));
+    QVERIFY(pane);
+    QVERIFY(pane->repository()->isPresent());
+
+    pane->navigateTo(root + QStringLiteral("/elsewhere"));
+    QVERIFY(waitFor([pane] { return !pane->repository()->isPresent(); }));
+    QVERIFY(pane->repository()->branch().isEmpty());
+    RepositoryCache::shared().clear();
+}
+
+void TestBrowserPaneController::aCheckoutReachedOverADriveThatIsNotLocalReportsNothing()
+{
+    if (!Repository::isSupported())
+        QSKIP("built without libgit2");
+
+    // A real checkout on disk, reached through a drive that is not a real
+    // filesystem: the memory drive is given the same absolute path, so anything
+    // that took the uri's path rather than its local path would find the
+    // repository and put a band up. libgit2 wants a path a kernel understands,
+    // and pulling `.git` across a network drive to decorate a listing is the
+    // trade ADR-0041 refused.
+    QTemporaryDir work;
+    QVERIFY(work.isValid());
+    GitFixture checkout(work.path());
+    QVERIFY(checkout.init(QStringLiteral("main")));
+    QVERIFY(checkout.writeFile(QStringLiteral("a.txt"), "a"));
+    QVERIFY(!checkout.commitAll(QStringLiteral("first")).isEmpty());
+
+    m_fs->addFile(work.path() + QStringLiteral("/a.txt"), QByteArray("a"));
+    BrowserPaneController* pane = makePane();
+    pane->navigateTo(QStringLiteral("mem://") + work.path());
+    QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() > 0; }));
+    drainEvents();
+
+    QVERIFY(!pane->repository()->isPresent());
+    // And nothing was even asked. A band that stays away because the answer was
+    // thrown out on arrival would still have walked a work tree over a network
+    // drive to get it.
+    for (const Task* task : m_tasks->tasks())
+        QVERIFY2(!qobject_cast<const ReadRepositoryTask*>(task),
+            "no git read belongs on a drive that is not local");
+    RepositoryCache::shared().clear();
+}
+
+void TestBrowserPaneController::twoCheckoutsInOnePaneEachReportTheirOwnBranch()
+{
+    if (!Repository::isSupported())
+        QSKIP("built without libgit2");
+
+    QTemporaryDir work;
+    QVERIFY(work.isValid());
+    QVERIFY(QDir(work.path()).mkpath(QStringLiteral("one")));
+    QVERIFY(QDir(work.path()).mkpath(QStringLiteral("two")));
+
+    GitFixture one(QDir(work.path()).filePath(QStringLiteral("one")));
+    GitFixture two(QDir(work.path()).filePath(QStringLiteral("two")));
+    QVERIFY(one.init(QStringLiteral("main")));
+    QVERIFY(two.init(QStringLiteral("release")));
+    QVERIFY(one.writeFile(QStringLiteral("a.txt"), "a"));
+    QVERIFY(two.writeFile(QStringLiteral("b.txt"), "b"));
+    QVERIFY(!one.commitAll(QStringLiteral("first")).isEmpty());
+    QVERIFY(!two.commitAll(QStringLiteral("first")).isEmpty());
+
+    const QString root = mountLocal(work.path());
+    BrowserPaneController* pane = paneOnCheckout(root + QStringLiteral("/one"));
+    QVERIFY(pane);
+    QCOMPARE(pane->repository()->branch(), QStringLiteral("main"));
+
+    pane->navigateTo(root + QStringLiteral("/two"));
+    QVERIFY(waitFor([pane] { return pane->repository()->branch() == QStringLiteral("release"); }));
+    QVERIFY(pane->repository()->isPresent());
+    RepositoryCache::shared().clear();
 }
 
 void TestBrowserPaneController::goingUpLandsOnTheFolderJustLeft()

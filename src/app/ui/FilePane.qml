@@ -563,6 +563,12 @@ FocusScope {
             font.pixelSize: App.secondaryTextSize
         }
 
+        // Above the listing, and only when the folder in view is inside a
+        // checkout. See ADR-0041 for why it is read-only and local drives only.
+        RepositoryBand {
+            info: paneController ? paneController.repository : null
+        }
+
         // Scanning 50 000 files takes seconds, and an empty pane during those
         // seconds reads as "this folder is empty" rather than "still working".
         // One second is the threshold: below it a spinner is just a flash.

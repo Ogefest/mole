@@ -264,6 +264,11 @@ mole_add_test(tst_Dragging          SOURCES app/tst_Dragging.cpp         LIBS mo
 # would have to step around.
 mole_add_test(tst_TabStrip          SOURCES app/tst_TabStrip.cpp        LIBS mole_qml_harness mole_builtin)
 
+# The band above a listing. Its own binary for the same reason again: it builds
+# git repositories in the fixture and navigates between them, and it measures how
+# tall the listing is, which is a claim about a folder that is not a checkout.
+mole_add_test(tst_RepositoryBand    SOURCES app/tst_RepositoryBand.cpp  LIBS mole_qml_harness mole_builtin)
+
 # The session log lives in the application target rather than a library, so the
 # test compiles the one file it is about. Exported symbols, so the backtrace it
 # checks for carries names.
@@ -289,6 +294,7 @@ mole_mark_qml_test(tst_Walkthrough)
 mole_mark_qml_test(tst_Sidebar)
 mole_mark_qml_test(tst_TabStrip)
 mole_mark_qml_test(tst_Dragging)
+mole_mark_qml_test(tst_RepositoryBand)
 # Not a QML test: it opens documents through Qt Pdf, which leaks on a failed load.
 mole_mark_qml_test(tst_DocumentMetadata)
 if(MOLE_HAVE_ARCHIVE_PLUGIN)

@@ -22,6 +22,8 @@ add_library(mole_ui STATIC
     models/BreakdownModel.cpp
     models/BrowserPaneController.h
     models/BrowserPaneController.cpp
+    models/RepositoryInfo.h
+    models/RepositoryInfo.cpp
     models/DriveListModel.h
     models/DriveListModel.cpp
     models/TerminalController.h

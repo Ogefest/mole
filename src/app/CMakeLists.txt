@@ -31,6 +31,7 @@ set(MOLE_QML_FILES
     ui/UnlockDialog.qml
     ui/TaskStrip.qml
     ui/FilePane.qml
+    ui/RepositoryBand.qml
     ui/BrowserView.qml
     ui/LiveSearchView.qml
     ui/SearchResultList.qml

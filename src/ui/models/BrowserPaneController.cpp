@@ -8,6 +8,7 @@
 #include "core/tasks/ListDirectoryTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/tasks/TransferTask.h"
+#include "core/vcs/ReadRepositoryTask.h"
 #include "core/vfs/VfsManager.h"
 #include "core/vfs/backends/LocalFileSystem.h"
 
@@ -22,6 +23,7 @@ BrowserPaneController::BrowserPaneController(PluginServices services, QObject* p
     : QObject(parent)
     , m_services(services)
     , m_files(new FileListModel(this))
+    , m_repository(new RepositoryInfo(this))
 {
 }
 
@@ -29,6 +31,8 @@ BrowserPaneController::~BrowserPaneController()
 {
     if (m_pending)
         m_pending->requestCancel();
+    if (m_repositoryPending)
+        m_repositoryPending->requestCancel();
 }
 
 QString BrowserPaneController::displayPath() const
@@ -46,6 +50,41 @@ QString BrowserPaneController::locationName() const
         return {};
     const QString name = m_current.fileName();
     return name.isEmpty() ? m_current.scheme() : name;
+}
+
+void BrowserPaneController::readRepository()
+{
+    // Local drives only, and this is the whole of that rule: a uri that is not a
+    // real filesystem path has no local path, so an archive, an SFTP volume and a
+    // bucket all leave the pane with nothing to say.
+    const QString localPath = m_current.toLocalPath();
+    if (!Repository::isSupported() || localPath.isEmpty() || !m_services.tasks) {
+        m_repository->clear();
+        return;
+    }
+
+    if (m_repositoryPending)
+        m_repositoryPending->requestCancel();
+
+    auto* task = new ReadRepositoryTask(localPath);
+    m_repositoryPending = task;
+
+    connect(task, &ReadRepositoryTask::repositoryRead, this,
+        [this, task](const QString& path, const QString& root, const RepositoryHead& head) {
+            // An answer about a folder the user has already left must not land in
+            // the band. Two guards rather than one, because a read of the folder
+            // now in view can also be superseded by a newer read of the same one.
+            if (m_repositoryPending != task || path != m_current.toLocalPath())
+                return;
+            m_repository->setHead(root, head);
+        });
+
+    connect(task, &Task::finished, this, [this, task] {
+        if (m_repositoryPending == task)
+            m_repositoryPending.clear();
+    });
+
+    m_services.tasks->submit(task);
 }
 
 void BrowserPaneController::annotateListing(const FileEntryList& entries)
@@ -563,6 +602,10 @@ void BrowserPaneController::load(const VfsUri& uri, bool recordHistory)
         emit historyChanged();
     }
     emit locationChanged();
+    // Before the listing rather than after it. The branch costs a discovery and a
+    // handful of reference reads, and a folder with fifty thousand files in it
+    // should not hold the one fact that is already known.
+    readRepository();
 
     setErrorText({});
     setLoading(true);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QHash>
+#include <QMetaType>
 #include <QMutex>
 #include <QString>
 
@@ -148,3 +149,7 @@ private:
 };
 
 } // namespace mole
+
+// Crosses a thread boundary: the branch is read on a pool thread and the band
+// that shows it is drawn on the other one.
+Q_DECLARE_METATYPE(mole::RepositoryHead)

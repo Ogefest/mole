@@ -2,6 +2,7 @@
 
 #include "sdk/PluginServices.h"
 #include "ui/models/FileListModel.h"
+#include "ui/models/RepositoryInfo.h"
 
 #include "core/vfs/VfsUri.h"
 
@@ -14,6 +15,7 @@
 namespace mole {
 
 class ListDirectoryTask;
+class ReadRepositoryTask;
 
 /// One navigable pane: current location, history, and the listing shown in it.
 ///
@@ -23,6 +25,10 @@ class BrowserPaneController : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(mole::FileListModel* files READ files CONSTANT)
+    /// What git says about the folder in view. Never null: it reports that there
+    /// is nothing to say rather than being absent, so a binding never has to
+    /// check.
+    Q_PROPERTY(mole::RepositoryInfo* repository READ repository CONSTANT)
     Q_PROPERTY(QString currentUri READ currentUri NOTIFY locationChanged)
     Q_PROPERTY(QString displayPath READ displayPath NOTIFY locationChanged)
     Q_PROPERTY(QString locationName READ locationName NOTIFY locationChanged)
@@ -44,6 +50,7 @@ public:
     ~BrowserPaneController() override;
 
     FileListModel* files() const { return m_files; }
+    RepositoryInfo* repository() const { return m_repository; }
     QString currentUri() const { return m_current.toString(); }
     QString displayPath() const;
     QString locationName() const;
@@ -151,6 +158,14 @@ private:
     /// Marks rows that already have a report or an alert, so the listing shows
     /// it without the user opening anything.
     void annotateListing(const FileEntryList& entries);
+    /// Asks git about the folder now in view, on a worker.
+    ///
+    /// Local drives only: libgit2 wants a real filesystem path, and pulling
+    /// `.git` across SFTP to decorate a listing is the wrong trade -- the same
+    /// reason the sidebar draws no capacity bar for a bucket. Anything that is not
+    /// a `file://` uri leaves the pane with nothing to say, which is what makes
+    /// the band absent there. See ADR-0041.
+    void readRepository();
     /// The entry to select on arrival, or an empty string for "the first row".
     /// Set by revealFile(), consumed by the next listing that lands.
     QString m_pendingReveal;
@@ -168,6 +183,7 @@ private:
 
     PluginServices m_services;
     FileListModel* m_files = nullptr;
+    RepositoryInfo* m_repository = nullptr;
     VfsUri m_current;
     QStringList m_history;
     int m_historyIndex = -1;
@@ -175,6 +191,9 @@ private:
     bool m_loading = false;
     QString m_errorText;
     QPointer<ListDirectoryTask> m_pending;
+    /// The git read in flight, so an answer about a folder somebody has already
+    /// left cannot land in the band.
+    QPointer<ReadRepositoryTask> m_repositoryPending;
 };
 
 } // namespace mole

@@ -3,6 +3,7 @@
 #include "core/duplicates/FindDuplicatesTask.h"
 #include "core/search/SearchQuery.h"
 #include "core/sync/SyncTask.h"
+#include "core/vcs/Repository.h"
 #include "core/vfs/FileEntry.h"
 #include "core/vfs/VfsTypes.h"
 #include "core/vfs/VfsUri.h"
@@ -28,6 +29,9 @@ void registerCoreMetaTypes()
     qRegisterMetaType<AccessInfo>("mole::AccessInfo");
     qRegisterMetaType<QList<DuplicateGroup>>("QList<mole::DuplicateGroup>");
     qRegisterMetaType<SyncPlan>("mole::SyncPlan");
+    // Crosses a thread boundary: git state is read on a pool thread and shown by
+    // the band above a listing.
+    qRegisterMetaType<RepositoryHead>("mole::RepositoryHead");
 }
 
 } // namespace mole

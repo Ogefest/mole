@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-18 #MOLE-102 A folder inside a git checkout says which branch it is on, in a band above the listing — the state instead when git is part-way through a rebase or a merge, the commit when HEAD is detached, and no band at all for a folder that is not a checkout
 2026-08-11 #MOLE-88 A file on an archive or a network drive can be dragged out too: the first drag fetches it and says so, the next one carries it, and dragging the same file twice fetches it once
 2026-08-11 #MOLE-87 Files dropped onto a listing are copied into the folder it is showing, with the pane saying how many and where while the pointer is still moving, and the copy confirmation asking before any name is overwritten
 2026-08-11 #MOLE-85 Files can be dragged out of a listing onto anything that takes files — the ticked rows when you start on one of them, that row alone when you do not, always as a copy
