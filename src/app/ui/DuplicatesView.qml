@@ -155,9 +155,8 @@ Item {
                             color: view.mutedColor
                             font.pixelSize: 12
                         }
-                        ComboBox {
+                        Picker {
                             objectName: "strategyPicker"
-                            implicitContentWidthPolicy: ComboBox.WidestText
                             font.pixelSize: 12
                             textRole: "label"
                             valueRole: "id"
@@ -180,9 +179,8 @@ Item {
                             color: view.mutedColor
                             font.pixelSize: 12
                         }
-                        ComboBox {
+                        Picker {
                             objectName: "minimumSizePicker"
-                            implicitContentWidthPolicy: ComboBox.WidestText
                             font.pixelSize: 12
                             textRole: "label"
                             valueRole: "bytes"

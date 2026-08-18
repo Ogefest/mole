@@ -114,11 +114,10 @@ Item {
                     font.pixelSize: 12
                 }
 
-                ComboBox {
+                Picker {
                     objectName: "alertSource"
                     id: sourceBox
                     Layout.fillWidth: true
-                    implicitContentWidthPolicy: ComboBox.WidestText
                     font.pixelSize: 12
                     textRole: "label"
                     valueRole: "id"
@@ -133,22 +132,20 @@ Item {
                     font.pixelSize: 12
                 }
 
-                ComboBox {
+                Picker {
                     objectName: "alertMetric"
                     id: metricBox
                     Layout.fillWidth: true
-                    implicitContentWidthPolicy: ComboBox.WidestText
                     font.pixelSize: 12
                     textRole: "label"
                     valueRole: "id"
                     model: controller ? controller.metricChoices : []
                 }
 
-                ComboBox {
+                Picker {
                     objectName: "alertComparison"
                     id: comparisonBox
                     Layout.fillWidth: true
-                    implicitContentWidthPolicy: ComboBox.WidestText
                     font.pixelSize: 12
                     textRole: "label"
                     valueRole: "id"

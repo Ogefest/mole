@@ -108,10 +108,9 @@ Dialog {
                 color: "#8b93a7"
                 font.pixelSize: App.secondaryTextSize
             }
-            ComboBox {
+            Picker {
                 id: formatBox
                 objectName: "archiveFormatBox"
-                implicitContentWidthPolicy: ComboBox.WidestText
                 font.pixelSize: App.secondaryTextSize
                 model: App.compressionFormats()
                 // Changing the kind renames the suffix rather than leaving a .zip

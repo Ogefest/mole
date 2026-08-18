@@ -96,9 +96,8 @@ Item {
                                 color: "#8b93a7"
                                 font.pixelSize: App.smallTextSize
                             }
-                            ComboBox {
+                            Picker {
                                 objectName: "viewerOption_" + modelData.key
-                                implicitContentWidthPolicy: ComboBox.WidestText
                                 font.pixelSize: App.secondaryTextSize
                                 focusPolicy: Qt.NoFocus
                                 model: modelData.choices

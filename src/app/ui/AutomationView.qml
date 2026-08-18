@@ -139,9 +139,8 @@ Item {
 
                         Item { Layout.fillWidth: true }
 
-                        ComboBox {
+                        Picker {
                             objectName: "intervalPicker"
-                            implicitContentWidthPolicy: ComboBox.WidestText
                             model: view.controller ? view.controller.intervalPresets : []
                             textRole: "label"
                             valueRole: "seconds"

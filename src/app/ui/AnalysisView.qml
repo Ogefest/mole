@@ -132,7 +132,7 @@ Item {
 
                     Item { Layout.fillWidth: true }
 
-                    ComboBox {
+                    Picker {
                         Layout.preferredWidth: 230
                         visible: target && target.history.length > 1
                         font.pixelSize: 11
@@ -164,9 +164,8 @@ Item {
                     // A report is worth far more as a series than as a
                     // snapshot, so repeating it is offered where it is made
                     // rather than buried in a settings screen.
-                    ComboBox {
+                    Picker {
                         objectName: "repeatPicker"
-                        implicitContentWidthPolicy: ComboBox.WidestText
                         font.pixelSize: 12
                         focusPolicy: Qt.NoFocus
                         textRole: "text"
@@ -401,7 +400,7 @@ Item {
                                 onTextChanged: if (target) target.extensions.filterText = text
                             }
 
-                            ComboBox {
+                            Picker {
                                 Layout.preferredWidth: 150
                                 font.pixelSize: 11
                                 focusPolicy: Qt.NoFocus

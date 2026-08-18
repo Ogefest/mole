@@ -63,7 +63,7 @@ Item {
             // idea of what a search was; it is a scope, and the difference
             // between the two was only ever which engine could answer.
             Label { text: "Search in"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
-            ComboBox {
+            Picker {
                 objectName: "searchScope"
                 Layout.preferredWidth: 200
                 model: ["This folder", "Everywhere indexed"]
@@ -83,7 +83,7 @@ Item {
             }
             // In its place when the scope is everywhere: which of the scanned
             // volumes, and how much each holds. The retired tab's one control.
-            ComboBox {
+            Picker {
                 objectName: "searchVolume"
                 Layout.fillWidth: true
                 Layout.columnSpan: 2
@@ -122,7 +122,7 @@ Item {
                 Keys.onDownPressed: resultList.takeFocus()
             }
 
-            ComboBox {
+            Picker {
                 objectName: "nameMode"
                 Layout.preferredWidth: 120
                 model: ["contains", "matches", "expression"]
@@ -471,7 +471,7 @@ Item {
                 Layout.fillWidth: true
                 spacing: 8
 
-                ComboBox {
+                Picker {
                     objectName: "kindMode"
                     Layout.preferredWidth: 150
                     model: ["files and folders", "files only", "folders only"]

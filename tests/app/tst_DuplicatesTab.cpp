@@ -58,6 +58,7 @@ private slots:
     void keepingOneCopyLeavesEveryOtherGroupAlone();
     void noPerGroupOverrideEverProposesDeletingEveryCopy();
     void theChoiceHasWeightOnTheScreen();
+    void everyStrategyNameFitsInThePickerThatOffersIt();
 
 private:
     /// Builds the whole window. Files go in *its* fixture and not in `m_tree`:
@@ -75,6 +76,10 @@ private:
     /// How tall the tab body is, which is the measurement "no strip above a void"
     /// is made of.
     qreal bodyHeight() const;
+    /// The item under `root` whose `text` is exactly `text`. For the insides of a
+    /// popup, where the delegates are built by the style and carry no objectName
+    /// of ours to look them up by.
+    static QQuickItem* itemShowing(QQuickItem* root, const QString& text);
 
     std::unique_ptr<QmlAppHarness> m_harness;
     std::unique_ptr<TempTree> m_tree;
@@ -147,6 +152,20 @@ qreal TestDuplicatesTab::bodyHeight() const
 {
     QQuickItem* body = shown(QStringLiteral("duplicateBody"));
     return body ? body->height() : -1;
+}
+
+QQuickItem* TestDuplicatesTab::itemShowing(QQuickItem* root, const QString& text)
+{
+    if (!root)
+        return nullptr;
+    if (root->property("text").toString() == text)
+        return root;
+    const QList<QQuickItem*> children = root->childItems();
+    for (QQuickItem* child : children) {
+        if (QQuickItem* found = itemShowing(child, text))
+            return found;
+    }
+    return nullptr;
 }
 
 void TestDuplicatesTab::cleanup()
@@ -751,6 +770,60 @@ void TestDuplicatesTab::theChoiceHasWeightOnTheScreen()
     QQuickItem* keep = shown(QStringLiteral("duplicateKeepPanel"));
     QVERIFY2(keep->height() > 60,
         qPrintable(QStringLiteral("the keep panel is %1 pixels tall").arg(keep->height())));
+}
+
+void TestDuplicatesTab::everyStrategyNameFitsInThePickerThatOffersIt()
+{
+    QVERIFY(startWindow());
+    DuplicatesController* controller = openTabOn({ fixtureRoot(QStringLiteral("pile")) });
+    QVERIFY(controller);
+
+    QQuickItem* picker = shown(QStringLiteral("strategyPicker"));
+    QVERIFY(picker);
+    const QVariantList strategies = controller->strategies();
+    QVERIFY(strategies.size() > 1);
+
+    // Every one of them, not only the one showing: the picker is one control and
+    // the longest name is the one that decides how wide it has to be. Choosing the
+    // strategy is the decision this tab is configured by, and a name cut off
+    // mid-word is a decision taken half-blind.
+    for (int i = 0; i < strategies.size(); ++i) {
+        picker->setProperty("currentIndex", i);
+        m_harness->settle();
+
+        auto* content = picker->property("contentItem").value<QQuickItem*>();
+        QVERIFY(content);
+        const QString label = strategies.at(i).toMap().value(QStringLiteral("label")).toString();
+        QCOMPARE(content->property("text").toString(), label);
+        QVERIFY2(content->implicitWidth() <= content->width() + 0.5,
+            qPrintable(QStringLiteral("the closed picker cuts \"%1\": it needs %2 pixels and has %3")
+                           .arg(label)
+                           .arg(content->implicitWidth())
+                           .arg(content->width())));
+    }
+
+    // And in the list it drops down, which is where the choice is actually made.
+    // The popup takes its width from the control, and its rows are laid out with
+    // padding of their own -- so a name that fits the closed picker to the pixel
+    // has less room in the row offering it.
+    auto* popup = picker->property("popup").value<QObject*>();
+    QVERIFY(popup);
+    QMetaObject::invokeMethod(popup, "open");
+    QVERIFY(m_harness->until([popup] { return popup->property("opened").toBool(); }));
+    m_harness->settle();
+
+    auto* list = popup->property("contentItem").value<QQuickItem*>();
+    QVERIFY(list);
+    for (const QVariant& strategy : strategies) {
+        const QString label = strategy.toMap().value(QStringLiteral("label")).toString();
+        QQuickItem* row = itemShowing(list, label);
+        QVERIFY2(row, qPrintable(QStringLiteral("no row in the list offers \"%1\"").arg(label)));
+        QVERIFY2(row->implicitWidth() <= row->width() + 0.5,
+            qPrintable(QStringLiteral("the list cuts \"%1\": it needs %2 pixels and has %3")
+                           .arg(label)
+                           .arg(row->implicitWidth())
+                           .arg(row->width())));
+    }
 }
 
 // A real window, so a real QGuiApplication rather than the guiless one

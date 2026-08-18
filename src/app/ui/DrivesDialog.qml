@@ -334,7 +334,7 @@ Dialog {
                         color: dialog.mutedColor
                         font.pixelSize: 12
                     }
-                    ComboBox {
+                    Picker {
                         id: kindPicker
                         objectName: "driveKindPicker"
                         Layout.fillWidth: true
@@ -597,7 +597,7 @@ Dialog {
 
     Component {
         id: choiceField
-        ComboBox {
+        Picker {
             font.pixelSize: 12
             editable: true
             model: field.choices

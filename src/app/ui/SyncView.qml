@@ -150,9 +150,8 @@ Item {
                         Layout.fillWidth: true
                         spacing: 10
 
-                        ComboBox {
+                        Picker {
                             objectName: "syncMode"
-                            implicitContentWidthPolicy: ComboBox.WidestText
                             font.pixelSize: 12
                             textRole: "label"
                             valueRole: "id"
@@ -175,9 +174,8 @@ Item {
                             color: view.mutedColor
                             font.pixelSize: 12
                         }
-                        ComboBox {
+                        Picker {
                             objectName: "syncCompare"
-                            implicitContentWidthPolicy: ComboBox.WidestText
                             font.pixelSize: 12
                             textRole: "label"
                             valueRole: "id"

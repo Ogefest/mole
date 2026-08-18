@@ -500,7 +500,7 @@ Item {
                     color: "#8b93a7"
                     font.pixelSize: 12
                 }
-                ComboBox {
+                Picker {
                     id: conflictBox
                     objectName: "conflictStrategy"
                     Layout.fillWidth: true

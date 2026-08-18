@@ -101,9 +101,8 @@ Item {
                             font.bold: true
                         }
                         Item { Layout.fillWidth: true }
-                        ComboBox {
+                        Picker {
                             objectName: "addRulePicker"
-                            implicitContentWidthPolicy: ComboBox.WidestText
                             font.pixelSize: App.secondaryTextSize
                             textRole: "label"
                             valueRole: "id"
@@ -236,7 +235,7 @@ Item {
                                     }
 
                                     // --- case ---
-                                    ComboBox {
+                                    Picker {
                                         visible: modelData.kind === "case"
                                         Layout.columnSpan: 2
                                         Layout.fillWidth: true
@@ -279,7 +278,7 @@ Item {
                                     }
 
                                     // --- strip ---
-                                    ComboBox {
+                                    Picker {
                                         visible: modelData.kind === "strip"
                                         Layout.columnSpan: 2
                                         Layout.fillWidth: true
@@ -365,7 +364,7 @@ Item {
                                     // Which part of the name this rule touches.
                                     // Stem by default: upper-casing a name should
                                     // not turn ".txt" into something no tool knows.
-                                    ComboBox {
+                                    Picker {
                                         visible: modelData.kind !== "extension"
                                         Layout.columnSpan: 2
                                         Layout.fillWidth: true

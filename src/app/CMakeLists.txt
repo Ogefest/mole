@@ -33,6 +33,7 @@ set(MOLE_QML_FILES
     ui/FilePane.qml
     ui/RepositoryBand.qml
     ui/GitMark.qml
+    ui/Picker.qml
     ui/BrowserView.qml
     ui/LiveSearchView.qml
     ui/SearchResultList.qml

@@ -52,9 +52,8 @@ Item {
                     color: "#8b93a7"
                     font.pixelSize: App.smallTextSize
                 }
-                ComboBox {
+                Picker {
                     objectName: "separatorPicker"
-                    implicitContentWidthPolicy: ComboBox.WidestText
                     font.pixelSize: App.secondaryTextSize
                     focusPolicy: Qt.NoFocus
                     model: (controller && controller.separatorChoices) ? controller.separatorChoices : []
