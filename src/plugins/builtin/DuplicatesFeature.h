@@ -40,6 +40,17 @@ class DuplicatesController final : public FeatureController
     /// Files the user has ticked for removal, and what removing them frees.
     Q_PROPERTY(int selectedCount READ selectedCount NOTIFY selectionChanged)
     Q_PROPERTY(QString selectedSizeText READ selectedSizeText NOTIFY selectionChanged)
+    /// How many copies there are altogether, so a tick count has something to be
+    /// a fraction of. "24 ticked" is a number; "24 of 26 copies" is a sentence
+    /// somebody can check a rule against.
+    Q_PROPERTY(int copyCount READ copyCount NOTIFY resultsChanged)
+    /// Which rule the ticks came from, in words -- empty when nothing is ticked.
+    ///
+    /// A rule is applied to every group at once and then nothing says it was: the
+    /// only feedback was a count and a size in the corner. This is the sentence
+    /// that says what just happened, and it stops being a rule the moment
+    /// somebody edits the ticks by hand, because then it is no longer true.
+    Q_PROPERTY(QString ruleText READ ruleText NOTIFY selectionChanged)
 
 public:
     DuplicatesController(PluginServices services, QObject* parent = nullptr);
@@ -65,6 +76,8 @@ public:
 
     int selectedCount() const { return static_cast<int>(m_selected.size()); }
     QString selectedSizeText() const;
+    int copyCount() const;
+    QString ruleText() const { return m_ruleText; }
     Q_INVOKABLE QStringList selectedUris() const;
     /// The ticked copies, listed for the confirmation: full location rather than
     /// name, because in a duplicate group every name is the same and the location
@@ -84,6 +97,13 @@ public:
     Q_INVOKABLE void keepNewest();
     Q_INVOKABLE void keepOldest();
     Q_INVOKABLE void keepShortestPath();
+    /// Keeps this one copy and ticks every other copy in its group.
+    ///
+    /// The per-group half of choosing. A rule that is right for forty-nine groups
+    /// and wrong for one should not have to be abandoned for the whole scan, and
+    /// the alternative -- a set of rule buttons on every group -- is four controls
+    /// times fifty groups to express something one click on the row already says.
+    Q_INVOKABLE void keepOnly(const QString& uri);
     Q_INVOKABLE void deleteSelected();
 
     /// Builds a file set from the ticked copies and returns its id, or an empty
@@ -112,7 +132,8 @@ signals:
     void progressChanged();
 
 private:
-    void selectAllBut(const std::function<int(const QList<FileEntry>&)>& chooseKeeper);
+    void selectAllBut(const QString& rule, const std::function<int(const QList<FileEntry>&)>& chooseKeeper);
+    void setRuleText(const QString& text);
 
     PluginServices m_services;
     QStringList m_roots;
@@ -122,6 +143,7 @@ private:
     QSet<QString> m_selected;
     bool m_hasRun = false;
     bool m_wasCancelled = false;
+    QString m_ruleText;
     QString m_progressText;
     QPointer<Task> m_task;
 };

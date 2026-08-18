@@ -164,9 +164,20 @@ a NAS is something you can decide to wait for.
 and says the scan was stopped rather than that it finished — the rest of the tree has not
 been searched, and scanning again starts from the beginning.
 
-The controls above the groups tick a whole answer at once — keep the newest of each group,
-or the oldest, or the copy nearest the top of the tree — and nothing is deleted until that
-is confirmed, with the files named.
+**Choosing what to keep.** The panel above the groups ticks a whole answer at once — keep
+the newest of each group, or the oldest, or the copy nearest the top of the tree — and
+then says what it did: which rule is in force, and how many copies of how many that
+ticked. Every copy in a decided group reads *keeping* or *remove*, so a rule applied to
+fifty groups can be checked by scrolling rather than by counting checkboxes.
+
+A rule is a starting point, not a verdict. `Keep this one` on any row keeps that copy and
+ticks the rest of its group, leaving every other group as the rule left it — and the moment
+you change a tick by hand the panel stops claiming a rule is in force, because it is not.
+Nothing is deleted until that is confirmed, with the files named.
+
+Two verbs, and they mean different things on purpose. A **rule** is stated as *keep*,
+because that is how the decision is made. A **tick** is stated as *remove*, because that
+is what it does.
 
 **Deleting is not the only way out.** `Make a set` turns the ticked copies into a
 [file set](searching.md#sets-which-outlive-the-search), which every operation in Mole

@@ -170,6 +170,24 @@ QVariantList DuplicatesController::selectedDetails() const
     return out;
 }
 
+int DuplicatesController::copyCount() const
+{
+    int copies = 0;
+    for (const DuplicateGroup& group : m_groups)
+        copies += static_cast<int>(group.files.size());
+    return copies;
+}
+
+void DuplicatesController::setRuleText(const QString& text)
+{
+    if (m_ruleText == text)
+        return;
+    m_ruleText = text;
+    // Announced with the selection rather than on its own: they always change
+    // together, and two signals would let a view draw a rule beside a count that
+    // no longer came from it.
+}
+
 QString DuplicatesController::selectedSizeText() const
 {
     qint64 bytes = 0;
@@ -194,6 +212,7 @@ void DuplicatesController::scan()
     m_groups.clear();
     m_selected.clear();
     m_wasCancelled = false;
+    m_ruleText.clear();
     m_progressText.clear();
     emit resultsChanged();
     emit selectionChanged();
@@ -252,18 +271,51 @@ void DuplicatesController::toggle(const QString& uri)
         m_selected.remove(uri);
     else
         m_selected.insert(uri);
+    // A rule that has been edited is no longer the rule. Saying "keeping the
+    // newest" over ticks somebody has since changed by hand would be the view
+    // asserting something untrue about what will be deleted.
+    setRuleText(m_selected.isEmpty() ? QString {} : QStringLiteral("Chosen by hand"));
     emit selectionChanged();
     emit resultsChanged();
+}
+
+void DuplicatesController::keepOnly(const QString& uri)
+{
+    // The group this copy belongs to, and only that one: the point of a per-group
+    // override is that the other forty-nine keep whatever they were given.
+    for (const DuplicateGroup& group : m_groups) {
+        bool mine = false;
+        for (const FileEntry& entry : group.files) {
+            if (entry.uri.toString() == uri)
+                mine = true;
+        }
+        if (!mine)
+            continue;
+
+        for (const FileEntry& entry : group.files) {
+            const QString each = entry.uri.toString();
+            if (each == uri)
+                m_selected.remove(each);
+            else
+                m_selected.insert(each);
+        }
+        setRuleText(QStringLiteral("Chosen by hand"));
+        emit selectionChanged();
+        emit resultsChanged();
+        return;
+    }
 }
 
 void DuplicatesController::clearSelection()
 {
     m_selected.clear();
+    setRuleText({});
     emit selectionChanged();
     emit resultsChanged();
 }
 
-void DuplicatesController::selectAllBut(const std::function<int(const QList<FileEntry>&)>& chooseKeeper)
+void DuplicatesController::selectAllBut(
+    const QString& rule, const std::function<int(const QList<FileEntry>&)>& chooseKeeper)
 {
     m_selected.clear();
     for (const DuplicateGroup& group : m_groups) {
@@ -273,13 +325,14 @@ void DuplicatesController::selectAllBut(const std::function<int(const QList<File
                 m_selected.insert(group.files.at(i).uri.toString());
         }
     }
+    setRuleText(m_groups.isEmpty() ? QString {} : rule);
     emit selectionChanged();
     emit resultsChanged();
 }
 
 void DuplicatesController::keepNewest()
 {
-    selectAllBut([](const QList<FileEntry>& files) {
+    selectAllBut(QStringLiteral("Keeping the newest of each group"), [](const QList<FileEntry>& files) {
         int best = 0;
         for (int i = 1; i < files.size(); ++i) {
             if (files.at(i).modified > files.at(best).modified)
@@ -291,7 +344,7 @@ void DuplicatesController::keepNewest()
 
 void DuplicatesController::keepOldest()
 {
-    selectAllBut([](const QList<FileEntry>& files) {
+    selectAllBut(QStringLiteral("Keeping the oldest of each group"), [](const QList<FileEntry>& files) {
         int best = 0;
         for (int i = 1; i < files.size(); ++i) {
             if (files.at(i).modified < files.at(best).modified)
@@ -305,14 +358,15 @@ void DuplicatesController::keepShortestPath()
 {
     // The copy nearest the top of the tree is usually the original; the ones
     // buried in "old", "backup" and "copy of copy" are usually not.
-    selectAllBut([](const QList<FileEntry>& files) {
-        int best = 0;
-        for (int i = 1; i < files.size(); ++i) {
-            if (files.at(i).uri.path().size() < files.at(best).uri.path().size())
-                best = i;
-        }
-        return best;
-    });
+    selectAllBut(
+        QStringLiteral("Keeping the copy nearest the top of the tree"), [](const QList<FileEntry>& files) {
+            int best = 0;
+            for (int i = 1; i < files.size(); ++i) {
+                if (files.at(i).uri.path().size() < files.at(best).uri.path().size())
+                    best = i;
+            }
+            return best;
+        });
 }
 
 QString DuplicatesController::buildSetFromTicked(const QString& name)
@@ -361,6 +415,7 @@ void DuplicatesController::deleteSelected()
             // cleared rather than left to look actionable.
             m_groups.clear();
             m_selected.clear();
+            m_ruleText.clear();
             m_hasRun = false;
             emit resultsChanged();
             emit selectionChanged();

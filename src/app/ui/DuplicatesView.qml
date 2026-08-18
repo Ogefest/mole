@@ -264,80 +264,121 @@ Item {
             }
 
             // ---- what to keep ----------------------------------------------
+            //
+            // Choosing what to keep is the hard half of deduplication, and it used
+            // to be four flat buttons wedged between the options and the results
+            // with the least visual weight of anything on the screen. It is a
+            // panel now, with the same weight as the options above it, because it
+            // is the control that decides what gets deleted.
+            //
+            // Two verbs, deliberately. The *rule* is stated as keep, because that
+            // is how the decision is made -- "keep the newest". The *ticks* are
+            // stated as remove, because that is what they do. Saying only one of
+            // them left a screen where pressing "Newest" under a heading reading
+            // Keep put a tick against every file except the newest, and nothing
+            // said which of the two readings a tick meant. See ADR-0044.
 
-            RowLayout {
+            Rectangle {
+                objectName: "duplicateKeepPanel"
                 Layout.fillWidth: true
                 visible: controller && controller.groupCount > 0
-                spacing: 8
+                radius: 6
+                color: view.panelColor
+                border.width: 1
+                border.color: view.lineColor
+                implicitHeight: keeping.implicitHeight + 22
 
-                Label {
-                    text: "Keep"
-                    color: view.mutedColor
-                    font.pixelSize: 12
-                }
-                Button {
-                    text: "Newest"
-                    flat: true
-                    font.pixelSize: 12
-                    onClicked: controller.keepNewest()
-                }
-                Button {
-                    text: "Oldest"
-                    flat: true
-                    font.pixelSize: 12
-                    onClicked: controller.keepOldest()
-                }
-                Button {
-                    text: "Nearest the top"
-                    flat: true
-                    font.pixelSize: 12
-                    onClicked: controller.keepShortestPath()
-                    ToolTip.visible: hovered
-                    ToolTip.text: "The copy with the shortest path is usually the original"
-                }
-                Button {
-                    text: "Nothing"
-                    flat: true
-                    font.pixelSize: 12
-                    onClicked: controller.clearSelection()
-                }
+                ColumnLayout {
+                    id: keeping
+                    anchors.fill: parent
+                    anchors.margins: 11
+                    spacing: 6
 
-                Item { Layout.fillWidth: true }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
 
-                Label {
-                    objectName: "duplicateSelection"
-                    visible: controller && controller.selectedCount > 0
-                    text: controller
-                          ? controller.selectedCount + " ticked · " + controller.selectedSizeText
-                          : ""
-                    color: "#d9a441"
-                    font.pixelSize: 12
-                }
-                // The other way out, standing beside Delete rather than hidden
-                // behind it. Finding duplicates is locating; what to do with what
-                // was found is a separate question, and a set is the answer that
-                // hands the pile to every operation Mole already has -- copy,
-                // move, compress, rename, analyse -- without this view growing a
-                // verb for any of them.
-                Button {
-                    objectName: "makeSetFromDuplicatesButton"
-                    text: "Make a set"
-                    flat: true
-                    enabled: controller && controller.selectedCount > 0
-                    ToolTip.visible: hovered
-                    ToolTip.text: "The ticked copies become a file set, which every " +
-                                  "operation in Mole takes"
-                    onClicked: {
-                        const id = controller.buildSetFromTicked("")
-                        if (id.length > 0)
-                            App.openFeatureTab("core.filesets")
+                        Label {
+                            text: "Keep"
+                            color: "#c9d1d9"
+                            font.pixelSize: 13
+                            font.bold: true
+                        }
+                        Button {
+                            objectName: "keepNewestButton"
+                            text: "Newest"
+                            font.pixelSize: 12
+                            onClicked: controller.keepNewest()
+                        }
+                        Button {
+                            text: "Oldest"
+                            font.pixelSize: 12
+                            onClicked: controller.keepOldest()
+                        }
+                        Button {
+                            text: "Nearest the top"
+                            font.pixelSize: 12
+                            onClicked: controller.keepShortestPath()
+                            ToolTip.visible: hovered
+                            ToolTip.text: "The copy with the shortest path is usually the original"
+                        }
+                        Button {
+                            objectName: "keepEverythingButton"
+                            text: "Everything"
+                            flat: true
+                            font.pixelSize: 12
+                            onClicked: controller.clearSelection()
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Unticks the lot, so nothing would be removed"
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        Button {
+                            objectName: "makeSetFromDuplicatesButton"
+                            text: "Make a set"
+                            flat: true
+                            enabled: controller && controller.selectedCount > 0
+                            ToolTip.visible: hovered
+                            ToolTip.text: "The ticked copies become a file set, which every " +
+                                          "operation in Mole takes"
+                            onClicked: {
+                                const id = controller.buildSetFromTicked("")
+                                if (id.length > 0)
+                                    App.openFeatureTab("core.filesets")
+                            }
+                        }
+                        Button {
+                            objectName: "deleteDuplicatesButton"
+                            text: "Delete ticked"
+                            enabled: controller && controller.selectedCount > 0
+                            onClicked: confirmDelete.open()
+                        }
                     }
-                }
-                Button {
-                    objectName: "deleteDuplicatesButton"
-                    text: "Delete ticked"
-                    enabled: controller && controller.selectedCount > 0
-                    onClicked: confirmDelete.open()
+
+                    // What the rule just did, across every group at once. Without
+                    // it a rule was applied silently and the only evidence was a
+                    // count in the corner, which says nothing about whether the
+                    // rule was the right one.
+                    Label {
+                        objectName: "duplicateRuleText"
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 12
+                        color: controller && controller.selectedCount > 0 ? "#d9a441" : "#6f7788"
+                        text: {
+                            if (!controller)
+                                return ""
+                            if (controller.selectedCount === 0)
+                                return "Nothing is ticked, so nothing would be removed."
+                            const rule = controller.ruleText.length > 0
+                                  ? controller.ruleText
+                                  : "Chosen by hand"
+                            return rule + " — " + controller.selectedCount + " of " +
+                                   controller.copyCount + " copies ticked for removal, " +
+                                   controller.selectedSizeText
+                        }
+                    }
                 }
             }
 
@@ -514,6 +555,19 @@ Item {
 
                 delegate: Rectangle {
                     required property var modelData
+
+                    // Whether anything in this group is ticked. Until something is,
+                    // every copy is equally kept and marking them all "keeping"
+                    // would be noise on a screen where nothing has been decided.
+                    readonly property bool decided: {
+                        const files = modelData.files
+                        for (let i = 0; i < files.length; ++i) {
+                            if (files[i].selected)
+                                return true
+                        }
+                        return false
+                    }
+
                     width: ListView.view.width
                     implicitHeight: groupBody.implicitHeight + 18
                     radius: 6
@@ -535,6 +589,16 @@ Item {
                                 font.bold: true
                             }
                             Item { Layout.fillWidth: true }
+                            // Whether this group has been decided at all, so a rule
+                            // applied to fifty of them can be checked by scrolling
+                            // rather than by counting ticks.
+                            Label {
+                                objectName: "duplicateGroupUndecided"
+                                visible: !decided
+                                text: "not decided"
+                                color: "#6f7788"
+                                font.pixelSize: 11
+                            }
                             Label {
                                 text: modelData.reclaimableText + " could be freed"
                                 color: "#d9a441"
@@ -549,15 +613,32 @@ Item {
                                 Layout.fillWidth: true
                                 spacing: 8
 
+                                // A tick removes. The column is headed that way in
+                                // the panel above, and the row says the other half:
+                                // in a decided group the unticked copy is the one
+                                // being kept, and it says so in a word.
                                 CheckBox {
                                     checked: modelData.selected
                                     onToggled: controller.toggle(modelData.uri)
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: modelData.selected
+                                                  ? "Ticked: this copy would be removed"
+                                                  : "Not ticked: this copy stays"
+                                }
+                                Label {
+                                    objectName: "duplicateKeepMark"
+                                    Layout.preferredWidth: 52
+                                    visible: decided
+                                    text: modelData.selected ? "remove" : "keeping"
+                                    horizontalAlignment: Text.AlignRight
+                                    color: modelData.selected ? "#e5534b" : "#5fb977"
+                                    font.pixelSize: 11
                                 }
                                 Label {
                                     text: modelData.name
                                     font.pixelSize: 12
                                     font.family: App.monospaceFont
-                                    Layout.preferredWidth: 220
+                                    Layout.preferredWidth: 200
                                     elide: Text.ElideMiddle
                                     color: modelData.selected ? "#d9a441" : "#d5dbe6"
                                 }
@@ -572,6 +653,20 @@ Item {
                                     text: modelData.modifiedText
                                     color: view.mutedColor
                                     font.pixelSize: 11
+                                }
+                                // The per-group override, in one click on the row
+                                // that is already there. A rule right for
+                                // forty-nine groups and wrong for one should not
+                                // have to be abandoned for the whole scan, and
+                                // four rule buttons per group would be two hundred
+                                // controls saying what this says.
+                                Button {
+                                    objectName: "keepOnlyThisButton"
+                                    text: "Keep this one"
+                                    flat: true
+                                    font.pixelSize: 11
+                                    visible: !decided || modelData.selected
+                                    onClicked: controller.keepOnly(modelData.uri)
                                 }
                             }
                         }

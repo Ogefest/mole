@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-18 #MOLE-72 Choosing what to keep is a panel rather than four flat buttons — a rule says what it did across every group, each copy reads keeping or remove, and any group can be overridden with one click
 2026-08-18 #MOLE-71 Ticked duplicates can become a file set instead of a deletion, and an operation invoked from the menu over a duplicates tab acts on what is ticked
 2026-08-18 #MOLE-70 Duplicate groups appear as the scan confirms them instead of all at the end, largest saving first at every instant, with the stage and file count on screen — and stopping keeps what was found rather than claiming nothing matched
 2026-08-18 #MOLE-69 A duplicates tab fills its own space in every state and says which one it is in — what will be searched and what it costs before a scan, progress during one, and one row per folder instead of an elided join

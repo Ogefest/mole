@@ -53,6 +53,12 @@ private slots:
     void whatTheShellAimsAtIsWhatIsTicked();
     void aSetIsMadeWithoutDeletingAnything();
 
+    void aRuleSaysWhatItDidAcrossEveryGroup();
+    void aRuleStopsBeingARuleOnceTheTicksAreEdited();
+    void keepingOneCopyLeavesEveryOtherGroupAlone();
+    void noPerGroupOverrideEverProposesDeletingEveryCopy();
+    void theChoiceHasWeightOnTheScreen();
+
 private:
     /// Builds the whole window. Files go in *its* fixture and not in `m_tree`:
     /// the application mounts its own, and a scan pointed at a directory the
@@ -550,6 +556,186 @@ void TestDuplicatesTab::aSetIsMadeWithoutDeletingAnything()
     QVERIFY(QFile::exists(QDir(m_harness->fixturePath()).filePath(QStringLiteral("pile/one.bin"))));
     QVERIFY(QFile::exists(QDir(m_harness->fixturePath()).filePath(QStringLiteral("pile/deep/one-copy.bin"))));
     QCOMPARE(controller->groupCount(), 1);
+}
+
+// ---- choosing what to keep ----------------------------------------------
+//
+// The hard half, and the one the view used to give the least weight of anything
+// on the screen: a rule was applied to every group at once and the only evidence
+// it had been was a count in a corner.
+
+void TestDuplicatesTab::aRuleSaysWhatItDidAcrossEveryGroup()
+{
+    QVERIFY(startWindow());
+    const QByteArray first(4096, 'a');
+    const QByteArray second(9000, 'b');
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/one.bin"), first));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/deep/one-copy.bin"), first));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/two.bin"), second));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/deep/two-copy.bin"), second));
+
+    DuplicatesController* controller = openTabOn({ fixtureRoot(QStringLiteral("pile")) });
+    QVERIFY(controller);
+    controller->setStrategyId(QStringLiteral("content"));
+    controller->setMinimumSize(1);
+    controller->scan();
+    QVERIFY(m_harness->until([controller] { return !controller->isScanning() && controller->hasRun(); }));
+    QCOMPARE(controller->groupCount(), 2);
+    QCOMPARE(controller->copyCount(), 4);
+
+    // Before any rule: nothing ticked, nothing claimed.
+    QVERIFY(controller->ruleText().isEmpty());
+    QVERIFY(m_harness->until([this] { return shown(QStringLiteral("duplicateRuleText")) != nullptr; }));
+    QVERIFY(shown(QStringLiteral("duplicateRuleText"))
+                ->property("text")
+                .toString()
+                .contains(QStringLiteral("Nothing is ticked")));
+
+    controller->keepNewest();
+    QCOMPARE(controller->ruleText(), QStringLiteral("Keeping the newest of each group"));
+    // Two groups, one copy kept in each, so two ticked out of four -- and the
+    // sentence says both numbers, because "2 ticked" alone is not something a
+    // rule can be checked against.
+    QCOMPARE(controller->selectedCount(), 2);
+    m_harness->settle();
+    const QString said = shown(QStringLiteral("duplicateRuleText"))->property("text").toString();
+    QVERIFY2(said.contains(QStringLiteral("Keeping the newest")), qPrintable(said));
+    QVERIFY2(said.contains(QStringLiteral("2 of 4 copies")), qPrintable(said));
+    QVERIFY2(said.contains(QStringLiteral("removal")), qPrintable(said));
+
+    // And every group shows which of its copies is being kept, so fifty of them
+    // can be checked by scrolling rather than by counting ticks.
+    QStringList marks;
+    for (QQuickItem* mark : m_harness->items(QStringLiteral("duplicateKeepMark"))) {
+        if (mark->isVisible())
+            marks.append(mark->property("text").toString());
+    }
+    QCOMPARE(marks.count(QStringLiteral("keeping")), 2);
+    QCOMPARE(marks.count(QStringLiteral("remove")), 2);
+}
+
+void TestDuplicatesTab::aRuleStopsBeingARuleOnceTheTicksAreEdited()
+{
+    QVERIFY(startWindow());
+    const QByteArray same(4096, 'a');
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/one.bin"), same));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/deep/one-copy.bin"), same));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/deeper/one-again.bin"), same));
+
+    DuplicatesController* controller = openTabOn({ fixtureRoot(QStringLiteral("pile")) });
+    QVERIFY(controller);
+    controller->setStrategyId(QStringLiteral("content"));
+    controller->setMinimumSize(1);
+    controller->scan();
+    QVERIFY(m_harness->until([controller] { return !controller->isScanning() && controller->hasRun(); }));
+
+    controller->keepOldest();
+    QCOMPARE(controller->ruleText(), QStringLiteral("Keeping the oldest of each group"));
+
+    // One tick changed by hand and the rule no longer describes what will be
+    // deleted. Going on saying "keeping the oldest" over ticks somebody has since
+    // edited would be the view asserting something untrue.
+    controller->toggle(controller->selectedUris().first());
+    QCOMPARE(controller->ruleText(), QStringLiteral("Chosen by hand"));
+
+    // And unticking the lot leaves no claim at all rather than a stale one.
+    controller->clearSelection();
+    QVERIFY(controller->ruleText().isEmpty());
+}
+
+void TestDuplicatesTab::keepingOneCopyLeavesEveryOtherGroupAlone()
+{
+    QVERIFY(startWindow());
+    const QByteArray first(4096, 'a');
+    const QByteArray second(9000, 'b');
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/one.bin"), first));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/deep/one-copy.bin"), first));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/two.bin"), second));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/deep/two-copy.bin"), second));
+
+    DuplicatesController* controller = openTabOn({ fixtureRoot(QStringLiteral("pile")) });
+    QVERIFY(controller);
+    controller->setStrategyId(QStringLiteral("content"));
+    controller->setMinimumSize(1);
+    controller->scan();
+    QVERIFY(m_harness->until([controller] { return !controller->isScanning() && controller->hasRun(); }));
+
+    controller->keepNewest();
+    const QStringList afterRule = controller->selectedUris();
+    QCOMPARE(afterRule.size(), 2);
+
+    // Override one group. That is the whole point of a per-group choice: a rule
+    // that is right for every group but one should not have to be abandoned.
+    const QString overridden = fixtureRoot(QStringLiteral("pile/deep/one-copy.bin"));
+    controller->keepOnly(overridden);
+
+    const QStringList after = controller->selectedUris();
+    QVERIFY2(!after.contains(overridden), "the copy chosen to keep is still ticked for removal");
+    QVERIFY2(after.contains(fixtureRoot(QStringLiteral("pile/one.bin"))),
+        "the other copy in that group was not ticked");
+    // The second group is untouched -- whatever the rule decided there still holds.
+    const QString otherGroupTick = afterRule.contains(fixtureRoot(QStringLiteral("pile/two.bin")))
+        ? fixtureRoot(QStringLiteral("pile/two.bin"))
+        : fixtureRoot(QStringLiteral("pile/deep/two-copy.bin"));
+    QCOMPARE(after.contains(otherGroupTick), afterRule.contains(otherGroupTick));
+    QCOMPARE(controller->ruleText(), QStringLiteral("Chosen by hand"));
+}
+
+void TestDuplicatesTab::noPerGroupOverrideEverProposesDeletingEveryCopy()
+{
+    QVERIFY(startWindow());
+    const QByteArray same(4096, 'a');
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/one.bin"), same));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/deep/one-copy.bin"), same));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/deeper/one-again.bin"), same));
+
+    DuplicatesController* controller = openTabOn({ fixtureRoot(QStringLiteral("pile")) });
+    QVERIFY(controller);
+    controller->setStrategyId(QStringLiteral("content"));
+    controller->setMinimumSize(1);
+    controller->scan();
+    QVERIFY(m_harness->until([controller] { return !controller->isScanning() && controller->hasRun(); }));
+    QCOMPARE(controller->groupCount(), 1);
+
+    // The same rule the four global ones are held to, applied to the new one:
+    // something in every group survives. Keeping one copy means ticking the other
+    // two, whichever copy is named and however many times it is asked for.
+    const QStringList copies { fixtureRoot(QStringLiteral("pile/one.bin")),
+        fixtureRoot(QStringLiteral("pile/deep/one-copy.bin")),
+        fixtureRoot(QStringLiteral("pile/deeper/one-again.bin")) };
+    for (const QString& kept : copies) {
+        controller->keepOnly(kept);
+        const QStringList ticked = controller->selectedUris();
+        QCOMPARE(ticked.size(), 2);
+        QVERIFY2(!ticked.contains(kept), qPrintable(QStringLiteral("keeping %1 ticked it").arg(kept)));
+    }
+}
+
+void TestDuplicatesTab::theChoiceHasWeightOnTheScreen()
+{
+    QVERIFY(startWindow());
+    const QByteArray same(4096, 'a');
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/one.bin"), same));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/deep/one-copy.bin"), same));
+
+    DuplicatesController* controller = openTabOn({ fixtureRoot(QStringLiteral("pile")) });
+    QVERIFY(controller);
+    controller->setStrategyId(QStringLiteral("content"));
+    controller->setMinimumSize(1);
+
+    // Nothing to choose between before a scan, so no panel at all -- it is not a
+    // control that should sit there disabled.
+    QVERIFY(!shown(QStringLiteral("duplicateKeepPanel")));
+
+    controller->scan();
+    QVERIFY(m_harness->until([controller] { return !controller->isScanning() && controller->hasRun(); }));
+    QVERIFY(m_harness->until([this] { return shown(QStringLiteral("duplicateKeepPanel")) != nullptr; }));
+
+    // A panel with the weight of the options panel above it, rather than four flat
+    // buttons wedged into a strip. Height is the measurement that claim is made of.
+    QQuickItem* keep = shown(QStringLiteral("duplicateKeepPanel"));
+    QVERIFY2(keep->height() > 60,
+        qPrintable(QStringLiteral("the keep panel is %1 pixels tall").arg(keep->height())));
 }
 
 // A real window, so a real QGuiApplication rather than the guiless one
