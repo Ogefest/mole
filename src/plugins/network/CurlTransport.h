@@ -41,6 +41,10 @@ struct TransportOptions
     /// Give up when a transfer moves fewer than this many bytes per second for
     /// `stallSeconds`. A wall-clock timeout cannot be used instead: a large file
     /// is slow for legitimate reasons, a dead connection is slow forever.
+    ///
+    /// `stallBytesPerSecond` is libcurl's own guard and covers HTTP and FTP.
+    /// `stallSeconds` is also what StallWatch counts, because for SFTP libcurl's
+    /// guard does not fire at all -- see the comment on that class.
     long stallBytesPerSecond = 1;
     long stallSeconds = 120;
 
@@ -50,6 +54,67 @@ struct TransportOptions
     /// key has *changed* is refused regardless -- that is the case worth
     /// refusing, and the one this flag does not cover.
     bool acceptUnknownHostKey = true;
+};
+
+/// Gives up on a transfer that has stopped moving.
+///
+/// libcurl has a guard of its own -- `CURLOPT_LOW_SPEED_LIMIT` with
+/// `CURLOPT_LOW_SPEED_TIME` -- and **for SFTP it does not fire**. Measured
+/// against a server whose link was cut in the middle of a transfer: the progress
+/// callback went on being called twice a second with the byte count frozen, and
+/// the transfer was still running long after the guard's time had passed. So the
+/// SSH layer is not blocking libcurl's loop, which was the standing guess; the
+/// low-speed check simply never reaches a verdict on that protocol.
+///
+/// It is applied here instead, in the progress callback, which is called
+/// throughout -- that is the whole reason this works. A transfer that neither
+/// finishes nor fails is the one outcome a file manager may not produce: a job
+/// that is going to fail must fail while somebody is still watching.
+///
+/// **This is half of the fix.** Aborting from the callback does not make
+/// `curl_easy_perform` return while the thread is inside the SSH layer waiting
+/// on a socket the kernel is still retransmitting into; `TCP_USER_TIMEOUT`,
+/// set from the same `stallSeconds`, is what ends that. See the socket option
+/// callback in CurlTransport.cpp.
+///
+/// Movement rather than speed, deliberately. libcurl's guard asks "is it slower
+/// than N bytes a second", which needs a rate and a window and gets both wrong
+/// on a link that is legitimately slow. This asks "has anything at all arrived",
+/// which a transfer over any working connection answers yes to, and a dead one
+/// never does.
+class StallWatch
+{
+public:
+    /// Zero or less turns it off, which is what a caller that wants libcurl's
+    /// guard and nothing else passes.
+    explicit StallWatch(qint64 stallSeconds)
+        : m_stallMs(stallSeconds > 0 ? stallSeconds * 1000 : -1)
+    {
+    }
+
+    /// `movedBytes` is everything this transfer has carried so far and `nowMs`
+    /// is how long it has been going. True once nothing has moved for long
+    /// enough that it is not going to finish.
+    ///
+    /// The clock is a parameter rather than read here, so that what decides this
+    /// is the same thing a test can drive.
+    bool hasStalled(qint64 movedBytes, qint64 nowMs)
+    {
+        if (movedBytes != m_lastMoved) {
+            m_lastMoved = movedBytes;
+            m_lastMovedMs = nowMs;
+            return false;
+        }
+        return m_stallMs > 0 && nowMs - m_lastMovedMs >= m_stallMs;
+    }
+
+    /// How long it waits, in milliseconds; -1 when it is off.
+    qint64 patienceMs() const { return m_stallMs; }
+
+private:
+    qint64 m_stallMs = -1;
+    qint64 m_lastMoved = -1;
+    qint64 m_lastMovedMs = 0;
 };
 
 /// One completed transfer.

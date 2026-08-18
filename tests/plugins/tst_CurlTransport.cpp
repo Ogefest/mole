@@ -19,6 +19,11 @@ private slots:
     void anUnknownLengthIsNotTreatedAsShort();
     void aRequestThatAskedForNoBodyIsNotShort();
     void anHttpStatusStillWins();
+
+    void aTransferThatKeepsMovingIsNeverGivenUpOn();
+    void aTransferThatStopsMovingIsGivenUpOnAfterTheWait();
+    void aSlowButLivingTransferSurvives();
+    void theWatchCanBeTurnedOff();
 };
 
 void TestCurlTransport::aCompleteDownloadIsAnOk()
@@ -92,6 +97,78 @@ void TestCurlTransport::anHttpStatusStillWins()
 
     const VfsError error = net::errorFor(response, QStringLiteral("Reading /gone"), net::StatusMeaning::Http);
     QCOMPARE(error.code, VfsError::NotFound);
+}
+
+// ---- giving up on a transfer that has stopped -----------------------------
+//
+// The guard exists because libcurl's own does not fire for SFTP. That was
+// measured against a server whose link was cut mid-transfer: the progress
+// callback went on being called twice a second with the byte count frozen, and
+// the transfer was still running long after CURLOPT_LOW_SPEED_TIME had passed.
+// A transfer that neither finishes nor fails is the one outcome a file manager
+// may not produce.
+//
+// The clock is a parameter of hasStalled() rather than something it reads, which
+// is what lets these run in microseconds and give the same answer every time. A
+// test that slept for the wait would be a test that passes on one machine.
+
+void TestCurlTransport::aTransferThatKeepsMovingIsNeverGivenUpOn()
+{
+    net::StallWatch watch(120);
+    qint64 moved = 0;
+    // Two hours of steady progress, checked twice a second the way libcurl calls
+    // the callback. Nothing here may ever be given up on.
+    for (qint64 ms = 0; ms < 2 * 60 * 60 * 1000; ms += 500) {
+        moved += 1024;
+        QVERIFY2(!watch.hasStalled(moved, ms),
+            qPrintable(QStringLiteral("gave up at %1 ms on a transfer that was moving").arg(ms)));
+    }
+}
+
+void TestCurlTransport::aTransferThatStopsMovingIsGivenUpOnAfterTheWait()
+{
+    net::StallWatch watch(120);
+
+    // Thirty-four megabytes arrive, and then the link goes away. This is the
+    // shape of the outage that found the fault, byte for byte.
+    QVERIFY(!watch.hasStalled(34078720, 5000));
+
+    // Nothing for the whole of the wait: still going, because a transfer is
+    // allowed to be quiet for as long as the guard says and not a moment less.
+    QVERIFY2(!watch.hasStalled(34078720, 5000 + 119999),
+        "given up on one millisecond early, which would make a slow link a failure");
+
+    // And then it is over.
+    QVERIFY2(watch.hasStalled(34078720, 5000 + 120000),
+        "a transfer that has moved nothing for two minutes has to be given up on");
+}
+
+void TestCurlTransport::aSlowButLivingTransferSurvives()
+{
+    // The case the guard must not catch, and the reason it counts movement
+    // rather than speed: a single byte every ninety seconds is a ruinous
+    // connection, but it is a connection, and a file manager that gave up on it
+    // would be giving up on somebody's transfer over a link they cannot change.
+    net::StallWatch watch(120);
+    qint64 moved = 0;
+    for (int step = 0; step < 20; ++step) {
+        const qint64 at = static_cast<qint64>(step) * 90000;
+        // Checked at the moment before the byte arrives, when the wait is at its
+        // longest, and then again as it lands.
+        QVERIFY(!watch.hasStalled(moved, at + 89999));
+        ++moved;
+        QVERIFY(!watch.hasStalled(moved, at + 90000));
+    }
+}
+
+void TestCurlTransport::theWatchCanBeTurnedOff()
+{
+    // Zero means "libcurl's guard and nothing else", which is what a caller
+    // asking for no wait at all gets rather than one that fires immediately.
+    net::StallWatch watch(0);
+    QCOMPARE(watch.patienceMs(), -1);
+    QVERIFY(!watch.hasStalled(0, 0));
+    QVERIFY2(!watch.hasStalled(0, 10LL * 365 * 24 * 60 * 60 * 1000), "off has to mean off");
 }
 
 MOLE_TEST_MAIN(TestCurlTransport)

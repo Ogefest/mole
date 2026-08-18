@@ -8,6 +8,9 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <sys/socket.h>
 
 namespace mole::net {
 namespace {
@@ -128,13 +131,70 @@ namespace {
         return bytes;
     }
 
+    /// Bounds how long the kernel will go on retransmitting into a link that has
+    /// gone away, on the socket libcurl has just opened.
+    ///
+    /// The other half of the fix StallWatch is the first half of, and the half
+    /// that was not obvious. Aborting from the progress callback is not enough
+    /// on its own: measured against a server whose link was cut, the callback
+    /// fired on time and returned "stop", and `curl_easy_perform` still did not
+    /// return -- the thread was inside the SSH layer, waiting on a socket that
+    /// the kernel was still faithfully retransmitting into.
+    ///
+    /// TCP keepalive does not cover it. Keepalive only runs on an *idle*
+    /// connection, and a transfer cut off mid-flight has unacknowledged data, so
+    /// the kernel is in retransmission instead -- which is bounded by
+    /// `tcp_retries2`, about fifteen minutes by default. That is the 641 seconds
+    /// the fault was reported with.
+    ///
+    /// `TCP_USER_TIMEOUT` is the one that applies: it caps how long *sent* data
+    /// may go unacknowledged before the socket is failed. Set to the same wait
+    /// the stall guard uses, so the two agree about how long is too long. Linux
+    /// only; elsewhere the guard still fires and how long the socket takes to
+    /// notice is the platform's business.
+    int boundTheSocketsPatience(void* userData, curl_socket_t handle, curlsocktype purpose)
+    {
+        if (purpose != CURLSOCKTYPE_IPCXN)
+            return CURL_SOCKOPT_OK;
+        const auto* options = static_cast<const TransportOptions*>(userData);
+#ifdef TCP_USER_TIMEOUT
+        if (options->stallSeconds > 0) {
+            const unsigned int ms = static_cast<unsigned int>(options->stallSeconds) * 1000;
+            setsockopt(handle, IPPROTO_TCP, TCP_USER_TIMEOUT, &ms, sizeof(ms));
+        }
+#endif
+        return CURL_SOCKOPT_OK;
+    }
+
+    /// What the progress callback needs for its two jobs.
+    struct ProgressWatch
+    {
+        const CancelToken* cancel = nullptr;
+        StallWatch stall { 0 };
+        QElapsedTimer since;
+        /// Set when this callback is what stopped the transfer because nothing
+        /// was moving. libcurl reports a cancellation and a stall the same way --
+        /// CURLE_ABORTED_BY_CALLBACK -- and they are not the same thing to
+        /// report to somebody.
+        bool stalled = false;
+    };
+
     /// Polled by libcurl during the transfer; a non-zero return aborts it. This
     /// is what turns a CancelToken into a transfer that actually stops, rather
-    /// than one that finishes and is then thrown away.
-    int reportProgress(void* userData, curl_off_t, curl_off_t, curl_off_t, curl_off_t)
+    /// than one that finishes and is then thrown away -- and, since libcurl's own
+    /// low-speed guard does not fire for SFTP, it is also where a transfer that
+    /// has stopped moving is given up on. See StallWatch.
+    int reportProgress(void* userData, curl_off_t, curl_off_t received, curl_off_t, curl_off_t sent)
     {
-        const auto* cancel = static_cast<const CancelToken*>(userData);
-        return cancel->isCancelled() ? 1 : 0;
+        auto* watch = static_cast<ProgressWatch*>(userData);
+        if (watch->cancel->isCancelled())
+            return 1;
+        if (watch->stall.hasStalled(
+                static_cast<qint64>(received) + static_cast<qint64>(sent), watch->since.elapsed())) {
+            watch->stalled = true;
+            return 1;
+        }
+        return 0;
     }
 
     /// Host key policy, stated once: a host we have not met is accepted and
@@ -295,6 +355,8 @@ void CurlPool::prepare(CURL* handle) const
     curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT, m_options.connectTimeoutSeconds);
     curl_easy_setopt(handle, CURLOPT_LOW_SPEED_LIMIT, m_options.stallBytesPerSecond);
     curl_easy_setopt(handle, CURLOPT_LOW_SPEED_TIME, m_options.stallSeconds);
+    curl_easy_setopt(handle, CURLOPT_SOCKOPTFUNCTION, boundTheSocketsPatience);
+    curl_easy_setopt(handle, CURLOPT_SOCKOPTDATA, const_cast<TransportOptions*>(&m_options));
     curl_easy_setopt(handle, CURLOPT_USERAGENT, "Mole/0.1");
 
     curl_easy_setopt(handle, CURLOPT_SSL_VERIFYPEER, m_options.verifyTls ? 1L : 0L);
@@ -377,8 +439,10 @@ Response CurlPool::perform(const Lease& lease, const CancelToken& cancel, QIODev
     curl_easy_setopt(handle, CURLOPT_HEADERFUNCTION, collectHeader);
     curl_easy_setopt(handle, CURLOPT_HEADERDATA, &response.headers);
     curl_easy_setopt(handle, CURLOPT_NOPROGRESS, 0L);
+    ProgressWatch watch { &cancel, StallWatch(m_options.stallSeconds), {}, false };
+    watch.since.start();
     curl_easy_setopt(handle, CURLOPT_XFERINFOFUNCTION, reportProgress);
-    curl_easy_setopt(handle, CURLOPT_XFERINFODATA, &cancel);
+    curl_easy_setopt(handle, CURLOPT_XFERINFODATA, &watch);
 
     qCDebug(networkLog, "#%llu start %s%s", static_cast<unsigned long long>(id),
         lease.url().isEmpty() ? "(no address)" : lease.url().constData(), sink ? " -> file" : "");
@@ -419,6 +483,16 @@ Response CurlPool::perform(const Lease& lease, const CancelToken& cancel, QIODev
     if (response.code != CURLE_OK) {
         response.detail = errorBuffer[0] != 0 ? QString::fromUtf8(errorBuffer)
                                               : QString::fromUtf8(curl_easy_strerror(response.code));
+    }
+
+    // A stall is not a cancellation, and libcurl cannot tell them apart: both
+    // arrive as CURLE_ABORTED_BY_CALLBACK because both are this callback saying
+    // stop. Somebody reading a failure needs the difference -- one of them they
+    // did on purpose -- so it is put back here, as the timeout it is.
+    if (watch.stalled && response.code == CURLE_ABORTED_BY_CALLBACK) {
+        response.code = CURLE_OPERATION_TIMEDOUT;
+        response.detail = QStringLiteral("nothing arrived for %1 seconds, so it was given up on")
+                              .arg(watch.stall.patienceMs() / 1000);
     }
 
     qCDebug(networkLog, "#%llu %s in %lld ms: %lld of %lld bytes down, %lld up, status %ld, %s%s%s",
