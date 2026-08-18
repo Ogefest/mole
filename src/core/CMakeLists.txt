@@ -108,6 +108,8 @@ add_library(mole_core STATIC
     duplicates/Strategies.cpp
     duplicates/FindDuplicatesTask.h
     duplicates/FindDuplicatesTask.cpp
+    duplicates/ContentComparison.h
+    duplicates/ContentComparison.cpp
 
     rename/RenameRule.h
     rename/RenameRule.cpp
@@ -242,6 +244,26 @@ else()
         message(STATUS "Git state: disabled (MOLE_WITH_GIT2=OFF)")
     endif()
     set(MOLE_GIT2_FOUND OFF CACHE INTERNAL "")
+endif()
+
+# The first stage of a content scan digests the head of each candidate. It is a
+# filter and proves nothing -- the stage after it compares the files themselves --
+# so it wants the fastest hash there is rather than a cryptographic one. XXH3 is
+# roughly a hundred times faster than the SHA-256 this used to use, which is the
+# difference between waiting for the processor and waiting for the disk. Without
+# it the scan falls back to SHA-256: slower, and every bit as correct, because a
+# filter only has to be consistent. See ADR-0046.
+if(PkgConfig_FOUND)
+    pkg_check_modules(XXHASH QUIET libxxhash)
+endif()
+if(XXHASH_FOUND)
+    target_compile_definitions(mole_core PRIVATE MOLE_HAVE_XXHASH)
+    target_include_directories(mole_core PRIVATE ${XXHASH_INCLUDE_DIRS})
+    target_link_directories(mole_core PRIVATE ${XXHASH_LIBRARY_DIRS})
+    target_link_libraries(mole_core PRIVATE ${XXHASH_LIBRARIES})
+    message(STATUS "Duplicate scan head: xxhash ${XXHASH_VERSION}")
+else()
+    message(STATUS "Duplicate scan head: SHA-256 (install libxxhash-dev for a faster filter)")
 endif()
 
 # Credentials are encrypted with OpenSSL, which Qt already depends on. Without it

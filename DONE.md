@@ -9,6 +9,50 @@ wrong.
 
 ---
 
+## Finding duplicates ran on one thread and was capped by its own hash
+
+**Asked for:** a scan by content was slow, and the question was whether a faster hash — xxHash
+instead of SHA-256 — would fix it.
+
+**What it turned out to be:** two ceilings, one of them not where anybody was looking.
+`FindDuplicatesTask::run()` was a single pool thread with no parallelism inside it at all, on a
+twenty-core machine. And Qt 6.4 carries its own SHA-2 that does not use the processor's SHA-NI
+instructions, so hashing ran at 218 MB/s — against 2 237 MB/s for OpenSSL on the same processor,
+24 096 MB/s for XXH3-128 and 86 957 MB/s for `memcmp`. The scan was capped at 218 MB/s whatever
+the storage was, and every SSD is faster than that.
+
+**The answer to the question as asked is: yes for one stage and no for the other**, because the
+two stages answer different questions. The head is a filter — a collision costs one extra file
+read at the stage after it, which then separates them, so no false group can survive and any
+hash will do. The last stage is a verdict, and what happens to a group is that all but one of it
+is deleted. A fast hash is fast because it is not cryptographic: XXH3 collisions can be
+constructed cheaply by whoever wrote the files, and a file manager scans folders filled from
+downloads and shared drives.
+
+**So the last stage uses no hash at all.** The files left are compared with one another, byte for
+byte, and that turned out to be the faster option as well as the exact one: each file is still
+read once, the work per byte is a `memcmp` instead of a digest, and files that differ stop at the
+first chunk that differs where a hash always reads both to the end. See
+[ADR-0046](docs/adr/0046-a-duplicate-is-proved-by-comparison-and-the-reads-are-overlapped.md).
+
+**Bounded memory was the part that needed designing, not the comparison.** Files are streamed in
+lockstep and only the chunk is held, so a group of hundred-gigabyte disk images costs what a group
+of documents costs. A bucket bigger than sixteen files is compared in slices and the slices joined
+by comparing one file from each — otherwise ten thousand copies of one photograph would be ten
+thousand descriptors and two and a half gigabytes of chunks. **The slices keep their lone files**:
+the first version discarded them, and a mutation test put back exactly that and watched
+`aFileAloneInItsSliceIsNotLost` fail, which is what it is there for. Both bounds are asserted at
+the drive rather than inferred, because neither shows in the groups a scan produces — a comparison
+that slurped both files whole would give the same answer.
+
+**Only the reads are overlapped.** Results are taken back in the order the work went out, so the
+grouping, the ordering, the announcement of each group and every call to `Task`'s reporting
+helpers stay on one thread: eight threads produce the same groups in the same order as one, which
+is asserted, and there is not a lock in the task.
+
+**Measured rather than asserted:** 1.9 GB of duplicates, warm in the page cache, on a release
+build — 9 330 ms before, 520 ms after.
+
 ## The grid had no page: it put every row of the table behind one scrollbar
 
 **Asked for:** MOLE-187 — the database viewer, and the delimited-text and Parquet viewers with

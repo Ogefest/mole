@@ -151,11 +151,18 @@ opening anything.
 
 `Find duplicates` from a folder looks for files that are the same, and lets you choose
 what *the same* means: identical contents, or the same size, or the same name. Identical
-contents is the default and does the work in the cheapest order — same size first, then
-the first megabyte, then a hash of the whole file — so almost nothing gets hashed. A
-megabyte rather than a few kilobytes because a video container, a RAW photograph, a PDF
-and a disk image all carry headers larger than that, and files that agree over a short
-head are exactly the ones the expensive pass then has to read in full.
+contents is the default and does the work in the cheapest order — same size first, then a
+digest of the first megabyte, then the files that are left compared with one another byte
+for byte — so almost nothing is read in full. A megabyte rather than a few kilobytes
+because a video container, a RAW photograph, a PDF and a disk image all carry headers
+larger than that, and files that agree over a short head are exactly the ones the
+expensive pass then has to read whole.
+
+**The last step compares rather than hashing**, because of what is done with its answer:
+all but one of a group gets deleted. Two files with the same hash are *probably* the same;
+two files compared byte for byte are the same. It is also the faster of the two, and files
+are read a piece at a time and several at once, so a folder of disk images costs no more
+memory than a folder of documents.
 
 What comes back is groups, and they appear as the scan finds them rather than all at the
 end. A group is only shown once it has agreed at every step, so nothing on the list is

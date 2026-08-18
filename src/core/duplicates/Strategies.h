@@ -65,10 +65,18 @@ public:
 
 /// Identical contents, proven.
 ///
-/// Three stages: size, then a hash of the first megabyte, then a hash of the
-/// whole file. Most non-duplicates are ruled out by the first two, so the
-/// expensive pass runs on very little -- which is the difference between a scan
-/// that finishes and one that does not.
+/// Three stages: size, then a hash of the first megabyte, then the surviving
+/// files compared with one another byte for byte. Most non-duplicates are ruled
+/// out by the first two, so the expensive pass runs on very little -- which is
+/// the difference between a scan that finishes and one that does not.
+///
+/// The last stage compares rather than hashing because of what is done with its
+/// answer: all but one of a group gets deleted. A hash makes that a claim about
+/// probability, and the fast hashes -- the ones worth using for a filter -- are
+/// not collision-resistant at all, so a collision can be constructed by whoever
+/// wrote the files. A comparison has no probability in it, reads each file once
+/// exactly as a hash does, and costs a memcmp per byte instead of a digest. See
+/// ADR-0046.
 class SameContentStrategy final : public IDuplicateStrategy
 {
 public:
@@ -76,18 +84,27 @@ public:
     QString label() const override { return QStringLiteral("Identical contents"); }
     QString description() const override
     {
-        return QStringLiteral("Proves it: same size, same first 1 MB, same hash of the whole "
-                              "file. Reads only what survives each step, so it costs far less "
-                              "than hashing everything.");
+        return QStringLiteral("Proves it: same size, same first 1 MB, then the files themselves "
+                              "compared byte for byte. Reads only what survives each step, so it "
+                              "costs far less than hashing everything.");
     }
     QStringList stageNames() const override
     {
         return { QStringLiteral("size"), QStringLiteral("first 1 MB"), QStringLiteral("whole file") };
     }
     bool stageReadsContent(int stage) const override { return stage > 0; }
+    /// The last one, which is what makes the verdict a proof rather than a
+    /// probability.
+    bool stageComparesContent(int stage) const override { return stage == 2; }
     QString keyFor(
         int stage, const FileEntry& entry, IFileSystem* fileSystem, const CancelToken& cancel) const override;
+    QList<QList<FileEntry>> compare(int stage, const QList<FileEntry>& bucket, const DriveLookup& driveFor,
+        const CancelToken& cancel) const override;
 
+    /// How much the second stage reads. It is a filter and nothing else: a
+    /// collision here costs one extra file read at the last stage, which then
+    /// separates them, so this stage is free to use the fastest hash there is.
+    ///
     /// How much the second stage reads.
     ///
     /// A megabyte, raised from 16 kB on 2026-08-18 because 16 kB was not enough to

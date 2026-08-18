@@ -12,6 +12,7 @@ on the components below, none of which are part of this project.
 | **Qt Test** | LGPL-3.0 | Test binaries only; never shipped in a release |
 | **libarchive** | BSD-2-Clause | Dynamically linked by the archive plugin |
 | **libcurl** | curl licence (MIT/X-style) | Dynamically linked by the network plugin; carries SFTP, FTP/FTPS, S3 and WebDAV. Uses whatever SSH and TLS libraries the system's curl was built against |
+| **xxHash** | BSD-2-Clause | Dynamically linked when present; digests the head of a candidate file in a duplicate scan, which is a filter and not a proof. Optional — without it the filter falls back to SHA-256 |
 | **OpenSSL** | Apache-2.0 | Dynamically linked; AES-256-GCM for the credential store and HMAC-SHA256 for S3 request signing |
 | **SQLite** | Public domain | Reached through Qt's `QSQLITE` driver, not linked directly |
 

@@ -2,12 +2,15 @@
 #include "support/TestSupport.h"
 
 #include "core/CoreMetaTypes.h"
+#include "core/duplicates/ContentComparison.h"
 #include "core/duplicates/FindDuplicatesTask.h"
 #include "core/duplicates/Strategies.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/VfsManager.h"
 #include "core/vfs/backends/LocalFileSystem.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
+
+#include <QMutex>
 
 using namespace mole;
 using namespace mole::test;
@@ -38,6 +41,12 @@ private slots:
     void theExpensiveStageOnlySeesWhatSurvivedTheCheapOnes();
     void aFileThatChangesWhileItIsBeingComparedIsLeftOutOfEveryGroup();
     void filesSharingALongHeaderAreSeparatedWithoutReadingThemWhole();
+
+    void contentsAreProvedByComparisonRatherThanByADigest();
+    void aBucketLargerThanTheOpenLimitIsStillOneGroup();
+    void aFileAloneInItsSliceIsNotLost();
+    void nothingIsEverHeldWholeAndNothingBeyondTheOpenLimitIsEverOpen();
+    void theAnswerIsTheSameHoweverManyThreadsRead();
 
     void groupsArriveAsTheyAreConfirmedRatherThanAllAtTheEnd();
     void aGroupIsNeverAnnouncedAndThenTakenBack();
@@ -107,8 +116,9 @@ void TestDuplicates::aFileThatChangesWhileItIsBeingComparedIsLeftOutOfEveryGroup
         }
         Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override
         {
+            const QMutexLocker locked(&m_guard);
             Result<std::unique_ptr<QIODevice>> reader = m_inner->openRead(target, expectedSize);
-            // Rewritten after the reader has its copy, so what was hashed really
+            // Rewritten after the reader has its copy, so what was compared really
             // is the old content and the file really is the new one.
             if (target.path() == m_path && !m_changed) {
                 m_changed = true;
@@ -128,6 +138,9 @@ void TestDuplicates::aFileThatChangesWhileItIsBeingComparedIsLeftOutOfEveryGroup
         FileSystemPtr m_inner;
         QString m_path;
         bool m_changed = false;
+        // Files are opened several at a time now, and this one is opened by
+        // whichever thread got to it.
+        mutable QMutex m_guard;
     };
 
     const QByteArray payload(8000, 'p');
@@ -345,11 +358,24 @@ public:
 
     QString keyFor(int stage, const FileEntry& entry, IFileSystem*, const CancelToken&) const override
     {
-        ++seen[stage];
+        {
+            // A stage that reads is run on several threads, so the tally has to
+            // be taken under something. Without this the count is whatever the
+            // threads left behind, and the suite is not clean under a sanitizer.
+            const QMutexLocker locked(&m_guard);
+            ++seen[stage];
+        }
         return stage == 0 ? QString::number(entry.size) : entry.name;
     }
 
+    int count(int stage) const
+    {
+        const QMutexLocker locked(&m_guard);
+        return seen.value(stage);
+    }
+
     mutable QHash<int, int> seen;
+    mutable QMutex m_guard;
 };
 
 } // namespace
@@ -374,8 +400,8 @@ void TestDuplicates::theExpensiveStageOnlySeesWhatSurvivedTheCheapOnes()
     m_tasks->submit(task);
     QVERIFY(waitFor([task] { return task->isFinished(); }, 30000));
 
-    QCOMPARE(watched->seen.value(0), 10);
-    QCOMPARE(watched->seen.value(1), 2);
+    QCOMPARE(watched->count(0), 10);
+    QCOMPARE(watched->count(1), 2);
 }
 
 namespace {
@@ -393,17 +419,38 @@ public:
     QString description() const override { return m_inner.description(); }
     QStringList stageNames() const override { return m_inner.stageNames(); }
     bool stageReadsContent(int stage) const override { return m_inner.stageReadsContent(stage); }
+    bool stageComparesContent(int stage) const override { return m_inner.stageComparesContent(stage); }
     QString keyFor(
         int stage, const FileEntry& entry, IFileSystem* fileSystem, const CancelToken& cancel) const override
     {
-        ++seen[stage];
+        note(stage, 1);
         return m_inner.keyFor(stage, entry, fileSystem, cancel);
     }
+    QList<QList<FileEntry>> compare(int stage, const QList<FileEntry>& bucket, const DriveLookup& driveFor,
+        const CancelToken& cancel) const override
+    {
+        // Counted in files, like the keying stages, so the numbers below are all
+        // "how many files did this stage have to open".
+        note(stage, static_cast<int>(bucket.size()));
+        return m_inner.compare(stage, bucket, driveFor, cancel);
+    }
 
-    mutable QHash<int, int> seen;
+    int count(int stage) const
+    {
+        const QMutexLocker locked(&m_guard);
+        return seen.value(stage);
+    }
 
 private:
+    void note(int stage, int files) const
+    {
+        const QMutexLocker locked(&m_guard);
+        seen[stage] += files;
+    }
+
     SameContentStrategy m_inner;
+    mutable QHash<int, int> seen;
+    mutable QMutex m_guard;
 };
 
 } // namespace
@@ -434,11 +481,245 @@ void TestDuplicates::filesSharingALongHeaderAreSeparatedWithoutReadingThemWhole(
 
     QCOMPARE(task->groups().size(), 0);
     // Both were sized, both had their head read -- and neither reached the stage
-    // that reads the file whole. That last number is the point of the change: at
-    // 16 kB it was two.
-    QCOMPARE(watched->seen.value(0), 2);
-    QCOMPARE(watched->seen.value(1), 2);
-    QCOMPARE(watched->seen.value(2), 0);
+    // that reads the file whole and compares it. That last number is the point of
+    // the change: at a 16 kB head it was two.
+    QCOMPARE(watched->count(0), 2);
+    QCOMPARE(watched->count(1), 2);
+    QCOMPARE(watched->count(2), 0);
+}
+
+// ---- the last stage compares, and what that costs ------------------------
+
+namespace {
+
+/// A drive that watches how the files under it are read.
+///
+/// Two claims need it, and both are about what a scan may never do however large
+/// the files or the bucket: hold a file in memory, and hold every file of a
+/// bucket open at once. Neither is visible from the outcome of a scan -- a
+/// comparison that slurped both files whole would give exactly the same groups --
+/// so it is measured at the only place it shows.
+class WatchfulDrive final : public IFileSystem
+{
+public:
+    explicit WatchfulDrive(FileSystemPtr inner)
+        : m_inner(std::move(inner))
+    {
+    }
+
+    QString scheme() const override { return m_inner->scheme(); }
+    VfsCapabilities capabilities() const override { return m_inner->capabilities(); }
+    Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) override
+    {
+        return m_inner->list(dir, cancel);
+    }
+    Result<FileEntry> stat(const VfsUri& target) override { return m_inner->stat(target); }
+    Result<void> makeDirectory(const VfsUri& target) override { return m_inner->makeDirectory(target); }
+    Result<void> remove(const VfsUri& target, bool recursive) override
+    {
+        return m_inner->remove(target, recursive);
+    }
+    Result<void> rename(const VfsUri& from, const VfsUri& to) override { return m_inner->rename(from, to); }
+    Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1) override
+    {
+        return m_inner->openWrite(target, expectedSize);
+    }
+
+    Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override
+    {
+        Result<std::unique_ptr<QIODevice>> inner = m_inner->openRead(target, expectedSize);
+        if (!inner.ok())
+            return inner;
+        return Result<std::unique_ptr<QIODevice>>(
+            std::unique_ptr<QIODevice>(new Watched(std::move(inner.value()), this)));
+    }
+
+    int mostOpenAtOnce() const { return m_mostOpen.loadAcquire(); }
+    qint64 largestRead() const { return m_largestRead.loadAcquire(); }
+
+private:
+    class Watched final : public QIODevice
+    {
+    public:
+        Watched(std::unique_ptr<QIODevice> inner, WatchfulDrive* drive)
+            : m_inner(std::move(inner))
+            , m_drive(drive)
+        {
+            m_drive->opened();
+            open(QIODevice::ReadOnly);
+        }
+        ~Watched() override { m_drive->closed(); }
+
+        bool isSequential() const override { return false; }
+        qint64 size() const override { return m_inner->size(); }
+
+    protected:
+        qint64 readData(char* data, qint64 maxSize) override
+        {
+            m_drive->read(maxSize);
+            return m_inner->read(data, maxSize);
+        }
+        qint64 writeData(const char*, qint64) override { return -1; }
+
+    private:
+        std::unique_ptr<QIODevice> m_inner;
+        WatchfulDrive* m_drive = nullptr;
+    };
+
+    void opened()
+    {
+        const int now = m_open.fetchAndAddOrdered(1) + 1;
+        int seen = m_mostOpen.loadAcquire();
+        while (now > seen && !m_mostOpen.testAndSetOrdered(seen, now))
+            seen = m_mostOpen.loadAcquire();
+    }
+    void closed() { m_open.fetchAndSubOrdered(1); }
+    void read(qint64 bytes)
+    {
+        qint64 seen = m_largestRead.loadAcquire();
+        while (bytes > seen && !m_largestRead.testAndSetOrdered(seen, bytes))
+            seen = m_largestRead.loadAcquire();
+    }
+
+    FileSystemPtr m_inner;
+    QAtomicInt m_open { 0 };
+    QAtomicInt m_mostOpen { 0 };
+    QAtomicInteger<qint64> m_largestRead { 0 };
+};
+
+} // namespace
+
+void TestDuplicates::contentsAreProvedByComparisonRatherThanByADigest()
+{
+    // Two files of one size that agree over more than the head reads and differ
+    // in the very last byte. The head lets them through -- that is what it is
+    // for -- and what separates them is the files themselves being compared.
+    const qint64 head = SameContentStrategy::kHeadBytes;
+    QByteArray a(head + 4096, 'q');
+    QByteArray b = a;
+    b[b.size() - 1] = 'r';
+    QVERIFY(m_tree->writeFile(QStringLiteral("last-byte-a.bin"), a));
+    QVERIFY(m_tree->writeFile(QStringLiteral("last-byte-b.bin"), b));
+    // And a pair that really is identical, so this is not passing by refusing
+    // to group anything at all.
+    QVERIFY(m_tree->writeFile(QStringLiteral("same-one.bin"), QByteArray(9000, 's')));
+    QVERIFY(m_tree->writeFile(QStringLiteral("same-two.bin"), QByteArray(9000, 's')));
+
+    const QList<DuplicateGroup> groups = find(std::make_unique<SameContentStrategy>());
+    QCOMPARE(groups.size(), 1);
+    QCOMPARE(groups.first().files.size(), 2);
+    QVERIFY2(groups.first().files.first().name.startsWith(QStringLiteral("same-")),
+        qPrintable(groups.first().files.first().name));
+}
+
+void TestDuplicates::aBucketLargerThanTheOpenLimitIsStillOneGroup()
+{
+    // More copies than may be held open at once, which is an ordinary shape --
+    // a photograph filed in forty places. The bucket is compared in slices, and
+    // the slices have to be joined back up or the answer is forty files in three
+    // groups that are all the same file.
+    const int copies = kMaxOpenAtOnce * 2 + 5;
+    const QByteArray payload(20000, 'c');
+    for (int i = 0; i < copies; ++i)
+        QVERIFY(m_tree->writeFile(QStringLiteral("copy%1.bin").arg(i), payload));
+
+    const QList<DuplicateGroup> groups = find(std::make_unique<SameContentStrategy>());
+    QCOMPARE(groups.size(), 1);
+    QCOMPARE(groups.first().files.size(), copies);
+}
+
+void TestDuplicates::aFileAloneInItsSliceIsNotLost()
+{
+    // The bucket is one file longer than the limit, so the last slice holds a
+    // single file -- and a slice that threw away its lone files would lose it.
+    // It is a match for every one of the others.
+    const int copies = kMaxOpenAtOnce + 1;
+    const QByteArray payload(12345, 'd');
+    for (int i = 0; i < copies; ++i)
+        QVERIFY(m_tree->writeFile(QStringLiteral("alone%1.bin").arg(i), payload));
+
+    const QList<DuplicateGroup> groups = find(std::make_unique<SameContentStrategy>());
+    QCOMPARE(groups.size(), 1);
+    QCOMPARE(groups.first().files.size(), copies);
+}
+
+void TestDuplicates::nothingIsEverHeldWholeAndNothingBeyondTheOpenLimitIsEverOpen()
+{
+    // The two bounds that keep a scan of a hundred-gigabyte disk image from
+    // being a scan that ends in the process being killed. Neither shows in the
+    // groups a scan produces, so both are measured at the drive.
+    const int copies = kMaxOpenAtOnce * 3;
+    const QByteArray payload(kComparisonChunkBytes * 3 + 517, 'e');
+
+    auto memory = std::make_shared<MemoryFileSystem>();
+    for (int i = 0; i < copies; ++i)
+        memory->addFile(QStringLiteral("/big%1.bin").arg(i), payload);
+    auto watchful = std::make_shared<WatchfulDrive>(memory);
+
+    VfsManager vfs;
+    Mount mount;
+    mount.id = QStringLiteral("watched");
+    mount.root = VfsUri::fromString(QStringLiteral("mem:///"));
+    mount.fileSystem = watchful;
+    vfs.addMount(mount);
+
+    auto* task = new FindDuplicatesTask(
+        &vfs, { VfsUri::fromString(QStringLiteral("mem:///")) }, std::make_unique<SameContentStrategy>());
+    task->setMinimumSize(1);
+    m_tasks->submit(task);
+    QVERIFY(waitFor([task] { return task->isFinished(); }, 60000));
+
+    QCOMPARE(task->groups().size(), 1);
+    QCOMPARE(task->groups().first().files.size(), copies);
+
+    // A file is read a chunk at a time and never asked for whole, so what a
+    // comparison costs in memory does not depend on how big the files are.
+    QVERIFY2(watchful->largestRead() <= kComparisonChunkBytes,
+        qPrintable(QStringLiteral("largest read was %1 bytes").arg(watchful->largestRead())));
+
+    // And a bucket of any size is compared in slices, so what it costs does not
+    // depend on how many files agreed either. The limit is per comparison and
+    // the scan reads on several threads, so the ceiling is that many slices.
+    const int ceiling = kMaxOpenAtOnce * task->workerCount();
+    QVERIFY2(watchful->mostOpenAtOnce() <= ceiling,
+        qPrintable(QStringLiteral("%1 files were open at once, over the %2 this may hold")
+                       .arg(watchful->mostOpenAtOnce())
+                       .arg(ceiling)));
+}
+
+void TestDuplicates::theAnswerIsTheSameHoweverManyThreadsRead()
+{
+    // Reads are overlapped and nothing else is, so a scan on eight threads has
+    // to produce the same groups in the same order as a scan on one. If it does
+    // not, the ordering the results depend on is coming from the scheduler.
+    for (int i = 0; i < 6; ++i) {
+        const QByteArray payload(4000 + i * 100, static_cast<char>('a' + i));
+        QVERIFY(m_tree->writeFile(QStringLiteral("group%1-one.bin").arg(i), payload));
+        QVERIFY(m_tree->writeFile(QStringLiteral("group%1-two.bin").arg(i), payload));
+        QVERIFY(m_tree->writeFile(QStringLiteral("group%1-three.bin").arg(i), payload));
+    }
+
+    const auto scan = [this](int workers) {
+        auto* task = new FindDuplicatesTask(
+            m_vfs.get(), { m_tree->rootUri() }, std::make_unique<SameContentStrategy>());
+        task->setMinimumSize(1);
+        task->setWorkerCount(workers);
+        m_tasks->submit(task);
+        [&] { QVERIFY(waitFor([task] { return task->isFinished(); }, 60000)); }();
+        QStringList names;
+        for (const DuplicateGroup& group : task->groups()) {
+            QStringList inGroup;
+            for (const FileEntry& file : group.files)
+                inGroup.append(file.name);
+            inGroup.sort();
+            names.append(inGroup.join(QLatin1Char(',')));
+        }
+        return names;
+    };
+
+    const QStringList onOne = scan(1);
+    QCOMPARE(onOne.size(), 6);
+    QCOMPARE(scan(8), onOne);
 }
 
 // ---- results as they are found ------------------------------------------

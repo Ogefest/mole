@@ -7,6 +7,8 @@
 
 #include <functional>
 
+class QThreadPool;
+
 namespace mole {
 
 class VfsManager;
@@ -27,6 +29,16 @@ struct DuplicateGroup
 /// groups that survive reach the next one. Hashing an entire tree to find
 /// duplicates is the obvious approach and is far slower than grouping by size
 /// first -- on a NAS it is the difference between minutes and hours.
+///
+/// THREADS
+/// -------
+/// The reads are overlapped and nothing else is. A stage that has to open files
+/// hands them to a pool of its own, several at a time; the walk, the grouping,
+/// the ordering of the results and every call to Task's reporting helpers stay
+/// on the one thread run() was called on. That is deliberate: the answers come
+/// back in the order the work went out, so the list is built in exactly the
+/// order it would be built by a scan on one thread, and nothing in here needs a
+/// lock. See ADR-0046.
 class FindDuplicatesTask final : public Task
 {
     Q_OBJECT
@@ -39,6 +51,12 @@ public:
     /// Ignores files smaller than this. Most trees contain thousands of tiny
     /// identical files nobody wants listed.
     void setMinimumSize(qint64 bytes) { m_minimumSize = bytes; }
+
+    /// How many files a reading stage opens at once. Zero, the default, works it
+    /// out from the machine. Set it to one to get a scan that reads in the order
+    /// it walked, which is what a test wanting a fixed answer asks for.
+    void setWorkerCount(int workers) { m_workers = workers; }
+    int workerCount() const;
 
     /// Every group confirmed so far, largest reclaimable first -- because that is
     /// the order anybody clearing space wants them in.
@@ -72,19 +90,46 @@ protected:
     void run() override;
 
 private:
-    /// Splits `bucket` by the key `stage` gives each file, dropping whatever is
-    /// left alone. `examined` and `total` are carried through only to say what the
-    /// scan is doing.
-    QList<QList<FileEntry>> splitAtStage(const QList<FileEntry>& bucket, int stage,
-        const std::function<IFileSystem*(const FileEntry&)>& driveFor, int& examined, int total);
+    /// What one file came back with from a keying stage.
+    struct StageKey
+    {
+        QString key;
+        /// The file changed between the listing and the read, so the key was
+        /// taken from content the file no longer has.
+        bool movedUnderfoot = false;
+    };
+
+    /// What one bucket came back with from the last stage.
+    struct BucketOutcome
+    {
+        QList<QList<FileEntry>> groups;
+        int movedUnderfoot = 0;
+    };
+
+    /// Splits every bucket by the key `stage` gives each file, dropping whatever
+    /// is left alone. The keys are worked out several at a time when the stage
+    /// has to open files, and the splitting is done here.
+    QList<QList<FileEntry>> narrowByKey(
+        const QList<QList<FileEntry>>& buckets, int stage, const DriveLookup& driveFor, QThreadPool& pool);
+    /// One key per file, in the order the files were given. Empty when cancelled.
+    QList<StageKey> keysFor(
+        const QList<FileEntry>& files, int stage, const DriveLookup& driveFor, QThreadPool& pool);
+    /// Runs the last stage over every bucket and announces what it settles.
+    void settle(
+        const QList<QList<FileEntry>>& buckets, int stage, const DriveLookup& driveFor, QThreadPool& pool);
+    /// The last stage for one bucket, on whichever thread the pool picked.
+    BucketOutcome settleBucket(const QList<FileEntry>& bucket, int stage, const DriveLookup& driveFor);
     /// Files that agreed all the way through are a group. Inserted in its place
     /// and announced.
     void confirm(const QList<FileEntry>& files);
+    /// Says which stage is running and how far through it is.
+    void reportStage(int stage, int examined, int total);
 
     VfsManager* m_vfs = nullptr;
     QList<VfsUri> m_roots;
     std::unique_ptr<IDuplicateStrategy> m_strategy;
     qint64 m_minimumSize = 1;
+    int m_workers = 0;
     QList<DuplicateGroup> m_groups;
     qint64 m_reclaimable = 0;
     int m_movedUnderfoot = 0;
