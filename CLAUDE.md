@@ -77,6 +77,16 @@ A task belonging to nothing would be a task nobody ever reaches, which is why
 not part of any larger effort. The `no epic` column of the `By epic` view should
 always be empty, and a card appearing in it means one fell out.
 
+**`Loose ends` is the last resort and not the default.** It was broken up on
+2026-08-18 after growing to eighteen open tasks over six unrelated subjects. A
+fault found in a transfer belongs in the transfer epic, one found in a preview in
+the preview epic; reach for `Loose ends` only when no epic fits. The titles are one
+call away, and reading them costs nothing:
+
+```sh
+v "/projects/$epics/tasks?per_page=50" | jq -r '.items[]|select(.done|not)|.title'
+```
+
 **You write to the board as yourself, and in this checkout you are the engineering
 role.** There is an account for planning and an account for engineering, each with
 its own credentials, so who moved a card and who left a comment is a fact on the
@@ -115,13 +125,16 @@ id=$(jq -n --arg t "A cancelled task is logged as a failure" \
         --rawfile d "$SCRATCH/task.md" '{title:$t, description:$d}' \
      | v "/projects/$root/tasks?format=markdown" -X POST -d @- | jq -r .id)
 
+# The epic this belongs to. Loose ends only when nothing else fits -- see above.
+epicTitle="Loose ends"
+
 lab() { v /labels | jq -r --arg t "$1" '.items[]|select(.title==$t)|.id'; }
-for t in bug area:vfs "epic: Loose ends"; do        # what it is, where it lives, its epic
+for t in bug area:vfs "epic: $epicTitle"; do        # what it is, where it lives, its epic
   v "/tasks/$id/labels" -X POST -d "{\"label_id\":$(lab "$t")}"
 done
 
 epic=$(v "/projects/$epics/tasks?per_page=50" \
-       | jq -r '.items[]|select(.title=="Loose ends")|.id')
+       | jq -r --arg t "$epicTitle" '.items[]|select(.title==$t)|.id')
 v "/tasks/$epic/relations" -X POST \
   -d "{\"relation_kind\":\"subtask\",\"other_task_id\":$id}"
 ```
