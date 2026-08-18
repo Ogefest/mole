@@ -236,7 +236,7 @@ mole_add_test(tst_FileSets          SOURCES app/tst_FileSets.cpp        LIBS mol
 
 # Choosing what to keep, which is the half of a duplicate scan that can lose a
 # file: no rule may ever propose deleting every copy of anything.
-mole_add_test(tst_DuplicatesTab     SOURCES app/tst_DuplicatesTab.cpp   LIBS mole_builtin)
+mole_add_test(tst_DuplicatesTab     SOURCES app/tst_DuplicatesTab.cpp   LIBS mole_qml_harness mole_builtin)
 
 # Drives the real QML end to end and photographs each verified state.
 # Screenshots land in MOLE_SCREENSHOT_DIR when it is set; `make screenshots`

@@ -1,6 +1,9 @@
 #include "plugins/builtin/DuplicatesFeature.h"
 #include "support/MoleTestMain.h"
+#include "support/QmlAppHarness.h"
 #include "support/TestSupport.h"
+#include "ui/AppController.h"
+#include "ui/models/TabsModel.h"
 
 #include "core/CoreMetaTypes.h"
 #include "core/events/EventBus.h"
@@ -9,6 +12,9 @@
 #include "core/vfs/VfsManager.h"
 #include "core/vfs/backends/LocalFileSystem.h"
 
+#include <QGuiApplication>
+#include <QQuickItem>
+#include <QQuickStyle>
 #include <QTest>
 
 using namespace mole;
@@ -32,7 +38,30 @@ private slots:
     void noSelectionRuleEverProposesDeletingEveryCopy_data();
     void noSelectionRuleEverProposesDeletingEveryCopy();
 
+    void anUnscannedTabFillsItsSpaceWithAnExplanation();
+    void aTabWithNoRootsSaysHowToGiveItSome();
+    void everyRootBeingSearchedGetsARowOfItsOwn();
+    void aScanThatMatchedNothingFillsTheSpaceAndSaysSo();
+    void resultsTakeTheSpaceTheEmptyStateWasHolding();
+
 private:
+    /// Builds the whole window. Files go in *its* fixture and not in `m_tree`:
+    /// the application mounts its own, and a scan pointed at a directory the
+    /// window never mounted answers with nothing while looking exactly like a
+    /// scan that found nothing.
+    bool startWindow();
+    /// Opens a duplicates tab on `roots` and hands back its controller. Nothing is
+    /// scanned -- that is the state most of these are about.
+    DuplicatesController* openTabOn(const QStringList& roots);
+    /// A folder inside the window's fixture, as a uri.
+    QString fixtureRoot(const QString& relativePath) const;
+    /// The one visible item with this objectName, or null.
+    QQuickItem* shown(const QString& objectName) const;
+    /// How tall the tab body is, which is the measurement "no strip above a void"
+    /// is made of.
+    qreal bodyHeight() const;
+
+    std::unique_ptr<QmlAppHarness> m_harness;
     std::unique_ptr<TempTree> m_tree;
     std::unique_ptr<VfsManager> m_vfs;
     std::unique_ptr<TaskManager> m_tasks;
@@ -60,8 +89,54 @@ void TestDuplicatesTab::init()
     m_events = std::make_unique<EventBus>();
 }
 
+bool TestDuplicatesTab::startWindow()
+{
+    m_harness = std::make_unique<QmlAppHarness>();
+    QString error;
+    if (!m_harness->start({}, &error)) {
+        qWarning("%s", qPrintable(error));
+        return false;
+    }
+    return true;
+}
+
+QString TestDuplicatesTab::fixtureRoot(const QString& relativePath) const
+{
+    return m_harness->fixtureUri() + QLatin1Char('/') + relativePath;
+}
+
+DuplicatesController* TestDuplicatesTab::openTabOn(const QStringList& roots)
+{
+    const int row = m_harness->app()->tabs()->openTab(QStringLiteral("core.duplicates"));
+    if (row < 0)
+        return nullptr;
+    auto* controller = qobject_cast<DuplicatesController*>(m_harness->app()->tabs()->controllerAt(row));
+    if (!controller)
+        return nullptr;
+    controller->setTargets(roots);
+    m_harness->app()->tabs()->setCurrentIndex(row);
+    m_harness->settle();
+    return controller;
+}
+
+QQuickItem* TestDuplicatesTab::shown(const QString& objectName) const
+{
+    for (QQuickItem* candidate : m_harness->items(objectName)) {
+        if (candidate->isVisible())
+            return candidate;
+    }
+    return nullptr;
+}
+
+qreal TestDuplicatesTab::bodyHeight() const
+{
+    QQuickItem* body = shown(QStringLiteral("duplicateBody"));
+    return body ? body->height() : -1;
+}
+
 void TestDuplicatesTab::cleanup()
 {
+    m_harness.reset();
     m_events.reset();
     m_index.reset();
     m_tasks.reset();
@@ -140,6 +215,155 @@ void TestDuplicatesTab::noSelectionRuleEverProposesDeletingEveryCopy()
     }
 }
 
-MOLE_TEST_MAIN(TestDuplicatesTab)
+// ---- the tab as somebody actually meets it ------------------------------
+//
+// Through the real window, because every claim here is about height: an
+// invisible item is dropped from a ColumnLayout rather than reserving its space,
+// so a view whose only filling item was the group list collapsed upward into a
+// strip of content above a void. Nothing headless can see that.
+
+void TestDuplicatesTab::anUnscannedTabFillsItsSpaceWithAnExplanation()
+{
+    QVERIFY(startWindow());
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/one.bin"), QByteArray(4096, 'a')));
+
+    DuplicatesController* controller = openTabOn({ fixtureRoot(QStringLiteral("pile")) });
+    QVERIFY(controller);
+    QVERIFY2(!controller->hasRun(), "the fixture scanned, so this proves nothing");
+
+    // The state is on screen and says which one it is, without reading the small
+    // print: a heading, not a caption.
+    QQuickItem* empty = shown(QStringLiteral("duplicateEmptyState"));
+    QVERIFY2(empty, "an unscanned tab shows nothing at all");
+    QVERIFY2(empty->height() > 0, "the empty state is there and zero pixels tall");
+
+    // And what it costs, which was 11px grey at the bottom of a panel -- where
+    // somebody about to start a scan on a NAS was least likely to read it.
+    QQuickItem* cost = shown(QStringLiteral("duplicateEmptyStateCost"));
+    QVERIFY(cost);
+    QVERIFY(!cost->property("text").toString().isEmpty());
+
+    // The body claims the height whether or not there is anything to put in it.
+    // This is the assertion the whole issue is about.
+    QQuickItem* body = shown(QStringLiteral("duplicateBody"));
+    QVERIFY(body);
+    QVERIFY2(body->height() > 200,
+        qPrintable(QStringLiteral("the tab body is %1 pixels tall").arg(body->height())));
+}
+
+void TestDuplicatesTab::aTabWithNoRootsSaysHowToGiveItSome()
+{
+    QVERIFY(startWindow());
+    DuplicatesController* controller = openTabOn({});
+    QVERIFY(controller);
+    QCOMPARE(controller->roots().size(), 0);
+
+    // Still fills, and still says which state it is in -- a tab opened the wrong
+    // way is the one most in need of a sentence.
+    QVERIFY(shown(QStringLiteral("duplicateEmptyState")));
+    QVERIFY(bodyHeight() > 200);
+    QVERIFY(shown(QStringLiteral("duplicateNoRoots")));
+    // Nothing to scan, so nothing offering to.
+    QVERIFY(!shown(QStringLiteral("duplicateEmptyStateScan")));
+}
+
+void TestDuplicatesTab::everyRootBeingSearchedGetsARowOfItsOwn()
+{
+    QVERIFY(startWindow());
+    QVERIFY(m_harness->writeFile(QStringLiteral("one/a.bin"), QByteArray(4096, 'a')));
+    QVERIFY(m_harness->writeFile(QStringLiteral("two/b.bin"), QByteArray(4096, 'b')));
+    QVERIFY(m_harness->writeFile(QStringLiteral("three/c.bin"), QByteArray(4096, 'c')));
+
+    DuplicatesController* controller = openTabOn({ fixtureRoot(QStringLiteral("one")),
+        fixtureRoot(QStringLiteral("two")), fixtureRoot(QStringLiteral("three")) });
+    QVERIFY(controller);
+    QCOMPARE(controller->roots().size(), 3);
+
+    // Three rows, not one label holding three paths joined by newlines and elided
+    // in the middle -- which said less than it looked like it did, and on two
+    // drives hid which drive each was on.
+    QList<QQuickItem*> rows;
+    for (QQuickItem* row : m_harness->items(QStringLiteral("duplicateRoot"))) {
+        if (row->isVisible())
+            rows.append(row);
+    }
+    QCOMPARE(rows.size(), 3);
+    for (QQuickItem* row : std::as_const(rows))
+        QVERIFY2(row->height() > 0, "a root row with no height is a root nobody can read");
+}
+
+void TestDuplicatesTab::aScanThatMatchedNothingFillsTheSpaceAndSaysSo()
+{
+    // Three files, all different, so the scan finishes with nothing.
+    QVERIFY(startWindow());
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/a.bin"), QByteArray(4096, 'a')));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/b.bin"), QByteArray(4096, 'b')));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/c.bin"), QByteArray(4096, 'c')));
+
+    DuplicatesController* controller = openTabOn({ fixtureRoot(QStringLiteral("pile")) });
+    QVERIFY(controller);
+    controller->setStrategyId(QStringLiteral("contents"));
+    controller->setMinimumSize(1);
+    controller->scan();
+    QVERIFY(m_harness->until([controller] { return !controller->isScanning() && controller->hasRun(); }));
+    QCOMPARE(controller->groupCount(), 0);
+
+    QVERIFY(m_harness->until([this] { return shown(QStringLiteral("duplicateNoMatchState")) != nullptr; }));
+    QVERIFY(bodyHeight() > 200);
+    // And the state it left behind is that one, not the one it started in.
+    QVERIFY(!shown(QStringLiteral("duplicateEmptyState")));
+}
+
+void TestDuplicatesTab::resultsTakeTheSpaceTheEmptyStateWasHolding()
+{
+    const QByteArray same(4096, 'a');
+    QVERIFY(startWindow());
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/one.bin"), same));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/deep/one-copy.bin"), same));
+
+    DuplicatesController* controller = openTabOn({ fixtureRoot(QStringLiteral("pile")) });
+    QVERIFY(controller);
+    const qreal beforeScan = bodyHeight();
+    QVERIFY(beforeScan > 200);
+
+    controller->setStrategyId(QStringLiteral("contents"));
+    controller->setMinimumSize(1);
+    controller->scan();
+    QVERIFY(m_harness->until([controller] { return !controller->isScanning() && controller->hasRun(); }));
+    QCOMPARE(controller->groupCount(), 1);
+
+    QVERIFY(m_harness->until([this] { return shown(QStringLiteral("duplicateGroupList")) != nullptr; }));
+    QVERIFY(!shown(QStringLiteral("duplicateEmptyState")));
+
+    // The body is still the body. It gives up a strip to the Keep row, which only
+    // exists once there is something to keep, and nothing else -- the results did
+    // not have to grow into space the empty state had been holding back.
+    QVERIFY2(bodyHeight() > 200, qPrintable(QStringLiteral("the body is %1 tall").arg(bodyHeight())));
+    QVERIFY2(bodyHeight() > beforeScan - 100,
+        qPrintable(QStringLiteral("the body fell from %1 to %2").arg(beforeScan).arg(bodyHeight())));
+
+    // And the list fills it, rather than sitting at its natural height with a void
+    // underneath -- which is the same fault one state along.
+    QQuickItem* list = shown(QStringLiteral("duplicateGroupList"));
+    QVERIFY(list);
+    QCOMPARE(list->height(), bodyHeight());
+}
+
+// A real window, so a real QGuiApplication rather than the guiless one
+// MOLE_TEST_MAIN gives every other controller suite. Material as well, because
+// how tall an item is depends on the style the application really runs under,
+// and height is what half of these assert on.
+int main(int argc, char** argv)
+{
+    QGuiApplication app(argc, argv);
+    app.setOrganizationName(QStringLiteral("Mole"));
+    app.setApplicationName(QStringLiteral("mole-tests"));
+    mole::registerCoreMetaTypes();
+    QQuickStyle::setStyle(QStringLiteral("Material"));
+
+    TestDuplicatesTab testObject;
+    QTEST_SET_MAIN_SOURCE_PATH
+    return QTest::qExec(&testObject, argc, argv);
+}
 
 #include "tst_DuplicatesTab.moc"

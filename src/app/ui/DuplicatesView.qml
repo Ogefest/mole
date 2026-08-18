@@ -17,7 +17,37 @@ Item {
     readonly property color lineColor: "#2a3140"
     readonly property color mutedColor: "#8b93a7"
 
+    // Which of the four states the tab is in. Written once here rather than as
+    // four conditions repeated down the file, because the one thing they have to
+    // be is mutually exclusive: two of them true at once is how the tab ended up
+    // with a strip of content above a void.
+    readonly property bool hasRoots: controller && controller.roots.length > 0
+    readonly property bool scanning: controller !== null && controller.scanning
+    readonly property bool showingResults: controller !== null && controller.groupCount > 0
+    readonly property bool foundNothing: controller !== null && !scanning && controller.hasRun
+                                         && controller.groupCount === 0
+
     function focusActivePane() { body.forceActiveFocus() }
+
+    // A root as somebody reads it. The scheme stays on anything that is not the
+    // local disk, because on two drives it is the only thing telling the two
+    // apart -- and it comes off file:// paths, where it is noise.
+    function readableRoot(uri) {
+        return uri.startsWith("file://") ? uri.substring(7) : uri
+    }
+
+    // What the chosen strategy is called, for a sentence about it rather than a
+    // caption underneath one.
+    function strategyLabel() {
+        if (!controller)
+            return ""
+        const all = controller.strategies
+        for (let i = 0; i < all.length; ++i) {
+            if (all[i].id === controller.strategyId)
+                return all[i].label
+        }
+        return ""
+    }
 
     FocusScope {
         id: body
@@ -76,14 +106,44 @@ Item {
                     anchors.margins: 11
                     spacing: 6
 
+                    // What is being searched. One row each rather than a
+                    // `\n`-joined label elided in the middle: these are the answer
+                    // to "what am I even looking at", there are rarely more than a
+                    // handful, and eliding the join hides which drive each is on.
                     Label {
+                        objectName: "duplicateNoRoots"
                         Layout.fillWidth: true
-                        text: controller && controller.roots.length > 0
-                              ? controller.roots.join("\n")
-                              : "Open this from a folder to search it."
+                        visible: !view.hasRoots
+                        text: "Open this from a folder to search it."
                         color: view.mutedColor
                         font.pixelSize: 11
-                        elide: Text.ElideMiddle
+                    }
+
+                    Repeater {
+                        model: view.hasRoots ? controller.roots : []
+                        delegate: RowLayout {
+                            required property string modelData
+
+                            objectName: "duplicateRoot"
+                            Layout.fillWidth: true
+                            spacing: 6
+
+                            Label {
+                                text: "▸"
+                                color: "#6f7788"
+                                font.pixelSize: 11
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: view.readableRoot(modelData)
+                                color: "#c9d1d9"
+                                font.pixelSize: 11
+                                font.family: App.monospaceFont
+                                // From the left: what tells two folders apart is
+                                // the end of the path, not the start.
+                                elide: Text.ElideLeft
+                            }
+                        }
                     }
 
                     RowLayout {
@@ -148,9 +208,12 @@ Item {
                         Item { Layout.fillWidth: true }
                     }
 
-                    // What this choice costs, not only what it matches. That is
-                    // the part someone needs before starting a scan on a NAS.
+                    // What this choice costs, not only what it matches -- the part
+                    // somebody needs before starting a scan on a NAS. Kept here as
+                    // well as in the empty state, because the picker is right above
+                    // it and this is where somebody changing it is looking.
                     Label {
+                        objectName: "duplicateStrategyNote"
                         Layout.fillWidth: true
                         text: controller ? controller.strategyDescription : ""
                         color: "#6f7788"
@@ -218,23 +281,164 @@ Item {
                 }
             }
 
-            Label {
+            // ---- the body ---------------------------------------------------
+            //
+            // One item that always claims the height, with a panel inside it for
+            // each state. An invisible item is dropped from a ColumnLayout
+            // altogether rather than reserving its space, so binding
+            // `Layout.fillHeight` straight onto the group list -- which is what
+            // this used to be -- left the whole tab collapsed upward into a strip
+            // of content above a void whenever there was nothing to show. Which
+            // was every time somebody opened it.
+
+            Item {
+                objectName: "duplicateBody"
                 Layout.fillWidth: true
-                visible: controller && controller.hasRun && controller.groupCount === 0
-                color: view.mutedColor
-                wrapMode: Text.WordWrap
-                text: "Nothing matched. A different strategy may still find something — " +
-                      "'Identical contents' proves files are the same, while 'Same name' " +
-                      "finds copies that were edited apart."
-            }
+                Layout.fillHeight: true
+
+                // Nothing scanned yet. The state the tab is in the first time
+                // anybody sees it, and so the one that has to say what this is
+                // for -- what will be searched, what the strategy matches and
+                // costs, and that the scan is the next step.
+                ColumnLayout {
+                    objectName: "duplicateEmptyState"
+                    anchors.centerIn: parent
+                    width: Math.min(parent.width - 40, 520)
+                    visible: !view.scanning && !view.showingResults && !view.foundNothing
+                    spacing: 10
+
+                    Label {
+                        Layout.alignment: Qt.AlignHCenter
+                        text: "⧉"
+                        font.pixelSize: 44
+                        color: "#3a4152"
+                    }
+                    Label {
+                        Layout.alignment: Qt.AlignHCenter
+                        text: view.hasRoots ? "Nothing scanned yet" : "Nothing to search"
+                        font.pixelSize: 16
+                        font.bold: true
+                        color: "#c9d1d9"
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: App.secondaryTextSize
+                        color: view.mutedColor
+                        text: {
+                            if (!view.hasRoots)
+                                return "Open this tab from a folder and it will search that folder."
+                            const count = controller.roots.length
+                            const where = count === 1
+                                  ? view.readableRoot(controller.roots[0])
+                                  : count + " folders"
+                            return "Scanning will walk " + where + ", matching by " +
+                                   view.strategyLabel().toLowerCase() + "."
+                        }
+                    }
+                    // The cost, given the weight it deserves. It was 11px grey at
+                    // the bottom of a panel, which is where somebody about to
+                    // start a scan on a NAS was least likely to read it.
+                    Label {
+                        objectName: "duplicateEmptyStateCost"
+                        Layout.fillWidth: true
+                        visible: view.hasRoots && text.length > 0
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: App.secondaryTextSize
+                        color: "#6f7788"
+                        text: controller ? controller.strategyDescription : ""
+                    }
+                    Button {
+                        objectName: "duplicateEmptyStateScan"
+                        Layout.alignment: Qt.AlignHCenter
+                        Layout.topMargin: 4
+                        visible: view.hasRoots
+                        text: "Scan"
+                        highlighted: true
+                        onClicked: controller.scan()
+                    }
+                }
+
+                // Scanning. The space belongs to progress -- there was a
+                // BusyIndicator in the header and nothing else, which on a large
+                // tree is a spinner and a silence.
+                ColumnLayout {
+                    objectName: "duplicateScanningState"
+                    anchors.centerIn: parent
+                    width: Math.min(parent.width - 40, 520)
+                    visible: view.scanning && !view.showingResults
+                    spacing: 10
+
+                    BusyIndicator {
+                        Layout.alignment: Qt.AlignHCenter
+                        running: parent.visible
+                        implicitWidth: 44
+                        implicitHeight: 44
+                    }
+                    Label {
+                        Layout.alignment: Qt.AlignHCenter
+                        text: "Searching"
+                        font.pixelSize: 16
+                        font.bold: true
+                        color: "#c9d1d9"
+                    }
+                    Label {
+                        objectName: "duplicateScanningDetail"
+                        Layout.fillWidth: true
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: App.secondaryTextSize
+                        color: view.mutedColor
+                        // What the scan has to say for itself. Thin today -- the
+                        // stage it is on and how much is left is MOLE-70's job,
+                        // and this is the place it will land.
+                        text: controller ? controller.summary : ""
+                    }
+                    Button {
+                        Layout.alignment: Qt.AlignHCenter
+                        Layout.topMargin: 4
+                        text: "Stop"
+                        flat: true
+                        onClicked: controller.cancel()
+                    }
+                }
+
+                // Nothing matched. Already the best-written part of this view, so
+                // the wording is untouched -- only where it sits has changed.
+                ColumnLayout {
+                    objectName: "duplicateNoMatchState"
+                    anchors.centerIn: parent
+                    width: Math.min(parent.width - 40, 520)
+                    visible: view.foundNothing
+                    spacing: 10
+
+                    Label {
+                        Layout.alignment: Qt.AlignHCenter
+                        text: "✓"
+                        font.pixelSize: 40
+                        color: "#3a4152"
+                    }
+                    Label {
+                        objectName: "duplicateNoMatchText"
+                        Layout.fillWidth: true
+                        horizontalAlignment: Text.AlignHCenter
+                        color: view.mutedColor
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: App.secondaryTextSize
+                        text: "Nothing matched. A different strategy may still find something — " +
+                              "'Identical contents' proves files are the same, while 'Same name' " +
+                              "finds copies that were edited apart."
+                    }
+                }
 
             // ---- the groups -------------------------------------------------
 
             ListView {
                 objectName: "duplicateGroupList"
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                visible: controller && controller.groupCount > 0
+                anchors.fill: parent
+                visible: view.showingResults
                 clip: true
                 spacing: 8
                 model: controller ? controller.groups : []
@@ -304,6 +508,7 @@ Item {
                         }
                     }
                 }
+            }
             }
         }
     }
