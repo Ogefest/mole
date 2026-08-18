@@ -13,6 +13,7 @@
 #include "plugins/builtin/SyncFeature.h"
 #include "plugins/builtin/previews/PdfPreview.h"
 #include "plugins/builtin/previews/PreviewProviders.h"
+#include "support/GitFixture.h"
 #include "support/QmlAppHarness.h"
 #include "support/TableFixtures.h"
 #include "support/TestSupport.h"
@@ -127,6 +128,7 @@ private slots:
     void ctrlGRevealsTheEditablePath();
     void aSlowFolderSaysSoInTheMiddleOfThePane();
     void theListingMarksReportsAndAlerts();
+    void aCheckoutSaysWhichBranchAndWhatChanged();
     void filtersByTyping();
     void filtersAndCopiesTableCells();
     void theFilterKeepsTheKeyboardWhileNarrowing();
@@ -807,6 +809,55 @@ void TestWalkthrough::theListingMarksReportsAndAlerts()
     QVERIFY2(!flag(mediaRow, FileListModel::HasReportRole), "a folder with no report is not marked");
 
     m_harness->screenshot(QStringLiteral("01c-listing-tags"));
+}
+
+void TestWalkthrough::aCheckoutSaysWhichBranchAndWhatChanged()
+{
+    if (!Repository::isSupported())
+        QSKIP("built without libgit2");
+
+    // A real checkout inside the fixture, with one file edited and one that git has
+    // never been told about.
+    QVERIFY(m_harness->makeDirs(QStringLiteral("project")));
+    GitFixture checkout(QDir(m_harness->fixturePath()).filePath(QStringLiteral("project")));
+    QVERIFY(checkout.init(QStringLiteral("main")));
+    QVERIFY(checkout.writeFile(QStringLiteral("README.md"), "# A project\n"));
+    QVERIFY(checkout.writeFile(QStringLiteral("src/main.cpp"), "int main() { return 0; }\n"));
+    QVERIFY(!checkout.commitAll(QStringLiteral("Set the project up")).isEmpty());
+    QVERIFY(checkout.writeFile(QStringLiteral("README.md"), "# A project\n\nWith a line added.\n"));
+    QVERIFY(checkout.writeFile(QStringLiteral("notes.txt"), "not committed yet\n"));
+
+    pane()->navigateTo(m_harness->fixtureUri() + QStringLiteral("/project"));
+    QVERIFY(m_harness->until([this] {
+        return !pane()->isLoading() && pane()->currentUri().endsWith(QStringLiteral("/project"));
+    }));
+
+    // The branch first, because it is the cheap fact; the count arrives after a walk.
+    QVERIFY(m_harness->until([this] { return pane()->repository()->headText() == QStringLiteral("main"); }));
+    QVERIFY(m_harness->until(
+        [this] { return pane()->repository()->changesText() == QStringLiteral("2 changed"); }));
+    QCOMPARE(pane()->repository()->commitSubject(), QStringLiteral("Set the project up"));
+
+    // And which two, on the rows themselves.
+    const auto markOf = [this](const QString& name) {
+        for (int row = 0; row < pane()->files()->rowCount(); ++row) {
+            const QModelIndex at = pane()->files()->index(row, 0);
+            if (at.data(FileListModel::NameRole).toString() == name)
+                return at.data(FileListModel::GitMarkRole).toString();
+        }
+        return QStringLiteral("<no such row>");
+    };
+    QCOMPARE(markOf(QStringLiteral("README.md")), QStringLiteral("M"));
+    QCOMPARE(markOf(QStringLiteral("notes.txt")), QStringLiteral("??"));
+    QCOMPARE(markOf(QStringLiteral("src")), QString());
+
+    m_harness->screenshot(QStringLiteral("01e-git-state"));
+
+    // Back where the rest of the walkthrough expects to be.
+    pane()->navigateTo(m_harness->fixtureUri());
+    QVERIFY(m_harness->until([this] { return !pane()->isLoading(); }));
+    RepositoryCache::shared().clear();
+    RepositoryStatusCache::shared().clear();
 }
 
 void TestWalkthrough::rendersMarkdownAsAPage()

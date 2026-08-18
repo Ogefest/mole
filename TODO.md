@@ -27,6 +27,27 @@ project, and a contributor should never hit a wall of text they cannot read.
 
 ## Notes
 
+- **Mole shows git state and does not change it.** No staging, no committing, no
+  checking out, no branching, no fetching, no discarding. Decided rather than pending:
+  a file manager that *shows* git state is useful to everybody with a checkout, and one
+  that half-implements a git client is a worse `git` and a worse Mole at the same time —
+  it would have to grow conflict resolution, hunk selection and credential handling to
+  be worth reaching for, and anybody who wanted those already has better. The read-only
+  boundary is what keeps this feature small enough to be correct. See
+  [ADR-0041](docs/adr/0041-git-state-is-read-through-libgit2.md).
+- **A repository on a remote drive shows nothing, and that is not a gap to be filled by
+  stretching this feature.** libgit2 wants a path a kernel understands, and pulling
+  `.git` across SFTP to decorate a listing would be slow, wrong when it went stale, and
+  unbounded in what it fetched. If reading a remote checkout is ever wanted, the honest
+  form is a git backend behind `IFileSystemFactory` — a drive that speaks git — rather
+  than this feature reaching across a network. That composes with everything here and
+  needs none of it changed.
+- **There is no diff and no log viewer, and neither belongs in the band.** Both are
+  *previews* of a file or a commit, so the shape they would take is an
+  `IPreviewProvider`, which composes later without touching anything built for the band
+  or the markers. Left out rather than deferred: the band answers "what state is this
+  folder in", and reading a diff is a different question that already has a good answer
+  one keystroke away in the terminal panel.
 - **"3 days ago" is spelled out in four places.** `ReportsFeature`, `BrowserFeature`,
   `SearchFeatures` and now `RepositoryInfo` each have their own copy of the same
   relative-time formatting, and the wordings have already drifted apart slightly. Not
@@ -62,7 +83,7 @@ project, and a contributor should never hit a wall of text they cannot read.
   English-only repository. Fixing it means giving the walkthrough a fixed locale,
   which rewrites every picture that shows a size — so it is one change, made once,
   rather than something to slip into an unrelated ticket.
-- **`make guide-images` rewrites all forty-five pictures, whatever changed.** The
+- **`make guide-images` rewrites every picture, whatever changed.** The
   sidebar shows the machine's real free space, so every window in the guide carries
   a number that is different on every run and on every machine. Copy in the pictures
   that changed for a reason and `git checkout` the rest — committing the lot means

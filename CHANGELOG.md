@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-18 #MOLE-107 The guide explains the git band and the letters on the rows, and the read-only boundary is written down as a decision rather than a gap
 2026-08-18 #MOLE-106 The band says how far the branch is from what it tracks and what the last commit was — the subject elided rather than wrapping, and nothing at all when there is no upstream or no commit
 2026-08-18 #MOLE-105 Git markers keep up with the tree: an operation that writes, or a commit made in the terminal or another window, refreshes them without losing the cursor or the ticked rows
 2026-08-18 #MOLE-185 Fix every index search iterating a list that had already been destroyed

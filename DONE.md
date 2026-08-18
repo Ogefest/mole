@@ -9,6 +9,48 @@ wrong.
 
 ---
 
+## The guide did not mention git, and read-only was not written down
+
+**Asked for:** MOLE-107 — the guide said nothing about git and the read-only boundary was
+nowhere on record, which means the next person to look would read it as work somebody forgot
+to do.
+
+**What it turned out to be:** a section in `browsing.md`, one picture, three entries in
+[TODO.md](TODO.md) and a bullet in the README.
+
+**The picture had to be earned, not staged.** The guide's own rule is that every picture was
+taken by the suite immediately after asserting that the state it shows is real, so the
+walkthrough gained a step that builds a checkout in its fixture, edits one file, leaves another
+untracked, asserts the branch, the count, the commit subject and the letter on each row — and
+photographs that. Only the one picture was copied in; `make guide-images` rewrites every one of
+them because the sidebar shows the machine's real free space, which is what TODO.md already
+says to do about it.
+
+**Three things are now decisions with reasons rather than absences.**
+
+*Mole shows git state and does not change it.* Not pending: a file manager that shows git state
+is useful to everybody with a checkout, and one that half-implements a git client is a worse
+`git` and a worse Mole at once — it would need conflict resolution, hunk selection and
+credential handling before it was worth reaching for, and anybody who wants those has better
+already. The boundary is what keeps this small enough to be correct.
+
+*A repository on a remote drive shows nothing*, and the fix is not to stretch this feature
+across a network. The honest form is a git backend behind `IFileSystemFactory` — a drive that
+speaks git — which composes with everything here and needs none of it changed.
+
+*There is no diff or log viewer*, because both are previews of a file or a commit and would be
+an `IPreviewProvider`. The band answers "what state is this folder in"; reading a diff is a
+different question with a good answer one keystroke away in the terminal panel.
+
+**Two things were stale and are now not.** The TODO note said `make guide-images` rewrites
+"forty-five pictures" when there were forty-nine, so it no longer carries a number that drifts.
+And the README's list of what works today had no git in it.
+
+**The guide says what happens without libgit2**, because that is the question somebody
+packaging this will have: the window behaves exactly as it did before any of this existed. It
+is asserted on every change rather than promised — the whole suite runs in a second
+configuration with `MOLE_WITH_GIT2=OFF`.
+
 ## The band said which branch, not whether it was behind
 
 **Asked for:** MOLE-106 — which branch was on the band; whether it is behind the one it

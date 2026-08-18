@@ -49,6 +49,12 @@ being added on top of it.
   always as a copy, asking before it overwrites a name. A row that is not on
   this computer is fetched first, so an archive and a bucket can be dragged out
   of too.
+- **Git state, read and never written.** A folder inside a checkout says which
+  branch, how far it is from what it tracks, what the last commit was and how much
+  has changed; the rows carry git's own letters, and a folder says when something
+  inside it has changed. Refreshed when an operation writes or when you commit from
+  the terminal panel. Local drives, and it needs libgit2 — without it Mole behaves
+  exactly as it did before. Mole shows git state and does not change it.
 - **Full keyboard control.** Arrows, Enter, Insert to select, function keys for
   operations. Enter hands a file to the desktop's default application.
 - **Background everything.** Listing, scanning and searching run on a thread
