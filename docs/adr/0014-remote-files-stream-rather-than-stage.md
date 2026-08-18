@@ -118,3 +118,31 @@ deliver the same bytes twice. That is not a thing to settle by reading documenta
 and hoping, and there is no FTP server in the build environment to settle it against,
 so it is tracked as its own task rather than guessed at. A read that quietly duplicates
 a span is worse than one that needs scratch space.
+
+## Amendment, 2026-08-19 (MOLE-127)
+
+**FTP reads stream too, and the question above is answered: both ends of the range are
+honoured.** Measured against a real server rather than read out of the documentation —
+a span of a hundred bytes delivers a hundred bytes, from the offset asked for, and a
+span whose end is the end of the file delivers the tail and stops. A server that only
+honoured `REST` would have answered the first of those with the remaining 299 900.
+
+So `openRead()` has the same shape as SFTP's: fetched whole below the threshold, over a
+pooled connection, and streamed above it through the same `StreamingDownload`, with one
+`fetchSpan()` helper that applies the drive's settings to every lease. The threshold is
+the same 64 MB SFTP uses, deliberately — two backends disagreeing about when a file is
+large would be two behaviours to explain. The span is a ceiling, for the same reason the
+upload span is: FTP has no re-key fault to work around and every span costs a login and
+a data channel, so in practice a read is one ranged fetch.
+
+Three tests hold it. `rangedFetchDeliversExactlyTheSpanItAsksFor` goes through plain
+libcurl rather than through the backend, because it is a claim about what servers do and
+the backend is what depends on it: if a server ever stops honouring the end of a range,
+that is the line that says so. `aFileOverTheThresholdReadsBackByteForByte` reads a file
+past the threshold and compares every byte, because a stream that dropped or repeated a
+span would still be the right length and the wrong file. `aLargeReadStreamsRatherThan\
+StagingTheWholeFile` needs no server and holds the structural claim, the way the write
+side's does.
+
+**No backend stages a whole file in either direction any more**, which is what the
+original decision set out to do.

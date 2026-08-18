@@ -76,6 +76,11 @@ private:
     /// replacing it when `append` is set. One span of a streamed upload; runs on
     /// the stream's own thread.
     VfsError sendSpan(const VfsUri& target, QIODevice& source, bool append, const CancelToken& cancel);
+    /// One ranged fetch into `sink`. Both ends of the range are set, and the
+    /// server honours both -- see the comment on the definition for why that had
+    /// to be measured rather than assumed.
+    VfsError fetchSpan(const QByteArray& url, const QString& what, QIODevice& sink, qint64 offset,
+        qint64 span, const CancelToken& cancel);
 
     QString m_scheme;
     FtpSettings m_settings;

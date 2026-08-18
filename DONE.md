@@ -9,6 +9,45 @@ wrong.
 
 ---
 
+## FTP staged a whole download, so it could not read a file bigger than the disk
+
+**Asked for:** MOLE-127 — the mirror of MOLE-34, which fixed the write side and left this one
+alone deliberately. `FtpFileSystem::openRead()` downloaded the whole file into a temporary and
+handed that back.
+
+**The ticket was a question, not a design.** `StreamingDownload` already existed and SFTP already
+used it; what nobody knew was what libcurl does with `CURLOPT_RANGE` on an FTP transfer. For FTP
+a range becomes `REST` plus `RETR`, and `REST` has no end — so if the end of the range is ignored,
+one span keeps delivering until the file runs out and the next span re-fetches bytes already
+handed over. A read that silently duplicates a span is worse than one that needs scratch space,
+and the amendment to [ADR-0014](docs/adr/0014-remote-files-stream-rather-than-stage.md) said so
+and left it, because there was no FTP server to settle it against. There is one now.
+
+**Measured first, and the answer is that both ends are honoured.** A span of a hundred bytes
+delivers a hundred bytes from the offset asked for; a span ending at the end of the file delivers
+the tail and stops. A server honouring only `REST` would have answered the first of those with
+the remaining 299 900 bytes.
+
+**So `openRead()` took the shape the ticket named** — the SFTP one: fetched whole below 64 MB
+over a pooled connection, streamed above it, one `fetchSpan()` helper with `applySettings()` on
+every lease, because a span that skipped them would talk to the server differently from the one
+before it.
+
+**Three tests, and each holds a different claim.** The ranged fetch goes through plain libcurl
+rather than through the backend, because it is a claim about what *servers* do and the backend is
+what depends on it — a server that stopped honouring the end of a range would break streamed reads
+and that is the line that would say so. A file just over the threshold is read back and compared
+byte for byte, because a stream that dropped or repeated a span would still be the right length
+and the wrong file. And the structural claim is held without a server, the way the write side's
+is: handed a size, `openRead()` returns a stream and touches no network at all.
+
+The first version of the ranged test asked the backend for a 300 kB file and asserted it came
+back as a stream. It does not, and should not — that is below the threshold. The claim belonged
+one level down.
+
+**No backend stages a whole file in either direction any more**, which is what ADR-0014 set out
+to do.
+
 ## Finding duplicates ran on one thread and was capped by its own hash
 
 **Asked for:** a scan by content was slow, and the question was whether a faster hash — xxHash

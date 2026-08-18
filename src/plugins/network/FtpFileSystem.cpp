@@ -19,6 +19,21 @@ namespace {
     /// continues with APPE instead of failing.
     constexpr qint64 kUploadSpanBytes = 1024LL * 1024 * 1024 * 1024;
 
+    /// The same figure, and the same reasoning, for a streamed read: one ranged
+    /// fetch carries the file and the stream clamps the span to what is left of
+    /// it, so in practice there is one transfer per read.
+    constexpr qint64 kDownloadSpanBytes = kUploadSpanBytes;
+
+    /// Below this a read is fetched whole into a temporary file, as every FTP
+    /// read used to be. A small file over a pooled connection costs one request
+    /// and no thread, where streaming it would cost a stat to learn its length
+    /// and a thread to carry it -- and nothing is at risk, because what made
+    /// staging a fault is a file too big to stage.
+    ///
+    /// The same figure SFTP uses, deliberately: two backends disagreeing about
+    /// when a file is large would be two behaviours to explain.
+    constexpr qint64 kFetchWholeBelow = 64LL * 1024 * 1024;
+
 } // namespace
 
 FtpFileSystem::FtpFileSystem(QString scheme, FtpSettings settings)
@@ -262,31 +277,86 @@ Result<void> FtpFileSystem::rename(const VfsUri& from, const VfsUri& to)
         QStringLiteral("Renaming %1").arg(from.path()));
 }
 
-Result<std::unique_ptr<QIODevice>> FtpFileSystem::openRead(const VfsUri& target, qint64)
+VfsError FtpFileSystem::fetchSpan(const QByteArray& url, const QString& what, QIODevice& sink, qint64 offset,
+    qint64 span, const CancelToken& cancel)
 {
-    auto scratch = std::make_unique<QTemporaryFile>();
-    if (!scratch->open()) {
-        return Result<std::unique_ptr<QIODevice>>::failure(
-            VfsError::IoError, QStringLiteral("Could not open a local copy for %1").arg(target.path()));
-    }
-
     auto lease = m_pool->take();
-    if (!lease) {
-        return Result<std::unique_ptr<QIODevice>>::failure(
-            VfsError::IoError, QStringLiteral("Could not start an FTP transfer"));
-    }
+    if (!lease)
+        return VfsError::make(VfsError::IoError, QStringLiteral("Could not start an FTP transfer"));
 
-    const QByteArray url = urlFor(target, false);
     lease.setUrl(url);
+    // Every lease, not only the first: the encryption, the passive mode and the
+    // rest are what this drive was configured with, and a span that skipped them
+    // would be a span that talked to the server differently from the one before.
     applySettings(lease);
 
-    const net::Response response = m_pool->perform(lease, CancelToken(), scratch.get());
-    const VfsError error = net::errorFor(
-        response, QStringLiteral("Reading %1").arg(target.path()), net::StatusMeaning::ProtocolReply);
-    if (error.isError())
-        return Result<std::unique_ptr<QIODevice>>(error);
+    // Both ends of the range, which was the doubt this ticket existed to settle.
+    // If a server honoured only the REST offset and ignored the end, one span
+    // would keep delivering to the end of the file and the next would re-fetch
+    // bytes already handed over -- a read that silently duplicates a span, which
+    // is worse than one that needs scratch space. Measured against a real server
+    // instead of read out of the documentation: it delivers exactly what it is
+    // asked for, and rangedFetchDeliversExactlyTheSpanItAsksFor holds that.
+    const QByteArray range = QByteArray::number(offset) + '-' + QByteArray::number(offset + span - 1);
+    curl_easy_setopt(lease.get(), CURLOPT_RANGE, range.constData());
 
-    return net::openDownloadedFile(std::move(scratch));
+    const net::Response response = m_pool->perform(lease, cancel, &sink);
+    return net::errorFor(response, what, net::StatusMeaning::ProtocolReply);
+}
+
+Result<std::unique_ptr<QIODevice>> FtpFileSystem::openRead(const VfsUri& target, qint64 expectedSize)
+{
+    const QByteArray url = urlFor(target, false);
+    const QString what = QStringLiteral("Reading %1").arg(target.path());
+
+    // Nobody said how big it is, so ask. A stream has to know where the file
+    // ends before it starts. On FTP that costs a listing of the parent, which is
+    // why a caller that already knows the size passes it.
+    qint64 length = expectedSize;
+    if (length < 0) {
+        const Result<FileEntry> entry = stat(target);
+        if (!entry.ok())
+            return Result<std::unique_ptr<QIODevice>>(entry.error());
+        length = entry.value().size;
+    }
+
+    // Small enough to hold: fetched whole, over a warm connection, as before.
+    if (length <= kFetchWholeBelow) {
+        auto scratch = std::make_unique<QTemporaryFile>();
+        if (!scratch->open()) {
+            return Result<std::unique_ptr<QIODevice>>::failure(
+                VfsError::IoError, QStringLiteral("Could not open a local copy for %1").arg(target.path()));
+        }
+
+        auto lease = m_pool->take();
+        if (!lease) {
+            return Result<std::unique_ptr<QIODevice>>::failure(
+                VfsError::IoError, QStringLiteral("Could not start an FTP transfer"));
+        }
+
+        lease.setUrl(url);
+        applySettings(lease);
+
+        const net::Response response = m_pool->perform(lease, CancelToken(), scratch.get());
+        const VfsError error = net::errorFor(response, what, net::StatusMeaning::ProtocolReply);
+        if (error.isError())
+            return Result<std::unique_ptr<QIODevice>>(error);
+
+        return net::openDownloadedFile(std::move(scratch));
+    }
+
+    // Anything larger is streamed a span at a time, so a file bigger than the
+    // scratch space is a file this can read. This is the mirror of MOLE-34 on
+    // the write side, and the amendment to ADR-0014 now covers both directions.
+    auto fetch = [this, url, what](QIODevice& sink, qint64 offset, qint64 span, const CancelToken& cancel) {
+        return fetchSpan(url, what, sink, offset, span, cancel);
+    };
+
+    auto stream = std::make_unique<net::StreamingDownload>(std::move(fetch), length, kDownloadSpanBytes);
+    if (!stream->open(QIODevice::ReadOnly)) {
+        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, stream->errorString());
+    }
+    return Result<std::unique_ptr<QIODevice>>(std::unique_ptr<QIODevice>(stream.release()));
 }
 
 VfsError FtpFileSystem::sendSpan(
