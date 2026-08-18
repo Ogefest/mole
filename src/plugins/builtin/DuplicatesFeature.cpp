@@ -2,6 +2,7 @@
 
 #include "core/duplicates/Strategies.h"
 #include "core/events/EventBus.h"
+#include "core/sets/FileSetStore.h"
 #include "core/tasks/TaskManager.h"
 #include "core/tasks/TransferTask.h"
 #include "core/vfs/VfsManager.h"
@@ -312,6 +313,28 @@ void DuplicatesController::keepShortestPath()
         }
         return best;
     });
+}
+
+QString DuplicatesController::buildSetFromTicked(const QString& name)
+{
+    if (!m_services.isValid() || !m_services.sets)
+        return {};
+
+    // What is ticked, which is the same answer targetUris() gives -- so a set made
+    // here and an operation invoked from the shell act on exactly the same files.
+    const QStringList uris = selectedUris();
+    if (uris.isEmpty())
+        return {};
+
+    const QString chosen = name.trimmed().isEmpty()
+        ? QStringLiteral("Duplicates: %1")
+              .arg(m_roots.size() == 1 ? VfsUri::fromString(m_roots.first()).fileName()
+                                       : QStringLiteral("%1 folders").arg(m_roots.size()))
+        : name.trimmed();
+
+    const FileSet built = m_services.sets->create(chosen, uris);
+    m_services.sets->save();
+    return built.id;
 }
 
 void DuplicatesController::deleteSelected()

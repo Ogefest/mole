@@ -313,6 +313,26 @@ Item {
                     color: "#d9a441"
                     font.pixelSize: 12
                 }
+                // The other way out, standing beside Delete rather than hidden
+                // behind it. Finding duplicates is locating; what to do with what
+                // was found is a separate question, and a set is the answer that
+                // hands the pile to every operation Mole already has -- copy,
+                // move, compress, rename, analyse -- without this view growing a
+                // verb for any of them.
+                Button {
+                    objectName: "makeSetFromDuplicatesButton"
+                    text: "Make a set"
+                    flat: true
+                    enabled: controller && controller.selectedCount > 0
+                    ToolTip.visible: hovered
+                    ToolTip.text: "The ticked copies become a file set, which every " +
+                                  "operation in Mole takes"
+                    onClicked: {
+                        const id = controller.buildSetFromTicked("")
+                        if (id.length > 0)
+                            App.openFeatureTab("core.filesets")
+                    }
+                }
                 Button {
                     objectName: "deleteDuplicatesButton"
                     text: "Delete ticked"

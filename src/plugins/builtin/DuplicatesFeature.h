@@ -86,6 +86,21 @@ public:
     Q_INVOKABLE void keepShortestPath();
     Q_INVOKABLE void deleteSelected();
 
+    /// Builds a file set from the ticked copies and returns its id, or an empty
+    /// string when nothing is ticked.
+    ///
+    /// The other way out of this tab, and the reason it matters is that a set is
+    /// something every operation in Mole already takes: a result that can become
+    /// one inherits copy, move, compress, rename and analyse without this view
+    /// growing a single verb. Finding duplicates is *locating*, and what to do
+    /// with what was found is a separate question whose answer is not always
+    /// "delete".
+    ///
+    /// A snapshot of what is ticked, not a query that re-runs later -- the same
+    /// promise LiveSearchController::buildSetFromResults() makes, and for the same
+    /// reason: it is what anybody reading "make a set from this" expects.
+    Q_INVOKABLE QString buildSetFromTicked(const QString& name = {});
+
     QVariantMap saveState() const override;
     void restoreState(const QVariantMap& state) override;
 

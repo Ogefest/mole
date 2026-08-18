@@ -8,10 +8,13 @@
 #include "core/CoreMetaTypes.h"
 #include "core/events/EventBus.h"
 #include "core/index/IndexDatabase.h"
+#include "core/sets/FileSetStore.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/VfsManager.h"
 #include "core/vfs/backends/LocalFileSystem.h"
 
+#include <QDir>
+#include <QFile>
 #include <QGuiApplication>
 #include <QQuickItem>
 #include <QQuickStyle>
@@ -45,6 +48,10 @@ private slots:
     void resultsTakeTheSpaceTheEmptyStateWasHolding();
     void aStoppedScanKeepsWhatItFoundAndSaysItWasStopped();
     void aStoppedScanThatFoundNothingDoesNotClaimNothingMatched();
+
+    void tickedCopiesAcrossGroupsBecomeOneSet();
+    void whatTheShellAimsAtIsWhatIsTicked();
+    void aSetIsMadeWithoutDeletingAnything();
 
 private:
     /// Builds the whole window. Files go in *its* fixture and not in `m_tree`:
@@ -427,6 +434,122 @@ void TestDuplicatesTab::aStoppedScanThatFoundNothingDoesNotClaimNothingMatched()
     const QString said = shown(QStringLiteral("duplicateNoMatchText"))->property("text").toString();
     QVERIFY2(!said.contains(QStringLiteral("Nothing matched")), qPrintable(said));
     QVERIFY2(said.contains(QStringLiteral("Stopped")), qPrintable(said));
+}
+
+// ---- the other way out --------------------------------------------------
+//
+// Finding duplicates is locating. What to do with what was found is a separate
+// question, and until now this tab had exactly one answer to it -- the
+// irreversible one.
+
+void TestDuplicatesTab::tickedCopiesAcrossGroupsBecomeOneSet()
+{
+    QVERIFY(startWindow());
+    const QByteArray first(4096, 'a');
+    const QByteArray second(9000, 'b');
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/one.bin"), first));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/deep/one-copy.bin"), first));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/two.bin"), second));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/deep/two-copy.bin"), second));
+
+    DuplicatesController* controller = openTabOn({ fixtureRoot(QStringLiteral("pile")) });
+    QVERIFY(controller);
+    controller->setStrategyId(QStringLiteral("content"));
+    controller->setMinimumSize(1);
+    controller->scan();
+    QVERIFY(m_harness->until([controller] { return !controller->isScanning() && controller->hasRun(); }));
+    QCOMPARE(controller->groupCount(), 2);
+
+    // One copy out of each group, so the set has to span both -- a set built from
+    // one group would pass an assertion about "the ticked copies" while missing
+    // the thing that makes this useful.
+    controller->toggle(fixtureRoot(QStringLiteral("pile/deep/one-copy.bin")));
+    controller->toggle(fixtureRoot(QStringLiteral("pile/deep/two-copy.bin")));
+    QCOMPARE(controller->selectedCount(), 2);
+
+    const QString id = controller->buildSetFromTicked(QStringLiteral("the pile"));
+    QVERIFY2(!id.isEmpty(), "no set was made");
+
+    const FileSet built = m_harness->app()->services().sets->set(id);
+    QVERIFY(built.isValid());
+    QCOMPARE(built.name, QStringLiteral("the pile"));
+    QStringList members = built.uris;
+    members.sort();
+    QStringList expected { fixtureRoot(QStringLiteral("pile/deep/one-copy.bin")),
+        fixtureRoot(QStringLiteral("pile/deep/two-copy.bin")) };
+    expected.sort();
+    QCOMPARE(members, expected);
+}
+
+void TestDuplicatesTab::whatTheShellAimsAtIsWhatIsTicked()
+{
+    QVERIFY(startWindow());
+    const QByteArray same(4096, 'a');
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/one.bin"), same));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/deep/one-copy.bin"), same));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/deeper/one-again.bin"), same));
+
+    DuplicatesController* controller = openTabOn({ fixtureRoot(QStringLiteral("pile")) });
+    QVERIFY(controller);
+    controller->setStrategyId(QStringLiteral("content"));
+    controller->setMinimumSize(1);
+    controller->scan();
+    QVERIFY(m_harness->until([controller] { return !controller->isScanning() && controller->hasRun(); }));
+    QCOMPARE(controller->groupCount(), 1);
+
+    // Nothing ticked is nothing aimed at. A tab that answered with everything it
+    // had found would turn an operation invoked by accident into one aimed at the
+    // whole scan.
+    QVERIFY(m_harness->app()->currentTargets().isEmpty());
+
+    controller->toggle(fixtureRoot(QStringLiteral("pile/deep/one-copy.bin")));
+    controller->toggle(fixtureRoot(QStringLiteral("pile/deeper/one-again.bin")));
+
+    // The shell asks the current tab what it is aimed at, by name and not by type,
+    // and gets the ticked copies. This is the part that makes the separation real
+    // rather than cosmetic: no operation has a special case for this view, and it
+    // is the same list a set is built from.
+    QStringList aimed = m_harness->app()->currentTargets();
+    aimed.sort();
+    QStringList ticked = controller->targetUris();
+    ticked.sort();
+    QCOMPARE(aimed, ticked);
+    QCOMPARE(aimed.size(), 2);
+    QVERIFY(aimed.contains(fixtureRoot(QStringLiteral("pile/deep/one-copy.bin"))));
+    QVERIFY(!aimed.contains(fixtureRoot(QStringLiteral("pile/one.bin"))));
+
+    // And a set built from the same ticks holds exactly that.
+    const QString id = controller->buildSetFromTicked({});
+    QVERIFY(!id.isEmpty());
+    QStringList members = m_harness->app()->services().sets->set(id).uris;
+    members.sort();
+    QCOMPARE(members, aimed);
+}
+
+void TestDuplicatesTab::aSetIsMadeWithoutDeletingAnything()
+{
+    QVERIFY(startWindow());
+    const QByteArray same(4096, 'a');
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/one.bin"), same));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/deep/one-copy.bin"), same));
+
+    DuplicatesController* controller = openTabOn({ fixtureRoot(QStringLiteral("pile")) });
+    QVERIFY(controller);
+    controller->setStrategyId(QStringLiteral("content"));
+    controller->setMinimumSize(1);
+    controller->scan();
+    QVERIFY(m_harness->until([controller] { return !controller->isScanning() && controller->hasRun(); }));
+
+    controller->keepNewest();
+    QVERIFY(controller->selectedCount() > 0);
+    QVERIFY(!controller->buildSetFromTicked({}).isEmpty());
+    m_harness->settle();
+
+    // Making a set is not a way of deleting things quietly. Both copies are still
+    // there, and the results are still on screen to do something else with.
+    QVERIFY(QFile::exists(QDir(m_harness->fixturePath()).filePath(QStringLiteral("pile/one.bin"))));
+    QVERIFY(QFile::exists(QDir(m_harness->fixturePath()).filePath(QStringLiteral("pile/deep/one-copy.bin"))));
+    QCOMPARE(controller->groupCount(), 1);
 }
 
 // A real window, so a real QGuiApplication rather than the guiless one

@@ -168,6 +168,13 @@ The controls above the groups tick a whole answer at once — keep the newest of
 or the oldest, or the copy nearest the top of the tree — and nothing is deleted until that
 is confirmed, with the files named.
 
+**Deleting is not the only way out.** `Make a set` turns the ticked copies into a
+[file set](searching.md#sets-which-outlive-the-search), which every operation in Mole
+already takes — so they can be copied,
+moved, compressed, renamed or analysed instead. Operations invoked from the menu act on
+the ticked copies too, exactly as they act on a selection in a pane: finding duplicates
+is finding out where they are, and what to do about them is a separate decision.
+
 ## Syncing two folders
 
 ![A sync plan](images/15-sync.png)
