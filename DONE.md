@@ -9,6 +9,48 @@ wrong.
 
 ---
 
+## Identical contents compared sixteen kilobytes of head
+
+**Asked for:** MOLE-191 — 16 kB is not enough to separate the files people actually have a lot
+of.
+
+**What it turned out to be:** a constant, and an accounting worth writing down. A video
+container, a RAW photograph, a PDF and a disk image all carry headers larger than 16 kB, so two
+different files of the same size agreed at the middle stage and both went through to the
+whole-file hash — the pass that stage exists to keep small. On a folder of video the scan
+degenerated towards hashing everything, which is what the strategy was built to avoid.
+
+**It is not free and the comment says so.** The stage reads 64 times what it did, but only for
+files that already share an exact size — and a file no larger than the head skips the stage
+altogether, which `keyFor` already handled, so with the head at a megabyte most files in most
+trees cost one read rather than two.
+
+**The test is what the change buys, not the constant.** Two files of one size agreeing over a
+header longer than 16 kB and differing inside the first megabyte are separated at the head
+stage, and the stage that reads a file whole never sees them. At 16 kB that last number was two.
+
+## Every dropdown cut its longest name in half
+
+**Asked for:** MOLE-190 — reported against the strategy picker in the duplicates tab, where
+*Identical contents* appeared in the list it is chosen from as *Identical c…*.
+
+**What it turned out to be:** all fourteen ComboBoxes in the application, because they share the
+cause. `implicitContentWidthPolicy: WidestText` sizes the *closed* control to the widest label in
+the *control's* font, and that worked. The list is built by the style — each row an ItemDelegate
+in the style's own default font with padding of its own — and handed the control's width. So a
+row drew its text a third larger than the control had measured it, in the room the control had
+needed for the smaller version. The control was 120 pixels; the row asked for 200.
+
+**One control used everywhere**, rather than fourteen chances to get it wrong. A row is laid out
+the way the closed control is, and the list is as wide as its widest row. Neither half is enough
+alone — matching the font still left the row wanting 138 pixels in a 120 pixel list.
+
+**The width is measured, not picked.** A hidden Text seeds it so the list does not visibly jump
+the first time it opens, and then each row reports what it actually asked for and that wins:
+`implicitWidth` is the style's answer and no measurement taken outside a row reproduces it.
+TextMetrics came two pixels short, which is exactly enough to elide the longest name and nothing
+else — the first fix looked right and still cut one name.
+
 ## Choosing what to keep had the least weight on the screen
 
 **Asked for:** MOLE-72 — the last card of *Duplicates, rebuilt*, and the one held back until
