@@ -5,6 +5,8 @@
 #include <QAbstractTableModel>
 #include <QHash>
 
+class QTimer;
+
 namespace mole {
 
 /// Presents an imported delimited file to a QML TableView.
@@ -20,9 +22,12 @@ class TableModel : public QAbstractTableModel
     Q_PROPERTY(int rows READ rowCount NOTIFY tableChanged)
     Q_PROPERTY(int columns READ columnCount NOTIFY tableChanged)
     Q_PROPERTY(QStringList headers READ headers NOTIFY tableChanged)
-    /// Rows in the file, before filtering.
+    /// Rows in the file, before filtering, or -1 while the source is still
+    /// working it out. A view shows a blank rather than a guess -- see
+    /// ITableSource::totalRows().
     Q_PROPERTY(qint64 totalRows READ totalRows NOTIFY tableChanged)
-    /// Rows the filter matched, which is what the view is showing.
+    /// Rows the filter matched, which is what the view is showing; -1 on the
+    /// same terms.
     Q_PROPERTY(qint64 matchingRows READ matchingRows NOTIFY tableChanged)
     Q_PROPERTY(QString filter READ filter WRITE setFilter NOTIFY filterChanged)
     /// Width hints in characters, so columns fit their contents.
@@ -47,8 +52,16 @@ public:
     qint64 totalRows() const { return m_totalRows; }
     qint64 matchingRows() const { return m_matchingRows; }
 
-    QString filter() const { return m_filter; }
+    /// What has been typed, which is not always what the rows on screen were
+    /// fetched with -- see setFilter().
+    QString filter() const { return m_typedFilter; }
+    /// Takes what has been typed. The scan it costs is deferred until the
+    /// typing stops, so holding a key down does not queue one per character.
     void setFilter(const QString& filter);
+    /// Applies the typed filter now, without waiting for the quiet.
+    Q_INVOKABLE void applyFilter();
+    /// Whether there is typing the rows on screen have not caught up with yet.
+    bool isFilterPending() const;
 
     QVariantList columnWidths() const;
 
@@ -72,6 +85,8 @@ signals:
 private:
     /// Loads the page containing `row` if it is not already cached.
     void ensureLoaded(int row) const;
+    /// Re-reads the counts the source can answer for the applied filter.
+    void readCounts();
 
     /// One screen is well under this; a page per scroll step would be a query
     /// per row.
@@ -80,10 +95,20 @@ private:
     /// screens without refetching, bounded so a long scroll cannot grow
     /// without limit -- which would defeat the entire design.
     static constexpr int kMaxCachedPages = 24;
+    /// How long the typing has to stop before the filter is applied, in
+    /// milliseconds. A filter is a scan -- no index answers a substring match
+    /// across every column -- so a keystroke that started one immediately meant
+    /// eight scans for an eight-letter word, each one of them on this thread.
+    /// Short enough to feel immediate, long enough to sit inside a keypress.
+    static constexpr int kFilterQuietMs = 250;
 
     ITableSource* m_source = nullptr;
     QStringList m_headers;
+    /// What the rows on screen were fetched with.
     QString m_filter;
+    /// What has been typed, which runs ahead of it while somebody is typing.
+    QString m_typedFilter;
+    QTimer* m_filterTimer = nullptr;
     qint64 m_totalRows = 0;
     qint64 m_matchingRows = 0;
     QList<int> m_columnWidths;

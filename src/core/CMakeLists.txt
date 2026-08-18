@@ -128,6 +128,8 @@ add_library(mole_core STATIC
     data/ITableSource.h
     data/SqliteTable.h
     data/SqliteTable.cpp
+    data/CountTableRowsTask.h
+    data/CountTableRowsTask.cpp
     data/ParquetTable.h
     data/ParquetTable.cpp
 

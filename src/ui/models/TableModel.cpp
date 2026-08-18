@@ -1,5 +1,8 @@
 #include "ui/models/TableModel.h"
 
+#include <QTimer>
+
+#include <algorithm>
 #include <limits>
 
 namespace mole {
@@ -21,7 +24,11 @@ namespace {
 
 TableModel::TableModel(QObject* parent)
     : QAbstractTableModel(parent)
+    , m_filterTimer(new QTimer(this))
 {
+    m_filterTimer->setSingleShot(true);
+    m_filterTimer->setInterval(kFilterQuietMs);
+    connect(m_filterTimer, &QTimer::timeout, this, &TableModel::applyFilter);
 }
 
 void TableModel::setSource(ITableSource* source)
@@ -29,12 +36,13 @@ void TableModel::setSource(ITableSource* source)
     beginResetModel();
     m_source = source;
     m_filter.clear();
+    m_typedFilter.clear();
+    m_filterTimer->stop();
     m_pages.clear();
     m_pageOrder.clear();
     m_headers = source ? source->headers() : QStringList {};
-    m_totalRows = source ? source->totalRows() : 0;
-    m_matchingRows = m_totalRows;
     m_columnWidths = source ? source->columnWidths() : QList<int> {};
+    readCounts();
     endResetModel();
 
     emit tableChanged();
@@ -52,28 +60,55 @@ void TableModel::refresh()
     m_pages.clear();
     m_pageOrder.clear();
     m_headers = m_source ? m_source->headers() : QStringList {};
-    m_totalRows = m_source ? m_source->totalRows() : 0;
-    m_matchingRows = m_source ? m_source->matchingRows(m_filter) : 0;
     m_columnWidths = m_source ? m_source->columnWidths() : QList<int> {};
+    readCounts();
     endResetModel();
 
     emit tableChanged();
 }
 
+void TableModel::readCounts()
+{
+    // Whatever the source can answer without going to look. A count it has not
+    // taken yet comes back as -1, which travels: the view shows a blank until
+    // it lands rather than a nought that would read as an empty table.
+    m_totalRows = m_source ? m_source->totalRows() : 0;
+    m_matchingRows = m_source ? m_source->matchingRows(m_filter) : 0;
+}
+
 void TableModel::setFilter(const QString& filter)
 {
-    if (m_filter == filter)
+    if (m_typedFilter == filter)
+        return;
+    m_typedFilter = filter;
+
+    // Not applied here. Counting the matches is a scan of the table -- no index
+    // answers a substring match across every column -- and applying it per
+    // keystroke made an eight-letter word eight scans on this thread. So the
+    // typing is taken now and the scan waits for it to stop.
+    m_filterTimer->start();
+    emit filterChanged();
+}
+
+void TableModel::applyFilter()
+{
+    m_filterTimer->stop();
+    if (m_filter == m_typedFilter)
         return;
 
     beginResetModel();
-    m_filter = filter;
+    m_filter = m_typedFilter;
     m_pages.clear();
     m_pageOrder.clear();
     m_matchingRows = m_source ? m_source->matchingRows(m_filter) : 0;
     endResetModel();
 
-    emit filterChanged();
     emit tableChanged();
+}
+
+bool TableModel::isFilterPending() const
+{
+    return m_filter != m_typedFilter;
 }
 
 QVariantList TableModel::columnWidths() const
@@ -89,9 +124,11 @@ int TableModel::rowCount(const QModelIndex& parent) const
 {
     if (parent.isValid())
         return 0;
-    // Clamped: QAbstractItemModel counts in int, and a file with more rows
-    // than that is beyond what any view can scroll to anyway.
-    return static_cast<int>(std::min<qint64>(m_matchingRows, std::numeric_limits<int>::max()));
+    // Clamped at both ends: QAbstractItemModel counts in int, and a file with
+    // more rows than that is beyond what any view can scroll to anyway -- while
+    // a source that has not finished counting answers -1, which is no rows to
+    // show yet rather than a number to hand a view.
+    return static_cast<int>(std::clamp<qint64>(m_matchingRows, 0, std::numeric_limits<int>::max()));
 }
 
 int TableModel::columnCount(const QModelIndex& parent) const

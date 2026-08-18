@@ -1950,15 +1950,17 @@ void TestWalkthrough::filtersAndCopiesTableCells()
         [viewer] { return !viewer->isImporting() && viewer->table()->rowCount() == 3; }, 10000));
 
     // The filter is a query over the imported file, not over what the view
-    // happens to have loaded.
+    // happens to have loaded. Waited for rather than read straight after: the
+    // scan it costs waits for the typing to stop, which is why holding a key
+    // down no longer starts one per character.
     viewer->table()->setFilter(QStringLiteral("bolt"));
-    QCOMPARE(viewer->table()->rowCount(), 1);
+    QVERIFY(m_harness->until([viewer] { return viewer->table()->rowCount() == 1; }));
     QCOMPARE(viewer->table()->matchingRows(), 1);
     QCOMPARE(viewer->table()->totalRows(), 3);
     QCOMPARE(viewer->table()->cellAt(0, 0), QStringLiteral("bolt"));
 
     viewer->table()->setFilter(QString());
-    QCOMPARE(viewer->table()->rowCount(), 3);
+    QVERIFY(m_harness->until([viewer] { return viewer->table()->rowCount() == 3; }));
 
     // A block of cells leaves as tab-separated text, which is what every
     // spreadsheet expects on paste.

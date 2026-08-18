@@ -31,6 +31,7 @@ private slots:
 
     // ---- SQLite ----
     void listsTablesAndViews();
+    void openingADatabaseCountsNothing();
     void readsTheSelectedTable();
     void switchingTablesChangesTheShape();
     void filtersAcrossColumnsIncludingNumbers();
@@ -110,6 +111,35 @@ void TestTableSources::listsTablesAndViews()
     QCOMPARE(table.rowCountOf(QStringLiteral("adults")), 2);
 }
 
+void TestTableSources::openingADatabaseCountsNothing()
+{
+    // Opening used to count every table and view in the file before anything
+    // was drawn, and a COUNT(*) is a walk of the table however it is indexed --
+    // so a database of a few large tables held the window for as long as it took
+    // to walk all of them. The names are cheap and are answered at once; the
+    // counts are expensive and are somebody else's job, on another thread.
+    buildDatabase();
+    SqliteTable table(databasePath());
+    QVERIFY(table.open());
+
+    for (const QString& name : table.tableNames()) {
+        QCOMPARE(table.knownRowCountOf(name), SqliteTable::kRowsNotCounted);
+    }
+    // Including the table it selected on the way in, which the grid reads.
+    QCOMPARE(table.totalRows(), SqliteTable::kRowsNotCounted);
+    QCOMPARE(table.matchingRows({}), SqliteTable::kRowsNotCounted);
+
+    // A count taken once is remembered for the life of the open file: the
+    // picker asks for every name and the summary strip asks again for the
+    // current one, and the file cannot change under a read-only connection.
+    QCOMPARE(table.rowCountOf(QStringLiteral("people")), 4);
+    QCOMPARE(table.knownRowCountOf(QStringLiteral("people")), 4);
+
+    // Or handed in from the connection the counting task walked it on.
+    table.setRowCount(QStringLiteral("adults"), 2);
+    QCOMPARE(table.knownRowCountOf(QStringLiteral("adults")), 2);
+}
+
 void TestTableSources::readsTheSelectedTable()
 {
     buildDatabase();
@@ -118,6 +148,9 @@ void TestTableSources::readsTheSelectedTable()
     QVERIFY(table.setCurrentTable(QStringLiteral("people")));
 
     QCOMPARE(table.headers(), QStringList({ "id", "name", "city", "age" }));
+    // Once somebody has counted it. Until then the size of the table is not
+    // known -- see openingADatabaseCountsNothing().
+    QCOMPARE(table.rowCountOf(QStringLiteral("people")), 4);
     QCOMPARE(table.totalRows(), 4);
 
     const QList<QStringList> window = table.rows(1, 2);
@@ -143,6 +176,7 @@ void TestTableSources::switchingTablesChangesTheShape()
     QVERIFY(table.setCurrentTable(QStringLiteral("order")));
     QCOMPARE(table.columnCount(), 1);
     QCOMPARE(table.headers(), QStringList { QStringLiteral("ref") });
+    QCOMPARE(table.rowCountOf(QStringLiteral("order")), 1);
     QCOMPARE(table.totalRows(), 1);
 
     // A table that is not there is refused rather than leaving the old one
@@ -233,7 +267,7 @@ void TestTableSources::opensReadOnly()
         !attempt.exec(QStringLiteral("DELETE FROM people")), "the preview connection must refuse to write");
 
     // And the data is still there.
-    QCOMPARE(table.matchingRows({}), 4);
+    QCOMPARE(table.rowCountOf(QStringLiteral("people")), 4);
 }
 
 // --------------------------------------------------------------- Parquet

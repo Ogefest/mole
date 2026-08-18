@@ -95,6 +95,7 @@ void SqliteTable::close()
     if (!m_open)
         return;
     m_open = false;
+    m_rowCounts.clear();
     {
         QSqlDatabase database = QSqlDatabase::database(m_connectionName, false);
         if (database.isOpen())
@@ -110,7 +111,6 @@ bool SqliteTable::setCurrentTable(const QString& table)
 
     m_table = table;
     m_headers.clear();
-    m_totalRows = -1;
 
     // Asked of the table rather than parsed out of its schema: a query returns
     // the columns a SELECT will actually produce, which is what the grid needs.
@@ -128,10 +128,33 @@ qint64 SqliteTable::rowCountOf(const QString& table) const
 {
     if (!m_open || !m_tables.contains(table))
         return 0;
+
+    // Remembered for the life of the open file. The picker asks for every name
+    // and the summary strip asks again for the current one, and the file cannot
+    // change under a connection that was opened read-only -- so the second and
+    // third answers are free.
+    const auto known = m_rowCounts.constFind(table);
+    if (known != m_rowCounts.constEnd())
+        return *known;
+
     QSqlQuery query(connection());
     if (!query.exec(QStringLiteral("SELECT COUNT(*) FROM %1").arg(quoted(table))) || !query.next())
         return 0;
-    return query.value(0).toLongLong();
+
+    const qint64 rows = query.value(0).toLongLong();
+    m_rowCounts.insert(table, rows);
+    return rows;
+}
+
+qint64 SqliteTable::knownRowCountOf(const QString& table) const
+{
+    return m_rowCounts.value(table, kRowsNotCounted);
+}
+
+void SqliteTable::setRowCount(const QString& table, qint64 rows)
+{
+    if (m_tables.contains(table) && rows >= 0)
+        m_rowCounts.insert(table, rows);
 }
 
 QString SqliteTable::whereClause(const QString& filter) const
@@ -163,16 +186,18 @@ void SqliteTable::bindFilter(QSqlQuery& query, const QString& filter) const
 
 qint64 SqliteTable::totalRows() const
 {
-    if (m_totalRows >= 0)
-        return m_totalRows;
-    m_totalRows = matchingRows({});
-    return m_totalRows;
+    // The remembered count, never a fresh one. This is read from the interface
+    // thread -- by the model when it is pointed at a table, and by the summary
+    // strip -- and that thread must not wait for a walk of the table.
+    return knownRowCountOf(m_table);
 }
 
 qint64 SqliteTable::matchingRows(const QString& filter) const
 {
     if (!m_open || m_table.isEmpty())
         return 0;
+    if (filter.isEmpty())
+        return totalRows();
 
     QSqlQuery query(connection());
     query.prepare(QStringLiteral("SELECT COUNT(*) FROM %1%2").arg(quoted(m_table), whereClause(filter)));

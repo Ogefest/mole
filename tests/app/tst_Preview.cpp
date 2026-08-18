@@ -10,6 +10,7 @@
 #include "plugins/builtin/previews/SyntaxHighlighter.h"
 #include "support/FakePlugin.h"
 #include "support/FaultyFileSystem.h"
+#include "support/TableFixtures.h"
 #include "support/TestSupport.h"
 #include "support/ZipFixtures.h"
 #include "ui/AppController.h"
@@ -32,6 +33,7 @@
 #include <QPageSize>
 #include <QPainter>
 #include <QPdfWriter>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTextBlock>
@@ -241,6 +243,10 @@ private slots:
     void parsesCsvWithADetectedSeparator();
     void tableFillsWhileTheImportIsStillRunning();
     void separatorCanBeOverridden();
+
+    // --- databases ---
+    void aDatabaseListsItsTablesBeforeItHasCountedAnyOfThem();
+    void typingAFilterScansOnceRatherThanOncePerCharacter();
     void reportsFactsForAnUnknownFile();
     void arrowsStepThroughFilesOnly();
     void survivesAFileThatVanished();
@@ -2029,6 +2035,92 @@ void TestPreview::separatorCanBeOverridden()
     QVERIFY(waitFor([viewer] { return !viewer->isImporting() && viewer->table()->rowCount() == 3; }, 5000));
     // No header row means spreadsheet-style letters rather than blanks.
     QCOMPARE(viewer->table()->headerAt(0), QStringLiteral("A"));
+}
+
+// ---------------------------------------------------------------- databases
+
+void TestPreview::aDatabaseListsItsTablesBeforeItHasCountedAnyOfThem()
+{
+    // Opening a database used to count every row of every table and view before
+    // it drew anything: once per name for the picker, twice because the binding
+    // reads it twice, and a third time for the table the grid landed on. A
+    // COUNT(*) is a walk of the table, so a file of a few large tables held the
+    // window for as long as it took to walk all of them.
+    const QString path = m_tree->absolute(QStringLiteral("catalogue.sqlite"));
+    QVERIFY(fixtures::writeSqlite(path));
+
+    FileEntry entry;
+    entry.name = QStringLiteral("catalogue.sqlite");
+    entry.uri = m_tree->rootUri().child(entry.name);
+
+    SqlitePreviewController viewer(m_app->services());
+    QSignalSpy schema(&viewer, &SqlitePreviewController::schemaChanged);
+    viewer.load(entry);
+
+    // The file is local, so it is opened inside that call -- and the counting
+    // runs on a pool thread and reports back through queued signals, none of
+    // which can be delivered until this returns to the event loop. So what is
+    // read here is what the window would have on its first frame.
+    const QVariantList firstFrame = viewer.tables();
+    QCOMPARE(firstFrame.size(), 3);
+    QStringList named;
+    for (const QVariant& row : firstFrame) {
+        const QVariantMap table = row.toMap();
+        named.append(table.value(QStringLiteral("name")).toString());
+        QVERIFY2(table.value(QStringLiteral("rowsText")).toString().isEmpty(),
+            "a count nobody has taken yet is a blank, not a nought and not a guess");
+    }
+    QCOMPARE(named, QStringList({ "adults", "order", "people" }));
+    QVERIFY2(viewer.table()->totalRows() < 0, "and the same for the table the grid landed on");
+    QVERIFY2(schema.count() > 0, "the names are on screen from the first frame");
+    QVERIFY2(!viewer.summary().contains(QStringLiteral("rows")), qPrintable(viewer.summary()));
+
+    // And then they arrive, each one where it belongs. The table the grid is
+    // showing is counted first, because it is the only count anybody is
+    // already looking at.
+    QTRY_COMPARE(viewer.table()->totalRows(), 3);
+    QVERIFY2(viewer.summary().contains(QStringLiteral("3 rows")), qPrintable(viewer.summary()));
+    QTRY_COMPARE(
+        viewer.tables().at(2).toMap().value(QStringLiteral("rowsText")).toString(), QLocale().toString(6));
+    QCOMPARE(
+        viewer.tables().at(1).toMap().value(QStringLiteral("rowsText")).toString(), QLocale().toString(2));
+}
+
+void TestPreview::typingAFilterScansOnceRatherThanOncePerCharacter()
+{
+    // The filter is `CAST(<column> AS TEXT) LIKE '%...%'` over every column at
+    // once, which no index can answer -- so it is a full scan, and it used to be
+    // one per character typed, on the thread that draws.
+    const QString path = m_tree->absolute(QStringLiteral("catalogue.sqlite"));
+    QVERIFY(fixtures::writeSqlite(path));
+
+    FileEntry entry;
+    entry.name = QStringLiteral("catalogue.sqlite");
+    entry.uri = m_tree->rootUri().child(entry.name);
+
+    SqlitePreviewController viewer(m_app->services());
+    viewer.load(entry);
+    // The table with something to filter in it, once its count has landed.
+    viewer.setCurrentTable(QStringLiteral("people"));
+    QTRY_COMPARE(viewer.table()->totalRows(), 6);
+
+    // Counted from the model resetting, which is what a filter costs the view:
+    // every cached page dropped, every row refetched, and the scan that says how
+    // many there are.
+    QSignalSpy refreshed(viewer.table(), &QAbstractItemModel::modelReset);
+    for (const QString& typed : { QStringLiteral("B"), QStringLiteral("Be"), QStringLiteral("Ber"),
+             QStringLiteral("Berl"), QStringLiteral("Berli") }) {
+        viewer.table()->setFilter(typed);
+    }
+
+    // What was typed is on screen at once -- the field is not made to lag behind
+    // the keyboard -- while the scan waits for the typing to stop.
+    QCOMPARE(viewer.table()->filter(), QStringLiteral("Berli"));
+    QCOMPARE(refreshed.count(), 0);
+
+    QTRY_COMPARE(viewer.table()->matchingRows(), 1);
+    QCOMPARE(refreshed.count(), 1);
+    QCOMPARE(viewer.table()->cellAt(0, 1), QStringLiteral("Grace"));
 }
 
 void TestPreview::reportsFactsForAnUnknownFile()

@@ -5,6 +5,7 @@
 #include "sdk/IPreviewProvider.h"
 #include "ui/models/TableModel.h"
 
+#include "core/data/CountTableRowsTask.h"
 #include "core/data/ParquetTable.h"
 #include "core/data/SqliteTable.h"
 #include "core/tasks/ReadFileTask.h"
@@ -489,12 +490,17 @@ signals:
 
 private:
     void refreshSummary();
+    /// Starts the pass that counts every table, current one first, on a pool
+    /// thread. Nothing here waits for it: the names are on screen already and
+    /// each count fills in where it belongs as it lands.
+    void countTables();
 
     PluginServices m_services;
     TableModel* m_table = nullptr;
     std::unique_ptr<SqliteTable> m_database;
     std::unique_ptr<LocalCopyProvider> m_copy;
     QString m_summary;
+    QPointer<CountTableRowsTask> m_counting;
 };
 
 class SqlitePreviewProvider final : public IPreviewProvider

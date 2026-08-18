@@ -9,6 +9,44 @@ wrong.
 
 ---
 
+## Opening a database counted every row in every table before it drew anything
+
+**Asked for:** MOLE-186 — opening a SQLite file in the preview stopped the window answering for as
+long as it took to count every table and view in it, and typing in the filter box repeated a full
+scan per keystroke.
+
+**What it turned out to be:** three counts of the same table and one per name, all on the thread
+that draws. `SqlitePreviewController::tables()` called `rowCountOf()` once per name and the
+binding read the list twice, so a file of *n* tables was counted 2*n* times before the first
+frame; `TableModel::setSource()` then read `totalRows()` for a third count of the current one.
+`ITableSource` states the requirement in its own header — an implementation that talks to a file
+"must be usable from the interface thread, which in practice means answering a windowed query
+quickly rather than scanning" — and `rows()` honoured it while the counts never did.
+
+**None of the three makes a count cheaper.** `COUNT(*)` is a walk of the table however the file is
+indexed, and that is not going to change. The point is that the window must not wait for it.
+
+- **The count is remembered**, per table, for the life of the open file. The connection is
+  read-only, so the file cannot change underneath it and the second and third answers are free.
+  That alone halves the cost of opening, because it is the second binding read that doubles it.
+- **The walking moved off the interface thread.** `CountTableRowsTask` opens a second read-only
+  connection on a pool thread — `connectionNameFor()` already hashes the calling thread into the
+  name, which is the shape the delimited importer uses, so there was no new design to make — and
+  reports each count back as it lands. The table being looked at is counted first. `totalRows()`
+  answers -1 until somebody has taken the count, and that travels: a blank in the picker and a
+  summary strip without a row count. **Not `max(rowid)`**, which is wrong for a table that has had
+  rows deleted and meaningless for a view; a blank is honest and a guess is not.
+- **The filter waits for the typing to stop**, 250 ms, in `TableModel` rather than in the SQLite
+  viewer — the delimited and Parquet viewers share the model, and the scan costs the same in all
+  three. `CAST(<column> AS TEXT) LIKE '%…%'` over every column is a full scan no index can answer,
+  and it used to be one per character.
+
+**The -1 is a contract change, written into `ITableSource`.** A source that knows its size without
+asking — an import into a store, a Parquet footer — simply always answers; one whose count is a
+walk answers -1 until it has been taken somewhere the window is not. `TableModel` reports no rows
+for a count it has not got, so the grid fills in when the figure arrives. MOLE-187 is what makes
+the grid draw its first page without waiting for the total at all.
+
 ## Analysing a folder posted a status update for every entry it walked
 
 **Asked for:** MOLE-188 — Analyse over a large folder stopped the whole window answering until it

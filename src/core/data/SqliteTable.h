@@ -2,6 +2,7 @@
 
 #include "core/data/ITableSource.h"
 
+#include <QHash>
 #include <QSqlDatabase>
 #include <QStringList>
 
@@ -25,6 +26,10 @@ public:
     SqliteTable(const SqliteTable&) = delete;
     SqliteTable& operator=(const SqliteTable&) = delete;
 
+    /// The file this reads. Needed by anything that wants a second connection
+    /// to it -- the counting task opens one of its own on a pool thread.
+    const QString& path() const { return m_path; }
+
     bool open(QString* errorOut = nullptr);
     void close();
     bool isOpen() const { return m_open; }
@@ -32,8 +37,23 @@ public:
     /// Tables and views, in the order SQLite lists them. Internal `sqlite_*`
     /// tables are left out: they are the file's own bookkeeping, not its data.
     QStringList tableNames() const { return m_tables; }
-    /// Rows in each table, keyed by name, for the picker to show alongside it.
+
+    /// Rows in `table`, counted now if nobody has counted it yet and remembered
+    /// for the life of the open file. `SELECT COUNT(*)` is a walk of the table,
+    /// and nothing bounds how long that takes, so **call this from a worker
+    /// thread** -- CountTableRowsTask is what does.
     qint64 rowCountOf(const QString& table) const;
+    /// The remembered count, or kRowsNotCounted when nobody has worked it out
+    /// yet. Answers without touching the file, so the interface thread may ask.
+    qint64 knownRowCountOf(const QString& table) const;
+    /// Remembers a count worked out on another connection, which is how the
+    /// counting task hands its answers back.
+    void setRowCount(const QString& table, qint64 rows);
+
+    /// What a count reads as before anybody has taken it. A blank in the
+    /// interface: honest, where a guess from `max(rowid)` would be wrong for a
+    /// table that has had rows deleted and meaningless for a view.
+    static constexpr qint64 kRowsNotCounted = -1;
 
     /// Which table the grid is reading. Empty until one is chosen.
     QString currentTable() const { return m_table; }
@@ -61,7 +81,9 @@ private:
     QString m_table;
     QStringList m_headers;
     bool m_open = false;
-    mutable qint64 m_totalRows = -1;
+    /// Counts already taken, by table name. Emptied when the file is closed,
+    /// because a count belongs to the file that was open when it was taken.
+    mutable QHash<QString, qint64> m_rowCounts;
 };
 
 } // namespace mole

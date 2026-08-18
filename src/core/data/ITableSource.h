@@ -26,11 +26,18 @@ public:
     virtual QStringList headers() const = 0;
     int columnCount() const { return static_cast<int>(headers().size()); }
 
-    /// Rows in the whole table.
+    /// Rows in the whole table, or -1 when that is not known yet.
+    ///
+    /// Counting a table is a walk of it, and the rule above says who may not
+    /// wait for one -- so a source whose count is expensive answers -1 until
+    /// somebody has taken the count somewhere the window is not, and the view
+    /// leaves the figure blank until it turns up. A source that knows its size
+    /// without asking, as an import into a store does, simply always answers.
     virtual qint64 totalRows() const = 0;
-    /// Rows matching `filter`, or every row when it is empty. Substring, any
-    /// column, case-insensitive -- a filter that searched one column would need
-    /// a column picker before it was useful at all.
+    /// Rows matching `filter`, or every row when it is empty; -1 on the same
+    /// terms as totalRows(). Substring, any column, case-insensitive -- a filter
+    /// that searched one column would need a column picker before it was useful
+    /// at all.
     virtual qint64 matchingRows(const QString& filter) const = 0;
 
     /// A window of rows in table order. This is the only read path the model

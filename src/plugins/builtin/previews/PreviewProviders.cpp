@@ -1114,6 +1114,7 @@ SqlitePreviewController::SqlitePreviewController(PluginServices services, QObjec
 
         m_table->setSource(m_database.get());
         refreshSummary();
+        countTables();
     });
     connect(m_copy.get(), &LocalCopyProvider::failed, this, [this](const QString& reason) {
         setLoading(false);
@@ -1123,8 +1124,40 @@ SqlitePreviewController::SqlitePreviewController(PluginServices services, QObjec
 
 SqlitePreviewController::~SqlitePreviewController()
 {
+    // Nothing is waiting for the counts any more, and a database of large
+    // tables would go on being walked for as long as it took.
+    if (m_counting)
+        m_counting->requestCancel();
     // The model must let go before the database it reads through goes away.
     m_table->clear();
+}
+
+void SqlitePreviewController::countTables()
+{
+    if (!m_database)
+        return;
+
+    // The table being looked at first, then the rest. Every count is wanted --
+    // the picker shows one per name -- but only one of them is the number under
+    // the grid somebody is already reading.
+    QStringList order = m_database->tableNames();
+    const QString current = m_database->currentTable();
+    if (order.removeAll(current) > 0)
+        order.prepend(current);
+
+    auto* task = new CountTableRowsTask(m_database->path(), order);
+    m_counting = task;
+    connect(task, &CountTableRowsTask::counted, this, [this](const QString& table, qint64 rows) {
+        if (!m_database)
+            return;
+        m_database->setRowCount(table, rows);
+        // The count of the table on screen is the row count of the grid, so the
+        // model has to be told; the others are only text in the picker.
+        if (table == m_database->currentTable())
+            m_table->refresh();
+        refreshSummary();
+    });
+    m_services.tasks->submit(task);
 }
 
 void SqlitePreviewController::refreshSummary()
@@ -1133,10 +1166,15 @@ void SqlitePreviewController::refreshSummary()
         m_summary.clear();
     } else {
         const QLocale locale;
-        m_summary = QStringLiteral("%1 · %2 rows × %3 columns")
-                        .arg(m_database->currentTable(), locale.toString(m_table->totalRows()))
-                        .arg(m_table->columnCount());
-        if (m_table->matchingRows() != m_table->totalRows()) {
+        const qint64 total = m_table->totalRows();
+        // Without the total until the count arrives, rather than with a nought
+        // that would read as an empty table or a guess that would be wrong.
+        m_summary = total < 0
+            ? QStringLiteral("%1 · %2 columns").arg(m_database->currentTable()).arg(m_table->columnCount())
+            : QStringLiteral("%1 · %2 rows × %3 columns")
+                  .arg(m_database->currentTable(), locale.toString(total))
+                  .arg(m_table->columnCount());
+        if (m_table->matchingRows() >= 0 && m_table->matchingRows() != total) {
             m_summary
                 += QStringLiteral("  ·  %1 match the filter").arg(locale.toString(m_table->matchingRows()));
         }
@@ -1153,8 +1191,12 @@ QVariantList SqlitePreviewController::tables() const
     const QLocale locale;
     const QStringList names = m_database->tableNames();
     for (const QString& name : names) {
+        // The count as it stands, never a count taken here: this is read by a
+        // binding, on the thread that draws, and once per name. Blank until the
+        // counting pass reaches this table.
+        const qint64 rows = m_database->knownRowCountOf(name);
         out.append(QVariantMap { { QStringLiteral("name"), name },
-            { QStringLiteral("rowsText"), locale.toString(m_database->rowCountOf(name)) },
+            { QStringLiteral("rowsText"), rows < 0 ? QString() : locale.toString(rows) },
             { QStringLiteral("current"), name == m_database->currentTable() } });
     }
     return out;
@@ -1171,6 +1213,8 @@ void SqlitePreviewController::setCurrentTable(const QString& table)
         return;
     if (!m_database->setCurrentTable(table))
         return;
+    // Its count may not have been taken yet, in which case the grid fills in
+    // when it arrives -- the same way the first table did.
 
     // A different table is a different shape, so the model is repointed rather
     // than refreshed -- its cached pages and column widths belong to the old one.
@@ -1189,6 +1233,9 @@ void SqlitePreviewController::load(const FileEntry& entry)
 {
     setErrorText({});
     setLoading(true);
+    // Counts belong to the file that was open when they were asked for.
+    if (m_counting)
+        m_counting->requestCancel();
     m_table->clear();
     m_database.reset();
     emit schemaChanged();
