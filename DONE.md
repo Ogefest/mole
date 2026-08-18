@@ -9,6 +9,128 @@ wrong.
 
 ---
 
+## Choosing what to keep had the least weight on the screen
+
+**Asked for:** MOLE-72 — the last card of *Duplicates, rebuilt*, and the one held back until
+progressive results landed because seeing groups arrive might change what it should be. It
+named three questions rather than a design, and asked for them to be answered out loud.
+
+**What it turned out to be:** [ADR-0044](docs/adr/0044-a-rule-says-what-it-did-and-keep-and-remove-are-both-said.md),
+and the answers are these.
+
+*What a rule applied to fifty groups looks like while you check it* — a sentence and a mark on
+every row. The panel says which rule is in force and gives the count something to be a fraction
+of, and each copy in a decided group reads *keeping* or *remove*, so fifty groups are checkable
+by scrolling instead of by counting checkboxes. A group with nothing ticked says *not decided*,
+because before a choice is made every copy really is equally kept and marking them all would be
+noise. And the rule stops claiming to be the rule the moment a tick is edited by hand.
+
+*Whether a rule belongs per group* — yes as an outcome, no as a second set of controls. `Keep
+this one` on any row keeps that copy and ticks the rest of its group, leaving the other
+forty-nine as the rule left them. Four rule buttons per group would be two hundred controls
+saying what one click already says.
+
+*Whether keep or remove is the honest verb* — both, in different places, because they are
+different facts. The rule is stated as keep, because that is how the decision is made. The tick
+is stated as remove, because that is what it does. Saying only one of them was the actual
+fault: pressing **Newest** under a heading reading **Keep** put a tick against every file except
+the newest, and nothing said which reading a tick carried. The fourth button was *Nothing*,
+which under *Keep* meant the opposite of what it did; it is *Everything* now.
+
+**Two of my own assertions were wrong before this landed.** The height check written for MOLE-69
+compared the tab body against a hand-picked tolerance, which MOLE-72's taller panel broke — a
+tolerance nobody can derive is a claim nobody is checking, and it is arithmetic now: the body
+gives up exactly the panel and the column's spacing. And it read the heights once, before the
+column had re-laid out, so it now waits for the condition.
+
+## A duplicates result could not become anything except a deletion
+
+**Asked for:** MOLE-71 — the view found copies and offered one thing to do with them. Finding
+duplicates is *locating*, and what to do with what was found is a separate question whose answer
+is not always "delete".
+
+**What it turned out to be:** cheaper than it looked, because the mechanism was already there.
+Operations take a list of uris and the shell asks the current tab for it by name — `targetUris()`
+— so a result that can become a file set inherits copy, move, compress, rename and analyse
+without the view growing a verb for any of them.
+
+**Half of it was already true and nothing held it.** `DuplicatesController::targetUris()` existed
+and worked; there was no test saying so, which is the same as it being able to stop working
+silently. It is now asserted against the list a set is built from, so the two cannot drift.
+
+## Duplicate groups appeared only once the whole scan had finished
+
+**Asked for:** MOLE-70 — a scan showed nothing until it ended and then showed everything, and the
+information to do better had already been paid for.
+
+**What it turned out to be:** a question of which stages run over everything and which run per
+bucket. The cheap stages stay breadth-first, because until one has run there are no buckets and
+because running them over the lot is what tells the last stage how many files it has to read.
+The last stage runs bucket by bucket, and a bucket surviving it is a group nothing later can
+change — so it goes out then. The expensive stage still only sees what the cheap ones left,
+which is the whole point of the staged design.
+
+**The ordering question was the one the ticket asked to be answered rather than assumed**, and
+[ADR-0043](docs/adr/0043-a-duplicate-group-is-reported-when-it-is-confirmed.md) answers it:
+inserted in place, not appended and re-sorted at the end. Appending would leave the list in
+arrival order for exactly the window this change exists to create — the whole of a long scan —
+and then rearrange it under the eyes of the person reading it.
+
+**A stopped scan keeps what it confirmed and says it was stopped.** *Nothing matched* is a claim
+about a tree that only a scan which ran to the end may make, and offering "try a different
+strategy" after searching a tenth of a NAS would be answering a question nobody asked.
+
+Both halves are tested from the data rather than from a clock: the order the signals were
+announced in for the first, and a stop asked for on the scan's own thread the moment a group is
+confirmed for the second. The obvious way to write the second — cancel from the test thread when
+the tab shows a group — was tried first and quietly proved nothing: the window wakes on a 15 ms
+tick, by which time a scan of twenty small files has long finished.
+
+## A duplicates tab was mostly empty space
+
+**Asked for:** MOLE-69 — most of the tab was void, and the emptiness was worst at the first moment
+somebody opened it, which is when they are deciding whether the feature is worth using.
+
+**What it turned out to be:** one binding. The group list was the only item in the column with
+`Layout.fillHeight`, and it carried `visible: groupCount > 0` — and a `ColumnLayout` drops an
+invisible item from the layout altogether rather than reserving its height, so before a scan
+nothing claimed the space and everything collapsed upward.
+
+The body is one item that always claims the height now, with a panel inside it for each of the
+four states. Two things also moved to where somebody would read them: the roots being searched
+get a row each instead of a `\n`-joined label elided in the middle, which hid which drive each
+was on; and what the chosen strategy costs is said in the empty state rather than only as 11px
+grey at the bottom of a panel, where somebody about to start a scan on a NAS was least likely to
+see it.
+
+**The first version of its test proved nothing.** It wrote files into the suite's own temporary
+tree and pointed the window's scan at them — but the application mounts its own fixture, so the
+scan answered with nothing while looking exactly like a scan that found nothing. The assertion
+that caught it was the one expecting a group.
+
+## A file git called deleted had no row, so nothing marked it
+
+**Asked for:** MOLE-184 — five of git's six letters land on a row somebody can see. `D` does not,
+because a listing shows what is on disk.
+
+**What it turned out to be:** the listing goes on showing what is on disk, and the count in the
+band becomes something to open.
+[ADR-0042](docs/adr/0042-a-deletion-is-reachable-from-the-band.md) records why a synthesised row
+lost, and it is not that it would have been hard to draw — `FileListModel::Provenance` and
+ADR-0038 already have the machinery. It is that a row is something a reader can cursor onto,
+tick, sort, filter and press `F5` or `F8` at, and each of those needs an answer for a file with
+no bytes. Six answers, and a listing that can be asked to copy something that does not exist, for
+one letter that would anyway be undoing a deletion somebody made on purpose.
+
+**A deleted entry goes to the folder that held it, with the cursor on nothing.** The folder is the
+true half of the answer and the cursor is the false half: dropping it on whatever happens to sort
+first would point at a different file while looking exactly like success.
+
+**The test is the invariant, not the feature.** The band is the only door to these paths, so the
+number it shows and the number of entries the list holds have to be the same number — asserted
+against a work tree carrying one of each of the six states, conflict included, built through a
+rebase that really stops on one rather than through an index written by hand.
+
 ## The guide did not mention git, and read-only was not written down
 
 **Asked for:** MOLE-107 — the guide said nothing about git and the read-only boundary was
