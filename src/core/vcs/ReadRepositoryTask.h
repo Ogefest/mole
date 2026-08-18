@@ -34,6 +34,9 @@ public:
     /// The work tree root, or empty when the path is in no repository. Only
     /// meaningful once the task has succeeded.
     const QString& root() const { return m_root; }
+    /// The repository's own directory, for whoever has to notice a commit made
+    /// outside Mole. Empty when the path is in no repository.
+    const QString& gitDir() const { return m_gitDir; }
     const RepositoryHead& head() const { return m_head; }
 
 signals:
@@ -48,6 +51,7 @@ protected:
 private:
     QString m_localPath;
     QString m_root;
+    QString m_gitDir;
     RepositoryHead m_head;
 };
 

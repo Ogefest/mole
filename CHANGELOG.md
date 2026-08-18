@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-18 #MOLE-105 Git markers keep up with the tree: an operation that writes, or a commit made in the terminal or another window, refreshes them without losing the cursor or the ticked rows
 2026-08-18 #MOLE-185 Fix every index search iterating a list that had already been destroyed
 2026-08-18 #MOLE-104 Rows in a checkout carry git's own letter — M, A, D, ??, R, U — and a folder says when something inside it has changed, at every level up to the one on screen
 2026-08-18 #MOLE-103 The band above a listing says how much of the checkout has changed, or that it is clean — one walk of the work tree per checkout rather than one per folder, on a worker, and abandoned when you navigate out of it

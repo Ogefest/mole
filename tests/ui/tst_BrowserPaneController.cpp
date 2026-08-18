@@ -83,6 +83,12 @@ private slots:
     void aFolderOutsideAnyCheckoutCarriesNoMarkers();
     void markersSurviveSortingAndFiltering();
 
+    void acopyOverATrackedFileMarksItWithoutNavigating();
+    void deletingATrackedFileIsNoticed();
+    void aCommitMadeOutsideMoleClearsTheMarkers();
+    void aBurstOfWritesIsOneWalkRatherThanOnePerFile();
+    void aRefreshLeavesTheCursorAndTheTicksAlone();
+
     void goingUpLandsOnTheFolderJustLeft();
     void goingBackRestoresTheCursor();
     void aForgottenEntryFallsBackToTheFirstRow();
@@ -108,6 +114,14 @@ private:
     /// nothing" is a number that did not change rather than a number that is zero.
     int queuedSoFar() const { return static_cast<int>(m_tasks->tasks().size()); }
 
+    /// Owns every pane this test made, and is destroyed before the services are.
+    ///
+    /// A pane parented to the test object outlives cleanup(), and a pane is not
+    /// inert once it has been left alive: it watches a repository directory and
+    /// holds a coalescing timer, either of which can wake it up long after the
+    /// TaskManager it would submit to has been deleted. That was an order-dependent
+    /// crash rather than a failure, which is the worst kind.
+    std::unique_ptr<QObject> m_panes;
     std::unique_ptr<QTemporaryDir> m_dir;
     VfsManager* m_vfs = nullptr;
     TaskManager* m_tasks = nullptr;
@@ -137,11 +151,14 @@ void TestBrowserPaneController::init()
     mount.fileSystem = m_fs;
     m_vfs->addMount(mount);
 
+    m_panes = std::make_unique<QObject>();
     m_services = PluginServices { m_vfs, m_tasks, m_index.get(), m_events };
 }
 
 void TestBrowserPaneController::cleanup()
 {
+    // Panes first, so nothing can still be holding the services below.
+    m_panes.reset();
     delete m_tasks;
     m_tasks = nullptr;
     delete m_vfs;
@@ -155,7 +172,7 @@ void TestBrowserPaneController::cleanup()
 
 BrowserPaneController* TestBrowserPaneController::makePane()
 {
-    return new BrowserPaneController(m_services, this);
+    return new BrowserPaneController(m_services, m_panes.get());
 }
 
 QString TestBrowserPaneController::mountLocal(const QString& path, bool writable)
@@ -1347,6 +1364,231 @@ void TestBrowserPaneController::markersSurviveSortingAndFiltering()
     pane->files()->setFilterText(QStringLiteral("beta"));
     QCOMPARE(pane->files()->rowCount(), 1);
     QCOMPARE(markFor(pane, QStringLiteral("beta.txt")), QStringLiteral("M"));
+    RepositoryCache::shared().clear();
+    RepositoryStatusCache::shared().clear();
+}
+
+void TestBrowserPaneController::acopyOverATrackedFileMarksItWithoutNavigating()
+{
+    if (!Repository::isSupported())
+        QSKIP("built without libgit2");
+
+    QTemporaryDir work;
+    QVERIFY(work.isValid());
+    QVERIFY(QDir(work.path()).mkpath(QStringLiteral("source")));
+    QVERIFY(QDir(work.path()).mkpath(QStringLiteral("checkout")));
+    GitFixture checkout(QDir(work.path()).filePath(QStringLiteral("checkout")));
+    QVERIFY(checkout.init(QStringLiteral("main")));
+    QVERIFY(checkout.writeFile(QStringLiteral("tracked.txt"), "committed contents\n"));
+    QVERIFY(!checkout.commitAll(QStringLiteral("first")).isEmpty());
+
+    QFile replacement(QDir(work.path()).filePath(QStringLiteral("source/tracked.txt")));
+    QVERIFY(replacement.open(QIODevice::WriteOnly));
+    replacement.write("something else entirely\n");
+    replacement.close();
+
+    const QString root = mountLocal(work.path());
+    BrowserPaneController* pane = paneOnCheckout(root + QStringLiteral("/checkout"));
+    QVERIFY(pane);
+    QVERIFY(waitFor([pane] { return pane->repository()->isStatusKnown(); }));
+    QCOMPARE(pane->repository()->changesText(), QStringLiteral("clean"));
+    QCOMPARE(markFor(pane, QStringLiteral("tracked.txt")), QString());
+
+    // Mole's own copy, over a file git is tracking. Nothing is navigated: a listing
+    // that still calls the file unchanged after this is the failure this ticket is
+    // about.
+    pane->dropHere(
+        { QUrl::fromLocalFile(QDir(work.path()).filePath(QStringLiteral("source/tracked.txt"))).toString() },
+        QStringLiteral("overwrite"));
+
+    QVERIFY(waitFor(
+        [this, pane] { return markFor(pane, QStringLiteral("tracked.txt")) == QStringLiteral("M"); }));
+    QCOMPARE(pane->repository()->changesText(), QStringLiteral("1 changed"));
+    RepositoryCache::shared().clear();
+    RepositoryStatusCache::shared().clear();
+}
+
+void TestBrowserPaneController::deletingATrackedFileIsNoticed()
+{
+    if (!Repository::isSupported())
+        QSKIP("built without libgit2");
+
+    QTemporaryDir work;
+    QVERIFY(work.isValid());
+    GitFixture checkout(work.path());
+    QVERIFY(checkout.init(QStringLiteral("main")));
+    QVERIFY(checkout.writeFile(QStringLiteral("doomed.txt"), "here for now\n"));
+    QVERIFY(checkout.writeFile(QStringLiteral("kept.txt"), "staying\n"));
+    QVERIFY(!checkout.commitAll(QStringLiteral("first")).isEmpty());
+
+    const QString root = mountLocal(work.path());
+    BrowserPaneController* pane = paneOnCheckout(root);
+    QVERIFY(pane);
+    QVERIFY(waitFor([pane] { return pane->repository()->isStatusKnown(); }));
+    QCOMPARE(pane->repository()->changesText(), QStringLiteral("clean"));
+
+    // Delete it through Mole, with the cursor on it.
+    for (int row = 0; row < pane->files()->rowCount(); ++row) {
+        if (pane->files()->index(row, 0).data(FileListModel::NameRole).toString()
+            == QStringLiteral("doomed.txt")) {
+            pane->setCurrentIndex(row);
+        }
+    }
+    QCOMPARE(pane->currentName(), QStringLiteral("doomed.txt"));
+    pane->deleteTargets();
+
+    // The count has to notice, or the band would go on calling the checkout clean
+    // after Mole itself removed a tracked file from it.
+    QVERIFY(waitFor([pane] { return pane->repository()->changesText() == QStringLiteral("1 changed"); }));
+
+    // And while the row is still listed -- a pane on its own does not reload itself,
+    // BrowserController does that when it hears the event -- the row carries the
+    // deletion. Which is worth asserting because it is the one case where `D` does
+    // have a row to land on.
+    QCOMPARE(markFor(pane, QStringLiteral("doomed.txt")), QStringLiteral("D"));
+
+    // Once the listing is reloaded the row goes, because a listing shows what is on
+    // disk. From then on the deletion lives on the folder above and in the count;
+    // whether to give it a row of its own is MOLE-184.
+    pane->refresh();
+    QVERIFY(waitFor([this, pane] {
+        return !pane->isLoading()
+            && markFor(pane, QStringLiteral("doomed.txt")) == QStringLiteral("<no such row>");
+    }));
+    QVERIFY(waitFor([pane] { return pane->repository()->changesText() == QStringLiteral("1 changed"); }));
+    RepositoryCache::shared().clear();
+    RepositoryStatusCache::shared().clear();
+}
+
+void TestBrowserPaneController::aCommitMadeOutsideMoleClearsTheMarkers()
+{
+    if (!Repository::isSupported())
+        QSKIP("built without libgit2");
+
+    QTemporaryDir work;
+    QVERIFY(work.isValid());
+    GitFixture checkout(work.path());
+    QVERIFY(checkout.init(QStringLiteral("main")));
+    QVERIFY(checkout.writeFile(QStringLiteral("a.txt"), "first"));
+    QVERIFY(!checkout.commitAll(QStringLiteral("first")).isEmpty());
+    QVERIFY(checkout.writeFile(QStringLiteral("a.txt"), "edited but not committed"));
+
+    const QString root = mountLocal(work.path());
+    BrowserPaneController* pane = paneOnCheckout(root);
+    QVERIFY(pane);
+    QVERIFY(waitFor([this, pane] { return markFor(pane, QStringLiteral("a.txt")) == QStringLiteral("M"); }));
+
+    // Committed by something that is not Mole and announces nothing on the event
+    // bus, which is what `git commit` in the terminal panel or in another window
+    // looks like from here. Only the watcher on the repository directory can see it.
+    QVERIFY(!checkout.commitAll(QStringLiteral("committed elsewhere")).isEmpty());
+
+    QVERIFY2(waitFor([this, pane] { return markFor(pane, QStringLiteral("a.txt")).isEmpty(); }),
+        "the marker outlived the commit that made it untrue");
+    QVERIFY(waitFor([pane] { return pane->repository()->changesText() == QStringLiteral("clean"); }));
+    RepositoryCache::shared().clear();
+    RepositoryStatusCache::shared().clear();
+}
+
+void TestBrowserPaneController::aBurstOfWritesIsOneWalkRatherThanOnePerFile()
+{
+    if (!Repository::isSupported())
+        QSKIP("built without libgit2");
+
+    QTemporaryDir work;
+    QVERIFY(work.isValid());
+    QVERIFY(QDir(work.path()).mkpath(QStringLiteral("source")));
+    QVERIFY(QDir(work.path()).mkpath(QStringLiteral("checkout")));
+    GitFixture checkout(QDir(work.path()).filePath(QStringLiteral("checkout")));
+    QVERIFY(checkout.init(QStringLiteral("main")));
+    QVERIFY(checkout.writeFile(QStringLiteral("kept.txt"), "x"));
+    QVERIFY(!checkout.commitAll(QStringLiteral("first")).isEmpty());
+
+    // Two hundred files to copy in, which is two hundred finished tasks and two
+    // hundred announcements.
+    const int files = 200;
+    QStringList urls;
+    for (int i = 0; i < files; ++i) {
+        const QString path
+            = QDir(work.path()).filePath(QStringLiteral("source/file%1.txt").arg(i, 3, 10, QLatin1Char('0')));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("payload");
+        file.close();
+        urls.append(QUrl::fromLocalFile(path).toString());
+    }
+
+    const QString root = mountLocal(work.path());
+    BrowserPaneController* pane = paneOnCheckout(root + QStringLiteral("/checkout"));
+    QVERIFY(pane);
+    QVERIFY(waitFor([pane] { return pane->repository()->isStatusKnown(); }));
+
+    int walks = 0;
+    connect(m_tasks, &TaskManager::taskAppended, this, [&walks](Task* task) {
+        if (qobject_cast<ReadStatusTask*>(task))
+            ++walks;
+    });
+
+    pane->dropHere(urls, QStringLiteral("overwrite"));
+    QVERIFY(waitFor([pane, files] { return pane->repository()->changedCount() == files; }, 30000));
+
+    // Counted, not timed. A walk per finished task would be two hundred; what the
+    // floor has to deliver is a handful.
+    QVERIFY2(walks > 0, "the copy left the status stale and nothing walked again");
+    QVERIFY2(walks <= 10,
+        qPrintable(QStringLiteral("%1 walks for %2 files: the floor is not collecting the burst")
+                       .arg(walks)
+                       .arg(files)));
+    RepositoryCache::shared().clear();
+    RepositoryStatusCache::shared().clear();
+}
+
+void TestBrowserPaneController::aRefreshLeavesTheCursorAndTheTicksAlone()
+{
+    if (!Repository::isSupported())
+        QSKIP("built without libgit2");
+
+    QTemporaryDir work;
+    QVERIFY(work.isValid());
+    GitFixture checkout(work.path());
+    QVERIFY(checkout.init(QStringLiteral("main")));
+    for (const QString& name : { QStringLiteral("alpha.txt"), QStringLiteral("beta.txt"),
+             QStringLiteral("gamma.txt"), QStringLiteral("delta.txt") }) {
+        QVERIFY(checkout.writeFile(name, "committed"));
+    }
+    QVERIFY(!checkout.commitAll(QStringLiteral("first")).isEmpty());
+
+    const QString root = mountLocal(work.path());
+    BrowserPaneController* pane = paneOnCheckout(root);
+    QVERIFY(pane);
+    QVERIFY(waitFor([pane] { return pane->repository()->isStatusKnown(); }));
+
+    // Cursor on the third row, and two rows ticked.
+    pane->setCurrentIndex(2);
+    const QString onCursor = pane->currentName();
+    QVERIFY(!onCursor.isEmpty());
+    pane->setCurrentIndex(0);
+    pane->toggleSelectionAndAdvance();
+    pane->toggleSelectionAndAdvance();
+    const QStringList ticked = pane->files()->selectedUris();
+    QCOMPARE(ticked.size(), 2);
+    pane->setCurrentIndex(2);
+
+    // Something changes the tree from outside, so a walk lands while the user is
+    // sitting on a row with a selection made. Staged as well as written, because
+    // staging is what touches the repository directory -- and the watcher on that
+    // directory is the only thing here that notices a change Mole did not make.
+    QVERIFY(checkout.writeFile(QStringLiteral("alpha.txt"), "edited from elsewhere"));
+    QVERIFY(checkout.stageAll());
+    QVERIFY(
+        waitFor([this, pane] { return markFor(pane, QStringLiteral("alpha.txt")) == QStringLiteral("M"); }));
+
+    // The annotations changed; the rows did not. A refresh that reset the model would
+    // drop both of these, and losing a selection somebody built by hand is worse than
+    // a stale marker.
+    QCOMPARE(pane->currentIndex(), 2);
+    QCOMPARE(pane->currentName(), onCursor);
+    QCOMPARE(pane->files()->selectedUris(), ticked);
     RepositoryCache::shared().clear();
     RepositoryStatusCache::shared().clear();
 }

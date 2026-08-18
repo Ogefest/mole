@@ -27,6 +27,7 @@ void ReadRepositoryTask::run()
     }
 
     m_root = repository->root();
+    m_gitDir = repository->gitDir();
     m_head = repository->head();
     setStatusText(m_head.branch.isEmpty() ? m_head.shortId : m_head.branch);
     emit repositoryRead(m_localPath, m_root, m_head);

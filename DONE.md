@@ -9,6 +9,62 @@ wrong.
 
 ---
 
+## Status read once was status that went stale
+
+**Asked for:** MOLE-105 — a listing that says a file is unchanged after Mole itself has
+copied over it is worse than one that says nothing. A wrong answer is the failure mode this
+feature has; a missing answer is not. Make the status refresh when it stops being true.
+
+**What it turned out to be:** three sources of staleness, one timer, and a watcher — plus one
+instruction in the brief that could not be followed as written.
+
+**Writes are already announced, so there is one place to listen.** Every operation Mole
+performs posts to the `EventBus` — a copy, a move, a delete, a rename, a new folder — because
+a second pane on the same folder has to hear about it. The pane subscribes to the same events
+and asks one question of each: is that path inside the work tree in view? Not *is it the folder
+on screen* — copying into `src/` while looking at the checkout root changes the count and the
+roll-up on the folder row, and a per-operation hook would have been a hook per operation to
+forget.
+
+**`VfsCapability::Watch` turned out to be a capability bit with nothing behind it.** The brief
+said to use it where available and fall back to re-reading on pane activation. There is no
+watch method on `IFileSystem` at all and no backend implements one, so "where available" is
+nowhere. What replaced it is a `QFileSystemWatcher` on the repository's own directory and on
+its loose branch tips — which is where a commit, a checkout or a pull leaves its mark, and none
+of those announces anything. That is honest for this feature specifically because it is local
+drives only, which is exactly where a filesystem watcher works. The activation fallback was
+then not built: with the watcher in place it would be an unconditional walk per pane switch,
+which is the cost the floor exists to avoid.
+
+**The floor is four hundred milliseconds, and it is started rather than restarted.** Copying
+two hundred files finishes two hundred tasks; a walk per task would cost more than the copy it
+is describing. Four hundred milliseconds is longer than the gap between two files of a bulk
+copy, so a burst collapses into one walk, and short enough that a single `F5` looks immediate.
+Started-not-restarted matters: restarting on each event would mean a copy running for minutes
+showed nothing at all until it finished. The test counts walks for two hundred files rather
+than watching a clock.
+
+**The cache is forgotten at once and the walk is scheduled after.** If the answer were dropped
+only when the walk ran, a second pane navigating into the checkout in between would find the
+stale answer sitting in the cache and believe it.
+
+**A refresh changes the annotations and not the rows**, which is what keeps the cursor and the
+ticked rows where the user put them — asserted with a cursor on the third row and two rows
+ticked while a walk lands.
+
+**A latent hazard in the test fixture surfaced as a crash**, and it was worth the hour. Panes
+were parented to the test object, so every pane from every case survived `cleanup()` while the
+`TaskManager` it holds was deleted after each one. That was harmless while a pane was inert;
+a pane that watches a directory and holds a timer is not inert, and one woke up to submit a
+task to freed memory. Order-dependent, so it passed alone and crashed in the suite — the worst
+kind. Panes are now owned per case and destroyed before the services they hold.
+
+**One assertion in the brief could not be met as written, and the truth was more interesting.**
+"Deleting a tracked file marks it deleted rather than leaving it marked as it was" — the row
+does carry `D`, for as long as the row is there. A pane on its own does not reload itself, so
+the assertion holds; once the listing is reloaded the row is gone, because a listing shows what
+is on disk. Both halves are asserted, which is the only honest version of MOLE-184.
+
 ## Every index search iterated a destroyed list, and nothing said so for six days
 
 **Asked for:** MOLE-185 — found by running `make asan` while finishing MOLE-105, which is

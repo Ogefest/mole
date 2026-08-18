@@ -160,6 +160,13 @@ public:
     /// Absolute path of the work tree root, without a trailing separator.
     const QString& root() const { return m_root; }
 
+    /// The repository's own directory -- `<root>/.git` for an ordinary checkout,
+    /// somewhere else entirely for a linked work tree or a submodule.
+    ///
+    /// Wanted by whoever has to notice a commit made outside Mole: what changes
+    /// then is in here, not in the work tree.
+    const QString& gitDir() const { return m_gitDir; }
+
     /// Which branch, or that HEAD is detached, and whether git is part-way
     /// through something. One lock and a handful of reference reads: no work tree
     /// walk, so this is cheap enough to answer on every navigation.
@@ -178,13 +185,14 @@ public:
     RepositoryStatus readStatus(const CancelToken& cancel) const;
 
 private:
-    Repository(std::shared_ptr<void> library, git_repository* handle, QString root);
+    Repository(std::shared_ptr<void> library, git_repository* handle, QString root, QString gitDir);
 
     /// Keeps libgit2 initialised for as long as any handle is open. See the
     /// comment on libraryHold() in the implementation.
     std::shared_ptr<void> m_library;
     git_repository* m_repo = nullptr;
     QString m_root;
+    QString m_gitDir;
     mutable QMutex m_mutex;
 };
 

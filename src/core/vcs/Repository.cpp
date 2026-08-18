@@ -267,10 +267,11 @@ namespace {
 
 #endif // MOLE_HAVE_GIT2
 
-Repository::Repository(std::shared_ptr<void> library, git_repository* handle, QString root)
+Repository::Repository(std::shared_ptr<void> library, git_repository* handle, QString root, QString gitDir)
     : m_library(std::move(library))
     , m_repo(handle)
     , m_root(std::move(root))
+    , m_gitDir(std::move(gitDir))
 {
 }
 
@@ -318,7 +319,8 @@ std::shared_ptr<Repository> Repository::open(const QString& path)
         return nullptr;
     }
 
-    return std::shared_ptr<Repository>(new Repository(std::move(library), handle, root));
+    const QString gitDir = normalisedRoot(git_repository_path(handle));
+    return std::shared_ptr<Repository>(new Repository(std::move(library), handle, root, gitDir));
 #else
     Q_UNUSED(path);
     return nullptr;

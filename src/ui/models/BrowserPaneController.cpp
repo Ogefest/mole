@@ -25,7 +25,92 @@ BrowserPaneController::BrowserPaneController(PluginServices services, QObject* p
     , m_services(services)
     , m_files(new FileListModel(this))
     , m_repository(new RepositoryInfo(this))
+    , m_statusFloor(new QTimer(this))
+    , m_gitWatcher(new QFileSystemWatcher(this))
 {
+    m_statusFloor->setSingleShot(true);
+    m_statusFloor->setInterval(kStatusFloorMs);
+    connect(m_statusFloor, &QTimer::timeout, this, [this] {
+        // The root is read now rather than captured when the timer started: by the
+        // time a burst has settled the user may be in a different checkout, and this
+        // must walk the one they are looking at.
+        if (m_repository->isPresent())
+            readStatus(m_repository->root());
+    });
+
+    // A commit, a checkout or a pull run from the terminal panel or from another
+    // window changes the repository directory and announces nothing. Watched
+    // directly rather than through VfsCapability::Watch, which is a capability bit
+    // with no backend behind it and no API on IFileSystem to call -- and this
+    // feature is local drives only, which is exactly where a filesystem watcher
+    // works. See TODO.md.
+    connect(m_gitWatcher, &QFileSystemWatcher::directoryChanged, this,
+        [this](const QString&) { invalidateStatus(); });
+    connect(
+        m_gitWatcher, &QFileSystemWatcher::fileChanged, this, [this](const QString&) { invalidateStatus(); });
+
+    // Every write Mole performs already says so here, including its own copies and
+    // deletes, so there is one place to listen rather than a hook per operation.
+    if (m_services.events) {
+        connect(
+            m_services.events, &EventBus::directoryChanged, this, &BrowserPaneController::noteWrittenInto);
+        connect(m_services.events, &EventBus::entryCreated, this, &BrowserPaneController::noteWrittenInto);
+        connect(m_services.events, &EventBus::entryRemoved, this, &BrowserPaneController::noteWrittenInto);
+        connect(
+            m_services.events, &EventBus::entryRenamed, this, [this](const VfsUri& from, const VfsUri& to) {
+                noteWrittenInto(from);
+                noteWrittenInto(to);
+            });
+    }
+}
+
+void BrowserPaneController::noteWrittenInto(const VfsUri& path)
+{
+    if (!m_repository->isPresent())
+        return;
+
+    // Anywhere inside the work tree, not only the folder on screen: copying into
+    // `src/` while looking at the checkout root changes what the band says, and the
+    // roll-up on the folder row with it.
+    const QString written = path.toLocalPath();
+    const QString& root = m_repository->root();
+    if (written.isEmpty() || !(written == root || written.startsWith(root + QLatin1Char('/'))))
+        return;
+
+    invalidateStatus();
+}
+
+void BrowserPaneController::invalidateStatus()
+{
+    if (!m_repository->isPresent())
+        return;
+
+    // Forgotten at once rather than when the walk runs, so a second pane navigating
+    // into this checkout in the meantime cannot pick the stale answer out of the
+    // cache and believe it.
+    RepositoryStatusCache::shared().forget(m_repository->root());
+
+    // Started, not restarted: a burst collapses into one walk, and a copy that runs
+    // for minutes still refreshes as it goes. See kStatusFloorMs.
+    if (!m_statusFloor->isActive())
+        m_statusFloor->start();
+}
+
+void BrowserPaneController::watchRepositoryDirectory(const QString& gitDir)
+{
+    const QStringList watched = m_gitWatcher->directories() + m_gitWatcher->files();
+    if (!watched.isEmpty())
+        m_gitWatcher->removePaths(watched);
+    if (gitDir.isEmpty())
+        return;
+
+    // The repository directory itself, where a commit replaces `index` and a
+    // checkout rewrites `HEAD`; and the loose branch tips, where a commit or a pull
+    // moves the one HEAD is on without necessarily touching anything above.
+    for (const QString& path : { gitDir, gitDir + QStringLiteral("/refs/heads") }) {
+        if (QFileInfo::exists(path))
+            m_gitWatcher->addPath(path);
+    }
 }
 
 BrowserPaneController::~BrowserPaneController()
@@ -80,6 +165,9 @@ void BrowserPaneController::readRepository()
             if (m_repositoryPending != task || path != m_current.toLocalPath())
                 return;
             m_repository->setHead(root, head);
+            // Aimed before the walk is asked for, so a commit that lands while the
+            // first walk is still running is not the one change that gets missed.
+            watchRepositoryDirectory(task->gitDir());
             // The branch is on the band by now; what has changed in the tree costs a
             // walk, so it is asked for second and arrives second.
             readStatus(root);
@@ -112,6 +200,10 @@ void BrowserPaneController::readStatus(const QString& root)
     if (root.isEmpty() || !m_services.tasks) {
         m_repository->clearStatus();
         annotateListing(m_files->allEntries());
+        // Nothing to watch outside a checkout, and an inotify handle held on the last
+        // one is a handle held on a directory the user may be deleting.
+        watchRepositoryDirectory(QString());
+        m_statusFloor->stop();
         return;
     }
 

@@ -6,10 +6,12 @@
 
 #include "core/vfs/VfsUri.h"
 
+#include <QFileSystemWatcher>
 #include <QHash>
 #include <QObject>
 #include <QPointer>
 #include <QStringList>
+#include <QTimer>
 #include <QVariantList>
 
 namespace mole {
@@ -174,6 +176,20 @@ private:
     /// every file git tracks. An answer already in RepositoryStatusCache is taken
     /// as it is, which is what makes moving between folders in one checkout free.
     void readStatus(const QString& root);
+    /// Notices that something under `path` was written, and re-reads the work tree
+    /// if that path is inside it.
+    ///
+    /// Every write Mole performs already announces itself on the EventBus, which is
+    /// what this listens to -- a copy, a move, a delete, a rename, a new folder. The
+    /// moment the task reports done, what git said about that tree is out of date,
+    /// and a listing that calls a file unchanged after Mole itself wrote over it is
+    /// the one failure mode this feature has.
+    void noteWrittenInto(const VfsUri& path);
+    /// Forgets the work tree's status and asks for it again, once the writing stops.
+    void invalidateStatus();
+    /// Points the watcher at the repository directory of the work tree in view, so a
+    /// commit made outside Mole is noticed.
+    void watchRepositoryDirectory(const QString& gitDir);
     /// The entry to select on arrival, or an empty string for "the first row".
     /// Set by revealFile(), consumed by the next listing that lands.
     QString m_pendingReveal;
@@ -188,6 +204,17 @@ private:
     QHash<QString, QString> m_cursorMemory;
     QList<QString> m_cursorMemoryOrder;
     void setErrorText(const QString& text);
+
+    /// How long the pane waits after a write before walking the tree again.
+    ///
+    /// Copying two hundred files into a checkout finishes two hundred tasks, and a
+    /// walk per task would make this feature cost more than the copy it is
+    /// describing. Four hundred milliseconds is longer than the gap between two
+    /// files of an ordinary bulk copy, so a burst collapses into one walk, and short
+    /// enough that a single F5 looks immediate. The timer is started rather than
+    /// restarted on each event, so a copy that runs for minutes still refreshes as
+    /// it goes instead of showing nothing until it finishes.
+    static constexpr int kStatusFloorMs = 400;
 
     PluginServices m_services;
     FileListModel* m_files = nullptr;
@@ -208,6 +235,11 @@ private:
     /// itself apart from navigating out of it. The task cannot answer this until it
     /// has run, and the decision has to be made before then.
     QString m_statusWalkRoot;
+    /// Collects a burst of writes into one walk. See kStatusFloorMs.
+    QTimer* m_statusFloor = nullptr;
+    /// Notices a commit, a checkout or a pull made outside Mole: what those change
+    /// is the repository directory, which no operation of ours announces.
+    QFileSystemWatcher* m_gitWatcher = nullptr;
 };
 
 } // namespace mole
