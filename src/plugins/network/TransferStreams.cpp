@@ -358,17 +358,43 @@ void StreamingDownload::startFetching(qint64 offset)
             const qint64 span = std::min(m_spanBytes, m_size - at);
             Sink sink(*this);
             const VfsError failed = m_fetch(sink, at, span, m_cancel);
+            const qint64 delivered = sink.written();
+            at += delivered;
+
             if (failed.isError()) {
-                const std::lock_guard<std::mutex> guard(m_mutex);
                 // A cancelled fetch is the reader letting go, not a fault.
-                if (!m_cancel.isCancelled())
-                    m_error = failed;
+                if (m_cancel.isCancelled())
+                    break;
+
+                // A span that carried bytes and then stopped is resumed from
+                // where it got to, rather than failing the whole read.
+                //
+                // ADR-0013 sized the span so that no connection would carry
+                // enough for the server's re-key to arrive, and rejected
+                // resuming because it costs a stall-guard wait per stall. A
+                // server whose RekeyLimit is exactly the span size puts the
+                // re-key *inside* the first span, and then the read cannot be
+                // done at all -- every attempt stops in the same place. No span
+                // size is safe for every server, because the client cannot know
+                // what the server's limit is, so the choice is one wait per
+                // re-key point against a file that cannot be read. See the
+                // amendment to ADR-0013.
+                //
+                // Only when it carried bytes. An attempt that delivered nothing
+                // has nothing to resume from and no reason to expect better, and
+                // that is what keeps a link which has really gone away bounded:
+                // one stall, one attempt that gets nowhere, and the read fails.
+                if (delivered > 0)
+                    continue;
+
+                const std::lock_guard<std::mutex> guard(m_mutex);
+                m_error = failed;
                 break;
             }
-            at += sink.written();
+
             // Short of what was asked for, with no error, is the end of the
             // file -- a server clamps a range that runs past it.
-            if (sink.written() < span)
+            if (delivered < span)
                 break;
         }
 

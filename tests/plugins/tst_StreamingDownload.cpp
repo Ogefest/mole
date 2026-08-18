@@ -292,7 +292,8 @@ private slots:
     void abandoningTheStreamDoesNotHang();
 
     void aFileLongerThanOneConnectionCanCarryStillArrivesWhole();
-    void thatSameFileOverOneConnectionDiesPartWay();
+    void thatSameFileOverOneSpanResumesUntilItIsWhole();
+    void aSpanThatDeliversNothingIsTheEndOfIt();
 
     void seekingToTheStartToTheEndAndPastIt();
     void aSpanBoundaryThatFallsOnAReadBoundaryIsInvisible();
@@ -551,11 +552,19 @@ void TestStreamingDownload::aFileLongerThanOneConnectionCanCarryStillArrivesWhol
     QCOMPARE(expectedOffset, static_cast<qint64>(payload.size()));
 }
 
-void TestStreamingDownload::thatSameFileOverOneConnectionDiesPartWay()
+void TestStreamingDownload::thatSameFileOverOneSpanResumesUntilItIsWhole()
 {
-    // The control, and the reason the test above is not green for the wrong
-    // reason: the same server, asked for the whole file in one go, does exactly
-    // what the real one does -- stops part way and says nothing more arrived.
+    // MOLE-99 in miniature, and the reversal of what this test used to assert.
+    //
+    // The same server, asked for the whole file in one span, meets its limit
+    // part way -- which is what a server whose RekeyLimit falls *inside* the
+    // span does, and no span size avoids it because the client cannot know what
+    // the server's limit is. It used to be a failure, and then the file could
+    // not be read at all: every attempt stopped in the same place.
+    //
+    // Now the span resumes from the byte it reached. It costs one stall-guard
+    // wait per limit met, which is what ADR-0013 rejected resuming for, against
+    // a file that otherwise cannot be read at all.
     const QByteArray payload = payloadOf(512 * 1024);
     ServerThatDiesPastALimit server(payload, 100 * 1024);
 
@@ -564,10 +573,45 @@ void TestStreamingDownload::thatSameFileOverOneConnectionDiesPartWay()
 
     qint64 last = 0;
     const QByteArray collected = readAll(stream, &last);
+    QCOMPARE(last, 0);
+    QVERIFY2(!stream.error().isError(), qPrintable(stream.errorString()));
+    QVERIFY2(collected == payload,
+        "every byte, and the right bytes: a resume that restarted at the "
+        "wrong offset would still be the right length");
+
+    // And it really did take several goes, or the server was not provoking the
+    // fault this is about.
+    QVERIFY2(
+        server.asked().size() > 1, "the whole file arrived in one connection, so the limit was never met");
+}
+
+void TestStreamingDownload::aSpanThatDeliversNothingIsTheEndOfIt()
+{
+    // The bound, and the reason resuming cannot turn a dead link into a wait
+    // without end. A span is resumed because it carried bytes; one that carries
+    // none has nothing to resume from and no reason to expect better, so the
+    // read fails there.
+    //
+    // Without this the two cases would be indistinguishable: a server that
+    // re-keys is one that stops after delivering, and a link that has gone away
+    // is one that delivers nothing. Only the second may fail the read, and only
+    // the first may retry.
+    const QByteArray payload = payloadOf(256 * 1024);
+    FakeServer server(payload);
+    server.failAfter(100 * 1024);
+
+    net::StreamingDownload stream(server.fetch(), payload.size(), 512 * 1024);
+    QVERIFY(stream.open(QIODevice::ReadOnly));
+
+    qint64 last = 0;
+    const QByteArray collected = readAll(stream, &last);
     QCOMPARE(last, -1);
     QVERIFY(collected.size() < payload.size());
-    QVERIFY2(stream.errorString().contains(QStringLiteral("nothing more arrived")),
-        qPrintable(stream.errorString()));
+    QVERIFY2(stream.errorString().contains(QStringLiteral("hung up")), qPrintable(stream.errorString()));
+
+    // One attempt that carried bytes, and one that carried none and ended it.
+    // A third would mean a dead link costs a stall-guard wait per attempt.
+    QCOMPARE(server.spans(), 2);
 }
 
 void TestStreamingDownload::seekingToTheStartToTheEndAndPastIt()
