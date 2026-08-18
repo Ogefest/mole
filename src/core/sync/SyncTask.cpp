@@ -40,19 +40,69 @@ bool SyncTask::copyOne(const SyncPlan::Step& step)
     QIODevice* from = input.value().get();
     QIODevice* to = output.value().get();
 
-    while (!from->atEnd()) {
+    // Read into a buffer rather than through the QByteArray overload, because
+    // that one answers "the file ended" and "the read failed" with the same
+    // empty result. A device being filled from a network as it is read has no
+    // other way to say which happened -- and taking the second for the first is
+    // worse here than anywhere else: sync would commit the destination, count
+    // the file as copied, and the next run would see matching sizes on both
+    // sides and copy nothing. The loss would be permanent and silent.
+    QByteArray chunk(kChunkSize, Qt::Uninitialized);
+    qint64 written = 0;
+    for (;;) {
         if (isCancelRequested())
             return false;
-        const QByteArray chunk = from->read(kChunkSize);
-        if (chunk.isEmpty())
-            break;
-        if (to->write(chunk) != chunk.size()) {
-            m_failures.append(QStringLiteral("%1: short write").arg(step.relativePath));
+
+        const qint64 got = from->read(chunk.data(), kChunkSize);
+        if (got < 0) {
+            m_failures.append(QStringLiteral("%1: the source stopped after %2 bytes: %3")
+                                  .arg(step.relativePath)
+                                  .arg(written)
+                                  .arg(from->errorString()));
             return false;
         }
+        if (got == 0)
+            break;
+
+        // The reason goes in the message. A destination that filled up, one
+        // whose connection went away and one whose file was pulled out from
+        // under it were all "short write", and which of them it was is the only
+        // part anybody can act on.
+        const qint64 put = to->write(chunk.constData(), got);
+        if (put != got) {
+            m_failures.append(QStringLiteral("%1: the destination took %2 of %3 bytes and stopped: %4")
+                                  .arg(step.relativePath)
+                                  .arg(written + qMax<qint64>(put, 0))
+                                  .arg(written + got)
+                                  .arg(to->errorString()));
+            return false;
+        }
+
+        written += got;
         // Throughput and the moving bar come from here, so a single large file
         // is not a frozen interface.
-        setBytesDone(bytesDone() < 0 ? chunk.size() : bytesDone() + chunk.size());
+        setBytesDone(bytesDone() < 0 ? written : bytesDone() + got);
+    }
+
+    // A read that ended early and a file that shrank look exactly alike from
+    // here: both hand over fewer bytes than the plan said and then report the
+    // end of the file. Only the source can tell them apart, so it is asked --
+    // once, and only when there is a discrepancy to explain. A file that really
+    // is smaller now is copied as it now is; a source that still claims the
+    // larger size gave a short answer. See ADR-0027.
+    //
+    // Before the destination is closed, because closing is what puts it in
+    // place: a copy about to be called a failure must not first be renamed into
+    // the name somebody asked for.
+    if (step.bytes > 0 && written < step.bytes) {
+        const Result<FileEntry> now = m_sourceFs->stat(step.source);
+        if (!now.ok() || now.value().size != written) {
+            m_failures.append(QStringLiteral("%1: the source said %2 bytes and gave %3")
+                                  .arg(step.relativePath)
+                                  .arg(step.bytes)
+                                  .arg(written));
+            return false;
+        }
     }
 
     // Closing is where a buffered backend actually commits, so it happens before

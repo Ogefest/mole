@@ -11,6 +11,8 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-19 #MOLE-98 Sync no longer takes a dropped connection for the end of a file — a read that dies half way is a failure instead of a file counted as copied, and a destination that fills up says so instead of saying "short write"
+
 2026-08-19 #MOLE-127 An FTP drive can now read a file larger than the local scratch space — reads stream a span at a time instead of downloading the whole file first, which was the last place a backend staged anything
 
 2026-08-18 #MOLE-187 A table, a database or a Parquet file is now shown five thousand rows at a time, with page controls under the grid, instead of one scrollbar over the whole of it

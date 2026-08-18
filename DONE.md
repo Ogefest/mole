@@ -9,6 +9,37 @@ wrong.
 
 ---
 
+## Sync took a dropped connection for the end of a file
+
+**Asked for:** MOLE-98 — noticed while writing the hostile slice through `TransferTask`.
+`SyncTask::copyOne()` had the fault `TransferTask` had been fixed for, and sync is the worse
+place for it.
+
+**What it turned out to be:** three lines, and the same root as before. `QIODevice` answers "the
+file ended" and "the read failed" with the same empty result, and the loop read with the
+`QByteArray` overload and stopped on an empty one. So a source whose connection died half way
+through was a file that finished: the destination was closed — which commits it — and the file
+counted as copied.
+
+**Why it is worse in sync than in a copy.** A failed copy is a missing file, and somebody notices.
+A failed *sync* leaves a destination whose size matches the source's, so **the next run plans
+nothing**. The loss is permanent and it is silent, which is what the `data-integrity` label is
+for. The last test in the slice is the one that says this out loud: the first run fails, the
+second run — with the drive behaving — copies the file, because it was never counted as done.
+
+**Two more things the same function was missing**, both of which `TransferTask` already had: it
+did not ask the source again when fewer bytes arrived than the plan said, so a read that ended
+early was indistinguishable from a file that shrank (ADR-0027); and its short-write failure said
+`short write` and nothing about why. A destination that filled up, one whose connection went away
+and one whose file was pulled out from under it were all the same sentence, and which of them it
+was is the only part anybody can act on.
+
+**Five scenarios, and each guard was removed to check its own test failed.** Taking out the
+`read < 0` check fails the dropped-connection case and the next-run case and nothing else; taking
+out the ADR-0027 stat fails the overstated-size case; putting `short write` back fails the
+disk-full case. The fifth is the one that must keep passing: a file that really did shrink is
+copied as it now is, which is why the guard asks the source rather than trusting the plan.
+
 ## FTP staged a whole download, so it could not read a file bigger than the disk
 
 **Asked for:** MOLE-127 — the mirror of MOLE-34, which fixed the write side and left this one
