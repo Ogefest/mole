@@ -1119,7 +1119,14 @@ void TestBrowserPaneController::walkingAwayFromACheckoutAbandonsItsWalk()
 
     // What is not a race is the answer: whichever way the walk ended, nothing about
     // the checkout may be on a band that is showing a folder outside it.
-    QVERIFY(!pane->repository()->isPresent());
+    //
+    // Waited for rather than read once, because what clears the band is a read of
+    // the *new* folder -- a task of its own, submitted after that folder's listing
+    // lands, and not the walk above. Reading straight after the walk finished
+    // asserted the outcome before the event that produces it, which passed on an
+    // idle machine and failed on a loaded one.
+    QVERIFY2(waitFor([pane] { return !pane->repository()->isPresent(); }),
+        "the band went on naming the checkout after the pane had left it");
     QVERIFY(!pane->repository()->isStatusKnown());
     QVERIFY(pane->repository()->changesText().isEmpty());
     RepositoryCache::shared().clear();
