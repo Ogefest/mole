@@ -3,12 +3,17 @@ import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
 
-// A table with selectable, copyable cells and a filter.
+// A table with selectable, copyable cells, a filter and a page.
 //
 // Shared by every tabular viewer -- delimited text, SQLite, Parquet -- because
 // none of the behaviour here is specific to where the rows came from. The
 // alternative was three copies of the selection arithmetic, which is three
 // places for it to drift.
+//
+// Every row index here is counted from the top of the page rather than the top
+// of the table, which is the coordinate system the model, the cursor arithmetic
+// and copyBlock() all work in. The footer is the only place a row's number
+// within the whole table appears. See ADR-0045.
 Item {
     id: grid
 
@@ -70,6 +75,12 @@ Item {
         view.positionViewAtCell(Qt.point(column, row), TableView.Contain)
     }
 
+    // Grouped by the reader's locale: a row number seven digits long is not
+    // readable as 1284003.
+    function grouped(value) {
+        return Number(value).toLocaleString(Qt.locale(), 'f', 0)
+    }
+
     // Character width for the current font, used to turn the source's width
     // hints into pixels. Measured once rather than guessed.
     TextMetrics {
@@ -89,6 +100,14 @@ Item {
         return Math.round(padded * metrics.advanceWidth)
     }
 
+    // A selection is a set of row indices, and every reset of the model -- a new
+    // source, a different table, a filter, a page -- makes those indices mean
+    // something else. Held on to, a block would name rows nobody selected.
+    Connections {
+        target: grid.table ? grid.table : null
+        function onModelReset() { grid.clearSelection() }
+    }
+
     Keys.onPressed: function(event) {
         if (event.matches(StandardKey.Copy)) {
             copySelection()
@@ -96,6 +115,18 @@ Item {
             return
         }
         const extend = (event.modifiers & Qt.ShiftModifier) !== 0
+        // Ctrl turns the paging keys into page moves, which is what PdfPreview,
+        // TextPreview and HexPreview already do -- see ViewerKeys.qml. Plain
+        // PgUp and PgDn go on moving the cursor inside the page.
+        const control = (event.modifiers & Qt.ControlModifier) !== 0
+        if (control && table) {
+            switch (event.key) {
+            case Qt.Key_PageDown: table.nextPage();     event.accepted = true; return
+            case Qt.Key_PageUp:   table.previousPage(); event.accepted = true; return
+            case Qt.Key_Home:     table.firstPage();    event.accepted = true; return
+            case Qt.Key_End:      table.lastPage();     event.accepted = true; return
+            }
+        }
         switch (event.key) {
         case Qt.Key_Up:    moveCursor(-1, 0, extend); event.accepted = true; break
         case Qt.Key_Down:  moveCursor(1, 0, extend);  event.accepted = true; break
@@ -209,6 +240,101 @@ Item {
                     onPositionChanged: function(mouse) {
                         if (pressed)
                             grid.extendTo(row, column)
+                    }
+                }
+            }
+        }
+
+        // ---- which page of the table -----------------------------------------
+        //
+        // Hidden when the whole table fits on one page, so a small file looks
+        // exactly as it did before there was a page at all.
+
+        ToolBar {
+            objectName: "gridPager"
+            Layout.fillWidth: true
+            visible: grid.table ? grid.table.pageCount > 1 : false
+            Material.background: "#1b2029"
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 8
+                anchors.rightMargin: 8
+                spacing: 2
+
+                ToolButton {
+                    objectName: "gridFirstPage"
+                    text: "⏮"
+                    enabled: grid.table && grid.table.page > 0
+                    focusPolicy: Qt.NoFocus
+                    font.pixelSize: App.smallTextSize
+                    onClicked: grid.table.firstPage()
+                    ToolTip.text: "First page  (Ctrl+Home)"
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 600
+                }
+                ToolButton {
+                    objectName: "gridPreviousPage"
+                    text: "◀"
+                    enabled: grid.table && grid.table.page > 0
+                    focusPolicy: Qt.NoFocus
+                    font.pixelSize: App.smallTextSize
+                    onClicked: grid.table.previousPage()
+                    ToolTip.text: "Previous page  (Ctrl+PgUp)"
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 600
+                }
+                ToolButton {
+                    objectName: "gridNextPage"
+                    text: "▶"
+                    enabled: grid.table && grid.table.page < grid.table.pageCount - 1
+                    focusPolicy: Qt.NoFocus
+                    font.pixelSize: App.smallTextSize
+                    onClicked: grid.table.nextPage()
+                    ToolTip.text: "Next page  (Ctrl+PgDn)"
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 600
+                }
+                ToolButton {
+                    objectName: "gridLastPage"
+                    text: "⏭"
+                    enabled: grid.table && grid.table.page < grid.table.pageCount - 1
+                    focusPolicy: Qt.NoFocus
+                    font.pixelSize: App.smallTextSize
+                    onClicked: grid.table.lastPage()
+                    ToolTip.text: "Last page  (Ctrl+End)"
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 600
+                }
+
+                Label {
+                    objectName: "gridPageNumber"
+                    Layout.leftMargin: 6
+                    text: grid.table ? "Page " + (grid.table.page + 1) + " of " + grid.table.pageCount : ""
+                    color: "#8b93a7"
+                    font.pixelSize: App.smallTextSize
+                }
+
+                Item { Layout.fillWidth: true }
+
+                // The one place a row's number within the whole table is said.
+                // The total can arrive after the first frame -- counting a
+                // database table happens off this thread -- so the range reads
+                // on its own and the total is added when it turns up.
+                Label {
+                    objectName: "gridPageRange"
+                    color: "#8b93a7"
+                    font.pixelSize: App.smallTextSize
+                    elide: Text.ElideRight
+                    text: {
+                        if (!grid.table || grid.table.rows <= 0)
+                            return ""
+                        const first = grid.table.firstRowOnPage + 1
+                        const last = grid.table.firstRowOnPage + grid.table.rows
+                        const range = "rows " + grid.grouped(first) + "–" + grid.grouped(last)
+                        return grid.table.matchingRows < 0
+                             ? range
+                             : range + " of " + grid.grouped(grid.table.matchingRows)
                     }
                 }
             }

@@ -9,13 +9,25 @@ class QTimer;
 
 namespace mole {
 
-/// Presents an imported delimited file to a QML TableView.
+/// Presents one page of a table to a QML TableView.
 ///
-/// Rows are fetched a window at a time from the store rather than held here,
-/// so a file with fifty million rows costs the same as one with fifty. The
-/// model reports the true row count and pulls whatever the view actually
-/// scrolls to -- there is no cap, and no point at which the table quietly
-/// stops being the file.
+/// A page is kPageRows of the table, and the view is given that and nothing
+/// else: rowCount() never exceeds it, and a row index here is counted from the
+/// top of the page rather than from the top of the table. The footer under the
+/// grid is the only place a row's number within the whole table appears.
+///
+/// The page exists because the offset is what costs, not the fetch. Rows have
+/// always been pulled a chunk at a time -- kChunkRows of them, kMaxCachedChunks
+/// kept -- so the model never holds more than a few thousand however far
+/// anybody scrolls. What was unbounded was the offset it fetched *at*:
+/// `LIMIT 500 OFFSET 9000000` is answered by stepping over nine million rows
+/// with the interface thread waiting, and one drag of a scrollbar over the
+/// whole table issues a run of them. Inside a page the largest offset any query
+/// can carry is the page's own start plus kPageRows.
+///
+/// See ADR-0045 for why the page is a fixed five thousand rows rather than a
+/// setting, and why the alternative -- one scrollbar over the whole table --
+/// promises a seek no source can perform.
 class TableModel : public QAbstractTableModel
 {
     Q_OBJECT
@@ -30,6 +42,16 @@ class TableModel : public QAbstractTableModel
     /// same terms.
     Q_PROPERTY(qint64 matchingRows READ matchingRows NOTIFY tableChanged)
     Q_PROPERTY(QString filter READ filter WRITE setFilter NOTIFY filterChanged)
+    /// Which page is being shown, counted from nought. The footer adds one,
+    /// because that is the only place a page is a thing a reader counts.
+    Q_PROPERTY(int page READ page NOTIFY pageChanged)
+    /// How many pages the matching rows come to; at least one, so there is
+    /// always a page to be on. One means the footer has nothing to offer and
+    /// hides itself, which is how a small file looks as it always did.
+    Q_PROPERTY(int pageCount READ pageCount NOTIFY tableChanged)
+    /// The index within the whole table of the first row on this page, counted
+    /// from nought. Everything else here counts from the top of the page.
+    Q_PROPERTY(qint64 firstRowOnPage READ firstRowOnPage NOTIFY pageChanged)
     /// Width hints in characters, so columns fit their contents.
     Q_PROPERTY(QVariantList columnWidths READ columnWidths NOTIFY tableChanged)
 
@@ -63,6 +85,18 @@ public:
     /// Whether there is typing the rows on screen have not caught up with yet.
     bool isFilterPending() const;
 
+    int page() const { return m_page; }
+    int pageCount() const;
+    qint64 firstRowOnPage() const;
+
+    /// Moving between pages. A move past the last page or before the first
+    /// changes nothing rather than wrapping: the ends of a table are where a
+    /// reader expects to stop.
+    Q_INVOKABLE void firstPage();
+    Q_INVOKABLE void previousPage();
+    Q_INVOKABLE void nextPage();
+    Q_INVOKABLE void lastPage();
+
     QVariantList columnWidths() const;
 
     /// Column header text, or a spreadsheet-style letter when the file had no
@@ -81,20 +115,41 @@ public:
 signals:
     void tableChanged();
     void filterChanged();
+    /// The page moved, or was put back to the first because what is being shown
+    /// changed underneath it. A view watching this clears its cell cursor and
+    /// its selection: row indices are page-relative, so a block held across a
+    /// page move would name different rows.
+    void pageChanged();
 
 private:
-    /// Loads the page containing `row` if it is not already cached.
+    /// Loads the chunk containing page-relative `row` if it is not cached.
     void ensureLoaded(int row) const;
     /// Re-reads the counts the source can answer for the applied filter.
     void readCounts();
+    /// Moves to `page`, clamped to the pages that exist. Drops the chunks with
+    /// it: they hold rows from the page being left.
+    void setPage(int page);
+    /// Puts the view back on the first page, because what it was showing has
+    /// changed underneath it, and drops the chunks. Called from inside a model
+    /// reset, so it reports whether the page moved rather than emitting: a
+    /// signal delivered while the model is mid-reset reaches a view that has
+    /// let go of its rows and not yet taken the new ones.
+    bool resetToFirstPage();
 
-    /// One screen is well under this; a page per scroll step would be a query
-    /// per row.
-    static constexpr int kPageRows = 500;
-    /// Pages kept before the oldest is dropped. Enough to scroll back a few
+public:
+    /// Rows on a page: what the view is offered at once. A constant rather than
+    /// a preference -- see ADR-0045 -- and public because a test asserting the
+    /// page holds a number of rows should say which number it means.
+    static constexpr int kPageRows = 5000;
+
+private:
+    /// Rows in one fetch from the source, inside the page. One screen is well
+    /// under this; a chunk per scroll step would be a query per row.
+    static constexpr int kChunkRows = 500;
+    /// Chunks kept before the oldest is dropped. Enough to scroll back a few
     /// screens without refetching, bounded so a long scroll cannot grow
     /// without limit -- which would defeat the entire design.
-    static constexpr int kMaxCachedPages = 24;
+    static constexpr int kMaxCachedChunks = 24;
     /// How long the typing has to stop before the filter is applied, in
     /// milliseconds. A filter is a scan -- no index answers a substring match
     /// across every column -- so a keystroke that started one immediately meant
@@ -111,10 +166,12 @@ private:
     QTimer* m_filterTimer = nullptr;
     qint64 m_totalRows = 0;
     qint64 m_matchingRows = 0;
+    int m_page = 0;
     QList<int> m_columnWidths;
 
-    mutable QHash<int, QList<QStringList>> m_pages;
-    mutable QList<int> m_pageOrder;
+    /// Fetched chunks, keyed by their index within the current page.
+    mutable QHash<int, QList<QStringList>> m_chunks;
+    mutable QList<int> m_chunkOrder;
 };
 
 } // namespace mole

@@ -34,6 +34,8 @@
 #include <QPainter>
 #include <QPdfWriter>
 #include <QSignalSpy>
+#include <QSqlDatabase>
+#include <QSqlQuery>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTextBlock>
@@ -247,6 +249,7 @@ private slots:
     // --- databases ---
     void aDatabaseListsItsTablesBeforeItHasCountedAnyOfThem();
     void typingAFilterScansOnceRatherThanOncePerCharacter();
+    void aDatabaseTableIsShownAPageAtATime();
     void reportsFactsForAnUnknownFile();
     void arrowsStepThroughFilesOnly();
     void survivesAFileThatVanished();
@@ -2121,6 +2124,60 @@ void TestPreview::typingAFilterScansOnceRatherThanOncePerCharacter()
     QTRY_COMPARE(viewer.table()->matchingRows(), 1);
     QCOMPARE(refreshed.count(), 1);
     QCOMPARE(viewer.table()->cellAt(0, 1), QStringLiteral("Grace"));
+}
+
+void TestPreview::aDatabaseTableIsShownAPageAtATime()
+{
+    // Reached the way the window reaches it: through the controller, the model
+    // it owns and the SQLite source behind that. A table used to be offered
+    // whole, so the offset the model fetched at was an offset into the file and
+    // one drag of the scrollbar issued a run of `OFFSET 9000000` queries.
+    const QString path = m_tree->absolute(QStringLiteral("wide.sqlite"));
+    {
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("pager"));
+        db.setDatabaseName(path);
+        QVERIFY(db.open());
+        QSqlQuery query(db);
+        QVERIFY(query.exec(QStringLiteral("CREATE TABLE readings (n INTEGER)")));
+        QVERIFY(query.exec(QStringLiteral("BEGIN")));
+        // Two full pages and a short one, so there is a last page that is not
+        // the same shape as the others.
+        for (int i = 0; i < 12000; ++i)
+            QVERIFY(query.exec(QStringLiteral("INSERT INTO readings VALUES (%1)").arg(i)));
+        QVERIFY(query.exec(QStringLiteral("COMMIT")));
+        db.close();
+    }
+    QSqlDatabase::removeDatabase(QStringLiteral("pager"));
+
+    FileEntry entry;
+    entry.name = QStringLiteral("wide.sqlite");
+    entry.uri = m_tree->rootUri().child(entry.name);
+
+    SqlitePreviewController viewer(m_app->services());
+    viewer.load(entry);
+    QTRY_COMPARE(viewer.table()->totalRows(), 12000);
+
+    QCOMPARE(viewer.table()->pageCount(), 3);
+    QCOMPARE(viewer.table()->rowCount(), TableModel::kPageRows);
+    QCOMPARE(viewer.table()->cellAt(0, 0), QStringLiteral("0"));
+
+    viewer.table()->nextPage();
+    QCOMPARE(viewer.table()->firstRowOnPage(), TableModel::kPageRows);
+    QCOMPARE(viewer.table()->cellAt(0, 0), QStringLiteral("5000"));
+
+    viewer.table()->lastPage();
+    QCOMPARE(viewer.table()->page(), 2);
+    QCOMPARE(viewer.table()->rowCount(), 2000);
+    QCOMPARE(viewer.table()->cellAt(1999, 0), QStringLiteral("11999"));
+
+    // A different table is a different set of rows, so the page goes back to
+    // the first rather than staying where the last table left it.
+    viewer.setCurrentTable(QStringLiteral("readings"));
+    viewer.table()->lastPage();
+    QCOMPARE(viewer.table()->page(), 2);
+    viewer.table()->setFilter(QStringLiteral("999"));
+    viewer.table()->applyFilter();
+    QCOMPARE(viewer.table()->page(), 0);
 }
 
 void TestPreview::reportsFactsForAnUnknownFile()

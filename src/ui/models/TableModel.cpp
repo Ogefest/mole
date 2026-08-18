@@ -3,7 +3,6 @@
 #include <QTimer>
 
 #include <algorithm>
-#include <limits>
 
 namespace mole {
 namespace {
@@ -38,13 +37,14 @@ void TableModel::setSource(ITableSource* source)
     m_filter.clear();
     m_typedFilter.clear();
     m_filterTimer->stop();
-    m_pages.clear();
-    m_pageOrder.clear();
     m_headers = source ? source->headers() : QStringList {};
     m_columnWidths = source ? source->columnWidths() : QList<int> {};
     readCounts();
+    const bool moved = resetToFirstPage();
     endResetModel();
 
+    if (moved)
+        emit pageChanged();
     emit tableChanged();
     emit filterChanged();
 }
@@ -57,13 +57,19 @@ void TableModel::clear()
 void TableModel::refresh()
 {
     beginResetModel();
-    m_pages.clear();
-    m_pageOrder.clear();
+    m_chunks.clear();
+    m_chunkOrder.clear();
     m_headers = m_source ? m_source->headers() : QStringList {};
     m_columnWidths = m_source ? m_source->columnWidths() : QList<int> {};
     readCounts();
+    // The page it was on may be gone: the delimited viewer refreshes while rows
+    // are still arriving from an import, and a filter narrowing the table can
+    // take the far end of it away.
+    const bool moved = m_page >= pageCount() && resetToFirstPage();
     endResetModel();
 
+    if (moved)
+        emit pageChanged();
     emit tableChanged();
 }
 
@@ -98,11 +104,14 @@ void TableModel::applyFilter()
 
     beginResetModel();
     m_filter = m_typedFilter;
-    m_pages.clear();
-    m_pageOrder.clear();
     m_matchingRows = m_source ? m_source->matchingRows(m_filter) : 0;
+    // A different set of rows is a different table as far as the page is
+    // concerned, and page seven of the old one means nothing in the new.
+    const bool moved = resetToFirstPage();
     endResetModel();
 
+    if (moved)
+        emit pageChanged();
     emit tableChanged();
 }
 
@@ -120,15 +129,79 @@ QVariantList TableModel::columnWidths() const
     return out;
 }
 
+int TableModel::pageCount() const
+{
+    // At least one, so there is always a page to be on -- an empty table, and a
+    // source that has not finished counting, are both one page with nothing on
+    // it rather than none.
+    if (m_matchingRows <= 0)
+        return 1;
+    return static_cast<int>((m_matchingRows + kPageRows - 1) / kPageRows);
+}
+
+qint64 TableModel::firstRowOnPage() const
+{
+    return static_cast<qint64>(m_page) * kPageRows;
+}
+
+void TableModel::setPage(int page)
+{
+    const int wanted = std::clamp(page, 0, pageCount() - 1);
+    if (wanted == m_page)
+        return; // past the end, or before the start: nothing changes
+
+    beginResetModel();
+    m_page = wanted;
+    // The chunks hold rows from the page being left, and they are keyed by
+    // their position within it.
+    m_chunks.clear();
+    m_chunkOrder.clear();
+    endResetModel();
+
+    emit pageChanged();
+    emit tableChanged();
+}
+
+bool TableModel::resetToFirstPage()
+{
+    m_chunks.clear();
+    m_chunkOrder.clear();
+    if (m_page == 0)
+        return false;
+    m_page = 0;
+    return true;
+}
+
+void TableModel::firstPage()
+{
+    setPage(0);
+}
+
+void TableModel::previousPage()
+{
+    setPage(m_page - 1);
+}
+
+void TableModel::nextPage()
+{
+    setPage(m_page + 1);
+}
+
+void TableModel::lastPage()
+{
+    setPage(pageCount() - 1);
+}
+
 int TableModel::rowCount(const QModelIndex& parent) const
 {
     if (parent.isValid())
         return 0;
-    // Clamped at both ends: QAbstractItemModel counts in int, and a file with
-    // more rows than that is beyond what any view can scroll to anyway -- while
-    // a source that has not finished counting answers -1, which is no rows to
-    // show yet rather than a number to hand a view.
-    return static_cast<int>(std::clamp<qint64>(m_matchingRows, 0, std::numeric_limits<int>::max()));
+    // The rows of this page, never the rows of the table. A source that has not
+    // finished counting answers -1, which is no rows to show yet rather than a
+    // number to hand a view.
+    if (m_matchingRows <= 0)
+        return 0;
+    return static_cast<int>(std::clamp<qint64>(m_matchingRows - firstRowOnPage(), 0, kPageRows));
 }
 
 int TableModel::columnCount(const QModelIndex& parent) const
@@ -141,16 +214,19 @@ void TableModel::ensureLoaded(int row) const
     if (!m_source)
         return;
 
-    const int page = row / kPageRows;
-    if (m_pages.contains(page))
+    const int chunk = row / kChunkRows;
+    if (m_chunks.contains(chunk))
         return;
 
-    QList<QStringList> rows = m_source->rows(static_cast<qint64>(page) * kPageRows, kPageRows, m_filter);
-    m_pages.insert(page, std::move(rows));
-    m_pageOrder.append(page);
+    // The page's own start, plus where in the page this chunk begins. This is
+    // the only place the two coordinate systems meet.
+    const qint64 offset = firstRowOnPage() + static_cast<qint64>(chunk) * kChunkRows;
+    QList<QStringList> rows = m_source->rows(offset, kChunkRows, m_filter);
+    m_chunks.insert(chunk, std::move(rows));
+    m_chunkOrder.append(chunk);
 
-    while (m_pageOrder.size() > kMaxCachedPages)
-        m_pages.remove(m_pageOrder.takeFirst());
+    while (m_chunkOrder.size() > kMaxCachedChunks)
+        m_chunks.remove(m_chunkOrder.takeFirst());
 }
 
 QVariant TableModel::data(const QModelIndex& index, int role) const
@@ -164,12 +240,12 @@ QVariant TableModel::data(const QModelIndex& index, int role) const
 
     ensureLoaded(index.row());
 
-    const int page = index.row() / kPageRows;
-    const auto position = m_pages.constFind(page);
-    if (position == m_pages.constEnd())
+    const int chunk = index.row() / kChunkRows;
+    const auto position = m_chunks.constFind(chunk);
+    if (position == m_chunks.constEnd())
         return {};
 
-    const int offset = index.row() % kPageRows;
+    const int offset = index.row() % kChunkRows;
     if (offset >= position->size())
         return {};
 

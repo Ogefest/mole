@@ -9,6 +9,43 @@ wrong.
 
 ---
 
+## The grid had no page: it put every row of the table behind one scrollbar
+
+**Asked for:** MOLE-187 — the database viewer, and the delimited-text and Parquet viewers with
+it, offered every row of a table at once.
+
+**What it turned out to be:** the fetch was already windowed and the offset was not.
+`kPageRows` was 500 and `kMaxCachedPages` 24, so the model never held more than twelve thousand
+rows however far anybody scrolled — but `rowCount()` returned the whole matching count, so the
+offset it fetched *at* was bounded by nothing. `SELECT … LIMIT 500 OFFSET 9000000` is answered by
+stepping over nine million rows with the interface thread waiting, and one drag of a scrollbar
+issues a run of them, each costing more than the last.
+
+**A page of five thousand rows, in `TableModel`**, so all three viewers get it at once — the grid
+is shared and so is the model behind it, which is what `ITableSource` was made source-agnostic
+for. `rowCount()` is the rows of the page, row indices are page-relative, and the fetch window
+lives inside the page, so the largest offset any query can carry is the page's start plus five
+thousand. [ADR-0045](docs/adr/0045-a-grid-shows-a-page-of-a-table-and-the-page-is-a-fixed-five-thousand-rows.md)
+records why it is a constant rather than a preference, and why the alternative — keeping one
+scrollbar and hoping — promises a seek no source can perform.
+
+**The word *page* meant two things one screen apart**, so the older one was renamed: a *chunk* is
+the five-hundred-row fetch inside the model, a *page* is what the reader is looking at. The class
+comment said "there is no cap, and no point at which the table quietly stops being the file",
+which had become the opposite of true and is the comment the next reader would have trusted; the
+user guide said the same thing in its own words and has been corrected with it.
+
+**A selection is cleared by any reset of the model**, not only by a page move. Row indices are
+page-relative, so a new source, a different table, a filter and a page change all make a held
+block name rows nobody selected — one rule covers all four, where clearing only on a page move
+would have left the other three.
+
+**The footer is the only place a row's number within the whole table appears** — *rows 5,001–10,000
+of 1,284,003* — and it reads without the total, because MOLE-186 makes that arrive after the first
+frame. It is hidden when there is one page, which is why the assertion that it draws at all lives
+in the walkthrough's twelve-thousand-row import: the rest of the suite's fixtures fit on one page,
+and a fault in a strip nothing renders would have waited for somebody's real export.
+
 ## Opening a database counted every row in every table before it drew anything
 
 **Asked for:** MOLE-186 — opening a SQLite file in the preview stopped the window answering for as

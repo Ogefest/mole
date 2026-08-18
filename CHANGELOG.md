@@ -11,6 +11,8 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-18 #MOLE-187 A table, a database or a Parquet file is now shown five thousand rows at a time, with page controls under the grid, instead of one scrollbar over the whole of it
+
 2026-08-18 #MOLE-186 A database with large tables now opens at once and fills its row counts in behind, instead of holding the window until every table has been counted — and a filter typed into a table, a CSV or a Parquet file is now scanned once when the typing stops rather than once per character
 
 2026-08-18 #MOLE-188 Analysing a large folder no longer freezes the window while it runs — every task's status line and published counts are now handed to the interface ten times a second at most, however fast the work produces them

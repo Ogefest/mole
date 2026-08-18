@@ -77,9 +77,22 @@ feature.
 ![A CSV as a grid](images/02-preview-csv.png)
 
 A delimited file becomes a grid backed by a scratch database rather than parsed into
-memory, so there is no row cap: the view scrolls the whole file and the filter searches
-all of it, not the part that happened to load. The separator is detected and stays
-editable, because detection is a guess and you can see when it guessed wrong.
+memory, so nothing is left out: the filter searches the whole file, not the part that
+happened to load. The separator is detected and stays editable, because detection is a
+guess and you can see when it guessed wrong.
+
+The grid shows **five thousand rows at a time**, with the controls to move between pages
+under it — first, previous, next and last, which page you are on, and which rows of the
+whole table are on screen. `Ctrl+PgDn` and `Ctrl+PgUp` move a page, `Ctrl+Home` and
+`Ctrl+End` go to the ends; plain `PgUp` and `PgDn` move the cursor within the page. A
+file that fits on one page shows no controls at all. The page is what keeps a table of
+ten million rows as quick to read as one of ten: a scrollbar over the whole of it would
+mean asking the file for row nine million, and every source answers that by counting to
+it.
+
+A filter is applied once you stop typing rather than on every key, because searching
+every column of every row is a pass over the table and holding a key down would start
+one per character.
 
 Rows appear as they are read:
 
@@ -111,9 +124,11 @@ to the viewer of last resort below.
 
 ![A SQLite database](images/21-preview-sqlite.png)
 
-A SQLite file opens as its tables and views, one at a time, read a page at a time. Open
-**read-only**: reading a database is not a licence to write to it, which is the same
-rule the PDF viewer follows.
+A SQLite file opens as its tables and views, one at a time, a page at a time like any
+other table. The list of names appears at once and the row count beside each one fills
+in behind it — counting a table means walking it, and the window is not made to wait for
+that. Open **read-only**: reading a database is not a licence to write to it, which is
+the same rule the PDF viewer follows.
 
 ![A Parquet file](images/22-preview-parquet.png)
 

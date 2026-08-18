@@ -1022,6 +1022,29 @@ void TestWalkthrough::aSlowTableSaysSoAndThenFillsAsItReads()
 
     QVERIFY(m_harness->until([table] { return !table->isImporting(); }, 30000));
     QCOMPARE(table->table()->totalRows(), 12000);
+
+    // Twelve thousand rows is three pages, so this is where the footer under the
+    // grid is drawn -- the only place in the suite that has more rows than a
+    // page. A small file never shows it, which is why an error in it would
+    // otherwise sit unseen until somebody opened a large export.
+    m_harness->settle(4);
+    QQuickItem* pager = m_harness->item(QStringLiteral("gridPager"));
+    QVERIFY2(pager && pager->isVisible(), "a table of three pages has to offer a way to the other two");
+    QCOMPARE(m_harness->item(QStringLiteral("gridPageNumber"))->property("text").toString(),
+        QStringLiteral("Page 1 of 3"));
+
+    QQuickItem* range = m_harness->item(QStringLiteral("gridPageRange"));
+    QVERIFY(range);
+    const QString firstPage = range->property("text").toString();
+    QVERIFY2(firstPage.startsWith(QStringLiteral("rows 1")), qPrintable(firstPage));
+    QVERIFY2(firstPage.endsWith(QLocale().toString(12000)), qPrintable(firstPage));
+
+    table->table()->lastPage();
+    m_harness->settle(4);
+    QCOMPARE(m_harness->item(QStringLiteral("gridPageNumber"))->property("text").toString(),
+        QStringLiteral("Page 3 of 3"));
+    QVERIFY2(range->property("text").toString().contains(QLocale().toString(10001)),
+        qPrintable(range->property("text").toString()));
 }
 
 void TestWalkthrough::folderSizesLandInTheListing()
