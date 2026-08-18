@@ -106,6 +106,15 @@ enum RepositoryFileState {
     RepositoryContainsChanges = 1 << 6,
 };
 
+/// Every state git itself reports, as one mask.
+///
+/// What separates a path git named from a directory this walk rolled up above
+/// one, which is the question anybody listing the changes has to ask: a folder
+/// carrying nothing but RepositoryContainsChanges is Mole's own arithmetic, not
+/// git's answer.
+constexpr int RepositoryReportedStates = RepositoryModified | RepositoryAdded | RepositoryDeleted
+    | RepositoryUntracked | RepositoryRenamed | RepositoryConflicted;
+
 /// The one mark a listing puts on a row in this state.
 ///
 /// git's own letters -- `M`, `A`, `D`, `??`, `R`, `U` -- because anybody with a

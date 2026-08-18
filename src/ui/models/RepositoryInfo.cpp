@@ -1,6 +1,9 @@
 #include "ui/models/RepositoryInfo.h"
 
+#include "core/vfs/VfsUri.h"
+
 #include <QStringList>
+#include <QVariantMap>
 
 #include <algorithm>
 
@@ -78,6 +81,43 @@ QString RepositoryInfo::changesText() const
     return QStringLiteral("%1 changed").arg(m_status.changedCount);
 }
 
+void RepositoryInfo::rebuildChangedPaths()
+{
+    m_changedPaths.clear();
+    if (!m_statusKnown || m_root.isEmpty())
+        return;
+
+    // The absolute paths first, so the sort is over what the hash is keyed by and
+    // the relative name is cut once per entry rather than once per comparison.
+    QStringList absolute;
+    absolute.reserve(m_status.byPath.size());
+    for (auto it = m_status.byPath.cbegin(); it != m_status.byPath.cend(); ++it) {
+        // A directory this walk rolled up carries nothing else, and is not a path
+        // git reported. Left out rather than shown as a bullet: every one of them
+        // is a parent of something already in the list.
+        if ((it.value() & RepositoryReportedStates) != 0)
+            absolute.append(it.key());
+    }
+    // A QHash iterates in whatever order it feels like, so the list would
+    // otherwise be different on two runs over the same checkout.
+    absolute.sort();
+
+    const int cut = m_root.length() + 1;
+    m_changedPaths.reserve(absolute.size());
+    for (const QString& path : std::as_const(absolute)) {
+        const int state = m_status.byPath.value(path, RepositoryUnchanged);
+        QVariantMap entry;
+        entry.insert(QStringLiteral("path"), path.mid(cut));
+        entry.insert(QStringLiteral("mark"), repositoryStateMark(state));
+        entry.insert(QStringLiteral("uri"), VfsUri::fromLocalPath(path).toString());
+        // The one entry with nowhere to go. Reported rather than left for the
+        // band to work out from the mark, because a file may be deleted and
+        // something else at once and the mark shows only the most urgent of them.
+        entry.insert(QStringLiteral("deleted"), (state & RepositoryDeleted) != 0);
+        m_changedPaths.append(entry);
+    }
+}
+
 void RepositoryInfo::setStatus(const QString& root, const RepositoryStatus& status)
 {
     // An answer about the checkout somebody has already navigated out of. The
@@ -92,6 +132,7 @@ void RepositoryInfo::setStatus(const QString& root, const RepositoryStatus& stat
 
     m_statusKnown = true;
     m_status = status;
+    rebuildChangedPaths();
     emit changed();
 }
 
@@ -101,6 +142,7 @@ void RepositoryInfo::clearStatus()
         return;
     m_statusKnown = false;
     m_status = RepositoryStatus {};
+    m_changedPaths.clear();
     emit changed();
 }
 
@@ -130,6 +172,7 @@ void RepositoryInfo::setHead(const QString& root, const RepositoryHead& head)
     if (m_root != root) {
         m_statusKnown = false;
         m_status = RepositoryStatus {};
+        m_changedPaths.clear();
     }
 
     m_present = true;
@@ -147,6 +190,7 @@ void RepositoryInfo::clear()
     m_head = RepositoryHead {};
     m_statusKnown = false;
     m_status = RepositoryStatus {};
+    m_changedPaths.clear();
     emit changed();
 }
 

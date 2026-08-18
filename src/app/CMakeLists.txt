@@ -32,6 +32,7 @@ set(MOLE_QML_FILES
     ui/TaskStrip.qml
     ui/FilePane.qml
     ui/RepositoryBand.qml
+    ui/GitMark.qml
     ui/BrowserView.qml
     ui/LiveSearchView.qml
     ui/SearchResultList.qml

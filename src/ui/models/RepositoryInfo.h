@@ -4,6 +4,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QVariantList>
 
 namespace mole {
 
@@ -33,6 +34,9 @@ class RepositoryInfo : public QObject
     Q_PROPERTY(bool statusKnown READ isStatusKnown NOTIFY changed)
     Q_PROPERTY(int changedCount READ changedCount NOTIFY changed)
     Q_PROPERTY(QString changesText READ changesText NOTIFY changed)
+    /// Every path git itself named, for whoever wants to reach one. See
+    /// changedPaths().
+    Q_PROPERTY(QVariantList changedPaths READ changedPaths NOTIFY changed)
     /// How far the branch is from what it tracks, in words. Empty when there is no
     /// upstream and when the two agree -- both of which mean there is nothing to do.
     Q_PROPERTY(QString trackingText READ trackingText NOTIFY changed)
@@ -72,6 +76,25 @@ public:
     /// what somebody wants to know is whether there is anything to deal with.
     QString changesText() const;
 
+    /// Every path git itself named, sorted, as `path`, `mark`, `uri` and
+    /// `deleted`.
+    ///
+    /// The count on the band says how many there are and this says which, which
+    /// is the only way to reach a file git has been told to delete: a listing
+    /// shows what is on disk, so a deletion has no row to carry a mark. See
+    /// docs/adr/0042-a-deletion-is-reachable-from-the-band.md.
+    ///
+    /// `path` is relative to the work tree root, because a reader looking at one
+    /// checkout already knows where it is and the absolute path is mostly
+    /// prefix. `uri` is the whole thing, because that is what anything that goes
+    /// to a file takes. The directories this walk rolled up are left out: they
+    /// are Mole's arithmetic rather than git's report, and every one of them is
+    /// a parent of something already in the list.
+    ///
+    /// Built when the walk lands rather than on every read, because a binding in
+    /// the band would otherwise re-sort the whole list on each repaint.
+    const QVariantList& changedPaths() const { return m_changedPaths; }
+
     QString trackingText() const;
     bool hasCommit() const { return m_present && m_head.committedAt.isValid(); }
     QString commitSubject() const { return hasCommit() ? m_head.subject : QString {}; }
@@ -108,6 +131,10 @@ private:
     RepositoryHead m_head;
     bool m_statusKnown = false;
     RepositoryStatus m_status;
+    QVariantList m_changedPaths;
+
+    /// Refills m_changedPaths from m_status. Called wherever the status moves.
+    void rebuildChangedPaths();
 };
 
 } // namespace mole

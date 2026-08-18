@@ -141,6 +141,42 @@ bool GitFixture::stageAll()
 #endif
 }
 
+bool GitFixture::stagePath(const QString& relativePath)
+{
+#ifdef MOLE_HAVE_GIT2
+    if (!m_repo)
+        return false;
+
+    git_index* index = nullptr;
+    if (git_repository_index(&index, m_repo) != 0)
+        return false;
+
+    const QByteArray path = relativePath.toUtf8();
+    // Which call it is depends on the disk rather than on what the caller thinks
+    // it did: add_bypath fails on a file that is not there, and remove_bypath is
+    // what records a deletion in the index.
+    const bool ok = QFileInfo::exists(absolute(relativePath))
+        ? git_index_add_bypath(index, path.constData()) == 0
+        : git_index_remove_bypath(index, path.constData()) == 0;
+    const bool wrote = ok && git_index_write(index) == 0;
+    git_index_free(index);
+    return wrote;
+#else
+    Q_UNUSED(relativePath);
+    return false;
+#endif
+}
+
+bool GitFixture::renameFile(const QString& from, const QString& to)
+{
+    const QString target = absolute(to);
+    if (!QDir().mkpath(QFileInfo(target).absolutePath()))
+        return false;
+    if (!QFile::rename(absolute(from), target))
+        return false;
+    return stagePath(from) && stagePath(to);
+}
+
 QString GitFixture::commitAll(const QString& message)
 {
 #ifdef MOLE_HAVE_GIT2

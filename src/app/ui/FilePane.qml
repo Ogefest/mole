@@ -567,6 +567,17 @@ FocusScope {
         // checkout. See ADR-0041 for why it is read-only and local drives only.
         RepositoryBand {
             info: paneController ? paneController.repository : null
+            // A changed path goes where anything else in Mole goes -- except a
+            // deleted one, which has nowhere to go, so it answers with the folder
+            // that held it and no cursor. See ADR-0042.
+            onPathActivated: function (uri, deleted) {
+                if (!paneController)
+                    return
+                if (deleted)
+                    paneController.revealMissingFile(uri)
+                else
+                    paneController.revealFile(uri)
+            }
         }
 
         // Scanning 50 000 files takes seconds, and an empty pane during those
@@ -798,27 +809,11 @@ FocusScope {
                         //
                         // Invisible rather than empty when there is nothing to say,
                         // so a folder in no checkout has no column here at all.
-                        Label {
+                        GitMark {
                             objectName: "gitMarker"
                             visible: gitMark.length > 0
                             width: visible ? 18 : 0
-                            horizontalAlignment: Text.AlignHCenter
-                            text: gitMark
-                            font.pixelSize: App.smallTextSize
-                            font.bold: true
-                            // Keyed off the letter rather than off the bitmask,
-                            // so the colour cannot disagree with the mark: the
-                            // letter already resolved "several states at once" to
-                            // the one worth showing.
-                            color: switch (gitMark) {
-                                   case "U": return "#e5534b"   // conflicted
-                                   case "D": return "#e5534b"   // deleted
-                                   case "A": return "#5fb977"   // added
-                                   case "R": return "#7cc4ff"   // renamed
-                                   case "M": return "#d9a441"   // modified
-                                   case "??": return "#8b93a7"  // untracked
-                                   default: return "#6f7788"    // something inside
-                                   }
+                            mark: gitMark
                         }
                     }
 

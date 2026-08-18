@@ -372,6 +372,7 @@ void BrowserPaneController::revealFile(const QString& fileUri)
         return;
 
     m_pendingReveal = fileUri;
+    m_pendingRevealMissing = false;
     const VfsUri folder = file.parent();
     if (folder == m_current) {
         // Already here, so there is no listing coming to put the cursor on it.
@@ -383,6 +384,32 @@ void BrowserPaneController::revealFile(const QString& fileUri)
         }
         return;
     }
+    navigateTo(folder.toString());
+}
+
+void BrowserPaneController::revealMissingFile(const QString& fileUri)
+{
+    const VfsUri file = VfsUri::fromString(fileUri);
+    if (!file.isValid())
+        return;
+
+    const VfsUri folder = file.parent();
+    if (folder == m_current) {
+        // Already the folder in view, so no listing is coming. The cursor comes off
+        // whatever it was on, because the answer to "where is this file" is this
+        // folder and not any row in it.
+        if (m_currentIndex != -1) {
+            m_currentIndex = -1;
+            emit currentIndexChanged();
+        }
+        return;
+    }
+
+    // Asked for by name so that the listing which lands does not fall back to the
+    // first row, and remembered so a second navigation to this folder later is
+    // unaffected.
+    m_pendingReveal = fileUri;
+    m_pendingRevealMissing = true;
     navigateTo(folder.toString());
 }
 
@@ -811,9 +838,13 @@ void BrowserPaneController::load(const VfsUri& uri, bool recordHistory)
             // A file someone asked to be shown wins over where the cursor was
             // last time in this folder: they said which one they meant.
             const QString wanted = m_pendingReveal.isEmpty() ? rememberedCursor(directory) : m_pendingReveal;
+            // A reveal of something not expected to be here answers with the folder
+            // and no row, rather than with the first row -- see revealMissingFile().
+            const bool missing = m_pendingRevealMissing;
             m_pendingReveal.clear();
+            m_pendingRevealMissing = false;
             const int row = wanted.isEmpty() ? -1 : m_files->rowOfUri(wanted);
-            m_currentIndex = row >= 0 ? row : (m_files->rowCount() > 0 ? 0 : -1);
+            m_currentIndex = row >= 0 ? row : (missing || m_files->rowCount() == 0 ? -1 : 0);
             emit currentIndexChanged();
         });
 

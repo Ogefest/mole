@@ -3,6 +3,7 @@
 #include "support/MoleTestMain.h"
 #include "support/QmlAppHarness.h"
 #include "ui/AppController.h"
+#include "ui/models/FileListModel.h"
 #include "ui/models/TabsModel.h"
 
 #include "core/CoreMetaTypes.h"
@@ -14,6 +15,8 @@
 #include <QQuickStyle>
 #include <QStringList>
 #include <QTest>
+#include <QVariantList>
+#include <QVariantMap>
 
 using namespace mole;
 using namespace mole::test;
@@ -47,6 +50,11 @@ private slots:
     void aLongSubjectElidesRatherThanWrappingTheBand();
     void aRepositoryWithNoCommitsHasNoCommitLine();
     void aBranchAheadAndBehindSaysSoAndOneWithNoUpstreamSaysNothing();
+    void theCountOpensAListNamingEveryPathGitReported();
+    void theCountAndTheListAreTheSameNumber();
+    void aDeletedFileIsNamedInTheListAndNowhereInTheListing();
+    void activatingADeletedEntryLandsOnTheFolderThatHeldIt();
+    void aCleanCheckoutHasNothingToOpen();
 
 private:
     BrowserPaneController* pane() const;
@@ -70,6 +78,23 @@ private:
     /// Builds a checkout at `relativePath` inside the harness fixture.
     std::unique_ptr<GitFixture> checkoutAt(
         const QString& relativePath, const QString& branch = QStringLiteral("main"));
+    /// A checkout at `relativePath` carrying one path in each of the six states
+    /// git reports -- conflicted, deleted, renamed, added, untracked, modified.
+    ///
+    /// All six in one work tree rather than six work trees, because the claim
+    /// being made is about the *count*: the band says how many there are and the
+    /// list says which, and a fixture holding one state at a time could never
+    /// catch the two disagreeing.
+    std::unique_ptr<GitFixture> checkoutInEveryState(const QString& relativePath);
+
+    /// Opens the list behind the count, by clicking the count the way a reader
+    /// would. Returns false when the band never offered one.
+    bool openChangedPaths();
+    /// What the open list holds, as "<mark> <path>", in the order it draws them.
+    QStringList changedPathRows() const;
+    /// The same, straight off the model, so the band and the answer it is drawing
+    /// can be compared rather than assumed equal.
+    QStringList changedPathEntries() const;
 
     std::unique_ptr<QmlAppHarness> m_harness;
 };
@@ -117,6 +142,86 @@ std::unique_ptr<GitFixture> TestRepositoryBand::checkoutAt(const QString& relati
     if (fixture->commitAll(QStringLiteral("first")).isEmpty())
         return nullptr;
     return fixture;
+}
+
+std::unique_ptr<GitFixture> TestRepositoryBand::checkoutInEveryState(const QString& relativePath)
+{
+    if (!m_harness->makeDirs(relativePath))
+        return nullptr;
+    auto fixture = std::make_unique<GitFixture>(QDir(m_harness->fixturePath()).filePath(relativePath));
+    if (!fixture->init(QStringLiteral("main")))
+        return nullptr;
+
+    // Everything the later states need, committed first, so that the rebase below
+    // -- which checks a tree out -- has nothing of ours to trample.
+    const bool seeded = fixture->writeFile(QStringLiteral("readme.md"), "base\n")
+        && fixture->writeFile(QStringLiteral("edited.txt"), "before\n")
+        && fixture->writeFile(QStringLiteral("gone.txt"), "here for now\n")
+        && fixture->writeFile(QStringLiteral("before.txt"), "renamed shortly\n")
+        && !fixture->commitAll(QStringLiteral("first")).isEmpty();
+    if (!seeded)
+        return nullptr;
+
+    // `U`. A real conflict rather than an index written by hand: two branches
+    // rewrite the same line, and a rebase stops on it. That is what git does, and
+    // a fixture that only resembled it would be testing our idea of a conflict.
+    const bool conflicted = fixture->createBranch(QStringLiteral("topic"))
+        && fixture->checkoutBranch(QStringLiteral("topic"))
+        && fixture->writeFile(QStringLiteral("readme.md"), "the topic line\n")
+        && !fixture->commitAll(QStringLiteral("on topic")).isEmpty()
+        && fixture->checkoutBranch(QStringLiteral("main"))
+        && fixture->writeFile(QStringLiteral("readme.md"), "the main line\n")
+        && !fixture->commitAll(QStringLiteral("on main")).isEmpty()
+        && fixture->beginRebase(QStringLiteral("topic"), QStringLiteral("main"));
+    if (!conflicted)
+        return nullptr;
+
+    const bool rest = fixture->writeFile(QStringLiteral("edited.txt"), "after\n") // M
+        && fixture->removeFile(QStringLiteral("gone.txt")) // D
+        && fixture->writeFile(QStringLiteral("stray.txt"), "nobody staged me\n") // ??
+        && fixture->writeFile(QStringLiteral("added.txt"), "brand new\n") // A
+        && fixture->stagePath(QStringLiteral("added.txt"))
+        && fixture->renameFile(QStringLiteral("before.txt"), QStringLiteral("after.txt")); // R
+    if (!rest)
+        return nullptr;
+    return fixture;
+}
+
+bool TestRepositoryBand::openChangedPaths()
+{
+    QQuickItem* count = nullptr;
+    for (QQuickItem* label : m_harness->items(QStringLiteral("repositoryChanges"))) {
+        if (label->isVisible())
+            count = label;
+    }
+    if (!count)
+        return false;
+    m_harness->click(m_harness->centreOf(count));
+    return m_harness->until([this] { return !changedPathRows().isEmpty(); });
+}
+
+QStringList TestRepositoryBand::changedPathRows() const
+{
+    QStringList out;
+    for (QQuickItem* row : m_harness->items(QStringLiteral("repositoryChangedPath"))) {
+        if (row->isVisible())
+            out.append(row->property("entryText").toString());
+    }
+    return out;
+}
+
+QStringList TestRepositoryBand::changedPathEntries() const
+{
+    QStringList out;
+    if (!pane())
+        return out;
+    const QVariantList entries = pane()->repository()->changedPaths();
+    for (const QVariant& entry : entries) {
+        const QVariantMap fields = entry.toMap();
+        out.append(fields.value(QStringLiteral("mark")).toString() + QLatin1Char(' ')
+            + fields.value(QStringLiteral("path")).toString());
+    }
+    return out;
 }
 
 void TestRepositoryBand::goTo(const QString& relativePath, const QString& expectedHead)
@@ -442,6 +547,138 @@ void TestRepositoryBand::aBranchAheadAndBehindSaysSoAndOneWithNoUpstreamSaysNoth
     }),
         qPrintable(
             QStringLiteral("the band says \"%1\"").arg(labelText(QStringLiteral("repositoryTracking")))));
+}
+
+void TestRepositoryBand::theCountOpensAListNamingEveryPathGitReported()
+{
+    const std::unique_ptr<GitFixture> checkout = checkoutInEveryState(QStringLiteral("work"));
+    QVERIFY(checkout);
+
+    // Part-way through a rebase, so the band names the state rather than the
+    // branch -- which is a fact about this fixture and not what is being tested.
+    goTo(QStringLiteral("work"), QStringLiteral("rebasing"));
+    QVERIFY2(m_harness->until([this] { return changesText() == QStringLiteral("6 changed"); }),
+        qPrintable(QStringLiteral("the band says \"%1\"").arg(changesText())));
+
+    // Sorted by path, so the list reads the same twice, and relative to the work
+    // tree root because a reader looking at one checkout already knows where it is.
+    const QStringList expected {
+        QStringLiteral("A added.txt"),
+        QStringLiteral("R after.txt"),
+        QStringLiteral("M edited.txt"),
+        QStringLiteral("D gone.txt"),
+        QStringLiteral("U readme.md"),
+        QStringLiteral("?? stray.txt"),
+    };
+    QCOMPARE(changedPathEntries(), expected);
+
+    // And it reaches the screen. A model nothing draws looks exactly like a model
+    // that works, which is the half of this only the window can prove.
+    QVERIFY2(openChangedPaths(), "the count did not open");
+    QCOMPARE(changedPathRows(), expected);
+
+    // The directories this walk rolled up are not in it: a folder marked because
+    // something below it changed is Mole's own arithmetic, not git's report.
+    QVERIFY(!changedPathEntries().contains(QStringLiteral("\u2022 ")));
+}
+
+void TestRepositoryBand::theCountAndTheListAreTheSameNumber()
+{
+    const std::unique_ptr<GitFixture> checkout = checkoutInEveryState(QStringLiteral("work"));
+    QVERIFY(checkout);
+
+    goTo(QStringLiteral("work"), QStringLiteral("rebasing"));
+    QVERIFY(m_harness->until([this] { return !changesText().isEmpty(); }));
+
+    // The band is the only door to these paths, so if the two ever disagree it is
+    // lying about one of them -- either counting something nobody can reach, or
+    // offering something it did not count.
+    const int counted = pane()->repository()->changedCount();
+    QCOMPARE(changedPathEntries().size(), counted);
+    QCOMPARE(changesText(), QStringLiteral("%1 changed").arg(counted));
+    QCOMPARE(counted, 6);
+}
+
+void TestRepositoryBand::aDeletedFileIsNamedInTheListAndNowhereInTheListing()
+{
+    const std::unique_ptr<GitFixture> checkout = checkoutAt(QStringLiteral("work"));
+    QVERIFY(checkout);
+    QVERIFY(checkout->writeFile(QStringLiteral("gone.txt"), "here for now\n"));
+    QVERIFY(!checkout->commitAll(QStringLiteral("second")).isEmpty());
+    QVERIFY(checkout->removeFile(QStringLiteral("gone.txt")));
+
+    goTo(QStringLiteral("work"), QStringLiteral("main"));
+    QVERIFY(m_harness->until([this] { return changesText() == QStringLiteral("1 changed"); }));
+
+    // The listing goes on showing what is on disk: no row, and so no `D` on one.
+    // That is the decision ADR-0042 records, and this is what would catch it being
+    // quietly reversed.
+    QVERIFY(!markers().contains(QStringLiteral("D")));
+
+    // And the name is reachable without leaving Mole, which is the whole point.
+    QVERIFY2(openChangedPaths(), "the count did not open");
+    QCOMPARE(changedPathRows(), QStringList { QStringLiteral("D gone.txt") });
+}
+
+void TestRepositoryBand::activatingADeletedEntryLandsOnTheFolderThatHeldIt()
+{
+    const std::unique_ptr<GitFixture> checkout = checkoutAt(QStringLiteral("work"));
+    QVERIFY(checkout);
+    QVERIFY(checkout->makeDirs(QStringLiteral("notes")));
+    QVERIFY(checkout->writeFile(QStringLiteral("notes/gone.txt"), "here for now\n"));
+    // A second file in the same folder, so "the cursor is on nothing" is a claim
+    // about the cursor rather than about an empty listing.
+    QVERIFY(checkout->writeFile(QStringLiteral("notes/kept.txt"), "staying\n"));
+    QVERIFY(!checkout->commitAll(QStringLiteral("second")).isEmpty());
+    QVERIFY(checkout->removeFile(QStringLiteral("notes/gone.txt")));
+
+    goTo(QStringLiteral("work"), QStringLiteral("main"));
+    QVERIFY(m_harness->until([this] { return changesText() == QStringLiteral("1 changed"); }));
+    QVERIFY2(openChangedPaths(), "the count did not open");
+    QCOMPARE(changedPathRows(), QStringList { QStringLiteral("D notes/gone.txt") });
+
+    QQuickItem* row = nullptr;
+    for (QQuickItem* candidate : m_harness->items(QStringLiteral("repositoryChangedPath"))) {
+        if (candidate->isVisible())
+            row = candidate;
+    }
+    QVERIFY(row);
+    m_harness->click(m_harness->centreOf(row));
+
+    // A deleted file has nowhere to go, so it goes to the folder that held it --
+    // which is the folder already carrying the roll-up dot.
+    QVERIFY2(m_harness->until([this] {
+        return pane()->currentUri().endsWith(QStringLiteral("work/notes")) && !pane()->isLoading();
+    }),
+        qPrintable(QStringLiteral("the pane is at \"%1\"").arg(pane()->currentUri())));
+
+    // And on nothing, rather than on whatever happens to sort first there: a
+    // cursor on notes/kept.txt would be pointing at a different file while looking
+    // exactly like success.
+    QVERIFY(m_harness->until([this] { return pane()->currentIndex() == -1; }));
+    QVERIFY2(pane()->files()->rowCount() > 0, "the folder was empty, so this proved nothing");
+}
+
+void TestRepositoryBand::aCleanCheckoutHasNothingToOpen()
+{
+    const std::unique_ptr<GitFixture> checkout = checkoutAt(QStringLiteral("work"));
+    QVERIFY(checkout);
+
+    goTo(QStringLiteral("work"), QStringLiteral("main"));
+    QVERIFY(m_harness->until([this] { return changesText() == QStringLiteral("clean"); }));
+
+    // "clean" is a fact and not a door. A control that opens an empty list is
+    // worse than no control, because pressing it teaches nothing.
+    QVERIFY(pane()->repository()->changedPaths().isEmpty());
+    QQuickItem* count = nullptr;
+    for (QQuickItem* label : m_harness->items(QStringLiteral("repositoryChanges"))) {
+        if (label->isVisible())
+            count = label;
+    }
+    QVERIFY(count);
+    m_harness->click(m_harness->centreOf(count));
+    m_harness->settle();
+    QVERIFY(changedPathRows().isEmpty());
 }
 
 // A real window, so a real QGuiApplication rather than the guiless one every

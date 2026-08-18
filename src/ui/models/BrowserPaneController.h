@@ -76,6 +76,15 @@ public:
     /// is", and arriving in the right folder with the cursor somewhere else is only
     /// half an answer.
     Q_INVOKABLE void revealFile(const QString& fileUri);
+    /// Navigates to the folder that *held* `fileUri` and leaves the cursor on
+    /// nothing.
+    ///
+    /// What "go to" means for a file that is not there -- a deletion git knows
+    /// about and the disk does not. The folder is the true half of the answer and
+    /// the cursor is the false half: dropping it on whatever happens to sort first
+    /// would be pointing at a different file and looking exactly like success. See
+    /// docs/adr/0042-a-deletion-is-reachable-from-the-band.md.
+    Q_INVOKABLE void revealMissingFile(const QString& fileUri);
     /// Moves the cursor by `delta` rows, clamped to the listing.
     Q_INVOKABLE void moveCursor(int delta);
     Q_INVOKABLE void cursorToStart();
@@ -193,6 +202,10 @@ private:
     /// The entry to select on arrival, or an empty string for "the first row".
     /// Set by revealFile(), consumed by the next listing that lands.
     QString m_pendingReveal;
+    /// Whether the pending reveal is for something not expected to be there, so a
+    /// listing that does not hold it leaves the cursor nowhere rather than falling
+    /// back to the first row. Set by revealMissingFile().
+    bool m_pendingRevealMissing = false;
 
     QString rememberedCursor(const VfsUri& folder) const;
     void setLoading(bool loading);

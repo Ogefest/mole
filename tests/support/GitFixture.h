@@ -65,6 +65,20 @@ public:
     /// Stages without committing, which is what an added-but-not-committed file
     /// has to be in for status to call it added.
     bool stageAll();
+    /// Stages one path, whatever happened to it -- an addition, an edit, or its
+    /// removal. What `git add <path>` does.
+    ///
+    /// Wanted because stageAll() cannot build a work tree that holds an *added*
+    /// file and an *untracked* one at the same time: staging everything turns the
+    /// second into the first, and a fixture meant to carry one of each state needs
+    /// both.
+    bool stagePath(const QString& relativePath);
+    /// Renames a file in the work tree and stages both halves of it.
+    ///
+    /// Both halves, because that is what makes git call it a rename rather than a
+    /// deletion and an addition: rename detection compares what left the index
+    /// against what arrived in it.
+    bool renameFile(const QString& from, const QString& to);
 
     /// The abbreviated id HEAD points at, empty in a repository with no commits.
     QString headShortId() const;
