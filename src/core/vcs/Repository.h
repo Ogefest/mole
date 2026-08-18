@@ -83,6 +83,19 @@ enum RepositoryFileState {
     RepositoryContainsChanges = 1 << 6,
 };
 
+/// The one mark a listing puts on a row in this state.
+///
+/// git's own letters -- `M`, `A`, `D`, `??`, `R`, `U` -- because anybody with a
+/// checkout reads them without thinking, and because the letter carries the
+/// meaning on its own: colour is never the only signal (ADR-0010). A directory
+/// that only inherited the roll-up gets a dot, since it stands for *something
+/// below here* rather than for a state of its own.
+///
+/// One mark for a path that is several states at once, most urgent first: a
+/// conflict, then a deletion, a rename, an addition, an untracked file, an edit.
+/// Structure beats "modified", which is the thing most likely to be true anyway.
+QString repositoryStateMark(int state);
+
 /// What one walk of a work tree found.
 struct RepositoryStatus
 {

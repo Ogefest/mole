@@ -76,6 +76,13 @@ private slots:
     void leavingACheckoutTakesTheCountWithIt();
     void walkingAwayFromACheckoutAbandonsItsWalk();
 
+    void everyKindOfChangeCarriesItsOwnMarker();
+    void aConflictedFileSaysSoRatherThanModified();
+    void aFolderSaysThatSomethingInsideItChanged();
+    void anIgnoredRowCarriesNoMarker();
+    void aFolderOutsideAnyCheckoutCarriesNoMarkers();
+    void markersSurviveSortingAndFiltering();
+
     void goingUpLandsOnTheFolderJustLeft();
     void goingBackRestoresTheCursor();
     void aForgottenEntryFallsBackToTheFirstRow();
@@ -92,6 +99,10 @@ private:
     /// A pane pointed at `uri`, with the listing already loaded.
     BrowserPaneController* paneOn(const QString& uri);
     static QByteArray contentsOf(const QString& path);
+    /// The git letter on the row called `name`, or an empty string when it carries
+    /// none. Answers "<no such row>" rather than nothing when the row is absent, so
+    /// a fixture that did not do what it claimed cannot pass as a clean row.
+    QString markFor(BrowserPaneController* pane, const QString& name) const;
     /// How many tasks have been submitted so far. TaskManager keeps a task after
     /// it has finished -- the strip shows what has just run -- so "queued
     /// nothing" is a number that did not change rather than a number that is zero.
@@ -1094,6 +1105,248 @@ void TestBrowserPaneController::walkingAwayFromACheckoutAbandonsItsWalk()
     QVERIFY(!pane->repository()->isPresent());
     QVERIFY(!pane->repository()->isStatusKnown());
     QVERIFY(pane->repository()->changesText().isEmpty());
+    RepositoryCache::shared().clear();
+    RepositoryStatusCache::shared().clear();
+}
+
+QString TestBrowserPaneController::markFor(BrowserPaneController* pane, const QString& name) const
+{
+    FileListModel* files = pane->files();
+    for (int row = 0; row < files->rowCount(); ++row) {
+        const QModelIndex at = files->index(row, 0);
+        if (at.data(FileListModel::NameRole).toString() == name)
+            return at.data(FileListModel::GitMarkRole).toString();
+    }
+    return QStringLiteral("<no such row>");
+}
+
+void TestBrowserPaneController::everyKindOfChangeCarriesItsOwnMarker()
+{
+    if (!Repository::isSupported())
+        QSKIP("built without libgit2");
+
+    QTemporaryDir work;
+    QVERIFY(work.isValid());
+    GitFixture checkout(work.path());
+    QVERIFY(checkout.init(QStringLiteral("main")));
+    QVERIFY(checkout.writeFile(QStringLiteral("edited.txt"), "before"));
+    QVERIFY(checkout.writeFile(QStringLiteral("gone/removed.txt"), "gone soon"));
+    QVERIFY(checkout.writeFile(QStringLiteral("gone/kept.txt"), "still here"));
+    QVERIFY(checkout.writeFile(QStringLiteral("moved.txt"), "content that stays the same\n"));
+    QVERIFY(checkout.writeFile(QStringLiteral("untouched.txt"), "still here"));
+    QVERIFY(!checkout.commitAll(QStringLiteral("first")).isEmpty());
+
+    QVERIFY(checkout.writeFile(QStringLiteral("edited.txt"), "after"));
+    QVERIFY(checkout.removeFile(QStringLiteral("gone/removed.txt")));
+    // A rename is only a rename once it is staged as one: git works it out by
+    // matching content between the index and the last commit.
+    QVERIFY(checkout.removeFile(QStringLiteral("moved.txt")));
+    QVERIFY(checkout.writeFile(QStringLiteral("elsewhere.txt"), "content that stays the same\n"));
+    QVERIFY(checkout.stageAll());
+    // After the staging, so that it stays untracked rather than becoming added --
+    // which is the difference between `??` and `A`.
+    QVERIFY(checkout.writeFile(QStringLiteral("fresh.txt"), "new and unstaged"));
+
+    const QString root = mountLocal(work.path());
+    BrowserPaneController* pane = paneOnCheckout(root);
+    QVERIFY(pane);
+    QVERIFY(waitFor([pane] { return pane->repository()->isStatusKnown(); }));
+
+    QCOMPARE(markFor(pane, QStringLiteral("edited.txt")), QStringLiteral("M"));
+    QCOMPARE(markFor(pane, QStringLiteral("elsewhere.txt")), QStringLiteral("R"));
+    QCOMPARE(markFor(pane, QStringLiteral("fresh.txt")), QStringLiteral("??"));
+    // Nothing happened to this one, so there is no mark and therefore no column.
+    QCOMPARE(markFor(pane, QStringLiteral("untouched.txt")), QString());
+
+    // A deletion is the one state a listing of what is on disk cannot put on its
+    // own row: the file is not there, so there is no row. What it can say is that
+    // the folder it was in has changed, which is what the roll-up is for -- and the
+    // band still counts it. Giving a deleted file a row of its own is a decision
+    // about what a listing is, not a marker; it is MOLE-184.
+    pane->navigateTo(root + QStringLiteral("/gone"));
+    QVERIFY(waitFor(
+        [pane] { return !pane->isLoading() && pane->currentUri().endsWith(QStringLiteral("/gone")); }));
+    QVERIFY(waitFor([pane] { return pane->repository()->isStatusKnown(); }));
+    QCOMPARE(markFor(pane, QStringLiteral("removed.txt")), QStringLiteral("<no such row>"));
+    QCOMPARE(markFor(pane, QStringLiteral("kept.txt")), QString());
+
+    pane->navigateTo(root);
+    QVERIFY(waitFor([pane] { return !pane->isLoading(); }));
+    QVERIFY(waitFor([pane] { return pane->repository()->isStatusKnown(); }));
+    QCOMPARE(markFor(pane, QStringLiteral("gone")), QStringLiteral("•"));
+    RepositoryCache::shared().clear();
+    RepositoryStatusCache::shared().clear();
+}
+
+void TestBrowserPaneController::aConflictedFileSaysSoRatherThanModified()
+{
+    if (!Repository::isSupported())
+        QSKIP("built without libgit2");
+
+    QTemporaryDir work;
+    QVERIFY(work.isValid());
+    GitFixture checkout(work.path());
+    QVERIFY(checkout.init(QStringLiteral("main")));
+    QVERIFY(checkout.writeFile(QStringLiteral("shared.txt"), "base\n"));
+    QVERIFY(!checkout.commitAll(QStringLiteral("first")).isEmpty());
+
+    // The same file changed two ways, then a rebase walked into it and stopped.
+    QVERIFY(checkout.createBranch(QStringLiteral("topic")));
+    QVERIFY(checkout.checkoutBranch(QStringLiteral("topic")));
+    QVERIFY(checkout.writeFile(QStringLiteral("shared.txt"), "topic wrote this\n"));
+    QVERIFY(!checkout.commitAll(QStringLiteral("on topic")).isEmpty());
+    QVERIFY(checkout.checkoutBranch(QStringLiteral("main")));
+    QVERIFY(checkout.writeFile(QStringLiteral("shared.txt"), "main wrote this\n"));
+    QVERIFY(!checkout.commitAll(QStringLiteral("on main")).isEmpty());
+    QVERIFY(checkout.beginRebase(QStringLiteral("topic"), QStringLiteral("main")));
+
+    const QString root = mountLocal(work.path());
+    BrowserPaneController* pane = paneOnCheckout(root);
+    QVERIFY(pane);
+    QVERIFY(waitFor([pane] { return pane->repository()->isStatusKnown(); }));
+
+    // A conflicted path also carries modified bits. "Modified" is the less urgent
+    // half of that truth and would send somebody to the wrong tool.
+    QCOMPARE(markFor(pane, QStringLiteral("shared.txt")), QStringLiteral("U"));
+    RepositoryCache::shared().clear();
+    RepositoryStatusCache::shared().clear();
+}
+
+void TestBrowserPaneController::aFolderSaysThatSomethingInsideItChanged()
+{
+    if (!Repository::isSupported())
+        QSKIP("built without libgit2");
+
+    QTemporaryDir work;
+    QVERIFY(work.isValid());
+    GitFixture checkout(work.path());
+    QVERIFY(checkout.init(QStringLiteral("main")));
+    QVERIFY(checkout.writeFile(QStringLiteral("src/deep/down/here.txt"), "before"));
+    QVERIFY(checkout.writeFile(QStringLiteral("quiet/nothing.txt"), "untouched"));
+    QVERIFY(!checkout.commitAll(QStringLiteral("first")).isEmpty());
+    QVERIFY(checkout.writeFile(QStringLiteral("src/deep/down/here.txt"), "after"));
+
+    const QString root = mountLocal(work.path());
+    BrowserPaneController* pane = paneOnCheckout(root);
+    QVERIFY(pane);
+    QVERIFY(waitFor([pane] { return pane->repository()->isStatusKnown(); }));
+
+    // At the top of the checkout the only rows are directories. Without the
+    // roll-up this listing would look completely clean over a tree with an edit
+    // in it.
+    QCOMPARE(markFor(pane, QStringLiteral("src")), QStringLiteral("•"));
+    QCOMPARE(markFor(pane, QStringLiteral("quiet")), QString());
+
+    // And at every level down to the file, because any of them can be the folder
+    // on screen.
+    for (const QString& folder :
+        { QStringLiteral("/src"), QStringLiteral("/src/deep"), QStringLiteral("/src/deep/down") }) {
+        pane->navigateTo(root + folder);
+        QVERIFY(
+            waitFor([pane, folder] { return !pane->isLoading() && pane->currentUri().endsWith(folder); }));
+        QVERIFY(waitFor([pane] { return pane->repository()->isStatusKnown(); }));
+    }
+    // The last hop landed in the folder holding the file itself.
+    QCOMPARE(markFor(pane, QStringLiteral("here.txt")), QStringLiteral("M"));
+    RepositoryCache::shared().clear();
+    RepositoryStatusCache::shared().clear();
+}
+
+void TestBrowserPaneController::anIgnoredRowCarriesNoMarker()
+{
+    if (!Repository::isSupported())
+        QSKIP("built without libgit2");
+
+    QTemporaryDir work;
+    QVERIFY(work.isValid());
+    GitFixture checkout(work.path());
+    QVERIFY(checkout.init(QStringLiteral("main")));
+    QVERIFY(checkout.writeFile(QStringLiteral(".gitignore"), "*.log\n"));
+    QVERIFY(!checkout.commitAll(QStringLiteral("first")).isEmpty());
+    QVERIFY(checkout.writeFile(QStringLiteral("noise.log"), "ignored"));
+    QVERIFY(checkout.writeFile(QStringLiteral("real.txt"), "counted"));
+
+    const QString root = mountLocal(work.path());
+    BrowserPaneController* pane = paneOnCheckout(root);
+    QVERIFY(pane);
+    QVERIFY(waitFor([pane] { return pane->repository()->isStatusKnown(); }));
+
+    QCOMPARE(markFor(pane, QStringLiteral("real.txt")), QStringLiteral("??"));
+    // The row is in the listing -- Mole shows it, git does not care about it.
+    QCOMPARE(markFor(pane, QStringLiteral("noise.log")), QString());
+    RepositoryCache::shared().clear();
+    RepositoryStatusCache::shared().clear();
+}
+
+void TestBrowserPaneController::aFolderOutsideAnyCheckoutCarriesNoMarkers()
+{
+    if (!Repository::isSupported())
+        QSKIP("built without libgit2");
+
+    QTemporaryDir work;
+    QVERIFY(work.isValid());
+    QVERIFY(QDir(work.path()).mkpath(QStringLiteral("plain")));
+    QVERIFY(QDir(work.path()).mkpath(QStringLiteral("checkout")));
+    GitFixture checkout(QDir(work.path()).filePath(QStringLiteral("checkout")));
+    QVERIFY(checkout.init(QStringLiteral("main")));
+    QVERIFY(checkout.writeFile(QStringLiteral("a.txt"), "a"));
+    QVERIFY(!checkout.commitAll(QStringLiteral("first")).isEmpty());
+    QVERIFY(checkout.writeFile(QStringLiteral("a.txt"), "edited"));
+
+    QFile plain(QDir(work.path()).filePath(QStringLiteral("plain/a.txt")));
+    QVERIFY(plain.open(QIODevice::WriteOnly));
+    plain.write("not in any repository");
+    plain.close();
+
+    const QString root = mountLocal(work.path());
+    BrowserPaneController* pane = paneOnCheckout(root + QStringLiteral("/checkout"));
+    QVERIFY(pane);
+    QVERIFY(waitFor([pane] { return pane->repository()->isStatusKnown(); }));
+    QCOMPARE(markFor(pane, QStringLiteral("a.txt")), QStringLiteral("M"));
+
+    // The same file name, one directory across, in no work tree. The marks have to
+    // go with the repository rather than linger on rows that look similar.
+    pane->navigateTo(root + QStringLiteral("/plain"));
+    QVERIFY(waitFor([pane] { return !pane->repository()->isPresent(); }));
+    QVERIFY(waitFor([pane] { return !pane->isLoading(); }));
+    QCOMPARE(markFor(pane, QStringLiteral("a.txt")), QString());
+    RepositoryCache::shared().clear();
+    RepositoryStatusCache::shared().clear();
+}
+
+void TestBrowserPaneController::markersSurviveSortingAndFiltering()
+{
+    if (!Repository::isSupported())
+        QSKIP("built without libgit2");
+
+    QTemporaryDir work;
+    QVERIFY(work.isValid());
+    GitFixture checkout(work.path());
+    QVERIFY(checkout.init(QStringLiteral("main")));
+    for (const QString& name :
+        { QStringLiteral("alpha.txt"), QStringLiteral("beta.txt"), QStringLiteral("gamma.txt") }) {
+        QVERIFY(checkout.writeFile(name, "before"));
+    }
+    QVERIFY(!checkout.commitAll(QStringLiteral("first")).isEmpty());
+    QVERIFY(checkout.writeFile(QStringLiteral("beta.txt"), "after"));
+
+    const QString root = mountLocal(work.path());
+    BrowserPaneController* pane = paneOnCheckout(root);
+    QVERIFY(pane);
+    QVERIFY(waitFor([pane] { return pane->repository()->isStatusKnown(); }));
+    QCOMPARE(markFor(pane, QStringLiteral("beta.txt")), QStringLiteral("M"));
+
+    // Reordered. The annotations are keyed by uri, not by row, so a row that moves
+    // takes its mark with it -- which is the whole reason for that shape.
+    pane->files()->setSortDescending(true);
+    QCOMPARE(markFor(pane, QStringLiteral("beta.txt")), QStringLiteral("M"));
+    pane->files()->setSortKey(FileListModel::SortKey::Modified);
+    QCOMPARE(markFor(pane, QStringLiteral("beta.txt")), QStringLiteral("M"));
+
+    // And filtered down to the one row.
+    pane->files()->setFilterText(QStringLiteral("beta"));
+    QCOMPARE(pane->files()->rowCount(), 1);
+    QCOMPARE(markFor(pane, QStringLiteral("beta.txt")), QStringLiteral("M"));
     RepositoryCache::shared().clear();
     RepositoryStatusCache::shared().clear();
 }

@@ -1,5 +1,7 @@
 #include "ui/models/FileListModel.h"
 
+#include "core/vcs/Repository.h"
+
 #include <QCollator>
 #include <QLocale>
 #include <QUrl>
@@ -379,8 +381,8 @@ void FileListModel::setAnnotations(QHash<QString, int> annotations)
         return;
     m_annotations = std::move(annotations);
     if (rowCount() > 0) {
-        emit dataChanged(
-            index(0, 0), index(rowCount() - 1, 0), { HasReportRole, HasAlertRole, AlertTriggeredRole });
+        emit dataChanged(index(0, 0), index(rowCount() - 1, 0),
+            { HasReportRole, HasAlertRole, AlertTriggeredRole, GitStateRole, GitMarkRole });
     }
 }
 
@@ -476,6 +478,10 @@ QVariant FileListModel::data(const QModelIndex& index, int role) const
         return (annotationFor(entry.uri.toString()) & AlertPresent) != 0;
     case AlertTriggeredRole:
         return (annotationFor(entry.uri.toString()) & AlertTriggered) != 0;
+    case GitStateRole:
+        return annotationFor(entry.uri.toString()) >> GitStateShift;
+    case GitMarkRole:
+        return repositoryStateMark(annotationFor(entry.uri.toString()) >> GitStateShift);
     case SelectedRole:
         return m_selected.contains(entry.uri.toString());
     default:
@@ -501,6 +507,8 @@ QHash<int, QByteArray> FileListModel::roleNames() const
         { HasReportRole, "hasReport" },
         { HasAlertRole, "hasAlert" },
         { AlertTriggeredRole, "alertTriggered" },
+        { GitStateRole, "gitState" },
+        { GitMarkRole, "gitMark" },
         { ProvenanceRole, "provenance" },
         { IndexedAtRole, "indexedAt" },
         { MatchLineRole, "matchLine" },

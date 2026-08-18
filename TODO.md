@@ -27,6 +27,20 @@ project, and a contributor should never hit a wall of text they cannot read.
 
 ## Notes
 
+- **A git status walk cannot be interrupted part way, only abandoned.** libgit2 offers
+  no hook inside the stat pass: `git_status_list_new` does the whole of the work
+  before the first entry is available, and `git_status_foreach_ext` is that same call
+  followed by a loop, so a token polled in its callback never interrupted the walk
+  either. Cancellation is checked per entry, which means an abandoned walk stops
+  *carrying* its answer rather than stops working. On a very large checkout a pane
+  navigated away from still pays for the walk it started; what it does not do is show
+  it, or make anything wait. Living with it because the alternative is Mole doing its
+  own stat pass, which would be slower than libgit2's and wrong in different ways.
+- **A file git calls deleted has no row in a listing, so nothing marks it.** Five of
+  the six git states land on a row somebody can see; `D` cannot, because the file is
+  not on disk. The deletion is still counted on the band and still rolls up onto the
+  folder that held it. Whether to synthesise a row for it is MOLE-184 — a decision
+  about what a listing is, not a marker that was forgotten.
 - **A drag that started inside Mole is refused by a check no test can reach.** The
   pane's `DropArea` ignores a drop whose `drag.source` is not null, because pane to
   pane is `F5` and `F6`; and a synthetic drop cannot be given a source, since

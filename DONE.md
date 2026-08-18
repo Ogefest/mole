@@ -9,6 +9,56 @@ wrong.
 
 ---
 
+## The listing did not say which files had changed
+
+**Asked for:** MOLE-104 — the band said three files changed; the listing did not say which
+three, which is the half of this that gets used while actually working. Mark the rows.
+
+**What it turned out to be:** no new mechanism, exactly as the brief said. `setAnnotations()`
+already carries a bitmask keyed by uri from outside the model, and git status is a fourth
+annotation of the same kind — one `dataChanged` over the rows, nothing inserted, removed or
+reordered, so a refresh cannot move the cursor or lose a tick. The git bits are carried in the
+same word as the report and alert bits, shifted rather than re-listed, so "modified" has one
+definition in the code base and there is no translation table to keep in step.
+
+**Two things the fixtures taught us, and both changed the code.**
+
+**A rename is reported under the path that no longer exists.** `git_status_foreach_ext` hands
+the callback one path per entry, and for a rename that path is the *source* — so the letter
+landed on a row nothing draws while the file somebody can see went unmarked. The fix is to
+read the entry's deltas instead, where both paths are available, and mark the destination.
+Which meant moving from the callback form to `git_status_list_new`, and that costs nothing in
+cancellation reach: `foreach_ext` is itself that same call followed by a loop over the
+finished list, so a token polled in its callback never interrupted the stat pass either. That
+is now written down in [TODO.md](TODO.md) rather than left as a comforting comment — an
+abandoned walk stops *carrying* its answer, not working.
+
+**A deleted file has no row to mark.** Five of the six states land on a row somebody can see.
+`D` cannot: a listing shows what is on disk, and the file is not. The deletion is still
+counted on the band and still rolls up onto the folder that held it, which is where it is
+visible — but the file itself is absent, as it is in any other file manager. Marking it means
+synthesising a row for something that is not there, and that is a statement about what a
+listing *is* rather than a marker: a synthesised row is one a user can tick, sort and press
+`F8` at, and every one of those needs an answer. Opened as MOLE-184 with both candidate
+answers written down, and the test asserts the truthful behaviour rather than being quietly
+dropped.
+
+**The colour is keyed off the letter, not off the bitmask.** A path can be several states at
+once, and the letter already resolved that to the one worth showing — conflict, deletion,
+rename, addition, untracked, edit, in that order, because structure beats "modified", which is
+the thing most likely to be true anyway. Deriving the colour from the same letter is what stops
+the two disagreeing. The letter is the signal and the colour only agrees with it, which is
+what [ADR-0010](docs/adr/0010-telling-the-two-buttons-apart.md) asks for.
+
+**A directory carries only the roll-up**, a dot rather than a letter, because none of the six
+aggregates into anything true — "something below here has changed" is the whole of what can
+honestly be said. It is computed in the walk, where the map is already built, and asserted at
+every level down to the file, since any of those folders can be the one on screen.
+
+**The markers survive sorting and filtering, and that is the point of the shape.** Annotations
+are keyed by uri rather than by row, so a row that moves takes its mark with it. Asserted by
+reordering twice and filtering down to one row.
+
 ## Nothing walked the work tree, so nothing knew what had changed
 
 **Asked for:** MOLE-103 — the band named the branch, which is the fact that costs nothing.

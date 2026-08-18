@@ -58,6 +58,12 @@ public:
         /// The container this row lives inside, named rather than left as a
         /// uri nobody recognises. Empty for an ordinary file.
         ContainerNameRole,
+        /// What git says about this row: a RepositoryFileState bitmask, nought for
+        /// a row in no work tree or one nothing has happened to.
+        GitStateRole,
+        /// The single letter that stands for it -- `M`, `A`, `??`. Empty when
+        /// there is nothing to mark, which is what leaves the column out.
+        GitMarkRole,
     };
 
     /// Where a row came from.
@@ -80,6 +86,11 @@ public:
         ReportPresent = 1 << 0,
         AlertPresent = 1 << 1,
         AlertTriggered = 1 << 2,
+        /// Where git's own states begin in the same word. The seven
+        /// RepositoryFileState bits are carried up here shifted rather than
+        /// re-listed, so "modified" has one definition in the code base and there
+        /// is no table to keep in step with it.
+        GitStateShift = 3,
     };
 
     explicit FileListModel(QObject* parent = nullptr);
@@ -88,6 +99,12 @@ public:
     /// Computed by the pane controller, which is the only layer with both the
     /// listing and the stores; the model just carries it to the delegate.
     void setAnnotations(QHash<QString, int> annotations);
+
+    /// Everything the model holds, filter and sort ignored.
+    ///
+    /// What a re-annotation walks: git status arrives after the listing does, and
+    /// marking the rows again must not depend on the listing being fetched twice.
+    const FileEntryList& allEntries() const { return m_all; }
 
     /// Replaces the contents.
     void setEntries(FileEntryList entries);

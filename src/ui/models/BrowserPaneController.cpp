@@ -111,6 +111,7 @@ void BrowserPaneController::readStatus(const QString& root)
 
     if (root.isEmpty() || !m_services.tasks) {
         m_repository->clearStatus();
+        annotateListing(m_files->allEntries());
         return;
     }
 
@@ -121,6 +122,7 @@ void BrowserPaneController::readStatus(const QString& root)
     const RepositoryStatus known = RepositoryStatusCache::shared().forRoot(root);
     if (known.complete) {
         m_repository->setStatus(root, known);
+        annotateListing(m_files->allEntries());
         return;
     }
 
@@ -142,6 +144,11 @@ void BrowserPaneController::readStatus(const QString& root)
             // one in view, so a walk that outlived its pane's navigation is spent
             // rather than wrong.
             m_repository->setStatus(walked, status);
+            // The listing landed before the walk did, so the rows are marked here
+            // rather than when they arrived. setAnnotations() is one dataChanged
+            // over the rows: nothing is inserted, removed or reordered, so the
+            // cursor and the ticks stay where the user left them.
+            annotateListing(m_files->allEntries());
         });
 
     connect(task, &Task::finished, this, [this, task] {
@@ -175,9 +182,23 @@ void BrowserPaneController::annotateListing(const FileEntryList& entries)
         }
     }
 
+    // Git status, when a walk has answered for the work tree in view. Looked up by
+    // local path rather than by uri: the walk answers in the paths a kernel
+    // understands, and a row's uri can be spelled more than one way.
+    const RepositoryStatus& status = m_repository->status();
+    const bool marking = m_repository->isPresent() && m_repository->isStatusKnown();
+
     for (const FileEntry& entry : entries) {
         const QString uri = entry.uri.toString();
         int flags = alerted.value(uri, FileListModel::NoAnnotation);
+
+        if (marking) {
+            const QString localPath = entry.uri.toLocalPath();
+            if (!localPath.isEmpty()) {
+                if (const int state = status.stateFor(localPath); state != RepositoryUnchanged)
+                    flags |= state << FileListModel::GitStateShift;
+            }
+        }
 
         // Only folders can have a report; testing files would hash five
         // thousand names to answer no five thousand times.

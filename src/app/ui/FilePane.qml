@@ -675,6 +675,7 @@ FocusScope {
                 required property bool hasReport
                 required property bool hasAlert
                 required property bool alertTriggered
+                required property string gitMark
 
                 width: ListView.view.width
                 // From the scale, so raising the text size cannot crop a row.
@@ -788,6 +789,36 @@ FocusScope {
                                 color: alertTriggered ? "#e5534b" : "#8b93a7"
                                 font.pixelSize: App.smallTextSize
                             }
+                        }
+
+                        // What git says about this row. git's own letter, which is
+                        // the signal -- the colour only agrees with it, because a
+                        // mark that means something in colour alone means nothing
+                        // to a reader who cannot separate two of them (ADR-0010).
+                        //
+                        // Invisible rather than empty when there is nothing to say,
+                        // so a folder in no checkout has no column here at all.
+                        Label {
+                            objectName: "gitMarker"
+                            visible: gitMark.length > 0
+                            width: visible ? 18 : 0
+                            horizontalAlignment: Text.AlignHCenter
+                            text: gitMark
+                            font.pixelSize: App.smallTextSize
+                            font.bold: true
+                            // Keyed off the letter rather than off the bitmask,
+                            // so the colour cannot disagree with the mark: the
+                            // letter already resolved "several states at once" to
+                            // the one worth showing.
+                            color: switch (gitMark) {
+                                   case "U": return "#e5534b"   // conflicted
+                                   case "D": return "#e5534b"   // deleted
+                                   case "A": return "#5fb977"   // added
+                                   case "R": return "#7cc4ff"   // renamed
+                                   case "M": return "#d9a441"   // modified
+                                   case "??": return "#8b93a7"  // untracked
+                                   default: return "#6f7788"    // something inside
+                                   }
                         }
                     }
 

@@ -31,6 +31,25 @@ QString RepositoryHead::stateText() const
     return {};
 }
 
+QString repositoryStateMark(int state)
+{
+    if ((state & RepositoryConflicted) != 0)
+        return QStringLiteral("U");
+    if ((state & RepositoryDeleted) != 0)
+        return QStringLiteral("D");
+    if ((state & RepositoryRenamed) != 0)
+        return QStringLiteral("R");
+    if ((state & RepositoryAdded) != 0)
+        return QStringLiteral("A");
+    if ((state & RepositoryUntracked) != 0)
+        return QStringLiteral("??");
+    if ((state & RepositoryModified) != 0)
+        return QStringLiteral("M");
+    if ((state & RepositoryContainsChanges) != 0)
+        return QStringLiteral("\u2022");
+    return {};
+}
+
 bool Repository::isSupported()
 {
 #ifdef MOLE_HAVE_GIT2
@@ -141,41 +160,21 @@ namespace {
         return out;
     }
 
-    /// What one walk is filling in, handed to the callback as its payload.
-    struct StatusWalk
+    /// Records one changed path, and marks every directory above it.
+    ///
+    /// `relative` is as git spells it, from the work tree root.
+    void recordStatus(RepositoryStatus& out, const QString& root, QString relative, int state)
     {
-        const CancelToken* cancel;
-        const QString* root;
-        RepositoryStatus* out;
-    };
-
-    /// Called once per changed path. Returning non-zero aborts the walk, which is
-    /// the whole of cooperative cancellation here.
-    int collectStatus(const char* path, unsigned int flags, void* payload)
-    {
-        auto* walk = static_cast<StatusWalk*>(payload);
-        if (walk->cancel->isCancelled())
-            return -1;
-        if (!path)
-            return 0;
-
         // An untracked directory arrives with a trailing separator, because that is
-        // what git reports when nothing inside it is tracked -- `?? newdir/`. The
-        // row that stands for it in a listing is the directory, so the separator
-        // comes off and the mark lands on the folder rather than on a path that is
-        // not in the list.
-        QString relative = QString::fromUtf8(path);
+        // what git reports when nothing inside it is tracked -- `?? newdir/`. The row
+        // that stands for it in a listing is the directory, so the separator comes
+        // off and the mark lands on the folder rather than on a path nothing shows.
         while (relative.endsWith(QLatin1Char('/')))
             relative.chop(1);
         if (relative.isEmpty())
-            return 0;
+            return;
 
-        const int state = mapStatusFlags(flags);
-        if (state == RepositoryUnchanged)
-            return 0;
-
-        walk->out->byPath[*walk->root + QLatin1Char('/') + relative] |= state;
-        ++walk->out->changedCount;
+        out.byPath[root + QLatin1Char('/') + relative] |= state;
 
         // And every directory above it, up to but not including the work tree root:
         // a folder on screen is marked when anything below it has changed, however
@@ -184,9 +183,24 @@ namespace {
         for (int slash = relative.lastIndexOf(QLatin1Char('/')); slash > 0;
              slash = relative.lastIndexOf(QLatin1Char('/'))) {
             relative.truncate(slash);
-            walk->out->byPath[*walk->root + QLatin1Char('/') + relative] |= RepositoryContainsChanges;
+            out.byPath[root + QLatin1Char('/') + relative] |= RepositoryContainsChanges;
         }
-        return 0;
+    }
+
+    /// The path a listing can actually mark, out of a delta that may name two.
+    ///
+    /// For a rename that is the destination: the source is not on disk any more, so
+    /// marking it puts the letter on a row nothing draws, and the file somebody can
+    /// see goes unmarked. For everything else the two are the same path.
+    QString pathToMark(const git_diff_delta* delta)
+    {
+        if (!delta)
+            return {};
+        if (delta->new_file.path)
+            return QString::fromUtf8(delta->new_file.path);
+        if (delta->old_file.path)
+            return QString::fromUtf8(delta->old_file.path);
+        return {};
     }
 
     /// The work tree path libgit2 answers with, in the form the rest of Mole uses:
@@ -373,17 +387,51 @@ RepositoryStatus Repository::readStatus(const CancelToken& cancel) const
     options.flags = GIT_STATUS_OPT_INCLUDE_UNTRACKED | GIT_STATUS_OPT_RENAMES_HEAD_TO_INDEX
         | GIT_STATUS_OPT_RENAMES_INDEX_TO_WORKDIR;
 
-    StatusWalk walk { &cancel, &m_root, &out };
-    const int rc = git_status_foreach_ext(m_repo, &options, &collectStatus, &walk);
-    // Anything other than nought means the walk did not finish -- the callback
-    // aborting on cancellation, or git failing part way. Either way what was
-    // collected is a partial answer, and the flag is how a caller knows not to
-    // show it.
-    out.complete = (rc == 0) && !cancel.isCancelled();
-    if (!out.complete) {
-        out.byPath.clear();
-        out.changedCount = 0;
+    // The list rather than git_status_foreach_ext, for the renames. The callback
+    // form is handed one path per entry, and for a rename that path is the source --
+    // which is not on disk any more, so the letter would land on a row nothing draws
+    // while the file somebody can see went unmarked. An entry carries both deltas
+    // and so both paths.
+    //
+    // It costs nothing in reach: foreach_ext is itself a list built in full and then
+    // iterated, so a token polled in its callback never interrupted the stat pass
+    // either. libgit2 offers no hook inside that pass, so cancellation is checked
+    // per entry here, and what an abandoned walk saves is the answer being carried
+    // any further -- not the walk. See TODO.md.
+    git_status_list* list = nullptr;
+    if (git_status_list_new(&list, m_repo, &options) != 0)
+        return out;
+
+    const size_t entries = git_status_list_entrycount(list);
+    for (size_t i = 0; i < entries; ++i) {
+        if (cancel.isCancelled()) {
+            git_status_list_free(list);
+            // Empty rather than partial. Half a walk marks half a listing correctly
+            // and the rest as clean, and a listing that calls a changed file
+            // unchanged is worse than one that says nothing at all.
+            return RepositoryStatus {};
+        }
+
+        const git_status_entry* entry = git_status_byindex(list, i);
+        if (!entry)
+            continue;
+        const int state = mapStatusFlags(entry->status);
+        if (state == RepositoryUnchanged)
+            continue;
+
+        // One entry is one change however many paths name it, so that the count
+        // agrees with what `git status` says.
+        ++out.changedCount;
+        const QString staged = pathToMark(entry->head_to_index);
+        const QString working = pathToMark(entry->index_to_workdir);
+        if (!staged.isEmpty())
+            recordStatus(out, m_root, staged, state);
+        if (!working.isEmpty() && working != staged)
+            recordStatus(out, m_root, working, state);
     }
+
+    git_status_list_free(list);
+    out.complete = !cancel.isCancelled();
 #else
     Q_UNUSED(cancel);
 #endif

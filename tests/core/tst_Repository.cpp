@@ -51,6 +51,7 @@ private slots:
     void aDirectoryIsMarkedForWhatIsInsideItAtEveryLevel();
     void anUntrackedFolderIsOneChangeRatherThanItsContents();
     void aCancelledWalkAnswersWithNothingRatherThanWithHalf();
+    void aStagedRenameIsNamedAsOne();
     void theWalkTaskCountsAndCaches();
     void aSecondWalkOfOneWorkTreeTakesTheAnswerAlreadyThere();
     void aCancelledWalkTaskSaysCancelledAndTellsNobody();
@@ -503,6 +504,39 @@ void TestRepository::aCancelledWalkAnswersWithNothingRatherThanWithHalf()
     const RepositoryStatus full = handle->readStatus(CancelToken {});
     QVERIFY(full.complete);
     QCOMPARE(full.changedCount, 20);
+}
+
+void TestRepository::aStagedRenameIsNamedAsOne()
+{
+    MOLE_REQUIRE_GIT();
+
+    TempTree tree;
+    QVERIFY(tree.isValid());
+    GitFixture repository(tree.path());
+    QVERIFY(repository.init());
+    QVERIFY(repository.writeFile(QStringLiteral("moved.txt"), "content that stays the same\n"));
+    QVERIFY(!repository.commitAll(QStringLiteral("first")).isEmpty());
+
+    QVERIFY(repository.removeFile(QStringLiteral("moved.txt")));
+    QVERIFY(repository.writeFile(QStringLiteral("elsewhere.txt"), "content that stays the same\n"));
+    QVERIFY(repository.stageAll());
+
+    const std::shared_ptr<Repository> handle = RepositoryCache::shared().forPath(tree.path());
+    QVERIFY(handle);
+    const RepositoryStatus status = handle->readStatus(CancelToken {});
+    const QString root = handle->root();
+
+    QVERIFY(status.complete);
+    // One change, not two: git works a rename out by matching content, and a move is
+    // one thing that happened rather than a deletion and an addition.
+    QCOMPARE(status.changedCount, 1);
+
+    // On the destination, which is the file that is on disk and therefore the only
+    // one with a row in a listing. libgit2's per-path callback hands over the source
+    // instead, which is why this walk reads the deltas rather than using it.
+    QCOMPARE(
+        repositoryStateMark(status.stateFor(root + QStringLiteral("/elsewhere.txt"))), QStringLiteral("R"));
+    QVERIFY(!status.byPath.contains(root + QStringLiteral("/moved.txt")));
 }
 
 void TestRepository::theWalkTaskCountsAndCaches()

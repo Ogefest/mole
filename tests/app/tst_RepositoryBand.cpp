@@ -12,6 +12,7 @@
 #include <QGuiApplication>
 #include <QQuickItem>
 #include <QQuickStyle>
+#include <QStringList>
 #include <QTest>
 
 using namespace mole;
@@ -41,6 +42,7 @@ private slots:
     void anInterruptedRebaseSaysSo();
     void movingBetweenTwoCheckoutsShowsEachBranch();
     void theBandCountsWhatHasChangedAndSaysWhenNothingHas();
+    void aChangedRowIsMarkedInTheListing();
 
 private:
     BrowserPaneController* pane() const;
@@ -53,6 +55,9 @@ private:
     QString headText() const;
     /// What the band says about how much has changed, empty until the walk lands.
     QString changesText() const;
+    /// Every git letter drawn in the listing right now, sorted so the assertion
+    /// does not depend on what order the delegates were built in.
+    QStringList markers() const;
     /// How tall the listing is right now, which is the measurement the "no strip
     /// reserving height" claim is made of.
     qreal listingHeight() const;
@@ -151,6 +156,17 @@ QString TestRepositoryBand::changesText() const
             return label->property("text").toString();
     }
     return {};
+}
+
+QStringList TestRepositoryBand::markers() const
+{
+    QStringList out;
+    for (QQuickItem* marker : m_harness->items(QStringLiteral("gitMarker"))) {
+        if (marker->isVisible())
+            out.append(marker->property("text").toString());
+    }
+    out.sort();
+    return out;
 }
 
 qreal TestRepositoryBand::listingHeight() const
@@ -280,6 +296,27 @@ void TestRepositoryBand::theBandCountsWhatHasChangedAndSaysWhenNothingHas()
     goTo(QStringLiteral("plain"), QString());
     QVERIFY(!band()->isVisible());
     QVERIFY(changesText().isEmpty());
+}
+
+void TestRepositoryBand::aChangedRowIsMarkedInTheListing()
+{
+    const std::unique_ptr<GitFixture> checkout = checkoutAt(QStringLiteral("work"));
+    QVERIFY(checkout);
+    QVERIFY(checkout->writeFile(QStringLiteral("readme.md"), "hello, edited\n"));
+    QVERIFY(checkout->writeFile(QStringLiteral("fresh.txt"), "new\n"));
+
+    goTo(QStringLiteral("work"), QStringLiteral("main"));
+
+    // The model tests prove which letter each state gets; this proves a letter ever
+    // reaches the screen -- the delegate is where a role that nothing binds to looks
+    // exactly like a role that works.
+    QVERIFY2(m_harness->until(
+                 [this] { return markers() == QStringList { QStringLiteral("??"), QStringLiteral("M") }; }),
+        qPrintable(QStringLiteral("the listing draws %1").arg(markers().join(QLatin1Char(' ')))));
+
+    // And a folder in no checkout draws none at all, so there is no column there.
+    goTo(QStringLiteral("plain"), QString());
+    QVERIFY(m_harness->until([this] { return markers().isEmpty(); }));
 }
 
 // A real window, so a real QGuiApplication rather than the guiless one every
