@@ -9,6 +9,7 @@
 #include "core/tasks/TaskManager.h"
 #include "core/tasks/TransferTask.h"
 #include "core/vcs/ReadRepositoryTask.h"
+#include "core/vcs/ReadStatusTask.h"
 #include "core/vfs/VfsManager.h"
 #include "core/vfs/backends/LocalFileSystem.h"
 
@@ -33,6 +34,8 @@ BrowserPaneController::~BrowserPaneController()
         m_pending->requestCancel();
     if (m_repositoryPending)
         m_repositoryPending->requestCancel();
+    if (m_statusPending)
+        m_statusPending->requestCancel();
 }
 
 QString BrowserPaneController::displayPath() const
@@ -77,11 +80,75 @@ void BrowserPaneController::readRepository()
             if (m_repositoryPending != task || path != m_current.toLocalPath())
                 return;
             m_repository->setHead(root, head);
+            // The branch is on the band by now; what has changed in the tree costs a
+            // walk, so it is asked for second and arrives second.
+            readStatus(root);
         });
 
     connect(task, &Task::finished, this, [this, task] {
         if (m_repositoryPending == task)
             m_repositoryPending.clear();
+    });
+
+    m_services.tasks->submit(task);
+}
+
+void BrowserPaneController::readStatus(const QString& root)
+{
+    // A walk of a work tree nobody is looking at any more is work for nobody.
+    // Abandoned rather than left to finish, because on a large checkout that is the
+    // difference between a window that answers and one that is busy for seconds
+    // after the user has moved on.
+    //
+    // Only when the work tree changed, though. Moving from `src/` to `tests/` is
+    // still waiting on the same walk, and cancelling it there would mean starting
+    // it again from the top.
+    if (m_statusPending && m_statusWalkRoot != root) {
+        m_statusPending->requestCancel();
+        m_statusPending.clear();
+        m_statusWalkRoot.clear();
+    }
+
+    if (root.isEmpty() || !m_services.tasks) {
+        m_repository->clearStatus();
+        return;
+    }
+
+    // Somebody has walked this work tree already -- the other pane, or this one
+    // before the user moved between two folders in the same checkout. One walk per
+    // checkout is the rule, and this is where it is kept: no task is submitted at
+    // all, so there is nothing to cancel and nothing on the strip.
+    const RepositoryStatus known = RepositoryStatusCache::shared().forRoot(root);
+    if (known.complete) {
+        m_repository->setStatus(root, known);
+        return;
+    }
+
+    // Already walking this very work tree, for the folder the user was in a moment
+    // ago. Its answer covers this folder too -- that is what a work tree walk is --
+    // so there is nothing to start.
+    if (m_statusPending)
+        return;
+
+    auto* task = new ReadStatusTask(m_current.toLocalPath());
+    m_statusPending = task;
+    m_statusWalkRoot = root;
+
+    connect(task, &ReadStatusTask::statusRead, this,
+        [this, task](const QString& walked, const RepositoryStatus& status) {
+            if (m_statusPending != task)
+                return;
+            // setStatus() drops an answer about a work tree that is no longer the
+            // one in view, so a walk that outlived its pane's navigation is spent
+            // rather than wrong.
+            m_repository->setStatus(walked, status);
+        });
+
+    connect(task, &Task::finished, this, [this, task] {
+        if (m_statusPending == task) {
+            m_statusPending.clear();
+            m_statusWalkRoot.clear();
+        }
     });
 
     m_services.tasks->submit(task);

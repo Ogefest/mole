@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-18 #MOLE-103 The band above a listing says how much of the checkout has changed, or that it is clean — one walk of the work tree per checkout rather than one per folder, on a worker, and abandoned when you navigate out of it
 2026-08-18 #MOLE-102 A folder inside a git checkout says which branch it is on, in a band above the listing — the state instead when git is part-way through a rebase or a merge, the commit when HEAD is detached, and no band at all for a folder that is not a checkout
 2026-08-11 #MOLE-88 A file on an archive or a network drive can be dragged out too: the first drag fetches it and says so, the next one carries it, and dragging the same file twice fetches it once
 2026-08-11 #MOLE-87 Files dropped onto a listing are copied into the folder it is showing, with the pane saying how many and where while the pointer is still moving, and the copy confirmation asking before any name is overwritten

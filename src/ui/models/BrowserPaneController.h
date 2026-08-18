@@ -16,6 +16,7 @@ namespace mole {
 
 class ListDirectoryTask;
 class ReadRepositoryTask;
+class ReadStatusTask;
 
 /// One navigable pane: current location, history, and the listing shown in it.
 ///
@@ -166,6 +167,13 @@ private:
     /// a `file://` uri leaves the pane with nothing to say, which is what makes
     /// the band absent there. See ADR-0041.
     void readRepository();
+    /// Asks what has changed in the work tree at `root`, on a worker.
+    ///
+    /// Chained off the branch read rather than run beside it: the branch is a
+    /// handful of reference reads and belongs on the band at once, and this stats
+    /// every file git tracks. An answer already in RepositoryStatusCache is taken
+    /// as it is, which is what makes moving between folders in one checkout free.
+    void readStatus(const QString& root);
     /// The entry to select on arrival, or an empty string for "the first row".
     /// Set by revealFile(), consumed by the next listing that lands.
     QString m_pendingReveal;
@@ -194,6 +202,12 @@ private:
     /// The git read in flight, so an answer about a folder somebody has already
     /// left cannot land in the band.
     QPointer<ReadRepositoryTask> m_repositoryPending;
+    /// The work tree walk in flight, for the same reason.
+    QPointer<ReadStatusTask> m_statusPending;
+    /// Which work tree that walk is of, so navigating inside one checkout can tell
+    /// itself apart from navigating out of it. The task cannot answer this until it
+    /// has run, and the decision has to be made before then.
+    QString m_statusWalkRoot;
 };
 
 } // namespace mole

@@ -9,6 +9,64 @@ wrong.
 
 ---
 
+## Nothing walked the work tree, so nothing knew what had changed
+
+**Asked for:** MOLE-103 — the band named the branch, which is the fact that costs nothing.
+Everything else worth knowing about a checkout comes from one walk of the work tree, and
+nothing walked it. Build the walk and put its summary on the band.
+
+**What it turned out to be:** `Repository::readStatus()` over `git_status_foreach_ext`, a
+`ReadStatusTask` to run it on a worker, and a `RepositoryStatusCache` keyed by work tree
+root. The cache is the part worth explaining, because the obvious place for it was wrong: a
+field on `Repository` would have been read under the lock a walk holds for its whole
+duration, so a pane asking what had changed would have waited for the walk — on the UI
+thread, which is the one rule this application does not bend. A cache with its own mutex,
+never held for longer than a hash lookup, is what makes one walk serve every folder.
+
+**One walk per checkout is kept in three places**, because a stat of the whole work tree per
+folder navigated into would make this the most expensive thing in the window. The controller
+does not submit when the cache already has the answer; it does not submit a second time when
+a walk of the same work tree is already in flight; and the task itself checks again when it
+starts, because it can sit in the queue behind a copy long enough for somebody else's walk
+to finish. The test counts submissions through `taskAppended` rather than reading the task
+list afterwards — a finished task can be retired out of that list, and a test that passes
+because the evidence was tidied away is not a test.
+
+**Cancellation is one line in the callback and a decision about the result.** Returning
+non-zero from the per-path callback aborts the walk, so the token is polled there. What the
+abandoned walk answers with is the interesting half: nothing, not what it had reached. Half a
+walk would mark half a listing correctly and the rest as clean, and a listing that calls a
+changed file unchanged is worse than one that says nothing at all — that is the failure mode
+this whole feature has.
+
+**Navigating out of a checkout abandons its walk; navigating inside one does not.** The
+distinction needed a member the task could not supply: which work tree the walk in flight is
+of, remembered when it is submitted, because the task cannot answer that until it has run and
+the decision has to be made before then. Moving from `src/` to `tests/` is still waiting on
+the same walk, and cancelling it there would only mean starting it again.
+
+**Directories are rolled up in the walk rather than by whoever draws the listing.** git
+answers with paths to files; a listing shows folders. Without the roll-up, opening a checkout
+at its root shows a clean-looking list of directories over a tree full of edits. A folder
+carries only *something inside here changed* — which of the six states is inside does not
+aggregate into anything true.
+
+**Two things libgit2 gets right and this follows.** Ignored files are excluded, so a build
+directory does not bury every real change under thousands of marks. And untracked directories
+are not recursed into: git reports a wholly untracked folder as the folder, which is the row a
+listing actually has, so a new directory of a hundred files is one change rather than a
+hundred.
+
+**The count says "clean" rather than "0 changed".** A count of nought is a sentence about
+arithmetic; what somebody wants to know is whether there is anything to deal with. And the
+count is absent, not zero, until the walk has answered — a band that said "clean" for the
+moment before the walk landed would be telling a lie that reads exactly like the truth.
+
+**That the walk is off the UI thread is asserted rather than assumed.** A direct connection to
+the task's own signal runs on the thread that emitted it, so the test records the thread the
+walk ran on and compares it with the one drawing the window. No clock, and no large fixture
+needed to make the point.
+
 ## A folder that was a checkout looked exactly like one that was not
 
 **Asked for:** MOLE-102 — the branch is the single most useful thing to know about a

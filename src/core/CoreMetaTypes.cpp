@@ -32,6 +32,7 @@ void registerCoreMetaTypes()
     // Crosses a thread boundary: git state is read on a pool thread and shown by
     // the band above a listing.
     qRegisterMetaType<RepositoryHead>("mole::RepositoryHead");
+    qRegisterMetaType<RepositoryStatus>("mole::RepositoryStatus");
 }
 
 } // namespace mole

@@ -113,6 +113,82 @@ namespace {
         return QString::fromLatin1(buffer);
     }
 
+    /// git's own flags, folded into the six states a listing can draw.
+    ///
+    /// Index and work tree are folded together on purpose: Mole shows what is
+    /// different from the last commit, and "staged" is a distinction only a git
+    /// client that can unstage has any use for -- this one cannot (ADR-0041).
+    int mapStatusFlags(unsigned int flags)
+    {
+        int out = RepositoryUnchanged;
+        // Conflicted first, and on its own: a conflicted path also carries
+        // modified bits, and "modified" is the less urgent half of that truth.
+        if ((flags & GIT_STATUS_CONFLICTED) != 0)
+            return RepositoryConflicted;
+        if ((flags & (GIT_STATUS_INDEX_NEW)) != 0)
+            out |= RepositoryAdded;
+        if ((flags & GIT_STATUS_WT_NEW) != 0)
+            out |= RepositoryUntracked;
+        if ((flags
+                & (GIT_STATUS_INDEX_MODIFIED | GIT_STATUS_WT_MODIFIED | GIT_STATUS_INDEX_TYPECHANGE
+                    | GIT_STATUS_WT_TYPECHANGE))
+            != 0)
+            out |= RepositoryModified;
+        if ((flags & (GIT_STATUS_INDEX_DELETED | GIT_STATUS_WT_DELETED)) != 0)
+            out |= RepositoryDeleted;
+        if ((flags & (GIT_STATUS_INDEX_RENAMED | GIT_STATUS_WT_RENAMED)) != 0)
+            out |= RepositoryRenamed;
+        return out;
+    }
+
+    /// What one walk is filling in, handed to the callback as its payload.
+    struct StatusWalk
+    {
+        const CancelToken* cancel;
+        const QString* root;
+        RepositoryStatus* out;
+    };
+
+    /// Called once per changed path. Returning non-zero aborts the walk, which is
+    /// the whole of cooperative cancellation here.
+    int collectStatus(const char* path, unsigned int flags, void* payload)
+    {
+        auto* walk = static_cast<StatusWalk*>(payload);
+        if (walk->cancel->isCancelled())
+            return -1;
+        if (!path)
+            return 0;
+
+        // An untracked directory arrives with a trailing separator, because that is
+        // what git reports when nothing inside it is tracked -- `?? newdir/`. The
+        // row that stands for it in a listing is the directory, so the separator
+        // comes off and the mark lands on the folder rather than on a path that is
+        // not in the list.
+        QString relative = QString::fromUtf8(path);
+        while (relative.endsWith(QLatin1Char('/')))
+            relative.chop(1);
+        if (relative.isEmpty())
+            return 0;
+
+        const int state = mapStatusFlags(flags);
+        if (state == RepositoryUnchanged)
+            return 0;
+
+        walk->out->byPath[*walk->root + QLatin1Char('/') + relative] |= state;
+        ++walk->out->changedCount;
+
+        // And every directory above it, up to but not including the work tree root:
+        // a folder on screen is marked when anything below it has changed, however
+        // deep. The root itself is left out because a pane showing it is a pane
+        // inside the checkout, not a row standing for it.
+        for (int slash = relative.lastIndexOf(QLatin1Char('/')); slash > 0;
+             slash = relative.lastIndexOf(QLatin1Char('/'))) {
+            relative.truncate(slash);
+            walk->out->byPath[*walk->root + QLatin1Char('/') + relative] |= RepositoryContainsChanges;
+        }
+        return 0;
+    }
+
     /// The work tree path libgit2 answers with, in the form the rest of Mole uses:
     /// no trailing separator, so it can be compared with a uri's path and used as a
     /// map key without two spellings of one directory.
@@ -270,6 +346,80 @@ RepositoryHead Repository::head() const
     git_reference_free(ref);
 #endif
     return out;
+}
+
+RepositoryStatus Repository::readStatus(const CancelToken& cancel) const
+{
+    RepositoryStatus out;
+#ifdef MOLE_HAVE_GIT2
+    QMutexLocker locker(&m_mutex);
+    if (!m_repo)
+        return out;
+    if (cancel.isCancelled())
+        return out;
+
+    git_status_options options = GIT_STATUS_OPTIONS_INIT;
+    options.show = GIT_STATUS_SHOW_INDEX_AND_WORKDIR;
+    // Untracked files are included because a file the user has just made is the
+    // most interesting thing in a folder, and .gitignore is honoured because
+    // libgit2 honours it unless told otherwise. GIT_STATUS_OPT_INCLUDE_IGNORED is
+    // deliberately absent: a build directory would otherwise bury every real
+    // change under thousands of marks nobody wants.
+    //
+    // Untracked directories are not recursed into either. git reports a folder
+    // whose contents are all untracked as the folder, and that is the row a
+    // listing has -- recursing would report a hundred files inside a new
+    // directory and count a hundred changes where git counts one.
+    options.flags = GIT_STATUS_OPT_INCLUDE_UNTRACKED | GIT_STATUS_OPT_RENAMES_HEAD_TO_INDEX
+        | GIT_STATUS_OPT_RENAMES_INDEX_TO_WORKDIR;
+
+    StatusWalk walk { &cancel, &m_root, &out };
+    const int rc = git_status_foreach_ext(m_repo, &options, &collectStatus, &walk);
+    // Anything other than nought means the walk did not finish -- the callback
+    // aborting on cancellation, or git failing part way. Either way what was
+    // collected is a partial answer, and the flag is how a caller knows not to
+    // show it.
+    out.complete = (rc == 0) && !cancel.isCancelled();
+    if (!out.complete) {
+        out.byPath.clear();
+        out.changedCount = 0;
+    }
+#else
+    Q_UNUSED(cancel);
+#endif
+    return out;
+}
+
+RepositoryStatusCache& RepositoryStatusCache::shared()
+{
+    static RepositoryStatusCache cache;
+    return cache;
+}
+
+RepositoryStatus RepositoryStatusCache::forRoot(const QString& root) const
+{
+    QMutexLocker locker(&m_mutex);
+    return m_byRoot.value(root);
+}
+
+void RepositoryStatusCache::store(const QString& root, RepositoryStatus status)
+{
+    if (root.isEmpty() || !status.complete)
+        return;
+    QMutexLocker locker(&m_mutex);
+    m_byRoot.insert(root, std::move(status));
+}
+
+void RepositoryStatusCache::forget(const QString& root)
+{
+    QMutexLocker locker(&m_mutex);
+    m_byRoot.remove(root);
+}
+
+void RepositoryStatusCache::clear()
+{
+    QMutexLocker locker(&m_mutex);
+    m_byRoot.clear();
 }
 
 RepositoryCache& RepositoryCache::shared()

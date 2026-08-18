@@ -4,10 +4,12 @@
 
 #include "core/tasks/TaskManager.h"
 #include "core/vcs/ReadRepositoryTask.h"
+#include "core/vcs/ReadStatusTask.h"
 #include "core/vcs/Repository.h"
 
 #include <QDir>
 #include <QFileInfo>
+#include <QThread>
 
 using namespace mole;
 using namespace mole::test;
@@ -44,6 +46,15 @@ private slots:
     void theTaskAnswersWithTheRootAndTheBranch();
     void theTaskAnswersThatThereIsNoRepositoryRatherThanFailing();
 
+    void theWalkNamesWhatHasChangedAndCountsIt();
+    void anIgnoredFileIsNeitherMarkedNorCounted();
+    void aDirectoryIsMarkedForWhatIsInsideItAtEveryLevel();
+    void anUntrackedFolderIsOneChangeRatherThanItsContents();
+    void aCancelledWalkAnswersWithNothingRatherThanWithHalf();
+    void theWalkTaskCountsAndCaches();
+    void aSecondWalkOfOneWorkTreeTakesTheAnswerAlreadyThere();
+    void aCancelledWalkTaskSaysCancelledAndTellsNobody();
+
     void withoutGitSupportNothingIsClaimed();
 
 private:
@@ -57,6 +68,9 @@ void TestRepository::cleanup()
     // The cache holds an open handle per repository, and every fixture here is a
     // temporary directory that is about to be deleted.
     RepositoryCache::shared().clear();
+    // And the status cache holds an answer per work tree, keyed by a path the next
+    // temporary directory could be given again.
+    RepositoryStatusCache::shared().clear();
 }
 
 void TestRepository::aPathInsideACheckoutAnswersWithItsRoot()
@@ -321,6 +335,293 @@ void TestRepository::theTaskAnswersThatThereIsNoRepositoryRatherThanFailing()
     QCOMPARE(answers, 1);
     QVERIFY(seenRoot.isEmpty());
     QVERIFY(!task->head().isValid());
+}
+
+void TestRepository::theWalkNamesWhatHasChangedAndCountsIt()
+{
+    MOLE_REQUIRE_GIT();
+
+    TempTree tree;
+    QVERIFY(tree.isValid());
+    GitFixture repository(tree.path());
+    QVERIFY(repository.init());
+    QVERIFY(repository.writeFile(QStringLiteral("kept.txt"), "kept"));
+    QVERIFY(repository.writeFile(QStringLiteral("edited.txt"), "before"));
+    QVERIFY(repository.writeFile(QStringLiteral("removed.txt"), "gone soon"));
+    QVERIFY(!repository.commitAll(QStringLiteral("first")).isEmpty());
+
+    QVERIFY(repository.writeFile(QStringLiteral("edited.txt"), "after"));
+    QVERIFY(repository.removeFile(QStringLiteral("removed.txt")));
+    QVERIFY(repository.writeFile(QStringLiteral("fresh.txt"), "new"));
+    QVERIFY(repository.writeFile(QStringLiteral("staged.txt"), "new and staged"));
+    QVERIFY(repository.stageAll());
+
+    const std::shared_ptr<Repository> handle = RepositoryCache::shared().forPath(tree.path());
+    QVERIFY(handle);
+    const RepositoryStatus status = handle->readStatus(CancelToken {});
+
+    QVERIFY(status.complete);
+    const QString root = handle->root();
+    // stageAll() staged the lot, so what was an edit is a staged edit and what was
+    // untracked is added. Both are folded into one answer per path on purpose --
+    // Mole shows what differs from the last commit, and cannot unstage anything.
+    QVERIFY((status.stateFor(root + QStringLiteral("/edited.txt")) & RepositoryModified) != 0);
+    QVERIFY((status.stateFor(root + QStringLiteral("/removed.txt")) & RepositoryDeleted) != 0);
+    QVERIFY((status.stateFor(root + QStringLiteral("/fresh.txt")) & RepositoryAdded) != 0);
+    QVERIFY((status.stateFor(root + QStringLiteral("/staged.txt")) & RepositoryAdded) != 0);
+
+    // The file nobody touched is absent from the map rather than present and zero,
+    // which is what keeps the map the size of the changes instead of the checkout.
+    QVERIFY(!status.byPath.contains(root + QStringLiteral("/kept.txt")));
+    QCOMPARE(status.stateFor(root + QStringLiteral("/kept.txt")), int(RepositoryUnchanged));
+
+    QCOMPARE(status.changedCount, 4);
+}
+
+void TestRepository::anIgnoredFileIsNeitherMarkedNorCounted()
+{
+    MOLE_REQUIRE_GIT();
+
+    TempTree tree;
+    QVERIFY(tree.isValid());
+    GitFixture repository(tree.path());
+    QVERIFY(repository.init());
+    QVERIFY(repository.writeFile(QStringLiteral(".gitignore"), "*.log\nbuild/\n"));
+    QVERIFY(!repository.commitAll(QStringLiteral("first")).isEmpty());
+
+    QVERIFY(repository.writeFile(QStringLiteral("noise.log"), "ignored"));
+    QVERIFY(repository.writeFile(QStringLiteral("build/artefact.o"), "ignored"));
+    QVERIFY(repository.writeFile(QStringLiteral("real.txt"), "counted"));
+
+    const std::shared_ptr<Repository> handle = RepositoryCache::shared().forPath(tree.path());
+    QVERIFY(handle);
+    const RepositoryStatus status = handle->readStatus(CancelToken {});
+    const QString root = handle->root();
+
+    QVERIFY(status.complete);
+    QCOMPARE(status.changedCount, 1);
+    QVERIFY((status.stateFor(root + QStringLiteral("/real.txt")) & RepositoryUntracked) != 0);
+    QCOMPARE(status.stateFor(root + QStringLiteral("/noise.log")), int(RepositoryUnchanged));
+    QCOMPARE(status.stateFor(root + QStringLiteral("/build")), int(RepositoryUnchanged));
+    // The roll-up must not reach a directory whose only contents are ignored
+    // either, or a build tree would mark every folder above it.
+    QCOMPARE(status.stateFor(root + QStringLiteral("/build/artefact.o")), int(RepositoryUnchanged));
+}
+
+void TestRepository::aDirectoryIsMarkedForWhatIsInsideItAtEveryLevel()
+{
+    MOLE_REQUIRE_GIT();
+
+    TempTree tree;
+    QVERIFY(tree.isValid());
+    GitFixture repository(tree.path());
+    QVERIFY(repository.init());
+    QVERIFY(repository.writeFile(QStringLiteral("src/deep/down/here.txt"), "before"));
+    QVERIFY(!repository.commitAll(QStringLiteral("first")).isEmpty());
+    QVERIFY(repository.writeFile(QStringLiteral("src/deep/down/here.txt"), "after"));
+
+    const std::shared_ptr<Repository> handle = RepositoryCache::shared().forPath(tree.path());
+    QVERIFY(handle);
+    const RepositoryStatus status = handle->readStatus(CancelToken {});
+    const QString root = handle->root();
+
+    QVERIFY(status.complete);
+    // One change, and three directories that have to say something about it --
+    // otherwise a pane at the root of a checkout shows a clean-looking list of
+    // folders over a tree full of edits.
+    QCOMPARE(status.changedCount, 1);
+    for (const QString& folder :
+        { QStringLiteral("/src"), QStringLiteral("/src/deep"), QStringLiteral("/src/deep/down") }) {
+        QVERIFY2((status.stateFor(root + folder) & RepositoryContainsChanges) != 0,
+            qPrintable(folder + QStringLiteral(" does not say that something inside it changed")));
+    }
+
+    // A directory carries only the roll-up: which of the six states is inside is
+    // not a question that aggregates into a true answer.
+    QCOMPARE(status.stateFor(root + QStringLiteral("/src")), int(RepositoryContainsChanges));
+    // And the work tree root is not in the map. A pane showing it is inside the
+    // checkout; no row in any listing stands for it.
+    QVERIFY(!status.byPath.contains(root));
+}
+
+void TestRepository::anUntrackedFolderIsOneChangeRatherThanItsContents()
+{
+    MOLE_REQUIRE_GIT();
+
+    TempTree tree;
+    QVERIFY(tree.isValid());
+    GitFixture repository(tree.path());
+    QVERIFY(repository.init());
+    QVERIFY(repository.writeFile(QStringLiteral("tracked.txt"), "x"));
+    QVERIFY(!repository.commitAll(QStringLiteral("first")).isEmpty());
+
+    for (int i = 0; i < 5; ++i)
+        QVERIFY(repository.writeFile(QStringLiteral("brand-new/file%1.txt").arg(i), "x"));
+
+    const std::shared_ptr<Repository> handle = RepositoryCache::shared().forPath(tree.path());
+    QVERIFY(handle);
+    const RepositoryStatus status = handle->readStatus(CancelToken {});
+    const QString root = handle->root();
+
+    QVERIFY(status.complete);
+    // What `git status` itself says: one untracked directory, not five untracked
+    // files. The row a listing has for it is the folder.
+    QCOMPARE(status.changedCount, 1);
+    QVERIFY((status.stateFor(root + QStringLiteral("/brand-new")) & RepositoryUntracked) != 0);
+    QCOMPARE(status.stateFor(root + QStringLiteral("/brand-new/file0.txt")), int(RepositoryUnchanged));
+}
+
+void TestRepository::aCancelledWalkAnswersWithNothingRatherThanWithHalf()
+{
+    MOLE_REQUIRE_GIT();
+
+    TempTree tree;
+    QVERIFY(tree.isValid());
+    GitFixture repository(tree.path());
+    QVERIFY(repository.init());
+    for (int i = 0; i < 20; ++i)
+        QVERIFY(repository.writeFile(QStringLiteral("file%1.txt").arg(i), "x"));
+
+    const std::shared_ptr<Repository> handle = RepositoryCache::shared().forPath(tree.path());
+    QVERIFY(handle);
+
+    // Cancelled before the walk begins, which is the state the callback polls for.
+    // No clock anywhere: the token is already set, so the first path aborts it.
+    CancelToken cancelled;
+    cancelled.cancel();
+    const RepositoryStatus abandoned = handle->readStatus(cancelled);
+
+    QVERIFY(!abandoned.complete);
+    // Empty rather than partial. Half a walk would mark half a listing correctly
+    // and the other half as clean, and a listing that says a changed file is
+    // unchanged is worse than one that says nothing.
+    QVERIFY(abandoned.byPath.isEmpty());
+    QCOMPARE(abandoned.changedCount, 0);
+
+    // And the same repository still answers properly afterwards -- an abandoned
+    // walk leaves nothing behind on the handle.
+    const RepositoryStatus full = handle->readStatus(CancelToken {});
+    QVERIFY(full.complete);
+    QCOMPARE(full.changedCount, 20);
+}
+
+void TestRepository::theWalkTaskCountsAndCaches()
+{
+    MOLE_REQUIRE_GIT();
+
+    TempTree tree;
+    QVERIFY(tree.isValid());
+    GitFixture repository(tree.path());
+    QVERIFY(repository.init());
+    QVERIFY(repository.writeFile(QStringLiteral("src/a.txt"), "a"));
+    QVERIFY(!repository.commitAll(QStringLiteral("first")).isEmpty());
+    QVERIFY(repository.writeFile(QStringLiteral("src/a.txt"), "changed"));
+
+    TaskManager tasks;
+    auto* task = new ReadStatusTask(repository.absolute(QStringLiteral("src")));
+    // Housekeeping nobody asked for, marked the same way as QuerySpaceTask so it
+    // cannot scroll the user's own copy off the task strip.
+    QVERIFY(task->isBackground());
+
+    QString seenRoot;
+    RepositoryStatus seen;
+    connect(
+        task, &ReadStatusTask::statusRead, this, [&](const QString& root, const RepositoryStatus& status) {
+            seenRoot = root;
+            seen = status;
+        });
+
+    // A direct connection runs on whichever thread emitted, so this records the
+    // thread the walk itself ran on. That is the rule the whole task framework
+    // exists for -- the UI thread never waits on a disk -- and a stat of every file
+    // in a checkout is exactly the work that would break it.
+    std::atomic<QThread*> walkedOn { nullptr };
+    connect(
+        task, &ReadStatusTask::statusRead, this,
+        [&walkedOn](const QString&, const RepositoryStatus&) { walkedOn = QThread::currentThread(); },
+        Qt::DirectConnection);
+
+    tasks.submit(task);
+    QVERIFY(waitForTask(task));
+    QCOMPARE(task->state(), Task::State::Succeeded);
+
+    QVERIFY2(walkedOn.load() != nullptr && walkedOn.load() != QThread::currentThread(),
+        "the work tree walk ran on the thread that draws the window");
+
+    QCOMPARE(canonical(seenRoot), canonical(tree.path()));
+    QCOMPARE(seen.changedCount, 1);
+    QVERIFY(!task->wasCached());
+    QVERIFY((seen.stateFor(task->root() + QStringLiteral("/src/a.txt")) & RepositoryModified) != 0);
+
+    // The walk covers the work tree rather than the folder it was handed, which is
+    // what git status means and what lets one walk serve every folder.
+    QVERIFY((seen.stateFor(task->root() + QStringLiteral("/src")) & RepositoryContainsChanges) != 0);
+    // And it is in the cache, which is where the next pane finds it.
+    QVERIFY(RepositoryStatusCache::shared().forRoot(task->root()).complete);
+}
+
+void TestRepository::aSecondWalkOfOneWorkTreeTakesTheAnswerAlreadyThere()
+{
+    MOLE_REQUIRE_GIT();
+
+    TempTree tree;
+    QVERIFY(tree.isValid());
+    GitFixture repository(tree.path());
+    QVERIFY(repository.init());
+    QVERIFY(repository.writeFile(QStringLiteral("src/a.txt"), "a"));
+    QVERIFY(repository.writeFile(QStringLiteral("tests/b.txt"), "b"));
+    QVERIFY(!repository.commitAll(QStringLiteral("first")).isEmpty());
+    QVERIFY(repository.writeFile(QStringLiteral("src/a.txt"), "changed"));
+
+    TaskManager tasks;
+    auto* first = new ReadStatusTask(repository.absolute(QStringLiteral("src")));
+    tasks.submit(first);
+    QVERIFY(waitForTask(first));
+    QVERIFY(!first->wasCached());
+
+    // The same checkout, reached from a different folder in it. Nothing walks
+    // twice: navigating between folders inside one repository is the commonest
+    // thing anybody does, and a stat of the whole tree per folder would make the
+    // feature the most expensive thing in the window.
+    auto* second = new ReadStatusTask(repository.absolute(QStringLiteral("tests")));
+    tasks.submit(second);
+    QVERIFY(waitForTask(second));
+    QVERIFY(second->wasCached());
+    QCOMPARE(second->status().changedCount, first->status().changedCount);
+    QCOMPARE(canonical(second->root()), canonical(first->root()));
+}
+
+void TestRepository::aCancelledWalkTaskSaysCancelledAndTellsNobody()
+{
+    MOLE_REQUIRE_GIT();
+
+    TempTree tree;
+    QVERIFY(tree.isValid());
+    GitFixture repository(tree.path());
+    QVERIFY(repository.init());
+    QVERIFY(repository.writeFile(QStringLiteral("a.txt"), "a"));
+    QVERIFY(!repository.commitAll(QStringLiteral("first")).isEmpty());
+    QVERIFY(repository.writeFile(QStringLiteral("a.txt"), "changed"));
+
+    TaskManager tasks;
+    auto* task = new ReadStatusTask(tree.path());
+
+    int answers = 0;
+    connect(
+        task, &ReadStatusTask::statusRead, this, [&](const QString&, const RepositoryStatus&) { ++answers; });
+
+    // Cancelled before it is submitted, so there is no window to race with and no
+    // clock to wait on. What is asserted is the end of the task, which is what
+    // navigating away has to leave behind.
+    task->requestCancel();
+    tasks.submit(task);
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(task->state(), Task::State::Cancelled);
+    // Nobody is told, and nothing is cached: an abandoned walk must not leave a
+    // half-answer behind for the next pane to find and believe.
+    QCOMPARE(answers, 0);
+    QVERIFY(!RepositoryStatusCache::shared().forRoot(canonical(tree.path())).complete);
 }
 
 void TestRepository::withoutGitSupportNothingIsClaimed()

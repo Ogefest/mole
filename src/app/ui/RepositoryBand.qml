@@ -57,6 +57,18 @@ Rectangle {
             font.bold: true
         }
 
+        // How much of the work tree differs from the last commit. Absent until the
+        // walk answers -- the branch is cheap and arrives first, and a band that
+        // said "clean" for the moment before the walk landed would be telling a
+        // lie that reads exactly like the truth.
+        Label {
+            objectName: "repositoryChanges"
+            visible: text.length > 0
+            text: band.info ? band.info.changesText : ""
+            color: band.info && band.info.changedCount > 0 ? "#c9d1d9" : "#6f7788"
+            font.pixelSize: App.secondaryTextSize
+        }
+
         Item { Layout.fillWidth: true }
     }
 }

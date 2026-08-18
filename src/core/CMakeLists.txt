@@ -146,6 +146,8 @@ add_library(mole_core STATIC
     vcs/Repository.cpp
     vcs/ReadRepositoryTask.h
     vcs/ReadRepositoryTask.cpp
+    vcs/ReadStatusTask.h
+    vcs/ReadStatusTask.cpp
 
     analysis/AnalysisReport.h
     analysis/AnalysisReport.cpp

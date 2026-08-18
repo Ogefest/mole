@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/vfs/VfsTypes.h"
+
 #include <QHash>
 #include <QMetaType>
 #include <QMutex>
@@ -57,6 +59,50 @@ struct RepositoryHead
     QString stateText() const;
 };
 
+/// What git says about one path in a work tree.
+///
+/// A bitmask rather than one value, because a path really is several of these at
+/// once: a file staged as added and edited again since is added *and* modified,
+/// and a listing forced to choose between them would be choosing which half of
+/// the truth to show.
+enum RepositoryFileState {
+    RepositoryUnchanged = 0,
+    RepositoryModified = 1 << 0,
+    RepositoryAdded = 1 << 1,
+    RepositoryDeleted = 1 << 2,
+    RepositoryUntracked = 1 << 3,
+    RepositoryRenamed = 1 << 4,
+    RepositoryConflicted = 1 << 5,
+    /// Something inside this directory is one of the above. Directories only.
+    ///
+    /// Rolled up by the walk rather than by whoever draws a listing, because git
+    /// answers with paths to files and a listing shows folders -- without this,
+    /// opening a checkout at its root shows a clean-looking list of directories
+    /// over a tree full of edits. It does not say *which* of the states is inside,
+    /// because none of them aggregates into anything true.
+    RepositoryContainsChanges = 1 << 6,
+};
+
+/// What one walk of a work tree found.
+struct RepositoryStatus
+{
+    /// Flags per absolute path -- files as git reported them, and the directories
+    /// above them rolled up. Absolute rather than relative to the work tree,
+    /// because every caller has a path in hand and none of them has a root.
+    QHash<QString, int> byPath;
+    /// How many paths git itself reported. Not `byPath.size()`, which also counts
+    /// the directories above them.
+    int changedCount = 0;
+    /// Whether the walk ran to the end. A cancelled walk answers with whatever it
+    /// had reached, which is not an answer anybody may show.
+    bool complete = false;
+
+    int stateFor(const QString& absolutePath) const
+    {
+        return byPath.value(absolutePath, RepositoryUnchanged);
+    }
+};
+
 /// One work tree, read and never written.
 ///
 /// The read-only boundary is deliberate and belongs to the whole feature rather
@@ -106,6 +152,18 @@ public:
     /// walk, so this is cheap enough to answer on every navigation.
     RepositoryHead head() const;
 
+    /// Walks the work tree and answers what has changed.
+    ///
+    /// The expensive one, and the reason ReadStatusTask exists: a stat per file,
+    /// which on a checkout of any size takes long enough to be felt. Cancellation
+    /// is polled once per path, so navigating away abandons the walk rather than
+    /// finishing it for nobody.
+    ///
+    /// Holds this repository for the whole walk, which is what one shared handle
+    /// costs -- a second pane asking which branch it is on waits. That is why the
+    /// answer is cached in RepositoryStatusCache and not re-read per folder.
+    RepositoryStatus readStatus(const CancelToken& cancel) const;
+
 private:
     Repository(std::shared_ptr<void> library, git_repository* handle, QString root);
 
@@ -148,8 +206,42 @@ private:
     QHash<QString, std::shared_ptr<Repository>> m_byGitDir;
 };
 
+/// The last completed walk for each work tree, shared by every pane showing one.
+///
+/// A cache of its own rather than a field on Repository, and the reason is the
+/// lock. A Repository is held for the whole of a status walk, so a pane reading
+/// the answer off it would wait for that walk to finish -- on the UI thread, which
+/// is the one rule this application does not bend. This has a mutex of its own and
+/// never holds it for longer than a hash lookup.
+///
+/// Keyed by work tree root, which is what makes one walk serve every folder in a
+/// checkout: navigating from `src/` to `tests/` finds the answer already here and
+/// starts nothing.
+class RepositoryStatusCache
+{
+public:
+    static RepositoryStatusCache& shared();
+
+    /// What the last completed walk of `root` found. `complete` is false when
+    /// nothing has walked it yet, or when the answer has been forgotten.
+    RepositoryStatus forRoot(const QString& root) const;
+    void store(const QString& root, RepositoryStatus status);
+    /// Forgets one work tree's answer, so the next pane that asks walks again.
+    /// What an operation writing inside it leaves behind.
+    void forget(const QString& root);
+    void clear();
+
+private:
+    RepositoryStatusCache() = default;
+
+    mutable QMutex m_mutex;
+    QHash<QString, RepositoryStatus> m_byRoot;
+};
+
 } // namespace mole
 
 // Crosses a thread boundary: the branch is read on a pool thread and the band
 // that shows it is drawn on the other one.
 Q_DECLARE_METATYPE(mole::RepositoryHead)
+// The same, for what a work tree walk found.
+Q_DECLARE_METATYPE(mole::RepositoryStatus)

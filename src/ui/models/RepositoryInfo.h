@@ -27,6 +27,12 @@ class RepositoryInfo : public QObject
     Q_PROPERTY(QString shortId READ shortId NOTIFY changed)
     Q_PROPERTY(QString stateText READ stateText NOTIFY changed)
     Q_PROPERTY(QString headText READ headText NOTIFY changed)
+    /// Whether a work tree walk has answered. False until it has, which is why
+    /// the band shows a branch before it shows a count rather than showing
+    /// "clean" for the moment before the walk lands.
+    Q_PROPERTY(bool statusKnown READ isStatusKnown NOTIFY changed)
+    Q_PROPERTY(int changedCount READ changedCount NOTIFY changed)
+    Q_PROPERTY(QString changesText READ changesText NOTIFY changed)
 
 public:
     explicit RepositoryInfo(QObject* parent = nullptr);
@@ -47,10 +53,33 @@ public:
     /// otherwise the branch.
     QString headText() const;
 
+    bool isStatusKnown() const { return m_statusKnown; }
+    int changedCount() const { return m_status.changedCount; }
+
+    /// How much of the work tree differs from the last commit.
+    ///
+    /// Empty until a walk has answered. A clean tree says "clean" rather than
+    /// "0 changed", because a count of nought is a sentence about arithmetic and
+    /// what somebody wants to know is whether there is anything to deal with.
+    QString changesText() const;
+
+    /// What the walk found, for whoever marks the rows. Empty until it has.
+    const RepositoryStatus& status() const { return m_status; }
+
     /// Records what a read answered. `root` empty means there is no repository,
     /// which is the same as clear() -- so a caller can hand over whatever came
     /// back without deciding first.
+    ///
+    /// A different root discards the status: it belonged to the other checkout,
+    /// and showing one repository's count beside another's branch would be a wrong
+    /// answer rather than a missing one.
     void setHead(const QString& root, const RepositoryHead& head);
+
+    /// Records what a walk of `root` found. Ignored when it is not the work tree
+    /// in view, which is what an answer about a folder somebody has left looks
+    /// like by the time it arrives.
+    void setStatus(const QString& root, const RepositoryStatus& status);
+    void clearStatus();
     void clear();
 
 signals:
@@ -62,6 +91,8 @@ private:
     bool m_present = false;
     QString m_root;
     RepositoryHead m_head;
+    bool m_statusKnown = false;
+    RepositoryStatus m_status;
 };
 
 } // namespace mole

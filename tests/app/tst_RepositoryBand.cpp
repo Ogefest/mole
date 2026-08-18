@@ -40,6 +40,7 @@ private slots:
     void aDetachedHeadSaysSo();
     void anInterruptedRebaseSaysSo();
     void movingBetweenTwoCheckoutsShowsEachBranch();
+    void theBandCountsWhatHasChangedAndSaysWhenNothingHas();
 
 private:
     BrowserPaneController* pane() const;
@@ -50,6 +51,8 @@ private:
     /// not shown in a single view.
     QQuickItem* band() const;
     QString headText() const;
+    /// What the band says about how much has changed, empty until the walk lands.
+    QString changesText() const;
     /// How tall the listing is right now, which is the measurement the "no strip
     /// reserving height" claim is made of.
     qreal listingHeight() const;
@@ -80,6 +83,9 @@ void TestRepositoryBand::cleanup()
     // Every fixture was a directory that is being deleted now, and the cache holds
     // an open handle per repository.
     RepositoryCache::shared().clear();
+    // And the walk's answer is cached per work tree, keyed by a path the next
+    // fixture could be handed again.
+    RepositoryStatusCache::shared().clear();
 }
 
 BrowserPaneController* TestRepositoryBand::pane() const
@@ -132,6 +138,15 @@ QQuickItem* TestRepositoryBand::band() const
 QString TestRepositoryBand::headText() const
 {
     for (QQuickItem* label : m_harness->items(QStringLiteral("repositoryHead"))) {
+        if (label->isVisible())
+            return label->property("text").toString();
+    }
+    return {};
+}
+
+QString TestRepositoryBand::changesText() const
+{
+    for (QQuickItem* label : m_harness->items(QStringLiteral("repositoryChanges"))) {
         if (label->isVisible())
             return label->property("text").toString();
     }
@@ -236,6 +251,35 @@ void TestRepositoryBand::movingBetweenTwoCheckoutsShowsEachBranch()
     // two navigations above.
     goTo(QStringLiteral("one"), QStringLiteral("main"));
     QCOMPARE(headText(), QStringLiteral("main"));
+}
+
+void TestRepositoryBand::theBandCountsWhatHasChangedAndSaysWhenNothingHas()
+{
+    const std::unique_ptr<GitFixture> checkout = checkoutAt(QStringLiteral("work"));
+    QVERIFY(checkout);
+
+    goTo(QStringLiteral("work"), QStringLiteral("main"));
+    // Nothing has been touched since the fixture committed, so the band says so in
+    // a word rather than counting to nought.
+    QVERIFY2(m_harness->until([this] { return changesText() == QStringLiteral("clean"); }),
+        qPrintable(QStringLiteral("the band says \"%1\" about a clean checkout").arg(changesText())));
+
+    QVERIFY(checkout->writeFile(QStringLiteral("readme.md"), "hello, edited\n"));
+    QVERIFY(checkout->writeFile(QStringLiteral("extra.txt"), "new\n"));
+    // The walk's answer is cached per work tree, and nothing has told it that the
+    // tree moved on -- that is MOLE-105's job, not this one's. Forgetting it by
+    // hand is what makes this a test of the count rather than of the refresh.
+    RepositoryStatusCache::shared().forget(QDir(m_harness->fixturePath()).filePath(QStringLiteral("work")));
+
+    goTo(QStringLiteral("plain"), QString());
+    goTo(QStringLiteral("work"), QStringLiteral("main"));
+    QVERIFY2(m_harness->until([this] { return changesText() == QStringLiteral("2 changed"); }),
+        qPrintable(QStringLiteral("the band says \"%1\" about two changes").arg(changesText())));
+
+    // And a folder in no checkout has no band at all, so nothing to say about it.
+    goTo(QStringLiteral("plain"), QString());
+    QVERIFY(!band()->isVisible());
+    QVERIFY(changesText().isEmpty());
 }
 
 // A real window, so a real QGuiApplication rather than the guiless one every

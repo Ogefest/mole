@@ -21,6 +21,41 @@ QString RepositoryInfo::headText() const
     return m_head.branch;
 }
 
+QString RepositoryInfo::changesText() const
+{
+    if (!m_present || !m_statusKnown)
+        return {};
+    if (m_status.changedCount == 0)
+        return QStringLiteral("clean");
+    return QStringLiteral("%1 changed").arg(m_status.changedCount);
+}
+
+void RepositoryInfo::setStatus(const QString& root, const RepositoryStatus& status)
+{
+    // An answer about the checkout somebody has already navigated out of. The
+    // walk is the slow half of this feature, so this really happens.
+    if (!m_present || root.isEmpty() || root != m_root)
+        return;
+    if (!status.complete)
+        return;
+    if (m_statusKnown && m_status.changedCount == status.changedCount && m_status.byPath == status.byPath) {
+        return;
+    }
+
+    m_statusKnown = true;
+    m_status = status;
+    emit changed();
+}
+
+void RepositoryInfo::clearStatus()
+{
+    if (!m_statusKnown && m_status.byPath.isEmpty())
+        return;
+    m_statusKnown = false;
+    m_status = RepositoryStatus {};
+    emit changed();
+}
+
 void RepositoryInfo::setHead(const QString& root, const RepositoryHead& head)
 {
     if (root.isEmpty()) {
@@ -41,6 +76,14 @@ void RepositoryInfo::setHead(const QString& root, const RepositoryHead& head)
         return;
     }
 
+    // A different checkout is a different answer. Dropped rather than kept while
+    // the new walk runs, because one repository's count beside another's branch is
+    // a wrong answer, and a missing one is not.
+    if (m_root != root) {
+        m_statusKnown = false;
+        m_status = RepositoryStatus {};
+    }
+
     m_present = true;
     m_root = root;
     m_head = head;
@@ -49,11 +92,13 @@ void RepositoryInfo::setHead(const QString& root, const RepositoryHead& head)
 
 void RepositoryInfo::clear()
 {
-    if (!m_present && m_root.isEmpty())
+    if (!m_present && m_root.isEmpty() && !m_statusKnown)
         return;
     m_present = false;
     m_root.clear();
     m_head = RepositoryHead {};
+    m_statusKnown = false;
+    m_status = RepositoryStatus {};
     emit changed();
 }
 

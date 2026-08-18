@@ -8,6 +8,7 @@
 #include "core/index/IndexDatabase.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vcs/ReadRepositoryTask.h"
+#include "core/vcs/ReadStatusTask.h"
 #include "core/vcs/Repository.h"
 #include "core/vfs/VfsManager.h"
 #include "core/vfs/backends/LocalFileSystem.h"
@@ -70,6 +71,10 @@ private slots:
     void leavingACheckoutTakesTheAnswerWithIt();
     void aCheckoutReachedOverADriveThatIsNotLocalReportsNothing();
     void twoCheckoutsInOnePaneEachReportTheirOwnBranch();
+    void aDirtyCheckoutIsCountedAndACleanOneSaysSo();
+    void movingBetweenFoldersInOneCheckoutWalksItOnce();
+    void leavingACheckoutTakesTheCountWithIt();
+    void walkingAwayFromACheckoutAbandonsItsWalk();
 
     void goingUpLandsOnTheFolderJustLeft();
     void goingBackRestoresTheCursor();
@@ -934,6 +939,163 @@ void TestBrowserPaneController::twoCheckoutsInOnePaneEachReportTheirOwnBranch()
     QVERIFY(waitFor([pane] { return pane->repository()->branch() == QStringLiteral("release"); }));
     QVERIFY(pane->repository()->isPresent());
     RepositoryCache::shared().clear();
+}
+
+void TestBrowserPaneController::aDirtyCheckoutIsCountedAndACleanOneSaysSo()
+{
+    if (!Repository::isSupported())
+        QSKIP("built without libgit2");
+
+    QTemporaryDir work;
+    QVERIFY(work.isValid());
+    GitFixture checkout(work.path());
+    QVERIFY(checkout.init(QStringLiteral("main")));
+    QVERIFY(checkout.writeFile(QStringLiteral("src/a.txt"), "a"));
+    QVERIFY(checkout.writeFile(QStringLiteral("src/b.txt"), "b"));
+    QVERIFY(!checkout.commitAll(QStringLiteral("first")).isEmpty());
+
+    const QString root = mountLocal(work.path());
+    BrowserPaneController* clean = paneOnCheckout(root + QStringLiteral("/src"));
+    QVERIFY(clean);
+    QVERIFY(waitFor([clean] { return clean->repository()->isStatusKnown(); }));
+    QCOMPARE(clean->repository()->changedCount(), 0);
+    // "clean", not "0 changed": a count of nought is a sentence about arithmetic,
+    // and what somebody wants to know is whether there is anything to deal with.
+    QCOMPARE(clean->repository()->changesText(), QStringLiteral("clean"));
+
+    QVERIFY(checkout.writeFile(QStringLiteral("src/a.txt"), "edited"));
+    QVERIFY(checkout.writeFile(QStringLiteral("src/fresh.txt"), "new"));
+    RepositoryStatusCache::shared().clear();
+
+    BrowserPaneController* dirty = paneOnCheckout(root + QStringLiteral("/src"));
+    QVERIFY(dirty);
+    QVERIFY(waitFor([dirty] { return dirty->repository()->isStatusKnown(); }));
+    QCOMPARE(dirty->repository()->changedCount(), 2);
+    QCOMPARE(dirty->repository()->changesText(), QStringLiteral("2 changed"));
+    RepositoryCache::shared().clear();
+    RepositoryStatusCache::shared().clear();
+}
+
+void TestBrowserPaneController::movingBetweenFoldersInOneCheckoutWalksItOnce()
+{
+    if (!Repository::isSupported())
+        QSKIP("built without libgit2");
+
+    QTemporaryDir work;
+    QVERIFY(work.isValid());
+    GitFixture checkout(work.path());
+    QVERIFY(checkout.init(QStringLiteral("main")));
+    QVERIFY(checkout.writeFile(QStringLiteral("src/a.txt"), "a"));
+    QVERIFY(checkout.writeFile(QStringLiteral("tests/b.txt"), "b"));
+    QVERIFY(checkout.writeFile(QStringLiteral("docs/c.txt"), "c"));
+    QVERIFY(!checkout.commitAll(QStringLiteral("first")).isEmpty());
+    QVERIFY(checkout.writeFile(QStringLiteral("src/a.txt"), "edited"));
+
+    // Counted as they are submitted rather than by looking at the list afterwards:
+    // a task that has finished and been retired would not be in it.
+    int walks = 0;
+    connect(m_tasks, &TaskManager::taskAppended, this, [&walks](Task* task) {
+        if (qobject_cast<ReadStatusTask*>(task))
+            ++walks;
+    });
+
+    const QString root = mountLocal(work.path());
+    BrowserPaneController* pane = paneOnCheckout(root + QStringLiteral("/src"));
+    QVERIFY(pane);
+    QVERIFY(waitFor([pane] { return pane->repository()->isStatusKnown(); }));
+    QCOMPARE(walks, 1);
+    QCOMPARE(pane->repository()->changedCount(), 1);
+
+    // Two more folders in the same checkout. Each one is a navigation, a listing
+    // and a branch read; none of them is a second stat of the whole work tree.
+    for (const QString& folder : { QStringLiteral("/tests"), QStringLiteral("/docs") }) {
+        pane->navigateTo(root + folder);
+        QVERIFY(
+            waitFor([pane, folder] { return !pane->isLoading() && pane->currentUri().endsWith(folder); }));
+        QVERIFY(waitFor([pane] { return pane->repository()->isStatusKnown(); }));
+        QCOMPARE(pane->repository()->changedCount(), 1);
+    }
+
+    QCOMPARE(walks, 1);
+    RepositoryCache::shared().clear();
+    RepositoryStatusCache::shared().clear();
+}
+
+void TestBrowserPaneController::leavingACheckoutTakesTheCountWithIt()
+{
+    if (!Repository::isSupported())
+        QSKIP("built without libgit2");
+
+    QTemporaryDir work;
+    QVERIFY(work.isValid());
+    QVERIFY(QDir(work.path()).mkpath(QStringLiteral("elsewhere")));
+    QVERIFY(QDir(work.path()).mkpath(QStringLiteral("checkout")));
+    GitFixture checkout(QDir(work.path()).filePath(QStringLiteral("checkout")));
+    QVERIFY(checkout.init(QStringLiteral("main")));
+    QVERIFY(checkout.writeFile(QStringLiteral("a.txt"), "a"));
+    QVERIFY(!checkout.commitAll(QStringLiteral("first")).isEmpty());
+    QVERIFY(checkout.writeFile(QStringLiteral("a.txt"), "edited"));
+
+    const QString root = mountLocal(work.path());
+    BrowserPaneController* pane = paneOnCheckout(root + QStringLiteral("/checkout"));
+    QVERIFY(pane);
+    QVERIFY(waitFor([pane] { return pane->repository()->isStatusKnown(); }));
+    QCOMPARE(pane->repository()->changesText(), QStringLiteral("1 changed"));
+
+    // Out of the checkout entirely. The count has to go with the branch -- a band
+    // that kept saying "1 changed" about a folder in no repository would be the
+    // one failure mode this feature has.
+    pane->navigateTo(root + QStringLiteral("/elsewhere"));
+    QVERIFY(waitFor([pane] { return !pane->repository()->isPresent(); }));
+    QVERIFY(!pane->repository()->isStatusKnown());
+    QVERIFY(pane->repository()->changesText().isEmpty());
+    RepositoryCache::shared().clear();
+    RepositoryStatusCache::shared().clear();
+}
+
+void TestBrowserPaneController::walkingAwayFromACheckoutAbandonsItsWalk()
+{
+    if (!Repository::isSupported())
+        QSKIP("built without libgit2");
+
+    QTemporaryDir work;
+    QVERIFY(work.isValid());
+    QVERIFY(QDir(work.path()).mkpath(QStringLiteral("elsewhere")));
+    QVERIFY(QDir(work.path()).mkpath(QStringLiteral("checkout")));
+    GitFixture checkout(QDir(work.path()).filePath(QStringLiteral("checkout")));
+    QVERIFY(checkout.init(QStringLiteral("main")));
+    QVERIFY(checkout.writeFile(QStringLiteral("a.txt"), "a"));
+    QVERIFY(!checkout.commitAll(QStringLiteral("first")).isEmpty());
+    QVERIFY(checkout.writeFile(QStringLiteral("a.txt"), "edited"));
+
+    QList<ReadStatusTask*> walks;
+    connect(m_tasks, &TaskManager::taskAppended, this, [&walks](Task* task) {
+        if (auto* walk = qobject_cast<ReadStatusTask*>(task))
+            walks.append(walk);
+    });
+
+    const QString root = mountLocal(work.path());
+    BrowserPaneController* pane = makePane();
+    pane->navigateTo(root + QStringLiteral("/checkout"));
+    QVERIFY(waitFor([&walks] { return !walks.isEmpty(); }));
+
+    // Straight out of the checkout, while its walk is in flight or has just landed.
+    pane->navigateTo(root + QStringLiteral("/elsewhere"));
+    QVERIFY(waitFor(
+        [pane] { return !pane->isLoading() && pane->currentUri().endsWith(QStringLiteral("/elsewhere")); }));
+
+    // The task ends either way -- cancelled if the walk was still going, succeeded
+    // if it beat the navigation. Which of the two happened is a race with the disk
+    // and asserting one of them would be asserting how fast this machine is.
+    QVERIFY(waitFor([&walks] { return walks.constFirst()->isFinished(); }));
+
+    // What is not a race is the answer: whichever way the walk ended, nothing about
+    // the checkout may be on a band that is showing a folder outside it.
+    QVERIFY(!pane->repository()->isPresent());
+    QVERIFY(!pane->repository()->isStatusKnown());
+    QVERIFY(pane->repository()->changesText().isEmpty());
+    RepositoryCache::shared().clear();
+    RepositoryStatusCache::shared().clear();
 }
 
 void TestBrowserPaneController::goingUpLandsOnTheFolderJustLeft()
