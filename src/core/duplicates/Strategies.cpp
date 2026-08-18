@@ -38,7 +38,7 @@ namespace {
         }
 
         // The size goes into the key as well, so a short file cannot collide with
-        // the first 16 kB of a long one.
+        // the first megabyte of a long one.
         hash.addData(QByteArray::number(entry.size));
         return QString::fromLatin1(hash.result().toHex());
     }
@@ -74,7 +74,9 @@ QString SameContentStrategy::keyFor(
     case 1:
         // Skipped for a file that fits entirely in the head: hashing it twice
         // would double the work for the smallest files, which are the most
-        // numerous.
+        // numerous. With the head at a megabyte that is most files in most
+        // trees, and they go straight to the whole-file stage having cost one
+        // read rather than two.
         if (entry.size <= kHeadBytes)
             return QStringLiteral("small");
         return hashOf(entry, fileSystem, kHeadBytes, cancel);

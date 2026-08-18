@@ -65,10 +65,10 @@ public:
 
 /// Identical contents, proven.
 ///
-/// Three stages: size, then a hash of the first 16 kB, then a hash of the whole
-/// file. Most non-duplicates are ruled out by the first two, so the expensive
-/// pass runs on very little -- which is the difference between a scan that
-/// finishes and one that does not.
+/// Three stages: size, then a hash of the first megabyte, then a hash of the
+/// whole file. Most non-duplicates are ruled out by the first two, so the
+/// expensive pass runs on very little -- which is the difference between a scan
+/// that finishes and one that does not.
 class SameContentStrategy final : public IDuplicateStrategy
 {
 public:
@@ -76,21 +76,33 @@ public:
     QString label() const override { return QStringLiteral("Identical contents"); }
     QString description() const override
     {
-        return QStringLiteral("Proves it: same size, same first 16 kB, same hash of the whole "
+        return QStringLiteral("Proves it: same size, same first 1 MB, same hash of the whole "
                               "file. Reads only what survives each step, so it costs far less "
                               "than hashing everything.");
     }
     QStringList stageNames() const override
     {
-        return { QStringLiteral("size"), QStringLiteral("first 16 kB"), QStringLiteral("whole file") };
+        return { QStringLiteral("size"), QStringLiteral("first 1 MB"), QStringLiteral("whole file") };
     }
     bool stageReadsContent(int stage) const override { return stage > 0; }
     QString keyFor(
         int stage, const FileEntry& entry, IFileSystem* fileSystem, const CancelToken& cancel) const override;
 
-    /// How much the second stage reads. Small enough to be nearly free, large
-    /// enough that files sharing a header still separate.
-    static constexpr qint64 kHeadBytes = 16 * 1024;
+    /// How much the second stage reads.
+    ///
+    /// A megabyte, raised from 16 kB on 2026-08-18 because 16 kB was not enough to
+    /// separate the files people actually have a lot of. A video container, a RAW
+    /// photograph, a PDF and a virtual disk image all carry headers and index
+    /// tables far larger than that, so genuinely different files of the same size
+    /// agreed at this stage and every one of them went through to the whole-file
+    /// hash -- which is the pass this stage exists to keep small.
+    ///
+    /// It is not free, and the honest accounting is this: the stage reads 64 times
+    /// what it did, but only ever for files that already share an exact size, and
+    /// a file no larger than this skips the stage entirely rather than being read
+    /// twice. What it buys is that the whole-file pass -- which reads gigabytes,
+    /// not megabytes -- sees far less.
+    static constexpr qint64 kHeadBytes = 1024 * 1024;
 };
 
 } // namespace mole

@@ -37,6 +37,7 @@ private slots:
     void aTreeWithNoDuplicatesReportsNone();
     void theExpensiveStageOnlySeesWhatSurvivedTheCheapOnes();
     void aFileThatChangesWhileItIsBeingComparedIsLeftOutOfEveryGroup();
+    void filesSharingALongHeaderAreSeparatedWithoutReadingThemWhole();
 
     void groupsArriveAsTheyAreConfirmedRatherThanAllAtTheEnd();
     void aGroupIsNeverAnnouncedAndThenTakenBack();
@@ -253,7 +254,7 @@ void TestDuplicates::identicalContentsProvesIt()
 
 void TestDuplicates::identicalContentsSeparatesFilesSharingAHeader()
 {
-    // The same first 16 kB, then different. The cheap middle stage groups them
+    // The same head, then different. The cheap middle stage groups them
     // and the final stage has to pull them apart -- if it did not, the strategy
     // would report a false match, which is the one failure that matters here.
     QByteArray head(SameContentStrategy::kHeadBytes, 'h');
@@ -375,6 +376,69 @@ void TestDuplicates::theExpensiveStageOnlySeesWhatSurvivedTheCheapOnes()
 
     QCOMPARE(watched->seen.value(0), 10);
     QCOMPARE(watched->seen.value(1), 2);
+}
+
+namespace {
+
+/// SameContentStrategy, with a note of how many files reached each stage.
+///
+/// Wraps the real one rather than reimplementing it: what is being asserted is
+/// where the real strategy stops, and a copy of its logic would assert that
+/// about the copy.
+class CountedContentStrategy final : public IDuplicateStrategy
+{
+public:
+    QString id() const override { return m_inner.id(); }
+    QString label() const override { return m_inner.label(); }
+    QString description() const override { return m_inner.description(); }
+    QStringList stageNames() const override { return m_inner.stageNames(); }
+    bool stageReadsContent(int stage) const override { return m_inner.stageReadsContent(stage); }
+    QString keyFor(
+        int stage, const FileEntry& entry, IFileSystem* fileSystem, const CancelToken& cancel) const override
+    {
+        ++seen[stage];
+        return m_inner.keyFor(stage, entry, fileSystem, cancel);
+    }
+
+    mutable QHash<int, int> seen;
+
+private:
+    SameContentStrategy m_inner;
+};
+
+} // namespace
+
+void TestDuplicates::filesSharingALongHeaderAreSeparatedWithoutReadingThemWhole()
+{
+    // Two files of one size that agree over a long header and differ well inside
+    // it. This is the shape the files people have a lot of really take -- a video
+    // container, a RAW photograph, a PDF, a disk image -- and with a 16 kB head
+    // every pair of them agreed at the middle stage and went through to the
+    // whole-file hash, which is the pass the middle stage exists to keep small.
+    const qint64 head = SameContentStrategy::kHeadBytes;
+    QVERIFY2(head >= 1024 * 1024, "the head is smaller than a megabyte");
+
+    QByteArray shared(64 * 1024, 'h');
+    QByteArray a = shared + QByteArray(head, 'a');
+    QByteArray b = shared + QByteArray(head, 'b');
+    QCOMPARE(a.size(), b.size());
+    QVERIFY(m_tree->writeFile(QStringLiteral("a.bin"), a));
+    QVERIFY(m_tree->writeFile(QStringLiteral("b.bin"), b));
+
+    auto strategy = std::make_unique<CountedContentStrategy>();
+    CountedContentStrategy* watched = strategy.get();
+    auto* task = new FindDuplicatesTask(m_vfs.get(), { m_tree->rootUri() }, std::move(strategy));
+    task->setMinimumSize(1);
+    m_tasks->submit(task);
+    QVERIFY(waitFor([task] { return task->isFinished(); }, 30000));
+
+    QCOMPARE(task->groups().size(), 0);
+    // Both were sized, both had their head read -- and neither reached the stage
+    // that reads the file whole. That last number is the point of the change: at
+    // 16 kB it was two.
+    QCOMPARE(watched->seen.value(0), 2);
+    QCOMPARE(watched->seen.value(1), 2);
+    QCOMPARE(watched->seen.value(2), 0);
 }
 
 // ---- results as they are found ------------------------------------------

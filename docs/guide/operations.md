@@ -152,7 +152,10 @@ opening anything.
 `Find duplicates` from a folder looks for files that are the same, and lets you choose
 what *the same* means: identical contents, or the same size, or the same name. Identical
 contents is the default and does the work in the cheapest order — same size first, then
-the first 16 kB, then a hash of the whole file — so almost nothing gets hashed.
+the first megabyte, then a hash of the whole file — so almost nothing gets hashed. A
+megabyte rather than a few kilobytes because a video container, a RAW photograph, a PDF
+and a disk image all carry headers larger than that, and files that agree over a short
+head are exactly the ones the expensive pass then has to read in full.
 
 What comes back is groups, and they appear as the scan finds them rather than all at the
 end. A group is only shown once it has agreed at every step, so nothing on the list is
