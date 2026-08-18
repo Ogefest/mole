@@ -350,12 +350,27 @@ void TestDuplicatesTab::resultsTakeTheSpaceTheEmptyStateWasHolding()
     QVERIFY(m_harness->until([this] { return shown(QStringLiteral("duplicateGroupList")) != nullptr; }));
     QVERIFY(!shown(QStringLiteral("duplicateEmptyState")));
 
-    // The body is still the body. It gives up a strip to the Keep row, which only
-    // exists once there is something to keep, and nothing else -- the results did
-    // not have to grow into space the empty state had been holding back.
+    // The body is still the body. It gives up exactly the height of the keep panel
+    // -- which only exists once there is something to keep -- and its own spacing,
+    // and nothing else. Said as arithmetic rather than as a tolerance, because a
+    // tolerance is a number that has to be revisited every time a control above
+    // the body changes size, and revisiting it means nobody is checking the claim
+    // any more.
     QVERIFY2(bodyHeight() > 200, qPrintable(QStringLiteral("the body is %1 tall").arg(bodyHeight())));
-    QVERIFY2(bodyHeight() > beforeScan - 100,
-        qPrintable(QStringLiteral("the body fell from %1 to %2").arg(beforeScan).arg(bodyHeight())));
+    const qreal spacing = 10; // the body column's, from DuplicatesView.qml
+    // Waited for rather than read once: the column re-lays out a frame after the
+    // panel appears, so reading straight after the list became visible catches the
+    // heights mid-move.
+    QVERIFY2(m_harness->until([this, beforeScan, spacing] {
+        QQuickItem* panel = shown(QStringLiteral("duplicateKeepPanel"));
+        return panel && qAbs(bodyHeight() + panel->height() + spacing - beforeScan) <= 1;
+    }),
+        qPrintable(QStringLiteral("the body went from %1 to %2 while the keep panel took %3")
+                       .arg(beforeScan)
+                       .arg(bodyHeight())
+                       .arg(shown(QStringLiteral("duplicateKeepPanel"))
+                               ? shown(QStringLiteral("duplicateKeepPanel"))->height()
+                               : -1)));
 
     // And the list fills it, rather than sitting at its natural height with a void
     // underneath -- which is the same fault one state along.
