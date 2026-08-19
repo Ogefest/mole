@@ -8,6 +8,9 @@
 #include <QProcess>
 #include <QStandardPaths>
 
+#include <algorithm>
+#include <unistd.h>
+
 using namespace mole;
 using namespace mole::test;
 
@@ -82,6 +85,65 @@ QString gzipInPlace(const QByteArray& contents, const QString& directory, const 
     return QFile::exists(compressed) ? compressed : QString();
 }
 
+/// One large member, written to the compressor a megabyte at a time.
+///
+/// Never held whole in this process: the assertion about what opening a member
+/// costs is made against resident memory, and a test that had just allocated the
+/// payload itself would hand the allocator a hole of exactly the right size to
+/// satisfy the fault it is looking for.
+QString compressBigStream(const QString& tool, qint64 totalBytes, const QString& outputPath)
+{
+    const QString found = QStandardPaths::findExecutable(tool);
+    if (found.isEmpty())
+        return {};
+
+    QProcess process;
+    process.setStandardOutputFile(outputPath);
+    process.start(found, { QStringLiteral("-c") });
+    if (!process.waitForStarted(30000))
+        return {};
+
+    // Not zeros: a pattern, so a read that answers from the wrong offset answers
+    // wrongly rather than plausibly. Still compresses to almost nothing.
+    QByteArray block(1024 * 1024, Qt::Uninitialized);
+    for (int i = 0; i < block.size(); ++i)
+        block[i] = static_cast<char>('a' + (i % 26));
+
+    qint64 written = 0;
+    while (written < totalBytes) {
+        const qint64 wanted = std::min<qint64>(block.size(), totalBytes - written);
+        if (process.write(block.constData(), wanted) != wanted)
+            return {};
+        if (!process.waitForBytesWritten(30000))
+            return {};
+        written += wanted;
+    }
+    process.closeWriteChannel();
+    if (!process.waitForFinished(60000) || process.exitCode() != 0)
+        return {};
+    return QFile::exists(outputPath) ? outputPath : QString();
+}
+
+/// The byte this process wrote at `offset` of that stream.
+char patternByteAt(qint64 offset)
+{
+    return static_cast<char>('a' + ((offset % (1024 * 1024)) % 26));
+}
+
+/// Resident memory, in bytes, or -1 where the platform will not say.
+qint64 residentBytes()
+{
+    QFile statm(QStringLiteral("/proc/self/statm"));
+    if (!statm.open(QIODevice::ReadOnly))
+        return -1;
+    const QList<QByteArray> fields = statm.readAll().simplified().split(' ');
+    if (fields.size() < 2)
+        return -1;
+    bool ok = false;
+    const qint64 pages = fields.at(1).toLongLong(&ok);
+    return ok ? pages * static_cast<qint64>(sysconf(_SC_PAGESIZE)) : -1;
+}
+
 } // namespace
 
 class TestArchiveFileSystem : public QObject
@@ -116,6 +178,12 @@ private slots:
     void aFileNamedGzThatIsNotGzipIsStillRefused();
     void aPlainFileIsStillNotAnArchive();
     void aSevenZipIsUnaffected();
+
+    void openingAMemberOfATruncatedArchiveStillGivesItsFirstWindow();
+    void theDamageInATruncatedMemberIsReportedByTheReadThatReachesIt();
+    void openingAMemberDoesNotAllocateItsUncompressedSize();
+    void aMemberIsReadableAtAnyOffsetAndNotOnlyFromTheStart();
+    void aWholeMemberStillArrivesForAnExtraction();
 
 private:
     QString m_tarGz;
@@ -707,6 +775,203 @@ void TestArchiveFileSystem::aSevenZipIsUnaffected()
     QCOMPARE(listing.value().size(), 1);
     QCOMPARE(listing.value().first().name, QStringLiteral("inside.txt"));
     QCOMPARE(listing.value().first().size, qint64(9));
+}
+
+// ---- a member is decompressed as it is read, not all at once -------------
+//
+// openRead() used to append the whole member to a QByteArray and hand back a
+// QBuffer over it, with no cap, so opening a 20 GB member asked for 20 GB before
+// the caller saw a byte -- while HexPreviewController's own header promises "the
+// file is never held, only the window being shown". MOLE-216 made it urgent
+// rather than theoretical: a file compressed with gzip alone is typically a log
+// or a dump, and those are the large ones. See MOLE-218.
+
+void TestArchiveFileSystem::openingAMemberOfATruncatedArchiveStillGivesItsFirstWindow()
+{
+    // Laziness proved by the data rather than by a measurement. The archive is cut
+    // short, so decompressing the whole member is impossible -- and reading the
+    // first window works anyway, which it cannot if opening the member read to the
+    // end. Before this, openRead() answered the truncation with an error and the
+    // window nobody had asked for was never handed over.
+    const QString whole = compressBigStream(QStringLiteral("gzip"), 4 * 1024 * 1024,
+        QDir(m_workspace->path()).filePath(QStringLiteral("whole.log.gz")));
+    if (whole.isEmpty())
+        QSKIP("gzip is not available");
+
+    QFile source(whole);
+    QVERIFY(source.open(QIODevice::ReadOnly));
+    const QByteArray bytes = source.readAll();
+    source.close();
+    QVERIFY(bytes.size() > 2048);
+
+    const QString cut = QDir(m_workspace->path()).filePath(QStringLiteral("cut.log.gz"));
+    QFile shortened(cut);
+    QVERIFY(shortened.open(QIODevice::WriteOnly));
+    shortened.write(bytes.left(bytes.size() - 512));
+    shortened.close();
+
+    FileSystemPtr fs = openArchive(cut);
+    Result<FileEntryList> listing = fs->list(rootOf(cut), CancelToken());
+    QVERIFY2(listing.ok(), qPrintable(listing.error().message));
+    QCOMPARE(listing.value().size(), 1);
+
+    Result<std::unique_ptr<QIODevice>> device = fs->openRead(listing.value().first().uri);
+    QVERIFY2(device.ok(), qPrintable(device.error().message));
+
+    const QByteArray window = device.value()->read(64 * 1024);
+    QCOMPARE(window.size(), 64 * 1024);
+    QCOMPARE(window.at(0), patternByteAt(0));
+    QCOMPARE(window.at(window.size() - 1), patternByteAt(window.size() - 1));
+}
+
+void TestArchiveFileSystem::theDamageInATruncatedMemberIsReportedByTheReadThatReachesIt()
+{
+    // The other half of the same change, and the half that could lose data: the
+    // failure has moved from open() to the read that arrives at it, so a caller
+    // reading a member to the end -- a copy, an extraction -- must still be told.
+    // A short, clean stream would be a truncated file reported as a whole one.
+    const QString whole = compressBigStream(QStringLiteral("gzip"), 4 * 1024 * 1024,
+        QDir(m_workspace->path()).filePath(QStringLiteral("damaged-source.log.gz")));
+    if (whole.isEmpty())
+        QSKIP("gzip is not available");
+
+    QFile source(whole);
+    QVERIFY(source.open(QIODevice::ReadOnly));
+    const QByteArray bytes = source.readAll();
+    source.close();
+
+    const QString cut = QDir(m_workspace->path()).filePath(QStringLiteral("damaged.log.gz"));
+    QFile shortened(cut);
+    QVERIFY(shortened.open(QIODevice::WriteOnly));
+    shortened.write(bytes.left(bytes.size() / 2));
+    shortened.close();
+
+    FileSystemPtr fs = openArchive(cut);
+    Result<FileEntryList> listing = fs->list(rootOf(cut), CancelToken());
+    QVERIFY2(listing.ok(), qPrintable(listing.error().message));
+
+    Result<std::unique_ptr<QIODevice>> device = fs->openRead(listing.value().first().uri);
+    QVERIFY2(device.ok(), qPrintable(device.error().message));
+
+    QIODevice& member = *device.value();
+    bool refused = false;
+    for (int reads = 0; reads < 4096; ++reads) {
+        QByteArray chunk(64 * 1024, Qt::Uninitialized);
+        const qint64 read = member.read(chunk.data(), chunk.size());
+        if (read < 0) {
+            refused = true;
+            break;
+        }
+        if (read == 0)
+            break;
+    }
+    QVERIFY2(refused, "a member cut in half read to a clean end instead of saying it was damaged");
+    QVERIFY(!member.errorString().isEmpty());
+}
+
+void TestArchiveFileSystem::openingAMemberDoesNotAllocateItsUncompressedSize()
+{
+    if (residentBytes() < 0)
+        QSKIP("this platform does not report resident memory");
+
+    // Sixty-four megabytes: far above anything the allocator or the fixture
+    // accounts for, and small enough that gzip builds it in about a second. It is
+    // written to the compressor a megabyte at a time, so this process has never
+    // held it and the allocator has no hole of the right size to hide the fault in.
+    const qint64 memberBytes = 64 * 1024 * 1024;
+    const QString archive = compressBigStream(QStringLiteral("gzip"), memberBytes,
+        QDir(m_workspace->path()).filePath(QStringLiteral("big.log.gz")));
+    if (archive.isEmpty())
+        QSKIP("gzip is not available");
+
+    FileSystemPtr fs = openArchive(archive);
+    Result<FileEntryList> listing = fs->list(rootOf(archive), CancelToken());
+    QVERIFY2(listing.ok(), qPrintable(listing.error().message));
+    QCOMPARE(listing.value().size(), 1);
+
+    const qint64 before = residentBytes();
+    Result<std::unique_ptr<QIODevice>> device = fs->openRead(listing.value().first().uri);
+    QVERIFY2(device.ok(), qPrintable(device.error().message));
+    const QByteArray window = device.value()->read(64 * 1024);
+    const qint64 after = residentBytes();
+
+    QCOMPARE(window.size(), 64 * 1024);
+    // A generous bound, because the claim is not "a few kilobytes" but "not the
+    // member": sixteen megabytes is a quarter of it and four times anything the
+    // decompressor needs.
+    const qint64 grew = after - before;
+    QVERIFY2(grew < 16 * 1024 * 1024,
+        qPrintable(QStringLiteral("opening a %1 MB member grew resident memory by %2 MB")
+                       .arg(memberBytes / (1024 * 1024))
+                       .arg(grew / (1024 * 1024))));
+}
+
+void TestArchiveFileSystem::aMemberIsReadableAtAnyOffsetAndNotOnlyFromTheStart()
+{
+    // The backend advertises RandomAccessRead, and the span loop that makes a
+    // large file copyable rests on it: seek, read a stretch, seek again. A stream
+    // format cannot be addressed by offset, so a seek forward decompresses and
+    // discards and a seek backwards starts again -- slow, and correct, which is
+    // the order those two matter in. The shape of the assertions is the one every
+    // other backend is held to in FileSystemConformance.
+    const qint64 memberBytes = 2 * 1024 * 1024;
+    const QString archive = compressBigStream(QStringLiteral("gzip"), memberBytes,
+        QDir(m_workspace->path()).filePath(QStringLiteral("ranged.log.gz")));
+    if (archive.isEmpty())
+        QSKIP("gzip is not available");
+
+    FileSystemPtr fs = openArchive(archive);
+    Result<FileEntryList> listing = fs->list(rootOf(archive), CancelToken());
+    QVERIFY2(listing.ok(), qPrintable(listing.error().message));
+
+    Result<std::unique_ptr<QIODevice>> device = fs->openRead(listing.value().first().uri);
+    QVERIFY2(device.ok(), qPrintable(device.error().message));
+    QIODevice& member = *device.value();
+
+    QCOMPARE(member.read(4), QByteArrayLiteral("abcd"));
+
+    // Forwards.
+    QVERIFY2(member.seek(1000), "a backend advertising random access must be able to seek");
+    QCOMPARE(member.read(3),
+        QByteArray(1, patternByteAt(1000)) + QByteArray(1, patternByteAt(1001))
+            + QByteArray(1, patternByteAt(1002)));
+
+    // Backwards, which is the one a stream format has to work for.
+    QVERIFY(member.seek(4));
+    QCOMPARE(member.read(2), QByteArray(1, patternByteAt(4)) + QByteArray(1, patternByteAt(5)));
+
+    // A long way forward, over many chunks.
+    QVERIFY(member.seek(memberBytes - 3));
+    QCOMPARE(member.read(100).size(), 3);
+
+    // And past the end, where the honest answer is nothing at all.
+    QVERIFY(member.seek(memberBytes));
+    QCOMPARE(member.read(10), QByteArray());
+}
+
+void TestArchiveFileSystem::aWholeMemberStillArrivesForAnExtraction()
+{
+    // A caller that wants the whole member still gets the whole member: nothing
+    // here is a cap, only a refusal to hold what has not been asked for. This is
+    // an extraction in miniature, over many more chunks than one.
+    const qint64 memberBytes = 3 * 1024 * 1024 + 777;
+    const QString archive = compressBigStream(QStringLiteral("gzip"), memberBytes,
+        QDir(m_workspace->path()).filePath(QStringLiteral("extracted.log.gz")));
+    if (archive.isEmpty())
+        QSKIP("gzip is not available");
+
+    FileSystemPtr fs = openArchive(archive);
+    Result<FileEntryList> listing = fs->list(rootOf(archive), CancelToken());
+    QVERIFY2(listing.ok(), qPrintable(listing.error().message));
+
+    Result<std::unique_ptr<QIODevice>> device = fs->openRead(listing.value().first().uri);
+    QVERIFY2(device.ok(), qPrintable(device.error().message));
+
+    const QByteArray everything = device.value()->readAll();
+    QCOMPARE(everything.size(), memberBytes);
+    QCOMPARE(everything.at(0), patternByteAt(0));
+    QCOMPARE(everything.at(1024 * 1024 + 5), patternByteAt(1024 * 1024 + 5));
+    QCOMPARE(everything.at(everything.size() - 1), patternByteAt(memberBytes - 1));
 }
 
 MOLE_TEST_MAIN(TestArchiveFileSystem)

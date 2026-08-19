@@ -188,6 +188,153 @@ namespace {
         return normaliseEntryPath(singleStream ? singleStreamMemberName(archivePath, reported) : reported);
     }
 
+    /// One member of an archive, decompressed as it is read rather than all at
+    /// once.
+    ///
+    /// The point of it is what it does not do: hold the member. openRead() used to
+    /// append the whole thing to a QByteArray and hand back a QBuffer over it,
+    /// with no cap, so opening a 20 GB member asked for 20 GB of memory before the
+    /// caller saw its first byte -- and the viewers are built on the opposite
+    /// promise. HexPreviewController's own header says "the file is never held,
+    /// only the window being shown, so a 100 GB firmware image opens as fast as a
+    /// 100 byte one", which was true over a local disk and quietly untrue over an
+    /// archive. Since MOLE-216 a member is as likely to be a compressed log or a
+    /// database dump as a document, so it stopped being survivable. See MOLE-218.
+    ///
+    /// A stream format has no random access, so reaching byte N still means
+    /// decompressing the N bytes before it. That is a cost in time, and it was
+    /// being paid in memory as well. Here only the chunk being handed over exists:
+    /// a seek forward decompresses and discards, and a seek backwards starts the
+    /// stream again from the beginning of the archive. Both are slow and neither
+    /// grows with the file, which is the right trade for a container that cannot
+    /// be addressed by offset -- and it keeps the random access the previews and
+    /// the span loop are written against.
+    class ArchiveMemberDevice final : public QIODevice
+    {
+    public:
+        ArchiveMemberDevice(QString archivePath, QString memberPath, qint64 knownSize)
+            : m_archivePath(std::move(archivePath))
+            , m_memberPath(std::move(memberPath))
+            , m_knownSize(knownSize)
+        {
+        }
+
+        bool open(OpenMode mode) override
+        {
+            if (!mode.testFlag(QIODevice::ReadOnly))
+                return false;
+            if (!startOfMember())
+                return false;
+            return QIODevice::open(mode | QIODevice::Unbuffered);
+        }
+
+        bool isSequential() const override { return false; }
+
+        /// What the index said, when it knew. A single compressed stream does not
+        /// know its uncompressed length until it has been read, and says so with
+        /// an unset size rather than with nought -- see ensureIndexed().
+        qint64 size() const override { return m_knownSize >= 0 ? m_knownSize : QIODevice::size(); }
+
+        bool seek(qint64 position) override
+        {
+            if (position < 0)
+                return false;
+            if (position < m_offset && !startOfMember())
+                return false;
+            if (position > m_offset && !discardTo(position))
+                return false;
+            return QIODevice::seek(position);
+        }
+
+        /// Meaningful once open() or a read has failed.
+        VfsError failure() const { return m_failure; }
+
+    protected:
+        qint64 readData(char* data, qint64 maxSize) override
+        {
+            if (maxSize <= 0 || !m_reader || !m_reader->isOpen())
+                return 0;
+
+            qint64 got = 0;
+            while (got < maxSize) {
+                const la_ssize_t read
+                    = archive_read_data(m_reader->handle(), data + got, static_cast<size_t>(maxSize - got));
+                if (read < 0) {
+                    m_failure = VfsError::make(VfsError::IoError,
+                        QStringLiteral("Cannot read %1: %2").arg(m_memberPath, m_reader->errorText()));
+                    setErrorString(m_failure.message);
+                    return -1;
+                }
+                if (read == 0)
+                    break; // the end of the member, which is not a failure
+                got += read;
+            }
+            m_offset += got;
+            return got;
+        }
+
+        qint64 writeData(const char*, qint64) override { return -1; }
+
+    private:
+        /// Opens the archive and walks the headers to this member. Called again to
+        /// go backwards, which is the only way a stream format can.
+        bool startOfMember()
+        {
+            m_open = openArchive(m_archivePath);
+            m_reader = m_open.reader.get();
+            m_offset = 0;
+            if (!m_reader || !m_reader->isOpen()) {
+                m_failure = VfsError::make(VfsError::IoError,
+                    QStringLiteral("Cannot open archive %1: %2")
+                        .arg(m_archivePath, m_reader ? m_reader->errorText() : QString()));
+                setErrorString(m_failure.message);
+                return false;
+            }
+
+            struct archive_entry* entry = nullptr;
+            while (archive_read_next_header(m_reader->handle(), &entry) == ARCHIVE_OK) {
+                if (pathOfEntry(entry, m_archivePath, m_open.singleStream) == m_memberPath)
+                    return true;
+                archive_read_data_skip(m_reader->handle());
+            }
+
+            m_failure = VfsError::make(
+                VfsError::NotFound, QStringLiteral("Entry vanished from archive: %1").arg(m_memberPath));
+            setErrorString(m_failure.message);
+            m_reader = nullptr;
+            return false;
+        }
+
+        /// Decompresses and throws away, which is what a forward seek costs.
+        /// Reaching the end early is not a failure: a caller may seek past it, and
+        /// the honest answer to a read there is nothing at all.
+        bool discardTo(qint64 position)
+        {
+            QByteArray scratch(kReadBlockSize, Qt::Uninitialized);
+            while (m_offset < position) {
+                const qint64 wanted = std::min<qint64>(kReadBlockSize, position - m_offset);
+                const qint64 read = readData(scratch.data(), wanted);
+                if (read < 0)
+                    return false;
+                if (read == 0)
+                    break;
+            }
+            return true;
+        }
+
+        QString m_archivePath;
+        QString m_memberPath;
+        qint64 m_knownSize = -1;
+        OpenArchive m_open;
+        /// Owned by m_open; held separately because it is what every read touches.
+        ArchiveReader* m_reader = nullptr;
+        /// Where the decompressed stream has actually reached, which is what a seek
+        /// is measured against. QIODevice keeps its own idea of the position and
+        /// the two are kept equal by seek().
+        qint64 m_offset = 0;
+        VfsError m_failure;
+    };
+
 } // namespace
 
 ArchiveFileSystem::ArchiveFileSystem(QString archivePath)
@@ -332,6 +479,12 @@ Result<FileEntry> ArchiveFileSystem::stat(const VfsUri& target)
 
 Result<std::unique_ptr<QIODevice>> ArchiveFileSystem::openRead(const VfsUri& target, qint64)
 {
+    // What the index knows about the member, which is what the device reports as
+    // its size. The hint the caller passed is deliberately not used: IFileSystem
+    // says expectedSize "is a hint about how to fetch, never a limit on what is
+    // returned", and nothing here needs to break that -- a lazy device gives a
+    // window without being told how big to make it.
+    qint64 known = -1;
     {
         QMutexLocker lock(&m_mutex);
         if (Result<void> indexed = ensureIndexed(); !indexed.ok())
@@ -344,47 +497,26 @@ Result<std::unique_ptr<QIODevice>> ArchiveFileSystem::openRead(const VfsUri& tar
         if (node->isDir)
             return VfsError::make(
                 VfsError::IsADirectory, QStringLiteral("Is a directory: %1").arg(target.path()));
+        known = node->size;
     }
 
-    // Stream formats have no random access, so extraction means scanning from
-    // the start. Fine for previews; a large extraction belongs in a Task.
-    const OpenArchive open = openArchive(m_archivePath);
-    const ArchiveReader& reader = *open.reader;
-    if (!reader.isOpen()) {
-        return VfsError::make(VfsError::IoError,
-            QStringLiteral("Cannot open archive %1: %2").arg(m_archivePath, reader.errorText()));
+    // Stream formats have no random access, so reaching a byte means decompressing
+    // everything before it. That is a cost in time, and it must not be one in
+    // memory as well -- which is what holding the whole member made it. The device
+    // decompresses as it is read and holds only the chunk it is handing over, so a
+    // preview costs its window and an extraction that reads to the end still gets
+    // every byte. See MOLE-218.
+    auto member = std::make_unique<ArchiveMemberDevice>(m_archivePath, target.path(), known);
+    if (!member->open(QIODevice::ReadOnly)) {
+        // Every refusal inside the device records why. A Result built from an
+        // error that is not one would be a success carrying no device at all,
+        // which is a null the caller has no reason to expect.
+        const VfsError why = member->failure();
+        return why.isError()
+            ? why
+            : VfsError::make(VfsError::IoError, QStringLiteral("Cannot read %1").arg(target.path()));
     }
-
-    struct archive_entry* entry = nullptr;
-    while (archive_read_next_header(reader.handle(), &entry) == ARCHIVE_OK) {
-        if (pathOfEntry(entry, m_archivePath, open.singleStream) != target.path()) {
-            archive_read_data_skip(reader.handle());
-            continue;
-        }
-
-        QByteArray contents;
-        QByteArray chunk(kReadBlockSize, Qt::Uninitialized);
-        for (;;) {
-            const la_ssize_t read = archive_read_data(reader.handle(), chunk.data(), kReadBlockSize);
-            if (read < 0) {
-                return VfsError::make(VfsError::IoError,
-                    QStringLiteral("Cannot read %1: %2").arg(target.path(), reader.errorText()));
-            }
-            if (read == 0)
-                break;
-            contents.append(chunk.constData(), static_cast<int>(read));
-        }
-
-        auto buffer = std::make_unique<QBuffer>();
-        buffer->setData(contents);
-        if (!buffer->open(QIODevice::ReadOnly)) {
-            return VfsError::make(VfsError::IoError, QStringLiteral("Cannot buffer %1").arg(target.path()));
-        }
-        return Result<std::unique_ptr<QIODevice>>(std::move(buffer));
-    }
-
-    return VfsError::make(
-        VfsError::NotFound, QStringLiteral("Entry vanished from archive: %1").arg(target.path()));
+    return Result<std::unique_ptr<QIODevice>>(std::move(member));
 }
 
 QList<ConnectionField> ArchiveFileSystemFactory::connectionFields() const
