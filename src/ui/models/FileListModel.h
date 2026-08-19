@@ -176,6 +176,15 @@ public:
     Q_INVOKABLE bool isDirAt(int row) const;
     Q_INVOKABLE int rowOfUri(const QString& uri) const;
 
+    /// Where a tile asks for this row's picture, at `size` pixels on its longest
+    /// edge. Empty for a directory and for a row that has no uri.
+    ///
+    /// Built from what this model already holds -- the uri and the modification
+    /// time -- so keying a thumbnail costs no extra `stat()`. The date is in the
+    /// url because it is what makes an edited file produce a new picture rather
+    /// than the one from before. See ADR-0058.
+    Q_INVOKABLE QString thumbnailUrl(int row, int size) const;
+
     // ---- selection -------------------------------------------------------
     //
     // Tracked by uri rather than by row, so re-sorting or refreshing a

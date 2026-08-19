@@ -5,6 +5,7 @@
 #include "host/MetadataRegistry.h"
 #include "host/PluginManager.h"
 #include "host/PreviewRegistry.h"
+#include "host/ThumbnailRegistry.h"
 #include "sdk/FeatureController.h"
 #include "sdk/ScanReaders.h"
 #include "ui/DragSource.h"
@@ -196,6 +197,7 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     m_features = new FeatureRegistry(this);
     m_previews = new PreviewRegistry(this);
     m_metadata = new MetadataRegistry(this);
+    m_thumbnails = new ThumbnailRegistry(this);
     m_actions = new ActionRegistry(this);
 
     m_index = std::make_unique<IndexDatabase>(IndexDatabase::defaultFilePath());
@@ -236,6 +238,7 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     m_services.events = m_events;
     m_services.previews = m_previews;
     m_services.metadata = m_metadata;
+    m_services.thumbnails = m_thumbnails;
     m_services.scheduler = m_scheduler;
     m_services.alerts = m_alerts;
     m_services.reports = m_reports.get();
@@ -251,6 +254,7 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     destinations.features = m_features;
     destinations.previews = m_previews;
     destinations.metadata = m_metadata;
+    destinations.thumbnails = m_thumbnails;
     destinations.actions = m_actions;
 
     m_plugins = new PluginManager(m_services, destinations, this);

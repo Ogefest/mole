@@ -1,5 +1,6 @@
 #include "QmlAppHarness.h"
 
+#include "ThumbnailImageProvider.h"
 #include "plugins/builtin/BuiltinPlugin.h"
 #include "ui/AppController.h"
 
@@ -138,6 +139,10 @@ bool QmlAppHarness::build(QString* errorOut)
 
     m_engine = std::make_unique<QQmlApplicationEngine>();
     m_engine->rootContext()->setContextProperty(QStringLiteral("App"), m_app.get());
+    // The same provider the window registers, from the same library: a provider
+    // wired up only in main.cpp is a provider no test can be wrong about.
+    m_engine->addImageProvider(
+        mole::ThumbnailKey::providerName(), new mole::ThumbnailImageProvider(m_app->services()));
     m_engine->load(QUrl(QStringLiteral("qrc:/qt/qml/Mole/ui/Main.qml")));
 
     if (m_engine->rootObjects().isEmpty())
@@ -367,24 +372,23 @@ QPoint QmlAppHarness::centreOf(const QQuickItem* item) const
     return centre.toPoint();
 }
 
+QQuickItem* QmlAppHarness::itemIn(QQuickItem* root, const QString& objectName)
+{
+    if (!root)
+        return nullptr;
+    if (root->objectName() == objectName)
+        return root;
+    const QList<QQuickItem*> children = root->childItems();
+    for (QQuickItem* child : children) {
+        if (QQuickItem* found = itemIn(child, objectName))
+            return found;
+    }
+    return nullptr;
+}
+
 QQuickItem* QmlAppHarness::item(const QString& objectName) const
 {
-    if (!m_window)
-        return nullptr;
-
-    const std::function<QQuickItem*(QQuickItem*)> search = [&](QQuickItem* node) -> QQuickItem* {
-        if (!node)
-            return nullptr;
-        if (node->objectName() == objectName)
-            return node;
-        const QList<QQuickItem*> children = node->childItems();
-        for (QQuickItem* child : children) {
-            if (QQuickItem* found = search(child))
-                return found;
-        }
-        return nullptr;
-    };
-    return search(m_window->contentItem());
+    return m_window ? itemIn(m_window->contentItem(), objectName) : nullptr;
 }
 
 QList<QQuickItem*> QmlAppHarness::items(const QString& objectName) const

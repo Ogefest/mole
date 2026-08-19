@@ -24,6 +24,9 @@ add_library(mole_ui STATIC
     models/DuplicateGroupModel.cpp
     models/BrowserPaneController.h
     models/BrowserPaneController.cpp
+    ThumbnailSource.h
+    ThumbnailSource.cpp
+
     models/RepositoryInfo.h
     models/RepositoryInfo.cpp
     models/DriveListModel.h

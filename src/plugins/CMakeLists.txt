@@ -54,6 +54,9 @@ add_library(mole_builtin STATIC
     builtin/previews/PdfPreview.cpp
     builtin/previews/VideoPreview.h
     builtin/previews/VideoPreview.cpp
+
+    builtin/thumbnails/ImageThumbnailer.h
+    builtin/thumbnails/ImageThumbnailer.cpp
 )
 
 # Qt PDF renders the pages. Optional: without it the provider still compiles and

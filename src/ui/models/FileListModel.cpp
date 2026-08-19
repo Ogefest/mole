@@ -1,5 +1,7 @@
 #include "ui/models/FileListModel.h"
 
+#include "ui/ThumbnailSource.h"
+
 #include "core/vcs/Repository.h"
 
 #include <QCollator>
@@ -531,6 +533,19 @@ QString FileListModel::nameAt(int row) const
     if (row < 0 || row >= m_visible.size())
         return {};
     return entryAt(row).name;
+}
+
+QString FileListModel::thumbnailUrl(int row, int size) const
+{
+    if (row < 0 || row >= m_visible.size() || size <= 0)
+        return {};
+    const FileEntry& entry = entryAt(row);
+    // A folder has no picture of its own, and asking for one would put a request
+    // in the queue for every folder in a tree.
+    if (entry.isDir || !entry.uri.isValid())
+        return {};
+    return ThumbnailKey::urlFor(
+        entry.uri, size, entry.modified.isValid() ? entry.modified.toSecsSinceEpoch() : 0);
 }
 
 int FileListModel::rowOfUri(const QString& uri) const

@@ -11,6 +11,8 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-20 #MOLE-140 The gallery now shows what pictures look like: thumbnails are a new extension point, made off the UI thread, bounded in size, and in the right orientation for a photograph taken upright
+
 2026-08-20 #MOLE-139 A fourth way of looking at a folder: Gallery, with tiles big enough to see a picture in — the same pane, so selection, sorting, filter-by-typing and F3 all work in it
 
 2026-08-20 #MOLE-138 In a grid of tiles the left and right arrows now move a tile and up and down move a visual row, and Page Up/Down move by the number of entries actually on screen instead of by fifteen

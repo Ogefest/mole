@@ -8,6 +8,7 @@ class IndexDatabase;
 class EventBus;
 class IPreviewLookup;
 class IMetadataLookup;
+class IThumbnailLookup;
 class Scheduler;
 class AlertStore;
 class AnalysisStore;
@@ -39,6 +40,10 @@ struct PluginServices
     /// viewer lookup above. Null in a headless context.
     /// See docs/adr/0034-what-a-file-says-about-itself.md.
     IMetadataLookup* metadata = nullptr;
+    /// Makes a small picture of a file, for the gallery. One winner per file,
+    /// unlike the readers above. Null in a headless context.
+    /// See docs/adr/0058-a-file-can-say-what-it-looks-like.md.
+    IThumbnailLookup* thumbnails = nullptr;
     /// Repeating work. Register a job kind here to have the host run it on a
     /// schedule; the rules themselves outlive the plugin that made them.
     Scheduler* scheduler = nullptr;

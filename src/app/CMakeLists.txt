@@ -1,8 +1,21 @@
+# The Qt Quick half of the shell, in a library rather than in the executable so
+# the headless harness can load the same thing the window does. Without this a
+# provider could be registered in main.cpp, exercised by nothing, and wrong.
+add_library(mole_shell STATIC
+    ThumbnailImageProvider.h
+    ThumbnailImageProvider.cpp
+)
+target_include_directories(mole_shell PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(mole_shell
+    PUBLIC mole_ui Qt6::Quick
+    PRIVATE mole_flags)
+
 qt_add_executable(mole
     main.cpp
     SessionLog.cpp
     SessionLog.h
 )
+target_link_libraries(mole PRIVATE mole_shell)
 
 # Exported symbols, so the backtrace written when the program crashes carries
 # function names rather than bare addresses.

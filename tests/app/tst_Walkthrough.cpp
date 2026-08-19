@@ -177,6 +177,7 @@ private slots:
     void alertsSayWhatWentOutsideItsBounds();
     void savedReportsAreAListYouCanOpen();
     void theListOfIndexesSaysHowOldEachOneIsAndWhatIsInIt();
+    void aTileShowsThePictureAndAnUndecodableFileKeepsItsIcon();
     void aFileSetIsAListYouCarryAround();
     void duplicatesFindsTheSamePictureThreeTimes();
     void anImageIsFittedToThePane();
@@ -3528,6 +3529,64 @@ void TestWalkthrough::alertsSayWhatWentOutsideItsBounds()
     // Waited on the answer rather than on a clock: the check walks the tree.
     QVERIFY(m_harness->until([this] { return m_harness->app()->alerts()->triggeredCount() > 0; }, 20000));
     m_harness->screenshot(QStringLiteral("16-alerts"));
+}
+
+/// The whole chain, through the real provider the window registers: a delegate
+/// asks for a url, a task decodes off the UI thread, and the picture arrives. And
+/// the other half, which matters as much: a file nothing can decode is not a
+/// failure -- the tile keeps the icon it already had and nothing is said about it.
+/// See MOLE-140.
+void TestWalkthrough::aTileShowsThePictureAndAnUndecodableFileKeepsItsIcon()
+{
+    auto* browser = qobject_cast<BrowserController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY(browser);
+    browser->activePane()->navigateTo(m_harness->fixtureUri() + QStringLiteral("/photos"));
+    QVERIFY(m_harness->until([browser] { return !browser->activePane()->isLoading(); }));
+
+    browser->setViewMode(BrowserController::ViewMode::Gallery);
+    m_harness->settle(4);
+
+    QQuickItem* tiles = m_harness->item(QStringLiteral("fileGrid"));
+    QVERIFY(tiles);
+    QVERIFY(m_harness->until([tiles] { return tiles->width() > 0; }));
+
+    FileListModel* files = browser->activePane()->files();
+    QVERIFY(files);
+    // sunset.png is a real picture; the IMG_*.jpg in this fixture are a header and
+    // nothing behind it, which is exactly the "cannot be decoded" case.
+    const int real = files->rowOfUri(m_harness->fixtureUri() + QStringLiteral("/photos/sunset.png"));
+    const int fake = files->rowOfUri(m_harness->fixtureUri() + QStringLiteral("/photos/IMG_4418.jpg"));
+    QVERIFY(real >= 0);
+    QVERIFY(fake >= 0);
+
+    const auto thumbnailOfRow = [tiles](int row) -> QQuickItem* {
+        QQuickItem* tile = nullptr;
+        QMetaObject::invokeMethod(tiles, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, tile), Q_ARG(int, row));
+        return tile ? QmlAppHarness::itemIn(tile, QStringLiteral("tileThumbnail")) : nullptr;
+    };
+
+    // Waited on the picture arriving rather than on a clock: the decode is a task.
+    QVERIFY2(m_harness->until(
+                 [&] {
+                     QQuickItem* image = thumbnailOfRow(real);
+                     return image && image->property("status").toInt() == 1; // Image.Ready
+                 },
+                 20000),
+        "a picture in the gallery has to show what it looks like");
+
+    QQuickItem* shown = thumbnailOfRow(real);
+    QVERIFY(shown);
+    QVERIFY2(shown->isVisible(), "and the picture is what is on screen, not the icon");
+
+    // The undecodable one answers with nothing, and Qt calls a response with no
+    // picture in it Ready -- so the tile has to decide on the size and not on the
+    // status, or those tiles end up with neither a picture nor an icon.
+    QQuickItem* missing = thumbnailOfRow(fake);
+    QVERIFY(missing);
+    QVERIFY(m_harness->until([missing] { return missing->property("status").toInt() != 0; }, 20000));
+    m_harness->settle(3);
+    QVERIFY2(!missing->property("hasPicture").toBool(), "nothing came back for this one");
+    QVERIFY2(!missing->isVisible(), "a file with no thumbnail keeps the icon tile it already had");
 }
 
 /// An index is a claim about a tree that goes quietly out of date, and the only

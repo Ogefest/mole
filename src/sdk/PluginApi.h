@@ -3,6 +3,7 @@
 #include "sdk/IFeature.h"
 #include "sdk/IMetadataReader.h"
 #include "sdk/IPreviewProvider.h"
+#include "sdk/IThumbnailer.h"
 #include "sdk/MenuAction.h"
 #include "sdk/PluginServices.h"
 
@@ -18,7 +19,7 @@ namespace mole {
 /// Bumped whenever anything a plugin can see changes shape. The host refuses
 /// to load a plugin built against a different major version, which turns a
 /// mysterious crash into a clear message at startup.
-inline constexpr int kPluginApiVersion = 10;
+inline constexpr int kPluginApiVersion = 11;
 
 struct PluginMetadata
 {
@@ -56,6 +57,11 @@ public:
     /// Contribute a reader of what a file says about itself. Unlike a preview
     /// provider, every reader that claims a file is used.
     virtual bool addMetadataReader(std::unique_ptr<IMetadataReader> reader) = 0;
+
+    /// Contribute a maker of small pictures of files. Unlike a metadata reader,
+    /// only the highest-priority one that claims a file is asked: a file has one
+    /// picture. See docs/adr/0058-a-file-can-say-what-it-looks-like.md.
+    virtual bool addThumbnailer(std::unique_ptr<IThumbnailer> thumbnailer) = 0;
 
     /// Contribute an entry to the application menu. Most plugins want
     /// MenuAction::Section::Workflows.

@@ -22,6 +22,7 @@
 #include "plugins/builtin/previews/PdfPreview.h"
 #include "plugins/builtin/previews/PreviewProviders.h"
 #include "plugins/builtin/previews/VideoPreview.h"
+#include "plugins/builtin/thumbnails/ImageThumbnailer.h"
 
 #include "core/automation/ScheduleStore.h"
 #include "core/automation/Scheduler.h"
@@ -127,6 +128,11 @@ void BuiltinPlugin::registerExtensions(PluginRegistry& registry)
     registry.addMetadataReader(std::make_unique<VideoMetadataReader>());
     registry.addMetadataReader(std::make_unique<AudioMetadataReader>());
     registry.addMetadataReader(std::make_unique<GenericMetadataReader>());
+
+    // What a file looks like, for the gallery. One picture per file, so this is
+    // the one that answers for anything Qt can decode and a later thumbnailer
+    // for a format it cannot sits above it by priority.
+    registry.addThumbnailer(std::make_unique<ImageThumbnailer>());
 }
 
 } // namespace mole

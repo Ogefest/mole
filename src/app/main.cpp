@@ -1,3 +1,4 @@
+#include "ThumbnailImageProvider.h"
 #include "app/SessionLog.h"
 #include "host/PluginManager.h"
 #include "plugins/builtin/BuiltinPlugin.h"
@@ -155,6 +156,11 @@ int main(int argc, char* argv[])
     // QML side stays free of C++ type registration -- QML reaches every
     // property through the meta-object system anyway.
     engine.rootContext()->setContextProperty(QStringLiteral("App"), &controller);
+
+    // How a tile asks what a file looks like. Registered before the window loads,
+    // because a delegate built in the first frame asks straight away.
+    engine.addImageProvider(
+        mole::ThumbnailKey::providerName(), new mole::ThumbnailImageProvider(controller.services()));
 
     // Qt 6.4 has no loadFromModule(); the explicit resource url is the
     // portable spelling until the baseline moves to 6.5.

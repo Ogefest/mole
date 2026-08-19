@@ -32,7 +32,7 @@ add_library(mole_qml_harness STATIC
 )
 target_include_directories(mole_qml_harness PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(mole_qml_harness
-    PUBLIC mole_builtin mole_test_support Qt6::Quick Qt6::QuickControls2 Qt6::Test
+    PUBLIC mole_builtin mole_shell mole_test_support Qt6::Quick Qt6::QuickControls2 Qt6::Test
     PRIVATE mole_flags)
 
 file(GLOB MOLE_APP_QML_FILES "${CMAKE_SOURCE_DIR}/src/app/ui/*.qml")
@@ -203,6 +203,10 @@ mole_add_test(tst_TableModel           SOURCES ui/tst_TableModel.cpp           L
 mole_add_test(tst_TaskListModel        SOURCES ui/tst_TaskListModel.cpp        LIBS mole_ui)
 mole_add_test(tst_TabsModel            SOURCES ui/tst_TabsModel.cpp            LIBS mole_ui)
 mole_add_test(tst_BrowserPaneController SOURCES ui/tst_BrowserPaneController.cpp LIBS mole_ui)
+
+# The headless half of the thumbnails: the url that keys one, the thread it is
+# decoded on, and the cancellation that stops one nobody is waiting for.
+mole_add_test(tst_ThumbnailSource      SOURCES ui/tst_ThumbnailSource.cpp      LIBS mole_ui)
 mole_add_test(tst_FileLauncher         SOURCES ui/tst_FileLauncher.cpp         LIBS mole_ui)
 
 # What a selection looks like once it has left the window. No window and no
@@ -240,6 +244,9 @@ endif()
 # What a photograph says about itself: an EXIF walk over bytes the test wrote,
 # including the offsets a hostile file would write.
 mole_add_test(tst_ImageMetadata     SOURCES plugins/tst_ImageMetadata.cpp LIBS mole_builtin)
+
+# A picture of a picture: bounded, in the right orientation, and decoded scaled.
+mole_add_test(tst_ImageThumbnailer  SOURCES plugins/tst_ImageThumbnailer.cpp LIBS mole_builtin)
 
 # Who wrote a document: a zip built by hand, walked from its front, and a PDF
 # written by the test. Includes the hostile container and the hostile XML.

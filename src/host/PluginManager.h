@@ -13,6 +13,7 @@ namespace mole {
 class FeatureRegistry;
 class PreviewRegistry;
 class MetadataRegistry;
+class ThumbnailRegistry;
 class ActionRegistry;
 
 /// Loads plugins and wires whatever they contribute into the host.
@@ -40,6 +41,7 @@ public:
         FeatureRegistry* features = nullptr;
         PreviewRegistry* previews = nullptr;
         MetadataRegistry* metadata = nullptr;
+        ThumbnailRegistry* thumbnails = nullptr;
         ActionRegistry* actions = nullptr;
     };
 

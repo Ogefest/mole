@@ -7,6 +7,8 @@ add_library(mole_host STATIC
     PreviewRegistry.cpp
     MetadataRegistry.h
     MetadataRegistry.cpp
+    ThumbnailRegistry.h
+    ThumbnailRegistry.cpp
     ActionRegistry.h
     ActionRegistry.cpp
     PluginManager.h

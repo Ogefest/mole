@@ -5,7 +5,9 @@
 
 #include "core/vfs/backends/MemoryFileSystem.h"
 
+#include <QColor>
 #include <QSemaphore>
+#include <QThread>
 
 #include <atomic>
 #include <memory>
@@ -140,6 +142,87 @@ private:
     bool m_fails = false;
 };
 
+/// A thumbnailer that answers with a flat colour, counts what it was asked and can
+/// be held still.
+///
+/// The counters are shared rather than owned, for the same reason the metadata
+/// reader's are: the registry takes the thumbnailer and the test still has to see
+/// what happened to it, and it runs on a worker thread.
+class FakeThumbnailer final : public IThumbnailer
+{
+public:
+    struct Log
+    {
+        std::atomic_int made { 0 };
+        /// How many were asked for and saw their cancel token already set.
+        std::atomic_int cancelled { 0 };
+        /// The size the last request asked for, so a test can hold that the tile's
+        /// own size reaches the thumbnailer.
+        std::atomic_int lastSize { 0 };
+        /// The thread the last one ran on, for the rule that nothing decodes on
+        /// the GUI thread.
+        std::atomic<QThread*> ranOn { nullptr };
+    };
+
+    FakeThumbnailer(
+        QString id, QColor colour, int priority = 0, std::shared_ptr<Log> log = nullptr, QString suffix = {})
+        : m_id(std::move(id))
+        , m_colour(colour)
+        , m_priority(priority)
+        , m_log(std::move(log))
+        , m_suffix(std::move(suffix))
+    {
+    }
+
+    /// Waits for this before answering, so a test can hold a decode still and
+    /// cancel it underneath. Not a sleep: released by the test.
+    void holdUntilReleased(std::shared_ptr<QSemaphore> gate) { m_gate = std::move(gate); }
+    /// Answers with nothing, which is what an undecodable file looks like.
+    void answerWithNothing() { m_empty = true; }
+
+    QString id() const override { return m_id; }
+    int priority() const override { return m_priority; }
+
+    bool canThumbnail(const FileEntry& entry) const override
+    {
+        return !entry.isDir && (m_suffix.isEmpty() || entry.uri.suffix() == m_suffix);
+    }
+
+    QImage thumbnail(
+        const FileEntry& entry, int size, PluginServices services, const CancelToken& cancel) const override
+    {
+        Q_UNUSED(entry);
+        Q_UNUSED(services);
+        if (m_log) {
+            ++m_log->made;
+            m_log->lastSize = size;
+            m_log->ranOn = QThread::currentThread();
+        }
+        if (m_gate)
+            m_gate->acquire();
+        if (cancel.isCancelled()) {
+            if (m_log)
+                ++m_log->cancelled;
+            return {};
+        }
+        if (m_empty)
+            return {};
+
+        QImage image(size, size, QImage::Format_ARGB32);
+        image.fill(m_colour);
+        return image;
+    }
+
+private:
+    QString m_id;
+    QColor m_colour;
+    int m_priority = 0;
+    std::shared_ptr<Log> m_log;
+    QString m_suffix;
+    std::shared_ptr<QSemaphore> m_gate;
+    bool m_empty = false;
+};
+
 /// Lets go of a held reader's gate on the way out of a test, however it leaves.
 ///
 /// A reader waiting on a gate is a blocked worker thread, and the fixture's
@@ -206,6 +289,7 @@ public:
         QStringList schemes;
         QStringList previewIds;
         QStringList metadataReaderIds;
+        QStringList thumbnailerIds;
         QStringList menuActionIds;
         /// Set to true by shutdown(). Owned by the test, because the manager
         /// destroys the plugin before the test can inspect it.
@@ -238,6 +322,8 @@ public:
             registry.addPreviewProvider(std::make_unique<FakePreviewProvider>(id, QString(), 0));
         for (const QString& id : m_config.metadataReaderIds)
             registry.addMetadataReader(std::make_unique<FakeMetadataReader>(id, QList<FileFact> {}));
+        for (const QString& id : m_config.thumbnailerIds)
+            registry.addThumbnailer(std::make_unique<FakeThumbnailer>(id, QColor(Qt::red)));
         for (const QString& id : m_config.menuActionIds) {
             MenuAction action;
             action.id = id;

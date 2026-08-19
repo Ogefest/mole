@@ -30,6 +30,7 @@ class IndexDatabase;
 class EventBus;
 class PreviewRegistry;
 class MetadataRegistry;
+class ThumbnailRegistry;
 class PluginManager;
 class FileLauncher;
 class DragSource;
@@ -134,6 +135,7 @@ public:
     BookmarkModel* bookmarks() const { return m_bookmarks; }
     PreviewRegistry* previews() const { return m_previews; }
     MetadataRegistry* metadata() const { return m_metadata; }
+    ThumbnailRegistry* thumbnails() const { return m_thumbnails; }
     Scheduler* scheduler() const { return m_scheduler; }
     ScheduleStore* schedules() const { return m_schedules; }
     AlertStore* alerts() const { return m_alerts; }
@@ -496,6 +498,7 @@ private:
     FeatureRegistry* m_features = nullptr;
     PreviewRegistry* m_previews = nullptr;
     MetadataRegistry* m_metadata = nullptr;
+    ThumbnailRegistry* m_thumbnails = nullptr;
     PluginManager* m_plugins = nullptr;
     FileLauncher* m_launcher = nullptr;
     DragSource* m_dragSource = nullptr;

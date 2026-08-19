@@ -4,6 +4,7 @@
 #include "host/FeatureRegistry.h"
 #include "host/MetadataRegistry.h"
 #include "host/PreviewRegistry.h"
+#include "host/ThumbnailRegistry.h"
 
 #include "core/vfs/VfsManager.h"
 
@@ -87,6 +88,20 @@ namespace {
             const QString id = reader->id();
             if (!m_destinations.metadata->addReader(std::move(reader))) {
                 reportError(QStringLiteral("metadata reader id '%1' is already taken").arg(id));
+                return false;
+            }
+            return true;
+        }
+
+        bool addThumbnailer(std::unique_ptr<IThumbnailer> thumbnailer) override
+        {
+            if (!thumbnailer || !m_destinations.thumbnails) {
+                reportError(QStringLiteral("rejected a null thumbnailer"));
+                return false;
+            }
+            const QString id = thumbnailer->id();
+            if (!m_destinations.thumbnails->addThumbnailer(std::move(thumbnailer))) {
+                reportError(QStringLiteral("thumbnailer id '%1' is already taken").arg(id));
                 return false;
             }
             return true;

@@ -39,6 +39,13 @@ FocusScope {
     // were demonstrably working while everything routed through onPressed was
     // not. Anything with a dedicated handler now uses it; onPressed is left
     // with the keys Qt has no handler for.
+    /// The longest edge a tile's picture is asked for, which is part of what a
+    /// thumbnail is keyed on. Derived from the tile rather than fixed, so the
+    /// small grid does not pay for a gallery-sized decode.
+    function thumbnailSize() {
+        return Math.max(32, Math.min(pane.tileWidth, pane.tileHeight) - 12)
+    }
+
     /// How many tiles fit across the grid, or 1 in the list where a visual row
     /// is one entry. Never zero: a pane narrower than one cell still moves by
     /// one entry rather than standing still.
@@ -926,11 +933,14 @@ FocusScope {
                     anchors.margins: 6
                     spacing: 2
 
-                    // The room a picture will occupy. Until there is one it holds
-                    // the icon, drawn to suit the tile rather than at a fixed 34
-                    // pixels -- a folder of source code in a large tile has to be
-                    // worth looking at, not a wall of small identical glyphs.
+                    // The room a picture occupies, and the icon underneath it.
+                    //
+                    // The icon is not replaced but covered: a file with no
+                    // thumbnail -- an unreadable drive, a format nothing here can
+                    // decode, a folder -- is not a failure, so nothing is put on
+                    // screen about it and the tile it already had stands.
                     Item {
+                        id: picture
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         Layout.minimumHeight: 0
@@ -951,8 +961,36 @@ FocusScope {
 
                         Label {
                             anchors.centerIn: parent
+                            visible: !thumbnail.hasPicture
                             text: iconText
                             font.pixelSize: Math.max(24, Math.round(pane.tileHeight * 0.32))
+                        }
+
+                        Image {
+                            id: thumbnail
+                            objectName: "tileThumbnail"
+                            anchors.fill: parent
+                            // Asked for at the size the tile will draw it, which
+                            // is part of the key: the same file in the small grid
+                            // and in the gallery are two different pictures.
+                            source: pane.tileMode && paneController && paneController.files
+                                    ? paneController.files.thumbnailUrl(index, pane.thumbnailSize())
+                                    : ""
+                            // Off, because the picture is already decoded at the
+                            // size wanted; scaling it again here would undo that.
+                            sourceSize.width: 0
+                            sourceSize.height: 0
+                            asynchronous: true
+                            cache: false
+                            fillMode: Image.PreserveAspectFit
+                            // On the size and not only on the status: a file with
+                            // no thumbnail answers with nothing, and Qt calls that
+                            // Ready. Hiding on status alone left those tiles with
+                            // neither a picture nor the icon they should keep.
+                            readonly property bool hasPicture: status === Image.Ready
+                                                               && implicitWidth > 0 && implicitHeight > 0
+                            visible: hasPicture
+                            smooth: true
                         }
                     }
                     Label {

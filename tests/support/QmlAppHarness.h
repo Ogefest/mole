@@ -152,6 +152,9 @@ public:
     /// Finds an item by objectName. Walks the visual tree, because
     /// QObject::findChild does not follow what Loader and SplitView build.
     QQuickItem* item(const QString& objectName) const;
+    /// The named item inside `root`, for reaching into one delegate of a view
+    /// rather than into the window. Static, because it walks what it is given.
+    static QQuickItem* itemIn(QQuickItem* root, const QString& objectName);
     /// Every item with this objectName, in tree order. A dual-pane browser has
     /// two of most things, and one of them is hidden -- asking for "the" item
     /// silently picks whichever comes first.
