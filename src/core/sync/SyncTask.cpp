@@ -83,8 +83,9 @@ bool SyncTask::copyOne(const SyncPlan::Step& step)
 
         written += got;
         // Throughput and the moving bar come from here, so a single large file
-        // is not a frozen interface.
-        setBytesDone(bytesDone() < 0 ? written : bytesDone() + got);
+        // is not a frozen interface. From this task's own running total, never
+        // read back from what was last reported -- see m_bytesCopied.
+        setBytesDone(m_bytesCopied + written);
     }
 
     // A read that ended early and a file that shrank look exactly alike from
@@ -117,6 +118,11 @@ bool SyncTask::copyOne(const SyncPlan::Step& step)
         m_failures.append(QStringLiteral("%1: %2").arg(step.relativePath, committed.error().message));
         return false;
     }
+    // Only once the file is committed. A step that failed part way leaves the
+    // destination without it, so counting its bytes would make the total say
+    // more arrived than did.
+    m_bytesCopied += written;
+    setBytesDone(m_bytesCopied);
     return true;
 }
 

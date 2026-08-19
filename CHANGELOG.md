@@ -11,6 +11,8 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-19 #MOLE-126 A sync now reports how much it has copied — the figure and the progress bar used to stop advancing part way through and settle on a fraction of the real total, while the copy itself was correct all along
+
 2026-08-19 #MOLE-224 The drives dialog's Kind picker now names the drive you selected, instead of the one you looked at before
 
 2026-08-19 #MOLE-225 A video preview can be muted, and remembers it — for every video and across restarts

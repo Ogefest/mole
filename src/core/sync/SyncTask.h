@@ -40,6 +40,16 @@ private:
     VfsUri m_target;
     SyncOptions m_options;
 
+    /// Bytes copied by the steps that are already finished.
+    ///
+    /// Its own counter, the way TransferTask keeps one. It used to read the
+    /// figure back with `bytesDone()` and add the chunk it had just written,
+    /// which was a number the drawing thread refreshes at most every
+    /// `Task::kDrainIntervalMs` -- so between two of those, every iteration
+    /// added its chunk to the same stale total and the count stopped advancing
+    /// while the copy itself was perfectly correct.
+    qint64 m_bytesCopied = 0;
+
     SyncPlan m_plan;
     int m_applied = 0;
     QStringList m_failures;

@@ -49,9 +49,13 @@ private slots:
     void aSourceThatReallyShrankIsCopiedAsItNowIs();
     void aDestinationThatFillsUpSaysWhy();
     void aFileThatFailedIsNotCountedAsAppliedAndIsRetriedNextRun();
+    void theByteCountIsTheWorkersOwnAndNotTheWindowsCopyOfIt();
 
 private:
     SyncTask* run();
+    /// Submits without waiting, for the one case that has to do something to the
+    /// task while it is still running.
+    SyncTask* start();
     QStringList destinationEntries() const;
 
     std::unique_ptr<TaskManager> m_tasks;
@@ -85,7 +89,7 @@ void TestSyncTaskUnderFault::cleanup()
     m_tree.reset();
 }
 
-SyncTask* TestSyncTaskUnderFault::run()
+SyncTask* TestSyncTaskUnderFault::start()
 {
     SyncOptions options;
     // Not a dry run, which is the default: what is being tested is what happens
@@ -94,6 +98,12 @@ SyncTask* TestSyncTaskUnderFault::run()
     auto* task = new SyncTask(m_source, VfsUri::fromString(QStringLiteral("mem:///src")), m_target,
         m_tree->rootUri().child(QStringLiteral("dest")), options);
     m_tasks->submit(task);
+    return task;
+}
+
+SyncTask* TestSyncTaskUnderFault::run()
+{
+    SyncTask* task = start();
     if (!waitForTask(task))
         return nullptr;
     return task;
@@ -212,4 +222,55 @@ void TestSyncTaskUnderFault::aFileThatFailedIsNotCountedAsAppliedAndIsRetriedNex
 }
 
 MOLE_TEST_MAIN(TestSyncTaskUnderFault)
+/// The running total a sync reports, when the window has already read one.
+///
+/// `Task::bytesDone()` used to answer with the figure the *window* holds, which
+/// is only refreshed when the task's report box is drained -- at most once every
+/// `kDrainIntervalMs`. Sync built its running total by reading that figure back
+/// and adding the chunk it had just written, so between two drains every
+/// iteration added its chunk to the same stale number. The total stopped
+/// advancing and the file was reported as a fraction of its size, while the copy
+/// itself was perfectly correct. `TransferTask` never had it: it keeps its own
+/// counter and reports that.
+///
+/// It was also a data race, which is how it was found. The map the figure came
+/// from is written on the main thread when the box is drained and was being read
+/// on the worker, with nothing between them -- ThreadSanitizer's only complaint
+/// against this codebase once Qt could answer it (ADR-0055).
+///
+/// **Nothing here waits for a clock.** The stall holds the worker at a byte
+/// offset; the test then waits for the drain to *land*, which is a condition it
+/// can see. What makes the fault certain rather than likely is the drain
+/// throttle itself: having just drained, the next one cannot come for
+/// `kDrainIntervalMs`, and the few hundred bytes left of an in-memory file are
+/// gone long before that.
+void TestSyncTaskUnderFault::theByteCountIsTheWorkersOwnAndNotTheWindowsCopyOfIt()
+{
+    // Held at a thousand bytes, then let go in small pieces so that several
+    // iterations run between one drain and the next.
+    m_source->readStallsAt(1000);
+    for (const qint64 at : { 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400 })
+        m_source->readGoesShortAt(at, 100);
+
+    SyncTask* task = start();
+    QVERIFY(waitFor([this] { return m_source->isStalled(); }));
+
+    // The window's copy catches up while the worker is held still. This is the
+    // condition, not a duration: the figure appearing is the drain landing.
+    QVERIFY(waitFor([task] { return task->bytesDone() == 1000; }));
+
+    m_source->release();
+    QVERIFY(waitForTask(task));
+
+    QVERIFY2(task->failures().isEmpty(), qPrintable(task->failures().join(QLatin1Char(' '))));
+    QCOMPARE(task->bytesDone(), kPayload);
+
+    // And the copy itself was never in doubt -- which is what made this one
+    // worth catching. A count that lies about work that was done correctly is
+    // read as a stall by whoever is watching it.
+    QFile landed(m_tree->absolute(QStringLiteral("dest/payload.bin")));
+    QVERIFY(landed.open(QIODevice::ReadOnly));
+    QCOMPARE(landed.readAll(), QByteArray(kPayload, 'a'));
+}
+
 #include "tst_SyncTaskUnderFault.moc"

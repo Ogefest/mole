@@ -284,20 +284,17 @@ TaskMetric Task::metric(const QString& key) const
 
 qint64 Task::bytesDone() const
 {
-    const auto position = m_metrics.constFind(TaskMetrics::kBytesDone);
-    return position == m_metrics.constEnd() ? -1 : static_cast<qint64>(position->value);
+    return m_bytesDone.load(std::memory_order_relaxed);
 }
 
 qint64 Task::bytesTotal() const
 {
-    const auto position = m_metrics.constFind(TaskMetrics::kBytesTotal);
-    return position == m_metrics.constEnd() ? -1 : static_cast<qint64>(position->value);
+    return m_byteTotal.load(std::memory_order_relaxed);
 }
 
 double Task::bytesPerSecond() const
 {
-    const auto position = m_metrics.constFind(TaskMetrics::kRate);
-    return position == m_metrics.constEnd() ? 0.0 : position->value;
+    return m_bytesPerSecond.load(std::memory_order_relaxed);
 }
 
 namespace {
@@ -365,6 +362,11 @@ void Task::setBytesDone(qint64 done)
     // stall takes too long to become visible.
     // Monotonic, for the same reason elapsedMs() is: a clock stepped backwards
     // between two samples would make the interval negative and the rate with it.
+    // First, and outside every window below. What follows coalesces *reports* --
+    // the queued events that reach the window -- and that throttling must not
+    // reach the figure a worker asks for.
+    m_bytesDone.store(done, std::memory_order_relaxed);
+
     const qint64 nowMs = m_since.isValid() ? m_since.elapsed() : 0;
     if (m_lastSampleMs < 0) {
         m_lastSampleMs = nowMs;
@@ -374,6 +376,7 @@ void Task::setBytesDone(qint64 done)
         const double rate = static_cast<double>(done - m_lastSampleBytes) / seconds;
         // Smoothed, or the number is unreadable while it changes every frame.
         m_rate = m_rate > 0.0 ? m_rate * 0.6 + rate * 0.4 : rate;
+        m_bytesPerSecond.store(m_rate, std::memory_order_relaxed);
         m_lastSampleMs = nowMs;
         m_lastSampleBytes = done;
         ++m_rateSamples;

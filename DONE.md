@@ -9,6 +9,61 @@ wrong.
 
 ---
 
+## The concurrency suites were not clean under ThreadSanitizer, and the one real race was hiding a wrong number
+
+**Asked for:** MOLE-126 — `make tsan` clean, or every remaining warning carrying a suppression entry
+saying what it is and why it is not ours. Anything found to be a real race gets a test that fails
+without the fix.
+
+**`make tsan` is clean. Fifty-six suites, no failures, no warnings.** Not the suppression fallback —
+there is nothing left to suppress.
+
+Most of the work was not here. The brief described 43 warnings from one suite; a whole run said 5038
+across 45, and four in five of those were Qt's own locking being invisible to a sanitizer the
+distribution's Qt was never built for. That is MOLE-234 and
+[ADR-0055](docs/adr/0055-thread-sanitizer-needs-a-qt-that-answers-it.md). Against a Qt that answers,
+5038 became 25 — **all of them one race, in our code.**
+
+**The race, and the better bug underneath it.** `Task::bytesDone()` read the metric map, which the
+drawing thread fills when the task's report box is drained. `SyncTask::copyOne` called it on a worker
+thread. That is the data race ThreadSanitizer reported, and on its own it would have been a tidy-up.
+
+It was not on its own. The figure that map holds is refreshed **at most once every
+`kDrainIntervalMs`**, and sync built its running total by reading it back:
+
+```cpp
+setBytesDone(bytesDone() < 0 ? written : bytesDone() + got);
+```
+
+So between two drains every iteration added its chunk to the same stale number. Worse, the report
+that carries the total to the window is itself coalesced, and the one report guaranteed to go out is
+the final one — `done >= m_byteTotal` — which a total that never reaches the size never triggers. A
+sync of four thousand bytes reported **one thousand**, and the copy was perfect. A count that lies
+about work that was done correctly reads as a stall to whoever is watching it, which is why this got
+a changelog line and the race did not.
+
+`TransferTask` never had it: it keeps `m_bytesCompleted` and reports that. Sync has its own counter
+now, added only once a file is committed — a step that failed part way leaves the destination without
+it, so counting its bytes would say more arrived than did.
+
+**The trap is gone as well as the instance.** `bytesDone()`, `bytesTotal()` and `bytesPerSecond()`
+are served from atomics the worker writes as it reports, so they are safe from any thread *and*
+current rather than drawn. Leaving them reading the map would have meant the next task body to ask
+its own byte count reintroduced both faults in silence. `metrics()` was already documented as UI
+thread only; now the three that are not say so too.
+
+**The test waits for a condition, never a clock**, and the drain throttle is what makes the fault
+certain rather than likely: the worker is stalled at a byte offset, the test waits for the window's
+copy to catch up — that is the drain landing, and it is visible — and then lets the worker go. Having
+just drained, the next drain cannot come for `kDrainIntervalMs`, and the few hundred bytes left of an
+in-memory file are gone long before that. It reported 1000 against 4000 before the fix.
+
+**Two suites are not in this tier and say so.** `tst_KilledOutright` and `tst_MoleTasks` abort on
+`CHECK failed: tsan_rtl.cpp:253`, an internal assertion in GCC 13's ThreadSanitizer runtime when a
+multithreaded program forks. Both start processes; both pass under `make test` and `make asan`.
+`TSAN_EXCLUDE` names them so the exclusion is a decision rather than a filter that happens to miss
+them.
+
 ## `make tsan` produced five thousand warnings and nobody could act on one of them
 
 **Asked for:** MOLE-234 — opened while starting MOLE-126, whose brief said "43 warnings, from

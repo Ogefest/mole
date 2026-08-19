@@ -115,8 +115,15 @@ public:
     /// One metric by key, or a default-constructed one when absent.
     TaskMetric metric(const QString& key) const;
 
-    /// Bytes moved so far, or -1 when this task does not measure bytes. A
-    /// shortcut for the well-known metric, because the progress bar needs it.
+    /// Bytes moved so far, or -1 when this task does not measure bytes.
+    ///
+    /// **Safe from any thread, and current rather than drawn.** These three come
+    /// from what the worker last reported, not from the metric map above -- that
+    /// map is filled on the drawing thread when the report box is drained, so
+    /// reading it from a worker was both a data race and an answer up to
+    /// `kDrainIntervalMs` out of date. A task that built its running total by
+    /// reading one of these back therefore added every chunk to the same stale
+    /// number until the next drain; see `SyncTask::copyOne`, which did.
     qint64 bytesDone() const;
     qint64 bytesTotal() const;
     /// Recent throughput in bytes per second, or 0 before there is enough to
@@ -302,8 +309,17 @@ private:
     /// When the box was last emptied. Drawing thread only.
     qint64 m_lastDrainMs = -1;
 
+    // --- the byte counters, written by the worker and read from anywhere ---
+    //
+    // Atomic because they are the one part of a task's reporting that a worker
+    // reads back -- a progress bar wants the window's copy, but a copy loop
+    // accumulating a total wants its own. Relaxed ordering throughout: each is a
+    // single value that stands alone, and nothing is published through them.
+    std::atomic<qint64> m_bytesDone { -1 };
+    std::atomic<double> m_bytesPerSecond { 0.0 };
+
     // --- throughput sampling, touched only by the worker thread ---
-    qint64 m_byteTotal = -1;
+    std::atomic<qint64> m_byteTotal { -1 };
     qint64 m_lastSampleBytes = 0;
     /// Minus one rather than zero, because zero is a moment the monotonic clock
     /// really can read: a task sampled in the millisecond it started would
