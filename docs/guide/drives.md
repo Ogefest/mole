@@ -3,11 +3,18 @@
 ![The drives dialog](images/11-drives.png)
 
 A drive is anywhere files live: a disk, an archive you have opened, or a server on
-the other side of the network. Mole speaks **SFTP**, **FTP**, **WebDAV** and
-**S3** — the last across AWS, Backblaze B2, MinIO, Ceph, Wasabi and Cloudflare
-R2 — and once one is set up it is a row in the same list as everything else. The
-listing, the previews, the search, copying, renaming: none of them know or care
-which kind of drive they are looking at.
+the other side of the network. Mole speaks **SFTP**, **FTP**, **WebDAV**, **S3** —
+the last across AWS, Backblaze B2, MinIO, Ceph, Wasabi and Cloudflare R2 — and
+**SMB** and **NFS**, which is what a NAS and a Linux or BSD file server offer. Once
+one is set up it is a row in the same list as everything else. The listing, the
+previews, the search, copying, renaming: none of them know or care which kind of
+drive they are looking at.
+
+**SMB and NFS depend on what Mole was built against** — `libsmbclient` for one and
+`libnfs` for the other, both optional. A build without them does not offer that kind
+at all rather than offering it and failing to connect, so the Kind list in the dialog
+is the honest answer to what this copy of Mole can reach. If either is missing from a
+build you did not make yourself, that is a question for whoever packaged it.
 
 `F4` → File → Drives… opens the dialog above. It is where a drive is *configured*
 and nothing else; connecting, ejecting and checking happen in the window.
@@ -145,10 +152,6 @@ good way to get an address rate-limited and a small bill on a metered bucket, fo
 information nobody asked for.
 
 ## What is not here
-
-**NFS and SMB are not written yet.** Both are wanted; neither exists today. On
-Linux a share mounted by the operating system shows up as an ordinary drive, so
-the gap is narrower in practice than it looks.
 
 **Google Drive, Dropbox and OneDrive are not backends and are not planned as
 part of the application.** Each needs OAuth, a registered application, token
