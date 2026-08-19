@@ -97,9 +97,9 @@ Item {
                     spacing: 0
                     Button {
                         text: "▭  Single"
-                        flat: controller ? (controller.splitEnabled || controller.gridEnabled) : true
+                        flat: controller ? (controller.splitEnabled || controller.tilesEnabled) : true
                         highlighted: controller
-                                     ? (!controller.splitEnabled && !controller.gridEnabled) : false
+                                     ? (!controller.splitEnabled && !controller.tilesEnabled) : false
                         font.pixelSize: 12
                         onClicked: { controller.viewMode = 0; view.focusActivePane() }
                     }
@@ -116,6 +116,14 @@ Item {
                         highlighted: controller ? controller.gridEnabled : false
                         font.pixelSize: 12
                         onClicked: { controller.viewMode = 2; view.focusActivePane() }
+                    }
+                    Button {
+                        objectName: "galleryButton"
+                        text: "▤  Gallery"
+                        flat: controller ? !controller.galleryEnabled : true
+                        highlighted: controller ? controller.galleryEnabled : false
+                        font.pixelSize: 12
+                        onClicked: { controller.viewMode = 3; view.focusActivePane() }
                     }
                 }
 
@@ -289,7 +297,9 @@ Item {
                 id: leftPane
                 SplitView.fillWidth: true
                 SplitView.minimumWidth: 260
-                gridMode: controller ? controller.gridEnabled : false
+                tileMode: controller ? controller.tilesEnabled : false
+                tileWidth: controller ? controller.tileWidth : 132
+                tileHeight: controller ? controller.tileHeight : 104
                 paneController: controller ? controller.left : null
                 active: controller ? controller.activePaneIndex === 0 : true
                 onFocusRequested: if (controller) controller.activePaneIndex = 0
@@ -308,7 +318,7 @@ Item {
             FilePane {
                 id: rightPane
                 visible: controller ? controller.splitEnabled : false
-                gridMode: false
+                tileMode: false
                 SplitView.preferredWidth: parent.width / 2
                 SplitView.minimumWidth: 260
                 paneController: controller ? controller.right : null

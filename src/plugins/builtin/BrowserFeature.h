@@ -23,6 +23,10 @@ class BrowserController final : public FeatureController
     Q_PROPERTY(ViewMode viewMode READ viewMode WRITE setViewMode NOTIFY viewModeChanged)
     Q_PROPERTY(bool splitEnabled READ splitEnabled NOTIFY viewModeChanged)
     Q_PROPERTY(bool gridEnabled READ gridEnabled NOTIFY viewModeChanged)
+    Q_PROPERTY(bool galleryEnabled READ galleryEnabled NOTIFY viewModeChanged)
+    Q_PROPERTY(bool tilesEnabled READ tilesEnabled NOTIFY viewModeChanged)
+    Q_PROPERTY(int tileWidth READ tileWidth NOTIFY viewModeChanged)
+    Q_PROPERTY(int tileHeight READ tileHeight NOTIFY viewModeChanged)
     Q_PROPERTY(int activePaneIndex READ activePaneIndex WRITE setActivePaneIndex NOTIFY activePaneChanged)
     /// A property, not a method. As an invokable it had no change signal, so
     /// QML evaluated the binding once and Copy/Move never enabled when the user
@@ -49,7 +53,8 @@ public:
     enum class ViewMode {
         Single, ///< one pane, rows
         Dual, ///< two panes side by side, commander style
-        Grid ///< one pane, tiles
+        Grid, ///< one pane, small tiles
+        Gallery ///< one pane, tiles big enough to see a picture in
     };
     Q_ENUM(ViewMode)
 
@@ -73,6 +78,18 @@ public:
     /// Tiles instead of rows. Orthogonal to how many panes there are, which is
     /// why the pane takes it as a flag rather than switching on the mode.
     bool gridEnabled() const { return m_viewMode == ViewMode::Grid; }
+    /// Tiles big enough to see a picture in. The fourth way of looking at a
+    /// folder, and the same pane: selection, F5, filter-by-typing, sorting and F3
+    /// all come with it because none of them knows which mode it is in.
+    bool galleryEnabled() const { return m_viewMode == ViewMode::Gallery; }
+    /// Either of the two tile views. The pane takes a size rather than a mode,
+    /// for the same reason gridEnabled() is a flag: one GridView serves both.
+    bool tilesEnabled() const { return gridEnabled() || galleryEnabled(); }
+    /// The cell a tile is drawn in. The gallery's is square and large enough for
+    /// a 160-pixel picture with the name under it in two lines and the size under
+    /// that; the grid's is what it has always been.
+    int tileWidth() const { return galleryEnabled() ? 200 : 132; }
+    int tileHeight() const { return galleryEnabled() ? 200 : 104; }
     int activePaneIndex() const { return m_activePaneIndex; }
     void setActivePaneIndex(int index);
 

@@ -46,6 +46,7 @@ private slots:
     void browserRemembersItsFolder();
     void dualPaneLayoutIsRemembered();
     void gridLayoutIsRemembered();
+    void galleryLayoutIsRemembered();
     void unknownLayoutFallsBackToTheListing();
     void bothPanesAndActivePaneAreRemembered();
     void searchTabRemembersItsQueryButNotItsResults();
@@ -292,6 +293,28 @@ void TestSession::gridLayoutIsRemembered()
     QVERIFY(browserAt(0)->gridEnabled());
 }
 
+/// The fourth way of looking at a folder, and the same tab: a tab left in the
+/// gallery has to come back in it. See MOLE-139.
+void TestSession::galleryLayoutIsRemembered()
+{
+    startApp();
+    BrowserController* browser = browserAt(0);
+    QVERIFY(browser);
+    QVERIFY(!browser->galleryEnabled());
+
+    browser->setViewMode(BrowserController::ViewMode::Gallery);
+    QVERIFY(browser->galleryEnabled());
+    QVERIFY2(!browser->gridEnabled(), "the gallery is not the grid of icons");
+    QVERIFY2(browser->tilesEnabled(), "but it is a tile view, which is what the pane is told");
+    QVERIFY2(!browser->splitEnabled(), "the gallery is one pane, not two");
+
+    restartApp();
+
+    QVERIFY(browserAt(0)->galleryEnabled());
+    // And its tile is the large one, which is the only thing that differs.
+    QVERIFY2(browserAt(0)->tileHeight() > 160, "a gallery tile has room for a picture");
+}
+
 void TestSession::unknownLayoutFallsBackToTheListing()
 {
     // A newer build might write a layout this one has never heard of. Falling
@@ -308,6 +331,7 @@ void TestSession::unknownLayoutFallsBackToTheListing()
     BrowserController* browser = browserAt(0);
     QVERIFY(browser);
     QVERIFY(!browser->gridEnabled());
+    QVERIFY(!browser->galleryEnabled());
     QVERIFY(!browser->splitEnabled());
 }
 

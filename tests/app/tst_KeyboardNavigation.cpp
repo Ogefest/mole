@@ -73,6 +73,7 @@ private slots:
     void gridArrowsMoveOneEntryWhenOnlyOneColumnFits();
     void pagingMovesByWhatIsVisibleRatherThanFifteen();
     void ctrlArrowsStillNavigateHistoryInTheGrid();
+    void theGalleryIsTheSamePaneWithBiggerTiles();
 
 private:
     BrowserPaneController* pane() const;
@@ -1029,6 +1030,85 @@ void TestKeyboardNavigation::ctrlArrowsStillNavigateHistoryInTheGrid()
     QVERIFY(waitFor([this, start] { return pane()->currentUri() == start; }));
     pressKey(Qt::Key_Right, Qt::ControlModifier);
     QVERIFY(waitFor([this, start] { return pane()->currentUri() != start; }));
+}
+
+/// The whole argument for a fourth view mode rather than a fourth feature is that
+/// everything the browser has comes with it. Asserted rather than assumed. See
+/// MOLE-139.
+void TestKeyboardNavigation::theGalleryIsTheSamePaneWithBiggerTiles()
+{
+    BrowserController* tab = browser();
+    QVERIFY(tab);
+    tab->setViewMode(BrowserController::ViewMode::Gallery);
+    settle();
+
+    QQuickItem* grid = findItem(QStringLiteral("fileGrid"));
+    QVERIFY(grid);
+    QVERIFY(waitFor([grid] { return grid->isVisible() && grid->width() > 0; }));
+    // One GridView serves both tile views; the gallery differs in its cell size
+    // and in nothing else.
+    QCOMPARE(grid->property("cellWidth").toInt(), tab->tileWidth());
+    QCOMPARE(grid->property("cellHeight").toInt(), tab->tileHeight());
+    QVERIFY2(tab->tileWidth() >= 200, "a gallery tile has room for a 160-pixel picture");
+
+    // Selection, and Insert advancing in listing order.
+    pane()->cursorToStart();
+    pressKey(Qt::Key_Insert);
+    QCOMPARE(pane()->files()->selectionCount(), 1);
+    QCOMPARE(pane()->currentIndex(), 1);
+    pressKey(Qt::Key_Space);
+    QCOMPARE(pane()->files()->selectionCount(), 2);
+    pressKey(Qt::Key_Escape);
+    QCOMPARE(pane()->files()->selectionCount(), 0);
+
+    // Filter-by-typing, with no shortcut to remember.
+    pressKey(Qt::Key_B); // "beta"
+    QVERIFY(waitFor([this] { return pane()->files()->rowCount() == 1; }, 3000));
+    QQuickItem* filter = findItem(QStringLiteral("filterField"));
+    QVERIFY(filter);
+    QVERIFY2(filter->hasActiveFocus(), "the keyboard has to move into the filter here too");
+    pressKey(Qt::Key_Escape);
+    QVERIFY(waitFor([this] { return pane()->files()->rowCount() == 5; }, 3000));
+
+    // Sorting, which is the model's and so is shared by construction.
+    pane()->files()->setSortDescending(false);
+    settle();
+    const QString ascending = pane()->files()->nameAt(0);
+    pane()->files()->setSortDescending(true);
+    settle();
+    QVERIFY2(pane()->files()->nameAt(0) != ascending, "sorting has to reach the tiles");
+    pane()->files()->setSortDescending(false);
+    settle();
+
+    // A folder of files with no thumbnails has to be worth looking at: the name
+    // is readable rather than elided to nothing in a 200-pixel tile.
+    QQuickItem* tile = nullptr;
+    QMetaObject::invokeMethod(grid, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, tile), Q_ARG(int, 0));
+    QVERIFY(tile);
+    QQuickItem* tileName = findItem(tile, QStringLiteral("tileName"));
+    QVERIFY(tileName);
+    QCOMPARE(tileName->property("text").toString(), pane()->files()->nameAt(0));
+    QVERIFY2(!tileName->property("truncated").toBool(),
+        qPrintable(QStringLiteral("\"%1\" does not fit a %2px tile")
+                       .arg(tileName->property("text").toString())
+                       .arg(tab->tileWidth())));
+    QVERIFY(tileName->width() > tab->tileWidth() / 2);
+    // And a directory says it is one, so a folder among photographs cannot read
+    // as a picture that failed to load.
+    QQuickItem* caption = findItem(tile, QStringLiteral("tileCaption"));
+    QVERIFY(caption);
+    QCOMPARE(caption->property("text").toString(), QStringLiteral("folder"));
+
+    // And F3 opens a preview of the tile under the cursor.
+    const int row = pane()->files()->rowOfUri(m_tree->rootUri().child(QStringLiteral("one.txt")).toString());
+    QVERIFY(row >= 0);
+    pane()->setCurrentIndex(row);
+    settle();
+    const int tabsBefore = m_app->tabs()->rowCount();
+    pressKey(Qt::Key_F3);
+    QCOMPARE(m_app->tabs()->rowCount(), tabsBefore + 1);
+    QCOMPARE(m_app->tabs()->currentController()->property("currentUri").toString(),
+        m_tree->rootUri().child(QStringLiteral("one.txt")).toString());
 }
 
 int main(int argc, char** argv)

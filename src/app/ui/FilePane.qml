@@ -12,9 +12,14 @@ FocusScope {
 
     property var paneController: null
     property bool active: true
-    /// Tiles instead of rows. Both views share the model, the cursor and every
-    /// key handler -- only the delegate and the layout differ.
-    property bool gridMode: false
+    /// Tiles instead of rows. Both tile views share the model, the cursor and
+    /// every key handler -- only the delegate and the layout differ.
+    property bool tileMode: false
+    /// The cell a tile is drawn in. Carried rather than switched on, so one
+    /// GridView serves the small grid of icons and the gallery both: the pane is
+    /// told a size, not a mode.
+    property int tileWidth: 132
+    property int tileHeight: 104
     signal focusRequested()
     signal transferRequested(bool move)
     signal switchPaneRequested()
@@ -38,7 +43,7 @@ FocusScope {
     /// is one entry. Never zero: a pane narrower than one cell still moves by
     /// one entry rather than standing still.
     function columnsAcross() {
-        if (!pane.gridMode || grid.cellWidth <= 0)
+        if (!pane.tileMode || grid.cellWidth <= 0)
             return 1
         return Math.max(1, Math.floor(grid.width / grid.cellWidth))
     }
@@ -47,7 +52,7 @@ FocusScope {
     /// guessed. It was 15 -- a constant that is a guess at a list's page height
     /// and means nothing in either view at any window size.
     function entriesPerPage() {
-        if (pane.gridMode) {
+        if (pane.tileMode) {
             if (grid.cellHeight <= 0)
                 return 1
             return Math.max(1, Math.floor(grid.height / grid.cellHeight) * pane.columnsAcross())
@@ -79,7 +84,7 @@ FocusScope {
             return
         if (event.modifiers & Qt.ControlModifier)
             paneController.goBack()
-        else if (pane.gridMode)
+        else if (pane.tileMode)
             paneController.moveCursor(-1)
     }
     Keys.onRightPressed: function(event) {
@@ -87,7 +92,7 @@ FocusScope {
             return
         if (event.modifiers & Qt.ControlModifier)
             paneController.goForward()
-        else if (pane.gridMode)
+        else if (pane.tileMode)
             paneController.moveCursor(1)
     }
     Keys.onReturnPressed: {
@@ -286,7 +291,7 @@ FocusScope {
     function takeFocus() {
         pane.focusRequested()
         pane.forceActiveFocus()
-        if (gridMode)
+        if (tileMode)
             grid.forceActiveFocus()
         else
             list.forceActiveFocus()
@@ -678,11 +683,11 @@ FocusScope {
         ListView {
             id: list
             objectName: "fileList"
-            visible: !pane.gridMode && !(slowListing.tripped && paneController && paneController.loading)
+            visible: !pane.tileMode && !(slowListing.tripped && paneController && paneController.loading)
 
             Layout.fillWidth: true
-            Layout.fillHeight: pane.gridMode ? false : true
-            Layout.preferredHeight: pane.gridMode ? 0 : -1
+            Layout.fillHeight: pane.tileMode ? false : true
+            Layout.preferredHeight: pane.tileMode ? 0 : -1
             clip: true
             model: paneController ? paneController.files : null
             currentIndex: paneController ? paneController.currentIndex : -1
@@ -860,19 +865,19 @@ FocusScope {
         GridView {
             id: grid
             objectName: "fileGrid"
-            visible: pane.gridMode
+            visible: pane.tileMode
 
             Layout.fillWidth: true
-            Layout.fillHeight: pane.gridMode
-            Layout.preferredHeight: pane.gridMode ? -1 : 0
+            Layout.fillHeight: pane.tileMode
+            Layout.preferredHeight: pane.tileMode ? -1 : 0
             clip: true
             model: paneController ? paneController.files : null
             currentIndex: paneController ? paneController.currentIndex : -1
-            focus: pane.gridMode
+            focus: pane.tileMode
             // Same reason as the list: one owner for the cursor.
             keyNavigationEnabled: false
-            cellWidth: 132
-            cellHeight: 104
+            cellWidth: pane.tileWidth
+            cellHeight: pane.tileHeight
             ScrollBar.vertical: ScrollBar {}
 
             onActiveFocusChanged: if (activeFocus) pane.focusRequested()
@@ -921,12 +926,37 @@ FocusScope {
                     anchors.margins: 6
                     spacing: 2
 
-                    Label {
-                        Layout.alignment: Qt.AlignHCenter
-                        text: iconText
-                        font.pixelSize: 34
+                    // The room a picture will occupy. Until there is one it holds
+                    // the icon, drawn to suit the tile rather than at a fixed 34
+                    // pixels -- a folder of source code in a large tile has to be
+                    // worth looking at, not a wall of small identical glyphs.
+                    Item {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        Layout.minimumHeight: 0
+
+                        // A directory says so at a glance: the whole view is
+                        // large tiles now, and a folder among photographs must
+                        // not read as a picture that failed to load.
+                        Rectangle {
+                            anchors.centerIn: parent
+                            width: Math.min(parent.width, parent.height) + 8
+                            height: width
+                            visible: isDir && pane.tileHeight >= 160
+                            radius: 8
+                            color: "#232a36"
+                            border.color: "#2f3849"
+                            border.width: 1
+                        }
+
+                        Label {
+                            anchors.centerIn: parent
+                            text: iconText
+                            font.pixelSize: Math.max(24, Math.round(pane.tileHeight * 0.32))
+                        }
                     }
                     Label {
+                        objectName: "tileName"
                         Layout.fillWidth: true
                         horizontalAlignment: Text.AlignHCenter
                         text: name
@@ -938,8 +968,9 @@ FocusScope {
                         color: selected ? Material.accent : Material.foreground
                     }
                     Label {
+                        objectName: "tileCaption"
                         Layout.alignment: Qt.AlignHCenter
-                        text: sizeText
+                        text: isDir ? "folder" : sizeText
                         color: "#6f7788"
                         font.pixelSize: App.smallTextSize
                     }

@@ -86,7 +86,7 @@ private slots:
     void menuEntryOpensTheTab();
     void viewMenuReflectsAndTogglesTheCurrentTab();
     void menuEntriesGreyOutWhenTheyDoNotApply();
-    void viewMenuOffersThreeExclusiveLayouts();
+    void viewMenuOffersFourExclusiveLayouts();
     void manyTabsOpenAndCloseWithoutLeaking();
     void shutsDownCleanlyWithWorkInFlight();
     void aScanStartedWithoutADialogKeepsWhatHasNotChanged();
@@ -1259,14 +1259,15 @@ void TestAppIntegration::viewMenuReflectsAndTogglesTheCurrentTab()
     QVERIFY(dual.value(QStringLiteral("checked")).toBool());
 }
 
-void TestAppIntegration::viewMenuOffersThreeExclusiveLayouts()
+void TestAppIntegration::viewMenuOffersFourExclusiveLayouts()
 {
     // Exactly one is ticked at a time: they are alternatives, not switches.
     const auto tickedLayout = [this]() -> QString {
         const QVariantList menu = m_app->buildMenu();
         QStringList ticked;
-        for (const QString& id : { QStringLiteral("mole.view.singlePane"),
-                 QStringLiteral("mole.view.dualPane"), QStringLiteral("mole.view.gridView") }) {
+        for (const QString& id :
+            { QStringLiteral("mole.view.singlePane"), QStringLiteral("mole.view.dualPane"),
+                QStringLiteral("mole.view.gridView"), QStringLiteral("mole.view.gallery") }) {
             if (menuEntry(menu, id).value(QStringLiteral("checked")).toBool())
                 ticked.append(id);
         }
@@ -1278,6 +1279,17 @@ void TestAppIntegration::viewMenuOffersThreeExclusiveLayouts()
     QVERIFY(m_app->triggerAction(QStringLiteral("mole.view.gridView")));
     QCOMPARE(tickedLayout(), QStringLiteral("mole.view.gridView"));
 
+    // The fourth, which unticks the grid rather than joining it.
+    QVERIFY(m_app->triggerAction(QStringLiteral("mole.view.gallery")));
+    QCOMPARE(tickedLayout(), QStringLiteral("mole.view.gallery"));
+    {
+        auto* tab = qobject_cast<BrowserController*>(m_app->tabs()->controllerAt(0));
+        QVERIFY(tab);
+        QVERIFY(tab->galleryEnabled());
+        QVERIFY2(!tab->gridEnabled(), "the gallery is not the grid of icons");
+        QVERIFY2(tab->tileHeight() > tab->tileWidth() / 2, "and its tile has room for a picture");
+    }
+
     QVERIFY(m_app->triggerAction(QStringLiteral("mole.view.dualPane")));
     QCOMPARE(tickedLayout(), QStringLiteral("mole.view.dualPane"));
 
@@ -1285,6 +1297,7 @@ void TestAppIntegration::viewMenuOffersThreeExclusiveLayouts()
     QVERIFY(browser);
     QVERIFY(browser->splitEnabled());
     QVERIFY(!browser->gridEnabled());
+    QVERIFY(!browser->galleryEnabled());
 }
 
 void TestAppIntegration::menuEntriesGreyOutWhenTheyDoNotApply()

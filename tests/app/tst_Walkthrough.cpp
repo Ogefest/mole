@@ -2320,6 +2320,23 @@ void TestWalkthrough::dualPaneAndGrid()
     QVERIFY2(!browser->splitEnabled(), "grid is one pane, not two");
     QVERIFY(m_harness->item(QStringLiteral("fileGrid")) != nullptr);
     m_harness->screenshot(QStringLiteral("06-grid"));
+
+    // The fourth way of looking at a folder: the same pane, the same model and
+    // the same keys, with a tile big enough to see a picture in. MOLE-139.
+    browser->setViewMode(BrowserController::ViewMode::Gallery);
+    m_harness->settle(4);
+    QVERIFY(browser->galleryEnabled());
+    QVERIFY2(!browser->gridEnabled(), "the gallery is not the grid of icons");
+    QVERIFY2(browser->tilesEnabled(), "but it is a tile view, which is all the pane is told");
+
+    QQuickItem* tiles = m_harness->item(QStringLiteral("fileGrid"));
+    QVERIFY(tiles);
+    QCOMPARE(tiles->property("cellWidth").toInt(), browser->tileWidth());
+    // Legible without a thumbnail in it, which is every tile until MOLE-140: the
+    // fixture root is folders and source files, and a wall of small identical
+    // glyphs is what this must not be.
+    QVERIFY(m_harness->until([tiles] { return tiles->width() > 0; }));
+    m_harness->screenshot(QStringLiteral("06b-gallery"));
 }
 
 void TestWalkthrough::f5CopiesTheSelectedFile()

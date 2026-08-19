@@ -418,6 +418,7 @@ QVariantMap BrowserController::saveState() const
     // tab, so it is remembered alongside where each pane was pointing.
     const QString mode = splitEnabled() ? QStringLiteral("dual")
         : gridEnabled()                 ? QStringLiteral("grid")
+        : galleryEnabled()              ? QStringLiteral("gallery")
                                         : QStringLiteral("single");
     return {
         { QStringLiteral("viewMode"), mode },
@@ -432,9 +433,10 @@ void BrowserController::restoreState(const QVariantMap& state)
     const QString mode = state.value(QStringLiteral("viewMode")).toString();
     // An unknown value from a newer build falls back to the plain listing
     // rather than refusing to restore the tab.
-    setViewMode(mode == QLatin1String("dual") ? ViewMode::Dual
-            : mode == QLatin1String("grid")   ? ViewMode::Grid
-                                              : ViewMode::Single);
+    setViewMode(mode == QLatin1String("dual")  ? ViewMode::Dual
+            : mode == QLatin1String("grid")    ? ViewMode::Grid
+            : mode == QLatin1String("gallery") ? ViewMode::Gallery
+                                               : ViewMode::Single);
 
     // A remembered location may have been unmounted, renamed or deleted since.
     // navigateTo() reports that in the pane rather than refusing to restore.

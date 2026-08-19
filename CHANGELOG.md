@@ -11,6 +11,8 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-20 #MOLE-139 A fourth way of looking at a folder: Gallery, with tiles big enough to see a picture in — the same pane, so selection, sorting, filter-by-typing and F3 all work in it
+
 2026-08-20 #MOLE-138 In a grid of tiles the left and right arrows now move a tile and up and down move a visual row, and Page Up/Down move by the number of entries actually on screen instead of by fifteen
 
 2026-08-20 #MOLE-231 An index can now be rescanned, put on a clock or forgotten from the Indexes tab, and a scan that is running shows on its row with a way to stop it

@@ -1248,7 +1248,8 @@ void AppController::registerShellActions()
     int layoutOrder = 10;
     for (const LayoutEntry& layout : { LayoutEntry { "mole.view.singlePane", "Single pane", 0 },
              LayoutEntry { "mole.view.dualPane", "Dual pane", 1 },
-             LayoutEntry { "mole.view.gridView", "Grid of icons", 2 } }) {
+             LayoutEntry { "mole.view.gridView", "Grid of icons", 2 },
+             LayoutEntry { "mole.view.gallery", "Gallery", 3 } }) {
         MenuAction action;
         action.id = QString::fromLatin1(layout.id);
         action.section = MenuAction::Section::View;
