@@ -2,6 +2,11 @@
 
 - **Date:** 2026-08-11
 - **Status:** Accepted
+- **Generalised by:**
+  [ADR-0051](0051-mole-is-for-files-not-a-client-of-what-holds-them.md) — reading git
+  state and never writing it turned out to be one instance of a rule about where Mole
+  stops. Not superseded: this record is still the decision about git,
+  and the sentence quoted there is from here.
 
 ## Context
 

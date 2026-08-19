@@ -383,6 +383,14 @@ Arrow's headers must come before any Qt header: Arrow declares a parameter named
 
 ## Deliberate gaps
 
+**Where Mole stops is one rule, written down once**:
+[ADR-0051](docs/adr/0051-mole-is-for-files-not-a-client-of-what-holds-them.md).
+Mole reads files and operates on them, and its ambition on the reading side is
+maximal — including facts that come from the system underneath. It is not a client
+of those systems: the line is at the first thing that writes into one. The question
+that decides a new case is *does this require Mole to model another system's
+domain?* The gaps below are instances of it, not separate opinions.
+
 - Writing into archives. It means rewriting the container — a different feature
   with different failure modes.
 - FUSE. Mounting into the kernel does not port to Windows, and the internal

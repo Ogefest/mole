@@ -2,6 +2,10 @@
 
 - **Date:** 2026-08-08
 - **Status:** Accepted
+- **Generalised by:** [ADR-0051](0051-mole-is-for-files-not-a-client-of-what-holds-them.md)
+  — reading archives and not writing into them turned out to be one instance of a rule
+  about where Mole stops. Not superseded: this record is still the decision about
+  archives, and its reasoning is what the rule generalises.
 
 ## Context
 
