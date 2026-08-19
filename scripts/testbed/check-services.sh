@@ -23,6 +23,10 @@ S3_PORT="${MOLE_TESTBED_S3_PORT:-9000}"
 failures=0
 ok()   { printf '  \033[32mok\033[0m    %s\n' "$*"; }
 bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$*"; failures=$((failures + 1)); }
+# Neither pass nor fail: something this machine cannot ask about. A check that
+# counted "I have no client for that" as a failure would teach people to ignore
+# the whole run.
+note() { printf '  \033[33m--\033[0m    %s\n' "$*"; }
 
 printf '\n\033[1mServices on %s\033[0m\n' "$ADDRESS"
 
@@ -74,6 +78,39 @@ if curl -fsS -u "$ACCOUNT:$PASSWORD" -T - "$dav/$stamp" <<<"hello" >/dev/null 2>
     curl -fsS -u "$ACCOUNT:$PASSWORD" -X DELETE "$dav/$stamp" >/dev/null 2>&1 || true
 else
     bad "webdav at $dav"
+fi
+
+# --- SMB ---------------------------------------------------------------------
+#
+# A listing through the share, not a port that answers. smbd accepts a
+# connection long before it will hand over a directory, and a check that stops
+# at the connection is a check that passes on a misconfigured share.
+
+SMB_SHARE="${MOLE_TESTBED_SMB_SHARE:-moledata}"
+if command -v smbclient >/dev/null 2>&1; then
+    if smbclient "//$ADDRESS/$SMB_SHARE" -U "$ACCOUNT%$PASSWORD" -c 'ls' >/dev/null 2>&1; then
+        ok "smb //$ADDRESS/$SMB_SHARE"
+    else
+        bad "smb //$ADDRESS/$SMB_SHARE"
+    fi
+else
+    note "smb: no smbclient here to ask with"
+fi
+
+# --- NFS ---------------------------------------------------------------------
+#
+# What the server says it exports, which needs no mount and therefore no root on
+# this machine. Whether *this* address may mount it is a question for the export
+# list rather than for a check that would need privileges to answer.
+
+if command -v showmount >/dev/null 2>&1; then
+    if showmount -e "$ADDRESS" 2>/dev/null | grep -q "/srv/moledata/nfs"; then
+        ok "nfs $ADDRESS:/srv/moledata/nfs"
+    else
+        note "nfs: not exported (set MOLE_TESTBED_NFS_CLIENTS and run services.sh)"
+    fi
+else
+    note "nfs: no showmount here to ask with"
 fi
 
 # --- FTP ---------------------------------------------------------------------

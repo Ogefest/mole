@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 #
-# Puts the four protocols on the machine provision.sh built.
+# Puts the protocols on the machine provision.sh built.
 #
 # The implementations people actually run, not stand-ins: OpenSSH, Apache's
-# mod_dav, MinIO and vsftpd. A backend that has only ever been held against a
-# fake has been tested against our idea of the protocol rather than against the
-# protocol.
+# mod_dav, MinIO, vsftpd, Samba and the kernel's NFS server. A backend that has
+# only ever been held against a fake has been tested against our idea of the
+# protocol rather than against the protocol.
+#
+# Samba and NFS are here before the backends that will talk to them, which is
+# deliberate: MOLE-36 asks for a new backend to be held to the hostile catalogue
+# from its first day rather than its second year, and that is only possible if
+# the server is standing before the code is.
 #
 # Separate from provision.sh on purpose. A script that builds a machine and also
 # configures four servers is a script nobody reads, and these are the parts most
@@ -29,6 +34,14 @@ REKEY_LIMIT="${MOLE_TESTBED_REKEY_LIMIT:-256M}"
 S3_PORT="${MOLE_TESTBED_S3_PORT:-9000}"
 # A bucket to aim at. Invented, like every other name in this repository.
 S3_BUCKET="${MOLE_TESTBED_S3_BUCKET:-mole-testbed}"
+# The SMB share and the NFS export. Both live on the small disk, like WebDAV and
+# FTP, so "the destination filled up" stays a real condition for them too.
+SMB_SHARE="${MOLE_TESTBED_SMB_SHARE:-moledata}"
+# Who may mount the export. NFS has no user authentication of its own worth the
+# name -- it trusts the network -- so this is the only thing standing between the
+# export and the rest of the LAN. A single address by default, and never the
+# whole subnet by accident.
+NFS_CLIENTS="${MOLE_TESTBED_NFS_CLIENTS:-}"
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 note() { printf '  %s\n' "$*"; }
@@ -50,9 +63,9 @@ on_server <<'REMOTE' || die "could not install the servers"
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq openssh-server apache2 apache2-utils vsftpd curl >/dev/null
+apt-get install -y -qq openssh-server apache2 apache2-utils vsftpd curl samba nfs-kernel-server >/dev/null
 REMOTE
-note "OpenSSH, Apache, vsftpd"
+note "OpenSSH, Apache, vsftpd, Samba, NFS"
 
 # --- the roots ---------------------------------------------------------------
 #
@@ -64,14 +77,14 @@ say "Roots"
 on_server <<REMOTE || die "could not make the roots"
 set -euo pipefail
 mountpoint -q /srv/moledata || { echo "the small disk is not mounted"; exit 1; }
-for dir in webdav ftp ftp/Shared; do
+for dir in webdav ftp ftp/Shared smb nfs; do
     mkdir -p /srv/moledata/\$dir
     chown $ACCOUNT:$ACCOUNT /srv/moledata/\$dir
 done
 mkdir -p /home/$ACCOUNT/sftp
 chown $ACCOUNT:$ACCOUNT /home/$ACCOUNT/sftp
 REMOTE
-note "/srv/moledata/webdav, /srv/moledata/ftp (small disk)"
+note "/srv/moledata/webdav, /srv/moledata/ftp, /srv/moledata/smb, /srv/moledata/nfs (small disk)"
 note "/home/$ACCOUNT/sftp (system disk)"
 
 # --- SFTP, and a second sshd that re-keys ------------------------------------
@@ -175,6 +188,68 @@ a2ensite moledav >/dev/null
 systemctl reload apache2 || systemctl restart apache2
 REMOTE
 note "http://$ADDRESS/dav"
+
+# --- SMB ---------------------------------------------------------------------
+
+say "SMB"
+on_server <<REMOTE || die "could not configure Samba"
+set -euo pipefail
+cat > /etc/samba/smb.conf <<'CONF'
+[global]
+   workgroup = WORKGROUP
+   server string = Mole test share
+   security = user
+   map to guest = never
+   # Modern clients only. A share that also speaks SMB1 is a share whose tests
+   # might be passing over a protocol nobody has shipped this decade.
+   server min protocol = SMB2
+   log level = 1
+
+[$SMB_SHARE]
+   path = /srv/moledata/smb
+   browseable = yes
+   read only = no
+   guest ok = no
+   valid users = $ACCOUNT
+   create mask = 0644
+   directory mask = 0755
+CONF
+
+# The Samba password is separate from the Unix one and has to be set explicitly.
+# The same throwaway, because a second secret to keep in step is a second thing
+# to get wrong -- and neither of them is written down in this repository.
+printf '%s\n%s\n' '$PASSWORD' '$PASSWORD' | smbpasswd -s -a $ACCOUNT >/dev/null
+smbpasswd -e $ACCOUNT >/dev/null
+
+systemctl enable --now smbd >/dev/null 2>&1
+systemctl restart smbd
+REMOTE
+note "//$ADDRESS/$SMB_SHARE, root /srv/moledata/smb"
+
+# --- NFS ---------------------------------------------------------------------
+
+say "NFS"
+if [ -z "\$NFS_CLIENTS" ]; then
+    note "skipped: set MOLE_TESTBED_NFS_CLIENTS to the address allowed to mount it."
+    note "An export open to the whole LAN is not something to arrive at by default."
+else
+on_server <<REMOTE || die "could not configure the NFS server"
+set -euo pipefail
+# insecure, because a userspace client -- which is what a file manager uses, so
+# that mounting needs no root on the machine running it -- connects from an
+# ordinary port, and the default refuses exactly that.
+#
+# no_root_squash is deliberately *not* set. The export is a place to put files,
+# not a way to become root on this machine.
+cat > /etc/exports <<CONF
+/srv/moledata/nfs $NFS_CLIENTS(rw,sync,insecure,no_subtree_check)
+CONF
+exportfs -ra
+systemctl enable --now nfs-kernel-server >/dev/null 2>&1
+systemctl restart nfs-kernel-server
+REMOTE
+note "$ADDRESS:/srv/moledata/nfs, for $NFS_CLIENTS"
+fi
 
 # --- FTP ---------------------------------------------------------------------
 
