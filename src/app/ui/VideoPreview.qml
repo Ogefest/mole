@@ -4,11 +4,11 @@ import QtQuick.Controls.Material
 import QtQuick.Layouts
 import QtMultimedia
 
-// The first frame, a play button, and where you are.
+// The file playing, a pause button, and where you are.
 //
 // Nothing else, on purpose: a preview is for recognising a file rather than for
 // working on one, so there is no volume slider to argue about, no playlist and no
-// stepping frame by frame. See MOLE-37.
+// stepping frame by frame. See MOLE-37, and MOLE-223 for why it plays by itself.
 Item {
     id: view
     property var controller: null
@@ -29,13 +29,23 @@ Item {
         videoOutput: output
         audioOutput: AudioOutput {}
 
-        // Never autoPlay. F3 walks a folder with the arrows, and a viewer that
-        // starts making noise as the cursor passes over a file is the wrong
-        // default -- so the file is paused at its first frame, which is what puts
-        // a picture on screen without the video running.
+        // Starts on its own, as soon as there is something to start. Opening a
+        // preview of a video is asking to see it move: the answer to *what is in
+        // this file* is its first few seconds, and a still frame with a button on
+        // it makes somebody ask for that twice.
+        //
+        // This was the other way round until MOLE-223, on the argument that F3
+        // walks a folder with the arrows and a viewer making noise as the cursor
+        // passes over a file is the wrong default. The argument is real and was
+        // overruled: see docs/adr/0053-a-video-preview-plays-itself.md, which also
+        // says what to do if the walking turns out to be the louder complaint.
+        //
+        // Only on `LoadedMedia`, which is the transition into having a file. A
+        // clip that reaches its end goes to `EndOfMedia` and stays there, so
+        // nothing here starts it over.
         onMediaStatusChanged: {
             if (mediaStatus === MediaPlayer.LoadedMedia && playbackState === MediaPlayer.StoppedState)
-                pause()
+                play()
         }
 
         // A container this build can demux may still hold a stream it has no

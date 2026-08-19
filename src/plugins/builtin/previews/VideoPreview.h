@@ -10,7 +10,7 @@ class LocalCopyProvider;
 
 #ifdef MOLE_HAVE_MULTIMEDIA
 
-/// A video, as its first frame and a play button.
+/// A video, playing, with somewhere to pause it and a position to drag.
 ///
 /// Playback itself is the view's business: `MediaPlayer` and `VideoOutput` do it,
 /// and this hands them a file and gets out of the way. What is here is the part a
@@ -19,9 +19,13 @@ class LocalCopyProvider;
 /// The image and document viewers reach for `LocalCopyProvider` for the same
 /// reason; see docs/adr/0004-pdf-previews.md.
 ///
-/// **It does not start playing.** `F3` walks a folder with the arrows, and a
-/// viewer that begins making noise as the cursor passes over a file is the wrong
-/// default: the first frame with a play button on it is what the tab shows.
+/// **It starts playing by itself**, including a file stepped onto with the arrows.
+/// Opening a preview of a video is asking to see it move, and one rule that is
+/// always true beats a viewer that plays or does not depending on how somebody
+/// arrived at the file. It opened paused until MOLE-223, on the argument that `F3`
+/// walks a folder with the arrows and a viewer making noise as the cursor passes
+/// over a file is the wrong default -- overruled knowingly, with the cost written
+/// down in docs/adr/0053-a-video-preview-plays-itself.md.
 class VideoPreviewController final : public PreviewController
 {
     Q_OBJECT

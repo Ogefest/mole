@@ -127,7 +127,7 @@ private slots:
     void theCopyPathKeysActuallyCopyAPath();
     void theCommandPaletteFindsAndRunsThings();
     void theWindowBehindAPopupIsNotWashedOut();
-    void aVideoShowsItsFirstFrameAndPlaysWhenAsked();
+    void aVideoStartsPlayingOnItsOwnAndStopsOnTheButton();
     void aVideoThatCannotBeDecodedSaysSoRatherThanShowingABlackFrame();
     void steppingOffAVideoLeavesNoPlayerBehind();
     void theHeaderAdvertisesTheCommandPalette();
@@ -1462,15 +1462,19 @@ bool TestWalkthrough::writeVideo(const QString& relativePath)
     const QString path = m_harness->fixturePath() + QLatin1Char('/') + relativePath;
     QProcess process;
     process.start(tool,
+        // Five seconds rather than one, since MOLE-223: a video preview starts
+        // playing on its own, and a one-second clip can reach its end between the
+        // assertion that it is playing and the one that the button stops it.
+        // Cheap either way -- 160x120 of `testsrc` is a few kilobytes a second.
         { QStringLiteral("-y"), QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
-            QStringLiteral("testsrc=duration=1:size=160x120:rate=10"), QStringLiteral("-pix_fmt"),
+            QStringLiteral("testsrc=duration=5:size=160x120:rate=10"), QStringLiteral("-pix_fmt"),
             QStringLiteral("yuv420p"), path });
     if (!process.waitForFinished(60000) || process.exitCode() != 0)
         return false;
     return QFile::exists(path);
 }
 
-void TestWalkthrough::aVideoShowsItsFirstFrameAndPlaysWhenAsked()
+void TestWalkthrough::aVideoStartsPlayingOnItsOwnAndStopsOnTheButton()
 {
 #ifndef MOLE_TEST_HAVE_MULTIMEDIA
     QSKIP("this build has no Qt Multimedia, which is the case the provider refuses in");
@@ -1486,10 +1490,10 @@ void TestWalkthrough::aVideoShowsItsFirstFrameAndPlaysWhenAsked()
     QObject* player = m_harness->object(QStringLiteral("videoPlayer"));
     QVERIFY2(player, "the view has no player in it");
 
-    // Loaded and paused at its first frame. Both halves are the claim: a picture on
-    // screen, and nothing running -- because F3 walks a folder with the arrows and a
-    // viewer that starts making noise as the cursor passes over a file is the wrong
-    // default.
+    // Loaded, with video in it, and running without having been asked. MOLE-37
+    // opened it paused at its first frame on the argument that F3 walks a folder
+    // with the arrows; MOLE-223 overruled that -- opening a preview of a video is
+    // asking to see it move. See docs/adr/0053-a-video-preview-plays-itself.md.
     QVERIFY2(m_harness->until([player] {
         return player->property("mediaStatus").toInt() == QMediaPlayer::LoadedMedia
             || player->property("mediaStatus").toInt() == QMediaPlayer::BufferedMedia;
@@ -1497,19 +1501,28 @@ void TestWalkthrough::aVideoShowsItsFirstFrameAndPlaysWhenAsked()
         "the player never loaded the file");
     QVERIFY2(player->property("hasVideo").toBool(), "loaded, but with no video in it");
     QVERIFY(player->property("duration").toLongLong() > 0);
-    QCOMPARE(player->property("playbackState").toInt(), int(QMediaPlayer::PausedState));
 
-    // And it plays on being asked, through the button rather than through the
-    // player: what a reader presses is what has to work.
-    QQuickItem* play = m_harness->item(QStringLiteral("videoPlayButton"));
-    QVERIFY(play);
-    QCOMPARE(play->property("text").toString(), QStringLiteral("Play"));
-    QVERIFY(QMetaObject::invokeMethod(play, "clicked"));
+    // The transition rather than a state that lasts: it is asserted that the clip
+    // *moved on its own*, which stays true once it has, where PlayingState stops
+    // being true the moment a short clip reaches its end.
     QVERIFY2(m_harness->until([player] {
         return player->property("playbackState").toInt() == QMediaPlayer::PlayingState
             || player->property("position").toLongLong() > 0;
     }),
-        "asked to play, and did not");
+        "nobody pressed anything and it should be playing anyway");
+
+    // And it stops on being asked, through the button rather than through the
+    // player: what a reader presses is what has to work. The label follows the
+    // player, so a viewer that starts playing offers *Pause*.
+    QQuickItem* play = m_harness->item(QStringLiteral("videoPlayButton"));
+    QVERIFY(play);
+    QVERIFY2(
+        m_harness->until([play] { return play->property("text").toString() == QStringLiteral("Pause"); }),
+        "the button never offered to pause a video that is playing");
+    QVERIFY(QMetaObject::invokeMethod(play, "clicked"));
+    QVERIFY2(m_harness->until(
+                 [player] { return player->property("playbackState").toInt() == QMediaPlayer::PausedState; }),
+        "asked to pause, and did not");
 
 #endif
 }
@@ -1565,6 +1578,16 @@ void TestWalkthrough::steppingOffAVideoLeavesNoPlayerBehind()
     QObject* player = m_harness->object(QStringLiteral("videoPlayer"));
     QVERIFY(player);
     QVERIFY(m_harness->until([player] { return player->property("duration").toLongLong() > 0; }));
+
+    // Playing by itself since MOLE-223, which is what turns "a player left running
+    // behind the next preview" from a hypothetical fault into a live one. Asked
+    // again anyway: what this test needs is a player definitely running at the
+    // moment the file changes, and asserting the start is not the same as holding
+    // it there.
+    QVERIFY(m_harness->until([player] {
+        return player->property("playbackState").toInt() == QMediaPlayer::PlayingState
+            || player->property("position").toLongLong() > 0;
+    }));
     QVERIFY(QMetaObject::invokeMethod(player, "play"));
 
     // Held by weak pointers: what is being asserted is that they die, and a

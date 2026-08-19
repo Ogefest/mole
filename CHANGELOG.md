@@ -11,6 +11,8 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-19 #MOLE-223 A video preview starts playing when it opens, instead of waiting on the Play button
+
 2026-08-19 #MOLE-210 A duplicate scan no longer stops the window responding as it fills — a confirmed group is added to the list instead of rebuilding every group already in it, so the results can be read and scrolled while the scan is still running
 
 2026-08-19 #MOLE-222 A drive being worked on breathes gently rather than flickering — the disk activity light was accurate and read as an alarm next to everything else in the sidebar

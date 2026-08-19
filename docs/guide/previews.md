@@ -122,11 +122,12 @@ to the viewer of last resort below.
 
 ## Video
 
-A video opens paused at its first frame, with a play button, a position and somewhere to
-drag it to. It does not start on its own: `F3` walks a folder with the arrows, and a
-preview that begins making noise as the cursor passes over a file is nobody's idea of a
-preview. There is no volume slider and no playlist — this is for recognising a file, not
-for watching one.
+A video starts playing as soon as it opens, with a pause button, a position and somewhere
+to drag it to. Pressing `F3` on a video is asking what is in it, and for a video that
+answer is the first few seconds rather than a still frame — the name was already in the
+listing. Stepping onto the next video with `←`/`→` plays that one too, so the rule is the
+same however you got to the file, and the sound comes with it. There is no volume slider
+and no playlist — this is for recognising a file, not for watching one.
 
 What can be played is what this machine's codecs can decode, and that is not knowable
 from the file's name: a container Mole opens may still hold a stream nothing installed
