@@ -178,6 +178,7 @@ private slots:
     void aFileNamedGzThatIsNotGzipIsStillRefused();
     void aPlainFileIsStillNotAnArchive();
     void aSevenZipIsUnaffected();
+    void aGzippedFileAnotherFormatWouldBidForStillOpens();
 
     void openingAMemberOfATruncatedArchiveStillGivesItsFirstWindow();
     void theDamageInATruncatedMemberIsReportedByTheReadThatReachesIt();
@@ -972,6 +973,39 @@ void TestArchiveFileSystem::aWholeMemberStillArrivesForAnExtraction()
     QCOMPARE(everything.at(0), patternByteAt(0));
     QCOMPARE(everything.at(1024 * 1024 + 5), patternByteAt(1024 * 1024 + 5));
     QCOMPARE(everything.at(everything.size() - 1), patternByteAt(memberBytes - 1));
+}
+
+void TestArchiveFileSystem::aGzippedFileAnotherFormatWouldBidForStillOpens()
+{
+    // Rows of `word;word` -- a shape libarchive's mtree bidder claims. It found
+    // both faults in the first version of this fallback, and neither was visible
+    // with a gzipped line of prose:
+    //
+    // - libarchive accepted the file at `archive_read_open_filename` and only
+    //   refused at the first header, so testing the open alone concluded a
+    //   container had claimed it and the retry never ran.
+    // - with `raw` enabled *alongside* the containers, mtree outbid raw -- raw's
+    //   bid is the lowest there is -- won, and failed at the first header, so the
+    //   file listed as an archive of nothing.
+    //
+    // Hence: the test is whether a first header can be read, and the retry asks
+    // for raw on its own.
+    const QByteArray payload("name;price\nwidget;1,50\nbolt;0,99\n");
+    const QString archive = compressFile(
+        QStringLiteral("gzip"), payload, QDir(m_workspace->path()).filePath(QStringLiteral("prices.csv.gz")));
+    if (archive.isEmpty())
+        QSKIP("gzip is not available");
+
+    FileSystemPtr fs = openArchive(archive);
+    Result<FileEntryList> listing = fs->list(rootOf(archive), CancelToken());
+    QVERIFY2(listing.ok(), qPrintable(listing.error().message));
+    QVERIFY2(listing.value().size() == 1,
+        qPrintable(QStringLiteral("listed %1 members").arg(listing.value().size())));
+    QCOMPARE(listing.value().first().name, QStringLiteral("prices.csv"));
+
+    Result<std::unique_ptr<QIODevice>> device = fs->openRead(listing.value().first().uri);
+    QVERIFY2(device.ok(), qPrintable(device.error().message));
+    QCOMPARE(device.value()->readAll(), payload);
 }
 
 MOLE_TEST_MAIN(TestArchiveFileSystem)

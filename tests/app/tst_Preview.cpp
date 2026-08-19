@@ -16,6 +16,10 @@
 #include "ui/AppController.h"
 #include "ui/models/TabsModel.h"
 
+#ifdef MOLE_TEST_HAVE_ARCHIVE
+#include "plugins/archive/ArchiveFileSystem.h"
+#endif
+
 #include "core/CoreMetaTypes.h"
 #include "core/data/FileType.h"
 #include "core/vfs/VfsManager.h"
@@ -33,9 +37,11 @@
 #include <QPageSize>
 #include <QPainter>
 #include <QPdfWriter>
+#include <QProcess>
 #include <QSignalSpy>
 #include <QSqlDatabase>
 #include <QSqlQuery>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTextBlock>
@@ -255,9 +261,27 @@ private slots:
     void survivesAFileThatVanished();
     void remembersItsFileAcrossRestart();
 
+    void f3OnAFileCompressedOnItsOwnShowsWhatIsInside_data();
+    void f3OnAFileCompressedOnItsOwnShowsWhatIsInside();
+    void aContainerIsNotSubstituted_data();
+    void aContainerIsNotSubstituted();
+    void aFileNamedGzThatIsNotGzipKeepsTodaysBehaviour();
+    void steppingOnReleasesTheSubstitutedMember();
+    void withNoArchiveBackendTheTabBehavesAsItDidBefore();
+
 private:
     IPreviewProvider* providerFor(const QString& relativePath) const;
     PreviewTabController* openPreview(const QString& relativePath);
+    /// Registers the backend that can open an archive, or answers false where
+    /// this build has none -- which is itself one of the cases under test.
+    bool withArchiveBackend();
+    /// gzips a file that already exists in the fixture, in place, the way the
+    /// command line does -- so the header carries the original name and the
+    /// member is called what the file was called.
+    bool gzipInPlace(const QString& relativePath);
+    /// Mounts that exist only so something can be read. Nought is the answer
+    /// after every file that is not a wrapper, and after stepping off one.
+    int internalMounts() const;
 
     PrivateProfile m_profile;
     std::unique_ptr<TempTree> m_tree;
@@ -299,6 +323,38 @@ void TestPreview::cleanup()
 {
     m_app.reset();
     m_tree.reset();
+}
+
+bool TestPreview::withArchiveBackend()
+{
+#ifdef MOLE_TEST_HAVE_ARCHIVE
+    m_app->services().vfs->registerFactory(std::make_unique<ArchiveFileSystemFactory>());
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool TestPreview::gzipInPlace(const QString& relativePath)
+{
+    const QString tool = QStandardPaths::findExecutable(QStringLiteral("gzip"));
+    if (tool.isEmpty())
+        return false;
+
+    QProcess process;
+    process.start(tool, { m_tree->absolute(relativePath) });
+    return process.waitForFinished(30000) && process.exitCode() == 0
+        && QFile::exists(m_tree->absolute(relativePath + QStringLiteral(".gz")));
+}
+
+int TestPreview::internalMounts() const
+{
+    int internal = 0;
+    for (const Mount& mount : m_app->services().vfs->mounts()) {
+        if (mount.internal)
+            ++internal;
+    }
+    return internal;
 }
 
 IPreviewProvider* TestPreview::providerFor(const QString& relativePath) const
@@ -2277,6 +2333,153 @@ void TestPreview::remembersItsFileAcrossRestart()
     }
     QVERIFY2(restored, "the preview tab must come back");
     QCOMPARE(restored->currentUri(), expected);
+}
+
+// ---- F3 on a file compressed on its own ---------------------------------
+//
+// `notes.txt.gz` used to show nine facts out of stat(), because no viewer claims
+// application/gzip and none should: what a reader wanted was the text inside.
+// MOLE-216 gave the member an address; this substitutes it, so every viewer Mole
+// already has works through the wrapper -- a .gz of a CSV is a table and of a PNG
+// is the picture, with no new provider, controller or QML anywhere. ADR-0033
+// already says the first answer about a file can be wrong and its contents settle
+// it; this is a third reason and not about identification. See MOLE-219.
+
+void TestPreview::f3OnAFileCompressedOnItsOwnShowsWhatIsInside_data()
+{
+    QTest::addColumn<QString>("memberName");
+    QTest::addColumn<QByteArray>("contents");
+    QTest::addColumn<QString>("viewerName");
+
+    QImage image(64, 48, QImage::Format_RGB32);
+    image.fill(Qt::darkCyan);
+    QByteArray png;
+    {
+        QBuffer buffer(&png);
+        buffer.open(QIODevice::WriteOnly);
+        QImageWriter writer(&buffer, "png");
+        writer.write(image);
+    }
+
+    QTest::newRow("text") << "inside.txt" << QByteArray("a line of text inside a wrapper\n") << "Text";
+    // The one that proves the substitution goes through the ordinary lookup
+    // rather than a text special case.
+    QTest::newRow("csv") << "inside.csv" << QByteArray("name;price\nwidget;1,50\nbolt;0,99\n") << "Table";
+    QTest::newRow("png") << "inside.png" << png << "Image";
+}
+
+void TestPreview::f3OnAFileCompressedOnItsOwnShowsWhatIsInside()
+{
+    QFETCH(QString, memberName);
+    QFETCH(QByteArray, contents);
+    QFETCH(QString, viewerName);
+
+    if (!withArchiveBackend())
+        QSKIP("this build has no backend that can open an archive");
+    QVERIFY(m_tree->writeFile(memberName, contents));
+    if (!gzipInPlace(memberName))
+        QSKIP("gzip is not available");
+
+    PreviewTabController* preview = openPreview(memberName + QStringLiteral(".gz"));
+    QVERIFY(preview);
+    QCOMPARE(preview->viewerName(), viewerName);
+    // The viewer names the member, not the wrapper, so it is clear what is being
+    // read -- while the arrows and the session still work on the file in the
+    // folder, which is what currentUri answers.
+    QCOMPARE(preview->title(), memberName);
+    QVERIFY(preview->currentUri().endsWith(memberName + QStringLiteral(".gz")));
+    QCOMPARE(internalMounts(), 1);
+}
+
+void TestPreview::aContainerIsNotSubstituted_data()
+{
+    QTest::addColumn<QString>("fileName");
+
+    // A tarball has many members and F3 on it goes on doing what it did. The name
+    // test comes first for exactly this: confirming one member costs a header
+    // read, and there is no reason to spend it on something already ruled out.
+    QTest::newRow("tar.gz") << "bundle.tar.gz";
+    QTest::newRow("zip") << "bundle.zip";
+}
+
+void TestPreview::aContainerIsNotSubstituted()
+{
+    QFETCH(QString, fileName);
+
+    if (!withArchiveBackend())
+        QSKIP("this build has no backend that can open an archive");
+
+    // Built by hand rather than by a tool: what matters is that it is a container
+    // by name, and the name is where this decision is taken.
+    QVERIFY(m_tree->writeFile(fileName, QByteArray(512, '\x1f')));
+
+    PreviewTabController* preview = openPreview(fileName);
+    QVERIFY(preview);
+    // The wrapper itself, named as itself, with nothing mounted for it.
+    QCOMPARE(preview->title(), fileName);
+    QCOMPARE(internalMounts(), 0);
+    QVERIFY2(!preview->viewerName().isEmpty(), "a container still gets whatever viewer it always got");
+}
+
+void TestPreview::aFileNamedGzThatIsNotGzipKeepsTodaysBehaviour()
+{
+    if (!withArchiveBackend())
+        QSKIP("this build has no backend that can open an archive");
+
+    // The name says one member; the bytes say nothing at all. The answer is
+    // today's -- a viewer for the file as it stands, not an error where a preview
+    // belongs.
+    QVERIFY(
+        m_tree->writeFile(QStringLiteral("pretending.gz"), QByteArray("gzip starts 1f 8b; this does not")));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("pretending.gz"));
+    QVERIFY(preview);
+    QCOMPARE(preview->title(), QStringLiteral("pretending.gz"));
+    QCOMPARE(internalMounts(), 0);
+    QVERIFY2(!preview->viewerName().isEmpty(), "a file that is not an archive still gets a viewer");
+}
+
+void TestPreview::steppingOnReleasesTheSubstitutedMember()
+{
+    if (!withArchiveBackend())
+        QSKIP("this build has no backend that can open an archive");
+    QVERIFY(m_tree->writeFile(QStringLiteral("aaa.txt"), QByteArray("inside the wrapper\n")));
+    if (!gzipInPlace(QStringLiteral("aaa.txt")))
+        QSKIP("gzip is not available");
+
+    PreviewTabController* preview = openPreview(QStringLiteral("aaa.txt.gz"));
+    QVERIFY(preview);
+    QCOMPARE(internalMounts(), 1);
+
+    // The arrows work on the folder, so the siblings have to have arrived before
+    // stepping means anything. Waited on the condition, not on a duration.
+    QVERIFY(waitFor([preview] { return preview->position() > 0; }, 5000));
+    preview->next();
+    QVERIFY(waitFor([preview] { return preview->viewer() != nullptr || !preview->isIdentifying(); }, 5000));
+
+    // The wrapper goes with the file it belonged to: a walk along a folder of
+    // two hundred of these must not leave two hundred mounts behind.
+    QCOMPARE(internalMounts(), 0);
+    QVERIFY2(!preview->title().endsWith(QStringLiteral(".txt.gz")), "the tab is still showing the wrapper");
+    QVERIFY2(preview->title() != QStringLiteral("aaa.txt"),
+        "the tab is still showing the member of the file that was stepped off");
+}
+
+void TestPreview::withNoArchiveBackendTheTabBehavesAsItDidBefore()
+{
+    // Deliberately without withArchiveBackend(): nothing here may make the
+    // preview tab depend on a plugin. A build with no archive backend has no
+    // factory that claims a .gz, and the feature is then quietly absent rather
+    // than broken.
+    QVERIFY(m_tree->writeFile(QStringLiteral("alone.txt"), QByteArray("wrapped up\n")));
+    if (!gzipInPlace(QStringLiteral("alone.txt")))
+        QSKIP("gzip is not available");
+
+    PreviewTabController* preview = openPreview(QStringLiteral("alone.txt.gz"));
+    QVERIFY(preview);
+    QCOMPARE(preview->title(), QStringLiteral("alone.txt.gz"));
+    QCOMPARE(internalMounts(), 0);
+    QVERIFY2(!preview->viewerName().isEmpty(), "the tab still chose a viewer the way it always did");
 }
 
 int main(int argc, char** argv)

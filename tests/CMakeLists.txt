@@ -216,7 +216,16 @@ mole_add_test(tst_AppIntegration    SOURCES app/tst_AppIntegration.cpp   LIBS mo
 # the scan and the search, which is state the integration suite would trip over.
 mole_add_test(tst_MixedSearch       SOURCES app/tst_MixedSearch.cpp      LIBS mole_builtin)
 mole_add_test(tst_Session           SOURCES app/tst_Session.cpp          LIBS mole_builtin)
-mole_add_test(tst_Preview           SOURCES app/tst_Preview.cpp          LIBS mole_builtin)
+# The preview tab, including what F3 does to a file compressed on its own. That
+# last part needs a backend that can open one, so the archive library is linked in
+# where the build has it and the cases that need it skip where it does not.
+if(MOLE_HAVE_ARCHIVE_PLUGIN)
+    mole_add_test(tst_Preview       SOURCES app/tst_Preview.cpp
+                                    LIBS mole_builtin mole_archive_backend)
+    target_compile_definitions(tst_Preview PRIVATE MOLE_TEST_HAVE_ARCHIVE)
+else()
+    mole_add_test(tst_Preview       SOURCES app/tst_Preview.cpp          LIBS mole_builtin)
+endif()
 
 # What a photograph says about itself: an EXIF walk over bytes the test wrote,
 # including the offsets a hostile file would write.

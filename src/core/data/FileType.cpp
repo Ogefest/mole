@@ -123,4 +123,21 @@ QString FileType::identify(const QString& name, QByteArrayView head)
     return bytesAreText ? plainText() : binary();
 }
 
+bool FileType::namesSingleCompressedStream(const QString& name)
+{
+    static const QStringList streams { QStringLiteral("gz"), QStringLiteral("xz"), QStringLiteral("bz2"),
+        QStringLiteral("zst") };
+
+    const QString lower = name.toLower();
+    for (const QString& suffix : streams) {
+        const QString dotted = QLatin1Char('.') + suffix;
+        if (!lower.endsWith(dotted))
+            continue;
+        // `.tar.gz` is a container that happens to be compressed, and `.tgz` does
+        // not end in `.gz` at all, so it never reaches here.
+        return !lower.chopped(dotted.size()).endsWith(QLatin1String(".tar"));
+    }
+    return false;
+}
+
 } // namespace mole

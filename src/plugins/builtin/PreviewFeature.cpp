@@ -38,6 +38,7 @@ PreviewTabController::~PreviewTabController()
         m_sniff->requestCancel();
     if (m_details)
         m_details->requestCancel();
+    releaseMemberMount();
 }
 
 QString PreviewTabController::folderPath() const
@@ -98,7 +99,6 @@ void PreviewTabController::open(const QString& uri)
 void PreviewTabController::showEntry(const FileEntry& entry)
 {
     m_current = entry;
-    setTitle(entry.name.isEmpty() ? QStringLiteral("Preview") : entry.name);
 
     // The old viewer goes before the new one arrives, so a heavy one does not
     // sit in memory while the next file loads.
@@ -121,15 +121,25 @@ void PreviewTabController::showEntry(const FileEntry& entry)
     m_head.clear();
     m_detailFacts.clear();
     emit detailsChanged();
+    // The wrapper the file before this one was read through goes with it.
+    releaseMemberMount();
 
-    IPreviewProvider* provider = m_services.previews ? m_services.previews->providerFor(entry) : nullptr;
+    // A file compressed on its own is a wrapper, and what a reader wanted to see
+    // is the member. Everything from here on asks about m_showing, which is the
+    // member when there was one and the file itself otherwise.
+    m_showing = entry;
+    if (const FileEntry member = singleCompressedMember(entry); member.uri.isValid())
+        m_showing = member;
+    setTitle(m_showing.name.isEmpty() ? QStringLiteral("Preview") : m_showing.name);
+
+    IPreviewProvider* provider = m_services.previews ? m_services.previews->providerFor(m_showing) : nullptr;
 
     // Pass one asked the name. When it got no further than the fallback tier --
     // the text viewer, or the list of facts -- the file itself is asked, because
     // that is where the answer can still change: a Dockerfile is text, and a zip
     // called notes.txt is not. See ADR-0033.
     const bool nameWasEnough = !provider || provider->priority() >= 0;
-    if (!nameWasEnough && entry.mimeType.isEmpty() && entry.size != 0) {
+    if (!nameWasEnough && m_showing.mimeType.isEmpty() && m_showing.size != 0) {
         identifyThenShow();
         return;
     }
@@ -139,38 +149,109 @@ void PreviewTabController::showEntry(const FileEntry& entry)
 
 void PreviewTabController::identifyThenShow()
 {
-    FileSystemPtr fs = m_services.vfs ? m_services.vfs->resolve(m_current.uri) : nullptr;
+    FileSystemPtr fs = m_services.vfs ? m_services.vfs->resolve(m_showing.uri) : nullptr;
     if (!fs || !m_services.tasks) {
-        installViewer(m_services.previews ? m_services.previews->providerFor(m_current) : nullptr);
+        installViewer(m_services.previews ? m_services.previews->providerFor(m_showing) : nullptr);
         return;
     }
 
     // One page, off the UI thread, and not snapped to line boundaries: what is
     // wanted is the first bytes of the file whatever they turn out to be.
-    auto* task = new ReadRangeTask(std::move(fs), m_current.uri, 0, FileType::kSampleBytes);
+    auto* task = new ReadRangeTask(std::move(fs), m_showing.uri, 0, FileType::kSampleBytes);
     task->setAlignToLines(false);
     m_sniff = task;
 
-    connect(task, &Task::finished, this, [this, task, uri = m_current.uri] {
+    connect(task, &Task::finished, this, [this, task, uri = m_showing.uri] {
         if (m_sniff != task)
             return;
         m_sniff.clear();
-        if (m_current.uri != uri)
+        if (m_showing.uri != uri)
             return;
 
         // A file that cannot be read still gets a viewer: the name's answer
         // stands, which is what happened before there was a second pass at all.
         if (task->state() == Task::State::Succeeded) {
             m_head = task->contents();
-            m_current.mimeType = FileType::identify(m_current.name, m_head);
+            m_showing.mimeType = FileType::identify(m_showing.name, m_head);
         }
 
-        installViewer(m_services.previews ? m_services.previews->providerFor(m_current) : nullptr);
+        installViewer(m_services.previews ? m_services.previews->providerFor(m_showing) : nullptr);
     });
 
     m_services.tasks->submit(task);
     // So the view says it is looking rather than saying nothing can show this.
     emit currentChanged();
+}
+
+FileEntry PreviewTabController::singleCompressedMember(const FileEntry& entry)
+{
+    // The cheap test first, and it is also the one that keeps a tarball out: a
+    // container has many members and F3 on it goes on doing what it always did.
+    // Confirming one member costs a header read, so it must not be run on
+    // something the name has already ruled out.
+    if (entry.isDir || !FileType::namesSingleCompressedStream(entry.name))
+        return {};
+    if (!m_services.vfs)
+        return {};
+
+    // Only a local file, which is the same limit opening one as a drive has.
+    const QString localPath = entry.uri.toLocalPath();
+    if (localPath.isEmpty())
+        return {};
+
+    // Whichever backend claims this kind of file, which is a plugin's business
+    // and not this one's. A build without the archive plugin has no factory that
+    // does, and then this whole feature is quietly absent rather than broken.
+    const QString suffix = entry.uri.suffix();
+    IFileSystemFactory* opener = nullptr;
+    for (IFileSystemFactory* factory : m_services.vfs->factories()) {
+        if (factory->mountableFileSuffixes().contains(suffix)) {
+            opener = factory;
+            break;
+        }
+    }
+    if (!opener)
+        return {};
+
+    QString error;
+    FileSystemPtr inside = opener->create(opener->configForFile(localPath), &error);
+    if (!inside)
+        return {}; // corrupt, encrypted, or nothing this build can open
+
+    const VfsUri root = opener->rootUriForFile(localPath);
+    const Result<FileEntryList> listed = inside->list(root, CancelToken {});
+    // Exactly one member, and a file: anything else is a container, or a `.gz`
+    // that is not gzip at all, and both keep today's behaviour.
+    if (!listed.ok() || listed.value().size() != 1 || listed.value().first().isDir)
+        return {};
+
+    // A viewer reads by resolving a uri, so the wrapper has to be mounted -- and
+    // it must not become a drive in the sidebar for the length of a preview.
+    Mount mount;
+    mount.id = QStringLiteral("preview-member:") + root.authority();
+    mount.displayName = entry.name;
+    mount.root = root;
+    mount.fileSystem = std::move(inside);
+    mount.internal = true;
+    m_memberMountId = m_services.vfs->addMount(mount);
+    if (m_memberMountId.isEmpty())
+        return {};
+    m_memberMountOwner = m_services.vfs;
+
+    return listed.value().first();
+}
+
+void PreviewTabController::releaseMemberMount()
+{
+    if (m_memberMountId.isEmpty())
+        return;
+    // The manager may already be gone: an application shutting down destroys it
+    // before the tabs it owns, and this runs from a destructor as well as from a
+    // file change. When it has gone the mount table went with it.
+    if (m_memberMountOwner)
+        m_memberMountOwner->removeMount(m_memberMountId);
+    m_memberMountId.clear();
+    m_memberMountOwner.clear();
 }
 
 void PreviewTabController::installViewer(IPreviewProvider* provider)
@@ -192,9 +273,9 @@ void PreviewTabController::installViewer(IPreviewProvider* provider)
     // before load(), so the file is read once and shown the way it was asked for
     // rather than shown one way and then the other.
     m_viewerOptions.clear();
-    const QList<ViewerOption> declared = provider->options(m_current);
+    const QList<ViewerOption> declared = provider->options(m_showing);
     for (const ViewerOption& option : declared) {
-        const QString chosen = rememberedChoice(option, m_current);
+        const QString chosen = rememberedChoice(option, m_showing);
         if (controller)
             controller->setViewerOption(option.key, chosen);
 
@@ -204,7 +285,7 @@ void PreviewTabController::installViewer(IPreviewProvider* provider)
     }
 
     if (controller)
-        controller->load(m_current);
+        controller->load(m_showing);
 
     // One switch for every preview rather than one per file type: see
     // setDetailsOpen(). Read here rather than once in the constructor because a
@@ -274,10 +355,10 @@ void PreviewTabController::readDetails()
         m_details->requestCancel();
         m_details.clear();
     }
-    if (!m_services.isValid() || !m_services.metadata || !m_current.uri.isValid() || m_current.isDir)
+    if (!m_services.isValid() || !m_services.metadata || !m_showing.uri.isValid() || m_showing.isDir)
         return;
 
-    const QList<IMetadataReader*> readers = m_services.metadata->readersFor(m_current);
+    const QList<IMetadataReader*> readers = m_services.metadata->readersFor(m_showing);
     if (readers.isEmpty()) {
         m_detailFacts.clear();
         emit detailsChanged();
@@ -285,14 +366,14 @@ void PreviewTabController::readDetails()
     }
 
     auto* task = new ReadMetadataTask(
-        m_services.vfs->resolve(m_current.uri), m_current, m_head, readers, m_services);
+        m_services.vfs->resolve(m_showing.uri), m_showing, m_head, readers, m_services);
     m_details = task;
 
-    connect(task, &Task::finished, this, [this, task, uri = m_current.uri] {
+    connect(task, &Task::finished, this, [this, task, uri = m_showing.uri] {
         if (m_details != task)
             return;
         m_details.clear();
-        if (m_current.uri != uri)
+        if (m_showing.uri != uri)
             return;
 
         m_detailFacts.clear();
@@ -342,11 +423,17 @@ void PreviewTabController::loadSiblings(const VfsUri& directory, const VfsUri& s
             for (const FileEntry& entry : std::as_const(m_siblings)) {
                 if (entry.uri == select) {
                     // A listing says nothing about what is inside a file, so it
-                    // must not undo what the content pass found out.
-                    const QString identified = m_current.mimeType;
+                    // must not undo what the content pass found out -- and that
+                    // was recorded against whatever is on screen.
+                    const bool wrapped = m_showing.uri != m_current.uri;
+                    const QString identified = wrapped ? m_current.mimeType : m_showing.mimeType;
                     m_current = entry;
                     if (m_current.mimeType.isEmpty())
                         m_current.mimeType = identified;
+                    // The member of a wrapper is not in this listing -- only the
+                    // wrapper is -- so it keeps everything it already knows.
+                    if (!wrapped)
+                        m_showing = m_current;
                     break;
                 }
             }
@@ -430,7 +517,7 @@ QString PreviewTabController::rememberedChoice(const ViewerOption& option, const
 void PreviewTabController::chooseViewerOption(const QString& key, const QString& value)
 {
     if (m_services.preferences)
-        m_services.preferences->setValue(preferenceKey(key, m_current), value);
+        m_services.preferences->setValue(preferenceKey(key, m_showing), value);
 
     // Applied to what is on screen now as well as remembered for next time, so
     // nothing has to be reopened by hand.

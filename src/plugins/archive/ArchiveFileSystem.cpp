@@ -1,5 +1,7 @@
 #include "plugins/archive/ArchiveFileSystem.h"
 
+#include "core/data/FileType.h"
+
 #include <QBuffer>
 #include <QFileInfo>
 #include <QMutexLocker>
@@ -23,9 +25,17 @@ namespace {
             /// Everything archive_read_support_format_all() covers: zip, tar, 7z,
             /// rar, iso, cpio, ar and the rest.
             Containers,
-            /// ... and `raw`, which is a stream with no container inside it: a
-            /// file compressed with gzip alone rather than a tarball.
-            AndSingleStream,
+            /// `raw` alone: a stream with no container inside it, a file
+            /// compressed with gzip rather than a tarball.
+            ///
+            /// Alone, and not alongside the containers, which matters. Some of
+            /// them bid on text -- the mtree bidder claims a gzipped CSV -- and a
+            /// bid beats raw's, which is the lowest there is. The container would
+            /// then win and fail at the first header, and the file would look like
+            /// an archive of nothing. By the time this is asked for, the containers
+            /// have already been asked and have answered no, so the only question
+            /// left is whether this is a single compressed stream.
+            SingleStreamOnly,
         };
 
         ArchiveReader(const QString& path, Formats formats)
@@ -34,14 +44,15 @@ namespace {
             if (!m_handle)
                 return;
             archive_read_support_filter_all(m_handle);
-            archive_read_support_format_all(m_handle);
             // libarchive keeps `raw` out of support_format_all() on purpose: it
             // bids lowest, so a real container still wins, but anything no format
             // claims becomes an archive of one unnamed member -- a plain text file
-            // included. Enabled only where the caller has already decided that is
-            // the question being asked. See openArchive().
-            if (formats == Formats::AndSingleStream)
+            // included. Asked for on its own, and only once the containers have
+            // refused the file. See openArchive().
+            if (formats == Formats::SingleStreamOnly)
                 archive_read_support_format_raw(m_handle);
+            else
+                archive_read_support_format_all(m_handle);
             m_opened = archive_read_open_filename(m_handle, path.toLocal8Bit().constData(), kReadBlockSize)
                 == ARCHIVE_OK;
         }
@@ -59,6 +70,40 @@ namespace {
         ArchiveReader& operator=(const ArchiveReader&) = delete;
 
         bool isOpen() const { return m_handle && m_opened; }
+
+        /// Whether any format claimed this file, which the open alone does not
+        /// settle: libarchive may accept the file and discover only at the first
+        /// header that nothing recognises it. Which of the two happens depends on
+        /// how far the format bidders had to read -- a gzipped line of prose is
+        /// refused at the open and a gzipped CSV at the first header, and before
+        /// this was understood the second one fell through every test and listed
+        /// as an archive of nothing.
+        bool hasEntries()
+        {
+            if (!isOpen())
+                return false;
+            if (!m_peeked && !m_exhausted)
+                m_peeked = archive_read_next_header(m_handle, &m_first) == ARCHIVE_OK;
+            return m_peeked;
+        }
+
+        /// The next entry, or null at the end. The first call hands back the
+        /// header hasEntries() had to read, rather than skipping past it.
+        struct archive_entry* nextHeader()
+        {
+            if (m_peeked) {
+                m_peeked = false;
+                return m_first;
+            }
+            if (!isOpen())
+                return nullptr;
+            struct archive_entry* entry = nullptr;
+            if (archive_read_next_header(m_handle, &entry) != ARCHIVE_OK) {
+                m_exhausted = true;
+                return nullptr;
+            }
+            return entry;
+        }
         /// Whether something actually decompressed this: gzip, xz, bzip2, zstd.
         /// A file named `.gz` that is not gzip opens with no filter at all, and
         /// with `raw` enabled its own bytes would be offered as a member.
@@ -76,6 +121,12 @@ namespace {
     private:
         struct archive* m_handle = nullptr;
         bool m_opened = false;
+        /// The first header, read to find out whether anything claimed the file
+        /// and held until somebody asks for it. libarchive reuses the entry, so it
+        /// is handed over before another header is ever asked for.
+        struct archive_entry* m_first = nullptr;
+        bool m_peeked = false;
+        bool m_exhausted = false;
     };
 
     /// libarchive reports "dir/sub/file.txt"; normalise to "/dir/sub/file.txt".
@@ -109,26 +160,6 @@ namespace {
         return QLatin1Char('/') + parts.join(QLatin1Char('/'));
     }
 
-    /// Whether this name promises a single compressed stream rather than a
-    /// container.
-    ///
-    /// `.tar.gz` and `.tgz` are containers that happen to be compressed, and are
-    /// deliberately not here: a tarball opens as a tarball and always has.
-    bool namesASingleStream(const QString& archivePath)
-    {
-        static const QStringList streams { QStringLiteral("gz"), QStringLiteral("xz"), QStringLiteral("bz2"),
-            QStringLiteral("zst") };
-
-        const QString lower = QFileInfo(archivePath).fileName().toLower();
-        for (const QString& suffix : streams) {
-            const QString dotted = QLatin1Char('.') + suffix;
-            if (!lower.endsWith(dotted))
-                continue;
-            return !lower.chopped(dotted.size()).endsWith(QLatin1String(".tar"));
-        }
-        return false;
-    }
-
     /// An open archive, and whether it turned out to be a single compressed
     /// stream rather than a container.
     struct OpenArchive
@@ -153,11 +184,11 @@ namespace {
     OpenArchive openArchive(const QString& path)
     {
         auto containers = std::make_unique<ArchiveReader>(path, ArchiveReader::Formats::Containers);
-        if (containers->isOpen() || !namesASingleStream(path))
+        if (containers->hasEntries() || !FileType::namesSingleCompressedStream(QFileInfo(path).fileName()))
             return { std::move(containers), false };
 
-        auto stream = std::make_unique<ArchiveReader>(path, ArchiveReader::Formats::AndSingleStream);
-        if (stream->isOpen() && stream->wasDecompressed())
+        auto stream = std::make_unique<ArchiveReader>(path, ArchiveReader::Formats::SingleStreamOnly);
+        if (stream->hasEntries() && stream->wasDecompressed())
             return { std::move(stream), true };
         // Whatever went wrong, the container reader holds the error worth showing:
         // "unrecognised archive format" rather than something about `raw`.
@@ -291,8 +322,7 @@ namespace {
                 return false;
             }
 
-            struct archive_entry* entry = nullptr;
-            while (archive_read_next_header(m_reader->handle(), &entry) == ARCHIVE_OK) {
+            while (struct archive_entry* entry = m_reader->nextHeader()) {
                 if (pathOfEntry(entry, m_archivePath, m_open.singleStream) == m_memberPath)
                     return true;
                 archive_read_data_skip(m_reader->handle());
@@ -368,8 +398,8 @@ Result<void> ArchiveFileSystem::ensureIndexed()
             VfsError::NotFound, QStringLiteral("Archive not found: %1").arg(m_archivePath));
     }
 
-    const OpenArchive open = openArchive(m_archivePath);
-    const ArchiveReader& reader = *open.reader;
+    OpenArchive open = openArchive(m_archivePath);
+    ArchiveReader& reader = *open.reader;
     if (!reader.isOpen()) {
         return Result<void>::failure(VfsError::IoError,
             QStringLiteral("Cannot open archive %1: %2").arg(m_archivePath, reader.errorText()));
@@ -377,8 +407,7 @@ Result<void> ArchiveFileSystem::ensureIndexed()
 
     m_nodes.insert(QStringLiteral("/"), Node { true, 0, QFileInfo(m_archivePath).lastModified() });
 
-    struct archive_entry* entry = nullptr;
-    while (archive_read_next_header(reader.handle(), &entry) == ARCHIVE_OK) {
+    while (struct archive_entry* entry = reader.nextHeader()) {
         const QString path = pathOfEntry(entry, m_archivePath, open.singleStream);
         if (path.isEmpty())
             continue;

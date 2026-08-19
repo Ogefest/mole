@@ -13,6 +13,8 @@ the first release; they stay as they are.
 
 2026-08-19 #MOLE-210 A duplicate scan no longer stops the window responding as it fills — a confirmed group is added to the list instead of rebuilding every group already in it, so the results can be read and scrolled while the scan is still running
 
+2026-08-19 #MOLE-219 F3 on a file compressed on its own now shows what is inside it — a gzipped log opens in the text viewer, a gzipped CSV as a table and a gzipped photograph as the picture, instead of a list of properties
+
 2026-08-19 #MOLE-218 A file inside an archive is decompressed as it is read instead of all at once, so previewing a member of any size opens at once and costs its window rather than the whole file
 
 2026-08-19 #MOLE-216 A file compressed on its own — a `.gz`, `.xz`, `.bz2` or `.zst` with no tar inside — now opens as a drive instead of being offered and then refused, with its one row named after the file that was compressed rather than "data"

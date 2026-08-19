@@ -127,6 +127,24 @@ signals:
 
 private:
     void showEntry(const FileEntry& entry);
+    /// The one member of a file compressed on its own, or an invalid entry.
+    ///
+    /// A `.gz` that is not a tarball is a wrapper around exactly one file, and
+    /// what a reader pressing F3 wanted is what is inside it. ADR-0033 already
+    /// says the first answer about a file can be wrong and its contents settle
+    /// it; this is a third reason, and not about identification: the contents are
+    /// inside a wrapper, so what should be resolved is the member. Since MOLE-216
+    /// the member has an address of its own, so the whole of it is an entry swap
+    /// followed by the ordinary lookup -- and every viewer Mole already has works
+    /// through it, a `.gz` of a CSV being a table and of a PNG being the picture.
+    ///
+    /// Mounts the wrapper internally, because a viewer reads by resolving a uri.
+    /// The mount goes when the file being shown does -- see releaseMemberMount().
+    FileEntry singleCompressedMember(const FileEntry& entry);
+    /// Unmounts the wrapper a substituted member was read through, if there is
+    /// one. Called before every file change and on the way out, so a walk along a
+    /// folder of `.gz` files leaves nothing behind.
+    void releaseMemberMount();
     /// Reads the head of the current file, puts what it is in
     /// `FileEntry::mimeType`, and asks the registry again. Only for a file whose
     /// name got no further than the fallback tier -- which is where the answer
@@ -141,7 +159,20 @@ private:
     void step(int delta);
 
     PluginServices m_services;
+    /// The file in the folder: what the arrows step through, what the session
+    /// records, and what the subtitle names.
     FileEntry m_current;
+    /// What the viewer was given, which is the same thing unless a wrapper was
+    /// opened -- then it is the member inside it. Every question about *what is
+    /// on screen* is asked of this one: which provider, which options, which
+    /// facts.
+    FileEntry m_showing;
+    /// The internal mount a substituted member is read through, or empty.
+    QString m_memberMountId;
+    /// Who to give it back to. Held as a QPointer and not as the raw pointer in
+    /// PluginServices because an application shutting down destroys the manager
+    /// before the tabs it owns, and this is released from a destructor.
+    QPointer<VfsManager> m_memberMountOwner;
     /// Files only: stepping into a directory from a preview makes no sense.
     FileEntryList m_siblings;
     QString m_viewerName;

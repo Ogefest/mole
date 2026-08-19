@@ -79,6 +79,17 @@ public:
     /// text viewer says more about it than a list of properties does.
     static bool looksLikeText(QByteArrayView sample);
 
+    /// Whether this name is a single compressed stream rather than a container:
+    /// `.gz`, `.xz`, `.bz2` or `.zst`, and not `.tgz` or `.tar.gz`.
+    ///
+    /// A fact about the name and nothing else, which is why it lives here rather
+    /// than in the archive backend. Two places need it and neither may depend on
+    /// the other: the backend decides from it whether to retry an open with
+    /// libarchive's `raw` format, which no container needs (MOLE-216), and the
+    /// preview tab decides from it whether the file is a wrapper around the thing
+    /// somebody actually wanted to look at (MOLE-219).
+    static bool namesSingleCompressedStream(const QString& name);
+
     /// The share of a sample that may be control characters before it is taken
     /// for binary. Here so a test can state the threshold it is testing.
     static constexpr int kControlPercent = 2;

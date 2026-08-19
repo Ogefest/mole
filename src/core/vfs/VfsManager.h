@@ -22,6 +22,17 @@ struct Mount
     QString iconName;
     VfsUri root;
     FileSystemPtr fileSystem;
+    /// A mount that exists so something can be *read*, not a place anybody can
+    /// go. It is left out of the sidebar and out of anything that offers a drive
+    /// to the user, and whoever created it removes it again.
+    ///
+    /// The preview tab is what needed it: a file compressed on its own is a
+    /// wrapper around one member, and showing the member means resolving a uri
+    /// inside the wrapper -- which needs a mount, because that is how every
+    /// reader in Mole reaches a file. Pressing F3 along a folder of two hundred
+    /// `.gz` files must not leave two hundred drives behind, or flash one into
+    /// the sidebar for each. See MOLE-219.
+    bool internal = false;
 
     bool isValid() const { return !id.isEmpty() && fileSystem != nullptr; }
 };

@@ -70,6 +70,10 @@ void DriveListModel::reload()
     QList<Row> rows;
     rows.reserve(mounts.size() + drives.size());
     for (const Mount& mount : mounts) {
+        // A mount that exists to be read is not a drive: it has no place in a
+        // list of places to go. See Mount::internal.
+        if (mount.internal)
+            continue;
         if (!mountsByDriveId.contains(mount.id))
             rows.append(Row { mount, {} });
     }

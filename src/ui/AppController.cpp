@@ -1076,7 +1076,11 @@ QString AppController::openArchive(const QString& archiveUri)
 
         const VfsUri root = factory->rootUriForFile(localPath);
         // Mounting the same archive twice would just duplicate the sidebar row.
+        // An internal mount is not that: it is somebody reading the file and it
+        // will go away again, so it must not be handed over as a place to browse.
         for (const Mount& existing : m_vfs->mounts()) {
+            if (existing.internal)
+                continue;
             if (existing.root == root) {
                 openLocation(root.toString());
                 return root.toString();
