@@ -448,9 +448,17 @@ void TestInterference::anOutageShorterThanTheGuardIsSurvived()
               "than left running.");
     }
 
-    // The stall guard gives up after two minutes of nothing. An outage of one
-    // minute fifty-nine is the case that must be ridden out: a link that comes
-    // back before the guard fires must not cost anybody their transfer.
+    // The stall guard gives up after two minutes of nothing. An outage inside
+    // that is the case that must be ridden out: a link that comes back before
+    // the guard fires must not cost anybody their transfer.
+    //
+    // RED, and known. Since the guard was made to fire at all (MOLE-108) this
+    // case fails: the span ends about forty seconds into the outage rather than
+    // at the two minutes anything here is set to, and the resume that follows
+    // meets a link that is still down. A minute of outage instead of one minute
+    // fifty-nine changes nothing, which rules out the margin being the cause.
+    // Recorded on MOLE-108 rather than deleted or quietly widened: what it
+    // claims is right, and it is the claim the fix has not met yet.
     const VfsUri remote = seedRemote(m_name, m_payload);
     QVERIFY(remote.isValid());
 
@@ -527,16 +535,22 @@ void TestInterference::anOutageLongerThanTheGuardIsReported()
         { QStringLiteral("netem"), QStringLiteral("rate"), QStringLiteral("8mbit"), QStringLiteral("400") });
     QVERIFY2(limited.contains(QStringLiteral("rate limited")), qPrintable(limited));
 
-    // Bounded at three minutes. The guard is set to two, so anything past three
-    // is not slowness, it is a transfer that is never going to end -- and the
-    // number has to be finite for the verdict to mean anything.
+    // Bounded at seven minutes, and the number is arithmetic rather than a
+    // guess. A link that has gone away costs the stall guard twice: once for the
+    // span that was carrying bytes and stopped, and once for the attempt that
+    // resumes it and gets nowhere -- see the amendment to ADR-0013, where only a
+    // span that delivered something is retried, which is what stops that from
+    // being three times or thirty. Two waits of two minutes, plus the time to
+    // notice, plus room for a slow machine. Anything past that is not slowness,
+    // it is a transfer that is never going to end -- and the number has to be
+    // finite for the verdict to mean anything.
     const Interfered run = runInterfered(
         request, m_payload / 8,
         [] {
             return TestbedControl::run(
                 { QStringLiteral("blackhole"), QStringLiteral("22"), QStringLiteral("140") });
         },
-        180000);
+        420000);
     VERIFY_IT_LANDED(run);
     TransferTask* task = run.task;
 

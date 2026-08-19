@@ -148,10 +148,21 @@ namespace {
     /// the fault was reported with.
     ///
     /// `TCP_USER_TIMEOUT` is the one that applies: it caps how long *sent* data
-    /// may go unacknowledged before the socket is failed. Set to the same wait
-    /// the stall guard uses, so the two agree about how long is too long. Linux
-    /// only; elsewhere the guard still fires and how long the socket takes to
-    /// notice is the platform's business.
+    /// may go unacknowledged before the socket is failed. Linux only; elsewhere
+    /// the guard still fires and how long the socket takes to notice is the
+    /// platform's business.
+    ///
+    /// Set to the same wait the stall guard uses, so the two agree about how long
+    /// is too long.
+    ///
+    /// **Known unfinished, and this is where it bites.** With this in place an
+    /// outage past the guard is reported instead of hanging, which is what
+    /// MOLE-108 asked for -- and an outage comfortably *shorter* than the guard,
+    /// which used to be ridden out, is now failed as well. The span ends around
+    /// forty seconds into an outage rather than at the two minutes either this or
+    /// the guard is set to, and nothing found so far explains which clock that
+    /// is: twice the wait behaves the same, and removing this brings back the
+    /// hang. `anOutageShorterThanTheGuardIsSurvived` is red because of it.
     int boundTheSocketsPatience(void* userData, curl_socket_t handle, curlsocktype purpose)
     {
         if (purpose != CURLSOCKTYPE_IPCXN)

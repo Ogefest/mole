@@ -73,8 +73,9 @@ struct TransportOptions
 ///
 /// **This is half of the fix.** Aborting from the callback does not make
 /// `curl_easy_perform` return while the thread is inside the SSH layer waiting
-/// on a socket the kernel is still retransmitting into; `TCP_USER_TIMEOUT`,
-/// set from the same `stallSeconds`, is what ends that. See the socket option
+/// on a socket the kernel is still retransmitting into; `TCP_USER_TIMEOUT` is
+/// what ends that. It is set to twice this wait rather than to the same figure,
+/// because it is the backstop and this is the decision -- see the socket option
 /// callback in CurlTransport.cpp.
 ///
 /// Movement rather than speed, deliberately. libcurl's guard asks "is it slower
