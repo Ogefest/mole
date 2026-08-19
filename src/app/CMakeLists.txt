@@ -51,6 +51,7 @@ set(MOLE_QML_FILES
     ui/AlertsView.qml
     ui/ViewerKeys.qml
     ui/ReportsView.qml
+    ui/IndexesView.qml
     ui/DataGrid.qml
     ui/SqlitePreview.qml
     ui/ParquetPreview.qml

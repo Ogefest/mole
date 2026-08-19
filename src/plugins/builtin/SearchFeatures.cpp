@@ -1,6 +1,7 @@
 #include "plugins/builtin/SearchFeatures.h"
 
 #include "plugins/builtin/IndexScanJob.h"
+#include "plugins/builtin/TimeWords.h"
 #include "sdk/ScanReaders.h"
 #include "ui/models/FileListModel.h"
 
@@ -345,24 +346,6 @@ bool LiveSearchController::indexCoversRoot() const
 {
     return coveringVolume().has_value();
 }
-
-namespace {
-
-    /// How long ago, in words. The whole reason the index is safe to default to is
-    /// that it admits its own age, so this is said rather than implied.
-    QString ageInWords(const QDateTime& when)
-    {
-        const qint64 seconds = when.secsTo(QDateTime::currentDateTime());
-        if (seconds < 120)
-            return QStringLiteral("just now");
-        if (seconds < 7200)
-            return QStringLiteral("%1 minutes ago").arg(seconds / 60);
-        if (seconds < 172800)
-            return QStringLiteral("%1 hours ago").arg(seconds / 3600);
-        return QStringLiteral("%1 days ago").arg(seconds / 86400);
-    }
-
-} // namespace
 
 QString LiveSearchController::indexNote() const
 {

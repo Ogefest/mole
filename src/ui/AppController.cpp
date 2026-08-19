@@ -1545,6 +1545,20 @@ void AppController::registerShellActions()
     }
     {
         MenuAction action;
+        action.id = QStringLiteral("mole.tools.indexes");
+        action.opensFeature = QStringLiteral("core.indexes");
+        action.section = MenuAction::Section::Workflows;
+        action.title = QStringLiteral("Indexes");
+        action.sortOrder = 55;
+        // Always available, for the same reason as the tracking list below: the
+        // reason to open it is usually that a search answered from something
+        // older than you thought, and nothing else points you at it.
+        action.enabled = [] { return true; };
+        action.trigger = [this] { openFeatureTab(QStringLiteral("core.indexes")); };
+        m_actions->addAction(std::move(action));
+    }
+    {
+        MenuAction action;
         action.id = QStringLiteral("mole.tools.alerts");
         action.opensFeature = QStringLiteral("core.alerts");
         action.section = MenuAction::Section::Workflows;

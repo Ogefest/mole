@@ -258,6 +258,10 @@ mole_add_test(tst_AnalysisTab       SOURCES app/tst_AnalysisTab.cpp     LIBS mol
 # fake container keep this off a real archive library. See MOLE-226.
 mole_add_test(tst_IndexScanJob      SOURCES plugins/tst_IndexScanJob.cpp LIBS mole_builtin)
 
+# The list of indexes: how old each one is, what kind of scan built it, and
+# whether anything is keeping it fresh. Headless -- it drives the controller.
+mole_add_test(tst_IndexesTab        SOURCES app/tst_IndexesTab.cpp     LIBS mole_builtin)
+
 mole_add_test(tst_Automation        SOURCES app/tst_Automation.cpp      LIBS mole_builtin)
 mole_add_test(tst_FileSets          SOURCES app/tst_FileSets.cpp        LIBS mole_builtin)
 

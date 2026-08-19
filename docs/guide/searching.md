@@ -170,6 +170,25 @@ interval for a folder that is already on one changes it.
 **The index can be deleted without losing anything but time.** It holds nothing that is not
 already in your files; throwing it away costs a rescan and nothing else.
 
+### The indexes you have
+
+An index is a claim about a tree, and a claim goes out of date. The *Indexes* tab lists every
+one you have, stalest first, so how much any search can be trusted is something you can look
+at rather than guess:
+
+![The list of indexes](images/26-indexes.png)
+
+Each row says what the index covers, how many entries are in it, **how long ago it was
+scanned**, **what kind of scan built it** — with what the files say about themselves or names
+only, archives listed or not — and **whether anything is keeping it fresh**. A tree indexed
+before Mole recorded that last fact says *not known* rather than claiming to have none; one
+rescan settles it.
+
+A row that is on no clock says so in its own colour, because that is the row's real news: it
+is as old as its last scan and no newer. *Automation* is the other half of the answer and a
+different question — it lists what runs by itself, so an index with no rule does not appear
+there at all.
+
 ## Typing the whole thing
 
 Above the form is a line, and the two are one query seen twice: typing here moves the

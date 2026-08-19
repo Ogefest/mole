@@ -7,6 +7,7 @@
 #include "plugins/builtin/BulkRenameFeature.h"
 #include "plugins/builtin/DuplicatesFeature.h"
 #include "plugins/builtin/FileSetsFeature.h"
+#include "plugins/builtin/IndexesFeature.h"
 #include "plugins/builtin/PreviewFeature.h"
 #include "plugins/builtin/ReportsFeature.h"
 #include "plugins/builtin/SearchFeatures.h"
@@ -175,6 +176,7 @@ private slots:
     void syncPlansBeforeItTouchesAnything();
     void alertsSayWhatWentOutsideItsBounds();
     void savedReportsAreAListYouCanOpen();
+    void theListOfIndexesSaysHowOldEachOneIsAndWhatIsInIt();
     void aFileSetIsAListYouCarryAround();
     void duplicatesFindsTheSamePictureThreeTimes();
     void anImageIsFittedToThePane();
@@ -3511,6 +3513,64 @@ void TestWalkthrough::alertsSayWhatWentOutsideItsBounds()
     m_harness->screenshot(QStringLiteral("16-alerts"));
 }
 
+/// An index is a claim about a tree that goes quietly out of date, and the only
+/// place one used to appear was a dropdown inside the search form. Two indexes
+/// that differ in the way that matters -- one recorded what the files say about
+/// themselves, one did not; one is kept up to date, one is not -- so the picture
+/// shows both answers in every column. See MOLE-230.
+void TestWalkthrough::theListOfIndexesSaysHowOldEachOneIsAndWhatIsInIt()
+{
+    // Stopped, so a rule that has never run stays "as soon as possible" instead
+    // of firing while the picture is being taken.
+    m_harness->app()->scheduler()->stop();
+
+    const QString photos = m_harness->fixtureUri() + QStringLiteral("/photos");
+    const QString documents = m_harness->fixtureUri() + QStringLiteral("/documents");
+    const auto idle = [this] { return m_harness->app()->tasks()->activeCount() == 0; };
+
+    auto* search = qobject_cast<LiveSearchController*>(m_harness->app()->tabs()->controllerAt(
+        m_harness->app()->openFeatureTab(QStringLiteral("mole.livesearch"))));
+    QVERIFY(search);
+    m_harness->settle(4);
+
+    search->setScanReadsMetadata(true);
+    search->scanDirectory(photos, QStringLiteral("photos"));
+    QVERIFY(m_harness->until(idle, 30000));
+
+    search->setScanReadsMetadata(false);
+    search->scanDirectory(documents, QStringLiteral("documents"));
+    QVERIFY(m_harness->until(idle, 30000));
+
+    QVERIFY(!search->scheduleScan(photos, 24 * 3600).isEmpty());
+
+    auto* indexes = qobject_cast<IndexesController*>(m_harness->app()->tabs()->controllerAt(
+        m_harness->app()->openFeatureTab(QStringLiteral("core.indexes"))));
+    QVERIFY(indexes);
+    m_harness->settle(6);
+
+    // The list is right before it is photographed: two rows, one of them kept up
+    // to date, and the two kinds of scan told apart.
+    QCOMPARE(indexes->volumeCount(), 2);
+    QCOMPARE(indexes->scheduledCount(), 1);
+    QVERIFY2(m_harness->item(QStringLiteral("indexList")), "the view has to have drawn the list");
+
+    bool sawMetadata = false;
+    bool sawNamesOnly = false;
+    const QVariantList rows = indexes->volumes();
+    for (const QVariant& entry : rows) {
+        const QVariantMap row = entry.toMap();
+        QVERIFY2(row.value(QStringLiteral("kindKnown")).toBool(),
+            "a scan this run performed has to have recorded what it was asked for");
+        if (row.value(QStringLiteral("hasMetadata")).toBool())
+            sawMetadata = true;
+        else
+            sawNamesOnly = true;
+    }
+    QVERIFY2(sawMetadata && sawNamesOnly, "the picture is of the difference, so both have to be in it");
+
+    m_harness->screenshot(QStringLiteral("26-indexes"));
+}
+
 void TestWalkthrough::savedReportsAreAListYouCanOpen()
 {
     // A report has to exist before a library of them is worth a picture, and the
@@ -3836,6 +3896,7 @@ void TestWalkthrough::everyFeatureAndPreviewHasAPictureInTheGuide()
         { QStringLiteral("core.sync"), QStringLiteral("15-sync") },
         { QStringLiteral("core.alerts"), QStringLiteral("16-alerts") },
         { QStringLiteral("core.reports"), QStringLiteral("17-reports") },
+        { QStringLiteral("core.indexes"), QStringLiteral("26-indexes") },
         { QStringLiteral("core.filesets"), QStringLiteral("18-file-sets") },
         { QStringLiteral("core.duplicates"), QStringLiteral("19-duplicates") },
 

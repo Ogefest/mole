@@ -21,6 +21,10 @@ add_library(mole_builtin STATIC
     builtin/AlertsFeature.cpp
     builtin/ReportsFeature.h
     builtin/ReportsFeature.cpp
+    builtin/IndexesFeature.h
+    builtin/IndexesFeature.cpp
+    builtin/TimeWords.h
+    builtin/TimeWords.cpp
     builtin/FileSetsFeature.h
     builtin/FileSetsFeature.cpp
     builtin/BulkRenameFeature.h

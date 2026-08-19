@@ -9,6 +9,7 @@
 #include "plugins/builtin/DuplicatesFeature.h"
 #include "plugins/builtin/FileSetsFeature.h"
 #include "plugins/builtin/IndexScanJob.h"
+#include "plugins/builtin/IndexesFeature.h"
 #include "plugins/builtin/PreviewFeature.h"
 #include "plugins/builtin/ReportsFeature.h"
 #include "plugins/builtin/SearchFeatures.h"
@@ -74,6 +75,11 @@ void BuiltinPlugin::registerExtensions(PluginRegistry& registry)
     // is the whole point of scheduling one.
     if (analysisStore)
         registry.addFeature(std::make_unique<ReportsFeature>(services, analysisStore));
+
+    // The same argument for the other thing Mole keeps: an index is a claim
+    // about a tree that goes out of date, and until this tab the only place one
+    // appeared was a dropdown inside the search form.
+    registry.addFeature(std::make_unique<IndexesFeature>(services));
 
     registry.addFeature(std::make_unique<BulkRenameFeature>(services));
     registry.addFeature(std::make_unique<DuplicatesFeature>(services));
