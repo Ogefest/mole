@@ -509,6 +509,11 @@ private:
     /// Restoring opens tabs, which would immediately mark the session dirty.
     bool m_restoring = false;
     TabsModel* m_tabs = nullptr;
+    /// Tells the drive list which locations the window has open, so a drive can
+    /// say that somebody is on it. Called when a tab moves, opens or closes, and
+    /// when the mount table changes -- never on a timer.
+    void refreshOpenDrives();
+
     DriveListModel* m_drives = nullptr;
     QSortFilterProxyModel* m_configuredDrives = nullptr;
     TaskListModel* m_taskModel = nullptr;

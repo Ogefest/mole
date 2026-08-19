@@ -13,6 +13,8 @@ the first release; they stay as they are.
 
 2026-08-19 #MOLE-210 A duplicate scan no longer stops the window responding as it fills — a confirmed group is added to the list instead of rebuilding every group already in it, so the results can be read and scrolled while the scan is still running
 
+2026-08-19 #MOLE-161 A drive's dot in the sidebar now says what the drive is doing rather than whether it is plugged in — filled grey for here and quiet, blue for one you are looking at, a hollow ring for one that is not connected, and a pulsing ring while it connects
+
 2026-08-19 #MOLE-37 F3 on a video now plays it — the file opens paused at its first frame with a play button, a position and somewhere to drag it to, and a build without Qt Multimedia shows the file's details as before
 
 2026-08-19 #MOLE-128 A dialog, a menu or the command palette no longer washes the window behind it out to a pale grey — Qt's dark-theme dim is near-white at sixty percent, and what sits behind a popup is now dimmed instead of faded almost away

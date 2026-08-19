@@ -46,6 +46,12 @@ private slots:
     void aDriveWithNoSecretConnectsWithNothingTyped();
     void withNothingWaitingNothingAsks();
 
+    void aDriveNobodyIsUsingShowsAFilledMutedDotAndABookmarkShowsNone();
+    void theTwoGreysAreToldApartByShape();
+    void openingAFolderOnADriveFillsItsDotInTheAccentColour();
+    void aDriveOpenInATabThatIsNotVisibleStillReadsAsOpen();
+    void connectingPulsesTheRingAndUnreachableIsFilledRed();
+
 private:
     /// The passphrase dialog, which is a Popup and so never appears in the
     /// visual tree that item() walks.
@@ -67,10 +73,41 @@ private:
     /// Saves an in-memory drive and returns once the sidebar has caught up.
     bool configureScratchDrive(const QString& name);
     DriveListModel::State stateOfDrive(const QString& name) const;
+    /// The state dot on a row, which is where the six appearances are read from.
+    QQuickItem* dotOn(const QString& driveName) const
+    {
+        return buttonIn(rowNamed(driveName), QStringLiteral("placeStateDot"));
+    }
+    /// The three channels of one dot, as the view actually has them.
+    struct DotLook
+    {
+        QColor colour;
+        bool filled = false;
+        bool pulsing = false;
+        bool visible = false;
+    };
+    DotLook lookOf(const QString& driveName) const
+    {
+        DotLook look;
+        QQuickItem* dot = dotOn(driveName);
+        if (!dot)
+            return look;
+        look.visible = dot->isVisible();
+        look.filled = dot->property("filled").toBool();
+        look.pulsing = dot->property("pulsing").toBool();
+        // The colour the dot is actually showing: a ring paints its border and
+        // leaves the middle transparent, so reading `color` alone would answer
+        // "transparent" for half the states.
+        look.colour = dot->property("hue").value<QColor>();
+        return look;
+    }
     /// Saves a drive whose password lives in the credential store, then starts
     /// the application again so the store is shut -- which is the only way to
     /// see what somebody meets on an ordinary morning.
     bool configureLockedDrive(const QString& name);
+    /// Configures the in-memory drive, connects it, and answers its root uri --
+    /// or an empty string when either half did not happen.
+    QString connectScratch();
 
     std::unique_ptr<QmlAppHarness> m_harness;
 };
@@ -126,7 +163,7 @@ DriveListModel::State TestSidebar::stateOfDrive(const QString& name) const
             continue;
         return static_cast<DriveListModel::State>(index.data(DriveListModel::StateRole).toInt());
     }
-    return DriveListModel::State::Local;
+    return DriveListModel::State::Idle;
 }
 
 bool TestSidebar::configureLockedDrive(const QString& name)
@@ -293,7 +330,7 @@ void TestSidebar::aDriveWithNoSecretConnectsWithNothingTyped()
 
     QVERIFY2(!unlockDialogIsUp(), "nothing here needs the store, so nothing asks");
     QVERIFY(m_harness->until(
-        [this] { return stateOfDrive(QStringLiteral("Scratch")) == DriveListModel::State::Connected; }));
+        [this] { return stateOfDrive(QStringLiteral("Scratch")) == DriveListModel::State::Idle; }));
 }
 
 void TestSidebar::withNothingWaitingNothingAsks()
@@ -343,7 +380,7 @@ void TestSidebar::pressingConnectMountsItAndTheRowStaysPut()
     press(buttonIn(row, QStringLiteral("placeRemoveButton")));
 
     QVERIFY(m_harness->until(
-        [this] { return stateOfDrive(QStringLiteral("Scratch")) == DriveListModel::State::Connected; }));
+        [this] { return stateOfDrive(QStringLiteral("Scratch")) == DriveListModel::State::Idle; }));
 
     // The same row, not a new one somewhere else: the list is read with a
     // pointer already on the way to it.
@@ -363,7 +400,7 @@ void TestSidebar::ejectingLeavesTheRowBehind()
     QVERIFY(row);
     press(buttonIn(row, QStringLiteral("placeRemoveButton")));
     QVERIFY(m_harness->until(
-        [this] { return stateOfDrive(QStringLiteral("Scratch")) == DriveListModel::State::Connected; }));
+        [this] { return stateOfDrive(QStringLiteral("Scratch")) == DriveListModel::State::Idle; }));
 
     const qreal heightBefore = rowNamed(QStringLiteral("Scratch"))->height();
     const qreal yBefore = rowNamed(QStringLiteral("Scratch"))->y();
@@ -419,7 +456,7 @@ void TestSidebar::connectingAsksWhetherTheDriveIsThere()
     press(buttonIn(rowNamed(QStringLiteral("Scratch")), QStringLiteral("placeRemoveButton")));
 
     QVERIFY(m_harness->until(
-        [this] { return stateOfDrive(QStringLiteral("Scratch")) == DriveListModel::State::Connected; }));
+        [this] { return stateOfDrive(QStringLiteral("Scratch")) == DriveListModel::State::Idle; }));
 
     // The in-memory backend answers, so this one ends connected -- but only
     // after passing through the state that says nobody has asked yet.
@@ -431,6 +468,190 @@ void TestSidebar::connectingAsksWhetherTheDriveIsThere()
     QVERIFY(row);
     QVERIFY2(
         !row->property("checkCaption").toString().isEmpty(), "the row carries what the check found and when");
+}
+
+// ---- what the dot says ----------------------------------------------------
+//
+// It used to say whether a drive was plugged in, which is not what anybody wants
+// to know -- and on a local disk it said nothing at all, because State::Local fell
+// through to the same grey a drive nobody has connected wears. Now it says what a
+// drive is *doing*, which is one question for every kind of drive. The appearances
+// are read here through the one objectName, because a colour is only a third of
+// what the dot is saying. See MOLE-161.
+
+void TestSidebar::aDriveNobodyIsUsingShowsAFilledMutedDotAndABookmarkShowsNone()
+{
+    // A drive the window is not on. The fixture has more than one local disk, and
+    // one of them holds the folder the browser opened on -- which is exactly the
+    // distinction being drawn, so the quiet one is found by asking rather than by
+    // knowing the fixture's names.
+    DriveListModel* drives = m_harness->app()->drives();
+    QString quiet;
+    QString inUse;
+    for (int row = 0; row < drives->rowCount(); ++row) {
+        const QModelIndex at = drives->index(row, 0);
+        const auto state = static_cast<DriveListModel::State>(at.data(DriveListModel::StateRole).toInt());
+        const QString name = at.data(DriveListModel::DisplayNameRole).toString();
+        if (state == DriveListModel::State::Idle && quiet.isEmpty())
+            quiet = name;
+        if (state == DriveListModel::State::Open && inUse.isEmpty())
+            inUse = name;
+    }
+    QVERIFY2(!quiet.isEmpty(), "the fixture has no drive that nobody is using");
+    m_harness->settle(3);
+
+    const DotLook idle = lookOf(quiet);
+    QVERIFY2(idle.visible, "every drive keeps a dot");
+    QVERIFY2(idle.filled, "a drive that is here shows a solid dot");
+    QVERIFY2(!idle.pulsing, "and nothing is happening to it");
+    QCOMPARE(idle.colour, QColor(QStringLiteral("#8b93a7")));
+
+    // The window opened on a folder, so one of the disks is in use -- and that is
+    // the whole point of the dot: two local disks, one of them being read.
+    QVERIFY2(!inUse.isEmpty(), "the window is not looking at anything, so this proved nothing");
+    QCOMPARE(lookOf(inUse).colour, QColor(QStringLiteral("#4c9aff")));
+
+    // A bookmark row is not a drive, and absence is what says so. Giving an idle
+    // drive an empty slot would make the two kinds of row identical -- the fault
+    // this scheme exists to fix, inverted.
+    QVERIFY(m_harness->app()->bookmarks()->add(m_harness->fixtureUri(), QStringLiteral("Fixture")));
+    QVERIFY(m_harness->until([this] { return rowNamed(QStringLiteral("Fixture")) != nullptr; }));
+    QQuickItem* bookmarkDot = dotOn(QStringLiteral("Fixture"));
+    QVERIFY2(!bookmarkDot || !bookmarkDot->isVisible(), "a bookmark row must have no dot at all");
+}
+
+void TestSidebar::theTwoGreysAreToldApartByShape()
+{
+    // Configured and not connected: the grey that means *could be connected*.
+    QVERIFY(configureScratchDrive(QStringLiteral("Scratch")));
+    QVERIFY(m_harness->until(
+        [this] { return stateOfDrive(QStringLiteral("Scratch")) == DriveListModel::State::Disconnected; }));
+    m_harness->settle(3);
+
+    const DotLook notConnected = lookOf(QStringLiteral("Scratch"));
+    QVERIFY(notConnected.visible);
+    QVERIFY2(!notConnected.filled, "a drive that could be connected and is not shows a hollow ring");
+    QVERIFY(!notConnected.pulsing);
+
+    // Connected and unused: the same grey, a different shape. That is the pair a
+    // shade of grey could not express at eight pixels, and the reason the answer
+    // is a ring rather than a second colour.
+    press(buttonIn(rowNamed(QStringLiteral("Scratch")), QStringLiteral("placeRemoveButton")));
+    QVERIFY(m_harness->until(
+        [this] { return stateOfDrive(QStringLiteral("Scratch")) == DriveListModel::State::Idle; }));
+    m_harness->settle(3);
+
+    const DotLook idle = lookOf(QStringLiteral("Scratch"));
+    QVERIFY2(idle.filled, "a connected drive nobody is using is here, and a solid dot says so");
+    QVERIFY(!idle.pulsing);
+    QCOMPARE(idle.colour, notConnected.colour);
+    QCOMPARE(idle.colour, QColor(QStringLiteral("#8b93a7")));
+}
+
+QString TestSidebar::connectScratch()
+{
+    if (!configureScratchDrive(QStringLiteral("Scratch")))
+        return {};
+    press(buttonIn(rowNamed(QStringLiteral("Scratch")), QStringLiteral("placeRemoveButton")));
+    if (!m_harness->until(
+            [this] { return stateOfDrive(QStringLiteral("Scratch")) == DriveListModel::State::Idle; }))
+        return {};
+
+    DriveListModel* drives = m_harness->app()->drives();
+    for (int row = 0; row < drives->rowCount(); ++row) {
+        if (drives->index(row, 0).data(DriveListModel::DisplayNameRole).toString()
+            == QStringLiteral("Scratch")) {
+            return drives->rootUriAt(row);
+        }
+    }
+    return {};
+}
+
+void TestSidebar::openingAFolderOnADriveFillsItsDotInTheAccentColour()
+{
+    const QString root = connectScratch();
+    QVERIFY2(!root.isEmpty(), "the scratch drive would not connect");
+
+    QVERIFY(m_harness->app()->goTo(root));
+    QVERIFY(m_harness->until(
+        [this] { return stateOfDrive(QStringLiteral("Scratch")) == DriveListModel::State::Open; }));
+    m_harness->settle(3);
+
+    const DotLook open = lookOf(QStringLiteral("Scratch"));
+    QVERIFY(open.filled);
+    QVERIFY2(!open.pulsing, "open is a state, not something happening");
+    QCOMPARE(open.colour, QColor(QStringLiteral("#4c9aff")));
+
+    // And leaving turns it off. Nothing polled to find that out: a pane navigated
+    // and said so.
+    QVERIFY(m_harness->app()->goTo(m_harness->fixtureUri()));
+    QVERIFY(m_harness->until(
+        [this] { return stateOfDrive(QStringLiteral("Scratch")) == DriveListModel::State::Idle; }));
+    m_harness->settle(3);
+    QCOMPARE(lookOf(QStringLiteral("Scratch")).colour, QColor(QStringLiteral("#8b93a7")));
+}
+
+void TestSidebar::aDriveOpenInATabThatIsNotVisibleStillReadsAsOpen()
+{
+    const QString root = connectScratch();
+    QVERIFY2(!root.isEmpty(), "the scratch drive would not connect");
+
+    QVERIFY(m_harness->app()->goTo(root));
+    QVERIFY(m_harness->until(
+        [this] { return stateOfDrive(QStringLiteral("Scratch")) == DriveListModel::State::Open; }));
+    const int wasOnIt = m_harness->app()->tabs()->currentIndex();
+
+    // Another tab, on top of it. The question is about the drive and not about the
+    // window, so the drive is still open although nobody can see it.
+    const int other = m_harness->app()->tabs()->openTab(QStringLiteral("mole.browser"));
+    QVERIFY(other >= 0);
+    m_harness->app()->tabs()->setCurrentIndex(other);
+    m_harness->settle(3);
+    QVERIFY(m_harness->app()->tabs()->currentIndex() != wasOnIt);
+
+    QCOMPARE(stateOfDrive(QStringLiteral("Scratch")), DriveListModel::State::Open);
+    QVERIFY(lookOf(QStringLiteral("Scratch")).filled);
+    QCOMPARE(lookOf(QStringLiteral("Scratch")).colour, QColor(QStringLiteral("#4c9aff")));
+
+    // Closing the tab that was on it is what turns the dot off.
+    m_harness->app()->tabs()->closeTab(wasOnIt);
+    QVERIFY(m_harness->until(
+        [this] { return stateOfDrive(QStringLiteral("Scratch")) != DriveListModel::State::Open; }));
+}
+
+void TestSidebar::connectingPulsesTheRingAndUnreachableIsFilledRed()
+{
+    QVERIFY2(!connectScratch().isEmpty(), "the scratch drive would not connect");
+
+    DriveListModel* drives = m_harness->app()->drives();
+    QString driveId;
+    for (int row = 0; row < drives->rowCount(); ++row) {
+        const QModelIndex at = drives->index(row, 0);
+        if (at.data(DriveListModel::DisplayNameRole).toString() == QStringLiteral("Scratch"))
+            driveId = at.data(DriveListModel::ConfiguredIdRole).toString();
+    }
+    QVERIFY(!driveId.isEmpty());
+
+    // A check is out and has not answered: something is happening, and it is not
+    // yet known whether the far end is there. A hollow ring, pulsing.
+    drives->noteCheckStarted(driveId);
+    QVERIFY(m_harness->until(
+        [this] { return stateOfDrive(QStringLiteral("Scratch")) == DriveListModel::State::Connecting; }));
+    m_harness->settle(3);
+    const DotLook connecting = lookOf(QStringLiteral("Scratch"));
+    QVERIFY2(!connecting.filled, "connecting has not arrived anywhere yet");
+    QVERIFY2(connecting.pulsing, "and something is happening, which is what motion means");
+    QCOMPARE(connecting.colour, QColor(QStringLiteral("#8b93a7")));
+
+    // And the answer was no.
+    drives->noteCheckResult(driveId, false, QStringLiteral("No route to the server"));
+    QVERIFY(m_harness->until(
+        [this] { return stateOfDrive(QStringLiteral("Scratch")) == DriveListModel::State::Unreachable; }));
+    m_harness->settle(3);
+    const DotLook unreachable = lookOf(QStringLiteral("Scratch"));
+    QVERIFY2(unreachable.filled, "unreachable is a state it has arrived at, not one it is heading for");
+    QVERIFY(!unreachable.pulsing);
+    QCOMPARE(unreachable.colour, QColor(QStringLiteral("#e5534b")));
 }
 
 int main(int argc, char** argv)

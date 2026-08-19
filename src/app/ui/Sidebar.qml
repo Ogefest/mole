@@ -20,13 +20,22 @@ Rectangle {
     signal focusWanted()
 
     // What a drive's state means, in the sidebar's own colours. The model says
-    // what a state means -- "good", "attention", "broken", "idle" -- and the
-    // palette lives here, so neither has to know the other's vocabulary.
+    // what a state means -- "idle", "using", "broken" -- and the palette lives
+    // here, so neither has to know the other's vocabulary.
+    //
+    // Hue is the *kind*: muted for nothing of yours, the accent for yours and in
+    // use, red for broken. The accent is not a new colour -- it is what this
+    // interface already means everywhere by "this is the thing you are on".
+    //
+    // The green that used to mean *connected* is gone. Under the model the dot
+    // now follows, that state is Idle -- available and unused -- and a colour of
+    // its own for it was a celebration of nothing happening. It also settles an
+    // accessibility fault nobody filed: green against red is the one pair
+    // deuteranopia cannot separate, and it was carrying connected against
+    // unreachable. See docs/adr/0052-a-drives-dot-says-what-it-is-doing.md.
     function stateColor(severity) {
-        if (severity === "good")
-            return "#57ab5a"
-        if (severity === "attention")
-            return "#d9a441"
+        if (severity === "using")
+            return Material.accent
         if (severity === "broken")
             return "#e5534b"
         return sidebar.mutedText
@@ -70,6 +79,12 @@ Rectangle {
         property bool ejectable: false
         property bool unlockable: false
         property string severity: ""
+        // Shape and motion, each carrying one idea. Hollow against filled is *not
+        // here yet* against *here* -- the pair the old grey conflated, and one a
+        // shade of grey cannot express at eight pixels. Motion is *happening right
+        // now*, and only that.
+        property bool solidDot: true
+        property bool pulsingDot: false
         property string stateCaption: ""
         property string checkCaption: ""
         signal connectRequested()
@@ -146,13 +161,36 @@ Rectangle {
                 Layout.preferredHeight: App.minimumTarget
                 spacing: 4
                 Rectangle {
+                    id: stateDot
                     objectName: "placeStateDot"
+                    // Absence already means something here: a bookmark row is not
+                    // a drive and has no dot at all. Giving that to an idle drive
+                    // would make two different kinds of row look identical, which
+                    // is the fault this scheme exists to fix, inverted.
                     visible: row.severity !== ""
+                    // The properties the appearance is made of, readable as
+                    // themselves: a test asserts six appearances through this one
+                    // objectName, and reading a colour tells it only a third of
+                    // what the dot is saying.
+                    property bool filled: row.solidDot
+                    property bool pulsing: row.pulsingDot
+                    property color hue: sidebar.stateColor(row.severity)
                     implicitWidth: 8
                     implicitHeight: 8
                     radius: 4
-                    color: sidebar.stateColor(row.severity)
+                    color: filled ? hue : "transparent"
+                    border.width: filled ? 0 : 1.5
+                    border.color: hue
                     Layout.alignment: Qt.AlignVCenter
+
+                    SequentialAnimation on opacity {
+                        running: stateDot.pulsing && stateDot.visible
+                        loops: Animation.Infinite
+                        alwaysRunToEnd: true
+                        NumberAnimation { to: 0.35; duration: 700; easing.type: Easing.InOutQuad }
+                        NumberAnimation { to: 1.0; duration: 700; easing.type: Easing.InOutQuad }
+                        onRunningChanged: if (!running) stateDot.opacity = 1.0
+                    }
                 }
                 Label {
                     objectName: "placeRowLabel"
@@ -297,6 +335,8 @@ Rectangle {
                 required property string configuredId
                 required property string stateText
                 required property string stateSeverity
+                required property bool dotFilled
+                required property bool dotPulsing
                 required property string checkMessage
                 required property string checkedAt
 
@@ -307,6 +347,8 @@ Rectangle {
                 capacityFree: freeText
                 capacityTotal: totalText
                 severity: stateSeverity
+                solidDot: dotFilled
+                pulsingDot: dotPulsing
                 stateCaption: stateText
 
                 // A drive somebody configured always has the slot, whatever it

@@ -131,6 +131,9 @@ void PreviewTabController::showEntry(const FileEntry& entry)
     if (const FileEntry member = singleCompressedMember(entry); member.uri.isValid())
         m_showing = member;
     setTitle(m_showing.name.isEmpty() ? QStringLiteral("Preview") : m_showing.name);
+    // Worth persisting -- the session remembers which file a preview was on --
+    // and it is how the shell learns this tab has moved to another drive.
+    emit stateChanged();
 
     IPreviewProvider* provider = m_services.previews ? m_services.previews->providerFor(m_showing) : nullptr;
 
@@ -469,6 +472,16 @@ void PreviewTabController::next()
 void PreviewTabController::previous()
 {
     step(-1);
+}
+
+QStringList PreviewTabController::openLocations() const
+{
+    // The file in the folder rather than the member of a wrapper: what holds a
+    // drive open is where the file lives, and a substituted member lives inside
+    // it. See singleCompressedMember().
+    if (!m_current.uri.isValid())
+        return {};
+    return { m_current.uri.toString() };
 }
 
 QVariantMap PreviewTabController::saveState() const

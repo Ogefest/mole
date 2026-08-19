@@ -3043,7 +3043,7 @@ void TestWalkthrough::theSidebarListsADriveAndConnectsIt()
     QVERIFY(!id.isEmpty());
     QVERIFY(m_harness->app()->connectDrive(id).isEmpty());
 
-    QVERIFY(m_harness->until([&] { return stateNow() == DriveListModel::State::Connected; }));
+    QVERIFY(m_harness->until([&] { return stateNow() == DriveListModel::State::Idle; }));
     QVERIFY(drives->data(drives->index(rowOfArchiveBox(), 0), DriveListModel::CanEjectRole).toBool());
     m_harness->screenshot(QStringLiteral("11c-drive-connected"));
 }

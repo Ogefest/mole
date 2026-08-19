@@ -6,6 +6,7 @@
 #include <QAbstractListModel>
 #include <QDateTime>
 #include <QHash>
+#include <QSet>
 #include <QTimer>
 
 namespace mole {
@@ -31,22 +32,35 @@ class DriveListModel : public QAbstractListModel
     Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
 
 public:
-    /// What a drive is doing, as far as the window can tell.
+    /// What a drive is *doing*, which is one question for every kind of drive.
     ///
-    /// `Connected` means a backend was built and mounted, not that the far end
-    /// answered -- the two are different questions and nothing here polls for
-    /// the second. See docs/adr/0018-connected-is-not-reachable.md.
+    /// It used to be a mixture. A mount with no configured drive behind it -- a
+    /// disk, an open archive, the scratch space -- was `Local`, which said where
+    /// it was rather than what was happening to it, and it shared the sidebar's
+    /// grey with `Disconnected`, where the grey means something real. A local
+    /// disk is not doing anything and is not waiting to be connected either. See
+    /// docs/adr/0052-a-drives-dot-says-what-it-is-doing.md.
     ///
-    /// `Connecting` and `Unreachable` have no source yet: the first needs
-    /// connecting to stop being synchronous, the second needs the drive check.
-    /// They are here because leaving them out would mean every reader of this
-    /// enum changing when they arrive.
+    /// Whether anybody has a drive open, and whether work is running on it, are
+    /// knowable without asking the drive anything -- and they are the same
+    /// question for a disk, an archive, a bucket and an SFTP server. So all of
+    /// them wear the same dot, and `Local` is not a state.
+    ///
+    /// `Connected` is gone with it: a mounted drive nobody is using is `Idle`.
+    /// Whether the far end answers is still a separate question that nothing here
+    /// polls for -- see docs/adr/0018-connected-is-not-reachable.md, whose
+    /// decisions this leaves untouched.
+    ///
+    /// **Highest first: Unreachable → Busy → Open → Connecting → Not connected →
+    /// Idle.** A drive that is open *and* has work running on it reads busy,
+    /// because that is the more specific statement.
     enum class State {
-        Local, ///< a mount with no configured drive behind it: a disk, an archive
+        Idle, ///< available, and nothing is using it
+        Open, ///< some tab's current location is on this drive
+        Busy, ///< work the user asked for is running on it
         Disconnected, ///< configured, not connected, and could be
         Locked, ///< configured, and its secrets are in a store that is shut
         Connecting, ///< being connected right now
-        Connected, ///< mounted; whether the far end answers is a separate question
         Unreachable, ///< mounted, and a check said the far end is not there
     };
     Q_ENUM(State)
@@ -77,6 +91,17 @@ public:
         /// recolour every row. Where the line falls: the model knows what a
         /// state means, the view knows what the palette calls that meaning.
         StateSeverityRole,
+        /// Whether the dot is a solid disc or a hollow ring, and whether it
+        /// pulses.
+        ///
+        /// Shape and motion rather than colour, and here for the same reason the
+        /// severity is a word: the model knows what a state means, the view knows
+        /// how this interface draws that meaning. Six states will not fit in one
+        /// colour, so the encoding is spread over channels that each carry one
+        /// idea -- hollow against filled is *not here yet* against *here*, and
+        /// motion is *happening right now* and only that.
+        DotFilledRole,
+        DotPulsingRole,
         /// The configured drive behind this row, or empty when there is none.
         /// What an action needs in order to name what it is acting on.
         ConfiguredIdRole,
@@ -146,7 +171,38 @@ public:
     /// dialog cannot end up calling the same state two different things.
     static QString stateText(State state);
     /// What a state means, for a view that has to pick a colour for it.
+    ///
+    /// Three answers now, not four: `idle` for nothing of yours, `using` for
+    /// yours and in use, `broken` for a drive a check has failed. The green that
+    /// used to mean *connected* is gone -- under this model that state is Idle,
+    /// available and unused, and a colour of its own for it would be a
+    /// celebration of nothing happening. Dropping it also settles an
+    /// accessibility fault nobody filed: green against red is the one pair
+    /// deuteranopia cannot separate, and it was carrying connected against
+    /// unreachable.
     static QString stateSeverity(State state);
+    /// Whether this state fills the dot or leaves it a ring. Hollow is *not here
+    /// yet*: a drive that could be connected and is not.
+    static bool stateFillsTheDot(State state);
+    /// Whether this state pulses. Only the two transient ones do -- connecting
+    /// and busy -- and the hue says which.
+    static bool statePulses(State state);
+
+    // ---- what the window is doing with a drive ----------------------------
+
+    /// Which locations the window has open, so a drive can say that somebody is
+    /// on it.
+    ///
+    /// Told rather than found out, like everything else here: `Open` changes when
+    /// a pane navigates, and the shell already learns that from the tab. Nothing
+    /// is polled and no drive is contacted -- which is more compliant with
+    /// ADR-0018 than the state it replaces, since reachability needs a check to
+    /// be learnt and this needs a signal the application already sends itself.
+    ///
+    /// A location counts whether or not its tab is the visible one: the question
+    /// is about the drive, not about the window. Two panes on one drive is still
+    /// one Open.
+    void noteOpenLocations(const QList<VfsUri>& locations);
 
 signals:
     void countChanged();
@@ -168,6 +224,11 @@ private:
     State stateOf(const Row& row) const;
     /// Redraws one drive's row after what is known about it changed.
     void refreshRowFor(const QString& driveId);
+
+    /// Mount ids the window currently has a location open on. Ids rather than
+    /// uris: the question a row asks is whether *this* drive is in use, and the
+    /// mount table is what turns a location into a drive.
+    QSet<QString> m_openMounts;
 
     /// The last thing anything learned about reaching a drive.
     struct Reachability

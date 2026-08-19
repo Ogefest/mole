@@ -42,9 +42,9 @@ records *that* a field has a secret, never what the secret is.
 
 **Nothing asks for it at startup.** The store is shut every time Mole starts, and
 most sessions never touch a drive that needs it — so a drive whose password is in
-there simply sits in the list, grey like the ones nobody has connected. Point at it
-and its tooltip says *Locked*, and the button it offers is a key rather than a play
-triangle:
+there simply sits in the list wearing the hollow ring of a drive that is not
+connected — which is what it is. Point at it and its tooltip says *Locked*, and the
+button it offers is a key rather than a play triangle:
 
 ![A drive waiting on the passphrase](images/11d-drive-locked.png)
 
@@ -84,23 +84,45 @@ as a fact.
 
 ## What the states mean
 
-| | |
-|---|---|
-| **Not connected** | set up, not connected right now. Nothing is wrong. |
-| **Locked** | its password is in the store, and the store is shut. The answer is the passphrase, not a button. |
-| **Connecting** | being connected, and nothing has heard back yet. |
-| **Connected** | connected, and something has reached it. |
-| **Unreachable** | something asked and the server did not answer. |
+The dot says what a drive is **doing**, and it says it the same way for every kind
+of drive — a local disk, an open archive, a bucket, a server:
 
-**Connected** and **Unreachable** are worth reading carefully, because they say
-less than they look like they say.
+| Dot | State | Means |
+|---|---|---|
+| filled grey | **Idle** | here, and nobody is using it |
+| filled blue | **Open** | one of your tabs is looking at something on it |
+| hollow grey ring | **Not connected** | set up, not connected right now. Nothing is wrong. |
+| hollow grey ring | **Locked** | its password is in the store, and the store is shut. The answer is the passphrase, not a button. |
+| pulsing grey ring | **Connecting** | being connected, and nothing has heard back yet. |
+| filled red | **Unreachable** | something asked and the server did not answer. |
+
+Four things carry it, and each one carries a single idea. **Hollow against filled**
+is *not here yet* against *here* — the pair that matters most, and one a shade of
+grey cannot express at eight pixels. **Colour** is the kind: grey for nothing of
+yours, blue for yours and in use, red for broken. **Motion** means *happening right
+now*, and only that. And **no dot at all** means the row is not a drive: that is how
+a bookmark looks.
+
+The legend you end up with without being handed one: *grey is here and quiet, blue
+is one I am using, pulsing means something is happening, hollow is not connected
+yet, red is broken.*
+
+There is no green. Under this scheme "connected" is *Idle* — available and unused —
+and a colour of its own for it would be a celebration of nothing happening. What
+says a connection worked is the row's own word changing, the ring becoming a solid
+dot, and the capacity bar appearing. It also settles an accessibility problem:
+green against red is the one pair that colour blindness most often cannot separate,
+and it used to carry connected against unreachable.
+
+**Idle** and **Unreachable** are worth reading carefully, because they say less
+than they look like they say.
 
 Connecting to a drive builds the machinery to talk to it, which involves no
 network traffic at all — a drive pointed at a server that has been switched off
-connects exactly as successfully as one that works. So *Connected* here means
-something has actually reached the far end, not merely that Mole has an object
-for it. That is why connecting runs a check, and why the row sits at
-*Connecting* until the check answers.
+connects exactly as successfully as one that works. So a solid dot here means
+something has actually reached the far end, not merely that Mole has an object for
+it. That is why connecting runs a check, and why the row sits at *Connecting* —
+pulsing, and still hollow — until the check answers.
 
 *Unreachable* means the opposite: something asked and got nothing back, at the
 time shown on the row. It does **not** mean the drive has gone. The connection is
@@ -109,7 +131,7 @@ and the row reports it rather than pretending to know more. An unreachable drive
 can still be browsed.
 
 Nothing polls. A drive's state changes when something is actually learned about
-it — you opened it, or you pressed check — and between those moments the row
+it — you walked into a folder on it, or you pressed check — and between those moments the row
 shows what was last true and when. A liveness poll would be a login attempt on
 somebody else's server repeated for as long as the window is open, which is a
 good way to get an address rate-limited and a small bill on a metered bucket, for

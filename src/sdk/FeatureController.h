@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QVariantMap>
 
 namespace mole {
@@ -41,6 +42,23 @@ public:
     /// saveState() returned last time. Treat every value as untrusted: it may
     /// come from an older version or a hand-edited file.
     virtual void restoreState(const QVariantMap& state) { Q_UNUSED(state) }
+
+    // ---- where this tab is -----------------------------------------------
+
+    /// The locations this tab currently has open, where that means anything: the
+    /// folder each browser pane is showing, the file a preview has open. Empty
+    /// for a tab that is not anywhere -- a report, a bulk rename, a schedule.
+    ///
+    /// The shell asks so that the sidebar can say which drives are in use, which
+    /// is what the dot beside a drive means. Asked rather than pushed, and asked
+    /// again whenever stateChanged() says something moved, so nothing is polled
+    /// and no drive is contacted to find out. It counts whether or not this tab
+    /// is the visible one: the question is about the drive, not about the window.
+    ///
+    /// Answer with uris as strings, in whatever order; the shell resolves each to
+    /// a drive and does not care about duplicates. See
+    /// docs/adr/0052-a-drives-dot-says-what-it-is-doing.md.
+    virtual QStringList openLocations() const { return {}; }
 
 signals:
     void titleChanged();

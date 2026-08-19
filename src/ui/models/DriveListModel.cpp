@@ -99,31 +99,71 @@ void DriveListModel::reload()
 
 DriveListModel::State DriveListModel::stateOf(const Row& row) const
 {
-    // A mount nobody configured is a local disk, an open archive or the scratch
-    // space: there is no connecting or disconnecting to be done to it, and the
-    // sidebar has always treated it that way.
-    if (!row.isConfigured())
-        return State::Local;
-
-    if (row.isMounted()) {
-        // value(), not operator[]: this is a const method, and the const
-        // overload of operator[] hands back a copy through a reference that
-        // reads as though it were the stored one.
+    // Highest first, and the order is the whole of the answer: Unreachable →
+    // Busy → Open → Connecting → Not connected → Idle. A drive that is open and
+    // has work running on it reads busy, because that is the more specific
+    // statement; a drive nothing can reach reads unreachable whatever is being
+    // attempted on it.
+    //
+    // value(), not operator[]: this is a const method, and the const overload of
+    // operator[] hands back a copy through a reference that reads as though it
+    // were the stored one.
+    if (row.isConfigured()) {
         const Reachability known = m_reach.value(row.drive.id);
-        // Connecting rather than Connected while the question is out. Building
-        // a backend performs no I/O, so a drive pointed at a server that has
-        // been switched off is mounted exactly as successfully as one that
-        // works -- and must not show green on its way to showing red.
-        if (known.pending)
-            return State::Connecting;
-        if (known.asked && !known.reachable)
+        if (row.isMounted() && !known.pending && known.asked && !known.reachable)
             return State::Unreachable;
-        return State::Connected;
     }
 
-    if (m_remotes && m_remotes->needsUnlocking(row.drive))
-        return State::Locked;
-    return State::Disconnected;
+    // What the window is doing with it, which is the same question for a local
+    // disk, an archive, a bucket and a server -- and is why State::Local is gone.
+    if (row.isMounted() && m_openMounts.contains(row.mount.id))
+        return State::Open;
+
+    if (row.isConfigured()) {
+        // Connecting rather than Idle while the question is out. Building a
+        // backend performs no I/O, so a drive pointed at a server that has been
+        // switched off is mounted exactly as successfully as one that works.
+        const Reachability known = m_reach.value(row.drive.id);
+        if (row.isMounted())
+            return known.pending ? State::Connecting : State::Idle;
+        if (m_remotes && m_remotes->needsUnlocking(row.drive))
+            return State::Locked;
+        return State::Disconnected;
+    }
+
+    // A mount nobody configured -- a disk, an open archive, the scratch space.
+    // There is nothing to connect or disconnect, which is expressed by it never
+    // reaching the three states above rather than by a state of its own.
+    return State::Idle;
+}
+
+void DriveListModel::noteOpenLocations(const QList<VfsUri>& locations)
+{
+    QSet<QString> open;
+    if (m_vfs) {
+        for (const VfsUri& uri : locations) {
+            if (!uri.isValid())
+                continue;
+            const Mount mount = m_vfs->mountForUri(uri);
+            if (!mount.id.isEmpty())
+                open.insert(mount.id);
+        }
+    }
+    if (open == m_openMounts)
+        return;
+
+    // Only the rows whose answer changed. The set is small and the list is
+    // short, but a reset here would rebuild every delegate every time somebody
+    // walked into a folder.
+    const QSet<QString> changed = (open - m_openMounts) + (m_openMounts - open);
+    m_openMounts = open;
+    for (int row = 0; row < m_rows.size(); ++row) {
+        if (!m_rows.at(row).isMounted() || !changed.contains(m_rows.at(row).mount.id))
+            continue;
+        const QModelIndex at = index(row, 0);
+        emit dataChanged(
+            at, at, { StateRole, StateTextRole, StateSeverityRole, DotFilledRole, DotPulsingRole });
+    }
 }
 
 void DriveListModel::noteCheckStarted(const QString& driveId)
@@ -198,8 +238,8 @@ void DriveListModel::refreshRowFor(const QString& driveId)
             continue;
         const QModelIndex index = this->index(row, 0);
         emit dataChanged(index, index,
-            { StateRole, StateTextRole, StateSeverityRole, CanConnectRole, CanEjectRole, CheckMessageRole,
-                CheckedAtRole });
+            { StateRole, StateTextRole, StateSeverityRole, DotFilledRole, DotPulsingRole, CanConnectRole,
+                CanEjectRole, CheckMessageRole, CheckedAtRole });
         return;
     }
 }
@@ -207,44 +247,74 @@ void DriveListModel::refreshRowFor(const QString& driveId)
 QString DriveListModel::stateText(State state)
 {
     switch (state) {
-    case State::Local:
-        return QStringLiteral("Local");
+    case State::Idle:
+        return QStringLiteral("Idle");
+    case State::Open:
+        return QStringLiteral("Open");
+    case State::Busy:
+        return QStringLiteral("Busy");
     case State::Disconnected:
         return QStringLiteral("Not connected");
     case State::Locked:
         return QStringLiteral("Locked");
     case State::Connecting:
         return QStringLiteral("Connecting");
-    case State::Connected:
-        return QStringLiteral("Connected");
     case State::Unreachable:
         return QStringLiteral("Unreachable");
     }
     return {};
 }
 
+bool DriveListModel::stateFillsTheDot(State state)
+{
+    switch (state) {
+    // Not here yet: a drive that could be connected and is not. A ring says that
+    // at eight pixels where a shade of grey cannot -- which is the whole fault
+    // this fixes, since Idle wore the same grey and means the opposite.
+    case State::Disconnected:
+    case State::Locked:
+    case State::Connecting:
+        return false;
+    case State::Idle:
+    case State::Open:
+    case State::Busy:
+    case State::Unreachable:
+        break;
+    }
+    return true;
+}
+
+bool DriveListModel::statePulses(State state)
+{
+    // Motion is *happening right now*, and only that. Two states are transient
+    // and both pulse; the hue says which.
+    return state == State::Connecting || state == State::Busy;
+}
+
 QString DriveListModel::stateSeverity(State state)
 {
     switch (state) {
-    case State::Connected:
-        return QStringLiteral("good");
-    case State::Connecting:
-        return QStringLiteral("attention");
+    // Yours, and in use. The accent is not a new colour: it is what this
+    // interface already means by *this is the thing you are on*.
+    case State::Open:
+    case State::Busy:
+        return QStringLiteral("using");
     case State::Unreachable:
         return QStringLiteral("broken");
-    case State::Local:
+    case State::Idle:
+    case State::Connecting:
     case State::Disconnected:
     // A drive whose password is in a shut store is not a problem: the store is
     // shut at every startup and may stay shut all session, and nothing has gone
-    // wrong until somebody asks for that drive. Amber is what a drive on its way
-    // to failing wears, so Locked reads grey with the rest of the not-yet. The
-    // word keeps the distinction the colour gives up: the row still says Locked
-    // and still offers the key rather than the play triangle.
+    // wrong until somebody asks for that drive. So Locked reads muted with the
+    // rest of the not-yet, and the word keeps the distinction: the row still says
+    // Locked and still offers the key rather than the play triangle.
     case State::Locked:
         break;
     }
-    // Nothing to report, which is what a local disk and a drive nobody has
-    // connected yet have in common. Not a problem, and not a success either.
+    // Nothing of yours. A quiet drive and one nobody has connected share this
+    // colour and are told apart by the shape of the dot -- which is the fault
+    // this replaces, where they shared both.
     return QStringLiteral("idle");
 }
 
@@ -326,6 +396,10 @@ QVariant DriveListModel::data(const QModelIndex& index, int role) const
         return stateText(state);
     case StateSeverityRole:
         return stateSeverity(state);
+    case DotFilledRole:
+        return stateFillsTheDot(state);
+    case DotPulsingRole:
+        return statePulses(state);
     case ConfiguredIdRole:
         return row.isConfigured() ? row.drive.id : QString();
     case CanConnectRole:
@@ -382,6 +456,8 @@ QHash<int, QByteArray> DriveListModel::roleNames() const
         { StateRole, "driveState" },
         { StateTextRole, "stateText" },
         { StateSeverityRole, "stateSeverity" },
+        { DotFilledRole, "dotFilled" },
+        { DotPulsingRole, "dotPulsing" },
         { ConfiguredIdRole, "configuredId" },
         { CanConnectRole, "canConnect" },
         { CanEjectRole, "canEject" },

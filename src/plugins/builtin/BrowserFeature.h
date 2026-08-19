@@ -56,6 +56,11 @@ public:
     BrowserController(
         PluginServices services, QString startUri, ViewMode initialMode, QObject* parent = nullptr);
 
+    /// Where this tab is looking: the folder each visible pane shows. In dual
+    /// that is both of them; in single or grid the other pane still exists and is
+    /// not on screen, so nobody is looking at it.
+    QStringList openLocations() const override;
+
     BrowserPaneController* left() const { return m_left; }
     BrowserPaneController* right() const { return m_right; }
     BrowserPaneController* activePane() const;

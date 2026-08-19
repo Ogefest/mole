@@ -87,7 +87,7 @@ private slots:
     void connectingDoesNotMoveTheRow();
     void disconnectingReturnsTheRowRatherThanRemovingIt();
     void aShutCredentialStoreShowsAsLocked();
-    void aMountNobodyConfiguredIsLocalAndUnchanged();
+    void aMountNobodyConfiguredIsIdleLikeAnythingNobodyIsUsing();
 
     void aDriveIsConnectingUntilSomethingHasActuallyAsked();
     void aDriveThatCannotBeReachedKeepsItsMountAndSaysWhy();
@@ -95,6 +95,11 @@ private slots:
     void aFailureOnALocalDiskIsNotADriveProblem();
     void nothingSchedulesARepeatingCheck();
     void aMissingFolderIsNotAnUnreachableDrive();
+
+    void aDriveSomebodyIsOnIsOpenAndOneNobodyIsOnIsIdle();
+    void aLocationOnADriveNobodyMountedOpensNothing();
+    void unreachableOutranksOpenAndOpenOutranksTheConnectionStates();
+    void everyStateHasAWordAColourAShapeAndAPulse();
 
 private:
     /// Adds a mount and waits for its space answer to arrive, if one is coming.
@@ -317,7 +322,7 @@ void TestDriveListModel::connectingDoesNotMoveTheRow()
     QCOMPARE(m_model->rowCount(), 3);
     const QModelIndex beta = m_model->index(rowOfBeta, 0);
     QCOMPARE(beta.data(DriveListModel::ConfiguredIdRole).toString(), second);
-    QCOMPARE(stateAt(beta), DriveListModel::State::Connected);
+    QCOMPARE(stateAt(beta), DriveListModel::State::Idle);
     QVERIFY(beta.data(DriveListModel::CanEjectRole).toBool());
     QVERIFY(!beta.data(DriveListModel::CanConnectRole).toBool());
 
@@ -332,7 +337,7 @@ void TestDriveListModel::disconnectingReturnsTheRowRatherThanRemovingIt()
     const QString id = configure(QStringLiteral("Office NAS"));
     connectConfigured(id);
     QCOMPARE(m_model->rowCount(), 1);
-    QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Connected);
+    QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Idle);
 
     m_model->unmount(0);
 
@@ -376,13 +381,19 @@ void TestDriveListModel::aShutCredentialStoreShowsAsLocked()
 /// The rows that were there before this change: a local disk, an open archive,
 /// the scratch space. Nothing connects or ejects them in the drive sense, and
 /// the sidebar must go on showing them exactly as it did.
-void TestDriveListModel::aMountNobodyConfiguredIsLocalAndUnchanged()
+/// A disk, an open archive and the scratch space used to be State::Local, which
+/// said where a drive was rather than what was happening to it -- and shared the
+/// sidebar's grey with a drive nobody had connected, where the grey means
+/// something real. There is nothing to connect here, and that is now expressed by
+/// the row never reaching the connection states rather than by a state of its own.
+/// See MOLE-161.
+void TestDriveListModel::aMountNobodyConfiguredIsIdleLikeAnythingNobodyIsUsing()
 {
     auto fs = std::make_shared<SizedFileSystem>();
     mountSized(QStringLiteral("disk"), fs);
 
     const QModelIndex row = m_model->index(0, 0);
-    QCOMPARE(stateAt(row), DriveListModel::State::Local);
+    QCOMPARE(stateAt(row), DriveListModel::State::Idle);
     QCOMPARE(row.data(DriveListModel::ConfiguredIdRole).toString(), QString());
     QVERIFY(!row.data(DriveListModel::CanConnectRole).toBool());
     QVERIFY(row.data(DriveListModel::CanEjectRole).toBool());
@@ -414,7 +425,7 @@ void TestDriveListModel::aDriveIsConnectingUntilSomethingHasActuallyAsked()
     QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Connecting);
 
     m_model->noteCheckResult(id, true, QStringLiteral("Listed 4 entries"));
-    QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Connected);
+    QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Idle);
     QCOMPARE(m_model->index(0, 0).data(DriveListModel::CheckMessageRole).toString(),
         QStringLiteral("Listed 4 entries"));
     QVERIFY2(!m_model->index(0, 0).data(DriveListModel::CheckedAtRole).toString().isEmpty(),
@@ -423,7 +434,7 @@ void TestDriveListModel::aDriveIsConnectingUntilSomethingHasActuallyAsked()
 
 /// The failing half, and the one the dot exists for. Every state the row passes
 /// through is recorded, because "ends Unreachable" would also be true of a row
-/// that flashed green first -- and green is the thing that gets believed.
+/// that flashed *available* on the way -- and a filled dot is what gets believed.
 void TestDriveListModel::aDriveThatCannotBeReachedKeepsItsMountAndSaysWhy()
 {
     const QString id = configure(QStringLiteral("Office NAS"));
@@ -438,8 +449,8 @@ void TestDriveListModel::aDriveThatCannotBeReachedKeepsItsMountAndSaysWhy()
     m_model->noteCheckResult(id, false, QStringLiteral("No route to the server"));
 
     QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Unreachable);
-    QVERIFY2(!seen.contains(DriveListModel::State::Connected),
-        "a drive that cannot be reached must never have shown as connected");
+    QVERIFY2(!seen.contains(DriveListModel::State::Idle),
+        "a drive that cannot be reached must never have shown as available");
     QVERIFY(seen.contains(DriveListModel::State::Connecting));
 
     QCOMPARE(m_model->index(0, 0).data(DriveListModel::CheckMessageRole).toString(),
@@ -464,7 +475,7 @@ void TestDriveListModel::aFailedOperationMovesAConnectedDriveToUnreachable()
     m_model->noteCheckStarted(id);
     connectConfigured(id);
     m_model->noteCheckResult(id, true, QStringLiteral("Listed 4 entries"));
-    QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Connected);
+    QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Idle);
 
     const VfsUri somewhereOnIt = m_registry->drive(id).rootUri().child(QStringLiteral("reports"));
     m_model->noteFailureAt(somewhereOnIt,
@@ -481,12 +492,12 @@ void TestDriveListModel::aFailedOperationMovesAConnectedDriveToUnreachable()
 void TestDriveListModel::aFailureOnALocalDiskIsNotADriveProblem()
 {
     mountSized(QStringLiteral("disk"), std::make_shared<SizedFileSystem>());
-    QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Local);
+    QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Idle);
 
     m_model->noteFailureAt(VfsUri::fromString(QStringLiteral("sized://disk/somewhere")),
         VfsError::make(VfsError::NetworkError, QStringLiteral("The server stopped answering")));
 
-    QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Local);
+    QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Idle);
 }
 
 /// The capacity refresh runs against every mount on a timer, and is the obvious
@@ -530,12 +541,127 @@ void TestDriveListModel::aMissingFolderIsNotAnUnreachableDrive()
     for (VfsError::Code code : { VfsError::NotFound, VfsError::AccessDenied, VfsError::NotSupported,
              VfsError::Cancelled, VfsError::NotADirectory }) {
         m_model->noteFailureAt(onIt, VfsError::make(code, QStringLiteral("no")));
-        QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Connected);
+        QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Idle);
     }
 
     // What does count: the drive itself stopped answering.
     m_model->noteFailureAt(onIt, VfsError::make(VfsError::NetworkError, QStringLiteral("gone")));
     QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Unreachable);
+}
+
+// ---- what a drive is doing ------------------------------------------------
+//
+// The dot beside a drive used to mean two different things depending on which row
+// it was on, and on a local disk it meant nothing at all: a mount nobody had
+// configured was State::Local, which shares the sidebar's grey with a drive nobody
+// has connected -- where the grey means *configured, not connected, and could be*.
+// A local disk is not doing anything and is not waiting to be connected either.
+// See MOLE-161.
+
+void TestDriveListModel::aDriveSomebodyIsOnIsOpenAndOneNobodyIsOnIsIdle()
+{
+    mountSized(QStringLiteral("disk"), std::make_shared<SizedFileSystem>());
+    const QModelIndex row = m_model->index(0, 0);
+    QCOMPARE(stateAt(row), DriveListModel::State::Idle);
+
+    // Told rather than found out, and told in terms of *locations*: what the
+    // window has open is a uri, and the mount table is what turns it into a drive.
+    m_model->noteOpenLocations({ VfsUri::fromString(QStringLiteral("sized://disk/photos")) });
+    QCOMPARE(stateAt(row), DriveListModel::State::Open);
+    QCOMPARE(row.data(DriveListModel::StateTextRole).toString(), QStringLiteral("Open"));
+    QCOMPARE(row.data(DriveListModel::StateSeverityRole).toString(), QStringLiteral("using"));
+
+    // And leaving turns it off.
+    m_model->noteOpenLocations({});
+    QCOMPARE(stateAt(row), DriveListModel::State::Idle);
+
+    // Two locations on one drive is still one Open, and going from one of them to
+    // the other leaves the row where it was.
+    m_model->noteOpenLocations({ VfsUri::fromString(QStringLiteral("sized://disk/a")),
+        VfsUri::fromString(QStringLiteral("sized://disk/b")) });
+    QCOMPARE(stateAt(row), DriveListModel::State::Open);
+}
+
+void TestDriveListModel::aLocationOnADriveNobodyMountedOpensNothing()
+{
+    // A configured drive that is not connected cannot have anything open on it,
+    // and a uri on a drive that does not exist must not disturb anybody's row.
+    const QString id = configure(QStringLiteral("Office NAS"));
+    QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Disconnected);
+
+    m_model->noteOpenLocations({ m_registry->drive(id).rootUri().child(QStringLiteral("reports")),
+        VfsUri::fromString(QStringLiteral("sized://nothing/here")) });
+    QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Disconnected);
+}
+
+void TestDriveListModel::unreachableOutranksOpenAndOpenOutranksTheConnectionStates()
+{
+    // Highest first: Unreachable → Busy → Open → Connecting → Not connected →
+    // Idle. Busy arrives with MOLE-162; the pairs that can occur without it are
+    // asserted here.
+    const QString id = configure(QStringLiteral("Office NAS"));
+    m_model->noteCheckStarted(id);
+    connectConfigured(id);
+    const QModelIndex row = m_model->index(0, 0);
+    QCOMPARE(stateAt(row), DriveListModel::State::Connecting);
+
+    // Open beats Connecting: somebody is already looking at it, which is a more
+    // specific statement than "we are still asking whether it is there".
+    m_model->noteOpenLocations({ m_registry->drive(id).rootUri() });
+    QCOMPARE(stateAt(row), DriveListModel::State::Open);
+
+    // And Unreachable beats Open. A drive nothing can reach reads unreachable
+    // whatever is being attempted on it -- the opposite would show a reader the
+    // accent colour for a drive that has stopped answering.
+    m_model->noteCheckResult(id, false, QStringLiteral("No route to the server"));
+    QCOMPARE(stateAt(row), DriveListModel::State::Unreachable);
+
+    // Reachable again, and it goes back to being open rather than to idle.
+    m_model->noteCheckResult(id, true, QStringLiteral("Listed 4 entries"));
+    QCOMPARE(stateAt(row), DriveListModel::State::Open);
+}
+
+void TestDriveListModel::everyStateHasAWordAColourAShapeAndAPulse()
+{
+    // Six states will not fit in one colour, so the encoding is spread over
+    // channels that each carry one idea: hue is the kind, filled against hollow is
+    // *here* against *not here yet*, and motion is *happening right now*. The
+    // table is the decision, so it is asserted as a table.
+    struct Appearance
+    {
+        DriveListModel::State state;
+        const char* word;
+        const char* severity;
+        bool filled;
+        bool pulsing;
+    };
+    static const Appearance table[] = {
+        { DriveListModel::State::Unreachable, "Unreachable", "broken", true, false },
+        { DriveListModel::State::Disconnected, "Not connected", "idle", false, false },
+        { DriveListModel::State::Locked, "Locked", "idle", false, false },
+        { DriveListModel::State::Connecting, "Connecting", "idle", false, true },
+        { DriveListModel::State::Idle, "Idle", "idle", true, false },
+        { DriveListModel::State::Open, "Open", "using", true, false },
+        { DriveListModel::State::Busy, "Busy", "using", true, true },
+    };
+
+    for (const Appearance& row : table) {
+        QCOMPARE(DriveListModel::stateText(row.state), QString::fromLatin1(row.word));
+        QCOMPARE(DriveListModel::stateSeverity(row.state), QString::fromLatin1(row.severity));
+        QCOMPARE(DriveListModel::stateFillsTheDot(row.state), row.filled);
+        QCOMPARE(DriveListModel::statePulses(row.state), row.pulsing);
+    }
+
+    // The two greys are told apart by shape, which is the pair the old one
+    // conflated: Idle is filled and Not connected is a ring.
+    QCOMPARE(DriveListModel::stateSeverity(DriveListModel::State::Idle),
+        DriveListModel::stateSeverity(DriveListModel::State::Disconnected));
+    QVERIFY(DriveListModel::stateFillsTheDot(DriveListModel::State::Idle));
+    QVERIFY(!DriveListModel::stateFillsTheDot(DriveListModel::State::Disconnected));
+
+    // And no state wears green any more.
+    for (const Appearance& row : table)
+        QVERIFY(DriveListModel::stateSeverity(row.state) != QStringLiteral("good"));
 }
 
 MOLE_TEST_MAIN(TestDriveListModel)

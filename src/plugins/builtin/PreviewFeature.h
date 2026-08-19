@@ -120,6 +120,9 @@ public:
 
     QVariantMap saveState() const override;
     void restoreState(const QVariantMap& state) override;
+    /// The file on screen. A preview holds a drive open exactly as much as a
+    /// pane does -- somebody is reading something on it.
+    QStringList openLocations() const override;
 
 signals:
     void currentChanged();

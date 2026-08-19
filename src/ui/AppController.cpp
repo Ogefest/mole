@@ -5,6 +5,7 @@
 #include "host/MetadataRegistry.h"
 #include "host/PluginManager.h"
 #include "host/PreviewRegistry.h"
+#include "sdk/FeatureController.h"
 #include "ui/DragSource.h"
 #include "ui/FileLauncher.h"
 #include "ui/SessionStore.h"
@@ -383,7 +384,16 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     connect(m_tabs, &TabsModel::sessionDirty, this, [this] {
         if (!m_restoring)
             m_sessionSaveTimer->start();
+        // The same signal answers a second question: a tab that moved may have
+        // moved onto or off a drive, and the sidebar's dot says which drives are
+        // in use. Nothing is polled and no drive is contacted -- see
+        // DriveListModel::noteOpenLocations().
+        refreshOpenDrives();
     });
+    // Opening and closing tabs changes the answer too, and neither goes through
+    // a controller's own signal.
+    connect(m_tabs, &TabsModel::countChanged, this, &AppController::refreshOpenDrives);
+    connect(m_vfs, &VfsManager::mountsChanged, this, &AppController::refreshOpenDrives);
 
     if (!restoreSession()) {
         // Nothing to come back to: start on something useful rather than an
@@ -1037,6 +1047,29 @@ bool AppController::goTo(const QString& uri)
     }
     openLocation(uri);
     return true;
+}
+
+void AppController::refreshOpenDrives()
+{
+    if (!m_tabs || !m_drives)
+        return;
+
+    // Every tab, not only the visible one: the question is about the drive, not
+    // about the window. A feature that is not anywhere -- a report, a rename --
+    // answers with nothing and costs nothing.
+    QList<VfsUri> open;
+    for (int row = 0; row < m_tabs->rowCount(); ++row) {
+        auto* controller = qobject_cast<FeatureController*>(m_tabs->controllerAt(row));
+        if (!controller)
+            continue;
+        const QStringList where = controller->openLocations();
+        for (const QString& uri : where) {
+            const VfsUri parsed = VfsUri::fromString(uri);
+            if (parsed.isValid())
+                open.append(parsed);
+        }
+    }
+    m_drives->noteOpenLocations(open);
 }
 
 bool AppController::isMountableArchive(const QString& uri) const

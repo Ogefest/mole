@@ -70,6 +70,21 @@ BrowserController::BrowserController(
     refreshFolderFacts();
 }
 
+QStringList BrowserController::openLocations() const
+{
+    QStringList open;
+    if (m_viewMode == ViewMode::Dual) {
+        if (m_left)
+            open.append(m_left->currentUri());
+        if (m_right)
+            open.append(m_right->currentUri());
+        return open;
+    }
+    if (BrowserPaneController* pane = activePane())
+        open.append(pane->currentUri());
+    return open;
+}
+
 BrowserPaneController* BrowserController::activePane() const
 {
     return (m_activePaneIndex == 1 && splitEnabled()) ? m_right : m_left;
