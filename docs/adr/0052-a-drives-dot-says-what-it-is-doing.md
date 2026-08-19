@@ -136,10 +136,16 @@ separate two of the hues.
 - **Every drive keeps a dot**, and `Idle` is the dot that was there before — what
   changed is that it now states something true, because the meaning it used to
   share has moved to a different shape.
-- **`Busy` is defined here and produced by MOLE-162.** It is in the ladder and in
-  the table because leaving it out would mean every reader of the enum changing
-  when it arrives — the same reasoning that put `Connecting` and `Unreachable` in
-  before they had a source.
+- **`Busy` comes from the tasks the user asked for**, landed the same day as the
+  rest of this (MOLE-162). A task declares the locations it reads or writes through
+  `Task::noteTouching()` in its constructor, and the model derives the set of busy
+  drives when a task is appended or changes state. Two guards keep it from becoming
+  noise, and both are asserted: `Task::isBackground()` excludes the application's
+  own housekeeping — `QuerySpaceTask` runs per mount every minute and would
+  otherwise pulse every row once a minute for ever — and a task that declares
+  nothing lights nothing, which is the right default for a metadata read or a
+  thumbnail decode. A copy declares both ends, so a transfer between two drives
+  pulses both.
 - **`FeatureController` gains `openLocations()`**, which is a new extension point,
   small and answerable with nothing: a feature that is not anywhere — a report, a
   bulk rename — inherits an empty answer and costs nothing. A plugin's tab
