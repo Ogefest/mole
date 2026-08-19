@@ -88,8 +88,8 @@ Rectangle {
         // Shape and motion, each carrying one idea. Hollow against filled is *not
         // here yet* against *here* -- the pair the old grey conflated, and one a
         // shade of grey cannot express at eight pixels. Motion is *happening right
-        // now*: a slow breath while something is awaited, an uneven flicker while
-        // work goes through.
+        // now*, and the word says which kind: `waiting` for an answer that has not
+        // come back, `working` for something going through.
         property bool solidDot: true
         property string dotMoves: ""
         property string stateCaption: ""
@@ -191,12 +191,15 @@ Rectangle {
                     Layout.alignment: Qt.AlignVCenter
 
                     // Two motions, and never both at once: a state either breathes
-                    // or flickers or holds still. Declared as animations with an
-                    // explicit target rather than as `on opacity` value sources,
-                    // because two value sources on one property fight over who
-                    // owns it when neither is running.
+                    // or holds still. Both breathing states use the same shape and
+                    // differ in how deep and how fast, because the difference being
+                    // drawn is between *nothing has come back yet* and *this is
+                    // going through*. Declared as animations with an explicit target
+                    // rather than as `on opacity` value sources, because two value
+                    // sources on one property fight over who owns it when neither is
+                    // running.
                     SequentialAnimation {
-                        running: stateDot.motion === "pulse" && stateDot.visible
+                        running: stateDot.motion === "waiting" && stateDot.visible
                         loops: Animation.Infinite
                         alwaysRunToEnd: true
                         onRunningChanged: if (!running) stateDot.opacity = 1.0
@@ -210,25 +213,27 @@ Rectangle {
                         }
                     }
 
-                    // A disk activity light. Uneven on purpose -- a steady blink
-                    // reads as a warning and a slow fade reads as waiting, while
-                    // real work is bursts with gaps between them. Fixed rather than
-                    // random: the guide's pictures settle on two identical frames,
-                    // and 24-transfer-running has a busy drive in it.
+                    // Work going through: the same breath, much shallower and half
+                    // the speed. Enough to say something is happening, not enough to
+                    // keep pulling the eye back to a corner of the window while
+                    // somebody is doing something else. This was an uneven flicker
+                    // first -- a disk activity light, taken literally -- and it was
+                    // built, looked at beside the rows it has to live among, and
+                    // withdrawn for reading as an alarm. See the second 2026-08-19
+                    // revision in docs/adr/0052-a-drives-dot-says-what-it-is-doing.md.
                     SequentialAnimation {
-                        running: stateDot.motion === "flicker" && stateDot.visible
+                        running: stateDot.motion === "working" && stateDot.visible
                         loops: Animation.Infinite
                         alwaysRunToEnd: true
                         onRunningChanged: if (!running) stateDot.opacity = 1.0
-                        NumberAnimation { target: stateDot; property: "opacity"; to: 1.0; duration: 60 }
-                        NumberAnimation { target: stateDot; property: "opacity"; to: 0.25; duration: 50 }
-                        NumberAnimation { target: stateDot; property: "opacity"; to: 1.0; duration: 40 }
-                        PauseAnimation { duration: 70 }
-                        NumberAnimation { target: stateDot; property: "opacity"; to: 0.3; duration: 45 }
-                        PauseAnimation { duration: 35 }
-                        NumberAnimation { target: stateDot; property: "opacity"; to: 1.0; duration: 30 }
-                        NumberAnimation { target: stateDot; property: "opacity"; to: 0.25; duration: 90 }
-                        PauseAnimation { duration: 160 }
+                        NumberAnimation {
+                            target: stateDot; property: "opacity"
+                            to: 0.7; duration: 1000; easing.type: Easing.InOutQuad
+                        }
+                        NumberAnimation {
+                            target: stateDot; property: "opacity"
+                            to: 1.0; duration: 1000; easing.type: Easing.InOutQuad
+                        }
                     }
                 }
                 Label {

@@ -101,12 +101,12 @@ public:
         /// idea -- hollow against filled is *not here yet* against *here*, and
         /// motion is *happening right now* and only that.
         DotFilledRole,
-        /// How the dot moves: empty, `pulse` or `flicker`.
+        /// How the dot moves: empty, `waiting` or `working`.
         ///
         /// A word rather than a flag, because two states move and they must not
-        /// move the same way. `Connecting` breathes -- something is being waited
-        /// for. `Busy` flickers like a disk activity light -- something is
-        /// happening right now, unevenly, the way real work does.
+        /// move alike -- and a word for what the motion *means*, leaving the view
+        /// to choose the curve. `Connecting` is waiting for an answer that has not
+        /// come back. `Busy` is work going through.
         DotMotionRole,
         /// The configured drive behind this row, or empty when there is none.
         /// What an action needs in order to name what it is acting on.
@@ -190,11 +190,11 @@ public:
     /// Whether this state fills the dot or leaves it a ring. Hollow is *not here
     /// yet*: a drive that could be connected and is not.
     static bool stateFillsTheDot(State state);
-    /// How this state moves: `pulse`, `flicker`, or nothing at all.
+    /// How this state moves: `waiting`, `working`, or nothing at all.
     ///
-    /// Only the two transient states move. They move differently on purpose: a
-    /// slow breath is *waiting for an answer*, and an uneven flicker is *work
-    /// going through*, which is what a disk light has always looked like.
+    /// Only the two transient states move, and they must not move alike. Both
+    /// breathe; the view draws *waiting for an answer* as a deep, quicker breath
+    /// and *work going through* as a shallow, slower one.
     static QString stateMotion(State state);
 
     // ---- what the window is doing with a drive ----------------------------

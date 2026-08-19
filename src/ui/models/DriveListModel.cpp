@@ -344,12 +344,16 @@ bool DriveListModel::stateFillsTheDot(State state)
 QString DriveListModel::stateMotion(State state)
 {
     // Motion is *happening right now*, and only that. Two states are transient,
-    // and how they move is the difference between them: connecting is waiting for
-    // an answer, and busy is work going through.
+    // and the word says which of the two, not what it looks like -- the same
+    // division of labour `stateSeverity()` has, where the model answers a meaning
+    // and the view knows how this interface paints it. Both of them breathe, and
+    // the view draws waiting deep and quick and work shallow and slow. See the
+    // second 2026-08-19 revision in
+    // docs/adr/0052-a-drives-dot-says-what-it-is-doing.md.
     if (state == State::Connecting)
-        return QStringLiteral("pulse");
+        return QStringLiteral("waiting");
     if (state == State::Busy)
-        return QStringLiteral("flicker");
+        return QStringLiteral("working");
     return {};
 }
 

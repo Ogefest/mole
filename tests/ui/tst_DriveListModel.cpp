@@ -682,13 +682,15 @@ void TestDriveListModel::everyStateHasAWordAColourAShapeAndAPulse()
         { DriveListModel::State::Unreachable, "Unreachable", "broken", true, "" },
         { DriveListModel::State::Disconnected, "Not connected", "idle", false, "" },
         { DriveListModel::State::Locked, "Locked", "idle", false, "" },
-        { DriveListModel::State::Connecting, "Connecting", "idle", false, "pulse" },
+        { DriveListModel::State::Connecting, "Connecting", "idle", false, "waiting" },
         { DriveListModel::State::Idle, "Idle", "idle", true, "" },
         { DriveListModel::State::Open, "Open", "using", true, "" },
         // Work going through, and it neither looks nor moves like being *on* a
-        // drive: a green disk light, flickering. See the 2026-08-19 revision in
-        // ADR-0052.
-        { DriveListModel::State::Busy, "Busy", "working", true, "flicker" },
+        // drive: green, and breathing where `Open` holds still. The word is what
+        // the motion means, not what it looks like, which is why it reads the same
+        // as the severity here and differs from it for `Connecting`. See both
+        // 2026-08-19 revisions in ADR-0052.
+        { DriveListModel::State::Busy, "Busy", "working", true, "working" },
     };
 
     for (const Appearance& row : table) {
@@ -700,7 +702,8 @@ void TestDriveListModel::everyStateHasAWordAColourAShapeAndAPulse()
 
     // The two moving states move differently, which is the whole reason motion is
     // a word and not a flag: waiting for an answer and work going through are not
-    // the same thing to look at.
+    // the same thing to look at. They breathe with the same shape now, so the word
+    // is the only thing keeping the view from drawing them alike.
     QVERIFY(DriveListModel::stateMotion(DriveListModel::State::Connecting)
         != DriveListModel::stateMotion(DriveListModel::State::Busy));
     // And busy no longer borrows the colour that means "you are on this".
@@ -746,7 +749,7 @@ void TestDriveListModel::aTaskOnTwoDrivesMakesBothOfThemBusy()
     QCOMPARE(
         m_model->index(0, 0).data(DriveListModel::StateSeverityRole).toString(), QStringLiteral("working"));
     QVERIFY(m_model->index(0, 0).data(DriveListModel::DotFilledRole).toBool());
-    QCOMPARE(m_model->index(0, 0).data(DriveListModel::DotMotionRole).toString(), QStringLiteral("flicker"));
+    QCOMPARE(m_model->index(0, 0).data(DriveListModel::DotMotionRole).toString(), QStringLiteral("working"));
 
     // And neither when it finishes.
     m_gate->release();

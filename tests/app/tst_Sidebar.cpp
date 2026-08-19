@@ -54,7 +54,7 @@ private slots:
     void openingAFolderOnADriveFillsItsDotInTheAccentColour();
     void aDriveOpenInATabThatIsNotVisibleStillReadsAsOpen();
     void connectingPulsesTheRingAndUnreachableIsFilledRed();
-    void workRunningOnADriveMakesItsDotPulseInTheAccentColour();
+    void workRunningOnADriveMakesItsDotBreatheInGreen();
 
 private:
     /// The passphrase dialog, which is a Popup and so never appears in the
@@ -87,7 +87,7 @@ private:
     {
         QColor colour;
         bool filled = false;
-        /// Empty, `pulse` or `flicker` -- the two moving states do not move the
+        /// Empty, `waiting` or `working` -- the two moving states do not move the
         /// same way, and which one it is is half of what the dot is saying.
         QString motion;
         bool visible = false;
@@ -646,7 +646,7 @@ void TestSidebar::connectingPulsesTheRingAndUnreachableIsFilledRed()
     m_harness->settle(3);
     const DotLook connecting = lookOf(QStringLiteral("Scratch"));
     QVERIFY2(!connecting.filled, "connecting has not arrived anywhere yet");
-    QCOMPARE(connecting.motion, QStringLiteral("pulse"));
+    QCOMPARE(connecting.motion, QStringLiteral("waiting"));
     QCOMPARE(connecting.colour, QColor(QStringLiteral("#8b93a7")));
 
     // And the answer was no.
@@ -660,7 +660,7 @@ void TestSidebar::connectingPulsesTheRingAndUnreachableIsFilledRed()
     QCOMPARE(unreachable.colour, QColor(QStringLiteral("#e5534b")));
 }
 
-void TestSidebar::workRunningOnADriveMakesItsDotPulseInTheAccentColour()
+void TestSidebar::workRunningOnADriveMakesItsDotBreatheInGreen()
 {
     // The sixth appearance, and the state that makes the whole scheme worth
     // having: "which of my drives is this transfer actually touching" is a
@@ -683,11 +683,14 @@ void TestSidebar::workRunningOnADriveMakesItsDotPulseInTheAccentColour()
 
     const DotLook busy = lookOf(QStringLiteral("Scratch"));
     QVERIFY2(busy.filled, "the drive is here and being worked on");
-    // A disk activity light: green, and flickering rather than breathing. Being
-    // *on* a drive and *working* a drive are different statements, so they get
-    // different channels -- see the 2026-08-19 revision in ADR-0052.
+    // Green, and breathing: being *on* a drive and *working* a drive are different
+    // statements, so they get different channels. The motion was a literal disk
+    // activity light for one afternoon and read as an alarm beside the rows it has
+    // to live among -- see both 2026-08-19 revisions in ADR-0052. What the view is
+    // told is what the motion means; the curve is the view's business, and the word
+    // is what stops it drawing this the way it draws `Connecting`.
     QCOMPARE(busy.colour, QColor(QStringLiteral("#57ab5a")));
-    QCOMPARE(busy.motion, QStringLiteral("flicker"));
+    QCOMPARE(busy.motion, QStringLiteral("working"));
     QVERIFY2(busy.colour != QColor(QStringLiteral("#4c9aff")),
         "busy must not borrow the colour that means \"this is the thing you are on\"");
 
@@ -698,7 +701,7 @@ void TestSidebar::workRunningOnADriveMakesItsDotPulseInTheAccentColour()
     m_harness->settle(3);
     const DotLook after = lookOf(QStringLiteral("Scratch"));
     QVERIFY(after.filled);
-    QVERIFY2(after.motion.isEmpty(), "a finished task must not leave a drive flickering");
+    QVERIFY2(after.motion.isEmpty(), "a finished task must not leave a drive breathing");
     QCOMPARE(after.colour, QColor(QStringLiteral("#8b93a7")));
     gate->release(8);
 }

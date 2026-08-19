@@ -2,9 +2,11 @@
 
 - **Date:** 2026-08-19
 - **Status:** Accepted
-- **Revised:** 2026-08-19 — `Busy` is a green flicker rather than an accent pulse.
-  See *Revision* below. Nothing else changed, and the argument about green is
-  narrowed rather than withdrawn.
+- **Revised:** 2026-08-19 — `Busy` is green rather than the accent, and breathes
+  rather than holding still. Two revisions below, in the order they happened: the
+  first made it a green flicker, the second withdrew the flicker and left the
+  green. Nothing else changed, and the argument about green is narrowed rather
+  than withdrawn.
 
 ## Context
 
@@ -68,7 +70,7 @@ using is `Idle`.
 | Connecting | ring, hollow, **breathing** | muted `#8b93a7` |
 | **Idle** | **filled** | muted `#8b93a7` |
 | Open | filled | accent `#4c9aff` |
-| Busy | filled, **flickering** | green `#57ab5a` (revised — see below) |
+| Busy | filled, **breathing** (shallow) | green `#57ab5a` (revised — see below) |
 
 - **Hollow against filled** carries *not here yet* against *here*. That is the pair
   the old grey was conflating, and shape separates it at eight pixels where a shade
@@ -76,8 +78,8 @@ using is `Idle`.
 - **Hue** is the kind: muted for nothing of yours, accent for yours and in use, red
   for broken.
 - **Motion** is *happening right now*, and only that. The two transient states
-  move, and they move differently: a slow breath is *waiting for an answer*, an
-  uneven flicker is *work going through*.
+  move, and they move differently: a deep, quicker breath is *waiting for an
+  answer*, a shallow, slower one is *work going through*.
 - **Absence** stays what it already was: this row is not a drive.
 
 **Green stops meaning *connected*.** Under this model that state is `Idle` —
@@ -145,7 +147,8 @@ while it waits.
 **So `Busy` is a disk activity light: green `#57ab5a`, flickering.** Short uneven
 blinks with gaps — the pattern is fixed rather than random, because the guide's
 pictures settle on two identical frames and `24-transfer-running.png` has a busy
-drive in it. `Open` is untouched.
+drive in it. `Open` is untouched. (The flicker did not survive the day it was
+written; the green did. See the second revision below.)
 
 Two things follow.
 
@@ -171,6 +174,54 @@ about hollow-against-filled. They are also opposite kinds of thing, one transien
 and one persistent, and a drive that is both is shown as unreachable by the
 precedence. The earlier reasoning stands for *connected*, which is the state it was
 written about; it does not extend to a state that flickers.
+
+## Revision, 2026-08-19, later the same day: the flicker goes, the green stays
+
+The flicker above was built and then looked at for longer than it took to write,
+which is the part the first revision skipped. It is a disk activity light taken
+literally — blinks of 30–90 ms, a floor of 0.25, gaps up to 160 ms — and beside the
+rows it actually lives among it reads as **an alarm rather than as work**. Two
+transfers running means two dots twitching in the corner of the eye of somebody who
+is trying to read a file listing, and a file manager's sidebar is furniture: it has
+to be legible while being ignored.
+
+Four candidates were drawn side by side, each next to the neighbours it has to be
+told apart from — the shipped flicker, a steady green, a gentle green breath, and a
+calmer flicker. **`Busy` breathes: opacity to `0.7` and back, 1000 ms each way,
+`InOutQuad`.** Green `#57ab5a` and the `working` severity are untouched; this
+revision is about motion alone.
+
+**Steady green was the calmest and was rejected on the accessibility argument.**
+With no motion at all, `Busy` differs from `Unreachable` by green against red and
+nothing else — the one pair deuteranopia most often cannot separate, and the exact
+trade the first revision talked itself into by pointing at motion. Dropping the
+motion would have quietly cashed in a defence that was written down an hour
+earlier.
+
+**The green-against-red defence survives this change intact, and is worth restating
+because the words changed.** It was *busy flickers, unreachable holds still*. It is
+now *busy breathes, unreachable holds still*. The difference the eye is being asked
+to make is between something moving and something not moving, which is the same
+difference as before and does not depend on how nervous the movement is.
+
+**`Connecting` and `Busy` now breathe with the same shape**, which is the one thing
+this revision has to answer for, since the first revision's argument for a motion
+*word* was that two moving states must not move alike. They still do not: the
+breaths differ in depth and speed — 0.35 over 700 ms against 0.7 over 1000 ms — and,
+more to the point, they differ in the two channels that were always carrying this
+pair. `Connecting` is a **hollow grey ring**; `Busy` is a **filled green dot**. A
+reader who cannot tell a deep breath from a shallow one is not left guessing.
+
+**The motion vocabulary becomes what the motion means rather than what it looks
+like:** `stateMotion()` answers `""`, `waiting` or `working`, not `pulse` or
+`flicker`. That is what the record already claimed the channel was for — the model
+says what a state means and the view knows how this interface paints it — and
+`pulse`/`flicker` were a description of pixels that had leaked into the model. The
+proof that it was leaking is this revision: the curve changed and the model would
+have had to change with it. Now it does not. `Busy`'s motion word reads the same as
+its severity, which is not a redundancy to tidy away: `Connecting`'s severity is
+`idle` and its motion is `waiting`, so neither channel can be derived from the
+other.
 
 ## Consequences
 

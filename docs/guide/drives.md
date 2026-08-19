@@ -91,7 +91,7 @@ of drive — a local disk, an open archive, a bucket, a server:
 |---|---|---|
 | filled grey | **Idle** | here, and nobody is using it |
 | filled blue | **Open** | one of your tabs is looking at something on it |
-| flickering green | **Busy** | something you asked for is reading or writing it |
+| breathing green | **Busy** | something you asked for is reading or writing it |
 | hollow grey ring | **Not connected** | set up, not connected right now. Nothing is wrong. |
 | hollow grey ring | **Locked** | its password is in the store, and the store is shut. The answer is the passphrase, not a button. |
 | pulsing grey ring | **Connecting** | being connected, and nothing has heard back yet. |
@@ -101,19 +101,19 @@ Four things carry it, and each one carries a single idea. **Hollow against fille
 is *not here yet* against *here* — the pair that matters most, and one a shade of
 grey cannot express at eight pixels. **Colour** is the kind: grey for nothing of
 yours, blue for the one you are looking at, green for one being worked, red for
-broken. **Motion** means *happening right now* — a slow breath while something is
-being waited for, an uneven flicker while work is going through, which is what a
-disk light has always looked like. And **no dot at all** means the row is not a
-drive: that is how a bookmark looks.
+broken. **Motion** means *happening right now* — a deep breath while something is
+being waited for, a gentle one while work is going through. A sidebar is furniture:
+it has to be readable while it is being ignored, so nothing in it twitches. And **no
+dot at all** means the row is not a drive: that is how a bookmark looks.
 
 The legend you end up with without being handed one: *grey is here and quiet, blue
-is the one I am looking at, green flickering is one being worked, hollow is not
+is the one I am looking at, green and breathing is one being worked, hollow is not
 connected yet, red is broken.*
 
 **Busy** answers a question people ask out loud — *which of my drives is this copy
 actually touching?* A copy has two ends and usually two drives, and both of them
 light up. Only work you asked for counts: Mole asks every drive how full it is once
-a minute, and if that counted, every row would blink once a minute for ever.
+a minute, and if that counted, every row would stir once a minute for ever.
 
 **Nothing is green for merely being connected.** Under this scheme "connected" is
 *Idle* — available and unused — and a colour of its own for it would be a
