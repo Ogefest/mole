@@ -36,6 +36,12 @@ Rectangle {
     function stateColor(severity) {
         if (severity === "using")
             return Material.accent
+        // Work going through. Green, and flickering rather than breathing -- see
+        // the dot below and the 2026-08-19 revision in ADR-0052. Not a new colour:
+        // it is the green this sidebar used to paint for *connected*, put to a job
+        // it can actually do.
+        if (severity === "working")
+            return "#57ab5a"
         if (severity === "broken")
             return "#e5534b"
         return sidebar.mutedText
@@ -82,9 +88,10 @@ Rectangle {
         // Shape and motion, each carrying one idea. Hollow against filled is *not
         // here yet* against *here* -- the pair the old grey conflated, and one a
         // shade of grey cannot express at eight pixels. Motion is *happening right
-        // now*, and only that.
+        // now*: a slow breath while something is awaited, an uneven flicker while
+        // work goes through.
         property bool solidDot: true
-        property bool pulsingDot: false
+        property string dotMoves: ""
         property string stateCaption: ""
         property string checkCaption: ""
         signal connectRequested()
@@ -173,7 +180,7 @@ Rectangle {
                     // objectName, and reading a colour tells it only a third of
                     // what the dot is saying.
                     property bool filled: row.solidDot
-                    property bool pulsing: row.pulsingDot
+                    property string motion: row.dotMoves
                     property color hue: sidebar.stateColor(row.severity)
                     implicitWidth: 8
                     implicitHeight: 8
@@ -183,13 +190,45 @@ Rectangle {
                     border.color: hue
                     Layout.alignment: Qt.AlignVCenter
 
-                    SequentialAnimation on opacity {
-                        running: stateDot.pulsing && stateDot.visible
+                    // Two motions, and never both at once: a state either breathes
+                    // or flickers or holds still. Declared as animations with an
+                    // explicit target rather than as `on opacity` value sources,
+                    // because two value sources on one property fight over who
+                    // owns it when neither is running.
+                    SequentialAnimation {
+                        running: stateDot.motion === "pulse" && stateDot.visible
                         loops: Animation.Infinite
                         alwaysRunToEnd: true
-                        NumberAnimation { to: 0.35; duration: 700; easing.type: Easing.InOutQuad }
-                        NumberAnimation { to: 1.0; duration: 700; easing.type: Easing.InOutQuad }
                         onRunningChanged: if (!running) stateDot.opacity = 1.0
+                        NumberAnimation {
+                            target: stateDot; property: "opacity"
+                            to: 0.35; duration: 700; easing.type: Easing.InOutQuad
+                        }
+                        NumberAnimation {
+                            target: stateDot; property: "opacity"
+                            to: 1.0; duration: 700; easing.type: Easing.InOutQuad
+                        }
+                    }
+
+                    // A disk activity light. Uneven on purpose -- a steady blink
+                    // reads as a warning and a slow fade reads as waiting, while
+                    // real work is bursts with gaps between them. Fixed rather than
+                    // random: the guide's pictures settle on two identical frames,
+                    // and 24-transfer-running has a busy drive in it.
+                    SequentialAnimation {
+                        running: stateDot.motion === "flicker" && stateDot.visible
+                        loops: Animation.Infinite
+                        alwaysRunToEnd: true
+                        onRunningChanged: if (!running) stateDot.opacity = 1.0
+                        NumberAnimation { target: stateDot; property: "opacity"; to: 1.0; duration: 60 }
+                        NumberAnimation { target: stateDot; property: "opacity"; to: 0.25; duration: 50 }
+                        NumberAnimation { target: stateDot; property: "opacity"; to: 1.0; duration: 40 }
+                        PauseAnimation { duration: 70 }
+                        NumberAnimation { target: stateDot; property: "opacity"; to: 0.3; duration: 45 }
+                        PauseAnimation { duration: 35 }
+                        NumberAnimation { target: stateDot; property: "opacity"; to: 1.0; duration: 30 }
+                        NumberAnimation { target: stateDot; property: "opacity"; to: 0.25; duration: 90 }
+                        PauseAnimation { duration: 160 }
                     }
                 }
                 Label {
@@ -336,7 +375,7 @@ Rectangle {
                 required property string stateText
                 required property string stateSeverity
                 required property bool dotFilled
-                required property bool dotPulsing
+                required property string dotMotion
                 required property string checkMessage
                 required property string checkedAt
 
@@ -348,7 +387,7 @@ Rectangle {
                 capacityTotal: totalText
                 severity: stateSeverity
                 solidDot: dotFilled
-                pulsingDot: dotPulsing
+                dotMoves: dotMotion
                 stateCaption: stateText
 
                 // A drive somebody configured always has the slot, whatever it

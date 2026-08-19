@@ -101,7 +101,13 @@ public:
         /// idea -- hollow against filled is *not here yet* against *here*, and
         /// motion is *happening right now* and only that.
         DotFilledRole,
-        DotPulsingRole,
+        /// How the dot moves: empty, `pulse` or `flicker`.
+        ///
+        /// A word rather than a flag, because two states move and they must not
+        /// move the same way. `Connecting` breathes -- something is being waited
+        /// for. `Busy` flickers like a disk activity light -- something is
+        /// happening right now, unevenly, the way real work does.
+        DotMotionRole,
         /// The configured drive behind this row, or empty when there is none.
         /// What an action needs in order to name what it is acting on.
         ConfiguredIdRole,
@@ -184,9 +190,12 @@ public:
     /// Whether this state fills the dot or leaves it a ring. Hollow is *not here
     /// yet*: a drive that could be connected and is not.
     static bool stateFillsTheDot(State state);
-    /// Whether this state pulses. Only the two transient ones do -- connecting
-    /// and busy -- and the hue says which.
-    static bool statePulses(State state);
+    /// How this state moves: `pulse`, `flicker`, or nothing at all.
+    ///
+    /// Only the two transient states move. They move differently on purpose: a
+    /// slow breath is *waiting for an answer*, and an uneven flicker is *work
+    /// going through*, which is what a disk light has always looked like.
+    static QString stateMotion(State state);
 
     // ---- what the window is doing with a drive ----------------------------
 

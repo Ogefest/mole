@@ -676,24 +676,36 @@ void TestDriveListModel::everyStateHasAWordAColourAShapeAndAPulse()
         const char* word;
         const char* severity;
         bool filled;
-        bool pulsing;
+        const char* motion;
     };
     static const Appearance table[] = {
-        { DriveListModel::State::Unreachable, "Unreachable", "broken", true, false },
-        { DriveListModel::State::Disconnected, "Not connected", "idle", false, false },
-        { DriveListModel::State::Locked, "Locked", "idle", false, false },
-        { DriveListModel::State::Connecting, "Connecting", "idle", false, true },
-        { DriveListModel::State::Idle, "Idle", "idle", true, false },
-        { DriveListModel::State::Open, "Open", "using", true, false },
-        { DriveListModel::State::Busy, "Busy", "using", true, true },
+        { DriveListModel::State::Unreachable, "Unreachable", "broken", true, "" },
+        { DriveListModel::State::Disconnected, "Not connected", "idle", false, "" },
+        { DriveListModel::State::Locked, "Locked", "idle", false, "" },
+        { DriveListModel::State::Connecting, "Connecting", "idle", false, "pulse" },
+        { DriveListModel::State::Idle, "Idle", "idle", true, "" },
+        { DriveListModel::State::Open, "Open", "using", true, "" },
+        // Work going through, and it neither looks nor moves like being *on* a
+        // drive: a green disk light, flickering. See the 2026-08-19 revision in
+        // ADR-0052.
+        { DriveListModel::State::Busy, "Busy", "working", true, "flicker" },
     };
 
     for (const Appearance& row : table) {
         QCOMPARE(DriveListModel::stateText(row.state), QString::fromLatin1(row.word));
         QCOMPARE(DriveListModel::stateSeverity(row.state), QString::fromLatin1(row.severity));
         QCOMPARE(DriveListModel::stateFillsTheDot(row.state), row.filled);
-        QCOMPARE(DriveListModel::statePulses(row.state), row.pulsing);
+        QCOMPARE(DriveListModel::stateMotion(row.state), QString::fromLatin1(row.motion));
     }
+
+    // The two moving states move differently, which is the whole reason motion is
+    // a word and not a flag: waiting for an answer and work going through are not
+    // the same thing to look at.
+    QVERIFY(DriveListModel::stateMotion(DriveListModel::State::Connecting)
+        != DriveListModel::stateMotion(DriveListModel::State::Busy));
+    // And busy no longer borrows the colour that means "you are on this".
+    QVERIFY(DriveListModel::stateSeverity(DriveListModel::State::Busy)
+        != DriveListModel::stateSeverity(DriveListModel::State::Open));
 
     // The two greys are told apart by shape, which is the pair the old one
     // conflated: Idle is filled and Not connected is a ring.
@@ -732,10 +744,9 @@ void TestDriveListModel::aTaskOnTwoDrivesMakesBothOfThemBusy()
     }));
     QCOMPARE(m_model->index(0, 0).data(DriveListModel::StateTextRole).toString(), QStringLiteral("Busy"));
     QCOMPARE(
-        m_model->index(0, 0).data(DriveListModel::StateSeverityRole).toString(), QStringLiteral("using"));
+        m_model->index(0, 0).data(DriveListModel::StateSeverityRole).toString(), QStringLiteral("working"));
     QVERIFY(m_model->index(0, 0).data(DriveListModel::DotFilledRole).toBool());
-    QVERIFY2(m_model->index(0, 0).data(DriveListModel::DotPulsingRole).toBool(),
-        "work in progress is the state that pulses");
+    QCOMPARE(m_model->index(0, 0).data(DriveListModel::DotMotionRole).toString(), QStringLiteral("flicker"));
 
     // And neither when it finishes.
     m_gate->release();

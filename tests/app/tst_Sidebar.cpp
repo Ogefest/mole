@@ -87,7 +87,9 @@ private:
     {
         QColor colour;
         bool filled = false;
-        bool pulsing = false;
+        /// Empty, `pulse` or `flicker` -- the two moving states do not move the
+        /// same way, and which one it is is half of what the dot is saying.
+        QString motion;
         bool visible = false;
     };
     DotLook lookOf(const QString& driveName) const
@@ -98,7 +100,7 @@ private:
             return look;
         look.visible = dot->isVisible();
         look.filled = dot->property("filled").toBool();
-        look.pulsing = dot->property("pulsing").toBool();
+        look.motion = dot->property("motion").toString();
         // The colour the dot is actually showing: a ring paints its border and
         // leaves the middle transparent, so reading `color` alone would answer
         // "transparent" for half the states.
@@ -507,7 +509,7 @@ void TestSidebar::aDriveNobodyIsUsingShowsAFilledMutedDotAndABookmarkShowsNone()
     const DotLook idle = lookOf(quiet);
     QVERIFY2(idle.visible, "every drive keeps a dot");
     QVERIFY2(idle.filled, "a drive that is here shows a solid dot");
-    QVERIFY2(!idle.pulsing, "and nothing is happening to it");
+    QVERIFY2(idle.motion.isEmpty(), "and nothing is happening to it");
     QCOMPARE(idle.colour, QColor(QStringLiteral("#8b93a7")));
 
     // The window opened on a folder, so one of the disks is in use -- and that is
@@ -535,7 +537,7 @@ void TestSidebar::theTwoGreysAreToldApartByShape()
     const DotLook notConnected = lookOf(QStringLiteral("Scratch"));
     QVERIFY(notConnected.visible);
     QVERIFY2(!notConnected.filled, "a drive that could be connected and is not shows a hollow ring");
-    QVERIFY(!notConnected.pulsing);
+    QVERIFY(notConnected.motion.isEmpty());
 
     // Connected and unused: the same grey, a different shape. That is the pair a
     // shade of grey could not express at eight pixels, and the reason the answer
@@ -547,7 +549,7 @@ void TestSidebar::theTwoGreysAreToldApartByShape()
 
     const DotLook idle = lookOf(QStringLiteral("Scratch"));
     QVERIFY2(idle.filled, "a connected drive nobody is using is here, and a solid dot says so");
-    QVERIFY(!idle.pulsing);
+    QVERIFY(idle.motion.isEmpty());
     QCOMPARE(idle.colour, notConnected.colour);
     QCOMPARE(idle.colour, QColor(QStringLiteral("#8b93a7")));
 }
@@ -583,7 +585,7 @@ void TestSidebar::openingAFolderOnADriveFillsItsDotInTheAccentColour()
 
     const DotLook open = lookOf(QStringLiteral("Scratch"));
     QVERIFY(open.filled);
-    QVERIFY2(!open.pulsing, "open is a state, not something happening");
+    QVERIFY2(open.motion.isEmpty(), "open is a state, not something happening");
     QCOMPARE(open.colour, QColor(QStringLiteral("#4c9aff")));
 
     // And leaving turns it off. Nothing polled to find that out: a pane navigated
@@ -644,7 +646,7 @@ void TestSidebar::connectingPulsesTheRingAndUnreachableIsFilledRed()
     m_harness->settle(3);
     const DotLook connecting = lookOf(QStringLiteral("Scratch"));
     QVERIFY2(!connecting.filled, "connecting has not arrived anywhere yet");
-    QVERIFY2(connecting.pulsing, "and something is happening, which is what motion means");
+    QCOMPARE(connecting.motion, QStringLiteral("pulse"));
     QCOMPARE(connecting.colour, QColor(QStringLiteral("#8b93a7")));
 
     // And the answer was no.
@@ -654,7 +656,7 @@ void TestSidebar::connectingPulsesTheRingAndUnreachableIsFilledRed()
     m_harness->settle(3);
     const DotLook unreachable = lookOf(QStringLiteral("Scratch"));
     QVERIFY2(unreachable.filled, "unreachable is a state it has arrived at, not one it is heading for");
-    QVERIFY(!unreachable.pulsing);
+    QVERIFY2(unreachable.motion.isEmpty(), "and it is not going anywhere, so it holds still");
     QCOMPARE(unreachable.colour, QColor(QStringLiteral("#e5534b")));
 }
 
@@ -681,8 +683,13 @@ void TestSidebar::workRunningOnADriveMakesItsDotPulseInTheAccentColour()
 
     const DotLook busy = lookOf(QStringLiteral("Scratch"));
     QVERIFY2(busy.filled, "the drive is here and being worked on");
-    QVERIFY2(busy.pulsing, "and something is happening to it, which is what motion means");
-    QCOMPARE(busy.colour, QColor(QStringLiteral("#4c9aff")));
+    // A disk activity light: green, and flickering rather than breathing. Being
+    // *on* a drive and *working* a drive are different statements, so they get
+    // different channels -- see the 2026-08-19 revision in ADR-0052.
+    QCOMPARE(busy.colour, QColor(QStringLiteral("#57ab5a")));
+    QCOMPARE(busy.motion, QStringLiteral("flicker"));
+    QVERIFY2(busy.colour != QColor(QStringLiteral("#4c9aff")),
+        "busy must not borrow the colour that means \"this is the thing you are on\"");
 
     // And it stops the moment the work does.
     gate->release();
@@ -691,7 +698,7 @@ void TestSidebar::workRunningOnADriveMakesItsDotPulseInTheAccentColour()
     m_harness->settle(3);
     const DotLook after = lookOf(QStringLiteral("Scratch"));
     QVERIFY(after.filled);
-    QVERIFY2(!after.pulsing, "a finished task must not leave a drive pulsing");
+    QVERIFY2(after.motion.isEmpty(), "a finished task must not leave a drive flickering");
     QCOMPARE(after.colour, QColor(QStringLiteral("#8b93a7")));
     gate->release(8);
 }

@@ -2,6 +2,9 @@
 
 - **Date:** 2026-08-19
 - **Status:** Accepted
+- **Revised:** 2026-08-19 — `Busy` is a green flicker rather than an accent pulse.
+  See *Revision* below. Nothing else changed, and the argument about green is
+  narrowed rather than withdrawn.
 
 ## Context
 
@@ -62,10 +65,10 @@ using is `Idle`.
 | Unreachable | filled | red `#e5534b` |
 | Not connected | **ring, hollow** | muted `#8b93a7` |
 | Locked | ring, hollow | muted `#8b93a7` |
-| Connecting | ring, hollow, **pulsing** | muted `#8b93a7` |
+| Connecting | ring, hollow, **breathing** | muted `#8b93a7` |
 | **Idle** | **filled** | muted `#8b93a7` |
 | Open | filled | accent `#4c9aff` |
-| Busy | filled, **pulsing** | accent `#4c9aff` |
+| Busy | filled, **flickering** | green `#57ab5a` (revised — see below) |
 
 - **Hollow against filled** carries *not here yet* against *here*. That is the pair
   the old grey was conflating, and shape separates it at eight pixels where a shade
@@ -73,10 +76,12 @@ using is `Idle`.
 - **Hue** is the kind: muted for nothing of yours, accent for yours and in use, red
   for broken.
 - **Motion** is *happening right now*, and only that. The two transient states
-  pulse; the hue says which.
+  move, and they move differently: a slow breath is *waiting for an answer*, an
+  uneven flicker is *work going through*.
 - **Absence** stays what it already was: this row is not a drive.
 
-**Green goes.** Under this model *connected* is `Idle` — available and unused.
+**Green stops meaning *connected*.** Under this model that state is `Idle` —
+available and unused. (Green returns for `Busy` alone; see the revision.)
 
 **Nothing polls, and no drive is contacted to work any of this out.** `Open` is
 learnt from a signal the application already sends itself: a tab's controller
@@ -127,6 +132,45 @@ nobody reads. A count badge of open tabs per drive: more precise and less legibl
 and the question people ask is *which drive*, not *how many tabs*. Colour alone
 across six states: unreadable at this size and unreachable for anybody who cannot
 separate two of the hues.
+
+## Revision, 2026-08-19: Busy is a green flicker
+
+Everything above was built, and then looked at. `Busy` shared the accent with
+`Open` and pulsed on the same slow 700 ms breath as `Connecting`, and the author's
+reading of it was that it looks *selected* rather than *working*. That is a fair
+description of what the channels were saying: the accent means **the thing you are
+on** everywhere else in this interface, and a sine fade is what something does
+while it waits.
+
+**So `Busy` is a disk activity light: green `#57ab5a`, flickering.** Short uneven
+blinks with gaps — the pattern is fixed rather than random, because the guide's
+pictures settle on two identical frames and `24-transfer-running.png` has a busy
+drive in it. `Open` is untouched.
+
+Two things follow.
+
+**Motion becomes a word rather than a flag.** `stateMotion()` answers `""`, `pulse`
+or `flicker`, in the shape `stateSeverity()` already used: the model says what a
+state means, the view knows how this interface draws that meaning. One boolean
+could not have said which of the two moving states was which, and *waiting for an
+answer* and *work going through* should not look the same.
+
+**`Busy` gets a severity of its own, `working`.** It shared `using` with `Open`,
+which is exactly why it shared the colour. Green is not a new colour here — it is
+the one this sidebar painted for *connected* until this record retired it — so what
+changed is which job it does.
+
+**The accessibility trade, stated rather than dropped.** The argument above for
+retiring green was partly that green against red is the one pair deuteranopia most
+often cannot separate, and it was carrying `Connected` against `Unreachable`. Green
+`Busy` against red `Unreachable` is that pair again, and this revision reintroduces
+it knowingly. What keeps it legible is that **the two do not move the same way**:
+`Busy` flickers and `Unreachable` holds still, so motion carries the difference
+even where the hue does not — which is the same argument the original scheme made
+about hollow-against-filled. They are also opposite kinds of thing, one transient
+and one persistent, and a drive that is both is shown as unreachable by the
+precedence. The earlier reasoning stands for *connected*, which is the state it was
+written about; it does not extend to a state that flickers.
 
 ## Consequences
 

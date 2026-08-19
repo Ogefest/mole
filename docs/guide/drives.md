@@ -91,7 +91,7 @@ of drive — a local disk, an open archive, a bucket, a server:
 |---|---|---|
 | filled grey | **Idle** | here, and nobody is using it |
 | filled blue | **Open** | one of your tabs is looking at something on it |
-| pulsing blue | **Busy** | something you asked for is reading or writing it |
+| flickering green | **Busy** | something you asked for is reading or writing it |
 | hollow grey ring | **Not connected** | set up, not connected right now. Nothing is wrong. |
 | hollow grey ring | **Locked** | its password is in the store, and the store is shut. The answer is the passphrase, not a button. |
 | pulsing grey ring | **Connecting** | being connected, and nothing has heard back yet. |
@@ -100,25 +100,26 @@ of drive — a local disk, an open archive, a bucket, a server:
 Four things carry it, and each one carries a single idea. **Hollow against filled**
 is *not here yet* against *here* — the pair that matters most, and one a shade of
 grey cannot express at eight pixels. **Colour** is the kind: grey for nothing of
-yours, blue for yours and in use, red for broken. **Motion** means *happening right
-now*, and only that. And **no dot at all** means the row is not a drive: that is how
-a bookmark looks.
+yours, blue for the one you are looking at, green for one being worked, red for
+broken. **Motion** means *happening right now* — a slow breath while something is
+being waited for, an uneven flicker while work is going through, which is what a
+disk light has always looked like. And **no dot at all** means the row is not a
+drive: that is how a bookmark looks.
 
 The legend you end up with without being handed one: *grey is here and quiet, blue
-is one I am using, pulsing means something is happening, hollow is not connected
-yet, red is broken.*
+is the one I am looking at, green flickering is one being worked, hollow is not
+connected yet, red is broken.*
 
 **Busy** answers a question people ask out loud — *which of my drives is this copy
 actually touching?* A copy has two ends and usually two drives, and both of them
-pulse. Only work you asked for counts: Mole asks every drive how full it is once a
-minute, and if that counted, every row would pulse once a minute for ever.
+light up. Only work you asked for counts: Mole asks every drive how full it is once
+a minute, and if that counted, every row would blink once a minute for ever.
 
-There is no green. Under this scheme "connected" is *Idle* — available and unused —
-and a colour of its own for it would be a celebration of nothing happening. What
-says a connection worked is the row's own word changing, the ring becoming a solid
-dot, and the capacity bar appearing. It also settles an accessibility problem:
-green against red is the one pair that colour blindness most often cannot separate,
-and it used to carry connected against unreachable.
+**Nothing is green for merely being connected.** Under this scheme "connected" is
+*Idle* — available and unused — and a colour of its own for it would be a
+celebration of nothing happening. What says a connection worked is the row's own
+word changing, the ring becoming a solid dot, and the capacity bar appearing. Green
+is kept for the one thing worth that much attention: a drive being worked.
 
 **Idle** and **Unreachable** are worth reading carefully, because they say less
 than they look like they say.

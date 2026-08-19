@@ -219,7 +219,7 @@ void DriveListModel::announceStateOf(const QSet<QString>& mounts)
             continue;
         const QModelIndex at = index(row, 0);
         emit dataChanged(
-            at, at, { StateRole, StateTextRole, StateSeverityRole, DotFilledRole, DotPulsingRole });
+            at, at, { StateRole, StateTextRole, StateSeverityRole, DotFilledRole, DotMotionRole });
     }
 }
 
@@ -295,7 +295,7 @@ void DriveListModel::refreshRowFor(const QString& driveId)
             continue;
         const QModelIndex index = this->index(row, 0);
         emit dataChanged(index, index,
-            { StateRole, StateTextRole, StateSeverityRole, DotFilledRole, DotPulsingRole, CanConnectRole,
+            { StateRole, StateTextRole, StateSeverityRole, DotFilledRole, DotMotionRole, CanConnectRole,
                 CanEjectRole, CheckMessageRole, CheckedAtRole });
         return;
     }
@@ -341,11 +341,16 @@ bool DriveListModel::stateFillsTheDot(State state)
     return true;
 }
 
-bool DriveListModel::statePulses(State state)
+QString DriveListModel::stateMotion(State state)
 {
-    // Motion is *happening right now*, and only that. Two states are transient
-    // and both pulse; the hue says which.
-    return state == State::Connecting || state == State::Busy;
+    // Motion is *happening right now*, and only that. Two states are transient,
+    // and how they move is the difference between them: connecting is waiting for
+    // an answer, and busy is work going through.
+    if (state == State::Connecting)
+        return QStringLiteral("pulse");
+    if (state == State::Busy)
+        return QStringLiteral("flicker");
+    return {};
 }
 
 QString DriveListModel::stateSeverity(State state)
@@ -354,8 +359,12 @@ QString DriveListModel::stateSeverity(State state)
     // Yours, and in use. The accent is not a new colour: it is what this
     // interface already means by *this is the thing you are on*.
     case State::Open:
-    case State::Busy:
         return QStringLiteral("using");
+    // Work going through, which is a different statement from "you are on this"
+    // and gets a channel of its own rather than sharing the accent. See the
+    // 2026-08-19 revision in docs/adr/0052-a-drives-dot-says-what-it-is-doing.md.
+    case State::Busy:
+        return QStringLiteral("working");
     case State::Unreachable:
         return QStringLiteral("broken");
     case State::Idle:
@@ -455,8 +464,8 @@ QVariant DriveListModel::data(const QModelIndex& index, int role) const
         return stateSeverity(state);
     case DotFilledRole:
         return stateFillsTheDot(state);
-    case DotPulsingRole:
-        return statePulses(state);
+    case DotMotionRole:
+        return stateMotion(state);
     case ConfiguredIdRole:
         return row.isConfigured() ? row.drive.id : QString();
     case CanConnectRole:
@@ -514,7 +523,7 @@ QHash<int, QByteArray> DriveListModel::roleNames() const
         { StateTextRole, "stateText" },
         { StateSeverityRole, "stateSeverity" },
         { DotFilledRole, "dotFilled" },
-        { DotPulsingRole, "dotPulsing" },
+        { DotMotionRole, "dotMotion" },
         { ConfiguredIdRole, "configuredId" },
         { CanConnectRole, "canConnect" },
         { CanEjectRole, "canEject" },
