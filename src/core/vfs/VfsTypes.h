@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QDateTime>
 #include <QFlags>
 #include <QMetaType>
 #include <QString>
@@ -53,9 +54,38 @@ enum class VfsCapability : quint32 {
     Watch = 1u << 8, ///< backend can push change notifications
     ReportsSpace = 1u << 9, ///< backend knows its own capacity
     ReportsAccess = 1u << 10, ///< backend can say who may do what here
+    ReportsLeftovers = 1u << 11, ///< backend can find work it left behind
 };
 Q_DECLARE_FLAGS(VfsCapabilities, VfsCapability)
 Q_DECLARE_OPERATORS_FOR_FLAGS(VfsCapabilities)
+
+/// Work a drive is still holding that no listing shows.
+///
+/// An upload interrupted by the process being killed is the case this exists
+/// for: S3 keeps the parts and **charges for them** until the upload is
+/// completed or abandoned, and they are not objects, so nothing that lists a
+/// bucket will ever mention them. A user whose machine lost power during a large
+/// copy is paying for storage they cannot see, let alone remove.
+///
+/// Deliberately not "an unfinished upload". A backend knows what it left behind
+/// and the shell does not need to learn the vocabulary of every protocol to
+/// offer to clear it up -- which is the same reasoning that put space() and
+/// access() on the drive rather than in the interface.
+struct DriveLeftover
+{
+    /// The backend's own handle for it. Opaque: it goes back to the drive that
+    /// issued it and nothing else reads it.
+    QString handle;
+    /// What it belongs to, for somebody deciding whether to discard it.
+    QString path;
+    /// When it was started, which is what an age threshold is applied to.
+    QDateTime started;
+    /// Bytes it is holding, or -1 when the drive cannot say without asking
+    /// again. The figure people act on -- it is what they are being charged for.
+    qint64 bytes = -1;
+    /// One line saying what this is, in the drive's own words.
+    QString what;
+};
 
 /// How much room a drive has.
 ///

@@ -43,6 +43,16 @@ Result<AccessInfo> IFileSystem::access(const VfsUri&)
     return VfsError::make(VfsError::NotSupported, QStringLiteral("access is unknown here"));
 }
 
+Result<QList<DriveLeftover>> IFileSystem::leftovers(std::chrono::seconds, const CancelToken&)
+{
+    return VfsError::make(VfsError::NotSupported, QStringLiteral("this drive does not keep anything back"));
+}
+
+Result<void> IFileSystem::discardLeftover(const DriveLeftover&)
+{
+    return VfsError::make(VfsError::NotSupported, QStringLiteral("this drive does not keep anything back"));
+}
+
 Result<FileEntryList> IFileSystem::search(const VfsUri&, const QString&, const CancelToken&)
 {
     return VfsError::make(VfsError::NotSupported, QStringLiteral("native search not supported"));

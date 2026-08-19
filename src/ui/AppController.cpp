@@ -28,6 +28,7 @@
 #include "core/settings/Preferences.h"
 #include "core/tasks/DriveCheckTask.h"
 #include "core/tasks/FolderSizesTask.h"
+#include "core/tasks/SweepLeftoversTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/IFileSystemFactory.h"
 #include "core/vfs/RemoteRegistry.h"
@@ -718,6 +719,57 @@ void AppController::checkDrive(const QString& id)
     auto* task = new DriveCheckTask(drive.name, std::move(fs), drive.rootUri());
     connect(task, &DriveCheckTask::checked, this,
         [report](bool reachable, const QString& message) { report(reachable, message); });
+    m_taskManager->submit(task);
+}
+
+void AppController::sweepDrive(const QString& id, bool discard, int olderThanHours)
+{
+    if (!m_remotes || !m_vfs || !m_taskManager)
+        return;
+
+    const RemoteDrive drive = m_remotes->drive(id);
+    if (!drive.isValid())
+        return;
+
+    const auto report = [this, id, discard](int found, const QString& message) {
+        emit driveSwept(id, found, discard, message);
+        emit notification(static_cast<int>(EventBus::Severity::Info),
+            discard ? QStringLiteral("Cleared up") : QStringLiteral("Looked over"), message);
+    };
+
+    QString error;
+    const QVariantMap config = m_remotes->configFor(drive, &error);
+    if (config.isEmpty()) {
+        report(0, error.isEmpty() ? QStringLiteral("This drive has no configuration") : error);
+        return;
+    }
+
+    IFileSystemFactory* factory = nullptr;
+    for (IFileSystemFactory* candidate : m_vfs->factories()) {
+        if (candidate->scheme() == drive.factoryScheme) {
+            factory = candidate;
+            break;
+        }
+    }
+    if (!factory) {
+        report(0, QStringLiteral("Nothing here can serve a %1 drive").arg(drive.factoryScheme));
+        return;
+    }
+
+    FileSystemPtr fs = factory->create(config, &error);
+    if (!fs) {
+        report(0, error.isEmpty() ? QStringLiteral("That configuration is not usable") : error);
+        return;
+    }
+
+    auto* task = new SweepLeftoversTask(
+        drive.name, std::move(fs), std::chrono::hours(qMax(0, olderThanHours)), discard);
+    connect(task, &Task::finished, this, [this, task, report] {
+        if (task->state() == Task::State::Failed)
+            report(0, task->error().message);
+        else
+            report(static_cast<int>(task->found().size()), task->summary());
+    });
     m_taskManager->submit(task);
 }
 

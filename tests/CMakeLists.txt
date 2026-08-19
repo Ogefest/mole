@@ -96,6 +96,7 @@ mole_add_test(tst_LocalFileSystem   SOURCES core/tst_LocalFileSystem.cpp)
 # What a process killed outright leaves behind. It starts a second copy of
 # itself and sends it SIGKILL, which is the one failure that cannot be faked
 # from inside a process that intends to keep running.
+mole_add_test(tst_SweepLeftovers   SOURCES core/tst_SweepLeftovers.cpp)
 mole_add_test(tst_KilledOutright    SOURCES core/tst_KilledOutright.cpp LIBS Qt6::Sql)
 mole_add_test(tst_MemoryFileSystem  SOURCES core/tst_MemoryFileSystem.cpp)
 

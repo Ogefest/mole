@@ -24,12 +24,27 @@ Dialog {
     // whoever typed it instead of only going to the notification area.
     property string checkMessage: ""
     property bool checkOk: false
+    /// The drive a sweep reported leftovers for, and how many. Held so the
+    /// banner can offer to clear them: what was found is somebody's, and one of
+    /// them may be a copy running on another machine right now, so finding and
+    /// removing are two steps rather than one.
+    property string sweptDriveId: ""
+    property int sweptFound: 0
 
     Connections {
         target: App
+        function onDriveSwept(id, found, cleared, message) {
+            dialog.checkOk = true
+            dialog.checkMessage = message
+            // Only an unremoved find leaves the offer standing.
+            dialog.sweptDriveId = (found > 0 && !cleared) ? id : ""
+            dialog.sweptFound = cleared ? 0 : found
+        }
         function onDriveChecked(id, reachable, message) {
             dialog.checkOk = reachable
             dialog.checkMessage = message
+            dialog.sweptDriveId = ""
+            dialog.sweptFound = 0
         }
     }
 
@@ -191,6 +206,21 @@ Dialog {
                     font.pixelSize: 11
                     wrapMode: Text.WordWrap
                 }
+
+                // Offered rather than done. Anything a sweep found is being paid
+                // for, so it is worth acting on -- and it is still somebody's, so
+                // it is not thrown away without being asked.
+                Button {
+                    objectName: "driveClearLeftoversButton"
+                    visible: dialog.sweptFound > 0
+                    text: "Clear " + dialog.sweptFound + (dialog.sweptFound === 1 ? " upload" : " uploads")
+                    font.pixelSize: 11
+                    onClicked: {
+                        dialog.checkMessage = "Clearing up…"
+                        App.sweepDrive(dialog.sweptDriveId, true)
+                        dialog.sweptFound = 0
+                    }
+                }
             }
         }
 
@@ -293,6 +323,24 @@ Dialog {
                                     dialog.checkMessage = "Checking " + displayName + "…"
                                     dialog.checkOk = false
                                     App.checkDrive(configuredId)
+                                }
+                            }
+
+                            ToolButton {
+                                objectName: "driveSweepButton"
+                                text: "⌫"
+                                implicitWidth: 24
+                                implicitHeight: 24
+                                ToolTip.text: "Look for uploads this drive never finished"
+                                ToolTip.visible: hovered
+                                // An upload interrupted by the machine losing
+                                // power is still on the server and still being
+                                // charged for, and no listing will ever show it.
+                                onClicked: {
+                                    dialog.checkMessage = "Looking over " + displayName + "…"
+                                    dialog.checkOk = true
+                                    dialog.sweptFound = 0
+                                    App.sweepDrive(configuredId, false)
                                 }
                             }
 

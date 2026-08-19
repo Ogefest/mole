@@ -136,6 +136,69 @@ QStringList parseBucketList(const QByteArray& xml)
     return buckets;
 }
 
+bool parseListMultipartUploads(const QByteArray& xml, S3UploadPage* page, QString* errorOut)
+{
+    const auto fail = [errorOut](const QString& message) {
+        if (errorOut)
+            *errorOut = message;
+        return false;
+    };
+
+    QXmlStreamReader reader(xml);
+    bool sawRoot = false;
+
+    while (!reader.atEnd()) {
+        reader.readNext();
+        if (!reader.isStartElement())
+            continue;
+
+        const QStringView name = reader.name();
+
+        if (!sawRoot) {
+            if (name == QLatin1String("Error"))
+                return fail(parseS3Error(xml));
+            if (name != QLatin1String("ListMultipartUploadsResult"))
+                return fail(QStringLiteral("The server did not answer with a list of uploads"));
+            sawRoot = true;
+            continue;
+        }
+
+        if (name == QLatin1String("Upload")) {
+            S3Upload upload;
+            while (!reader.atEnd()) {
+                reader.readNext();
+                if (reader.isEndElement() && reader.name() == QLatin1String("Upload"))
+                    break;
+                if (!reader.isStartElement())
+                    continue;
+                const QStringView field = reader.name();
+                if (field == QLatin1String("Key"))
+                    upload.key = reader.readElementText();
+                else if (field == QLatin1String("UploadId"))
+                    upload.uploadId = reader.readElementText();
+                else if (field == QLatin1String("Initiated"))
+                    upload.initiated = parseTimestamp(reader.readElementText());
+            }
+            // Both or neither: an entry missing its id is one nothing can be
+            // done about, and reporting it would offer an action that fails.
+            if (!upload.key.isEmpty() && !upload.uploadId.isEmpty())
+                page->uploads.append(upload);
+        } else if (name == QLatin1String("NextKeyMarker")) {
+            page->nextKeyMarker = reader.readElementText();
+        } else if (name == QLatin1String("NextUploadIdMarker")) {
+            page->nextUploadIdMarker = reader.readElementText();
+        } else if (name == QLatin1String("IsTruncated")) {
+            page->truncated = reader.readElementText().trimmed() == QLatin1String("true");
+        }
+    }
+
+    if (reader.hasError())
+        return fail(QStringLiteral("The list of uploads could not be read: %1").arg(reader.errorString()));
+    if (!sawRoot)
+        return fail(QStringLiteral("The server answered with nothing at all"));
+    return true;
+}
+
 QString parseMultipartUploadId(const QByteArray& xml)
 {
     QXmlStreamReader reader(xml);

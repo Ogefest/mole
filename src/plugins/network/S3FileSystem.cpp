@@ -97,7 +97,8 @@ VfsCapabilities S3FileSystem::capabilities() const
     // a bucket policy, which says nothing about one key. Saying nothing beats
     // inventing an answer -- the conformance suite checks for exactly that.
     return VfsCapability::Read | VfsCapability::Write | VfsCapability::Create | VfsCapability::Delete
-        | VfsCapability::Rename | VfsCapability::MakeDirectory | VfsCapability::RandomAccessRead;
+        | VfsCapability::Rename | VfsCapability::MakeDirectory | VfsCapability::RandomAccessRead
+        | VfsCapability::ReportsLeftovers;
 }
 
 QString S3FileSystem::keyFor(const VfsUri& uri) const
@@ -117,6 +118,31 @@ QString S3FileSystem::keyFor(const VfsUri& uri) const
     if (path.isEmpty())
         return prefix;
     return prefix + kSeparator + path;
+}
+
+QString S3FileSystem::rootKey() const
+{
+    QString prefix = m_settings.prefix;
+    while (prefix.endsWith(kSeparator))
+        prefix.chop(1);
+    while (prefix.startsWith(kSeparator))
+        prefix.remove(0, 1);
+    return prefix;
+}
+
+QString S3FileSystem::keyToPath(const QString& key) const
+{
+    const QString prefix = rootKey();
+    if (prefix.isEmpty())
+        return kSeparator + key;
+    if (key == prefix)
+        return QString(kSeparator);
+    if (key.startsWith(prefix + kSeparator))
+        return kSeparator + key.mid(prefix.size() + 1);
+    // Outside this drive's prefix, which the listing filter should have kept out.
+    // Shown whole rather than mangled: a path that lies about where something is
+    // is worse than one that is longer than expected.
+    return kSeparator + key;
 }
 
 net::Response S3FileSystem::send(const Call& call, const CancelToken& cancel, QIODevice* sink)
@@ -638,6 +664,119 @@ void S3FileSystem::abandonMultipart(const QString& key, const QString& uploadId)
     call.key = key;
     call.query.append({ QStringLiteral("uploadId"), uploadId });
     send(call, CancelToken());
+}
+
+Result<QList<net::S3Upload>> S3FileSystem::listUnfinishedUploads(const CancelToken& cancel)
+{
+    QList<net::S3Upload> found;
+    QString keyMarker;
+    QString uploadIdMarker;
+    const QString root = rootKey();
+
+    // Paged, and with two markers rather than one: two uploads of the same key
+    // can be in flight, so the key alone does not say where to carry on from.
+    // Stopping at the first page would report the first thousand leftovers and
+    // leave the rest being paid for, which is the fault this exists to end.
+    for (;;) {
+        if (cancel.isCancelled())
+            return Result<QList<net::S3Upload>>::failure(VfsError::Cancelled, QStringLiteral("cancelled"));
+
+        Call call;
+        call.method = "GET";
+        call.query.append({ QStringLiteral("uploads"), QString() });
+        // No `prefix` parameter, deliberately. S3 documents one and MinIO
+        // answers an empty list for a prefix that certainly matches -- measured
+        // against the test machine, with a hand-seeded upload the unfiltered
+        // listing reports and the filtered one does not. A filter that silently
+        // hides leftovers is the same fault as not looking for them, so the
+        // whole list is asked for and narrowed below.
+        //
+        // The cost is carrying uploads belonging to other prefixes of the same
+        // bucket. A bucket has a handful of these at most -- one per copy
+        // somebody was killed in the middle of -- so the whole list is small.
+        if (!keyMarker.isEmpty())
+            call.query.append({ QStringLiteral("key-marker"), keyMarker });
+        if (!uploadIdMarker.isEmpty())
+            call.query.append({ QStringLiteral("upload-id-marker"), uploadIdMarker });
+
+        const net::Response response = send(call, cancel);
+        const VfsError error = errorFor(response, QStringLiteral("Listing unfinished uploads"));
+        if (error.isError())
+            return Result<QList<net::S3Upload>>(error);
+
+        net::S3UploadPage page;
+        QString problem;
+        if (!net::parseListMultipartUploads(response.body, &page, &problem)) {
+            return Result<QList<net::S3Upload>>::failure(
+                VfsError::IoError, QStringLiteral("Listing unfinished uploads: %1").arg(problem));
+        }
+
+        // Narrowed to this drive. A drive rooted at a prefix must not offer to
+        // abandon uploads belonging to another drive on the same bucket.
+        for (const net::S3Upload& upload : std::as_const(page.uploads)) {
+            if (root.isEmpty() || upload.key == root || upload.key.startsWith(root + kSeparator))
+                found.append(upload);
+        }
+        if (!page.truncated || (page.nextKeyMarker.isEmpty() && page.nextUploadIdMarker.isEmpty()))
+            break;
+        keyMarker = page.nextKeyMarker;
+        uploadIdMarker = page.nextUploadIdMarker;
+    }
+    return Result<QList<net::S3Upload>>(found);
+}
+
+Result<QList<DriveLeftover>> S3FileSystem::leftovers(
+    std::chrono::seconds olderThan, const CancelToken& cancel)
+{
+    const Result<QList<net::S3Upload>> uploads = listUnfinishedUploads(cancel);
+    if (!uploads.ok())
+        return Result<QList<DriveLeftover>>(uploads.error());
+
+    // Anything younger than the threshold is left alone. It is very likely an
+    // upload somebody has in flight this minute -- possibly another window of
+    // this application -- and from here it is indistinguishable from one a
+    // killed process abandoned. Abandoning it would break a copy that was going
+    // perfectly well, which is a worse fault than the one being cleaned up.
+    const QDateTime cutoff = QDateTime::currentDateTimeUtc().addSecs(-olderThan.count());
+
+    QList<DriveLeftover> out;
+    for (const net::S3Upload& upload : uploads.value()) {
+        if (upload.initiated.isValid() && upload.initiated > cutoff)
+            continue;
+
+        DriveLeftover leftover;
+        // Key and id together: the id alone does not say what to abandon, and
+        // two uploads of one key differ only by it.
+        leftover.handle = upload.key + QLatin1Char('\n') + upload.uploadId;
+        leftover.path = keyToPath(upload.key);
+        leftover.started = upload.initiated;
+        // Not asked for. Knowing it means a ListParts for every upload, which
+        // turns a single request into one per leftover for a figure nobody needs
+        // before deciding -- what is being decided is whether to keep something
+        // nothing can finish.
+        leftover.bytes = -1;
+        leftover.what = QStringLiteral("an upload that was never finished");
+        out.append(leftover);
+    }
+    return Result<QList<DriveLeftover>>(out);
+}
+
+Result<void> S3FileSystem::discardLeftover(const DriveLeftover& leftover)
+{
+    const qsizetype split = leftover.handle.indexOf(QLatin1Char('\n'));
+    if (split <= 0) {
+        return Result<void>::failure(
+            VfsError::NotFound, QStringLiteral("That is not something this drive handed out"));
+    }
+    const QString key = leftover.handle.left(split);
+    const QString uploadId = leftover.handle.mid(split + 1);
+
+    Call call;
+    call.method = "DELETE";
+    call.key = key;
+    call.query.append({ QStringLiteral("uploadId"), uploadId });
+    const net::Response response = send(call, CancelToken());
+    return errorFor(response, QStringLiteral("Abandoning the unfinished upload of %1").arg(leftover.path));
 }
 
 Result<std::unique_ptr<QIODevice>> S3FileSystem::openWrite(const VfsUri& target, qint64 expectedSize)

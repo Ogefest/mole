@@ -11,6 +11,8 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-19 #MOLE-96 An S3 drive can now be asked what uploads it never finished — the parts a killed process leaves behind are charged for until somebody removes them, and until now nothing in Mole could even see them
+
 2026-08-19 #MOLE-99 A large file can now be read from an SFTP server that re-keys part way through a span — the read resumes from the byte it reached instead of failing, so a file that could not be read at all now arrives whole
 
 2026-08-19 #MOLE-98 Sync no longer takes a dropped connection for the end of a file — a read that dies half way is a failure instead of a file counted as copied, and a destination that fills up says so instead of saying "short write"

@@ -9,6 +9,41 @@ wrong.
 
 ---
 
+## Orphaned S3 multipart uploads could not be found, and were charged for
+
+**Asked for:** MOLE-96 — a multipart upload interrupted by the process being killed leaves its
+parts on the server. `abandonMultipart()` handles every failure the process is alive to see, and
+`SIGKILL` gives it nothing to see. S3 charges storage for those parts until the upload is
+completed or aborted, they are not objects, and nothing that lists a bucket will ever mention
+them.
+
+**The ticket was held back by a design question**, which is why its epic parked it: not what S3
+has to call, but *where a drive-level maintenance action lives*.
+[ADR-0047](docs/adr/0047-a-drive-reports-what-it-is-still-holding.md) answers it — **the drive
+reports what it is holding, in its own words, and the shell offers to clear it.** Two virtuals on
+`IFileSystem` behind a `ReportsLeftovers` capability, the same shape that put `space()` and
+`access()` on the drive rather than teaching the interface about buckets. Nothing in the shell
+knows what a multipart upload is.
+
+**Finding and removing are two steps**, because what a sweep finds is somebody's: an upload that
+looks abandoned may be a copy running on another machine this minute, and nothing in the protocol
+tells them apart. The age threshold is the same rule in numbers, and it is a parameter rather than
+a constant — the right figure depends on how long a copy takes on the link in question.
+
+**Two things the server taught us.** MinIO answers an empty list for a `prefix` that certainly
+matches: seeded by hand, the unfiltered listing reports the upload and the filtered one does not.
+So the prefix is applied in the backend instead — a filter that silently hides leftovers is the
+same fault as not looking for them. And the paging carries two markers rather than one, because
+two uploads of the same key can be in flight.
+
+**Four claims, and the live one is the whole ticket.** The parser is held without a server,
+including that an error document is never read as "nothing left behind" — that answer is precisely
+the one that keeps somebody paying. Against real MinIO: an upload seeded raw is found, hidden by
+an age threshold, removed, and gone. And with a real process: a second copy of the test binary
+begins an upload, is `SIGKILL`ed, and what it left is found and removed — the scenario the earlier
+kill work could not tick. It lives in the S3 suite rather than in `tst_KilledOutright` because
+that suite is a core one and this needs a backend from a plugin that is not built everywhere.
+
 ## A large SFTP read died at the re-key point on a server that re-keys early
 
 **Asked for:** MOLE-99 — found by the scale tier, which is where it was meant to be found. ADR-0013

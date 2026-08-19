@@ -78,6 +78,12 @@ public:
     Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override;
     Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1) override;
 
+    /// Uploads begun and never finished, which S3 keeps -- and charges for --
+    /// until somebody says otherwise. See DriveLeftover.
+    Result<QList<DriveLeftover>> leftovers(
+        std::chrono::seconds olderThan, const CancelToken& cancel) override;
+    Result<void> discardLeftover(const DriveLeftover& leftover) override;
+
 private:
     /// One signed request, described before it is sent.
     struct Call
@@ -113,11 +119,19 @@ private:
     /// housekeeping, and the failure that led here is the one worth reporting.
     /// Without it the parts sit in the bucket being charged for.
     void abandonMultipart(const QString& key, const QString& uploadId);
+    /// Every unfinished upload under this drive's prefix, a page at a time.
+    Result<QList<net::S3Upload>> listUnfinishedUploads(const CancelToken& cancel);
     /// The VFS error for a finished call, preferring the server's own words.
     VfsError errorFor(const net::Response& response, const QString& what) const;
 
     /// Object key for a uri, with the drive's prefix applied.
     QString keyFor(const VfsUri& uri) const;
+    /// The drive's prefix as a key, without leading or trailing separators.
+    /// Empty for a drive rooted at the bucket.
+    QString rootKey() const;
+    /// The other direction: a key back to the path a reader would recognise,
+    /// with the drive's prefix taken off again.
+    QString keyToPath(const QString& key) const;
     /// Lists one page under `prefix`, with or without a delimiter.
     Result<net::S3ListPage> listPage(
         const QString& prefix, bool delimited, const QString& token, int maxKeys, const CancelToken& cancel);

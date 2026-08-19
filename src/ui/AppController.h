@@ -192,6 +192,21 @@ public:
     /// steps later when something finally tries to read from it.
     Q_INVOKABLE void checkDrive(const QString& id);
 
+    /// Asks a drive what it is still holding that no listing shows, and -- when
+    /// `discard` is set -- throws it away. Reports through driveSwept().
+    ///
+    /// An upload interrupted by the machine losing power is the case: S3 keeps
+    /// the parts and charges for them until somebody completes or abandons the
+    /// upload, and they are not objects, so nothing that lists a bucket will
+    /// mention them. Two steps rather than one, because what is found is
+    /// somebody's and one of them may be a copy running on another machine right
+    /// now -- the first call reports, the second acts.
+    ///
+    /// A day old by default, which is the same rule stated in
+    /// IFileSystem::leftovers(): younger than that and it cannot be told apart
+    /// from an upload in flight.
+    Q_INVOKABLE void sweepDrive(const QString& id, bool discard = false, int olderThanHours = 24);
+
     // ---- putting a location on the clipboard -------------------------------
 
     /// A location as text worth pasting: the native path for something on local
@@ -396,6 +411,9 @@ signals:
     /// A checkDrive() finished. `message` is ready to show as it stands: what was
     /// found, or why the drive could not be reached.
     void driveChecked(const QString& id, bool reachable, const QString& message);
+    /// A sweepDrive() finished. `found` is how many leftovers there are, and
+    /// `message` is ready to show as it stands.
+    void driveSwept(const QString& id, int found, bool cleared, const QString& message);
     /// The shell should show the drives dialog. A signal rather than a direct
     /// call, because this layer has no business knowing what a dialog is.
     void drivesRequested();

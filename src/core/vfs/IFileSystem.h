@@ -7,6 +7,7 @@
 #include <QIODevice>
 #include <QString>
 
+#include <chrono>
 #include <memory>
 
 namespace mole {
@@ -78,6 +79,19 @@ public:
     /// Who may do what at `target`. Only meaningful when ReportsAccess is
     /// advertised; otherwise NotSupported, and the interface says nothing.
     virtual Result<AccessInfo> access(const VfsUri& target);
+
+    /// Work this drive is still holding that no listing will ever show, older
+    /// than `olderThan`. NotSupported unless ReportsLeftovers is advertised.
+    ///
+    /// **The age is not politeness, it is correctness.** Another copy of Mole --
+    /// or another window of this one -- may have an upload in flight right now,
+    /// and its parts look exactly like the ones a killed process left behind.
+    /// Nothing distinguishes them but how long they have been there, which is
+    /// why this cannot simply run on connect and why the threshold is the
+    /// caller's to choose rather than a constant in here.
+    virtual Result<QList<DriveLeftover>> leftovers(std::chrono::seconds olderThan, const CancelToken& cancel);
+    /// Throws one away. The handle must be one this drive reported.
+    virtual Result<void> discardLeftover(const DriveLeftover& leftover);
 
     /// Backend-side search. Only called when NativeSearch is advertised;
     /// otherwise the search feature walks the tree with list() instead.
