@@ -544,8 +544,11 @@ QString FileListModel::thumbnailUrl(int row, int size) const
     // in the queue for every folder in a tree.
     if (entry.isDir || !entry.uri.isValid())
         return {};
+    // The size goes too, as a hint: a thumbnailer deciding whether a file on a
+    // drive where reading is downloading is worth fetching should not have to
+    // stat() it per tile when the listing already knows.
     return ThumbnailKey::urlFor(
-        entry.uri, size, entry.modified.isValid() ? entry.modified.toSecsSinceEpoch() : 0);
+        entry.uri, size, entry.modified.isValid() ? entry.modified.toSecsSinceEpoch() : 0, entry.size);
 }
 
 int FileListModel::rowOfUri(const QString& uri) const

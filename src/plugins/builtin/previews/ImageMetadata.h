@@ -45,6 +45,20 @@ public:
     /// Whether a prefix is too short to answer with -- the dimensions are not in
     /// it yet, or the EXIF block it points at runs past the end.
     static bool wantsMore(QByteArrayView bytes, const QString& fileName);
+
+    /// The small picture a camera wrote into IFD1 of this file's EXIF block, as
+    /// the JPEG bytes it is, or nothing when there is not one inside `bytes`.
+    ///
+    /// Public because the gallery needs exactly this and needs it to be the same
+    /// walker: almost every camera JPEG carries a 160x120 thumbnail in its first
+    /// 64 kB, and reading that instead of the whole file is the difference between
+    /// a sixty-fourth of a megabyte and eight on a drive where reading is
+    /// downloading. See MOLE-143.
+    ///
+    /// The offset and the length IFD1 gives are claims like every other offset
+    /// here: both are checked against the buffer before anything follows them, so
+    /// a file pointing outside itself costs this thumbnail and nothing else.
+    static QByteArray embeddedThumbnail(QByteArrayView bytes);
 };
 
 } // namespace mole

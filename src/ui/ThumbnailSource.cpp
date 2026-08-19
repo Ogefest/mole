@@ -16,15 +16,17 @@ QString ThumbnailKey::toId() const
     // percent signs and arg() would read %2F as a placeholder and substitute into
     // the middle of the path.
     return QString::fromLatin1(QUrl::toPercentEncoding(uri.toString())) + QStringLiteral("?size=")
-        + QString::number(size) + QStringLiteral("&mtime=") + QString::number(mtime);
+        + QString::number(size) + QStringLiteral("&mtime=") + QString::number(mtime)
+        + QStringLiteral("&bytes=") + QString::number(bytes);
 }
 
-QString ThumbnailKey::urlFor(const VfsUri& uri, int size, qint64 mtime)
+QString ThumbnailKey::urlFor(const VfsUri& uri, int size, qint64 mtime, qint64 bytes)
 {
     ThumbnailKey key;
     key.uri = uri;
     key.size = size;
     key.mtime = mtime;
+    key.bytes = bytes;
     return QStringLiteral("image://") + providerName() + QLatin1Char('/') + key.toId();
 }
 
@@ -42,6 +44,7 @@ ThumbnailKey ThumbnailKey::parse(const QString& id)
     const QUrlQuery query(id.mid(split + 1));
     key.size = query.queryItemValue(QStringLiteral("size")).toInt();
     key.mtime = query.queryItemValue(QStringLiteral("mtime")).toLongLong();
+    key.bytes = query.queryItemValue(QStringLiteral("bytes")).toLongLong();
     return key;
 }
 
@@ -82,6 +85,7 @@ void ThumbnailTask::run()
     FileEntry entry;
     entry.uri = m_key.uri;
     entry.name = m_key.uri.fileName();
+    entry.size = m_key.bytes;
     if (m_key.mtime > 0)
         entry.modified = QDateTime::fromSecsSinceEpoch(m_key.mtime);
 

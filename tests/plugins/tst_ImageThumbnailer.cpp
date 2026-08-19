@@ -1,13 +1,18 @@
 #include "plugins/builtin/thumbnails/ImageThumbnailer.h"
+#include "support/FaultyFileSystem.h"
 #include "support/ImageFixtures.h"
 #include "support/MoleTestMain.h"
 #include "support/TestSupport.h"
 
 #include "core/vfs/VfsManager.h"
+#include "core/vfs/backends/LocalFileSystem.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
+#include <QDir>
 #include <QElapsedTimer>
+#include <QFileInfo>
 #include <QImageReader>
+#include <QTemporaryDir>
 
 using namespace mole;
 using namespace mole::test;
@@ -31,13 +36,28 @@ private slots:
     void claimsWhatThisBuildCanRead();
     void cancellationIsHonouredBeforeTheDecode();
 
+    void aRemoteJpegWithAThumbnailInsideItCostsOneBoundedRead();
+    void aRemoteFileOverTheCeilingGetsNothingAndIsNotFetched();
+    void aLocalFileIsDecodedInFullAndLooksIt();
+    void anExifOffsetPointingOutsideThePrefixCostsThatThumbnailOnly();
+    void aFolderOfRemotePhotographsCostsKilobytesEach();
+
 private:
     /// Writes `bytes` into the memory drive and thumbnails it at `size`.
     QImage thumbnailOf(
         const QString& name, const QByteArray& bytes, int size, const CancelToken& cancel = CancelToken {});
-    FileEntry entryFor(const QString& name) const;
+    /// A listing's entry: the uri and the size, because a real one has both and
+    /// the remote ceiling is decided on the size.
+    FileEntry entryFor(const QString& name, qint64 bytes = 0) const;
+
+    /// A camera JPEG: `size` pixels of picture with a real, complete JPEG
+    /// thumbnail spliced into IFD1 of its EXIF block, the way a camera writes one.
+    static QByteArray cameraJpeg(QSize size, QSize thumbnail);
+    /// The same drive, wrapped in something that counts what was read through it.
+    FaultyFileSystem* countingDrive();
 
     std::shared_ptr<MemoryFileSystem> m_fs;
+    std::shared_ptr<FaultyFileSystem> m_counting;
     std::unique_ptr<VfsManager> m_vfs;
     PluginServices m_services;
     ImageThumbnailer m_thumbnailer;
@@ -60,14 +80,53 @@ void TestImageThumbnailer::init()
 void TestImageThumbnailer::cleanup()
 {
     m_vfs.reset();
+    m_counting.reset();
     m_fs.reset();
 }
 
-FileEntry TestImageThumbnailer::entryFor(const QString& name) const
+FaultyFileSystem* TestImageThumbnailer::countingDrive()
+{
+    m_counting = std::make_shared<FaultyFileSystem>(m_fs);
+    Mount mount;
+    mount.displayName = QStringLiteral("counted");
+    mount.root = VfsUri::fromString(QStringLiteral("mem:///"));
+    mount.fileSystem = m_counting;
+    // Replaces the plain mount: the same root, so the same uris resolve here.
+    const QList<Mount> mounts = m_vfs->mounts();
+    for (const Mount& existing : mounts)
+        m_vfs->removeMount(existing.id);
+    m_vfs->addMount(mount);
+    return m_counting.get();
+}
+
+QByteArray TestImageThumbnailer::cameraJpeg(QSize size, QSize thumbnail)
+{
+    // A real JPEG for the thumbnail, because the whole claim is that what comes
+    // out of IFD1 is a complete file that decodes on its own.
+    QImage small(thumbnail, QImage::Format_RGB32);
+    small.fill(Qt::magenta);
+    QByteArray inner;
+    {
+        QBuffer buffer(&inner);
+        buffer.open(QIODevice::WriteOnly);
+        QImageWriter writer(&buffer, "jpeg");
+        writer.write(small);
+    }
+
+    ExifBuilder exif(false);
+    exif.addAscii(0x010f, "Mole");
+    exif.addThumbnail(inner);
+    // Textured, because a test about what a file costs to read needs a file that
+    // costs something: two flat rectangles at 2400x1600 compress to nothing.
+    return jpegOf(texturedImage(size), exif.build());
+}
+
+FileEntry TestImageThumbnailer::entryFor(const QString& name, qint64 bytes) const
 {
     FileEntry entry;
     entry.uri = VfsUri::fromString(QStringLiteral("mem:///%1").arg(name));
     entry.name = name;
+    entry.size = bytes;
     return entry;
 }
 
@@ -75,7 +134,7 @@ QImage TestImageThumbnailer::thumbnailOf(
     const QString& name, const QByteArray& bytes, int size, const CancelToken& cancel)
 {
     m_fs->addFile(QStringLiteral("/%1").arg(name), bytes);
-    return m_thumbnailer.thumbnail(entryFor(name), size, m_services, cancel);
+    return m_thumbnailer.thumbnail(entryFor(name, bytes.size()), size, m_services, cancel);
 }
 
 void TestImageThumbnailer::picturesComeBackBoundedWithTheirAspectKept()
@@ -179,8 +238,9 @@ void TestImageThumbnailer::aFileNothingCanDecodeIsAnOrdinaryAnswer()
 
     // And a file that is not there at all, which is what a race with a delete
     // looks like from here.
-    QVERIFY(m_thumbnailer.thumbnail(entryFor(QStringLiteral("gone.jpg")), 96, m_services, CancelToken {})
-                .isNull());
+    QVERIFY(
+        m_thumbnailer.thumbnail(entryFor(QStringLiteral("gone.jpg"), 4096), 96, m_services, CancelToken {})
+            .isNull());
 }
 
 void TestImageThumbnailer::claimsWhatThisBuildCanRead()
@@ -208,6 +268,144 @@ void TestImageThumbnailer::cancellationIsHonouredBeforeTheDecode()
         thumbnailOf(QStringLiteral("late.jpg"), jpegWithExif(QSize(640, 480), QByteArray()), 160, cancelled)
             .isNull(),
         "a folder scrolled past leaves its decodes pointless");
+}
+
+// ------------------------------------------------ what a remote drive costs
+//
+// A folder of five hundred photographs on a network drive is four gigabytes.
+// Making 200-pixel tiles by fetching all of it would be the most expensive thing
+// this application has ever done, and on a metered bucket it is billed. Every
+// camera JPEG already carries a thumbnail in its first 64 kB. See MOLE-143.
+
+void TestImageThumbnailer::aRemoteJpegWithAThumbnailInsideItCostsOneBoundedRead()
+{
+    const QByteArray photograph = cameraJpeg(QSize(2400, 1600), QSize(160, 120));
+    QVERIFY2(photograph.size() > 200000, "the file has to be big enough for the saving to mean something");
+    m_fs->addFile(QStringLiteral("/holiday.jpg"), photograph);
+
+    FaultyFileSystem* counted = countingDrive();
+    const QImage tile = m_thumbnailer.thumbnail(
+        entryFor(QStringLiteral("holiday.jpg"), photograph.size()), 200, m_services, CancelToken {});
+
+    QVERIFY2(!tile.isNull(), "the picture inside the file is a tile");
+    // Softer than the tile, because 160x120 is what the camera wrote -- shown
+    // rather than nothing, which is the whole job.
+    QVERIFY2(qMax(tile.width(), tile.height()) <= 200, "and still bounded by what was asked for");
+
+    QVERIFY2(counted->bytesRead() <= ImageThumbnailer::kPrefixBytes,
+        qPrintable(QStringLiteral("read %1 bytes of a %2-byte file")
+                       .arg(counted->bytesRead())
+                       .arg(photograph.size())));
+    QCOMPARE(counted->openReadCount(), 1);
+}
+
+void TestImageThumbnailer::aRemoteFileOverTheCeilingGetsNothingAndIsNotFetched()
+{
+    // No EXIF at all, so there is nothing inside it to find -- and past the
+    // ceiling, so fetching it is not worth what it costs.
+    const QByteArray plain = jpegWithExif(QSize(800, 600), QByteArray());
+    m_fs->addFile(QStringLiteral("/raw.jpg"), plain);
+
+    FaultyFileSystem* counted = countingDrive();
+    const qint64 claimed = ImageThumbnailer::kRemoteCeiling + 1;
+    const QImage tile
+        = m_thumbnailer.thumbnail(entryFor(QStringLiteral("raw.jpg"), claimed), 200, m_services, {});
+
+    QVERIFY2(tile.isNull(), "an icon tile is a correct answer, not a failure");
+    // The prefix was looked at, because that is where a camera's own thumbnail
+    // would have been; the body was not.
+    QVERIFY2(counted->bytesRead() <= ImageThumbnailer::kPrefixBytes,
+        qPrintable(QStringLiteral("read %1 bytes").arg(counted->bytesRead())));
+    QVERIFY2(counted->bytesRead() < claimed / 2, "nothing like the whole file was fetched");
+}
+
+void TestImageThumbnailer::aLocalFileIsDecodedInFullAndLooksIt()
+{
+    QTemporaryDir local;
+    QVERIFY(local.isValid());
+    const QString path = QDir(local.path()).filePath(QStringLiteral("holiday.jpg"));
+    {
+        // The same file: a big picture with a small thumbnail inside it. On a local
+        // drive the decode is the answer, because reading it costs nothing.
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        const QByteArray photograph = cameraJpeg(QSize(1200, 900), QSize(160, 120));
+        QVERIFY(file.write(photograph) == photograph.size());
+    }
+
+    auto local_fs = std::make_shared<LocalFileSystem>();
+    Mount mount;
+    mount.displayName = QStringLiteral("disk");
+    mount.root = VfsUri::fromLocalPath(local.path());
+    mount.fileSystem = local_fs;
+    QVERIFY(!m_vfs->addMount(mount).isEmpty());
+
+    FileEntry entry;
+    entry.uri = VfsUri::fromLocalPath(path);
+    entry.name = QStringLiteral("holiday.jpg");
+    entry.size = QFileInfo(path).size();
+    QVERIFY(!ImageThumbnailer::isRemote(entry.uri));
+
+    const QImage tile = m_thumbnailer.thumbnail(entry, 200, m_services, CancelToken {});
+    QVERIFY(!tile.isNull());
+    // The embedded one is 160x120 and would come back at 160 on its longest edge.
+    // A full decode of a 1200x900 file asked for 200 comes back at 200, which is
+    // how the two are told apart.
+    QCOMPARE(qMax(tile.width(), tile.height()), 200);
+}
+
+/// An offset in a file is a claim, not a promise.
+void TestImageThumbnailer::anExifOffsetPointingOutsideThePrefixCostsThatThumbnailOnly()
+{
+    ExifBuilder exif(false);
+    exif.addAscii(0x010f, "Mole");
+    exif.addThumbnail(QByteArray("\xff\xd8not really a jpeg", 20));
+    // The thumbnail's own offset, pointed a long way outside the block.
+    exif.pointThumbnailAt(0x7fffffff);
+    const QByteArray bent = jpegWithExif(QSize(640, 480), exif.build());
+    m_fs->addFile(QStringLiteral("/bent.jpg"), bent);
+
+    FaultyFileSystem* counted = countingDrive();
+    // Under the ceiling, so the fallback decode is allowed and is what answers.
+    const QImage tile
+        = m_thumbnailer.thumbnail(entryFor(QStringLiteral("bent.jpg"), bent.size()), 120, m_services, {});
+
+    // No crash, no unbounded read, and the tile still comes from the file itself.
+    QVERIFY(!tile.isNull());
+    QCOMPARE(qMax(tile.width(), tile.height()), 120);
+    QVERIFY2(counted->bytesRead() < ImageThumbnailer::kPrefixBytes + bent.size() + 1,
+        qPrintable(QStringLiteral("read %1 bytes").arg(counted->bytesRead())));
+}
+
+void TestImageThumbnailer::aFolderOfRemotePhotographsCostsKilobytesEach()
+{
+    const int photographs = 20;
+    qint64 onTheDrive = 0;
+    for (int i = 0; i < photographs; ++i) {
+        const QByteArray photograph = cameraJpeg(QSize(2000, 1500), QSize(160, 120));
+        onTheDrive += photograph.size();
+        m_fs->addFile(QStringLiteral("/photos/shot-%1.jpg").arg(i), photograph);
+    }
+    QVERIFY2(onTheDrive > 20 * 100000, "the folder has to be worth not downloading");
+
+    FaultyFileSystem* counted = countingDrive();
+    for (int i = 0; i < photographs; ++i) {
+        FileEntry entry;
+        entry.uri = VfsUri::fromString(QStringLiteral("mem:///photos/shot-%1.jpg").arg(i));
+        entry.name = entry.uri.fileName();
+        entry.size = onTheDrive / photographs;
+        QVERIFY(!m_thumbnailer.thumbnail(entry, 200, m_services, CancelToken {}).isNull());
+    }
+
+    // Kilobytes each, not megabytes: the whole point of the ticket, counted rather
+    // than argued.
+    const qint64 perPhotograph = counted->bytesRead() / photographs;
+    QVERIFY2(perPhotograph <= ImageThumbnailer::kPrefixBytes,
+        qPrintable(QStringLiteral("%1 bytes each against %2 on the drive")
+                       .arg(perPhotograph)
+                       .arg(onTheDrive / photographs)));
+    QVERIFY2(counted->bytesRead() * 4 < onTheDrive,
+        qPrintable(QStringLiteral("read %1 of %2 bytes").arg(counted->bytesRead()).arg(onTheDrive)));
 }
 
 MOLE_TEST_MAIN(TestImageThumbnailer)

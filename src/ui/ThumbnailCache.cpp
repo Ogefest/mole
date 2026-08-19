@@ -58,6 +58,8 @@ QString ThumbnailCache::fileNameFor(const ThumbnailKey& key)
     hash.addData(QByteArray::number(key.size));
     hash.addData(QByteArrayLiteral("\0"));
     hash.addData(QByteArray::number(key.mtime));
+    // `bytes` is deliberately not in here: it is a hint about how to make the
+    // picture, not part of which picture it is.
     // Half the digest is 128 bits, which is a name nobody will collide and a
     // directory listing a person can still read.
     return QString::fromLatin1(hash.result().toHex().left(32));

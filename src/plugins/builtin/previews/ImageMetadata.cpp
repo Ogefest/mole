@@ -503,6 +503,62 @@ QList<FileFact> ImageMetadataReader::factsFor(QByteArrayView bytes, const QStrin
     return facts;
 }
 
+QByteArray ImageMetadataReader::embeddedThumbnail(QByteArrayView bytes)
+{
+    const QByteArrayView block = exifBlock(bytes);
+    if (block.size() < 8)
+        return {};
+
+    const bool bigEndian = block.startsWith(QByteArrayLiteral("MM"));
+    if (!bigEndian && !block.startsWith(QByteArrayLiteral("II")))
+        return {};
+    const TiffBlock tiff(block, bigEndian);
+
+    const std::optional<quint32> firstDirectory = tiff.u32(4);
+    if (!firstDirectory)
+        return {};
+
+    // IFD1 is where the thumbnail lives, and where it is is the last four bytes of
+    // IFD0 -- a number the file chose, like every other one here.
+    const std::optional<quint16> ifd0Count = tiff.u16(*firstDirectory);
+    if (!ifd0Count)
+        return {};
+    const qint64 nextPointerAt = qint64(*firstDirectory) + 2 + qint64(*ifd0Count) * 12;
+    const std::optional<quint32> ifd1At = tiff.u32(nextPointerAt);
+    if (!ifd1At || *ifd1At == 0)
+        return {}; // no second directory, which is most files that are not photographs
+
+    const QList<Entry> ifd1 = readDirectory(tiff, *ifd1At);
+    if (ifd1.isEmpty())
+        return {};
+
+    // JPEGInterchangeFormat and its length. Both have to be there and both have
+    // to point inside the block, or there is no thumbnail as far as this is
+    // concerned.
+    const Entry* at = find(ifd1, 0x0201);
+    const Entry* length = find(ifd1, 0x0202);
+    if (!at || !length)
+        return {};
+    const std::optional<double> offset = asNumber(tiff, *at);
+    const std::optional<double> count = asNumber(tiff, *length);
+    if (!offset || !count || *offset < 0 || *count <= 0)
+        return {};
+
+    const qint64 from = qint64(*offset);
+    const qint64 size = qint64(*count);
+    if (!tiff.has(from, size))
+        return {}; // an offset in a file is a claim, not a promise
+
+    QByteArray thumbnail = block.sliced(from, size).toByteArray();
+    // A complete JPEG or nothing: a truncated one would be a broken tile rather
+    // than a missing one.
+    if (thumbnail.size() < 4 || static_cast<unsigned char>(thumbnail.at(0)) != 0xff
+        || static_cast<unsigned char>(thumbnail.at(1)) != 0xd8) {
+        return {};
+    }
+    return thumbnail;
+}
+
 bool ImageMetadataReader::wantsMore(QByteArrayView bytes, const QString& fileName)
 {
     Q_UNUSED(fileName);

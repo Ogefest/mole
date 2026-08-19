@@ -31,6 +31,14 @@ struct ThumbnailKey
     /// which means the picture cannot be invalidated by a change and will be
     /// remade when the size changes and not before.
     qint64 mtime = 0;
+    /// How big the file is, or 0 when nobody said.
+    ///
+    /// A **hint**, not part of what the picture is: it is here so a thumbnailer
+    /// can decide whether a file on a drive where reading is downloading is worth
+    /// fetching, without a `stat()` of its own per tile. The disk cache
+    /// deliberately leaves it out of its key -- the same picture found with and
+    /// without a size hint is the same picture.
+    qint64 bytes = 0;
 
     bool isValid() const { return uri.isValid() && size > 0; }
 
@@ -43,7 +51,7 @@ struct ThumbnailKey
     /// The provider name the url addresses.
     static QString providerName() { return QStringLiteral("mole-thumb"); }
     /// The whole url, for a view that wants to build one in a binding.
-    static QString urlFor(const VfsUri& uri, int size, qint64 mtime);
+    static QString urlFor(const VfsUri& uri, int size, qint64 mtime, qint64 bytes = 0);
 };
 
 /// Makes one thumbnail, on a worker thread.

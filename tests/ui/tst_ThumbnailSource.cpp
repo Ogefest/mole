@@ -105,13 +105,16 @@ QImage TestThumbnailSource::awaitThumbnail(QObject* response, const QString& id)
 {
     QImage answer;
     bool arrived = false;
-    QObject::connect(
-        m_pump.get(), &ThumbnailPump::ready, m_pump.get(), [&](QObject* who, const QImage& image) {
-            if (who != response)
-                return;
-            answer = image;
-            arrived = true;
-        });
+    // The context object dies with this call, and the connection with it. Bound to
+    // the pump instead, a later answer would run a lambda whose captures are this
+    // function's dead stack -- which is what make asan said.
+    QObject scope;
+    QObject::connect(m_pump.get(), &ThumbnailPump::ready, &scope, [&](QObject* who, const QImage& image) {
+        if (who != response)
+            return;
+        answer = image;
+        arrived = true;
+    });
     m_pump->startFor(response, id);
     if (!waitFor([&] { return arrived; }, 10000))
         return {};
@@ -229,13 +232,14 @@ void TestThumbnailSource::cancellingAResponseReachesTheDecode()
     QObject response;
     QImage answer;
     bool arrived = false;
-    QObject::connect(
-        m_pump.get(), &ThumbnailPump::ready, m_pump.get(), [&](QObject* who, const QImage& image) {
-            if (who != &response)
-                return;
-            answer = image;
-            arrived = true;
-        });
+    // Dies with the test body, taking the connection with it -- see awaitThumbnail.
+    QObject scope;
+    QObject::connect(m_pump.get(), &ThumbnailPump::ready, &scope, [&](QObject* who, const QImage& image) {
+        if (who != &response)
+            return;
+        answer = image;
+        arrived = true;
+    });
 
     ThumbnailKey key;
     key.uri = VfsUri::fromString(QStringLiteral("mem:///photos/a.jpg"));
@@ -362,11 +366,12 @@ void TestThumbnailSource::twoPanesAskingAtOnceDecodeItOnce()
     QObject left;
     QObject right;
     QList<QObject*> answered;
-    QObject::connect(
-        m_pump.get(), &ThumbnailPump::ready, m_pump.get(), [&](QObject* who, const QImage& image) {
-            if (!image.isNull())
-                answered.append(who);
-        });
+    // Dies with the test body, taking the connection with it -- see awaitThumbnail.
+    QObject scope;
+    QObject::connect(m_pump.get(), &ThumbnailPump::ready, &scope, [&](QObject* who, const QImage& image) {
+        if (!image.isNull())
+            answered.append(who);
+    });
 
     m_pump->startFor(&left, key.toId());
     QVERIFY(waitFor([&] { return log->made.load() == 1; }));
@@ -418,7 +423,9 @@ void TestThumbnailSource::onlySoManyDecodeAtOnceAndTheRestQueue()
 
     // Released, and the queue drains without ever going over the bound.
     int seenOver = 0;
-    QObject::connect(m_pump.get(), &ThumbnailPump::ready, m_pump.get(), [&](QObject*, const QImage&) {
+    // Dies with the test body, taking the connection with it -- see awaitThumbnail.
+    QObject scope;
+    QObject::connect(m_pump.get(), &ThumbnailPump::ready, &scope, [&](QObject*, const QImage&) {
         if (m_pump->outstanding() > 2)
             ++seenOver;
     });
@@ -459,7 +466,9 @@ void TestThumbnailSource::whatCameIntoViewLastIsServedFirst()
     QCOMPARE(m_pump->queued(), 2);
 
     QStringList order;
-    QObject::connect(m_pump.get(), &ThumbnailPump::ready, m_pump.get(), [&](QObject* who, const QImage&) {
+    // Dies with the test body, taking the connection with it -- see awaitThumbnail.
+    QObject scope;
+    QObject::connect(m_pump.get(), &ThumbnailPump::ready, &scope, [&](QObject* who, const QImage&) {
         order.append(who == &busy ? QStringLiteral("busy")
                 : who == &early   ? QStringLiteral("early")
                                   : QStringLiteral("late"));
