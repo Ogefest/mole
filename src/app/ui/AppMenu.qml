@@ -10,6 +10,11 @@ import QtQuick.Layouts
 // The four sections are declared statically because they are fixed by the API
 // enum; only the entries inside them are dynamic.
 Menu {
+    // Dimmed rather than washed out: Qt's Material dark theme dims with
+    // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
+    Overlay.modal: DimVeil {}
+    Overlay.modeless: DimVeil {}
+
     id: appMenu
     objectName: "appMenu"
 

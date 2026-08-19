@@ -8,6 +8,11 @@ import QtQuick.Layouts
 // Everything else -- what is being packed, where it lands -- is already known from
 // what is selected, and asking about it would be a form rather than a question.
 Dialog {
+    // Dimmed rather than washed out: Qt's Material dark theme dims with
+    // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
+    Overlay.modal: DimVeil {}
+    Overlay.modeless: DimVeil {}
+
     id: dialog
     objectName: "compressDialog"
 

@@ -9,6 +9,11 @@ import QtQuick.Layouts
 // exists is that not every control has a shortcut of its own -- so it would be an
 // odd sort of answer if it needed the mouse.
 Popup {
+    // Dimmed rather than washed out: Qt's Material dark theme dims with
+    // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
+    Overlay.modal: DimVeil {}
+    Overlay.modeless: DimVeil {}
+
     id: palette
     objectName: "commandPalette"
 

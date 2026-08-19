@@ -10,6 +10,11 @@ import QtQuick.Layouts
 // itself, so a new provider appears with a correct form and nothing in this file
 // changes. That is the whole reason drives are a plugin seam.
 Dialog {
+    // Dimmed rather than washed out: Qt's Material dark theme dims with
+    // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
+    Overlay.modal: DimVeil {}
+    Overlay.modeless: DimVeil {}
+
     id: dialog
     objectName: "drivesDialog"
 

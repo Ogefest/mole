@@ -341,6 +341,11 @@ Item {
     }
 
     Dialog {
+        // Dimmed rather than washed out: Qt's Material dark theme dims with
+        // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
+        Overlay.modal: DimVeil {}
+        Overlay.modeless: DimVeil {}
+
         id: confirmDelete
         objectName: "confirmSyncDelete"
         anchors.centerIn: parent

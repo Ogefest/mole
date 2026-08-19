@@ -27,6 +27,7 @@ set(MOLE_QML_FILES
     ui/CompressDialog.qml
     ui/TargetList.qml
     ui/ConfirmButtons.qml
+    ui/DimVeil.qml
     ui/Sidebar.qml
     ui/UnlockDialog.qml
     ui/TaskStrip.qml
@@ -110,6 +111,38 @@ if(MOLE_QML_STANDARD_BUTTONS)
         "docs/adr/0010-telling-the-two-buttons-apart.md. If a dialog genuinely "
         "needs an arrangement the footer cannot express, widen the footer and "
         "amend that ADR rather than working around this check.")
+endif()
+
+# And once more, for the veil behind a popup. Qt's Material style sets
+# `Overlay.modal` on each control rather than on the window, so the window-level
+# fallback is never reached and every popup has to name its own -- which means a
+# popup written later goes back to Qt's dim, `#99fafafa`, near-white at sixty
+# percent. Over this interface that is a wash rather than a scrim: the sidebar and
+# the listing behind a dialog go pale grey, and the whole window reads as a fade
+# that stopped part way. That is MOLE-128, and nothing about it is visible to
+# whoever writes the nineteenth dialog. So the build says so.
+#
+# A grep is enough, as above: a file that declares a popup declares a veil.
+set(MOLE_QML_UNVEILED "")
+foreach(qml IN LISTS MOLE_QML_ON_DISK)
+    file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/${qml}" popups
+         REGEX "^[^/]*(Dialog|Popup|Menu|Drawer)[ 	]*\{")
+    if(popups)
+        file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/${qml}" veiled
+             REGEX "^[^/]*Overlay\.modal[ 	]*:")
+        if(NOT veiled)
+            list(APPEND MOLE_QML_UNVEILED ${qml})
+        endif()
+    endif()
+endforeach()
+if(MOLE_QML_UNVEILED)
+    message(FATAL_ERROR
+        "These QML files declare a dialog, popup or menu and do not say what dims "
+        "the window behind it:\n"
+        "  ${MOLE_QML_UNVEILED}\n"
+        "Add `Overlay.modal: DimVeil {}` and `Overlay.modeless: DimVeil {}` to "
+        "each one -- see ui/DimVeil.qml for why Qt's own dim washes this "
+        "interface out, and tst_Walkthrough for the pixel that proves it.")
 endif()
 
 qt_add_qml_module(mole

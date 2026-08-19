@@ -1050,6 +1050,11 @@ FocusScope {
     // --- dialogs -------------------------------------------------------
 
     Dialog {
+        // Dimmed rather than washed out: Qt's Material dark theme dims with
+        // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
+        Overlay.modal: DimVeil {}
+        Overlay.modeless: DimVeil {}
+
         id: mkdirDialog
         title: "New folder"
         modal: true
@@ -1071,6 +1076,11 @@ FocusScope {
     }
 
     Dialog {
+        // Dimmed rather than washed out: Qt's Material dark theme dims with
+        // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
+        Overlay.modal: DimVeil {}
+        Overlay.modeless: DimVeil {}
+
         id: renameDialog
         title: "Rename"
         modal: true
@@ -1095,6 +1105,11 @@ FocusScope {
     }
 
     Dialog {
+        // Dimmed rather than washed out: Qt's Material dark theme dims with
+        // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
+        Overlay.modal: DimVeil {}
+        Overlay.modeless: DimVeil {}
+
         id: deleteDialog
         objectName: "deleteDialog"
         title: "Delete"

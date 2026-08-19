@@ -742,6 +742,11 @@ ApplicationWindow {
     }
 
     Dialog {
+        // Dimmed rather than washed out: Qt's Material dark theme dims with
+        // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
+        Overlay.modal: DimVeil {}
+        Overlay.modeless: DimVeil {}
+
         id: aboutDialog
         objectName: "aboutDialog"
         // Without this the popup never becomes a focus scope, so nothing inside it
@@ -806,6 +811,11 @@ ApplicationWindow {
     }
 
     Dialog {
+        // Dimmed rather than washed out: Qt's Material dark theme dims with
+        // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
+        Overlay.modal: DimVeil {}
+        Overlay.modeless: DimVeil {}
+
         id: shortcutDialog
         objectName: "shortcutDialog"
         // Without this the popup never becomes a focus scope, so nothing inside it
@@ -917,6 +927,11 @@ ApplicationWindow {
     }
 
     Popup {
+        // Dimmed rather than washed out: Qt's Material dark theme dims with
+        // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
+        Overlay.modal: DimVeil {}
+        Overlay.modeless: DimVeil {}
+
         id: notificationPopup
         x: (root.width - width) / 2
         y: root.height - height - 80

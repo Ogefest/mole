@@ -149,6 +149,11 @@ Rectangle {
     // then closes again, and a band that grew to fifteen lines would take that
     // height off the listing for as long as the checkout was dirty.
     Popup {
+        // Dimmed rather than washed out: Qt's Material dark theme dims with
+        // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
+        Overlay.modal: DimVeil {}
+        Overlay.modeless: DimVeil {}
+
         id: changedPaths
         objectName: "repositoryChangedPaths"
 

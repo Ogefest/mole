@@ -59,6 +59,8 @@
 #include <QTextDocument>
 #include <QThread>
 
+#include <functional>
+
 using namespace mole;
 using namespace mole::test;
 
@@ -118,6 +120,7 @@ private slots:
     void theSidebarRowsAreEvenlyTallAndHoldStill();
     void theCopyPathKeysActuallyCopyAPath();
     void theCommandPaletteFindsAndRunsThings();
+    void theWindowBehindAPopupIsNotWashedOut();
     void theHeaderAdvertisesTheCommandPalette();
     void ctrlFIsASearchBoxYouCanTypeInto();
     void aPartlyIndexedFolderShowsWhereEachRowCameFrom();
@@ -173,6 +176,9 @@ private slots:
 
 private:
     BrowserPaneController* pane() const;
+    /// Asserts that the window behind an open popup is dimmed rather than washed
+    /// out. `what` names the popup, for the message a failure prints.
+    void assertTheWindowBehindAPopupIsDimmed(const char* what);
     /// Writes the fixture tree every test starts from. See its definition for
     /// what is in it and why.
     void buildFixture();
@@ -1380,6 +1386,60 @@ void TestWalkthrough::theCommandPaletteFindsAndRunsThings()
     QVERIFY(m_harness->until([palette] { return !palette->property("opened").toBool(); }));
 }
 
+void TestWalkthrough::assertTheWindowBehindAPopupIsDimmed(const char* what)
+{
+    // Every guide picture taken with a popup open -- a dialog, the palette, a menu
+    // -- came out with the whole window behind it washed to a pale grey at about
+    // forty percent, which reads as a fade that stopped part way and is not one.
+    // MOLE-114 put that down to the frame being grabbed 40 ms into a 220 ms
+    // transition, fixed the grab to wait for two identical frames, and the wash did
+    // not move. It was Qt's Material dim: `#99fafafa`, near-white at sixty percent,
+    // which over this interface's `#151922` comes out at exactly (158, 160, 164).
+    // See MOLE-128 and ui/DimVeil.qml.
+    //
+    // The pixel is at (300, 300), in the sidebar and nowhere near any popup, and
+    // the colour it is judged against is the window's own ground rather than a
+    // constant that would go stale the first time the theme changes.
+    const QImage frame = m_harness->grab();
+    QVERIFY2(!frame.isNull(), "the window would not render at all");
+    QVERIFY(frame.width() > 400 && frame.height() > 400);
+
+    const QRgb ground = m_harness->window()->color().rgb();
+    const QRgb behind = frame.pixel(300, 300);
+    const int groundLuma = qGray(ground);
+    const int behindLuma = qGray(behind);
+
+    // A scrim darkens. The fault lightened, which is the one thing a dim can
+    // never do, so this is the assertion that fails before the fix -- by 25
+    // against 160.
+    QVERIFY2(behindLuma <= groundLuma,
+        qPrintable(
+            QStringLiteral("with %1 open the sidebar reads #%2 over a ground of #%3, which is "
+                           "lighter rather than dimmer")
+                .arg(QString::fromLatin1(what), QString::number(behind, 16), QString::number(ground, 16))));
+    // And it is still the interface behind the popup rather than a black hole:
+    // a scrim that swallows the window is the same fault with the sign flipped.
+    QVERIFY2(behindLuma * 3 >= groundLuma,
+        qPrintable(
+            QStringLiteral("with %1 open the sidebar reads #%2, which is not a dim of #%3")
+                .arg(QString::fromLatin1(what), QString::number(behind, 16), QString::number(ground, 16))));
+}
+
+void TestWalkthrough::theWindowBehindAPopupIsNotWashedOut()
+{
+    // The palette, because it is the popup every guide picture of a command has
+    // behind it. The compress dialog is asserted where its own picture is taken.
+    m_harness->key(Qt::Key_R, Qt::ControlModifier);
+    QObject* palette = m_harness->object(QStringLiteral("commandPalette"));
+    QVERIFY(palette);
+    QVERIFY(m_harness->until([palette] { return palette->property("opened").toBool(); }));
+
+    assertTheWindowBehindAPopupIsDimmed("the command palette");
+
+    QVERIFY(QMetaObject::invokeMethod(palette, "close"));
+    QVERIFY(m_harness->until([palette] { return !palette->property("opened").toBool(); }));
+}
+
 void TestWalkthrough::theHeaderAdvertisesTheCommandPalette()
 {
     // The palette is the answer to "how do I do X", and nobody finds a shortcut they
@@ -1714,6 +1774,10 @@ void TestWalkthrough::compressingTheSelectionMakesAnArchiveBesideIt()
     QQuickItem* protect = m_harness->item(QStringLiteral("protectWithPassword"));
     QVERIFY(protect);
     QVERIFY2(protect->property("enabled").toBool(), "zip can carry one");
+
+    // The picture MOLE-128 was reported against: its labels looked half
+    // transparent and the listing appeared to show through the dialog.
+    assertTheWindowBehindAPopupIsDimmed("the compress dialog");
 
     m_harness->screenshot(QStringLiteral("13-compress"));
 

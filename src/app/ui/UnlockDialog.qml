@@ -14,6 +14,11 @@ import QtQuick.Layouts
 // be asked for in a modal; the reason behind that stands and is why the other
 // half was kept. See docs/adr/0031-a-locked-drive-is-connected-when-it-is-opened.md.
 Dialog {
+    // Dimmed rather than washed out: Qt's Material dark theme dims with
+    // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
+    Overlay.modal: DimVeil {}
+    Overlay.modeless: DimVeil {}
+
     id: dialog
     objectName: "unlockDialog"
 

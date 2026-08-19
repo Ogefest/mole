@@ -331,6 +331,11 @@ Item {
     // --- dialogs -------------------------------------------------------
 
     Dialog {
+        // Dimmed rather than washed out: Qt's Material dark theme dims with
+        // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
+        Overlay.modal: DimVeil {}
+        Overlay.modeless: DimVeil {}
+
         id: transferDialog
         objectName: "transferDialog"
         // Without this the popup never becomes a focus scope, so nothing inside it
@@ -527,6 +532,11 @@ Item {
     }
 
     Dialog {
+        // Dimmed rather than washed out: Qt's Material dark theme dims with
+        // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
+        Overlay.modal: DimVeil {}
+        Overlay.modeless: DimVeil {}
+
         id: transferHint
         objectName: "transferHint"
         // Without this the popup never becomes a focus scope, so nothing inside it
@@ -551,6 +561,11 @@ Item {
     }
 
     Popup {
+        // Dimmed rather than washed out: Qt's Material dark theme dims with
+        // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
+        Overlay.modal: DimVeil {}
+        Overlay.modeless: DimVeil {}
+
         id: errorPopup
         x: (view.width - width) / 2
         y: view.height - height - 40
