@@ -1,6 +1,9 @@
 #include "plugins/network/FtpFileSystem.h"
 #include "plugins/network/S3FileSystem.h"
 #include "plugins/network/SftpFileSystem.h"
+#ifdef MOLE_HAVE_SMB
+#include "plugins/network/SmbFileSystem.h"
+#endif
 #include "plugins/network/WebdavFileSystem.h"
 #include "sdk/PluginApi.h"
 
@@ -38,6 +41,17 @@ public:
         registry.addFileSystemFactory(std::make_unique<FtpFileSystemFactory>());
         registry.addFileSystemFactory(std::make_unique<S3FileSystemFactory>());
         registry.addFileSystemFactory(std::make_unique<WebdavFileSystemFactory>());
+        // SMB is built but deliberately NOT offered yet. SmbFileSystem works --
+        // it lists, stats, creates, writes and reads against a real Samba share,
+        // and its own tests hold that -- but the conformance suite ends in an
+        // abort inside libsmbclient's allocator ("talloc: access after free",
+        // lib/param/loadparm.c) and the cause is not yet known.
+        //
+        // A drive kind that can take the process down with it is worse than one
+        // that is not there, so this line stays commented until the conformance
+        // run is green. See MOLE-36.
+        //
+        // registry.addFileSystemFactory(std::make_unique<SmbFileSystemFactory>());
     }
 };
 

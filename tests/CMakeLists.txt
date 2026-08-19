@@ -363,6 +363,12 @@ if(MOLE_HAVE_NETWORK_PLUGIN)
     mole_add_test(tst_WebdavFileSystem SOURCES plugins/tst_WebdavFileSystem.cpp
                                        LIBS mole_network_backends CURL::libcurl)
 
+    # Only where Samba's client library was found, like the backend itself.
+    if(SMBCLIENT_FOUND)
+        mole_add_test(tst_SmbFileSystem SOURCES plugins/tst_SmbFileSystem.cpp
+                                        LIBS mole_network_backends CURL::libcurl)
+    endif()
+
     # The scale tier: gigabytes, against a real machine, with peak scratch
     # space, memory and file descriptors asserted rather than hoped for. Not
     # part of `make test` -- `make test-heavy` runs it, and every case skips

@@ -168,6 +168,26 @@ if(CURL_FOUND AND OpenSSL_FOUND)
         network/WebdavFileSystem.h
         network/WebdavFileSystem.cpp
     )
+
+    # SMB through Samba's own client library, and optional like every other
+    # backend dependency: a build without it ships the other drives and says so,
+    # rather than failing to configure. See ADR-0048.
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(SMBCLIENT QUIET smbclient)
+    endif()
+    if(SMBCLIENT_FOUND)
+        target_sources(mole_network_backends PRIVATE
+            network/SmbFileSystem.h
+            network/SmbFileSystem.cpp)
+        target_compile_definitions(mole_network_backends PUBLIC MOLE_HAVE_SMB)
+        target_include_directories(mole_network_backends PRIVATE ${SMBCLIENT_INCLUDE_DIRS})
+        target_link_directories(mole_network_backends PRIVATE ${SMBCLIENT_LIBRARY_DIRS})
+        target_link_libraries(mole_network_backends PRIVATE ${SMBCLIENT_LIBRARIES})
+        message(STATUS "Windows shares: smb (libsmbclient ${SMBCLIENT_VERSION})")
+    else()
+        message(STATUS "Windows shares: unavailable (install libsmbclient-dev)")
+    endif()
     target_include_directories(mole_network_backends PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
     target_link_libraries(mole_network_backends
         PUBLIC mole_core
