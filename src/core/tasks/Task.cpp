@@ -202,6 +202,10 @@ void Task::applyPending()
         // that arrived together is a strip that redraws once.
         emit metricsChanged();
     }
+
+    // Whatever the subclass has been collecting travels on the same drain, and
+    // therefore under the same bound.
+    drainPayload();
 }
 
 void Task::flushReports()

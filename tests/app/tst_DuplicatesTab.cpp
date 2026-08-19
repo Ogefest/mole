@@ -480,13 +480,14 @@ void TestDuplicatesTab::aStoppedScanKeepsWhatItFoundAndSaysItWasStopped()
     //
     // The task is caught as it is submitted, which is the only moment anything
     // outside the controller has a pointer to it.
+    // Through the hook rather than a signal: since MOLE-211 what the window is
+    // told is drained on the drawing thread, and the hook is the one thing that
+    // still runs at the instant of confirmation, on the thread that confirmed.
     connect(m_harness->app()->services().tasks, &TaskManager::taskAppended, this, [](Task* task) {
         auto* scan = qobject_cast<FindDuplicatesTask*>(task);
         if (!scan)
             return;
-        connect(
-            scan, &FindDuplicatesTask::groupFound, scan,
-            [scan](const DuplicateGroup&, int) { scan->requestCancel(); }, Qt::DirectConnection);
+        scan->setOnGroupConfirmed([scan](const DuplicateGroup&, int) { scan->requestCancel(); });
     });
 
     controller->scan();

@@ -11,6 +11,9 @@
 #include "core/vfs/backends/MemoryFileSystem.h"
 
 #include <QMutex>
+#include <QSemaphore>
+
+#include <atomic>
 
 using namespace mole;
 using namespace mole::test;
@@ -52,6 +55,8 @@ private slots:
     void aGroupIsNeverAnnouncedAndThenTakenBack();
     void theListIsInOrderAtEveryInstantAndNotOnlyAtTheEnd();
     void aScanStoppedPartWayKeepsWhatItHadAlreadyConfirmed();
+    void aBurstOfConfirmationsIsBoundedByTheDrainAndNotByTheGroupCount();
+    void aGroupReachesTheWindowWhileTheScanIsStillStandingInConfirm();
 
 private:
     QList<DuplicateGroup> find(std::unique_ptr<IDuplicateStrategy> strategy, qint64 minimumSize = 1);
@@ -760,8 +765,11 @@ void TestDuplicates::groupsArriveAsTheyAreConfirmedRatherThanAllAtTheEnd()
     // them before it ended -- and it is proof taken from the data, with no clock
     // anywhere in it.
     QStringList announcements;
-    connect(task, &FindDuplicatesTask::groupFound, this,
-        [&announcements](const DuplicateGroup&, int) { announcements.append(QStringLiteral("group")); });
+    connect(task, &FindDuplicatesTask::groupsFound, this,
+        [&announcements](const QList<DuplicateGroup>& groups, const QList<int>&) {
+            for (int i = 0; i < groups.size(); ++i)
+                announcements.append(QStringLiteral("group"));
+        });
     connect(
         task, &Task::finished, this, [&announcements] { announcements.append(QStringLiteral("finished")); });
 
@@ -789,8 +797,8 @@ void TestDuplicates::aGroupIsNeverAnnouncedAndThenTakenBack()
     task->setMinimumSize(1);
 
     QList<DuplicateGroup> announced;
-    connect(task, &FindDuplicatesTask::groupFound, this,
-        [&announced](const DuplicateGroup& group, int) { announced.append(group); });
+    connect(task, &FindDuplicatesTask::groupsFound, this,
+        [&announced](const QList<DuplicateGroup>& groups, const QList<int>&) { announced.append(groups); });
 
     m_tasks->submit(task);
     QVERIFY(waitFor([task] { return task->isFinished(); }, 30000));
@@ -834,12 +842,15 @@ void TestDuplicates::theListIsInOrderAtEveryInstantAndNotOnlyAtTheEnd()
     // is the thing this ordering exists to avoid.
     QList<qint64> mirrored;
     bool everOutOfOrder = false;
-    connect(task, &FindDuplicatesTask::groupFound, this,
-        [&mirrored, &everOutOfOrder](const DuplicateGroup& group, int position) {
-            mirrored.insert(qBound(0, position, static_cast<int>(mirrored.size())), group.reclaimable);
-            for (int i = 1; i < mirrored.size(); ++i) {
-                if (mirrored.at(i) > mirrored.at(i - 1))
-                    everOutOfOrder = true;
+    connect(task, &FindDuplicatesTask::groupsFound, this,
+        [&mirrored, &everOutOfOrder](const QList<DuplicateGroup>& groups, const QList<int>& positions) {
+            for (int g = 0; g < groups.size() && g < positions.size(); ++g) {
+                mirrored.insert(
+                    qBound(0, positions.at(g), static_cast<int>(mirrored.size())), groups.at(g).reclaimable);
+                for (int i = 1; i < mirrored.size(); ++i) {
+                    if (mirrored.at(i) > mirrored.at(i - 1))
+                        everOutOfOrder = true;
+                }
             }
         });
 
@@ -877,9 +888,12 @@ void TestDuplicates::aScanStoppedPartWayKeepsWhatItHadAlreadyConfirmed()
     // confirmed, and on the task's own thread, so the stop is in place before it
     // looks at the next bucket. A test that slept for 200 ms would stop somewhere
     // different on every machine.
-    connect(
-        task, &FindDuplicatesTask::groupFound, task,
-        [task](const DuplicateGroup&, int) { task->requestCancel(); }, Qt::DirectConnection);
+    //
+    // Through the hook rather than the signal, because since MOLE-211 the signal
+    // is drained on the drawing thread and would arrive after the scan of six
+    // small files had already ended -- which is the whole point of the drain, and
+    // exactly why the hook exists.
+    task->setOnGroupConfirmed([task](const DuplicateGroup&, int) { task->requestCancel(); });
 
     m_tasks->submit(task);
     QVERIFY(waitFor([task] { return task->isFinished(); }, 30000));
@@ -889,6 +903,107 @@ void TestDuplicates::aScanStoppedPartWayKeepsWhatItHadAlreadyConfirmed()
     // stopping does not make that less true -- it only means there may be more.
     QCOMPARE(task->groups().size(), 1);
     QCOMPARE(task->groups().first().files.size(), 2);
+}
+
+void TestDuplicates::aBurstOfConfirmationsIsBoundedByTheDrainAndNotByTheGroupCount()
+{
+    // Two hundred groups, each at a size of its own, so the last stage settles two
+    // hundred buckets and confirms two hundred times as fast as it can read them.
+    // Before MOLE-211 that was two hundred queued events into the window, from a
+    // worker thread, with nothing bounding how many could arrive in a frame --
+    // a second unthrottled channel out of a task whose own header explains why
+    // there is a box.
+    const int wanted = 200;
+    for (int i = 0; i < wanted; ++i) {
+        const QByteArray body(1024 + i * 8, static_cast<char>('a' + i % 26));
+        QVERIFY(m_tree->writeFile(QStringLiteral("pile/%1/one.bin").arg(i), body));
+        QVERIFY(m_tree->writeFile(QStringLiteral("pile/%1/two.bin").arg(i), body));
+    }
+
+    auto* task
+        = new FindDuplicatesTask(m_vfs.get(), { m_tree->rootUri() }, std::make_unique<SameContentStrategy>());
+    task->setMinimumSize(1);
+
+    int emissions = 0;
+    QList<qint64> mirrored;
+    QSet<QString> arrivedTwice;
+    QSet<QString> seen;
+    connect(task, &FindDuplicatesTask::groupsFound, this,
+        [&](const QList<DuplicateGroup>& groups, const QList<int>& positions) {
+            ++emissions;
+            QCOMPARE(groups.size(), positions.size());
+            for (int g = 0; g < groups.size(); ++g) {
+                const QString first = groups.at(g).files.first().uri.toString();
+                if (seen.contains(first))
+                    arrivedTwice.insert(first);
+                seen.insert(first);
+                // Applied in the order they were given, which is what makes a
+                // position in a batch mean anything at all.
+                mirrored.insert(
+                    qBound(0, positions.at(g), static_cast<int>(mirrored.size())), groups.at(g).reclaimable);
+            }
+        });
+
+    m_tasks->submit(task);
+    QVERIFY(waitFor([task] { return task->isFinished(); }, 120000));
+    drainEvents();
+
+    // Everything arrived, once each, and the list built from the batches is the
+    // list the scan ended up with -- ADR-0043's ordering, unchanged.
+    QCOMPARE(seen.size(), wanted);
+    QVERIFY2(arrivedTwice.isEmpty(), "a group was announced twice");
+    QList<qint64> settled;
+    for (const DuplicateGroup& group : task->groups())
+        settled.append(group.reclaimable);
+    QCOMPARE(mirrored, settled);
+
+    // The bound, taken from the task's own elapsed time rather than from a clock
+    // the test reads: at most one event per drain interval, plus the one
+    // flushReports() hands over at the end. A slower machine gets a longer scan
+    // and a proportionally larger allowance, so this cannot be made flaky by
+    // load -- and it fails outright for anything that emits per group, which
+    // would need two hundred.
+    const qint64 allowed = task->elapsedMs() / Task::kDrainIntervalMs + 2;
+    QVERIFY2(emissions >= 1, "nothing was announced at all");
+    QVERIFY2(emissions <= allowed,
+        qPrintable(QStringLiteral("%1 emissions for %2 groups in %3 ms allows at most %4")
+                       .arg(emissions)
+                       .arg(wanted)
+                       .arg(task->elapsedMs())
+                       .arg(allowed)));
+}
+
+void TestDuplicates::aGroupReachesTheWindowWhileTheScanIsStillStandingInConfirm()
+{
+    // A drain is a bound, not a delay: the one group of a quiet scan must not wait
+    // for the interval to close or for the walk to end.
+    //
+    // Proved by the data rather than by a clock. The scan is held inside confirm()
+    // -- on its own thread, through the hook that runs there -- until the group has
+    // been received on this one. If the group only arrived at the end of the scan,
+    // the scan could not end, and the wait times out instead.
+    const QByteArray same(4096, 'a');
+    QVERIFY(m_tree->writeFile(QStringLiteral("one.bin"), same));
+    QVERIFY(m_tree->writeFile(QStringLiteral("deep/two.bin"), same));
+
+    auto* task
+        = new FindDuplicatesTask(m_vfs.get(), { m_tree->rootUri() }, std::make_unique<SameContentStrategy>());
+    task->setMinimumSize(1);
+
+    QSemaphore arrived;
+    std::atomic<bool> arrivedBeforeTheScanMovedOn { false };
+    connect(task, &FindDuplicatesTask::groupsFound, this,
+        [&arrived](const QList<DuplicateGroup>&, const QList<int>&) { arrived.release(); });
+    task->setOnGroupConfirmed([&arrived, &arrivedBeforeTheScanMovedOn](const DuplicateGroup&, int) {
+        arrivedBeforeTheScanMovedOn = arrived.tryAcquire(1, 10000);
+    });
+
+    m_tasks->submit(task);
+    QVERIFY(waitFor([task] { return task->isFinished(); }, 30000));
+
+    QVERIFY2(arrivedBeforeTheScanMovedOn.load(),
+        "the group did not reach the window until the scan had finished with it");
+    QCOMPARE(task->groups().size(), 1);
 }
 
 MOLE_TEST_MAIN(TestDuplicates)

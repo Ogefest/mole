@@ -186,17 +186,25 @@ void DuplicatesController::scan()
     m_task = task;
     setBusy(true);
 
-    // One group at a time, as the scan confirms it, in the place the task worked
-    // out for it -- so the list is sorted largest-first at every instant rather
-    // than only once the walk has finished. See ADR-0043.
-    connect(
-        task, &FindDuplicatesTask::groupFound, this, [this, task](const DuplicateGroup& group, int position) {
+    // Groups as the scan confirms them, each in the place the task worked out for
+    // it -- so the list is sorted largest-first at every instant rather than only
+    // once the walk has finished. See ADR-0043.
+    //
+    // In whatever batches the task's drain hands over, which is what bounds how
+    // many events a burst of confirmations can put in front of the window. The
+    // positions are applied in the order they were given: each is where its group
+    // belongs in a list that already holds the ones before it.
+    connect(task, &FindDuplicatesTask::groupsFound, this,
+        [this, task](const QList<DuplicateGroup>& groups, const QList<int>& positions) {
             if (m_task != task)
                 return;
-            // An insertion, announced as one. The scalar properties -- the count,
-            // the summary -- are read again off resultsChanged and cost nothing;
-            // what used to cost was that the list was read again with them.
-            m_groups->insertGroup(group, position);
+            for (int i = 0; i < groups.size() && i < positions.size(); ++i) {
+                // An insertion, announced as one. The scalar properties -- the
+                // count, the summary -- are read again off resultsChanged and
+                // cost nothing; what used to cost was that the list was read
+                // again with them.
+                m_groups->insertGroup(groups.at(i), positions.at(i));
+            }
             emit resultsChanged();
         });
     connect(task, &Task::statusTextChanged, this, [this, task] {

@@ -133,6 +133,12 @@ public:
     /// Called by TaskManager on a pool thread. Not part of the public API.
     void execute();
 
+    /// The shortest gap between two updates handed to the drawing thread, in
+    /// milliseconds. Ten a second is more than anybody reads and few enough that
+    /// the thread has time left to draw; the figure matches the one
+    /// setBytesDone() has always used for the same reason.
+    static constexpr qint64 kDrainIntervalMs = 100;
+
 signals:
     void stateChanged();
     void progressChanged();
@@ -173,11 +179,23 @@ protected:
     /// Mark the task failed. The first failure wins.
     void fail(const VfsError& error);
 
+    /// Asks the drawing thread to empty the box, unless it has already been
+    /// asked and not yet got to it. Called from the worker thread, and available
+    /// to a subclass with a box of its own -- see drainPayload().
+    void scheduleDrain();
+    /// Empties whatever the subclass has been collecting, on the drawing thread
+    /// and on the same schedule as the status line and the metrics.
+    ///
+    /// A task with something of its own to announce -- a duplicate group, a
+    /// match, a row -- has the same problem the status line had: one queued
+    /// event per item is bounded by nothing but the speed of the worker, and the
+    /// window never gets a frame in. Filling a box here and emptying it from
+    /// this hook gets the bound for free: at most one event outstanding, at most
+    /// one every kDrainIntervalMs, carrying however much arrived in between.
+    virtual void drainPayload() { }
+
 private:
     void setState(State state);
-    /// Asks the drawing thread to empty the box, unless it has already been
-    /// asked and not yet got to it. Called from the worker thread.
-    void scheduleDrain();
     /// Empties the box if the window is open, and asks to be called again when
     /// it opens if it is not. Runs on the drawing thread.
     void drainReports();
@@ -198,12 +216,6 @@ private:
     /// by multiples rather than by percent. A wrong estimate is worse than none:
     /// it is read once, believed, and remembered.
     static constexpr int kSettledRateSamples = 3;
-
-    /// The shortest gap between two updates handed to the drawing thread, in
-    /// milliseconds. Ten a second is more than anybody reads and few enough that
-    /// the thread has time left to draw; the figure matches the one
-    /// setBytesDone() has always used for the same reason.
-    static constexpr qint64 kDrainIntervalMs = 100;
 
     // --- owned by the UI thread ---
     bool m_background = false;

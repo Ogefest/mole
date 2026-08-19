@@ -368,7 +368,39 @@ void FindDuplicatesTask::confirm(const QList<FileEntry>& files)
     const int position = static_cast<int>(at - m_groups.begin());
     m_groups.insert(at, group);
 
-    emit groupFound(group, position);
+    // Into the box for the window, rather than an event of its own. What is in the
+    // box is carried out by Task's drain: at most one event outstanding, at most
+    // one every kDrainIntervalMs, however fast the scan confirms.
+    //
+    // Before the local hook below and not after it, so an observer that blocks --
+    // and one of them does, to hold the scan still while a test looks -- cannot
+    // stop the window being told about a group that is already confirmed.
+    {
+        const QMutexLocker locked(&m_pendingGuard);
+        m_pendingGroups.append(group);
+        m_pendingPositions.append(position);
+    }
+    scheduleDrain();
+
+    // An observer that has to act now, on this thread, before the next bucket is
+    // looked at. Nothing in the application uses it.
+    if (m_onConfirmed)
+        m_onConfirmed(group, position);
+}
+
+void FindDuplicatesTask::drainPayload()
+{
+    QList<DuplicateGroup> groups;
+    QList<int> positions;
+    {
+        const QMutexLocker locked(&m_pendingGuard);
+        groups.swap(m_pendingGroups);
+        positions.swap(m_pendingPositions);
+    }
+    if (groups.isEmpty())
+        return;
+
+    emit groupsFound(groups, positions);
 }
 
 } // namespace mole

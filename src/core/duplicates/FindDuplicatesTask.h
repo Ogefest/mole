@@ -4,6 +4,7 @@
 #include "core/tasks/Task.h"
 
 #include <QList>
+#include <QMutex>
 
 #include <functional>
 
@@ -73,21 +74,46 @@ public:
     /// ignored a file is a scan whose answer is smaller than the truth.
     int changedDuringTheScan() const { return m_movedUnderfoot; }
 
+    /// Called the instant a group is confirmed, on whichever thread confirmed it,
+    /// once the group is in the box the window is told from.
+    ///
+    /// Not a signal, and deliberately not one: a per-group event out of a worker
+    /// thread is unbounded by construction, which is what groupsFound() exists
+    /// to avoid. This is for an observer that has to act at the moment of
+    /// confirmation and is already on that thread -- a test that stops a scan on
+    /// its own data rather than on a clock. Nothing on the drawing thread may
+    /// use it.
+    void setOnGroupConfirmed(std::function<void(const DuplicateGroup&, int)> hook)
+    {
+        m_onConfirmed = std::move(hook);
+    }
+
 signals:
-    /// One group, confirmed: it has agreed at every stage, so nothing later in
-    /// this scan can withdraw it or add to it.
+    /// The groups confirmed since the window was last told, in the order they
+    /// were confirmed, each with the position it belongs at in groups().
     ///
-    /// Emitted as the scan runs rather than at the end. A row that appears and
-    /// then vanishes is worse than a row that appears late -- it teaches people
-    /// not to believe the list -- so nothing goes out until it is settled.
+    /// Emitted as the scan runs rather than at the end. A group has agreed at
+    /// every stage before it goes out, so nothing later in the scan can withdraw
+    /// it or add to it: a row that appears and then vanishes is worse than a row
+    /// that appears late, because it teaches people not to believe the list.
     ///
-    /// `position` is where it belongs in groups(), which is kept in order as it
-    /// fills. Handed over rather than left to be worked out again, because the
-    /// task has just worked it out.
-    void groupFound(const mole::DuplicateGroup& group, int position);
+    /// One event for however many were confirmed inside Task::kDrainIntervalMs
+    /// rather than one per group. Since ADR-0046 the reads are overlapped, so
+    /// confirmations arrive in bursts from a scan that used to produce them one
+    /// slow read at a time, and nothing bounded how many events a burst could
+    /// put in front of the window. See MOLE-211; the box it travels in is the
+    /// one the status line has used since MOLE-188.
+    ///
+    /// ADR-0043 is untouched: 100 ms is not "when the walk ends", nothing partial
+    /// is announced, and a group still arrives in its place. `positions` are
+    /// meant to be applied in the order they are given -- each is where its group
+    /// belongs in a list that already has the ones before it in.
+    void groupsFound(const QList<mole::DuplicateGroup>& groups, const QList<int>& positions);
 
 protected:
     void run() override;
+    /// Hands over whatever has been confirmed since the last time, as one event.
+    void drainPayload() override;
 
 private:
     /// What one file came back with from a keying stage.
@@ -133,11 +159,18 @@ private:
     QList<DuplicateGroup> m_groups;
     qint64 m_reclaimable = 0;
     int m_movedUnderfoot = 0;
+    std::function<void(const DuplicateGroup&, int)> m_onConfirmed;
+
+    // --- the box: filled by whichever thread confirms, emptied by the drawing
+    // one on Task's drain. Same mechanism as the status line, same bound.
+    mutable QMutex m_pendingGuard;
+    QList<DuplicateGroup> m_pendingGroups;
+    QList<int> m_pendingPositions;
 };
 
 } // namespace mole
 
-// Crosses a thread boundary one at a time now as well as in a list: a group is
-// confirmed on a pool thread and the tab that shows it lives on the other one.
+// Crosses a thread boundary in a list: groups are confirmed on a pool thread and
+// the tab that shows them lives on the other one.
 Q_DECLARE_METATYPE(mole::DuplicateGroup)
 Q_DECLARE_METATYPE(QList<mole::DuplicateGroup>)
