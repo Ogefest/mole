@@ -130,6 +130,12 @@ mole-control <command>
                                       gets its old one back. Never the first one,
                                       which every transfer in the tier uses, and
                                       never this channel's own
+  many-files <count>                  a directory with that many empty entries
+                                      under the SFTP root, and its path printed.
+                                      Made here because a hundred thousand
+                                      creations over SFTP is a hundred thousand
+                                      round trips. `no-files` removes it.
+  no-files                            and takes it away again
   room <sftp|s3|webdav|ftp>           bytes free where that service keeps its
                                       files, so a test can decline to fill a
                                       disk it would take the machine down with
@@ -321,6 +327,39 @@ hostkey)
     esac
     ;;
 
+many-files)
+    # A directory big enough to be a question rather than a formality.
+    #
+    # Whether a listing paginates, what it costs in memory and what the progress
+    # reading does with a hundred thousand entries are all properties of the
+    # backend -- but making the directory through the backend would be a hundred
+    # thousand round trips, which is a test nobody would wait for. The machine
+    # makes it in one command instead, and the test does the part that is
+    # actually under examination.
+    count="${2:-100000}"
+    case "$count" in
+    ''|*[!0-9]*) refuse "many-files takes a count" ;;
+    esac
+    home=$(getent passwd "$(stat -c %U "$DATA")" | cut -d: -f6)
+    dir="$home/sftp/mole-many-files"
+    rm -rf "$dir"
+    mkdir -p "$dir"
+    # In batches, and with the shell doing the naming: one touch per file would
+    # be a hundred thousand processes.
+    seq 1 "$count" | sed "s|^|$dir/entry-|; s|\$|.txt|" | xargs -r -n 2000 touch
+    chown -R "$(stat -c %U "$DATA")" "$dir"
+    made=$(find "$dir" -maxdepth 1 -type f | wc -l)
+    [ "$made" = "$count" ] || refuse "asked for $count entries and made $made"
+    say "$dir has $made entries"
+    printf '%s\n' "$dir"
+    ;;
+
+no-files)
+    home=$(getent passwd "$(stat -c %U "$DATA")" | cut -d: -f6)
+    rm -rf "$home/sftp/mole-many-files"
+    say "the many-files directory is gone"
+    ;;
+
 room)
     # The machine is the only thing that knows its own layout, and a suite that
     # asked for ten gigabytes on the four-gigabyte disk would take every other
@@ -358,6 +397,8 @@ restore)
     # nobody asked for.
     rm -f /run/mole-rate
     rm -f "$BALLAST"
+    home=$(getent passwd "$(stat -c %U "$DATA")" | cut -d: -f6)
+    rm -rf "$home/sftp/mole-many-files"
     if [ -f /etc/ssh/rekey/ssh_host_ed25519_key.original ]; then
         mv /etc/ssh/rekey/ssh_host_ed25519_key.original /etc/ssh/rekey/ssh_host_ed25519_key
         mv /etc/ssh/rekey/ssh_host_ed25519_key.original.pub /etc/ssh/rekey/ssh_host_ed25519_key.pub

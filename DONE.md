@@ -9,6 +9,43 @@ wrong.
 
 ---
 
+## The heavy tier never met the sizes where a backend changes its mind
+
+**Asked for:** MOLE-113 — three sizes and one shape decide which code path a backend takes, and
+nothing exercised any of them. The tier moved gigabytes and every one of those gigabytes sat
+comfortably inside a single strategy.
+
+**The figures are the constants the backends branch on, not numbers somebody liked.**
+`SftpFileSystem::kFetchWholeBelow` (64 MiB), `SftpFileSystem::kSpanBytes` (256 MiB) and
+`S3FileSystem::kPartBytes` (64 MiB), each taken one byte under and one byte over, plus the five-gibibyte
+ceiling that multipart exists to remove. If one of those constants moves, these rows are where it
+should be noticed.
+
+Seven rows, and each verifies **content rather than length** — the failure being looked for is a
+boundary that is off by one, which leaves a file of exactly the right size with the wrong bytes in
+it. The size the server reports is checked first and separately, because "the object is short" and
+"the object is wrong" are different findings and only one of them points at the stitching.
+
+**A hundred thousand entries in one directory got its own case, and its own way of being set up.**
+Making that directory *through* the backend would be a hundred thousand round trips — an hour of
+waiting to arrange a test about something else. `mole-control many-files` makes it on the machine in
+about eight seconds, which is what a control channel is for. What is under examination is the
+listing, and that still goes through the backend: 100,000 entries in 18.5 seconds, 96 MiB of resident
+growth, and — the part that matters — **not one entry short**. A backend that paginated and stopped
+after its first page would answer perfectly happily with a thousand, and a listing that is quietly
+short is how a sync decides a file is missing and a delete decides it is gone.
+
+**The machine had nineteen gigabytes of our own litter on it.** Twenty-five files with names from
+these very suites — `mole-cut-`, `mole-heavy-`, `mole-interference-`, one `.mole-partial` — left by
+runs that were killed rather than finished, including the one this session aborted under
+ThreadSanitizer. The five-gibibyte case had nowhere to go until they were gone. Nothing here fixes
+that recurring; it is worth a task of its own, because a tier that fills the disk with its own
+leavings starts skipping for a reason that is not true.
+
+All seven rows pass, the five-gibibyte one at 27.9 MiB/s in about three minutes each way. Every row
+skips with the reason when either end lacks the room, which is the difference between a
+tier that reports honestly and one that takes a test machine down with it.
+
 ## The concurrency suites were not clean under ThreadSanitizer, and the one real race was hiding a wrong number
 
 **Asked for:** MOLE-126 — `make tsan` clean, or every remaining warning carrying a suppression entry

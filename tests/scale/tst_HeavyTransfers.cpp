@@ -5,6 +5,7 @@
 #include "scale/HeavyPayload.h"
 #include "support/MoleTestMain.h"
 #include "support/TestSupport.h"
+#include "support/TestbedControl.h"
 
 #include "core/tasks/TaskManager.h"
 #include "core/tasks/TransferTask.h"
@@ -193,11 +194,21 @@ private slots:
     void aLargeFileMakesTheRoundTrip_data();
     void aLargeFileMakesTheRoundTrip();
 
+    void aStrategyBoundaryArrivesWhole_data();
+    void aStrategyBoundaryArrivesWhole();
+    void aDirectoryOfAHundredThousandEntriesCanBeListed();
+
 private:
     /// The payload every case uses, in bytes.
     qint64 payloadBytes() const { return m_payloadBytes; }
     /// Writes the source file and returns its uri, or fails the test.
     VfsUri makeSource(const QString& name);
+    /// The same at a size of its own, for the cases that are about a threshold
+    /// rather than about the tier's payload.
+    VfsUri makeSource(const QString& name, qint64 bytes);
+    /// Finds the target the environment set up under that name, or a default-
+    /// constructed one when it is not configured.
+    Target targetNamed(const QString& name) const;
     void record(const QString& scenario, qint64 bytes, qint64 milliseconds, const ResourceWatch& watch);
 
     qint64 m_payloadBytes = 0;
@@ -232,6 +243,11 @@ void TestHeavyTransfers::cleanup()
 
 VfsUri TestHeavyTransfers::makeSource(const QString& name)
 {
+    return makeSource(name, m_payloadBytes);
+}
+
+VfsUri TestHeavyTransfers::makeSource(const QString& name, qint64 bytes)
+{
     const QString path = QDir(m_dir->path()).filePath(name);
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly)) {
@@ -240,12 +256,21 @@ VfsUri TestHeavyTransfers::makeSource(const QString& name)
     }
 
     QString problem;
-    if (!HeavyPayload::writeTo(file, m_payloadBytes, &problem)) {
+    if (!HeavyPayload::writeTo(file, bytes, &problem)) {
         qWarning("%s", qPrintable(problem));
         return {};
     }
     file.close();
     return VfsUri::fromLocalPath(path);
+}
+
+Target TestHeavyTransfers::targetNamed(const QString& name) const
+{
+    for (const Target& candidate : targetsFromEnvironment()) {
+        if (candidate.name == name)
+            return candidate;
+    }
+    return {};
 }
 
 void TestHeavyTransfers::record(
@@ -316,6 +341,185 @@ void TestHeavyTransfers::aLargeLocalCopyKeepsItsResources()
                        .arg(ResourceWatch::openDescriptors())));
 }
 
+/// A hundred thousand entries in one directory.
+///
+/// Three questions at once, and none of them shows up at any size this tier used
+/// to use: what a listing of that size costs in memory, whether anything
+/// paginates, and what the reading that drives the progress figure does when it
+/// is handed a list that long.
+///
+/// The directory is made by the machine rather than through the backend. Making
+/// it through the backend would be a hundred thousand round trips -- eight
+/// seconds of work turned into an hour of waiting, to set up a test about
+/// something else entirely. What is under examination is the *listing*, and that
+/// is done here.
+void TestHeavyTransfers::aDirectoryOfAHundredThousandEntriesCanBeListed()
+{
+    const Target target = targetNamed(QStringLiteral("sftp"));
+    if (!target.fileSystem)
+        QSKIP("no sftp in the environment");
+    if (!TestbedControl::isAvailable()) {
+        QSKIP("No control channel. Making a directory this size through the backend would be a "
+              "hundred thousand round trips -- scripts/testbed/control.sh install puts one there.");
+    }
+
+    const qint64 wanted = envBytes("MOLE_TEST_HEAVY_ENTRIES", 100000);
+    const QString answer
+        = TestbedControl::run({ QStringLiteral("many-files"), QString::number(wanted) }, 600000);
+    QVERIFY2(answer.contains(QStringLiteral("entries")), qPrintable(answer));
+
+    // The last line is the path; the lines above it are the machine saying what
+    // it did, which is what every command here does.
+    const QString remotePath = answer.split(QLatin1Char('\n')).last().trimmed();
+    QVERIFY2(remotePath.startsWith(QLatin1Char('/')), qPrintable(answer));
+
+    const VfsUri directory(QStringLiteral("sftp"), QString(), remotePath);
+    QElapsedTimer clock;
+    ResourceWatch watch;
+    clock.start();
+    const Result<FileEntryList> listed = target.fileSystem->list(directory, CancelToken());
+    const qint64 elapsed = clock.elapsed();
+    watch.stop();
+
+    QVERIFY2(listed.ok(), qPrintable(listed.error().message));
+
+    // Every one of them. A backend that paginates and stops after the first page
+    // answers perfectly happily with a thousand, and a listing that is quietly
+    // short is how a sync decides a file is missing and a delete decides it is
+    // gone.
+    QCOMPARE(listed.value().size(), static_cast<int>(wanted));
+
+    record(QStringLiteral("sftp, %1 entries").arg(wanted), 0, elapsed, watch);
+
+    // Room to hold them once, not several times over. A hundred thousand entries
+    // is tens of megabytes of names and dates however it is done; half a gibibyte
+    // is the line between holding the answer and holding copies of it.
+    QVERIFY2(watch.peakResidentGrowthBytes() < 512LL * 1024 * 1024,
+        qPrintable(QStringLiteral("listing %1 entries grew the process by %2")
+                       .arg(wanted)
+                       .arg(QLocale().formattedDataSize(watch.peakResidentGrowthBytes()))));
+
+    TestbedControl::run({ QStringLiteral("no-files") }, 600000);
+}
+
+void TestHeavyTransfers::aStrategyBoundaryArrivesWhole_data()
+{
+    QTest::addColumn<QString>("backend");
+    QTest::addColumn<qint64>("bytes");
+    QTest::addColumn<QString>("why");
+
+    constexpr qint64 kMiB = 1024LL * 1024;
+    constexpr qint64 kGiB = 1024LL * kMiB;
+
+    // One byte either side of every size where a backend stops doing one thing
+    // and starts doing another. A size that sits comfortably inside a strategy
+    // proves nothing about the code that decides between them, and the tier's
+    // own payload sat comfortably inside all of these.
+    //
+    // The figures are not invented here. They are the constants the backends
+    // branch on -- SftpFileSystem's kFetchWholeBelow and kSpanBytes, and
+    // S3FileSystem's kPartBytes -- and if one of those moves, these rows are
+    // where it should be noticed.
+
+    // SFTP fetches a file below this into a temporary file and streams anything
+    // above it. Two entirely different paths, and only one of them is what the
+    // scratch-space assertions in this tier are about.
+    QTest::newRow("sftp, just under the fetch-whole line")
+        << QStringLiteral("sftp") << 64 * kMiB - 1 << QStringLiteral("fetched whole");
+    QTest::newRow("sftp, just over the fetch-whole line")
+        << QStringLiteral("sftp") << 64 * kMiB + 1 << QStringLiteral("streamed");
+
+    // A span is one connection's worth. Past it a read is stitched together from
+    // more than one, which is where an off-by-one leaves a seam.
+    QTest::newRow("sftp, one span") << QStringLiteral("sftp") << 256 * kMiB - 1
+                                    << QStringLiteral("a single span");
+    QTest::newRow("sftp, two spans") << QStringLiteral("sftp") << 256 * kMiB + 1
+                                     << QStringLiteral("stitched from two spans");
+
+    // S3 sends anything up to a part in one PUT and anything above it as a
+    // multipart upload, which is a different request, a different signature and
+    // a different way of going wrong.
+    QTest::newRow("s3, a single put") << QStringLiteral("s3") << 64 * kMiB - 1 << QStringLiteral("one PUT");
+    QTest::newRow("s3, a multipart upload")
+        << QStringLiteral("s3") << 64 * kMiB + 1 << QStringLiteral("multipart");
+
+    // And the ceiling multipart exists to remove. S3 refuses a single PUT above
+    // five gibibytes, so a backend that never switched would simply be unable to
+    // store a file this size -- and it would find that out at the far end of a
+    // five-gigabyte upload.
+    QTest::newRow("s3, past the single-put ceiling")
+        << QStringLiteral("s3") << 5 * kGiB + 1 << QStringLiteral("multipart past the PUT limit");
+}
+
+void TestHeavyTransfers::aStrategyBoundaryArrivesWhole()
+{
+    QFETCH(QString, backend);
+    QFETCH(qint64, bytes);
+    QFETCH(QString, why);
+
+    const Target target = targetNamed(backend);
+    if (!target.fileSystem)
+        QSKIP(qPrintable(QStringLiteral("no %1 in the environment").arg(backend)));
+
+    // Room at both ends, said out loud rather than found out by filling a disk.
+    // The far end needs the file; this end needs it twice, once as the source
+    // and once as what comes back.
+    if (target.capacity > 0 && target.capacity < bytes + 512LL * 1024 * 1024) {
+        QSKIP(qPrintable(QStringLiteral("%1 has room for %2 and this needs %3")
+                             .arg(backend, QLocale().formattedDataSize(target.capacity),
+                                 QLocale().formattedDataSize(bytes))));
+    }
+    const qint64 here = QStorageInfo(m_dir->path()).bytesAvailable();
+    if (here < 2 * bytes + 512LL * 1024 * 1024) {
+        QSKIP(qPrintable(QStringLiteral("this machine has %1 free and this needs twice %2")
+                             .arg(QLocale().formattedDataSize(here), QLocale().formattedDataSize(bytes))));
+    }
+
+    const QString name
+        = QStringLiteral("mole-boundary-%1-%2.bin").arg(QCoreApplication::applicationPid()).arg(bytes);
+    const VfsUri source = makeSource(name, bytes);
+    QVERIFY(source.isValid());
+    const VfsUri landed = target.directory.child(name);
+
+    QElapsedTimer clock;
+    clock.start();
+    {
+        TransferTask::Request request;
+        request.sourceFileSystem = m_disk;
+        request.targetFileSystem = target.fileSystem;
+        request.sources = { source };
+        request.targetDirectory = target.directory;
+        request.onConflict = TransferTask::Conflict::Overwrite;
+
+        auto* task = new TransferTask(request);
+        m_tasks->submit(task);
+        QVERIFY2(waitForTask(task, 7200000),
+            qPrintable(QStringLiteral("the upload of %1 never finished").arg(why)));
+        QVERIFY2(task->failures().isEmpty(), qPrintable(task->failures().join(QLatin1Char(' '))));
+    }
+
+    // The size the server reports, before anything is read back. A backend that
+    // switched strategy and lost a part leaves a shorter object, and finding
+    // that out here says something different from finding it out byte by byte.
+    const Result<FileEntry> onServer = target.fileSystem->stat(landed);
+    QVERIFY2(onServer.ok(), qPrintable(onServer.error().message));
+    QCOMPARE(onServer.value().size, bytes);
+
+    // Content, not length. A boundary that is off by one leaves a file of
+    // exactly the right size with the wrong bytes in it -- which is the whole
+    // reason this tier verifies rather than measures.
+    {
+        const Result<std::unique_ptr<QIODevice>> back = target.fileSystem->openRead(landed, bytes);
+        QVERIFY2(back.ok(), qPrintable(back.error().message));
+        QString problem;
+        QVERIFY2(HeavyPayload::verify(*back.value(), bytes, &problem), qPrintable(problem));
+    }
+    record(QStringLiteral("%1, %2").arg(backend, why), bytes, clock.elapsed(), ResourceWatch());
+
+    target.fileSystem->remove(landed, false);
+    QFile::remove(source.toLocalPath());
+}
+
 void TestHeavyTransfers::aFileAcrossAThirtyTwoBitBoundaryArrivesWhole_data()
 {
     QTest::addColumn<qint64>("bytes");
@@ -343,10 +547,7 @@ void TestHeavyTransfers::aFileAcrossAThirtyTwoBitBoundaryArrivesWhole()
                              .arg(QLocale().formattedDataSize(needed), QLocale().formattedDataSize(room))));
     }
 
-    const qint64 previous = m_payloadBytes;
-    m_payloadBytes = bytes;
-    const VfsUri source = makeSource(QStringLiteral("boundary.bin"));
-    m_payloadBytes = previous;
+    const VfsUri source = makeSource(QStringLiteral("boundary.bin"), bytes);
     QVERIFY(source.isValid());
     QVERIFY(QDir(m_dir->path()).mkpath(QStringLiteral("dst")));
 

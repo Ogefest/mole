@@ -166,6 +166,14 @@ fill the small disk to a chosen percentage and empty it, and apply or remove
 `tc netem`. Every command prints what it did, because a test that fails after
 interfering has to be able to say what it interfered with.
 
+`many-files <count>` is the odd one out: it makes a fixture rather than causing a
+fault. A directory of a hundred thousand entries is a real question for a
+listing — what it costs in memory, whether anything paginates, what the progress
+reading does with it — and making one *through* the backend would be a hundred
+thousand round trips. The machine does it in about eight seconds instead, and the
+test does the part actually under examination. `no-files` takes it away, and so
+does `restore`.
+
 From C++ it is `TestbedControl` in `tests/support`, and **it is absent by
 default**: nothing reaches for it unless `MOLE_TEST_CONTROL` names the command,
 so a suite on somebody's own machine cannot start stopping services on anything.
