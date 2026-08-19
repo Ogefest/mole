@@ -13,7 +13,7 @@ picture is here, something checks it.
 |---|---|
 | [Browsing](browsing.md) | panes, tabs, the keyboard, folder sizes, git state |
 | [Looking inside files](previews.md) | text, code, Markdown, tables, PDFs, HTML, images, databases |
-| [Finding things](searching.md) | searching a tree, the index, doing something with the results |
+| [Finding things](searching.md) | searching a tree, the indexes you have, doing something with the results |
 | [Operations](operations.md) | compressing, dragging files in and out, renaming in bulk, the terminal, analysis, duplicates, sync, alerts |
 | [Network drives](drives.md) | SFTP, FTP, S3, WebDAV, and the passphrase that opens them |
 | [One key for everything](palette.md) | the command palette |

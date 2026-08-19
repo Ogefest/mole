@@ -66,7 +66,10 @@ being added on top of it.
   archives it meets; the contents themselves are deliberately never indexed. A
   folder with an indexed subfolder is answered by both at once, and every row
   says whether it is what is on disk now or what a scan remembered. Re-scans keep
-  what has not changed, and a folder can be put on a nightly clock.
+  what has not changed, and a folder can be put on a clock at any interval. The
+  *Indexes* tab lists every index there is — how old each one is, what kind of
+  scan built it, whether anything is keeping it fresh — and is where one is
+  rescanned, stopped or thrown away.
 - **Sessions.** Open tabs, their folders, their layout and the window's own
   size come back after a restart. Each tab kind decides what it remembers,
   plugins included.

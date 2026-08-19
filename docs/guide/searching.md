@@ -51,8 +51,8 @@ status line accounts for both halves until it can say *every row current*.
 ![A folder answered by both halves](images/12c-search-mixed.png)
 
 Nothing anywhere decides an index is "too old" to use. A folder that changes often is one
-you index often, or do not index at all and search directly — which is why the schedule
-below is the control that matters.
+you index often, or do not index at all and search directly — which is why the interval below
+is the control that matters, and why every index says its own age in the *Indexes* tab.
 
 ## What you know about the file
 
@@ -145,44 +145,56 @@ what has actually been recorded for the folder you are searching — a plugin th
 new fact gets a field without anybody editing the form, and a fact nothing in scope carries
 is not offered.
 
-## Indexing, and keeping it fresh
+## Indexing: making one, keeping it fresh, and looking after it
 
-*Scan a folder…* sits beside the search, because it is what makes any of the above mean
-anything. It walks the tree once in the background and records it; searching that folder
-afterwards never touches the disk. Two switches, both with their cost stated: recording
-what the files say about themselves is one read per file, and listing what is inside
-archives is one read for a zip and a whole pass for a `tar.gz`.
+An index is what makes everything above mean anything: it walks a tree once in the
+background and records it, and searching that folder afterwards never touches the disk.
 
-A re-scan **keeps what has not changed**. A folder whose modification time has not moved
-has the same contents, so its subtree is carried across rather than walked again — which on
-the trees this exists for is the difference between minutes and hours to learn that nothing
-much has moved. Nothing is ever carried forward that the scan did not just see in its
+**There are two ways to the same dialog**, and they are the same operation. In a search tab,
+*Scan a folder…* opens it empty. From a listing, Tools ▸ *Index this folder* (or the command
+palette) opens it on the folder you are looking at, already filled in — it does not start a
+scan behind your back, because what a scan is asked for is worth a decision rather than a
+default nobody sees.
+
+### What a scan is asked for
+
+Four choices, each with its cost stated rather than implied:
+
+| | |
+|---|---|
+| *Also record what each file says about itself* | one read per file. This is what makes `image.camera` and `media.duration` answerable at all — see above. Off by default: the cost is bounded per file and unbounded in aggregate, and a hundred thousand photographs is a hundred thousand reads. |
+| *Also list what is inside archives* | one read for a zip's own listing, a whole pass for a `tar.gz`. On a drive that is not local, listing one means fetching it, so large ones are left alone. |
+| *Keep it up to date* | an interval, from every hour through to every month, and *never* to take a folder off the clock again. |
+| *Full rescan* | keeps nothing and walks everything, for when you suspect the index. |
+
+A re-scan otherwise **keeps what has not changed**. A folder whose modification time has not
+moved has the same contents, so its subtree is carried across rather than walked again —
+which on the trees this exists for is the difference between minutes and hours to learn that
+nothing much has moved. Nothing is ever carried forward that the scan did not just see in its
 parent's listing, which is why a folder that has been deleted disappears rather than
-lingering. A drive that does not date its folders gives the scan nothing to work from, so
-it walks the lot and says so, and *Full rescan* walks everything and keeps nothing — which
-is what to reach for when you suspect the index.
+lingering. A drive that does not date its folders gives the scan nothing to work from, so it
+walks the lot and says so.
 
-*Keep it up to date* puts the folder on the same clock every other repeating job in Mole
-uses — every hour through to every month, and *never* to take it off again. It survives a
-restart and catches up on a run missed while the machine was off, and choosing a different
-interval for a folder that is already on one changes it.
-
-**The index can be deleted without losing anything but time.** It holds nothing that is not
-already in your files; throwing it away costs a rescan and nothing else.
+An interval puts the folder on the same clock every other repeating job in Mole uses: it
+survives a restart and catches up on a run missed while the machine was off, and a nightly
+run costs a walk of what moved rather than of everything. Choosing a different interval for a
+folder that is already on one changes it, and a repeat **repeats the scan that created it** —
+a tree indexed with metadata is not quietly re-indexed without it a week later.
 
 ### The indexes you have
 
-An index is a claim about a tree, and a claim goes out of date. The *Indexes* tab lists every
-one you have, stalest first, so how much any search can be trusted is something you can look
-at rather than guess:
+An index is a claim about a tree, and a claim goes out of date. The *Indexes* tab — Tools ▸
+*Indexes* — lists every one you have, stalest first, so how much any search can be trusted is
+something you can look at rather than guess.
 
 ![The list of indexes](images/26-indexes.png)
 
 Each row says what the index covers, how many entries are in it, **how long ago it was
-scanned**, **what kind of scan built it** — with what the files say about themselves or names
-only, archives listed or not — and **whether anything is keeping it fresh**. A tree indexed
-before Mole recorded that last fact says *not known* rather than claiming to have none; one
-rescan settles it.
+scanned**, **what kind of scan built it** — *names only* or *with what the files say about
+themselves*, the same words the coverage sentence above the search form uses, plus whether
+archives were listed — and **whether anything is keeping it fresh**. A tree indexed before
+Mole recorded that middle fact says *not known* rather than claiming to have none; one rescan
+settles it.
 
 A row that is on no clock says so in its own colour, because that is the row's real news: it
 is as old as its last scan and no newer. *Automation* is the other half of the answer and a
@@ -190,16 +202,18 @@ different question — it lists what runs by itself, so an index with no rule do
 there at all.
 
 Each row is also where an index is looked after. *Rescan* walks it again, repeating the kind
-of scan that built it rather than a poorer one; *Full rescan* keeps nothing, for when you
-suspect the index. *Repeat* is the same picker the index dialog has, so putting a tree on a
-clock or taking it off can be done from either. And *Forget* deletes the index: no files are
-touched — an index holds nothing that is not already in them — so it costs a rescan and no
-data at all, which is why it asks first rather than because anything is at risk.
+of scan that built it rather than a poorer one; *Full rescan* keeps nothing. *Repeat* is the
+same picker the dialog has, so a tree can be put on a clock or taken off from either place.
+
+**And an index can be thrown away.** *Forget* deletes it, along with any schedule that was
+keeping it up to date. No files are touched — an index holds nothing that is not already in
+them — so it costs a rescan and no data at all. It asks first because the rescan of a large
+tree is not quick, not because anything is at risk.
 
 A scan that is running takes its row over and offers to stop it, with what it has covered so
-far. That matters most for a scheduled one: a scan starting by itself while you are working
-is otherwise a slowdown with no explanation anywhere. Stopping leaves the index exactly as it
-was — the previous contents stay searchable in full and the row's date does not move.
+far. That matters most for a scheduled one: a scan starting by itself while you are working is
+otherwise a slowdown with no explanation anywhere. Stopping leaves the index exactly as it was
+— the previous contents stay searchable in full and the row's date does not move.
 
 ## Typing the whole thing
 
