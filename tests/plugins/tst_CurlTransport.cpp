@@ -1,9 +1,12 @@
 #include "plugins/network/CurlTransport.h"
 #include "support/MoleTestMain.h"
+#include "support/ScriptedHttpServer.h"
 
+#include <QElapsedTimer>
 #include <QTest>
 
 using namespace mole;
+using namespace mole::test;
 
 /// The transport's judgement of a finished transfer, offline.
 ///
@@ -24,6 +27,9 @@ private slots:
     void aTransferThatStopsMovingIsGivenUpOnAfterTheWait();
     void aSlowButLivingTransferSurvives();
     void theWatchCanBeTurnedOff();
+
+    void aTransferThatGoesQuietIsEndedByTheGuardItself();
+    void aCancelTakesEffectAtOnce();
 };
 
 void TestCurlTransport::aCompleteDownloadIsAnOk()
@@ -169,6 +175,90 @@ void TestCurlTransport::theWatchCanBeTurnedOff()
     QCOMPARE(watch.patienceMs(), -1);
     QVERIFY(!watch.hasStalled(0, 0));
     QVERIFY2(!watch.hasStalled(0, 10LL * 365 * 24 * 60 * 60 * 1000), "off has to mean off");
+}
+
+// ---- the loop Mole owns ---------------------------------------------------
+//
+// Against a real socket, because what is being tested is that the transport
+// stops waiting -- and the thing it used to wait on was libcurl's own loop.
+// A server that hangs up is a failure the client is told about; one that goes
+// quiet and stays open tells it nothing, which is the case a guard has to be
+// the answer to.
+
+void TestCurlTransport::aTransferThatGoesQuietIsEndedByTheGuardItself()
+{
+    ScriptedHttpServer server([](const ScriptedHttpServer::Request&) {
+        ScriptedHttpServer::Reply reply;
+        reply.status = 200;
+        reply.body = QByteArray(64 * 1024, 'x');
+        // A quarter of the body, and then nothing at all for half a minute --
+        // far longer than the guard, so the guard is what ends this or nothing
+        // does.
+        reply.goQuietAfter = 16 * 1024;
+        reply.stayQuietMs = 30000;
+        return reply;
+    });
+    QVERIFY2(server.start(), "could not take a port for the scripted server");
+
+    net::TransportOptions options;
+    options.stallSeconds = 2;
+    net::CurlPool pool(std::move(options));
+
+    auto lease = pool.take();
+    QVERIFY(lease);
+    lease.setUrl((server.url() + QStringLiteral("/quiet")).toUtf8());
+
+    QElapsedTimer clock;
+    clock.start();
+    CancelToken nobodyCancelled;
+    const net::Response response = pool.perform(lease, nobodyCancelled);
+    const qint64 took = clock.elapsed();
+
+    // At the guard, not at whatever the operating system eventually notices.
+    QVERIFY2(
+        took < 6000, qPrintable(QStringLiteral("waited %1 ms against a guard of two seconds").arg(took)));
+    QVERIFY2(took >= 2000, qPrintable(QStringLiteral("gave up after %1 ms, inside its own guard").arg(took)));
+
+    // And reported as the timeout it is rather than as a cancellation: one of
+    // those is something somebody did on purpose.
+    QCOMPARE(response.code, CURLE_OPERATION_TIMEDOUT);
+    QVERIFY2(!net::wasCancelled(response), "a stall must not read as a cancellation");
+    const VfsError said = net::errorFor(response, QStringLiteral("Reading"), net::StatusMeaning::Http);
+    QVERIFY2(said.message.contains(QStringLiteral("nothing arrived")), qPrintable(said.message));
+}
+
+void TestCurlTransport::aCancelTakesEffectAtOnce()
+{
+    // The same server, and a token already pulled. Cancellation is felt at the
+    // next turn of the loop rather than whenever libcurl next asks -- so this
+    // comes back in well under the guard, and well under a second.
+    ScriptedHttpServer server([](const ScriptedHttpServer::Request&) {
+        ScriptedHttpServer::Reply reply;
+        reply.status = 200;
+        reply.body = QByteArray(64 * 1024, 'x');
+        reply.goQuietAfter = 16 * 1024;
+        reply.stayQuietMs = 30000;
+        return reply;
+    });
+    QVERIFY2(server.start(), "could not take a port for the scripted server");
+
+    net::TransportOptions options;
+    options.stallSeconds = 30;
+    net::CurlPool pool(std::move(options));
+
+    auto lease = pool.take();
+    QVERIFY(lease);
+    lease.setUrl((server.url() + QStringLiteral("/quiet")).toUtf8());
+
+    CancelToken cancel;
+    cancel.cancel();
+
+    QElapsedTimer clock;
+    clock.start();
+    const net::Response response = pool.perform(lease, cancel);
+    QVERIFY2(clock.elapsed() < 1000,
+        qPrintable(QStringLiteral("a cancelled transfer took %1 ms").arg(clock.elapsed())));
+    QVERIFY2(net::wasCancelled(response), "a cancelled transfer has to read as cancelled");
 }
 
 MOLE_TEST_MAIN(TestCurlTransport)

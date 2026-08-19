@@ -132,9 +132,14 @@ namespace {
     }
 
     /// How long the kernel may go on retransmitting into a link that has gone
-    /// away before the socket is failed, in seconds. A figure somebody chose,
-    /// rather than one inherited from a guard that answers a different question.
+    /// away before the socket is failed, in seconds. A backstop: the transfer is
+    /// over long before this, by the guard's decision.
     constexpr long kSocketPatienceSeconds = 20;
+
+    /// How long one turn of the transfer loop waits for something to happen.
+    /// Short enough that a cancellation is felt at once and a stall is noticed
+    /// within a poll of the figure the guard was given.
+    constexpr int kPollMs = 200;
 
     /// Bounds how long the kernel will go on retransmitting into a link that has
     /// gone away, on the socket libcurl has just opened.
@@ -157,21 +162,17 @@ namespace {
     /// the guard still fires and how long the socket takes to notice is the
     /// platform's business.
     ///
-    /// **Short on purpose, and unrelated to how long the transfer may live.**
-    /// kSocketPatienceSeconds, not the stall wait: with StreamingDownload
-    /// resuming a failed span for as long as its budget lasts, a connection that
-    /// admits defeat quickly is a virtue -- the sooner the socket says so, the
-    /// sooner the next attempt is in flight.
-    ///
-    /// The two were the same figure once, and that was the mistake: one number
-    /// deciding both how patient a connection is and how long a transfer may go
-    /// without progress means a connection giving up is a transfer giving up,
-    /// and a link that comes back after two minutes costs somebody their copy.
-    int boundTheSocketsPatience(void* userData, curl_socket_t handle, curlsocktype purpose)
+    /// **A backstop, and nothing decides on it any more.** It was briefly the
+    /// thing that ended a stalled transfer, because the guard could only ask
+    /// libcurl to stop and libcurl went on waiting. perform() owns the loop now,
+    /// so the guard ends the transfer itself and this is only here to stop a
+    /// socket the kernel is retransmitting into from being held open for the
+    /// fifteen minutes `tcp_retries2` allows -- which matters for the file
+    /// descriptor, not for the answer anybody gets.
+    int boundTheSocketsPatience(void*, curl_socket_t handle, curlsocktype purpose)
     {
         if (purpose != CURLSOCKTYPE_IPCXN)
             return CURL_SOCKOPT_OK;
-        const auto* options = static_cast<const TransportOptions*>(userData);
 #ifdef TCP_USER_TIMEOUT
         if (kSocketPatienceSeconds > 0) {
             const unsigned int ms = static_cast<unsigned int>(kSocketPatienceSeconds) * 1000;
@@ -297,6 +298,16 @@ void CurlPool::Lease::setUrl(const QByteArray& url)
         curl_easy_setopt(m_handle, CURLOPT_URL, m_url.constData());
 }
 
+void CurlPool::Lease::abandon() const
+{
+    if (!m_handle)
+        return;
+    m_pooled = false;
+    // Belt and braces: even if something else pools it, the connection is not
+    // reused for another request.
+    curl_easy_setopt(m_handle, CURLOPT_FORBID_REUSE, 1L);
+}
+
 void CurlPool::Lease::useOwnConnection()
 {
     if (!m_handle)
@@ -368,8 +379,10 @@ void CurlPool::prepare(CURL* handle) const
     curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(handle, CURLOPT_MAXREDIRS, 8L);
     curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT, m_options.connectTimeoutSeconds);
-    curl_easy_setopt(handle, CURLOPT_LOW_SPEED_LIMIT, m_options.stallBytesPerSecond);
-    curl_easy_setopt(handle, CURLOPT_LOW_SPEED_TIME, m_options.stallSeconds);
+    // No CURLOPT_LOW_SPEED_LIMIT/TIME. It was libcurl's own attempt at this
+    // guard and it never reached a verdict on SFTP at all; now that perform()
+    // owns the loop, the guard is consulted there against the handle's counters
+    // and a second one underneath it could only disagree.
     curl_easy_setopt(handle, CURLOPT_SOCKOPTFUNCTION, boundTheSocketsPatience);
     curl_easy_setopt(handle, CURLOPT_SOCKOPTDATA, const_cast<TransportOptions*>(&m_options));
     curl_easy_setopt(handle, CURLOPT_USERAGENT, "Mole/0.1");
@@ -454,7 +467,11 @@ Response CurlPool::perform(const Lease& lease, const CancelToken& cancel, QIODev
     curl_easy_setopt(handle, CURLOPT_HEADERFUNCTION, collectHeader);
     curl_easy_setopt(handle, CURLOPT_HEADERDATA, &response.headers);
     curl_easy_setopt(handle, CURLOPT_NOPROGRESS, 0L);
-    ProgressWatch watch { &cancel, StallWatch(m_options.stallSeconds), {}, false };
+    // The callback stays for what it is good at, which is being called often: a
+    // cancellation noticed there takes effect before the next poll comes round.
+    // It is no longer the only way out, and it no longer decides anything about
+    // stalling -- the loop below does that, against the handle's own counters.
+    ProgressWatch watch { &cancel, StallWatch(0), {}, false };
     watch.since.start();
     curl_easy_setopt(handle, CURLOPT_XFERINFOFUNCTION, reportProgress);
     curl_easy_setopt(handle, CURLOPT_XFERINFODATA, &watch);
@@ -464,7 +481,81 @@ Response CurlPool::perform(const Lease& lease, const CancelToken& cancel, QIODev
 
     QElapsedTimer clock;
     clock.start();
-    response.code = curl_easy_perform(handle);
+
+    // ---- the loop this class owns --------------------------------------
+    //
+    // curl_easy_perform would block here until libcurl decided the transfer was
+    // over, which made every guard Mole has an attempt to influence somebody
+    // else's loop. Driving it here costs a multi handle per transfer and buys
+    // the two decisions that matter: when to stop waiting, and on what grounds.
+    CURLM* multi = curl_multi_init();
+    if (!multi) {
+        response.code = CURLE_FAILED_INIT;
+        response.detail = QStringLiteral("could not start a transfer loop");
+        return response;
+    }
+    curl_multi_add_handle(multi, handle);
+
+    StallWatch stall(m_options.stallSeconds);
+    bool cancelled = false;
+    bool stalled = false;
+    int running = 1;
+
+    while (running > 0) {
+        const CURLMcode stepped = curl_multi_perform(multi, &running);
+        if (stepped != CURLM_OK) {
+            response.detail = QString::fromUtf8(curl_multi_strerror(stepped));
+            break;
+        }
+        if (running == 0)
+            break;
+
+        // A few hundred milliseconds, so cancelling is felt at once and a
+        // stalled transfer is noticed within a poll of the guard's figure.
+        int ready = 0;
+        curl_multi_poll(multi, nullptr, 0, kPollMs, &ready);
+
+        if (cancel.isCancelled()) {
+            cancelled = true;
+            break;
+        }
+
+        // From the handle's own counters rather than from what the callback last
+        // happened to be told. Both directions, because an upload stalls the
+        // same way a download does and neither is this loop's business to know.
+        curl_off_t received = 0;
+        curl_off_t sent = 0;
+        curl_easy_getinfo(handle, CURLINFO_SIZE_DOWNLOAD_T, &received);
+        curl_easy_getinfo(handle, CURLINFO_SIZE_UPLOAD_T, &sent);
+        if (stall.hasStalled(static_cast<qint64>(received) + static_cast<qint64>(sent), clock.elapsed())) {
+            stalled = true;
+            break;
+        }
+    }
+
+    // The result belongs to the message rather than to a return value now.
+    int leftToRead = 0;
+    while (CURLMsg* message = curl_multi_info_read(multi, &leftToRead)) {
+        if (message->msg == CURLMSG_DONE && message->easy_handle == handle)
+            response.code = message->data.result;
+    }
+
+    curl_multi_remove_handle(multi, handle);
+    curl_multi_cleanup(multi);
+
+    if (cancelled || stalled) {
+        // A transfer stopped part way leaves its connection mid-message, and the
+        // next caller must not inherit it.
+        lease.abandon();
+    }
+    if (cancelled) {
+        response.code = CURLE_ABORTED_BY_CALLBACK;
+    } else if (stalled) {
+        response.code = CURLE_OPERATION_TIMEDOUT;
+        response.detail = QStringLiteral("nothing arrived for %1 seconds, so it was given up on")
+                              .arg(stall.patienceMs() / 1000);
+    }
+
     const qint64 elapsed = clock.elapsed();
 
     curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &response.status);
@@ -495,19 +586,13 @@ Response CurlPool::perform(const Lease& lease, const CancelToken& cancel, QIODev
         response.receivedBytes = received;
     }
 
-    if (response.code != CURLE_OK) {
+    // Only when nothing better has been said. The loop above knows things
+    // libcurl's own string does not -- that this was a stall and how long it
+    // waited -- and "Timeout was reached" is the version of that nobody can act
+    // on.
+    if (response.code != CURLE_OK && response.detail.isEmpty()) {
         response.detail = errorBuffer[0] != 0 ? QString::fromUtf8(errorBuffer)
                                               : QString::fromUtf8(curl_easy_strerror(response.code));
-    }
-
-    // A stall is not a cancellation, and libcurl cannot tell them apart: both
-    // arrive as CURLE_ABORTED_BY_CALLBACK because both are this callback saying
-    // stop. Somebody reading a failure needs the difference -- one of them they
-    // did on purpose -- so it is put back here, as the timeout it is.
-    if (watch.stalled && response.code == CURLE_ABORTED_BY_CALLBACK) {
-        response.code = CURLE_OPERATION_TIMEDOUT;
-        response.detail = QStringLiteral("nothing arrived for %1 seconds, so it was given up on")
-                              .arg(watch.stall.patienceMs() / 1000);
     }
 
     qCDebug(networkLog, "#%llu %s in %lld ms: %lld of %lld bytes down, %lld up, status %ld, %s%s%s",

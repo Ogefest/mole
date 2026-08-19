@@ -9,6 +9,49 @@ wrong.
 
 ---
 
+## Mole did not own its transfer loop, so the stall guard was advice
+
+**Asked for:** MOLE-212 — written up while MOLE-108 was being measured, and by the end of that
+ticket the reason was not in doubt. `CurlPool::perform` called `curl_easy_perform`, which blocks
+until libcurl decides the transfer is over, so every mechanism Mole had for bounding a transfer was
+an attempt to influence a loop it did not own. On SFTP all three missed: libcurl's own low-speed
+guard never reached a verdict on that protocol, `StallWatch` returned *stop* and was ignored, and
+what actually ended transfers was `TCP_USER_TIMEOUT` — **the kernel deciding when a Mole transfer
+gives up, and by how much.**
+
+**The important half of the MOLE-108 measurement was that the callback fired.** Twice a second,
+throughout a dead link, with the byte count frozen. libcurl was returning to its own loop and
+consulting Mole all along; being told to stop simply did not end the wait. That is what made this
+a loop-ownership problem rather than a tuning problem.
+
+**So `perform` drives the transfer.** `curl_multi_add_handle`, then `curl_multi_perform` and
+`curl_multi_poll` on a two-hundred-millisecond tick, ending when the handle reports done, when the
+cancel token is pulled, or when the guard says nothing has moved. The result comes from
+`CURLMSG_DONE`. Not a change of engine — `curl_easy_perform` is itself a wrapper over the same
+machinery — and no backend changed. See
+[ADR-0049](docs/adr/0049-the-transport-owns-its-transfer-loop.md).
+
+**The guard reads the handle's own counters** rather than whatever the callback was last told,
+which makes it independent of how often libcurl chooses to call anybody and covers uploads for
+nothing.
+
+**Then, and only then, the old mechanisms came out.** The ticket said to remove them after the live
+suites ran green with the new loop, so that one change is measured at a time — and that order
+mattered: the four backend suites were run against the testbed before the removal and again after.
+`CURLOPT_LOW_SPEED_LIMIT`/`TIME` are gone, and `TCP_USER_TIMEOUT` is a backstop against a held file
+descriptor rather than the thing that decides.
+
+**The guard is testable without a server now.** `ScriptedHttpServer` grew the neighbour of
+`hangUpAfter`: a reply that sends part of a body and then holds the connection open sending nothing.
+That is the harder case, because a connection that hangs up is a failure the client is told about
+and one that goes quiet is not. Against a two-second guard the transfer ends in about two seconds
+and reports a timeout rather than a cancellation; with the token pulled it returns in well under a
+second.
+
+**One detail that would have been expensive to discover:** a handle whose transfer was abandoned
+must not go back to the pool, because its connection is mid-message and the next caller would read
+somebody else's reply. `Lease::abandon()` reaches the outcome `useOwnConnection()` already had.
+
 ## A transfer cut off by a long outage hung instead of giving up
 
 **Asked for:** MOLE-108 — a transfer interrupted by a total outage neither finished nor failed. It

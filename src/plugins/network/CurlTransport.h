@@ -38,14 +38,15 @@ struct TransportOptions
     bool verifyTls = true;
 
     long connectTimeoutSeconds = 20;
-    /// Give up when a transfer moves fewer than this many bytes per second for
-    /// `stallSeconds`. A wall-clock timeout cannot be used instead: a large file
-    /// is slow for legitimate reasons, a dead connection is slow forever.
+    /// Give up on a transfer that has moved nothing for this long. A wall-clock
+    /// timeout cannot be used instead: a large file is slow for legitimate
+    /// reasons, a dead connection is slow forever.
     ///
-    /// `stallBytesPerSecond` is libcurl's own guard and covers HTTP and FTP.
-    /// `stallSeconds` is also what StallWatch counts, because for SFTP libcurl's
-    /// guard does not fire at all -- see the comment on that class.
-    long stallBytesPerSecond = 1;
+    /// Enforced by the loop in CurlPool::perform(), against the handle's own
+    /// byte counters, so it means the same thing on every protocol. It is how
+    /// patient one *connection* is; how long a whole transfer may go without
+    /// progress is StreamingDownload's budget, and conflating the two is a
+    /// mistake with its own paragraph in ADR-0013.
     long stallSeconds = 120;
 
     /// SFTP only. Empty means "wherever ssh would look".
@@ -203,11 +204,21 @@ public:
         /// SftpFileSystem for what was measured.
         void useOwnConnection();
 
+        /// Says this handle must be closed rather than pooled, because its
+        /// transfer was abandoned part way and its connection is mid-message.
+        /// The next caller inheriting that would read somebody else's reply.
+        ///
+        /// Called by perform() when its loop ends on a stall or a cancellation
+        /// rather than on the transfer finishing.
+        void abandon() const;
+
     private:
         CurlPool* m_pool = nullptr;
         CURL* m_handle = nullptr;
         QByteArray m_url;
-        bool m_pooled = true;
+        /// Mutable because abandoning is a fact discovered during the transfer,
+        /// and perform() is handed the lease by const reference.
+        mutable bool m_pooled = true;
     };
 
     /// Enough to keep every TaskManager worker warm. Past that a handle is
@@ -233,6 +244,20 @@ public:
     /// left empty -- which is how a multi-gigabyte download avoids becoming a
     /// multi-gigabyte QByteArray. Without one the body is collected in memory,
     /// which is what every listing and XML answer wants.
+    /// Runs one transfer, in a loop this class owns.
+    ///
+    /// Through libcurl's multi interface rather than `curl_easy_perform`, and not
+    /// for speed or concurrency -- `curl_easy_perform` is itself a wrapper over
+    /// the same machinery. It is so that the decision to stop is Mole's. A loop
+    /// somebody else owns has to be asked to stop and may decline: on SFTP the
+    /// progress callback was consulted twice a second throughout a dead link and
+    /// returning "stop" from it did not end the call, so what actually ended
+    /// transfers was a kernel socket timeout. See ADR-0049.
+    ///
+    /// Two things follow, on every protocol. A cancellation takes effect at the
+    /// next poll. And "nothing has arrived for stallSeconds" ends the transfer at
+    /// stallSeconds, whatever the protocol is doing and whatever the socket is
+    /// doing.
     Response perform(const Lease& lease, const CancelToken& cancel, QIODevice* sink = nullptr);
 
     /// Points a request at `payload` as the thing to upload. The device must

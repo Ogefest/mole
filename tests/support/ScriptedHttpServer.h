@@ -72,6 +72,16 @@ public:
         /// without ever saying so — the failure that looks like success.
         qint64 hangUpAfter = -1;
 
+        /// Send this much of the body and then hold the connection open,
+        /// sending nothing, for this long. Negative does neither.
+        ///
+        /// The neighbour of hangUpAfter, and the harder case: a connection that
+        /// hangs up is a failure the client is told about, and one that goes
+        /// quiet and stays open is not. Nothing arrives, nothing closes, and
+        /// whatever is bounding the transfer has to be the thing that ends it.
+        qint64 goQuietAfter = -1;
+        int stayQuietMs = 0;
+
         /// Whether to read the request body before answering. A server
         /// answering 411 does not, and a caller has to cope with being refused
         /// before it has finished talking.

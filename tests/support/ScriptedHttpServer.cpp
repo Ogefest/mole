@@ -1,5 +1,6 @@
 #include "support/ScriptedHttpServer.h"
 
+#include <QElapsedTimer>
 #include <QTcpServer>
 #include <QTcpSocket>
 
@@ -173,6 +174,22 @@ void ScriptedHttpServer::answerOne(QTcpSocket& socket)
 
     const qint64 send
         = reply.hangUpAfter >= 0 ? std::min<qint64>(reply.hangUpAfter, reply.body.size()) : reply.body.size();
+    if (reply.goQuietAfter >= 0) {
+        // Part of the body, then silence with the connection still open. The
+        // caller is told nothing at all: no close, no error, no bytes.
+        const qint64 first = std::min<qint64>(reply.goQuietAfter, reply.body.size());
+        out += reply.body.left(static_cast<int>(first));
+        socket.write(out);
+        socket.waitForBytesWritten(kSocketWaitMs);
+        // Held rather than slept through, so a caller that gives up early does
+        // not leave this thread sitting on a socket nobody is reading.
+        QElapsedTimer quiet;
+        quiet.start();
+        while (quiet.elapsed() < reply.stayQuietMs && socket.state() == QAbstractSocket::ConnectedState)
+            socket.waitForReadyRead(50);
+        return;
+    }
+
     out += reply.body.left(static_cast<int>(send));
 
     socket.write(out);

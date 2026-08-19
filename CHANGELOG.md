@@ -11,6 +11,8 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-19 #MOLE-212 A transfer that stops moving is given up on when Mole's own guard says so, on every protocol, instead of when the operating system happens to notice — and cancelling one takes effect at once
+
 2026-08-19 #MOLE-108 A transfer over a link that drops and comes back is no longer lost — a read keeps retrying from where it got to while bytes are still arriving, and gives up only once nothing has arrived for two minutes
 
 2026-08-19 #MOLE-96 An S3 drive can now be asked what uploads it never finished — the parts a killed process leaves behind are charged for until somebody removes them, and until now nothing in Mole could even see them
