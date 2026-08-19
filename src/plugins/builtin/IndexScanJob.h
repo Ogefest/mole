@@ -2,6 +2,7 @@
 
 #include "sdk/PluginServices.h"
 
+#include "core/automation/ScheduleStore.h"
 #include "core/automation/Scheduler.h"
 #include "core/index/ScanOptions.h"
 
@@ -40,6 +41,20 @@ public:
     /// What `rule` asks a scan for. Every option the rule carries, so a nightly
     /// run repeats the scan that created it rather than a poorer one.
     static ScanOptions optionsFor(const ScheduleRule& rule);
+
+    /// The rule re-indexing `rootUri`, or an invalid one when nothing does.
+    static ScheduleRule ruleFor(const ScheduleStore& store, const QString& rootUri);
+
+    /// Puts `rootUri` on a clock every `seconds`, or takes it off the clock when
+    /// `seconds <= 0` -- which is how "Repeat: never" is said. Returns the rule's
+    /// id, empty when it was removed.
+    ///
+    /// Here rather than beside one caller because two places offer this now, the
+    /// index dialog and the list of indexes, and two copies of it would be two
+    /// places to disagree about what a rule carries. An existing rule has its
+    /// interval changed and keeps its id.
+    static QString schedule(ScheduleStore& store, const QString& rootUri, qint64 seconds,
+        const ScanOptions& options, const QString& label);
 
     explicit IndexScanJob(PluginServices services, QObject* parent = nullptr);
 

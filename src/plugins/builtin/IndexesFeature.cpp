@@ -2,10 +2,14 @@
 
 #include "plugins/builtin/IndexScanJob.h"
 #include "plugins/builtin/TimeWords.h"
+#include "sdk/ScanReaders.h"
 
 #include "core/automation/ScheduleStore.h"
 #include "core/automation/Scheduler.h"
 #include "core/events/EventBus.h"
+#include "core/index/ScanTask.h"
+#include "core/tasks/TaskManager.h"
+#include "core/vfs/VfsManager.h"
 
 #include <QLocale>
 
@@ -54,7 +58,157 @@ IndexesController::IndexesController(PluginServices services, QObject* parent)
     if (m_services.events) {
         connect(m_services.events, &EventBus::indexUpdated, this, [this](qint64, qint64) { refresh(); });
     }
+    // A scan that is running is otherwise invisible except as one line in the
+    // task strip -- and a scheduled scan starting while somebody is working is a
+    // mystery slowdown. Followed here so the row it belongs to says so.
+    if (m_services.tasks) {
+        connect(m_services.tasks, &TaskManager::taskAppended, this, &IndexesController::watch);
+        const QList<Task*> already = m_services.tasks->tasks();
+        for (Task* task : already)
+            watch(task);
+    }
     rebuild();
+}
+
+void IndexesController::watch(Task* task)
+{
+    // By type rather than by title: a scan is a ScanTask, and matching on words
+    // would break the first time one of them was reworded.
+    if (!qobject_cast<ScanTask*>(task))
+        return;
+
+    connect(task, &Task::statusTextChanged, this, &IndexesController::volumesChanged);
+    connect(task, &Task::stateChanged, this, &IndexesController::volumesChanged);
+    // The counts and the date move when it lands, so the whole list is re-read.
+    connect(task, &Task::finished, this, [this] { rebuild(); });
+}
+
+Task* IndexesController::scanOf(const QString& rootUri) const
+{
+    if (!m_services.tasks)
+        return nullptr;
+
+    const VfsUri root = VfsUri::fromString(rootUri);
+    const QList<Task*> tasks = m_services.tasks->tasks();
+    for (Task* task : tasks) {
+        if (!qobject_cast<ScanTask*>(task) || task->isFinished())
+            continue;
+        if (task->touching().contains(root))
+            return task;
+    }
+    return nullptr;
+}
+
+std::optional<IndexVolume> IndexesController::volumeWithId(qint64 volumeId) const
+{
+    for (const IndexVolume& volume : m_volumes) {
+        if (volume.id == volumeId)
+            return volume;
+    }
+    return std::nullopt;
+}
+
+ScanOptions IndexesController::optionsFor(const IndexVolume& volume, bool full) const
+{
+    // What it records, so a rescan repeats the scan that built it rather than a
+    // poorer one. A volume from before the options were recorded gets what the
+    // index dialog opens on, which is the honest guess and is said in the tab.
+    ScanOptions options = volume.scan.value_or(ScanOptions { true, false, true });
+    // Nothing kept and everything walked, which is what "full" means here and in
+    // the dialog.
+    options.incremental = !full;
+    return options;
+}
+
+QVariantList IndexesController::schedulePresets() const
+{
+    QVariantList out;
+    const auto presets = ScheduleRule::presets();
+    for (const auto& preset : presets) {
+        out.append(QVariantMap { { QStringLiteral("label"), preset.first },
+            { QStringLiteral("seconds"), QVariant::fromValue(preset.second) } });
+    }
+    return out;
+}
+
+bool IndexesController::rescan(qint64 volumeId, bool full)
+{
+    const std::optional<IndexVolume> volume = volumeWithId(volumeId);
+    if (!volume || !m_services.isValid())
+        return false;
+    // One scan per volume at a time. Two at once would have the second one's
+    // generation swap drop the first one's rows.
+    if (scanOf(volume->rootUri))
+        return false;
+
+    const VfsUri root = VfsUri::fromString(volume->rootUri);
+    FileSystemPtr fs = m_services.vfs->resolve(root);
+    if (!fs)
+        return false; // an unplugged drive, which is not this tab's to explain
+
+    auto* task = new ScanTask(fs, root, volume->label, m_services.index);
+    applyScanOptions(*task, optionsFor(*volume, full), m_services, fs, root);
+    // Watched before it is submitted, so the row shows the first status line
+    // rather than starting to move only once something else has happened.
+    watch(task);
+    connect(task, &Task::finished, this, [this, task] {
+        if (task->state() == Task::State::Succeeded && m_services.events)
+            m_services.events->postIndexUpdated(-1, task->filesIndexed());
+    });
+    m_services.tasks->submit(task);
+    emit volumesChanged();
+    return true;
+}
+
+bool IndexesController::setSchedule(qint64 volumeId, qint64 seconds)
+{
+    const std::optional<IndexVolume> volume = volumeWithId(volumeId);
+    if (!volume || !m_services.scheduler || !m_services.scheduler->store())
+        return false;
+
+    // Incremental whatever this volume's own last scan was: a nightly full walk
+    // of the tree this exists for is hours a night for nothing.
+    ScanOptions nightly = optionsFor(*volume, false);
+    IndexScanJob::schedule(*m_services.scheduler->store(), volume->rootUri, seconds, nightly,
+        QStringLiteral("Re-index %1").arg(volume->label));
+    emit volumesChanged();
+    return true;
+}
+
+bool IndexesController::forget(qint64 volumeId)
+{
+    if (!m_services.index)
+        return false;
+    const std::optional<IndexVolume> volume = volumeWithId(volumeId);
+    if (!volume)
+        return false;
+    // A scan writing into a volume that is being deleted would put its rows back.
+    if (Task* running = scanOf(volume->rootUri))
+        running->requestCancel();
+
+    if (!m_services.index->removeVolume(volumeId).ok())
+        return false;
+    // The rule outliving the index it refreshes would rebuild it tonight, which
+    // is not what "forget this index" means.
+    if (m_services.scheduler && m_services.scheduler->store()) {
+        IndexScanJob::schedule(*m_services.scheduler->store(), volume->rootUri, 0, ScanOptions {}, QString());
+    }
+    rebuild();
+    if (m_services.events)
+        m_services.events->postIndexUpdated(-1, 0);
+    return true;
+}
+
+bool IndexesController::stopScan(qint64 volumeId)
+{
+    const std::optional<IndexVolume> volume = volumeWithId(volumeId);
+    if (!volume)
+        return false;
+    Task* running = scanOf(volume->rootUri);
+    if (!running)
+        return false;
+    running->requestCancel();
+    return true;
 }
 
 void IndexesController::rebuild()
@@ -116,6 +270,7 @@ QVariantList IndexesController::volumes() const
         }
 
         const std::optional<ScheduleRule> rule = ruleFor(volume.rootUri);
+        const Task* running = scanOf(volume.rootUri);
         // A rule that is paused is not keeping anything fresh, and saying it is
         // scheduled would be the kind of confident wrong answer this tab exists
         // to remove.
@@ -137,7 +292,13 @@ QVariantList IndexesController::volumes() const
             { QStringLiteral("kindKnown"), volume.scan.has_value() },
             { QStringLiteral("hasMetadata"), volume.scan && volume.scan->metadata },
             { QStringLiteral("hasArchives"), volume.scan && volume.scan->archives },
+            { QStringLiteral("running"), running != nullptr },
+            // What it has covered so far, which is the scan's own line: a count
+            // of entries, what it kept, and what it could not read.
+            { QStringLiteral("progressText"), running ? running->statusText() : QString() },
             { QStringLiteral("scheduled"), kept },
+            { QStringLiteral("scheduleSeconds"),
+                QVariant::fromValue(kept ? rule->intervalSeconds : qint64(0)) },
             { QStringLiteral("scheduleText"),
                 kept ? ScheduleRule::describeInterval(rule->intervalSeconds)
                      : (rule ? QStringLiteral("paused") : QStringLiteral("not on a clock")) },

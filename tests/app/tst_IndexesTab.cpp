@@ -1,9 +1,11 @@
 #include "plugins/builtin/BuiltinPlugin.h"
+#include "plugins/builtin/IndexScanJob.h"
 #include "plugins/builtin/IndexesFeature.h"
 #include "plugins/builtin/SearchFeatures.h"
 #include "support/TestSupport.h"
 #include "ui/AppController.h"
 #include "ui/models/TabsModel.h"
+#include "ui/models/TaskListModel.h"
 
 #include "core/CoreMetaTypes.h"
 #include "core/automation/ScheduleStore.h"
@@ -36,6 +38,11 @@ private slots:
     void aVolumeIndexedBeforeTheOptionsWereRecordedSaysItCannotTell();
     void nothingIndexedReadsAsNothingRatherThanAsAnEmptyList();
     void theListFollowsAScanThatFinishesElsewhere();
+    void rescanningARowRepeatsTheKindOfScanTheVolumeRecords();
+    void aFullRescanWalksEverything();
+    void removingARowsScheduleLeavesTheVolumeAndTakesTheRule();
+    void forgettingARowTakesTheIndexAndItsSchedule();
+    void aRunningScanShowsOnItsRowAndStoppingItChangesNothing();
 
 private:
     IndexesController* openIndexes();
@@ -250,6 +257,182 @@ void TestIndexesTab::theListFollowsAScanThatFinishesElsewhere()
     m_app->services().events->postIndexUpdated(-1, 2);
 
     QVERIFY(waitFor([tab] { return tab->volumeCount() == 1; }));
+}
+
+/// The options a volume records are what a rescan of it asks for. Anything else
+/// makes a tree indexed one way on Monday indexed another way on Tuesday, which
+/// is the fault the whole epic is about.
+void TestIndexesTab::rescanningARowRepeatsTheKindOfScanTheVolumeRecords()
+{
+    const QString photos = m_tree->rootUri().child(QStringLiteral("photos")).toString();
+    ScanOptions everything;
+    everything.incremental = true;
+    everything.metadata = true;
+    everything.archives = true;
+    QVERIFY(seed(photos, QStringLiteral("photos"), everything));
+
+    IndexesController* tab = openIndexes();
+    QVERIFY(tab);
+    const qint64 id = rowFor(tab, QStringLiteral("photos")).value(QStringLiteral("id")).toLongLong();
+    QVERIFY(id >= 0);
+
+    QVERIFY(tab->rescan(id, false));
+    QVERIFY(waitFor([this] { return m_app->tasks()->activeCount() == 0; }, 30000));
+
+    // Read back off the volume, which is where a finished scan records what it
+    // was asked for.
+    const QVariantMap after = rowFor(tab, QStringLiteral("photos"));
+    QVERIFY2(after.value(QStringLiteral("hasMetadata")).toBool(),
+        "a rescan must not quietly drop what the volume was indexed with");
+    QVERIFY(after.value(QStringLiteral("hasArchives")).toBool());
+    // And it really re-walked the tree rather than only touching the row.
+    QVERIFY(after.value(QStringLiteral("entryCount")).toLongLong() > 0);
+}
+
+/// The distinction the scan dialog makes, on a row: full is what somebody reaches
+/// for when they suspect the index, and it has to keep nothing.
+void TestIndexesTab::aFullRescanWalksEverything()
+{
+    // A subfolder, because carrying forward is what happens to a *subtree* whose
+    // date has not moved -- a flat folder has nothing to carry.
+    QVERIFY(m_tree->writeFile(QStringLiteral("photos/2025/leaf.jpg")));
+    const QString photos = m_tree->rootUri().child(QStringLiteral("photos")).toString();
+    QVERIFY(seed(photos, QStringLiteral("photos"), ScanOptions {}));
+
+    IndexesController* tab = openIndexes();
+    QVERIFY(tab);
+    const qint64 id = rowFor(tab, QStringLiteral("photos")).value(QStringLiteral("id")).toLongLong();
+
+    const auto lastScanKeptSomething = [this] {
+        // The scan's own line is where "unchanged and kept" is said.
+        TaskListModel* tasks = m_app->tasks();
+        for (int row = tasks->rowCount() - 1; row >= 0; --row) {
+            const QModelIndex at = tasks->index(row, 0);
+            if (tasks->data(at, TaskListModel::TitleRole).toString().startsWith(QStringLiteral("Scan "))) {
+                return tasks->data(at, TaskListModel::StatusTextRole)
+                    .toString()
+                    .contains(QStringLiteral("unchanged and kept"));
+            }
+        }
+        return false;
+    };
+
+    // Dated back, because the index only trusts a folder that was already settled
+    // when the last scan ran. Then two incremental scans: the first records the
+    // dates and the second is the one with something to carry.
+    const QDateTime settled = QDateTime::currentDateTime().addSecs(-3600);
+    for (const QString& folder : { QStringLiteral("photos"), QStringLiteral("photos/2025") })
+        QVERIFY2(m_tree->setModified(folder, settled), qPrintable(folder));
+
+    QVERIFY(tab->rescan(id, false));
+    QVERIFY(waitFor([this] { return m_app->tasks()->activeCount() == 0; }, 30000));
+    QVERIFY(tab->rescan(id, false));
+    QVERIFY(waitFor([this] { return m_app->tasks()->activeCount() == 0; }, 30000));
+    QVERIFY2(lastScanKeptSomething(), "an incremental rescan of an unchanged tree has to keep something");
+
+    // And the full one keeps nothing, which is the whole difference.
+    QVERIFY(tab->rescan(id, true));
+    QVERIFY(waitFor([this] { return m_app->tasks()->activeCount() == 0; }, 30000));
+    QVERIFY2(!lastScanKeptSomething(), "a full rescan walks everything and keeps nothing");
+}
+
+void TestIndexesTab::removingARowsScheduleLeavesTheVolumeAndTakesTheRule()
+{
+    const QString photos = m_tree->rootUri().child(QStringLiteral("photos")).toString();
+    QVERIFY(seed(photos, QStringLiteral("photos"), ScanOptions {}));
+
+    IndexesController* tab = openIndexes();
+    QVERIFY(tab);
+    const qint64 id = rowFor(tab, QStringLiteral("photos")).value(QStringLiteral("id")).toLongLong();
+
+    QVERIFY(tab->setSchedule(id, 7 * 24 * 3600));
+    QCOMPARE(m_app->schedules()->rules().size(), 1);
+    QCOMPARE(rowFor(tab, QStringLiteral("photos")).value(QStringLiteral("scheduleText")).toString(),
+        QStringLiteral("Every week"));
+    // Incremental, whatever this volume's own last scan was: a nightly full walk
+    // is hours a night for nothing.
+    QVERIFY(IndexScanJob::optionsFor(m_app->schedules()->rules().first()).incremental);
+
+    // Changed rather than ignored, the way the index dialog's picker behaves.
+    QVERIFY(tab->setSchedule(id, 24 * 3600));
+    QCOMPARE(m_app->schedules()->rules().size(), 1);
+    QCOMPARE(m_app->schedules()->rules().first().intervalSeconds, 24 * 3600);
+
+    QVERIFY(tab->setSchedule(id, 0));
+    QVERIFY(m_app->schedules()->rules().isEmpty());
+    // The index itself is untouched: taking it off a clock is not forgetting it.
+    QCOMPARE(tab->volumeCount(), 1);
+    QCOMPARE(rowFor(tab, QStringLiteral("photos")).value(QStringLiteral("scheduleText")).toString(),
+        QStringLiteral("not on a clock"));
+}
+
+/// The guide already promised the index can be deleted without losing anything
+/// but time, and no interface could do it.
+void TestIndexesTab::forgettingARowTakesTheIndexAndItsSchedule()
+{
+    const QString photos = m_tree->rootUri().child(QStringLiteral("photos")).toString();
+    const QString docs = m_tree->rootUri().child(QStringLiteral("docs")).toString();
+    QVERIFY(seed(photos, QStringLiteral("photos"), ScanOptions {}));
+    QVERIFY(seed(docs, QStringLiteral("docs"), ScanOptions {}));
+
+    IndexesController* tab = openIndexes();
+    QVERIFY(tab);
+    const qint64 id = rowFor(tab, QStringLiteral("photos")).value(QStringLiteral("id")).toLongLong();
+    QVERIFY(tab->setSchedule(id, 24 * 3600));
+
+    // The rows are in the index before it goes, so their absence afterwards means
+    // something.
+    SearchQuery byName;
+    byName.add(SearchPredicate::name(QStringLiteral("file-0.txt")));
+    QCOMPARE(m_app->services().index->search(byName).value().size(), 2);
+
+    QVERIFY(tab->forget(id));
+
+    QCOMPARE(tab->volumeCount(), 1);
+    QVERIFY(rowFor(tab, QStringLiteral("photos")).isEmpty());
+    // Its rows are gone from a search, and the other volume's are not.
+    QCOMPARE(m_app->services().index->search(byName).value().size(), 1);
+    // And the rule that would have rebuilt it tonight went with it.
+    QVERIFY2(m_app->schedules()->rules().isEmpty(),
+        "a rule outliving the index it refreshes would rebuild what was just forgotten");
+}
+
+/// A scheduled scan starting while somebody is working is otherwise a mystery
+/// slowdown: it is visible and stoppable where the indexes are listed. Stopping
+/// leaves the volume as it was, which the generation swap already guarantees --
+/// what is new is that it is reported.
+void TestIndexesTab::aRunningScanShowsOnItsRowAndStoppingItChangesNothing()
+{
+    // A tree big enough that a scan of it is still going when it is looked at.
+    for (int i = 0; i < 400; ++i)
+        QVERIFY(m_tree->writeFile(QStringLiteral("big/branch%1/leaf.txt").arg(i)));
+    const QString big = m_tree->rootUri().child(QStringLiteral("big")).toString();
+    QVERIFY(seed(big, QStringLiteral("big"), ScanOptions {}));
+
+    IndexesController* tab = openIndexes();
+    QVERIFY(tab);
+    const QVariantMap before = rowFor(tab, QStringLiteral("big"));
+    const qint64 id = before.value(QStringLiteral("id")).toLongLong();
+    const QString scannedBefore = before.value(QStringLiteral("scannedAt")).toString();
+    const qint64 entriesBefore = before.value(QStringLiteral("entryCount")).toLongLong();
+    QVERIFY(entriesBefore > 0);
+
+    QVERIFY(tab->rescan(id, true));
+
+    // On the row, waited for on the condition rather than on a clock.
+    QVERIFY(waitFor(
+        [&] { return rowFor(tab, QStringLiteral("big")).value(QStringLiteral("running")).toBool(); }));
+    QVERIFY(tab->stopScan(id));
+    QVERIFY(waitFor([this] { return m_app->tasks()->activeCount() == 0; }, 30000));
+
+    const QVariantMap after = rowFor(tab, QStringLiteral("big"));
+    QVERIFY2(!after.value(QStringLiteral("running")).toBool(), "a stopped scan is not still running");
+    // The previous contents, unchanged: same count, same date, still searchable.
+    QCOMPARE(after.value(QStringLiteral("entryCount")).toLongLong(), entriesBefore);
+    QCOMPARE(after.value(QStringLiteral("scannedAt")).toString(), scannedBefore);
+    SearchQuery byName;
+    byName.add(SearchPredicate::name(QStringLiteral("file-0.txt")));
+    QCOMPARE(m_app->services().index->search(byName).value().size(), 1);
 }
 
 int main(int argc, char** argv)

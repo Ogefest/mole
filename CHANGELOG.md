@@ -11,6 +11,8 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-20 #MOLE-231 An index can now be rescanned, put on a clock or forgotten from the Indexes tab, and a scan that is running shows on its row with a way to stop it
+
 2026-08-20 #MOLE-230 A new Indexes tab lists every indexed tree — how old it is, how big it is, what kind of scan built it, and whether anything is keeping it fresh
 
 2026-08-20 #MOLE-228 Index this folder now opens the indexing dialog on that folder, instead of quietly starting a full walk that recorded nothing about the files

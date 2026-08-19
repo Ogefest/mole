@@ -157,36 +157,14 @@ QString LiveSearchController::scheduleScan(const QString& uri, qint64 seconds)
     if (!m_services.isValid() || !m_services.scheduler->store())
         return {};
 
-    // How "Repeat: never" is said, the same way the report dialog says it.
-    if (seconds <= 0) {
-        unscheduleScan(uri);
-        return {};
-    }
-
-    ScheduleStore* store = m_services.scheduler->store();
-    const QString existing = scheduledScanId(uri);
-
-    ScheduleRule rule = existing.isEmpty() ? ScheduleRule {} : store->rule(existing);
-    if (!rule.isValid()) {
-        rule.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-        rule.jobKind = IndexScanJob::kind();
-    }
+    // Incremental whatever the dialog's "full rescan" box says: that box is a
+    // one-off for when somebody suspects the index, and a nightly full walk of
+    // the tree this exists for is hours a night for nothing.
+    ScanOptions nightly = scanOptions(true);
     // Read in Automation beside the report rules, where the whole uri of a tree
     // four levels down is a line nobody can tell from the one below it.
-    rule.label = QStringLiteral("Re-index %1").arg(folderNameOf(uri));
-    // Every option the scan was asked for, not just the incremental flag: a
-    // rule that carried less rebuilt the volume as a poorer scan every night.
-    rule.parameters
-        = { { IndexScanJob::rootUriParameter(), uri }, { IndexScanJob::incrementalParameter(), true },
-              { IndexScanJob::metadataParameter(), m_scanReadsMetadata },
-              { IndexScanJob::archivesParameter(), m_scanOpensArchives } };
-    // Changed rather than left alone: choosing a different interval for a folder
-    // that already had one used to do nothing at all.
-    rule.intervalSeconds = seconds;
-    rule.enabled = true;
-    store->put(rule);
-    store->save();
-    return rule.id;
+    return IndexScanJob::schedule(*m_services.scheduler->store(), uri, seconds, nightly,
+        QStringLiteral("Re-index %1").arg(folderNameOf(uri)));
 }
 
 qint64 LiveSearchController::scheduledScanSeconds(const QString& uri) const
@@ -212,13 +190,7 @@ QString LiveSearchController::scheduledScanId(const QString& uri) const
 {
     if (!m_services.isValid() || !m_services.scheduler->store())
         return {};
-    for (const ScheduleRule& rule : m_services.scheduler->store()->rules()) {
-        if (rule.jobKind == IndexScanJob::kind()
-            && rule.parameters.value(IndexScanJob::rootUriParameter()).toString() == uri) {
-            return rule.id;
-        }
-    }
-    return {};
+    return IndexScanJob::ruleFor(*m_services.scheduler->store(), uri).id;
 }
 
 void LiveSearchController::unscheduleScan(const QString& uri)

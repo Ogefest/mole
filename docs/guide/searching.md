@@ -189,6 +189,18 @@ is as old as its last scan and no newer. *Automation* is the other half of the a
 different question — it lists what runs by itself, so an index with no rule does not appear
 there at all.
 
+Each row is also where an index is looked after. *Rescan* walks it again, repeating the kind
+of scan that built it rather than a poorer one; *Full rescan* keeps nothing, for when you
+suspect the index. *Repeat* is the same picker the index dialog has, so putting a tree on a
+clock or taking it off can be done from either. And *Forget* deletes the index: no files are
+touched — an index holds nothing that is not already in them — so it costs a rescan and no
+data at all, which is why it asks first rather than because anything is at risk.
+
+A scan that is running takes its row over and offers to stop it, with what it has covered so
+far. That matters most for a scheduled one: a scan starting by itself while you are working
+is otherwise a slowdown with no explanation anywhere. Stopping leaves the index exactly as it
+was — the previous contents stay searchable in full and the row's date does not move.
+
 ## Typing the whole thing
 
 Above the form is a line, and the two are one query seen twice: typing here moves the

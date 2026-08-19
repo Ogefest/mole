@@ -6,6 +6,7 @@
 
 #include "core/automation/ScheduleRule.h"
 #include "core/index/IndexDatabase.h"
+#include "core/tasks/Task.h"
 
 #include <QVariantList>
 
@@ -52,6 +53,33 @@ public:
     /// elsewhere, so the list is never older than the tab.
     Q_INVOKABLE void refresh();
 
+    /// The intervals to offer. The same list the index dialog offers, so the two
+    /// places cannot drift apart.
+    Q_INVOKABLE QVariantList schedulePresets() const;
+
+    /// Walks the tree again, repeating the kind of scan this volume records --
+    /// not a poorer one. `full` keeps nothing and walks everything, which is what
+    /// somebody reaches for when they suspect the index.
+    ///
+    /// Re-indexing a tree used to mean typing its path back into the *Index a
+    /// folder* dialog from memory.
+    Q_INVOKABLE bool rescan(qint64 volumeId, bool full = false);
+
+    /// Puts this volume on a clock every `seconds`, or takes it off when
+    /// `seconds <= 0`. What the volume's own scan was asked for is what the rule
+    /// carries, so the nightly run repeats it.
+    Q_INVOKABLE bool setSchedule(qint64 volumeId, qint64 seconds);
+
+    /// Deletes the index. Nothing else: it holds nothing that is not already in
+    /// your files, so this costs a rescan and no data at all -- which is the
+    /// wording the confirmation uses, and the promise the guide already made
+    /// about something no interface could actually do.
+    Q_INVOKABLE bool forget(qint64 volumeId);
+
+    /// Stops a scan running against this volume. The index is left exactly as it
+    /// was, which the generation swap already guarantees.
+    Q_INVOKABLE bool stopScan(qint64 volumeId);
+
     QVariantMap saveState() const override;
     void restoreState(const QVariantMap& state) override;
 
@@ -61,6 +89,16 @@ signals:
 
 private:
     void rebuild();
+    /// Follows a scan so the row it belongs to can show what it has covered, and
+    /// rebuilds when it ends.
+    void watch(Task* task);
+    /// The scan running against `rootUri`, if one is.
+    Task* scanOf(const QString& rootUri) const;
+    /// The volume with this id, or nothing when the list has moved on.
+    std::optional<IndexVolume> volumeWithId(qint64 volumeId) const;
+    /// What a rescan of `volume` should ask for: what it records, or what the
+    /// index dialog opens on when it records nothing.
+    ScanOptions optionsFor(const IndexVolume& volume, bool full) const;
     /// The rule keeping `rootUri` fresh, if there is one. A volume's rule is the
     /// index job whose root matches, which is what the search form already looks
     /// for one uri at a time.

@@ -158,6 +158,97 @@ Item {
                             font.pixelSize: 11
                             wrapMode: Text.WordWrap
                         }
+
+                        // What can be done to it, on the row rather than in a
+                        // menu somewhere: re-indexing a tree used to mean typing
+                        // its path back into the index dialog from memory.
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 6
+
+                            // A scan that is running takes the row over, because
+                            // then the only useful action is stopping it.
+                            Label {
+                                objectName: "indexProgressText"
+                                visible: modelData.running
+                                Layout.fillWidth: true
+                                text: modelData.progressText.length > 0
+                                      ? "Scanning — " + modelData.progressText
+                                      : "Scanning…"
+                                color: view.mutedColor
+                                font.pixelSize: 11
+                                elide: Text.ElideRight
+                            }
+                            Button {
+                                objectName: "indexStopButton"
+                                visible: modelData.running
+                                text: "Stop"
+                                flat: true
+                                font.pixelSize: 11
+                                // Nothing is lost: what the volume held before
+                                // stays searchable and its date does not move.
+                                onClicked: controller.stopScan(modelData.id)
+                            }
+
+                            Button {
+                                objectName: "indexRescanButton"
+                                visible: !modelData.running
+                                text: "Rescan"
+                                flat: true
+                                font.pixelSize: 11
+                                onClicked: controller.rescan(modelData.id, false)
+                            }
+                            Button {
+                                objectName: "indexFullRescanButton"
+                                visible: !modelData.running
+                                text: "Full rescan"
+                                flat: true
+                                font.pixelSize: 11
+                                onClicked: controller.rescan(modelData.id, true)
+                            }
+
+                            // The same picker the index dialog offers, over the
+                            // same presets, so the two places agree.
+                            Picker {
+                                objectName: "indexRepeatPicker"
+                                visible: !modelData.running
+                                font.pixelSize: 11
+                                textRole: "text"
+                                model: {
+                                    var out = [{ seconds: 0, text: "Repeat: never" }]
+                                    var presets = controller ? controller.schedulePresets() : []
+                                    for (var i = 0; i < presets.length; ++i)
+                                        out.push({ seconds: presets[i].seconds,
+                                                   text: "Repeat: " + presets[i].label.toLowerCase() })
+                                    return out
+                                }
+                                currentIndex: {
+                                    var on = modelData.scheduled ? modelData.scheduleSeconds : 0
+                                    for (var i = 0; i < model.length; ++i) {
+                                        if (model[i].seconds === on)
+                                            return i
+                                    }
+                                    return 0
+                                }
+                                onActivated: controller.setSchedule(modelData.id,
+                                                                    model[currentIndex].seconds)
+                            }
+
+                            Item { Layout.fillWidth: !modelData.running }
+
+                            Button {
+                                objectName: "indexForgetButton"
+                                visible: !modelData.running
+                                text: "Forget"
+                                flat: true
+                                font.pixelSize: 11
+                                onClicked: {
+                                    forgetDialog.volumeId = modelData.id
+                                    forgetDialog.volumeLabel = modelData.label
+                                    forgetDialog.open()
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -176,8 +267,8 @@ Item {
                 color: view.mutedColor
                 font.pixelSize: 11
                 wrapMode: Text.WordWrap
-                text: "An index is only as fresh as its last scan. Put one on a clock where it was " +
-                      "made, in a search tab, and it keeps itself current."
+                text: "An index is only as fresh as its last scan. Put one on a clock and it keeps " +
+                      "itself current: a repeat costs a walk of what moved rather than of everything."
             }
             Button {
                 objectName: "openAutomationButton"
@@ -185,6 +276,43 @@ Item {
                 flat: true
                 onClicked: App.openFeatureTab("core.automation")
             }
+        }
+    }
+
+    Dialog {
+        // Dimmed rather than washed out: Qt's Material dark theme dims with
+        // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
+        Overlay.modal: DimVeil {}
+        Overlay.modeless: DimVeil {}
+
+        id: forgetDialog
+        objectName: "forgetIndexDialog"
+        // Without this the popup never becomes a focus scope, so nothing inside
+        // it can hold the keyboard and the footer's focus quietly does nothing.
+        focus: true
+        anchors.centerIn: parent
+        modal: true
+        title: "Forget this index?"
+
+        property var volumeId: -1
+        property string volumeLabel: ""
+
+        // Hours of walking, thrown away on a click. Destructive, and told apart
+        // from the way out — ADR-0010.
+        footer: ConfirmButtons {
+            acceptText: "Forget"
+            destructive: true
+        }
+
+        onAccepted: if (controller) controller.forget(forgetDialog.volumeId)
+
+        Label {
+            width: 380
+            wrapMode: Text.Wrap
+            text: "The index of " + forgetDialog.volumeLabel + " is deleted, and any schedule " +
+                  "keeping it up to date goes with it.\n\nNo files are touched. An index holds " +
+                  "nothing that is not already in them, so this costs a rescan and nothing else — " +
+                  "though on a large tree that rescan is not quick."
         }
     }
 }
