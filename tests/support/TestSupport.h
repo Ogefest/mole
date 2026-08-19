@@ -98,6 +98,16 @@ private:
     std::unique_ptr<QTemporaryDir> m_dir;
 };
 
+/// Dates a file *or a folder* on the local disk.
+///
+/// A directory cannot be opened as a QFile, and `QFileDevice::setFileTime` is
+/// the only thing Qt offers, so folders go through `utime()`. Tests need this
+/// because an incremental scan is entirely about a folder's date: a tree created
+/// a moment ago is one nothing can tell apart from a tree changed a moment ago,
+/// and the index only trusts a folder that was already settled when the last
+/// scan ran.
+bool setModifiedTime(const QString& absolutePath, const QDateTime& when);
+
 /// A temporary directory that cleans itself up, plus helpers to populate it.
 class TempTree
 {
@@ -112,6 +122,8 @@ public:
     bool makeDirs(const QString& relativePath);
     /// Creates a file with the given contents, creating parents as needed.
     bool writeFile(const QString& relativePath, const QByteArray& contents = "x");
+    /// Dates an entry, folders included. See setModifiedTime().
+    bool setModified(const QString& relativePath, const QDateTime& when);
     QString absolute(const QString& relativePath) const;
 
 private:

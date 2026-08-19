@@ -10,6 +10,10 @@
 
 #include <utility>
 
+#ifdef Q_OS_UNIX
+#include <utime.h>
+#endif
+
 namespace mole::test {
 namespace {
 
@@ -105,7 +109,30 @@ void drainEvents()
     QCoreApplication::processEvents();
 }
 
+bool setModifiedTime(const QString& absolutePath, const QDateTime& when)
+{
+    if (QFileInfo(absolutePath).isDir()) {
+#ifdef Q_OS_UNIX
+        const time_t stamp = static_cast<time_t>(when.toSecsSinceEpoch());
+        utimbuf times { stamp, stamp };
+        return utime(QFile::encodeName(absolutePath).constData(), &times) == 0;
+#else
+        return false;
+#endif
+    }
+
+    QFile file(absolutePath);
+    if (!file.open(QIODevice::ReadWrite))
+        return false;
+    return file.setFileTime(when, QFileDevice::FileModificationTime);
+}
+
 TempTree::TempTree() = default;
+
+bool TempTree::setModified(const QString& relativePath, const QDateTime& when)
+{
+    return setModifiedTime(relativePath.isEmpty() ? m_dir.path() : absolute(relativePath), when);
+}
 
 VfsUri TempTree::rootUri() const
 {

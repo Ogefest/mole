@@ -631,6 +631,15 @@ Item {
         }
     }
 
+    /// Opens the index dialog on `uri`, for *Index this folder* in the folder
+    /// menu. That entry used to start a scan with none of these four questions
+    /// asked, which made the discoverable door the poor one. See MOLE-228.
+    function openIndexDialog(uri, label) {
+        scanPath.text = uri
+        scanLabel.text = label
+        scanDialog.open()
+    }
+
     Dialog {
         // Dimmed rather than washed out: Qt's Material dark theme dims with
         // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.

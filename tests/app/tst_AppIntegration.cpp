@@ -89,6 +89,7 @@ private slots:
     void viewMenuOffersThreeExclusiveLayouts();
     void manyTabsOpenAndCloseWithoutLeaking();
     void shutsDownCleanlyWithWorkInFlight();
+    void aScanStartedWithoutADialogKeepsWhatHasNotChanged();
 
 private:
     std::vector<std::unique_ptr<IPlugin>> builtIns() const;
@@ -1331,6 +1332,43 @@ void TestAppIntegration::manyTabsOpenAndCloseWithoutLeaking()
         }
         return true;
     }));
+}
+
+/// queueScan() is the way in for a scan nobody is asked about, and it used to
+/// set nothing at all on the task -- so every call walked the whole tree,
+/// however little had moved. On the trees this exists for that is hours to learn
+/// nothing has changed. See MOLE-228.
+void TestAppIntegration::aScanStartedWithoutADialogKeepsWhatHasNotChanged()
+{
+    const QString uri = m_tree->rootUri().toString();
+    const auto idle = [this] { return m_app->tasks()->activeCount() == 0; };
+
+    // Dated before the first scan, because the index only trusts a folder that
+    // was already settled when that scan ran: one changed in the same second
+    // would look unchanged for ever after.
+    const QDateTime settled = QDateTime::currentDateTime().addSecs(-3600);
+    for (const QString& folder : { QString(), QStringLiteral("reports"), QStringLiteral("empty") })
+        QVERIFY2(m_tree->setModified(folder, settled), qPrintable(folder));
+
+    m_app->queueScan(uri, QStringLiteral("tree"));
+    QVERIFY(waitFor(idle, 30000));
+
+    // Nothing has moved, so the second scan should walk almost none of it.
+    m_app->queueScan(uri, QStringLiteral("tree"));
+    QVERIFY(waitFor(idle, 30000));
+
+    // The scan says what it did, and a second walk of an unchanged tree has to
+    // say it kept something.
+    TaskListModel* tasks = m_app->tasks();
+    QStringList said;
+    for (int row = 0; row < tasks->rowCount(); ++row) {
+        const QModelIndex at = tasks->index(row, 0);
+        if (tasks->data(at, TaskListModel::TitleRole).toString().startsWith(QStringLiteral("Scan ")))
+            said.append(tasks->data(at, TaskListModel::StatusTextRole).toString());
+    }
+    QCOMPARE(said.size(), 2);
+    QVERIFY2(said.filter(QStringLiteral("unchanged and kept")).size() == 1,
+        qPrintable(said.join(QStringLiteral(" | "))));
 }
 
 void TestAppIntegration::shutsDownCleanlyWithWorkInFlight()

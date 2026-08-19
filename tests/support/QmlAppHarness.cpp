@@ -20,7 +20,6 @@
 #include <QUrl>
 
 #ifdef Q_OS_UNIX
-#include <utime.h>
 #endif
 
 namespace mole::test {
@@ -209,25 +208,10 @@ bool QmlAppHarness::setModified(const QString& relativePath, const QDateTime& wh
 {
     const QString target = QDir(fixturePath()).filePath(relativePath);
 
-    // A directory cannot be opened as a QFile, and QFileDevice::setFileTime is
-    // the only portable way Qt offers -- so folders go through utime(), which is
-    // POSIX and is what the screenshot run uses. A folder whose date comes from
-    // the clock is a folder whose date differs between two regenerations of the
-    // same commit, which is the whole thing the fixed fixture name is for.
-    if (QFileInfo(target).isDir()) {
-#ifdef Q_OS_UNIX
-        const time_t stamp = static_cast<time_t>(when.toSecsSinceEpoch());
-        utimbuf times { stamp, stamp };
-        return utime(QFile::encodeName(target).constData(), &times) == 0;
-#else
-        return true;
-#endif
-    }
-
-    QFile file(target);
-    if (!file.open(QIODevice::ReadWrite))
-        return false;
-    return file.setFileTime(when, QFileDevice::FileModificationTime);
+    // A folder whose date comes from the clock is a folder whose date differs
+    // between two regenerations of the same commit, which is the whole thing the
+    // fixed fixture name is for. Folders need utime(); the shared helper knows.
+    return setModifiedTime(target, when);
 }
 
 void QmlAppHarness::settle(int rounds)

@@ -338,6 +338,14 @@ public:
     /// is written -- and only then, and only if every one of them could be read.
     Q_INVOKABLE void compressSelection(const QString& archiveName, const QString& format,
         const QString& passphrase = {}, bool removeSources = false);
+    /// Starts a scan with no dialog in the way, for whoever already knows what
+    /// they are asking for.
+    ///
+    /// Incremental and archive-listing by default, which is what the *Index a
+    /// folder* dialog opens on: this used to set nothing at all, so every call
+    /// walked the whole tree and recorded nothing about the files. Metadata is
+    /// off, because one read per file is bounded per file and unbounded in
+    /// aggregate -- it is asked for, in the dialog. See ADR-0056.
     Q_INVOKABLE void queueScan(const QString& uri, const QString& label);
 
     // ---- application menu -------------------------------------------------
@@ -428,6 +436,11 @@ signals:
     /// A menu entry whose body is a QML dialog was picked; the shell decides
     /// which one to show. Keeps dialog markup out of C++.
     void dialogRequested(const QString& actionId);
+    /// *Index this folder* was picked in a browser pane. The search tab is
+    /// already open by the time this is emitted; the shell opens its *Index a
+    /// folder* dialog on `uri`, so the four questions a scan raises are asked
+    /// once, in one place, however somebody arrived at it.
+    void indexFolderRequested(const QString& uri, const QString& label);
 
 private:
     void mountDefaultDrives();

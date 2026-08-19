@@ -6,6 +6,7 @@
 #include "host/PluginManager.h"
 #include "host/PreviewRegistry.h"
 #include "sdk/FeatureController.h"
+#include "sdk/ScanReaders.h"
 #include "ui/DragSource.h"
 #include "ui/FileLauncher.h"
 #include "ui/SessionStore.h"
@@ -1606,7 +1607,17 @@ void AppController::registerShellActions()
             QObject* pane = currentTabProperty("activePane").value<QObject*>();
             if (!pane)
                 return;
-            queueScan(pane->property("currentUri").toString(), pane->property("locationName").toString());
+            // Read before the tab changes under us, because opening one makes a
+            // different pane current.
+            const QString uri = pane->property("currentUri").toString();
+            const QString label = pane->property("locationName").toString();
+            // The dialog rather than a scan: this entry is the one somebody
+            // finds first, and it used to start the slowest and least complete
+            // scan Mole has with none of its four options asked for. Two doors
+            // onto one operation, and now they are the same door.
+            if (openFeatureTab(QStringLiteral("mole.livesearch")) < 0)
+                return;
+            emit indexFolderRequested(uri, label);
         };
         m_actions->addAction(std::move(action));
     }
@@ -2234,7 +2245,13 @@ void AppController::queueScan(const QString& uri, const QString& label)
         return;
     }
 
-    auto* task = new ScanTask(std::move(fs), root, label.isEmpty() ? uri : label, m_index.get());
+    auto* task = new ScanTask(fs, root, label.isEmpty() ? uri : label, m_index.get());
+    // What the dialog opens on. Setting nothing meant every call walked the
+    // whole tree and wrote rows that said nothing about the files.
+    ScanOptions options;
+    options.incremental = true;
+    options.archives = true;
+    applyScanOptions(*task, options, m_services, fs, root);
     connect(task, &Task::finished, this, [this, task] {
         if (task->state() == Task::State::Succeeded)
             m_events->postIndexUpdated(-1, task->filesIndexed());

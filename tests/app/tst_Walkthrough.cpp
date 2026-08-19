@@ -151,6 +151,7 @@ private slots:
     void forgettingEveryReportForAFolderAsksInRed();
     void indexingAFolderIsAskedForWithTheVerbAndTypedInto();
     void theIndexDialogOpensOnTheIntervalTheFolderIsAlreadyOn();
+    void indexThisFolderAsksTheSameFourQuestionsAsTheDialog();
     void aDialogWithOneButtonStillHoldsTheKeyboard();
     void analysesAFolder();
     void schedulesTheReportAndTracksIt();
@@ -2483,6 +2484,36 @@ void TestWalkthrough::indexingAFolderIsAskedForWithTheVerbAndTypedInto()
     m_harness->type(m_harness->fixturePath());
     QVERIFY(m_harness->until([accept] { return accept->property("enabled").toBool(); }));
     QVERIFY2(looksBlue(fillOf(accept)), "indexing is not destructive, so blue rather than red");
+}
+
+/// *Index this folder* in the folder menu is the entry point somebody finds
+/// first, and it used to start the slowest and least complete scan Mole has: a
+/// full walk of the tree, recording nothing about the files, with none of the
+/// four questions asked. It now opens the dialog that asks them, on the folder
+/// the pane is looking at. See MOLE-228.
+void TestWalkthrough::indexThisFolderAsksTheSameFourQuestionsAsTheDialog()
+{
+    // Started from a browser pane, which is where the entry lives.
+    QVERIFY(m_harness->app()->tabs()->currentIndex() >= 0);
+    m_harness->settle(4);
+
+    QObject* dialog = m_harness->object(QStringLiteral("scanDialog"));
+    QVERIFY2(!dialog || !dialog->property("visible").toBool(), "nothing is open yet");
+
+    QVERIFY(m_harness->app()->triggerAction(QStringLiteral("mole.tools.indexFolder")));
+
+    // The dialog, on this folder -- and no scan of its own: the options are
+    // nobody's decision until somebody has made them.
+    QVERIFY(m_harness->until([this] {
+        QObject* opened = m_harness->object(QStringLiteral("scanDialog"));
+        return opened && opened->property("visible").toBool();
+    }));
+    m_harness->settle(4);
+    QCOMPARE(m_harness->app()->tasks()->activeCount(), 0);
+
+    QQuickItem* path = m_harness->item(QStringLiteral("scanPath"));
+    QVERIFY(path);
+    QCOMPARE(path->property("text").toString(), m_harness->fixtureUri());
 }
 
 /// How often a folder is re-indexed is chosen where the folder is indexed, and

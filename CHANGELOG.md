@@ -11,6 +11,8 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-20 #MOLE-228 Index this folder now opens the indexing dialog on that folder, instead of quietly starting a full walk that recorded nothing about the files
+
 2026-08-19 #MOLE-227 A folder's re-index can be set to any interval from hourly to monthly, changed afterwards, and turned off again — it was a checkbox that only ever created a rule, fixed at 24 hours
 
 2026-08-19 #MOLE-226 A scheduled re-index now repeats the scan that created it — a folder indexed with metadata or archive contents no longer loses them, a subtree at a time, every night

@@ -920,6 +920,16 @@ ApplicationWindow {
             else if (actionId === "mole.help.plugins" || actionId === "mole.help.about")
                 aboutDialog.open()
         }
+        function onIndexFolderRequested(uri, label) {
+            // The search tab has only just been opened, so its body is a Loader
+            // that has not instantiated its view yet. Asked for on the next turn
+            // of the loop, when there is something to ask.
+            Qt.callLater(function() {
+                var view = root.currentTabItem()
+                if (view && view.openIndexDialog)
+                    view.openIndexDialog(uri, label)
+            })
+        }
         function onNotification(severity, title, detail) {
             notificationLabel.text = detail.length > 0 ? title + " — " + detail : title
             notificationPopup.open()
