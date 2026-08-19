@@ -16,10 +16,25 @@ option(MOLE_ENABLE_SANITIZERS "Enable ASan + UBSan" OFF)
 # and thread sanitizers instrument the same things and refuse to share a binary.
 option(MOLE_ENABLE_THREAD_SANITIZER "Enable ThreadSanitizer" OFF)
 
+# Core, its layers and their headless tests -- no QML, no plugins, no window.
+#
+# It exists for ThreadSanitizer. TSan can only be believed against a Qt whose own
+# locking is annotated for it, which means a Qt built with `-sanitize thread`,
+# and building all of Qt that way is not a thing to ask of anybody: QtPdf pulls
+# in PDFium and QtMultimedia pulls in a media stack, for suites that have nothing
+# to do with concurrency. qtbase alone is a tractable build and holds everything
+# the concurrency suites need. See ADR-0055.
+option(MOLE_CORE_ONLY "Build core, host, ui and their headless tests only" OFF)
+
 # Qt 6.4 is the baseline (Ubuntu 24.04 ships 6.4.2). Do not use newer APIs
 # without bumping this number first -- it is what keeps the port to
 # Windows/macOS honest.
-find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Sql Concurrent)
+if(MOLE_CORE_ONLY)
+    # Everything here is in qtbase, which is the whole point -- see the option above.
+    find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Sql Concurrent)
+else()
+    find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Sql Concurrent)
+endif()
 
 qt_standard_project_setup()
 
@@ -53,9 +68,13 @@ add_subdirectory(src/core)
 add_subdirectory(src/sdk)
 add_subdirectory(src/host)
 add_subdirectory(src/ui)
-add_subdirectory(src/plugins)
-add_subdirectory(src/app)
 add_subdirectory(src/tools)
+# The two that need Qml, Quick, Pdf or Multimedia, and so the two a qtbase-only
+# Qt cannot build. Everything above needs nothing outside qtbase.
+if(NOT MOLE_CORE_ONLY)
+    add_subdirectory(src/plugins)
+    add_subdirectory(src/app)
+endif()
 
 if(MOLE_BUILD_TESTS)
     # Network is for the tests alone -- Mole itself talks to servers through
@@ -80,6 +99,7 @@ include(GNUInstallDirs)
 
 set(MOLE_PLUGIN_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/mole/plugins")
 
+if(NOT MOLE_CORE_ONLY)
 install(TARGETS mole mole-tasks
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
@@ -87,6 +107,7 @@ if(MOLE_HAVE_ARCHIVE_PLUGIN)
     install(TARGETS mole_plugin_archive
         LIBRARY DESTINATION ${MOLE_PLUGIN_INSTALL_DIR})
 endif()
+endif() # MOLE_CORE_ONLY: there is no application to install
 
 # Licence paperwork travels with every install: Qt's LGPL requires the notice
 # and its text to reach whoever receives the binary.

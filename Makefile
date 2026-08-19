@@ -81,20 +81,44 @@ asan:
 	@$(MAKE) test PRESET=asan
 
 ## tsan: build and test under ThreadSanitizer
-##       A separate build from asan because the two cannot share a binary. The
-##       suites worth running here are the concurrent ones -- everything else is
-##       single-threaded and pays the slowdown for nothing -- so this runs the
-##       whole suite by default and takes TESTS= to narrow it.
+##       A separate build from asan because the two cannot share a binary, and a
+##       core-only build against an instrumented Qt -- scripts/qt-tsan.sh makes
+##       one, and ADR-0055 says why nothing else will do. Takes TESTS= to narrow it.
 TESTS ?= .
+# Where scripts/qt-tsan.sh installs by default. Override to put it elsewhere.
+MOLE_TSAN_QT ?= $(HOME)/opt/qt-6.4.2-tsan
+export MOLE_TSAN_QT
+
+# Two suites are left out by name rather than by accident.
+#
+# Both start or fork a process, and the ThreadSanitizer runtime in GCC 13 aborts
+# on an internal assertion when a multithreaded program forks --
+# `CHECK failed: tsan_rtl.cpp:253`. That is the tool falling over, not a race:
+# both suites pass under `make test` and under `make asan`. Excluding them by
+# name keeps the tier green and keeps the reason visible; a filter that happened
+# to miss them would tell nobody anything.
+TSAN_EXCLUDE ?= tst_KilledOutright|tst_MoleTasks
+
 tsan:
-	@cmake --build build/tsan --parallel $(JOBS) 2>/dev/null || cmake --preset tsan
-	@cmake --build build/tsan --parallel $(JOBS)
-	@# setarch -R turns address-space randomisation off for the run. Without it
-	@# every binary dies on "unexpected memory mapping": the kernel's default
-	@# mmap entropy on this distribution is wider than ThreadSanitizer's shadow
-	@# mapping expects, and nothing in the build can fix that from inside.
+	@test -f "$(MOLE_TSAN_QT)/lib/libQt6Core.so.6" || { \
+		echo "No instrumented Qt at $(MOLE_TSAN_QT)."; \
+		echo "Build one with scripts/qt-tsan.sh, or set MOLE_TSAN_QT to where yours is."; \
+		echo "Running this against a distribution Qt produces thousands of warnings"; \
+		echo "that are its locking being invisible rather than anything of ours --"; \
+		echo "see docs/adr/0055-thread-sanitizer-needs-a-qt-that-answers-it.md."; \
+		exit 2; }
+	@# setarch -R turns address-space randomisation off, and it has to cover the
+	@# *build* as well as the run. Without it a ThreadSanitizer binary dies on
+	@# "unexpected memory mapping": this distribution's mmap entropy is wider than
+	@# TSan's shadow mapping expects, and nothing in the build can fix that from
+	@# inside. The build needs it because the instrumented Qt's own moc is a TSan
+	@# binary too, so every AutoMoc step runs one -- which is not obvious until it
+	@# fails at the first file with an error that names no cause.
+	@setarch $$(uname -m) -R cmake --build build/tsan --parallel $(JOBS) 2>/dev/null \
+		|| cmake --preset tsan
+	@setarch $$(uname -m) -R cmake --build build/tsan --parallel $(JOBS)
 	@setarch $$(uname -m) -R ctest --test-dir build/tsan --output-on-failure \
-		--parallel $(JOBS) --label-exclude heavy -R "$(TESTS)"
+		--parallel $(JOBS) --label-exclude heavy -R "$(TESTS)" -E "$(TSAN_EXCLUDE)"
 
 ## format: apply .clang-format to every source file
 format:

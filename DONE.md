@@ -9,6 +9,63 @@ wrong.
 
 ---
 
+## `make tsan` produced five thousand warnings and nobody could act on one of them
+
+**Asked for:** MOLE-234 — opened while starting MOLE-126, whose brief said "43 warnings, from
+`tst_ManyAtOnce` alone". A whole run says **5038, across 45 of the 91 suites**. That brief was
+written from a first look at one suite, and the shape of the problem is not what it assumes.
+
+**The cause is one line in Qt's own header.** Qt annotates its mutexes and futexes for
+ThreadSanitizer through `QtCore/qtsan_impl.h`, behind a macro evaluated when the translation unit is
+compiled. Our code is built with `-fsanitize=thread` and gets the annotations; the distribution's Qt
+was not, so **its locking is invisible** — TSan sees a write on one thread and a read on another with
+nothing between them and reports a race that is not there. `libQt6Core.so.6` does not link `libtsan`
+at all. Sorted by where *both* racing accesses lived, 3900 of the 5038 were in Qt, glibc or
+libstdc++, and 366 in our own code.
+
+**The glibc thousand misled us first, and the way it did is worth keeping.** A thousand reports were
+`tzset_internal` reached through `QFileInfo::lastModified()` — which reads exactly like the
+documented case where concurrent `localtime_r` races on lazy timezone initialisation, and has an
+obvious cheap fix. Calling `tzset()` once at startup changed nothing at all. That was the clue
+rather than a dead end: the serialisation was **Qt's, not glibc's**, and TSan could not see that
+either. They vanished with the rest.
+
+**A suppression file would have been the wrong answer, which is why the ticket needed reopening
+rather than finishing.** MOLE-126 offered it as the fallback — every remaining warning gets an entry
+naming what it is. With Qt uninstrumented that means suppressing Qt wholesale, and nearly every real
+race here touches a `QString` or a `QObject` somewhere in its stack, so the suppression would hide
+exactly what the tool exists to find. It is also the reverse of the rule `lsan.supp` already keeps:
+every entry there is scoped to a third-party module *so that a leak in our own code still fails the
+build*.
+
+**So `make tsan` builds its own Qt.** `scripts/qt-tsan.sh` fetches qtbase, checks it against a
+recorded SHA-256, configures it with Qt's own `-sanitize thread` and installs it outside the
+repository. qtbase alone, deliberately: QtQuick, QtQml, QtPdf and QtMultimedia are needed by no suite
+this tier runs, and QtPdf pulls in PDFium while QtMultimedia pulls in a media stack — a great deal of
+building for suites that are not about concurrency. `MOLE_CORE_ONLY` builds core, host, ui, tools and
+their headless tests, which need nothing outside qtbase.
+[ADR-0055](docs/adr/0055-thread-sanitizer-needs-a-qt-that-answers-it.md) has the alternatives.
+
+**The measurement, which is the whole point:**
+
+| | Warnings |
+|---|---:|
+| distribution Qt, whole suite | 5038 |
+| instrumented Qt, core suites | **25** |
+
+and all 25 are one race in our own code — `Task`'s metric map, written on the main thread in
+`applyPending()` and read on a worker thread in `bytesDone()`. MOLE-126 is now a piece of evidence
+instead of a wall.
+
+**Two things cost a build each to learn.** `-sanitize thread` instruments Qt's *build tools*, so the
+`moc` that runs during the build is itself a TSan binary and dies on "unexpected memory mapping" —
+the same ASLR problem the `tsan` target already worked around for the test run, and the error names
+no cause. `setarch -R` has to cover the build as well, in the script and in the Makefile. And
+`tst_KilledOutright` and `tst_MoleTasks` abort on `CHECK failed: tsan_rtl.cpp:253`, an internal
+assertion in GCC 13's TSan runtime when a multithreaded program forks; both start processes, both
+pass under `make test` and `make asan`, and both are excluded by name in `TSAN_EXCLUDE` so the
+exclusion is visible rather than a filter that quietly misses them.
+
 ## The server attacked mid-transfer, and the same faults for a millisecond each
 
 **Asked for:** MOLE-28 — six kinds of interference against a live server, each producing a named

@@ -23,7 +23,9 @@ add_library(mole_test_support STATIC
 )
 
 # The QML-driving harness needs Quick and the application's QML; kept in its
-# own target so the headless core tests do not pay for it.
+# own target so the headless core tests do not pay for it -- and skipped whole in
+# a core-only build, which has no Quick to link.
+if(NOT MOLE_CORE_ONLY)
 add_library(mole_qml_harness STATIC
     support/QmlAppHarness.h
     support/QmlAppHarness.cpp
@@ -38,6 +40,8 @@ qt_add_resources(mole_qml_harness "harness_qml"
     PREFIX "/qt/qml/Mole"
     BASE "${CMAKE_SOURCE_DIR}/src/app"
     FILES ${MOLE_APP_QML_FILES})
+
+endif() # MOLE_CORE_ONLY
 
 target_include_directories(mole_test_support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(mole_test_support
@@ -209,6 +213,12 @@ mole_add_test(tst_Bookmarks            SOURCES ui/tst_Bookmarks.cpp            L
 mole_add_test(tst_CommandPalette       SOURCES ui/tst_CommandPalette.cpp       LIBS mole_ui)
 
 # --- the assembled application ----------------------------------------------
+#
+# From here down every suite needs the window, a plugin or a server, and each of
+# those needs Qml, Quick, Pdf, Multimedia or libcurl. A core-only build has none
+# of them -- see MOLE_CORE_ONLY in the top-level CMakeLists.
+if(NOT MOLE_CORE_ONLY)
+
 mole_add_test(tst_AppIntegration    SOURCES app/tst_AppIntegration.cpp   LIBS mole_builtin)
 
 # A folder with an indexed subtree in it, answered by both engines at once. Its
@@ -421,3 +431,5 @@ if(MOLE_HAVE_NETWORK_PLUGIN)
 else()
     message(STATUS "Network drive tests skipped: the network plugin was not built")
 endif()
+
+endif() # MOLE_CORE_ONLY

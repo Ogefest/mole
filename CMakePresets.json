@@ -1,59 +1,83 @@
 {
-  "version": 3,
-  "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 },
-  "configurePresets": [
-    {
-      "name": "base",
-      "hidden": true,
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/${presetName}",
-      "cacheVariables": {
-        "CMAKE_CXX_COMPILER_LAUNCHER": "ccache",
-        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
-      }
+    "version": 3,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 24,
+        "patch": 0
     },
-    {
-      "name": "debug",
-      "inherits": "base",
-      "displayName": "Debug",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
-    },
-    {
-      "name": "asan",
-      "inherits": "base",
-      "displayName": "Debug + sanitizers",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "MOLE_ENABLE_SANITIZERS": "ON"
-      }
-    },
-    {
-      "name": "tsan",
-      "inherits": "base",
-      "displayName": "Debug + thread sanitizer",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "MOLE_ENABLE_THREAD_SANITIZER": "ON"
-      }
-    },
-    {
-      "name": "release",
-      "inherits": "base",
-      "displayName": "Release",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
-    }
-  ],
-  "buildPresets": [
-    { "name": "debug", "configurePreset": "debug" },
-    { "name": "asan", "configurePreset": "asan" },
-    { "name": "tsan", "configurePreset": "tsan" },
-    { "name": "release", "configurePreset": "release" }
-  ],
-  "testPresets": [
-    {
-      "name": "debug",
-      "configurePreset": "debug",
-      "output": { "outputOnFailure": true }
-    }
-  ]
+    "configurePresets": [
+        {
+            "name": "base",
+            "hidden": true,
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "cacheVariables": {
+                "CMAKE_CXX_COMPILER_LAUNCHER": "ccache",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
+            "name": "debug",
+            "inherits": "base",
+            "displayName": "Debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "asan",
+            "inherits": "base",
+            "displayName": "Debug + sanitizers",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "MOLE_ENABLE_SANITIZERS": "ON"
+            }
+        },
+        {
+            "name": "tsan",
+            "inherits": "base",
+            "displayName": "Debug + thread sanitizer (core only, instrumented Qt)",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "MOLE_ENABLE_THREAD_SANITIZER": "ON",
+                "MOLE_CORE_ONLY": "ON",
+                "CMAKE_PREFIX_PATH": "$env{MOLE_TSAN_QT}"
+            }
+        },
+        {
+            "name": "release",
+            "inherits": "base",
+            "displayName": "Release",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "debug",
+            "configurePreset": "debug"
+        },
+        {
+            "name": "asan",
+            "configurePreset": "asan"
+        },
+        {
+            "name": "tsan",
+            "configurePreset": "tsan"
+        },
+        {
+            "name": "release",
+            "configurePreset": "release"
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "debug",
+            "configurePreset": "debug",
+            "output": {
+                "outputOnFailure": true
+            }
+        }
+    ]
 }
