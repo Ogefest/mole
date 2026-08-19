@@ -270,7 +270,9 @@ void TestKilledOutright::anIndexKilledMidWriteOpensAgainAndAnswers()
         if (!database.insertBatch(volume.value(), settled.value(), rowsNamed(QStringLiteral("settled"), 500))
                  .ok())
             return;
-        if (!database.commitScan(volume.value(), settled.value(), QDateTime::currentDateTime()).ok())
+        if (!database
+                 .commitScan(volume.value(), settled.value(), QDateTime::currentDateTime(), ScanOptions {})
+                 .ok())
             return;
 
         // Said with a file rather than a message, because the parent has to

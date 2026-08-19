@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/index/ScanOptions.h"
 #include "core/search/SearchQuery.h"
 #include "core/vfs/VfsTypes.h"
 #include "core/vfs/VfsUri.h"
@@ -10,6 +11,8 @@
 #include <QMutex>
 #include <QSqlDatabase>
 #include <QString>
+
+#include <optional>
 
 class QThread;
 
@@ -53,6 +56,16 @@ struct IndexVolume
     QString label;
     QDateTime lastScan;
     qint64 fileCount = 0;
+
+    /// What the scan that built this volume was asked for, or nothing when the
+    /// volume was written before the index recorded it.
+    ///
+    /// Nothing means **not known**, which is a different answer from "no
+    /// metadata": a list that says a tree indexed with metadata last week has
+    /// none is worse than one saying it cannot tell yet, and one rescan replaces
+    /// the unknown with the truth. See
+    /// docs/adr/0057-a-volume-records-the-scan-that-built-it.md.
+    std::optional<ScanOptions> scan;
 };
 
 struct IndexSearchHit
@@ -127,7 +140,13 @@ public:
     /// Makes `generation` the volume's contents and records the scan time,
     /// dropping what the previous one left. One transaction, so this instant
     /// is where a search stops seeing the old scan and starts seeing this one.
-    [[nodiscard]] Result<void> commitScan(qint64 volumeId, qint64 generation, const QDateTime& when);
+    /// `options` is what the scan was asked for, recorded on the volume so
+    /// anything looking at a list of indexes can say what is in each. Written
+    /// here and not at beginScan(), because only a finished scan's options
+    /// describe what the volume holds -- an abandoned one leaves them alone the
+    /// way it already leaves `last_scan` alone.
+    [[nodiscard]] Result<void> commitScan(
+        qint64 volumeId, qint64 generation, const QDateTime& when, const ScanOptions& options);
 
     /// Every directory the volume's last finished scan recorded, by path,
     /// against the time it was last changed.

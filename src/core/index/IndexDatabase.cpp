@@ -13,7 +13,7 @@
 namespace mole {
 namespace {
 
-    constexpr int kSchemaVersion = 4;
+    constexpr int kSchemaVersion = 5;
 
 } // namespace
 
@@ -271,6 +271,21 @@ Result<void> IndexDatabase::applyMigrations()
             return applied;
     }
 
+    if (version < 5) {
+        // What the scan that built a volume was asked for, so a list of indexes
+        // can say which of them can answer a question about a camera and which
+        // cannot. Nullable on purpose: a volume written before this has no
+        // recorded options, and "not known" is the honest answer for it rather
+        // than "no metadata", which would be a lie about a tree indexed with it.
+        const QStringList statements = {
+            QStringLiteral("ALTER TABLE volumes ADD COLUMN scan_incremental INTEGER"),
+            QStringLiteral("ALTER TABLE volumes ADD COLUMN scan_metadata INTEGER"),
+            QStringLiteral("ALTER TABLE volumes ADD COLUMN scan_archives INTEGER"),
+        };
+        if (Result<void> applied = apply(5, statements); !applied.ok())
+            return applied;
+    }
+
     QSqlQuery bump(db);
     if (!bump.exec(QStringLiteral("PRAGMA user_version=%1").arg(kSchemaVersion)))
         return sqlError(db, QStringLiteral("Writing schema version"));
@@ -472,7 +487,8 @@ Result<qint64> IndexDatabase::carryForward(qint64 volumeId, qint64 generation, c
     return carried;
 }
 
-Result<void> IndexDatabase::commitScan(qint64 volumeId, qint64 generation, const QDateTime& when)
+Result<void> IndexDatabase::commitScan(
+    qint64 volumeId, qint64 generation, const QDateTime& when, const ScanOptions& options)
 {
     QMutexLocker lock(&m_mutex);
     if (!m_open)
@@ -499,9 +515,13 @@ Result<void> IndexDatabase::commitScan(qint64 volumeId, qint64 generation, const
     QSqlQuery swap(db);
     swap.prepare(QStringLiteral(
         "UPDATE volumes SET generation = ?, last_scan = ?, "
+        "scan_incremental = ?, scan_metadata = ?, scan_archives = ?, "
         "file_count = (SELECT COUNT(*) FROM files WHERE volume_id = ? AND generation = ?) WHERE id = ?"));
     swap.addBindValue(generation);
     swap.addBindValue(when.toSecsSinceEpoch());
+    swap.addBindValue(options.incremental ? 1 : 0);
+    swap.addBindValue(options.metadata ? 1 : 0);
+    swap.addBindValue(options.archives ? 1 : 0);
     swap.addBindValue(volumeId);
     swap.addBindValue(generation);
     swap.addBindValue(volumeId);
@@ -550,8 +570,9 @@ Result<QList<IndexVolume>> IndexDatabase::volumes() const
     if (!db.isOpen())
         return sqlError(db, QStringLiteral("No index connection for this thread")).error();
     QSqlQuery query(db);
-    if (!query.exec(
-            QStringLiteral("SELECT id, root_uri, label, last_scan, file_count FROM volumes ORDER BY label")))
+    if (!query.exec(QStringLiteral("SELECT id, root_uri, label, last_scan, file_count, "
+                                   "scan_incremental, scan_metadata, scan_archives "
+                                   "FROM volumes ORDER BY label")))
         return sqlError(db, QStringLiteral("Listing volumes")).error();
 
     QList<IndexVolume> out;
@@ -564,6 +585,15 @@ Result<QList<IndexVolume>> IndexDatabase::volumes() const
         if (scan > 0)
             v.lastScan = QDateTime::fromSecsSinceEpoch(scan);
         v.fileCount = query.value(4).toLongLong();
+        // All three or none: they are written together by one finished scan, so
+        // a volume either remembers what it was asked for or it does not.
+        if (!query.value(5).isNull()) {
+            ScanOptions asked;
+            asked.incremental = query.value(5).toBool();
+            asked.metadata = query.value(6).toBool();
+            asked.archives = query.value(7).toBool();
+            v.scan = asked;
+        }
         out.append(v);
     }
     return out;

@@ -479,8 +479,9 @@ void TestMixedSearch::theFieldsOfferedFollowTheKeysInScope()
     row.extension = QStringLiteral("xyz");
     row.facts = { SearchFact { QStringLiteral("xyz.invented"), QStringLiteral("something"), 0, false } };
     QVERIFY(m_app->services().index->insertBatch(volume.value(), scan.value(), { row }).ok());
-    QVERIFY(
-        m_app->services().index->commitScan(volume.value(), scan.value(), QDateTime::currentDateTime()).ok());
+    QVERIFY(m_app->services()
+                .index->commitScan(volume.value(), scan.value(), QDateTime::currentDateTime(), ScanOptions {})
+                .ok());
 
     search->setRootUri(memUri(QStringLiteral("/elsewhere")));
     search->setRootUri(memUri(QStringLiteral("/tree")));

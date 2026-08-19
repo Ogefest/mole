@@ -46,6 +46,9 @@ private slots:
     void whatAFileSaysAboutItselfIsStoredAndAskedFor();
     void aRowInsideAContainerKeepsItsOwnAddress();
     void anIndexWrittenBeforeFactsMigratesWithoutLosingARow();
+    void aVolumeRemembersWhatKindOfScanBuiltIt();
+    void anAbandonedScanLeavesTheRecordedOptionsAlone();
+    void anIndexWrittenBeforeTheOptionsAnswersNotKnown();
     void survivesAccessFromSeveralThreads();
     void operationsFailCleanlyWhenClosed();
 
@@ -55,7 +58,9 @@ private:
     qint64 seedVolume(const QString& uri, const QStringList& paths);
     /// Writes rows into `volume` as one finished scan -- begun, filled and
     /// committed -- which is the only way anything becomes searchable.
-    bool rescan(qint64 volume, const QList<IndexedFile>& rows);
+    /// `options` is what the scan is recorded as having been asked for. Default
+    /// for a test that does not care, stated for one that does.
+    bool rescan(qint64 volume, const QList<IndexedFile>& rows, const ScanOptions& options = {});
     bool rescan(qint64 volume, const QStringList& paths);
     /// Rows in the table, whether or not a search can reach them.
     ///
@@ -111,14 +116,14 @@ qint64 TestIndexDatabase::seedVolume(const QString& uri, const QStringList& path
     return rescan(volume.value(), paths) ? volume.value() : -1;
 }
 
-bool TestIndexDatabase::rescan(qint64 volume, const QList<IndexedFile>& rows)
+bool TestIndexDatabase::rescan(qint64 volume, const QList<IndexedFile>& rows, const ScanOptions& options)
 {
     const Result<qint64> scan = m_db->beginScan(volume);
     if (!scan.ok())
         return false;
     if (!m_db->insertBatch(volume, scan.value(), rows).ok())
         return false;
-    return m_db->commitScan(volume, scan.value(), QDateTime::currentDateTime()).ok();
+    return m_db->commitScan(volume, scan.value(), QDateTime::currentDateTime(), options).ok();
 }
 
 bool TestIndexDatabase::rescan(qint64 volume, const QStringList& paths)
@@ -355,7 +360,7 @@ void TestIndexDatabase::rowsFromAnUnfinishedScanAreNotVisible()
     QCOMPARE(m_db->search(named(QStringLiteral("settled"))).value().size(), 1);
 
     const QDateTime when = QDateTime::fromSecsSinceEpoch(1700000000);
-    QVERIFY(m_db->commitScan(volume, scan.value(), when).ok());
+    QVERIFY(m_db->commitScan(volume, scan.value(), when, ScanOptions {}).ok());
 
     // And the swap is total in both directions: what arrived is the contents,
     // what it replaced is gone rather than lingering alongside it.
@@ -401,7 +406,8 @@ void TestIndexDatabase::abandoningTheVolumesOwnScanDoesNothing()
     QVERIFY(scan.ok());
     QVERIFY(
         m_db->insertBatch(volume.value(), scan.value(), { makeFile(QStringLiteral("/data/a.txt")) }).ok());
-    QVERIFY(m_db->commitScan(volume.value(), scan.value(), QDateTime::currentDateTime()).ok());
+    QVERIFY(
+        m_db->commitScan(volume.value(), scan.value(), QDateTime::currentDateTime(), ScanOptions {}).ok());
 
     QVERIFY(m_db->abandonScan(volume.value(), scan.value()).ok());
     QCOMPARE(m_db->fileCount(volume.value()).value(), 1);
@@ -477,7 +483,7 @@ void TestIndexDatabase::commitScanRecordsTheCountAndTheTime()
     QCOMPARE(m_db->volumes().value().first().fileCount, 0);
 
     const QDateTime when = QDateTime::fromSecsSinceEpoch(1700000000);
-    QVERIFY(m_db->commitScan(volume.value(), scan.value(), when).ok());
+    QVERIFY(m_db->commitScan(volume.value(), scan.value(), when, ScanOptions {}).ok());
 
     const QList<IndexVolume> volumes = m_db->volumes().value();
     QCOMPARE(volumes.size(), 1);
@@ -536,7 +542,7 @@ void TestIndexDatabase::anIndexWrittenBeforeGenerationsStaysVisible()
     QVERIFY(scan.ok());
     QVERIFY(upgraded.insertBatch(volume, scan.value(), { makeFile(QStringLiteral("/old/new.txt")) }).ok());
     QCOMPARE(upgraded.fileCount().value(), 2); // still the old two, mid-scan
-    QVERIFY(upgraded.commitScan(volume, scan.value(), QDateTime::currentDateTime()).ok());
+    QVERIFY(upgraded.commitScan(volume, scan.value(), QDateTime::currentDateTime(), ScanOptions {}).ok());
     QCOMPARE(upgraded.fileCount().value(), 1);
 }
 
@@ -640,6 +646,13 @@ void TestIndexDatabase::anIndexWrittenBeforeFactsMigratesWithoutLosingARow()
         QSqlQuery query(db);
         QVERIFY(query.exec(QStringLiteral("DROP TABLE IF EXISTS file_facts")));
         QVERIFY(query.exec(QStringLiteral("PRAGMA user_version=2")));
+        // Nor did it record what a scan was asked for. A column left behind here
+        // would make the migration that adds it fail, which is not what a
+        // database written by the previous version looks like.
+        for (const QString& column : { QStringLiteral("scan_incremental"), QStringLiteral("scan_metadata"),
+                 QStringLiteral("scan_archives") }) {
+            QVERIFY(query.exec(QStringLiteral("ALTER TABLE volumes DROP COLUMN %1").arg(column)));
+        }
         // Version 2 had no `uri` column either; SQLite cannot drop one, so the
         // table is rebuilt the way the previous schema really had it.
         QVERIFY(query.exec(QStringLiteral("CREATE TABLE files_v2 AS SELECT id, volume_id, generation, "
@@ -660,6 +673,142 @@ void TestIndexDatabase::anIndexWrittenBeforeFactsMigratesWithoutLosingARow()
     auto again = std::make_unique<IndexDatabase>(path);
     QVERIFY(again->open().ok());
     QCOMPARE(again->fileCount().value(), 2);
+}
+
+/// Two indexes over two trees, one of which can answer a question about a camera
+/// and one of which cannot, are different things and used to be
+/// indistinguishable -- factKeys() is a proxy and cannot tell "scanned without
+/// metadata" from "scanned with it over files that carry none". See MOLE-229.
+void TestIndexDatabase::aVolumeRemembersWhatKindOfScanBuiltIt()
+{
+    const Result<qint64> photos
+        = m_db->upsertVolume(VfsUri::fromString(QStringLiteral("file:///photos")), QStringLiteral("photos"));
+    const Result<qint64> plain
+        = m_db->upsertVolume(VfsUri::fromString(QStringLiteral("file:///plain")), QStringLiteral("plain"));
+    QVERIFY(photos.ok());
+    QVERIFY(plain.ok());
+
+    ScanOptions everything;
+    everything.incremental = true;
+    everything.metadata = true;
+    everything.archives = true;
+    QVERIFY(rescan(photos.value(), { makeFile(QStringLiteral("/photos/a.jpg")) }, everything));
+    QVERIFY(rescan(plain.value(), { makeFile(QStringLiteral("/plain/a.txt")) }, ScanOptions {}));
+
+    const QList<IndexVolume> volumes = m_db->volumes().value();
+    QCOMPARE(volumes.size(), 2);
+    const auto found = [&volumes](const QString& label) {
+        for (const IndexVolume& volume : volumes) {
+            if (volume.label == label)
+                return volume;
+        }
+        return IndexVolume {};
+    };
+
+    const IndexVolume rich = found(QStringLiteral("photos"));
+    QVERIFY(rich.scan.has_value());
+    QVERIFY(rich.scan->metadata);
+    QVERIFY(rich.scan->archives);
+    QVERIFY(rich.scan->incremental);
+
+    const IndexVolume bare = found(QStringLiteral("plain"));
+    QVERIFY(bare.scan.has_value());
+    QVERIFY(!bare.scan->metadata);
+    QVERIFY(!bare.scan->archives);
+    QVERIFY(!bare.scan->incremental);
+}
+
+/// A scan that is abandoned or killed leaves the volume exactly as it was, and
+/// what it was asked for is part of "as it was" -- the same property the
+/// generation swap exists for, which should not gain an exception.
+void TestIndexDatabase::anAbandonedScanLeavesTheRecordedOptionsAlone()
+{
+    const Result<qint64> volume
+        = m_db->upsertVolume(VfsUri::fromString(QStringLiteral("file:///tree")), QStringLiteral("tree"));
+    QVERIFY(volume.ok());
+
+    ScanOptions withMetadata;
+    withMetadata.metadata = true;
+    QVERIFY(rescan(volume.value(), { makeFile(QStringLiteral("/tree/a.jpg")) }, withMetadata));
+    const QDateTime committed = m_db->volumes().value().first().lastScan;
+    QVERIFY(committed.isValid());
+
+    // A poorer scan, begun and thrown away.
+    const Result<qint64> abandoned = m_db->beginScan(volume.value());
+    QVERIFY(abandoned.ok());
+    QVERIFY(m_db->insertBatch(volume.value(), abandoned.value(), { makeFile(QStringLiteral("/tree/b.jpg")) })
+                .ok());
+    QVERIFY(m_db->abandonScan(volume.value(), abandoned.value()).ok());
+
+    const IndexVolume after = m_db->volumes().value().first();
+    QCOMPARE(after.lastScan, committed);
+    QVERIFY(after.scan.has_value());
+    QVERIFY2(after.scan->metadata, "an abandoned scan must not rewrite what the volume was asked for");
+}
+
+/// An index somebody already has says "not known" rather than "no metadata",
+/// because the second is a lie about a tree indexed with it last week. One
+/// rescan replaces the unknown with the truth.
+void TestIndexDatabase::anIndexWrittenBeforeTheOptionsAnswersNotKnown()
+{
+    const QString path = QDir(m_dir->path()).filePath(QStringLiteral("no-options.sqlite"));
+    const QString name = QStringLiteral("schema_four");
+    {
+        // The schema as version 4 shipped it, written by hand: the migration
+        // cannot be tested against a database the migration built.
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), name);
+        db.setDatabaseName(path);
+        QVERIFY(db.open());
+        QSqlQuery query(db);
+        QVERIFY(query.exec(QStringLiteral(
+            "CREATE TABLE volumes (id INTEGER PRIMARY KEY AUTOINCREMENT, root_uri TEXT NOT NULL UNIQUE, "
+            "label TEXT NOT NULL, last_scan INTEGER, file_count INTEGER NOT NULL DEFAULT 0, "
+            "generation INTEGER NOT NULL DEFAULT 0, next_generation INTEGER NOT NULL DEFAULT 0)")));
+        QVERIFY(query.exec(QStringLiteral(
+            "CREATE TABLE files (id INTEGER PRIMARY KEY AUTOINCREMENT, volume_id INTEGER NOT NULL "
+            "REFERENCES volumes(id) ON DELETE CASCADE, name TEXT NOT NULL, name_folded TEXT NOT NULL, "
+            "path TEXT NOT NULL, parent_path TEXT NOT NULL, extension TEXT, "
+            "is_dir INTEGER NOT NULL DEFAULT 0, size INTEGER NOT NULL DEFAULT 0, "
+            "mtime INTEGER NOT NULL DEFAULT 0, generation INTEGER NOT NULL DEFAULT 0, uri TEXT)")));
+        QVERIFY(query.exec(QStringLiteral("CREATE TABLE file_facts (file_id INTEGER NOT NULL "
+                                          "REFERENCES files(id) ON DELETE CASCADE, key TEXT NOT NULL, "
+                                          "text TEXT, num REAL)")));
+        QVERIFY(query.exec(QStringLiteral(
+            "INSERT INTO volumes (root_uri, label, last_scan, file_count) VALUES ('file:///old', 'old', "
+            "1700000000, 1)")));
+        QVERIFY(query.exec(
+            QStringLiteral("INSERT INTO files (volume_id, name, name_folded, path, parent_path, extension) "
+                           "VALUES (1, 'kept.jpg', 'kept.jpg', '/old/kept.jpg', '/old', 'jpg')")));
+        QVERIFY(query.exec(QStringLiteral("PRAGMA user_version=4")));
+    }
+    QSqlDatabase::removeDatabase(name);
+
+    IndexDatabase upgraded(path);
+    QVERIFY2(upgraded.open().ok(), "an index from the previous schema must still open");
+
+    // The migration loses no volume and no row.
+    const QList<IndexVolume> volumes = upgraded.volumes().value();
+    QCOMPARE(volumes.size(), 1);
+    QCOMPARE(volumes.first().fileCount, 1);
+    QCOMPARE(upgraded.fileCount().value(), 1);
+
+    // And says it cannot tell, which is neither of the two answers a scanned
+    // volume gives.
+    QVERIFY2(!volumes.first().scan.has_value(),
+        "a volume written before the options were recorded cannot claim to have none");
+
+    // One rescan replaces the unknown with the truth.
+    const qint64 volume = volumes.first().id;
+    const Result<qint64> scan = upgraded.beginScan(volume);
+    QVERIFY(scan.ok());
+    QVERIFY(upgraded.insertBatch(volume, scan.value(), { makeFile(QStringLiteral("/old/kept.jpg")) }).ok());
+    ScanOptions withMetadata;
+    withMetadata.metadata = true;
+    QVERIFY(upgraded.commitScan(volume, scan.value(), QDateTime::currentDateTime(), withMetadata).ok());
+
+    const IndexVolume rescanned = upgraded.volumes().value().first();
+    QVERIFY(rescanned.scan.has_value());
+    QVERIFY(rescanned.scan->metadata);
 }
 
 void TestIndexDatabase::survivesAccessFromSeveralThreads()
@@ -694,7 +843,8 @@ void TestIndexDatabase::survivesAccessFromSeveralThreads()
         writer.join();
 
     QCOMPARE(failures.load(), 0);
-    QVERIFY(m_db->commitScan(volume.value(), scan.value(), QDateTime::currentDateTime()).ok());
+    QVERIFY(
+        m_db->commitScan(volume.value(), scan.value(), QDateTime::currentDateTime(), ScanOptions {}).ok());
     QCOMPARE(m_db->fileCount().value(), kWriters * kRowsEach);
 
     // Reading from yet another thread must work too.
@@ -722,7 +872,7 @@ void TestIndexDatabase::operationsFailCleanlyWhenClosed()
     QVERIFY(!m_db->upsertVolume(VfsUri::fromString(QStringLiteral("file:///x")), QString()).ok());
     QVERIFY(!m_db->beginScan(1).ok());
     QVERIFY(!m_db->insertBatch(1, 1, { makeFile(QStringLiteral("/x/a")) }).ok());
-    QVERIFY(!m_db->commitScan(1, 1, QDateTime::currentDateTime()).ok());
+    QVERIFY(!m_db->commitScan(1, 1, QDateTime::currentDateTime(), ScanOptions {}).ok());
     QVERIFY(!m_db->abandonScan(1, 1).ok());
 }
 

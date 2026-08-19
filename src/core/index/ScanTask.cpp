@@ -172,7 +172,8 @@ void ScanTask::run()
 
     // The one moment the volume changes: the new contents become the answer
     // and the old ones go, in a single transaction.
-    if (Result<void> committed = m_index->commitScan(volumeId, generation, QDateTime::currentDateTime());
+    if (Result<void> committed
+        = m_index->commitScan(volumeId, generation, QDateTime::currentDateTime(), m_options);
         !committed.ok()) {
         giveUp(committed.error());
         return;
