@@ -26,6 +26,19 @@ DriveListModel::DriveListModel(VfsManager* vfs, RemoteRegistry* remotes, TaskMan
     if (m_remotes)
         connect(m_remotes, &RemoteRegistry::drivesChanged, this, &DriveListModel::reload);
 
+    // Busy is learnt from what the application already tells itself: a task is
+    // appended, one starts, one ends. Nothing is polled, and no drive is asked --
+    // the rule ADR-0018 set and ADR-0052 keeps.
+    if (m_tasks) {
+        connect(m_tasks, &TaskManager::taskAppended, this, [this](Task* task) {
+            if (task)
+                connect(task, &Task::stateChanged, this, &DriveListModel::refreshBusyDrives);
+            refreshBusyDrives();
+        });
+        connect(m_tasks, &TaskManager::activeCountChanged, this, &DriveListModel::refreshBusyDrives);
+        connect(m_tasks, &TaskManager::tasksReset, this, &DriveListModel::refreshBusyDrives);
+    }
+
     if (m_vfs || m_remotes)
         reload();
     if (m_tasks)
@@ -116,6 +129,10 @@ DriveListModel::State DriveListModel::stateOf(const Row& row) const
 
     // What the window is doing with it, which is the same question for a local
     // disk, an archive, a bucket and a server -- and is why State::Local is gone.
+    // Busy outranks Open: a drive somebody is looking at *and* copying to is being
+    // copied to, which is the more specific statement.
+    if (row.isMounted() && m_busyMounts.contains(row.mount.id))
+        return State::Busy;
     if (row.isMounted() && m_openMounts.contains(row.mount.id))
         return State::Open;
 
@@ -157,8 +174,48 @@ void DriveListModel::noteOpenLocations(const QList<VfsUri>& locations)
     // walked into a folder.
     const QSet<QString> changed = (open - m_openMounts) + (m_openMounts - open);
     m_openMounts = open;
+    announceStateOf(changed);
+}
+
+void DriveListModel::refreshBusyDrives()
+{
+    QSet<QString> busy;
+    if (m_tasks && m_vfs) {
+        const QList<Task*> tasks = m_tasks->tasks();
+        for (Task* task : tasks) {
+            if (!task)
+                continue;
+            // Work the user asked for, and running now. Housekeeping the
+            // application does on its own behalf lights nothing: QuerySpaceTask
+            // runs per mount every minute to keep the capacity bars honest, and if
+            // it counted, every drive in the list would pulse once a minute for
+            // ever and the feature would be noise in its first hour. A finished
+            // task stops counting the instant it finishes, including one that
+            // failed or was cancelled -- a drive left pulsing after a failed copy
+            // is the kind of thing nobody notices in review and everybody notices
+            // in use.
+            if (task->isBackground() || task->state() != Task::State::Running)
+                continue;
+            const QList<VfsUri> touching = task->touching();
+            for (const VfsUri& uri : touching) {
+                const Mount mount = m_vfs->mountForUri(uri);
+                if (!mount.id.isEmpty())
+                    busy.insert(mount.id);
+            }
+        }
+    }
+    if (busy == m_busyMounts)
+        return;
+
+    const QSet<QString> changed = (busy - m_busyMounts) + (m_busyMounts - busy);
+    m_busyMounts = busy;
+    announceStateOf(changed);
+}
+
+void DriveListModel::announceStateOf(const QSet<QString>& mounts)
+{
     for (int row = 0; row < m_rows.size(); ++row) {
-        if (!m_rows.at(row).isMounted() || !changed.contains(m_rows.at(row).mount.id))
+        if (!m_rows.at(row).isMounted() || !mounts.contains(m_rows.at(row).mount.id))
             continue;
         const QModelIndex at = index(row, 0);
         emit dataChanged(

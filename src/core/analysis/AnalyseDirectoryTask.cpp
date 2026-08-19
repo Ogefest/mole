@@ -16,6 +16,7 @@ AnalyseDirectoryTask::AnalyseDirectoryTask(
     , m_root(std::move(root))
     , m_label(std::move(label))
 {
+    noteTouching(m_root);
 }
 
 void AnalyseDirectoryTask::run()

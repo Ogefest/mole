@@ -18,6 +18,8 @@ RenameTask::RenameTask(VfsManager* vfs, QList<RenamePlan::Entry> entries, QObjec
     , m_vfs(vfs)
     , m_entries(std::move(entries))
 {
+    for (const RenamePlan::Entry& entry : std::as_const(m_entries))
+        noteTouching(entry.source);
 }
 
 void RenameTask::run()

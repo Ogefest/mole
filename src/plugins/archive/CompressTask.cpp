@@ -126,6 +126,8 @@ CompressTask::CompressTask(Request request, QObject* parent)
           parent)
     , m_request(std::move(request))
 {
+    noteTouching(m_request.sources);
+    noteTouching(m_request.target);
 }
 
 bool CompressTask::plan(QList<Item>& items)

@@ -4,6 +4,7 @@
 
 #include "core/CoreMetaTypes.h"
 #include "core/credentials/SecretStore.h"
+#include "core/tasks/QuerySpaceTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/RemoteRegistry.h"
 #include "core/vfs/backends/LocalFileSystem.h"
@@ -11,6 +12,7 @@
 
 #include <QAbstractItemModelTester>
 #include <QDir>
+#include <QSemaphore>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 
@@ -101,6 +103,13 @@ private slots:
     void unreachableOutranksOpenAndOpenOutranksTheConnectionStates();
     void everyStateHasAWordAColourAShapeAndAPulse();
 
+    void aTaskOnTwoDrivesMakesBothOfThemBusy();
+    void thePerMinuteSpaceQueryLightsNothing();
+    void aTaskThatDeclaresNothingLightsNothing();
+    void aTaskThatFailsOrIsCancelledStopsTheBusyDot();
+    void busyOutranksOpenAndUnreachableOutranksBusy();
+    void nothingRecomputesBusyOnATimer();
+
 private:
     /// Adds a mount and waits for its space answer to arrive, if one is coming.
     void mountSized(const QString& id, std::shared_ptr<SizedFileSystem> fs);
@@ -109,6 +118,15 @@ private:
     /// What connectDrive() does, minus the factory: the mount takes the drive's
     /// own id, which is the join the whole model rests on.
     void connectConfigured(const QString& driveId);
+    /// A task that holds still on the pool until the test lets it go, declaring
+    /// the locations it touches. Held still because "busy" is a state a task is
+    /// *in*, and a task that has already finished is not in it.
+    ScriptedTask* heldTask(const QList<VfsUri>& touching, bool background = false);
+    /// The state of the row for a mount id.
+    DriveListModel::State stateOfMount(const QString& id) const;
+
+    /// Lets every held task go, so nothing outlives a test.
+    std::shared_ptr<QSemaphore> m_gate;
 
     std::unique_ptr<QTemporaryDir> m_dir;
     std::unique_ptr<SecretStore> m_secrets;
@@ -129,13 +147,38 @@ void TestDriveListModel::init()
 
     m_vfs = std::make_unique<VfsManager>();
     m_tasks = std::make_unique<TaskManager>();
+    m_gate = std::make_shared<QSemaphore>();
     m_model = std::make_unique<DriveListModel>(m_vfs.get(), m_registry.get(), m_tasks.get());
     // The periodic refresh would keep submitting work behind the assertions.
     m_model->setRefreshInterval(0);
 }
 
+ScriptedTask* TestDriveListModel::heldTask(const QList<VfsUri>& touching, bool background)
+{
+    auto gate = m_gate;
+    auto* task = new ScriptedTask(QStringLiteral("held"), [gate](ScriptedTask&) { gate->acquire(); });
+    task->noteTouching(touching);
+    task->setBackground(background);
+    m_tasks->submit(task);
+    return task;
+}
+
+DriveListModel::State TestDriveListModel::stateOfMount(const QString& id) const
+{
+    for (int row = 0; row < m_model->rowCount(); ++row) {
+        const QModelIndex at = m_model->index(row, 0);
+        if (at.data(DriveListModel::IdRole).toString() == id)
+            return static_cast<DriveListModel::State>(at.data(DriveListModel::StateRole).toInt());
+    }
+    return DriveListModel::State::Idle;
+}
+
 void TestDriveListModel::cleanup()
 {
+    // Let every held task go before anything it might touch is destroyed. A
+    // generous count: releasing permits nobody is waiting on costs nothing.
+    if (m_gate)
+        m_gate->release(64);
     m_model.reset();
     m_tasks.reset();
     m_vfs.reset();
@@ -662,6 +705,156 @@ void TestDriveListModel::everyStateHasAWordAColourAShapeAndAPulse()
     // And no state wears green any more.
     for (const Appearance& row : table)
         QVERIFY(DriveListModel::stateSeverity(row.state) != QStringLiteral("good"));
+}
+
+// ---- and what is running on it --------------------------------------------
+//
+// A drive with a copy running on it looked exactly like one nobody had touched all
+// session. "Which of my drives is this transfer actually touching" is a question
+// people ask out loud, and the task strip answered it only by naming a task whose
+// title contains a path somebody has to read. See MOLE-162.
+
+void TestDriveListModel::aTaskOnTwoDrivesMakesBothOfThemBusy()
+{
+    mountSized(QStringLiteral("from"), std::make_shared<SizedFileSystem>());
+    mountSized(QStringLiteral("to"), std::make_shared<SizedFileSystem>());
+    QCOMPARE(stateOfMount(QStringLiteral("from")), DriveListModel::State::Idle);
+    QCOMPARE(stateOfMount(QStringLiteral("to")), DriveListModel::State::Idle);
+
+    // A copy has a source and a destination and usually two different drives, so
+    // the attribution is from a task's uris to a *set* of drives rather than to
+    // one. TransferTask declares both ends for exactly this.
+    ScriptedTask* task = heldTask({ VfsUri::fromString(QStringLiteral("sized://from/holiday.mov")),
+        VfsUri::fromString(QStringLiteral("sized://to/backup")) });
+    QVERIFY(waitFor([this] {
+        return stateOfMount(QStringLiteral("from")) == DriveListModel::State::Busy
+            && stateOfMount(QStringLiteral("to")) == DriveListModel::State::Busy;
+    }));
+    QCOMPARE(m_model->index(0, 0).data(DriveListModel::StateTextRole).toString(), QStringLiteral("Busy"));
+    QCOMPARE(
+        m_model->index(0, 0).data(DriveListModel::StateSeverityRole).toString(), QStringLiteral("using"));
+    QVERIFY(m_model->index(0, 0).data(DriveListModel::DotFilledRole).toBool());
+    QVERIFY2(m_model->index(0, 0).data(DriveListModel::DotPulsingRole).toBool(),
+        "work in progress is the state that pulses");
+
+    // And neither when it finishes.
+    m_gate->release();
+    QVERIFY(waitForTask(task));
+    QVERIFY(waitFor([this] {
+        return stateOfMount(QStringLiteral("from")) == DriveListModel::State::Idle
+            && stateOfMount(QStringLiteral("to")) == DriveListModel::State::Idle;
+    }));
+}
+
+void TestDriveListModel::thePerMinuteSpaceQueryLightsNothing()
+{
+    // The trap this feature would have shipped with. QuerySpaceTask runs per mount
+    // every minute -- it is how the sidebar knows how full a drive is -- so if
+    // every task lit the dot, every drive in the list would pulse once a minute
+    // for ever and the feature would be noise in its first hour. Task::isBackground()
+    // is the hook, and QuerySpaceTask sets it.
+    mountSized(QStringLiteral("disk"), std::make_shared<SizedFileSystem>());
+
+    auto* housekeeping = new QuerySpaceTask(
+        m_vfs->mounts().first().fileSystem, m_vfs->mounts().first().root, QStringLiteral("disk"));
+    QVERIFY2(housekeeping->isBackground(), "QuerySpaceTask must stay background, or the dot becomes noise");
+    m_tasks->submit(housekeeping);
+    QVERIFY(waitForTask(housekeeping));
+
+    QCOMPARE(stateOfMount(QStringLiteral("disk")), DriveListModel::State::Idle);
+
+    // And the same rule while one is running rather than after it: a background
+    // task held still lights nothing either.
+    ScriptedTask* held = heldTask({ VfsUri::fromString(QStringLiteral("sized://disk/x")) }, true);
+    QVERIFY(waitFor([held] { return held->state() == Task::State::Running; }));
+    QCOMPARE(stateOfMount(QStringLiteral("disk")), DriveListModel::State::Idle);
+    m_gate->release();
+    QVERIFY(waitForTask(held));
+}
+
+void TestDriveListModel::aTaskThatDeclaresNothingLightsNothing()
+{
+    // The second guard, and the one that covers what nobody has thought about
+    // yet: a metadata read, a thumbnail decode, a table row count. Silence lights
+    // nothing, so a task only appears in the sidebar when somebody decided it
+    // should.
+    mountSized(QStringLiteral("disk"), std::make_shared<SizedFileSystem>());
+
+    ScriptedTask* silent = heldTask({});
+    QVERIFY(waitFor([silent] { return silent->state() == Task::State::Running; }));
+    QVERIFY2(!silent->isBackground(), "this one is not background: it is simply not saying");
+    QVERIFY(silent->touching().isEmpty());
+    QCOMPARE(stateOfMount(QStringLiteral("disk")), DriveListModel::State::Idle);
+    m_gate->release();
+    QVERIFY(waitForTask(silent));
+}
+
+void TestDriveListModel::aTaskThatFailsOrIsCancelledStopsTheBusyDot()
+{
+    // A drive left pulsing after a failed copy is the kind of thing nobody
+    // notices in review and everybody notices in use.
+    mountSized(QStringLiteral("disk"), std::make_shared<SizedFileSystem>());
+    const QList<VfsUri> on { VfsUri::fromString(QStringLiteral("sized://disk/report.pdf")) };
+
+    ScriptedTask* failing = heldTask(on);
+    QVERIFY(waitFor([this] { return stateOfMount(QStringLiteral("disk")) == DriveListModel::State::Busy; }));
+    failing->fail(VfsError::make(VfsError::IoError, QStringLiteral("the disk gave up")));
+    m_gate->release();
+    QVERIFY(waitForTask(failing));
+    QCOMPARE(failing->state(), Task::State::Failed);
+    QVERIFY(waitFor([this] { return stateOfMount(QStringLiteral("disk")) == DriveListModel::State::Idle; }));
+
+    ScriptedTask* cancelled = heldTask(on);
+    QVERIFY(waitFor([this] { return stateOfMount(QStringLiteral("disk")) == DriveListModel::State::Busy; }));
+    cancelled->requestCancel();
+    m_gate->release();
+    QVERIFY(waitForTask(cancelled));
+    QVERIFY(waitFor([this] { return stateOfMount(QStringLiteral("disk")) == DriveListModel::State::Idle; }));
+}
+
+void TestDriveListModel::busyOutranksOpenAndUnreachableOutranksBusy()
+{
+    const QString id = configure(QStringLiteral("Office NAS"));
+    m_model->noteCheckStarted(id);
+    connectConfigured(id);
+    m_model->noteCheckResult(id, true, QStringLiteral("Listed 4 entries"));
+    const VfsUri root = m_registry->drive(id).rootUri();
+
+    // Open, then busy on top of it. Busy is the more specific statement.
+    m_model->noteOpenLocations({ root });
+    QCOMPARE(stateOfMount(id), DriveListModel::State::Open);
+
+    ScriptedTask* task = heldTask({ root.child(QStringLiteral("archive")) });
+    QVERIFY(waitFor([this, &id] { return stateOfMount(id) == DriveListModel::State::Busy; }));
+
+    // And a drive nothing can reach reads unreachable even with work running on
+    // it: the work is what found out.
+    m_model->noteCheckResult(id, false, QStringLiteral("The server stopped answering"));
+    QCOMPARE(stateOfMount(id), DriveListModel::State::Unreachable);
+    m_model->noteCheckResult(id, true, QStringLiteral("Answering again"));
+    QCOMPARE(stateOfMount(id), DriveListModel::State::Busy);
+
+    // When the task ends it goes back to open, not to idle: somebody is still
+    // looking at it.
+    m_gate->release();
+    QVERIFY(waitForTask(task));
+    QVERIFY(waitFor([this, &id] { return stateOfMount(id) == DriveListModel::State::Open; }));
+}
+
+void TestDriveListModel::nothingRecomputesBusyOnATimer()
+{
+    // Learnt from what the application already tells itself -- a task appended, a
+    // task changing state -- and from nothing else. A repeating recomputation
+    // would be work done for as long as the window is open, for an answer that
+    // only changes when a task does.
+    mountSized(QStringLiteral("disk"), std::make_shared<SizedFileSystem>());
+    m_model->setRefreshInterval(0);
+
+    const QList<QTimer*> timers = m_model->findChildren<QTimer*>();
+    for (QTimer* timer : timers) {
+        QVERIFY2(
+            !timer->isActive(), "the only timer here is the capacity refresh, and this test turned it off");
+    }
 }
 
 MOLE_TEST_MAIN(TestDriveListModel)

@@ -29,6 +29,7 @@ LiveSearchTask::LiveSearchTask(FileSystemPtr fileSystem, VfsUri root, SearchQuer
     , m_query(std::move(query))
     , m_plan(planSearch(m_query, SearchSource::Walk))
 {
+    noteTouching(m_root);
 }
 
 void LiveSearchTask::supersede(QHash<QString, QStringList> indexedByParent)

@@ -12,6 +12,7 @@ ScanTask::ScanTask(
     , m_label(std::move(label))
     , m_index(index)
 {
+    noteTouching(m_root);
 }
 
 void ScanTask::setContainerReader(std::function<QList<IndexedFile>(const FileEntry&, bool*)> reader)

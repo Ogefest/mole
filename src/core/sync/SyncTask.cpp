@@ -20,6 +20,9 @@ SyncTask::SyncTask(FileSystemPtr sourceFs, VfsUri source, FileSystemPtr targetFs
     , m_target(std::move(target))
     , m_options(std::move(options))
 {
+    // Both trees, like a copy: a sync between two drives is work on two drives.
+    noteTouching(m_source);
+    noteTouching(m_target);
 }
 
 bool SyncTask::copyOne(const SyncPlan::Step& step)

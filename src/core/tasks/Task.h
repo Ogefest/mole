@@ -1,9 +1,11 @@
 #pragma once
 
 #include "core/vfs/VfsTypes.h"
+#include "core/vfs/VfsUri.h"
 
 #include <QDateTime>
 #include <QElapsedTimer>
+#include <QList>
 #include <QMap>
 #include <QMutex>
 #include <QObject>
@@ -130,6 +132,20 @@ public:
     /// Safe to call from any thread. Cooperative -- run() must poll.
     Q_INVOKABLE void requestCancel();
 
+    /// The locations this task reads or writes, so the interface can say which
+    /// drives are in use. Empty for a task that has not said.
+    ///
+    /// **Declared by the task, because only the task knows** -- a copy touches
+    /// two drives and usually does, a scan touches one, and nothing outside can
+    /// work that out from a title. Nothing is derived and nothing is polled: the
+    /// list is fixed when the task is built and read when it starts and ends.
+    ///
+    /// Silence lights nothing, which is the right default. What the sidebar shows
+    /// is work somebody asked for; a task that reads a file to say what it is, or
+    /// asks a mount how full it is, has no business making a drive look busy. See
+    /// docs/adr/0052-a-drives-dot-says-what-it-is-doing.md.
+    QList<VfsUri> touching() const { return m_touching; }
+
     /// Called by TaskManager on a pool thread. Not part of the public API.
     void execute();
 
@@ -156,6 +172,19 @@ protected:
     bool isCancelRequested() const { return m_cancel.isCancelled(); }
     const CancelToken& cancelToken() const { return m_cancel; }
     void setBackground(bool background) { m_background = background; }
+    /// Names a location this task reads or writes. Called from the constructor,
+    /// where the task's own arguments are, and never afterwards: the answer must
+    /// not change while something is watching it.
+    void noteTouching(const VfsUri& uri)
+    {
+        if (uri.isValid() && !m_touching.contains(uri))
+            m_touching.append(uri);
+    }
+    void noteTouching(const QList<VfsUri>& uris)
+    {
+        for (const VfsUri& uri : uris)
+            noteTouching(uri);
+    }
 
     /// Publishes or updates a metric. Safe from the worker thread; coalesced on
     /// the worker thread, so a report per chunk does not flood the event queue.
@@ -219,6 +248,8 @@ private:
 
     // --- owned by the UI thread ---
     bool m_background = false;
+    /// Fixed when the task is built, so it is safe to read from any thread.
+    QList<VfsUri> m_touching;
     QDateTime m_startedAt;
     QDateTime m_finishedAt;
     /// How long the task has been going, measured with a clock that cannot go

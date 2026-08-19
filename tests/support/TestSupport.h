@@ -31,10 +31,15 @@ public:
 
     /// Re-exposed so the test can drive them from inside the body.
     using Task::fail;
+    /// A scripted task can also say which drives it touches and whether it is the
+    /// application's own housekeeping -- the two things that decide whether a
+    /// drive reads as busy. See DriveListModel::refreshBusyDrives().
     using Task::isCancelRequested;
+    using Task::noteTouching;
     using Task::reportBytes;
     using Task::reportCount;
     using Task::reportText;
+    using Task::setBackground;
     using Task::setBytesDone;
     using Task::setByteTotal;
     using Task::setProgress;

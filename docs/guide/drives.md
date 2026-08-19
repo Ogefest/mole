@@ -91,6 +91,7 @@ of drive — a local disk, an open archive, a bucket, a server:
 |---|---|---|
 | filled grey | **Idle** | here, and nobody is using it |
 | filled blue | **Open** | one of your tabs is looking at something on it |
+| pulsing blue | **Busy** | something you asked for is reading or writing it |
 | hollow grey ring | **Not connected** | set up, not connected right now. Nothing is wrong. |
 | hollow grey ring | **Locked** | its password is in the store, and the store is shut. The answer is the passphrase, not a button. |
 | pulsing grey ring | **Connecting** | being connected, and nothing has heard back yet. |
@@ -106,6 +107,11 @@ a bookmark looks.
 The legend you end up with without being handed one: *grey is here and quiet, blue
 is one I am using, pulsing means something is happening, hollow is not connected
 yet, red is broken.*
+
+**Busy** answers a question people ask out loud — *which of my drives is this copy
+actually touching?* A copy has two ends and usually two drives, and both of them
+pulse. Only work you asked for counts: Mole asks every drive how full it is once a
+minute, and if that counted, every row would pulse once a minute for ever.
 
 There is no green. Under this scheme "connected" is *Idle* — available and unused —
 and a colour of its own for it would be a celebration of nothing happening. What

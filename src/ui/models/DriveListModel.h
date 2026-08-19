@@ -204,6 +204,17 @@ public:
     /// one Open.
     void noteOpenLocations(const QList<VfsUri>& locations);
 
+    /// Works out which drives have work running on them, from the tasks the
+    /// manager is holding. Called when a task is added and when one starts or
+    /// ends -- never on a timer.
+    ///
+    /// **Only tasks the user asked for count**, which is `Task::isBackground()`,
+    /// and only the locations a task has declared through `Task::touching()`.
+    /// Without the first, `QuerySpaceTask` -- which runs per mount every minute to
+    /// keep the capacity bars honest -- would make every drive in the list pulse
+    /// once a minute for ever, and the feature would be noise in its first hour.
+    void refreshBusyDrives();
+
 signals:
     void countChanged();
 
@@ -222,6 +233,9 @@ private:
 
     void reload();
     State stateOf(const Row& row) const;
+    /// Redraws the rows whose drive is in `mounts`. What both of the sets above
+    /// need after they change.
+    void announceStateOf(const QSet<QString>& mounts);
     /// Redraws one drive's row after what is known about it changed.
     void refreshRowFor(const QString& driveId);
 
@@ -229,6 +243,9 @@ private:
     /// uris: the question a row asks is whether *this* drive is in use, and the
     /// mount table is what turns a location into a drive.
     QSet<QString> m_openMounts;
+    /// Mount ids with work the user asked for running on them. Derived when a
+    /// task starts or ends rather than per row per repaint.
+    QSet<QString> m_busyMounts;
 
     /// The last thing anything learned about reaching a drive.
     struct Reachability

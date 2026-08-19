@@ -23,6 +23,10 @@ TransferTask::TransferTask(Request request, QObject* parent)
     : Task(describe(request.mode, static_cast<int>(request.sources.size())), parent)
     , m_request(std::move(request))
 {
+    // Both ends. A copy from a disk to a bucket is work on two drives, and the
+    // sidebar has to say so about both of them.
+    noteTouching(m_request.sources);
+    noteTouching(m_request.targetDirectory);
 }
 
 void TransferTask::recordFailure(const VfsUri& uri, const VfsError& error)
@@ -474,6 +478,7 @@ DeleteTask::DeleteTask(FileSystemPtr fileSystem, QList<VfsUri> targets, QObject*
     , m_fileSystem(std::move(fileSystem))
     , m_targets(std::move(targets))
 {
+    noteTouching(m_targets);
 }
 
 void DeleteTask::run()

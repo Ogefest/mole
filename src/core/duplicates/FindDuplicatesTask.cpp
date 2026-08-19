@@ -20,6 +20,7 @@ FindDuplicatesTask::FindDuplicatesTask(
     , m_roots(std::move(roots))
     , m_strategy(std::move(strategy))
 {
+    noteTouching(m_roots);
 }
 
 FindDuplicatesTask::~FindDuplicatesTask() = default;

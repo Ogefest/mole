@@ -1,12 +1,15 @@
 #include "support/MoleTestMain.h"
 #include "support/QmlAppHarness.h"
+#include "support/TestSupport.h"
 #include "ui/AppController.h"
 #include "ui/models/DriveListModel.h"
 
 #include "core/CoreMetaTypes.h"
+#include "core/tasks/TaskManager.h"
 
 #include <QGuiApplication>
 #include <QQuickItem>
+#include <QSemaphore>
 #include <QTest>
 #include <QVariantMap>
 
@@ -51,6 +54,7 @@ private slots:
     void openingAFolderOnADriveFillsItsDotInTheAccentColour();
     void aDriveOpenInATabThatIsNotVisibleStillReadsAsOpen();
     void connectingPulsesTheRingAndUnreachableIsFilledRed();
+    void workRunningOnADriveMakesItsDotPulseInTheAccentColour();
 
 private:
     /// The passphrase dialog, which is a Popup and so never appears in the
@@ -652,6 +656,44 @@ void TestSidebar::connectingPulsesTheRingAndUnreachableIsFilledRed()
     QVERIFY2(unreachable.filled, "unreachable is a state it has arrived at, not one it is heading for");
     QVERIFY(!unreachable.pulsing);
     QCOMPARE(unreachable.colour, QColor(QStringLiteral("#e5534b")));
+}
+
+void TestSidebar::workRunningOnADriveMakesItsDotPulseInTheAccentColour()
+{
+    // The sixth appearance, and the state that makes the whole scheme worth
+    // having: "which of my drives is this transfer actually touching" is a
+    // question people ask out loud, and the task strip answers it only by naming a
+    // task whose title contains a path somebody has to read. See MOLE-162.
+    const QString root = connectScratch();
+    QVERIFY2(!root.isEmpty(), "the scratch drive would not connect");
+    QCOMPARE(stateOfDrive(QStringLiteral("Scratch")), DriveListModel::State::Idle);
+
+    // Held still on the pool, because busy is a state a task is *in*.
+    auto gate = std::make_shared<QSemaphore>();
+    auto* work
+        = new ScriptedTask(QStringLiteral("Copy to Scratch"), [gate](ScriptedTask&) { gate->acquire(); });
+    work->noteTouching(VfsUri::fromString(root).child(QStringLiteral("holiday.mov")));
+    m_harness->app()->services().tasks->submit(work);
+
+    QVERIFY(m_harness->until(
+        [this] { return stateOfDrive(QStringLiteral("Scratch")) == DriveListModel::State::Busy; }));
+    m_harness->settle(3);
+
+    const DotLook busy = lookOf(QStringLiteral("Scratch"));
+    QVERIFY2(busy.filled, "the drive is here and being worked on");
+    QVERIFY2(busy.pulsing, "and something is happening to it, which is what motion means");
+    QCOMPARE(busy.colour, QColor(QStringLiteral("#4c9aff")));
+
+    // And it stops the moment the work does.
+    gate->release();
+    QVERIFY(m_harness->until(
+        [this] { return stateOfDrive(QStringLiteral("Scratch")) == DriveListModel::State::Idle; }));
+    m_harness->settle(3);
+    const DotLook after = lookOf(QStringLiteral("Scratch"));
+    QVERIFY(after.filled);
+    QVERIFY2(!after.pulsing, "a finished task must not leave a drive pulsing");
+    QCOMPARE(after.colour, QColor(QStringLiteral("#8b93a7")));
+    gate->release(8);
 }
 
 int main(int argc, char** argv)
