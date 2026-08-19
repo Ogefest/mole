@@ -81,6 +81,45 @@ Dialog {
         kindPicker.popup.open()
     }
 
+    /// Which row of `App.driveKinds` a kind is, or -1 when it is not one of them.
+    ///
+    /// -1 rather than 0 for "no match", because row zero is a real backend and a
+    /// form that is not editing anything must not name one.
+    function indexOfKind(factoryScheme, variantName) {
+        const kinds = App.driveKinds
+        for (let i = 0; i < kinds.length; ++i) {
+            if (kinds[i].factory === factoryScheme && kinds[i].variant === variantName)
+                return i
+        }
+        return -1
+    }
+
+    /// Points the Kind picker at what the form is showing.
+    ///
+    /// **Set here rather than bound**, which is where every other control in this
+    /// panel is fed from -- the name, the root, the declared fields, the description
+    /// under the picker. The picker was the one left out, and that was MOLE-224.
+    ///
+    /// The binding that suggests itself, `currentIndex: indexOfKind(factory,
+    /// variant)`, would in fact have worked. That is measured rather than assumed,
+    /// because the received wisdom is that it breaks: a `ComboBox` writes
+    /// `currentIndex` through its own C++ setter when a row is activated, and an
+    /// internal write of that kind does **not** remove a QML binding -- only an
+    /// imperative assignment from JavaScript does. So feeding it from here is a
+    /// choice to keep one way of filling this panel, not a workaround for a trap.
+    ///
+    /// `editText` is assigned as well, and that half is not redundant. It follows
+    /// `currentIndex` by itself whenever the index really changes -- including to
+    /// the empty string at -1 -- so selecting a drive needs nothing more. But
+    /// assigning the index it already holds emits nothing, and `editable: true`
+    /// means somebody can leave text half-typed in a picker that is already at -1;
+    /// clearing the form has to clear that too.
+    function showKind(factoryScheme, variantName) {
+        const index = indexOfKind(factoryScheme, variantName)
+        kindPicker.currentIndex = index
+        kindPicker.editText = index < 0 ? "" : kindPicker.labelAt(index)
+    }
+
     function startNew() {
         editingId = ""
         factory = ""
@@ -89,6 +128,7 @@ Dialog {
         nameField.text = ""
         rootField.text = ""
         showAdvanced = false
+        showKind("", "")
     }
 
     function startEditing(drive) {
@@ -99,6 +139,7 @@ Dialog {
         nameField.text = drive.name
         rootField.text = drive.root
         showAdvanced = false
+        showKind(drive.factory, drive.variant)
     }
 
     /// Always a string, whatever the backend put in the field description.
@@ -422,15 +463,11 @@ Dialog {
                     wrapMode: Text.WordWrap
                     font.pixelSize: 11
                     text: {
-                        const kinds = App.driveKinds
-                        for (let i = 0; i < kinds.length; ++i) {
-                            if (kinds[i].factory === dialog.factory
-                                && kinds[i].variant === dialog.variant) {
-                                return kinds[i].available ? kinds[i].description
-                                                          : kinds[i].unavailableReason
-                            }
-                        }
-                        return ""
+                        const index = dialog.indexOfKind(dialog.factory, dialog.variant)
+                        if (index < 0)
+                            return ""
+                        const kind = App.driveKinds[index]
+                        return kind.available ? kind.description : kind.unavailableReason
                     }
                 }
 

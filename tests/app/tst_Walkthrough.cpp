@@ -158,6 +158,7 @@ private slots:
     void theTerminalOpensInTheFolderYouAreLookingAt();
     void theTerminalTakesTheKeyboardAndCtrlDEndsIt();
     void theDrivesDialogOffersBackendsAndAForm();
+    void theKindPickerFollowsTheDriveYouSelect();
     void everyBackendBuildsAFormWithoutComplaint();
     void aDriveWithAPasswordSavesAndConnects();
     void savingThroughTheFormShowsWhatTheCheckFound();
@@ -2744,6 +2745,122 @@ void TestWalkthrough::theTerminalTakesTheKeyboardAndCtrlDEndsIt()
     QVERIFY2(m_harness->until([terminal] { return !terminal->isVisible(); }, 6000),
         "a shell that ended takes its panel with it");
     QCOMPARE(m_harness->app()->bookmarks()->rowCount(), bookmarksWithFolder);
+}
+
+/// The Kind picker names the drive that is selected, and keeps doing it.
+///
+/// It used to name whatever it named last. Every other control in that panel is
+/// fed by `startEditing()` -- the name, the root, the declared fields, the
+/// description under the picker -- and the picker was the one left out, so an SFTP
+/// drive followed by an S3 one left the form reading S3 and the picker reading
+/// SFTP. Saving was never affected: `App.saveDrive` is handed the dialog's own
+/// `factory` and `variant`, not what the picker displays. What was wrong was the
+/// reading, and the picker is the control somebody checks to see they clicked the
+/// right row. See MOLE-224.
+void TestWalkthrough::theKindPickerFollowsTheDriveYouSelect()
+{
+    QVERIFY(m_harness->app()->unlockCredentials(QStringLiteral("test-passphrase")));
+
+    // Whichever two kinds this build really has. The fault is about following the
+    // selection, so any two that differ will show it, and asking the application
+    // rather than naming backends keeps this passing in a build without one.
+    const QVariantList kinds = m_harness->app()->driveKinds();
+    QVariantMap first;
+    QVariantMap second;
+    for (const QVariant& entry : kinds) {
+        const QVariantMap kind = entry.toMap();
+        if (!kind.value(QStringLiteral("available")).toBool())
+            continue;
+        if (first.isEmpty()) {
+            first = kind;
+            continue;
+        }
+        if (kind.value(QStringLiteral("factory")) != first.value(QStringLiteral("factory"))
+            || kind.value(QStringLiteral("variant")) != first.value(QStringLiteral("variant"))) {
+            second = kind;
+            break;
+        }
+    }
+    QVERIFY2(!second.isEmpty(), "this build offers fewer than two usable kinds, so nothing here is visible");
+
+    QVERIFY(m_harness->app()->saveDrive(QStringLiteral("kind-a"), QStringLiteral("Kind A"),
+        first.value(QStringLiteral("factory")).toString(), first.value(QStringLiteral("variant")).toString(),
+        QString(), QVariantMap()));
+    QVERIFY(m_harness->app()->saveDrive(QStringLiteral("kind-b"), QStringLiteral("Kind B"),
+        second.value(QStringLiteral("factory")).toString(),
+        second.value(QStringLiteral("variant")).toString(), QString(), QVariantMap()));
+
+    m_harness->app()->triggerAction(QStringLiteral("mole.file.drives"));
+    QObject* dialog = m_harness->object(QStringLiteral("drivesDialog"));
+    QVERIFY(dialog);
+    QVERIFY(m_harness->until([dialog] { return dialog->property("opened").toBool(); }));
+
+    QQuickItem* picker = m_harness->item(QStringLiteral("driveKindPicker"));
+    QVERIFY(picker);
+    const QVariantList offered = picker->property("model").toList();
+    QVERIFY(!offered.isEmpty());
+
+    // Selected the way the dialog selects: a row click calls startEditing() with
+    // the drive's configuration, so that is what is called here rather than a
+    // pixel being aimed at.
+    auto selectAndRead = [this, dialog, picker, offered](const QString& id) -> QVariantMap {
+        const QVariantMap configured = m_harness->app()->driveConfiguration(id);
+        if (configured.isEmpty())
+            return {};
+        QMetaObject::invokeMethod(dialog, "startEditing", Q_ARG(QVariant, QVariant(configured)));
+        m_harness->settle(4);
+        const int index = picker->property("currentIndex").toInt();
+        if (index < 0 || index >= offered.size())
+            return {};
+        QVariantMap kind = offered.at(index).toMap();
+        // What is actually readable, not only which row is current. The picker is
+        // editable, so the text on screen is the editor's -- and the complaint was
+        // about reading the dialog, so that is what has to be right.
+        kind.insert(QStringLiteral("shownText"), picker->property("editText"));
+        return kind;
+    };
+
+    // a, then b, then a again. Twice would pass with a picker that copies the
+    // *previous* selection; three times, ending where it started, would not.
+    QVariantMap shown = selectAndRead(QStringLiteral("kind-a"));
+    QCOMPARE(shown.value(QStringLiteral("factory")), first.value(QStringLiteral("factory")));
+    QCOMPARE(shown.value(QStringLiteral("variant")), first.value(QStringLiteral("variant")));
+    QCOMPARE(shown.value(QStringLiteral("shownText")), first.value(QStringLiteral("label")));
+
+    shown = selectAndRead(QStringLiteral("kind-b"));
+    QCOMPARE(shown.value(QStringLiteral("factory")), second.value(QStringLiteral("factory")));
+    QCOMPARE(shown.value(QStringLiteral("variant")), second.value(QStringLiteral("variant")));
+    QCOMPARE(shown.value(QStringLiteral("shownText")), second.value(QStringLiteral("label")));
+
+    shown = selectAndRead(QStringLiteral("kind-a"));
+    QCOMPARE(shown.value(QStringLiteral("factory")), first.value(QStringLiteral("factory")));
+    QCOMPARE(shown.value(QStringLiteral("variant")), first.value(QStringLiteral("variant")));
+    QCOMPARE(shown.value(QStringLiteral("shownText")), first.value(QStringLiteral("label")));
+
+    // And pressing add empties it, rather than leaving the last drive's kind
+    // standing in a box that now describes nothing. The picker is editable, so
+    // what is on screen is the editor's text: clearing the index alone leaves
+    // whatever was last displayed sitting there.
+    QQuickItem* addButton = m_harness->item(QStringLiteral("addDriveButton"));
+    QVERIFY(addButton);
+    QVERIFY(QMetaObject::invokeMethod(addButton, "clicked"));
+    m_harness->settle(4);
+    QCOMPARE(picker->property("currentIndex").toInt(), -1);
+    QVERIFY2(picker->property("editText").toString().isEmpty(),
+        qPrintable(QStringLiteral("add left \"%1\" typed in the kind box")
+                       .arg(picker->property("editText").toString())));
+
+    // And again from the state that only an explicit clear can answer: the picker
+    // is editable and already at -1, with something half-typed in it. Assigning the
+    // index it already holds emits nothing, so a form cleared by index alone would
+    // keep the text.
+    picker->setProperty("editText", QStringLiteral("half-typed sftp"));
+    QVERIFY(QMetaObject::invokeMethod(addButton, "clicked"));
+    m_harness->settle(4);
+    QCOMPARE(picker->property("currentIndex").toInt(), -1);
+    QVERIFY2(picker->property("editText").toString().isEmpty(),
+        qPrintable(QStringLiteral("clearing the form left \"%1\" in the kind box")
+                       .arg(picker->property("editText").toString())));
 }
 
 void TestWalkthrough::theDrivesDialogOffersBackendsAndAForm()

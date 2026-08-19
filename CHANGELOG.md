@@ -11,6 +11,8 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-19 #MOLE-224 The drives dialog's Kind picker now names the drive you selected, instead of the one you looked at before
+
 2026-08-19 #MOLE-225 A video preview can be muted, and remembers it — for every video and across restarts
 
 2026-08-19 #MOLE-223 A video preview starts playing when it opens, instead of waiting on the Play button
