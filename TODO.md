@@ -27,6 +27,16 @@ project, and a contributor should never hit a wall of text they cannot read.
 
 ## Notes
 
+- **A changed host key is the one interference case a fake cannot mirror.** Every
+  other case in the interference tier has a cheap twin that runs on every change:
+  a connection dying mid-read or mid-write, a service that goes away and comes
+  back, a link that keeps handing back less than it was asked for, a destination
+  that fills up, a process killed outright. A rotated host key has no twin,
+  because a fake filesystem has no host key to change and the refusal being
+  tested belongs to the SSH layer rather than to us. `tst_Interference::aChangedHostKeyIsRefused`
+  is therefore live-only and stays that way. It is the one place where "the
+  cheapest place that can hold it" is a server.
+
 - **Mole shows git state and does not change it.** No staging, no committing, no
   checking out, no branching, no fetching, no discarding. Decided rather than pending:
   a file manager that *shows* git state is useful to everybody with a checkout, and one

@@ -12,6 +12,8 @@
 #include <QDir>
 #include <QFile>
 
+#include <atomic>
+
 using namespace mole;
 using namespace mole::test;
 
@@ -52,7 +54,9 @@ private slots:
     void aSourceThatGrewSinceTheListingIsCopiedAsItNowIs();
     void aSourceWhosePermissionIsWithdrawnMidCopyLeavesNothingBehind();
     void theFileBeingWrittenIsRemovedMidWrite();
+    void anUploadWhoseConnectionDiesMidFileLeavesNothingUnderItsName();
     void aDestinationThatFillsUpSaysWhy();
+    void aLinkThatKeepsGoingShortStillDeliversEveryByte();
 
     void cancellingBeforeTheFirstByteLeavesNothing();
     void cancellingMidFileLeavesNothing();
@@ -272,6 +276,39 @@ void TestTransferTaskUnderFault::theFileBeingWrittenIsRemovedMidWrite()
     QVERIFY(m_memory->stat(VfsUri::fromString(QStringLiteral("mem:///src/payload.bin"))).ok());
 }
 
+/// The connection dying part way through an **upload**, cheaply.
+///
+/// The interference tier kills the connection at a byte offset in each
+/// direction, and only one of those directions had a mirror here: a read that
+/// dies is `aReadThatStopsHalfWayIsNotAnEndOfFile` and a source that dies is
+/// several cases above, while a *write* that dies mid-file was covered nowhere
+/// outside a move and a dry run. The two directions fail through different code
+/// -- one gives up on a stream it is reading, the other on one it is writing --
+/// so one of them proves nothing about the other.
+void TestTransferTaskUnderFault::anUploadWhoseConnectionDiesMidFileLeavesNothingUnderItsName()
+{
+    m_target->writeFailsAt(kSixty);
+
+    TransferTask* task = run(request());
+    QVERIFY(task);
+
+    QCOMPARE(task->copiedCount(), 0);
+    QCOMPARE(task->failedCount(), 1);
+
+    // Which file and why, the same standard the disk-full case is held to. The
+    // bytes before the offset really were written, so "it failed" without a
+    // name would leave somebody looking for a file that is genuinely part there.
+    const QString failure = task->failures().first();
+    QVERIFY2(failure.contains(QStringLiteral("payload.bin")), qPrintable(failure));
+    QVERIFY2(failure.contains(QStringLiteral("refused")), qPrintable(failure));
+
+    // Nothing under the final name and no working file either. This is the one
+    // that matters: a half-uploaded file left under the name it was aiming at is
+    // indistinguishable from a finished one to everything that looks later.
+    QVERIFY2(destinationEntries().isEmpty(), qPrintable(destinationEntries().join(QLatin1Char(' '))));
+    QVERIFY(m_memory->stat(VfsUri::fromString(QStringLiteral("mem:///src/payload.bin"))).ok());
+}
+
 void TestTransferTaskUnderFault::aDestinationThatFillsUpSaysWhy()
 {
     m_target->destinationFillsAt(kSixty);
@@ -291,6 +328,65 @@ void TestTransferTaskUnderFault::aDestinationThatFillsUpSaysWhy()
 
     QVERIFY(destinationEntries().isEmpty());
     QVERIFY(m_memory->stat(VfsUri::fromString(QStringLiteral("mem:///src/payload.bin"))).ok());
+}
+
+/// A link that keeps handing back less than it was asked for, cheaply.
+///
+/// The mirror of the interference tier's lossy-link case, where a quarter of a
+/// gigabyte crosses a link carrying 200 ms of latency and 1% and then 5% packet
+/// loss, and every byte is verified at the far end. What that exercises, once
+/// the packets are out of it, is a read returning fewer bytes than it was asked
+/// for over and over -- ordinary streaming behaviour that a caller may not read
+/// as the end of the file. That live case needs a server and four minutes; this
+/// one needs neither and runs on every change.
+void TestTransferTaskUnderFault::aLinkThatKeepsGoingShortStillDeliversEveryByte()
+{
+    // Patterned, not four thousand copies of one letter like the fixture's own
+    // payload. A comparison against a run of identical bytes passes just as
+    // happily on a file that was truncated and padded back out, or one whose
+    // blocks arrived in the wrong order -- which is exactly what this case is
+    // supposed to be able to see.
+    QByteArray patterned(kPayload, Qt::Uninitialized);
+    for (qint64 i = 0; i < kPayload; ++i)
+        patterned[static_cast<int>(i)] = static_cast<char>((i * 31 + i / 251) & 0xff);
+    m_memory->addFile(QStringLiteral("/src/lossy.bin"), patterned);
+
+    // Seven of them, and deliberately not on any boundary a buffer is likely to
+    // use. The one-byte read is the smallest a stream can go short by without
+    // being an end of file, and it is the one a caller checking `got < asked`
+    // gets wrong.
+    const QList<qint64> offsets = { 1, 499, 1201, 2399, 2400, 3001, kPayload - 1 };
+    const QList<qint64> chunks = { 1, 3, 17, 1, 250, 7, 1 };
+    for (int i = 0; i < offsets.size(); ++i)
+        m_source->readGoesShortAt(offsets.at(i), chunks.at(i));
+
+    // And a counter at the same offsets, because this case asserts that a copy
+    // *succeeded* -- which it would do just as cheerfully if not one of the
+    // faults above had fired. Three of the interference tier's cases were green
+    // and checking nothing in exactly this way, so a case whose instrument might
+    // silently miss says out loud that it landed.
+    std::atomic<int> reached { 0 };
+    for (const qint64 offset : offsets)
+        m_source->whenReadReaches(offset, [&reached] { ++reached; });
+
+    TransferTask* task = run(request({ QStringLiteral("lossy.bin") }));
+    QVERIFY(task);
+
+    // It succeeds. Nothing here is a fault the copy has to report -- a short
+    // read is what a network does, not what a broken one does.
+    QCOMPARE(task->failedCount(), 0);
+    QCOMPARE(task->copiedCount(), 1);
+    QVERIFY2(task->failures().isEmpty(), qPrintable(task->failures().join(QLatin1Char(' '))));
+
+    // And byte for byte, which is the whole point: a file of the right length
+    // is not the same claim as a file of the right contents, and a boundary that
+    // is off by one produces the first without the second.
+    QCOMPARE(reached.load(), static_cast<int>(offsets.size()));
+
+    QCOMPARE(destinationSize(QStringLiteral("lossy.bin")), kPayload);
+    QFile landed(QDir(m_tree->path()).filePath(QStringLiteral("lossy.bin")));
+    QVERIFY(landed.open(QIODevice::ReadOnly));
+    QCOMPARE(landed.readAll(), patterned);
 }
 
 void TestTransferTaskUnderFault::cancellingBeforeTheFirstByteLeavesNothing()

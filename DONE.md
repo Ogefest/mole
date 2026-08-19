@@ -9,6 +9,58 @@ wrong.
 
 ---
 
+## The server attacked mid-transfer, and the same faults for a millisecond each
+
+**Asked for:** MOLE-28 — six kinds of interference against a live server, each producing a named
+outcome rather than a hang, and every failure they find left behind as a tier 1 scenario in the
+fault-injecting filesystem so it can be checked in a second for ever after.
+
+**Half of it had already landed and nobody had said so.** The six cases went in on 2026-08-10 under
+"Part of MOLE-28": the connection killed at a byte offset each way, the service restarted, 200 ms of
+latency and 1% and 5% loss, a changed host key, a process killed outright, a destination with less
+room than the payload. What was outstanding was the proof they hold and the cheap half of the
+sentence above.
+
+**They hold.** Fifteen cases, fifteen passed, nothing skipped, twenty-six minutes, nobody watching —
+the first unattended run the tier has ever had, which is MOLE-109's doing.
+
+**The cheap half was an audit, not a guess.** Asking which of `FaultyFileSystem`'s eighteen knobs no
+test outside its own suite ever turns produced a short list, and two of them were exactly where the
+live tier had no twin:
+
+- **`readGoesShortAt` — nobody.** That is the lossy link with the packets taken out of it: a read
+  handing back fewer bytes than it was asked for, over and over, which a caller may not read as the
+  end of the file. `aLinkThatKeepsGoingShortStillDeliversEveryByte` now does it seven times at
+  offsets that fall on no buffer boundary, and compares the landed file byte for byte against a
+  patterned payload — not the fixture's four thousand copies of one letter, which would compare
+  equal to a file that had been truncated and padded back out.
+- **`writeFailsAt` — used, but never for this.** The connection dying mid-*upload* was covered by a
+  move and a dry run and nothing else, while the read direction had three cases. The two fail
+  through different code, so one proves nothing about the other.
+  `anUploadWhoseConnectionDiesMidFileLeavesNothingUnderItsName` holds it.
+
+**The near miss is the part worth keeping.** Both new cases passed the moment they were written,
+which for a case that asserts a copy *succeeded* means nothing at all — the interference tier has
+already produced three green tests that checked nothing, all the same shape. So the short-read case
+counts its own faults with `whenReadReaches` and fails if fewer than seven fired, and the copy loop
+was then deliberately broken to watch the case go red.
+
+**And the first attempt at breaking it lied.** `if (got < kChunkSize)` was inserted above
+`if (got == 0) break;` without braces, which is `if (got < kChunkSize && got == 0)` — the original
+condition exactly. The test passed, and the obvious conclusion was that `QIODevice` absorbs short
+reads before a caller ever sees one and the whole case was worthless. It does not: written properly,
+the mutation makes the case fail on `failedCount()`, and the file arrives whole only because the
+loop reads until zero. A mutation that does not change behaviour is worse than no mutation, because
+it answers the question with a confident no.
+
+**One of the six has no twin and never will.** A fake filesystem has no host key to rotate, and the
+refusal being tested belongs to the SSH layer rather than to us, so `aChangedHostKeyIsRefused` is
+live-only. That is in TODO.md rather than left for somebody to rediscover as a gap.
+
+The failure the six actually found was MOLE-108, and its tier 1 tests went in with its fix —
+`aSpanThatKeepsFailingEndsTheReadWhenTheBudgetIsSpent` and `aLinkThatComesBackInsideTheBudgetCostsNothing`
+hold the budget with no server anywhere.
+
 ## The instrument for a total outage could cut off the machine it had to put back
 
 **Asked for:** MOLE-109 — the interference tier needs an outage with no packets at all, and the way
