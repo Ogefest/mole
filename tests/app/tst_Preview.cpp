@@ -645,16 +645,29 @@ void TestPreview::steppingToTheNextFileCancelsAReaderInFlight()
     // A reader held still while the reader steps away. Waited on the condition
     // -- the gate -- rather than on a clock, and released by the test.
     auto gate = std::make_shared<QSemaphore>();
+    // Released whatever happens next, including an assertion below failing and
+    // returning from this function. A reader left on the gate is a thread the
+    // fixture's teardown waits for until ctest kills the binary, and the failure
+    // then reads as a timeout with no assertion named. See MOLE-217.
+    const GateRelease letGoOnTheWayOut(gate);
+
     auto log = std::make_shared<FakeMetadataReader::Log>();
+    // Claims `.txt` and nothing else, which is what makes the rest of this
+    // deterministic. Unfiltered, it also claimed the file stepped *to* -- the
+    // drawer is one setting, so that file starts a read of its own -- and then two
+    // readers were waiting on one permit. Whichever won was down to the scheduler:
+    // if the new file's read took it, the cancelled counter below never moved and
+    // the wait failed on a machine that was merely busy.
     auto slow = std::make_unique<FakeMetadataReader>(QStringLiteral("test.slow"),
-        QList<FileFact> { { QStringLiteral("Slow"), QStringLiteral("finally") } }, 10, log);
+        QList<FileFact> { { QStringLiteral("Slow"), QStringLiteral("finally") } }, 10, log,
+        QStringLiteral("txt"));
     slow->holdUntilReleased(gate);
     m_app->metadata()->addReader(std::move(slow));
 
     PreviewTabController* preview = openPreview(QStringLiteral("notes.txt"));
     QVERIFY(preview);
     preview->setDetailsOpen(true);
-    QVERIFY(waitFor([log] { return log->reads.load() == 1; }, 5000));
+    QVERIFY(waitFor([log] { return log->reads.load() == 1; }, 30000));
 
     // Off the GUI thread: it is still stuck in the reader and the interface is
     // not.
@@ -666,15 +679,16 @@ void TestPreview::steppingToTheNextFileCancelsAReaderInFlight()
 
     // Waited on the reader having noticed, rather than on the tab having let go:
     // the two happen on different threads and only the first one is the claim.
-    QVERIFY(waitFor([log] { return log->cancelled.load() == 1; }, 5000));
+    // The budget is a backstop and not the measurement -- there is exactly one
+    // reader waiting on exactly one permit now, so the only thing between the
+    // release and the counter is the pool getting a slice.
+    QVERIFY(waitFor([log] { return log->cancelled.load() == 1; }, 30000));
 
     // And what it was going to say never reaches the file that is open now: the
-    // task finished, late, against a tab that has moved on.
+    // task finished, late, against a tab that has moved on. The reader cannot
+    // claim `config.json` at all, so a "Slow" row here could only have come from
+    // the file somebody stepped away from.
     drainEvents();
-    // The drawer is one setting, so the file stepped to opens it too and the
-    // same reader is waiting on the gate again. Let every one of them go, or the
-    // teardown waits for a thread that is never coming back.
-    gate->release(16);
     QVERIFY2(detailNamed(preview, QStringLiteral("Slow")).isEmpty(),
         "facts about the file somebody stepped away from must not land on this one");
 }

@@ -140,6 +140,40 @@ private:
     bool m_fails = false;
 };
 
+/// Lets go of a held reader's gate on the way out of a test, however it leaves.
+///
+/// A reader waiting on a gate is a blocked worker thread, and the fixture's
+/// teardown waits for it. A `release()` written at the bottom of the test is not
+/// reached when a `QVERIFY` above it fails -- QTest returns from the function --
+/// so the thread never comes back, teardown waits for it, and ctest kills the
+/// whole binary at its timeout. What the log then says is `Timeout`, with no
+/// mention of the assertion that actually failed. One of these beside the gate
+/// makes that impossible, and it costs nothing when everything passes: the
+/// permits nobody is waiting on are never taken.
+///
+/// See MOLE-217, which was three minutes of a suite run and a lost diagnosis.
+class GateRelease
+{
+public:
+    explicit GateRelease(std::shared_ptr<QSemaphore> gate, int permits = 64)
+        : m_gate(std::move(gate))
+        , m_permits(permits)
+    {
+    }
+    ~GateRelease()
+    {
+        if (m_gate)
+            m_gate->release(m_permits);
+    }
+
+    GateRelease(const GateRelease&) = delete;
+    GateRelease& operator=(const GateRelease&) = delete;
+
+private:
+    std::shared_ptr<QSemaphore> m_gate;
+    int m_permits;
+};
+
 /// A filesystem factory for a scheme nobody else claims.
 class FakeFileSystemFactory final : public IFileSystemFactory
 {
