@@ -1,11 +1,14 @@
 #include "plugins/network/SmbFileSystem.h"
 
+#include "core/vfs/PartialWrite.h"
+
 #include <QDateTime>
 #include <QIODevice>
 #include <QThread>
 
 #include <cstring>
 #include <libsmbclient.h>
+#include <mutex>
 
 namespace mole {
 namespace {
@@ -59,33 +62,59 @@ namespace {
     ///
     /// Seekable, which is what lets SMB advertise RandomAccessRead: a preview
     /// reads one page from the middle of a file rather than the file.
-    class SmbFile final : public QIODevice
+    class SmbFile final : public QIODevice, public ICommitsOnClose
     {
     public:
-        SmbFile(SMBCCTX* context, SMBCFILE* handle, qint64 size, QString what)
-            : m_context(context)
+        SmbFile(const SmbFileSystem& drive, int handle, qint64 size, QString what)
+            : m_drive(&drive)
             , m_handle(handle)
             , m_size(size)
             , m_what(std::move(what))
         {
         }
 
-        ~SmbFile() override { closeHandle(); }
+        /// A write goes under a working name and is renamed into place when it is
+        /// closed. Without it an abandoned write -- a cancelled copy, or a caller
+        /// that gave up -- leaves a partial file under the name somebody asked
+        /// for, indistinguishable from a file that is simply that size. Same rule
+        /// as the local disk: ADR-0020 and ADR-0021.
+        void commitOnCloseTo(VfsUri staging, VfsUri target)
+        {
+            m_staging = std::move(staging);
+            m_target = std::move(target);
+            m_commits = true;
+        }
 
-        bool isSequential() const override { return false; }
-        qint64 size() const override { return m_size >= 0 ? m_size : QIODevice::size(); }
+        ~SmbFile() override
+        {
+            closeHandle();
+            // Destroyed without being closed is an abandoned write, and what was
+            // written is not a file anybody asked for.
+            if (m_commits && !m_committed)
+                discardStaging();
+        }
+
+        VfsError commitError() const override { return m_commitFailure; }
 
         void close() override
         {
             QIODevice::close();
             closeHandle();
+            if (m_commits && !m_committed)
+                commit();
         }
+
+        bool isSequential() const override { return false; }
+        qint64 size() const override { return m_size >= 0 ? m_size : QIODevice::size(); }
 
         bool seek(qint64 position) override
         {
             if (position < 0)
                 return false;
-            const off_t landed = smbc_getFunctionLseek(m_context)(m_context, m_handle, position, SEEK_SET);
+            const SmbFileSystem::Session session(*m_drive);
+            if (!session.ok())
+                return false;
+            const off_t landed = smbc_lseek(m_handle, position, SEEK_SET);
             if (landed < 0) {
                 setErrorString(errorFromErrno(errno, m_what).message);
                 return false;
@@ -101,8 +130,10 @@ namespace {
         {
             if (maxSize <= 0)
                 return 0;
-            const ssize_t got
-                = smbc_getFunctionRead(m_context)(m_context, m_handle, data, static_cast<size_t>(maxSize));
+            const SmbFileSystem::Session session(*m_drive);
+            if (!session.ok())
+                return -1;
+            const ssize_t got = smbc_read(m_handle, data, static_cast<size_t>(maxSize));
             if (got < 0) {
                 m_failure = errorFromErrno(errno, m_what);
                 setErrorString(m_failure.message);
@@ -115,8 +146,10 @@ namespace {
         {
             if (size <= 0)
                 return 0;
-            const ssize_t put = smbc_getFunctionWrite(m_context)(
-                m_context, m_handle, const_cast<char*>(data), static_cast<size_t>(size));
+            const SmbFileSystem::Session session(*m_drive);
+            if (!session.ok())
+                return -1;
+            const ssize_t put = smbc_write(m_handle, data, static_cast<size_t>(size));
             if (put < 0) {
                 m_failure = errorFromErrno(errno, m_what);
                 setErrorString(m_failure.message);
@@ -128,17 +161,56 @@ namespace {
     private:
         void closeHandle()
         {
-            if (!m_handle)
+            if (m_handle < 0)
                 return;
-            smbc_getFunctionClose(m_context)(m_context, m_handle);
-            m_handle = nullptr;
+            const SmbFileSystem::Session session(*m_drive);
+            if (session.ok())
+                smbc_close(m_handle);
+            m_handle = -1;
         }
 
-        SMBCCTX* m_context = nullptr;
-        SMBCFILE* m_handle = nullptr;
+        /// Puts the finished bytes under the name that was asked for.
+        void commit()
+        {
+            m_committed = true;
+            const SmbFileSystem::Session session(*m_drive);
+            if (!session.ok()) {
+                m_commitFailure = VfsError::make(
+                    VfsError::IoError, QStringLiteral("%1: no SMB session to finish with").arg(m_what));
+                return;
+            }
+            const QByteArray from = m_drive->urlFor(m_staging).toUtf8();
+            const QByteArray to = m_drive->urlFor(m_target).toUtf8();
+            // Removed first: a share refuses to rename onto a name that exists,
+            // where a POSIX rename would replace it. An overwrite is ordinary --
+            // it is what a re-run of a failed copy does -- so this is the
+            // difference between "supported" and "refused every second time".
+            smbc_unlink(to.constData());
+            if (smbc_rename(from.constData(), to.constData()) != 0) {
+                m_commitFailure = errorFromErrno(errno, m_what);
+                smbc_unlink(from.constData());
+            }
+        }
+
+        void discardStaging()
+        {
+            m_committed = true;
+            const SmbFileSystem::Session session(*m_drive);
+            if (!session.ok())
+                return;
+            smbc_unlink(m_drive->urlFor(m_staging).toUtf8().constData());
+        }
+
+        const SmbFileSystem* m_drive = nullptr;
+        int m_handle = -1;
         qint64 m_size = -1;
         QString m_what;
         VfsError m_failure;
+        bool m_commits = false;
+        bool m_committed = false;
+        VfsUri m_staging;
+        VfsUri m_target;
+        VfsError m_commitFailure;
     };
 
 } // namespace
@@ -197,23 +269,26 @@ SmbFileSystem::SmbFileSystem(QString scheme, SmbSettings settings)
 
 SmbFileSystem::~SmbFileSystem() = default;
 
-SMBCCTX* SmbFileSystem::context() const
-{
-    // One per thread, built on first use and then kept for the life of the
-    // thread. See the note on the class for why it is per thread; why it is
-    // never freed is a separate lesson, learned the hard way.
-    //
-    // `smbc_free_context()` tears down state libsmbclient keeps *globally*, not
-    // per context. Freeing one while the process still means to use another --
-    // which is what happens the moment a second drive is configured, or the same
-    // drive is rebuilt -- aborts inside Samba's allocator: "talloc: access after
-    // free ... source3/param/loadparm.c". So a thread's context outlives every
-    // drive that used it, and the thread taking it away is the only teardown.
-    // A pool has a bounded number of threads, so this is a bounded amount of
-    // memory rather than a leak that grows.
-    static thread_local SMBCCTX* held = nullptr;
+namespace {
 
-    if (!held) {
+    /// Serialises every SMB operation in the process. See the note on the class
+    /// for why there is only one session to serialise behind.
+    std::mutex& sessionGuard()
+    {
+        static std::mutex only;
+        return only;
+    }
+
+    /// The one context every `smbc_*` wrapper acts on, built on first use and
+    /// never freed: `smbc_free_context()` tears down state libsmbclient keeps
+    /// globally, and freeing it while the process still means to do SMB aborts
+    /// inside Samba's allocator.
+    SMBCCTX* theSession()
+    {
+        static SMBCCTX* held = nullptr;
+        if (held)
+            return held;
+
         SMBCCTX* fresh = smbc_new_context();
         if (!fresh)
             return nullptr;
@@ -222,26 +297,41 @@ SMBCCTX* SmbFileSystem::context() const
         smbc_setOptionUseKerberos(fresh, 0);
         smbc_setOptionFallbackAfterKerberos(fresh, 1);
 
-        // The dialect is left to Samba's own configuration rather than set here.
-        // smbc_setOptionProtocols() takes `char*` and the library takes an
-        // interest in the memory afterwards; handing it a string literal
-        // corrupted the heap a few operations later, inside its own allocator.
-        // Samba has not offered SMB1 by default for years, so the setting bought
-        // nothing that the default does not already give.
-
+        // The dialect is left to Samba's own configuration. smbc_setOptionProtocols()
+        // takes `char*` and the library takes an interest in the memory afterwards;
+        // handing it a string literal corrupted the heap a few operations later.
+        // Samba has not offered SMB1 by default for years.
         if (!smbc_init_context(fresh)) {
             smbc_free_context(fresh, 1);
             return nullptr;
         }
+        // The wrappers act on whatever this points at, which is the whole reason
+        // there is one session rather than one per thread.
+        smbc_set_context(fresh);
         held = fresh;
+        return held;
     }
 
-    // The credentials belong to the drive asking rather than to the thread, and
-    // one thread serves every drive in turn -- so they are set on the way in to
-    // every call rather than once when the context is built. Sequential on this
-    // thread by construction: a backend call does not return until it is done.
-    smbc_setOptionUserData(held, m_credentials.get());
-    return held;
+} // namespace
+
+SmbFileSystem::Session::Session(const SmbFileSystem& drive)
+{
+    sessionGuard().lock();
+    SMBCCTX* context = theSession();
+    if (!context) {
+        sessionGuard().unlock();
+        return;
+    }
+    // Whose credentials the callback will read. Set on the way in to every
+    // operation, because one session serves every drive in turn.
+    smbc_setOptionUserData(context, const_cast<Credentials*>(drive.m_credentials.get()));
+    m_ok = true;
+}
+
+SmbFileSystem::Session::~Session()
+{
+    if (m_ok)
+        sessionGuard().unlock();
 }
 
 VfsCapabilities SmbFileSystem::capabilities() const
@@ -274,65 +364,90 @@ QString SmbFileSystem::urlFor(const VfsUri& uri) const
 
 Result<FileEntryList> SmbFileSystem::list(const VfsUri& dir, const CancelToken& cancel)
 {
-    SMBCCTX* ctx = context();
-    if (!ctx) {
+    const Session session(*this);
+    if (!session.ok()) {
         return Result<FileEntryList>::failure(
             VfsError::IoError, QStringLiteral("This machine cannot start an SMB session"));
     }
 
     const QString what = QStringLiteral("Listing %1").arg(dir.path());
     const QByteArray url = urlFor(dir).toUtf8();
-    SMBCFILE* handle = smbc_getFunctionOpendir(ctx)(ctx, url.constData());
-    if (!handle)
+    const int handle = smbc_opendir(url.constData());
+    if (handle < 0)
         return Result<FileEntryList>(errorFromErrno(errno, what));
 
-    FileEntryList entries;
-    while (struct smbc_dirent* found = smbc_getFunctionReaddir(ctx)(ctx, handle)) {
+    // Read the whole directory first, and only then ask about each entry.
+    //
+    // Nothing may touch this context while the directory handle is open.
+    // `readdir` hands back a pointer into a buffer belonging to that handle, and
+    // any other operation on the same context is free to reuse it -- so a `stat`
+    // in this loop leaves the iteration walking memory that has been handed to
+    // somebody else. It shows up as an abort inside Samba's own allocator, a
+    // long way from here and during whatever happened to run next.
+    //
+    // The cost is holding the names of one directory, which is what a listing is
+    // about to return anyway.
+    struct Found
+    {
+        QString name;
+        bool isDir = false;
+    };
+    QList<Found> found;
+
+    while (struct smbc_dirent* entry = smbc_readdir(handle)) {
         if (cancel.isCancelled()) {
-            smbc_getFunctionClosedir(ctx)(ctx, handle);
+            smbc_closedir(handle);
             return Result<FileEntryList>::failure(VfsError::Cancelled, QStringLiteral("cancelled"));
         }
 
-        // From namelen, and never from the pointer alone. `smbc_dirent` ends in
-        // a flexible array declared `char name[1]`, so the name is as long as
+        // From namelen, and never from the pointer alone. `smbc_dirent` ends in a
+        // flexible array declared `char name[1]`, so the name is as long as
         // namelen says and the array's *type* claims one byte -- which is enough
         // for QString::fromUtf8 to bind to its QByteArrayView overload, take the
-        // array's extent, and hand back a one-character name. Every file in
-        // every listing came back as its own first letter.
-        const QString name = QString::fromUtf8(found->name, qstrnlen(found->name, found->namelen));
+        // array's extent, and hand back a one-character name. Every file in every
+        // listing came back as its own first letter.
+        const QString name = QString::fromUtf8(entry->name, qstrnlen(entry->name, entry->namelen));
         if (name == QLatin1String(".") || name == QLatin1String(".."))
             continue;
         // Printers, IPC endpoints and the rest of what a server offers. They are
         // not files and nothing in a file manager can do anything with them.
-        if (found->smbc_type != SMBC_FILE && found->smbc_type != SMBC_DIR)
+        if (entry->smbc_type != SMBC_FILE && entry->smbc_type != SMBC_DIR)
             continue;
+        found.append(Found { name, entry->smbc_type == SMBC_DIR });
+    }
+    smbc_closedir(handle);
 
-        FileEntry entry;
-        entry.name = name;
-        entry.uri = dir.child(name);
-        entry.isDir = found->smbc_type == SMBC_DIR;
+    // Size and time need a stat of their own: a directory entry carries the name
+    // and the kind and nothing else. Asked for rather than left out, because a
+    // listing without sizes or dates is half a listing.
+    FileEntryList entries;
+    entries.reserve(found.size());
+    for (const Found& one : std::as_const(found)) {
+        if (cancel.isCancelled())
+            return Result<FileEntryList>::failure(VfsError::Cancelled, QStringLiteral("cancelled"));
 
-        // Size and time need a stat of their own: a directory entry carries the
-        // name and the kind and nothing else. Asked for here rather than left
-        // out, because a listing without sizes or dates is half a listing.
+        FileEntry made;
+        made.name = one.name;
+        made.uri = dir.child(one.name);
+        made.isDir = one.isDir;
+
         struct stat details
         {
         };
-        const QByteArray childUrl = urlFor(entry.uri).toUtf8();
-        if (smbc_getFunctionStat(ctx)(ctx, childUrl.constData(), &details) == 0) {
-            entry.size = entry.isDir ? 0 : static_cast<qint64>(details.st_size);
-            entry.modified = QDateTime::fromSecsSinceEpoch(static_cast<qint64>(details.st_mtime));
+        const QByteArray childUrl = urlFor(made.uri).toUtf8();
+        if (smbc_stat(childUrl.constData(), &details) == 0) {
+            made.size = made.isDir ? 0 : static_cast<qint64>(details.st_size);
+            made.modified = QDateTime::fromSecsSinceEpoch(static_cast<qint64>(details.st_mtime));
         }
-        entries.append(entry);
+        entries.append(made);
     }
-    smbc_getFunctionClosedir(ctx)(ctx, handle);
     return Result<FileEntryList>(entries);
 }
 
 Result<FileEntry> SmbFileSystem::stat(const VfsUri& target)
 {
-    SMBCCTX* ctx = context();
-    if (!ctx) {
+    const Session session(*this);
+    if (!session.ok()) {
         return Result<FileEntry>::failure(
             VfsError::IoError, QStringLiteral("This machine cannot start an SMB session"));
     }
@@ -341,7 +456,7 @@ Result<FileEntry> SmbFileSystem::stat(const VfsUri& target)
     struct stat details
     {
     };
-    if (smbc_getFunctionStat(ctx)(ctx, url.constData(), &details) != 0)
+    if (smbc_stat(url.constData(), &details) != 0)
         return Result<FileEntry>(errorFromErrno(errno, QStringLiteral("Looking at %1").arg(target.path())));
 
     FileEntry entry;
@@ -355,29 +470,32 @@ Result<FileEntry> SmbFileSystem::stat(const VfsUri& target)
 
 Result<void> SmbFileSystem::makeDirectory(const VfsUri& target)
 {
-    SMBCCTX* ctx = context();
-    if (!ctx)
+    const Session session(*this);
+    if (!session.ok())
         return VfsError::make(VfsError::IoError, QStringLiteral("This machine cannot start an SMB session"));
 
     const QByteArray url = urlFor(target).toUtf8();
-    if (smbc_getFunctionMkdir(ctx)(ctx, url.constData(), 0755) != 0)
+    if (smbc_mkdir(url.constData(), 0755) != 0)
         return errorFromErrno(errno, QStringLiteral("Creating %1").arg(target.path()));
     return {};
 }
 
 Result<void> SmbFileSystem::remove(const VfsUri& target, bool recursive)
 {
-    SMBCCTX* ctx = context();
-    if (!ctx)
-        return VfsError::make(VfsError::IoError, QStringLiteral("This machine cannot start an SMB session"));
-
+    // No session taken here. What follows calls stat(), list() and remove()
+    // again, each of which takes one -- and the guard is not recursive, so
+    // holding it across them would deadlock on the first child.
     const Result<FileEntry> what = stat(target);
     if (!what.ok())
         return Result<void>(what.error());
 
     if (!what.value().isDir) {
+        const Session session(*this);
+        if (!session.ok())
+            return VfsError::make(
+                VfsError::IoError, QStringLiteral("This machine cannot start an SMB session"));
         const QByteArray url = urlFor(target).toUtf8();
-        if (smbc_getFunctionUnlink(ctx)(ctx, url.constData()) != 0)
+        if (smbc_unlink(url.constData()) != 0)
             return errorFromErrno(errno, QStringLiteral("Removing %1").arg(target.path()));
         return {};
     }
@@ -394,21 +512,39 @@ Result<void> SmbFileSystem::remove(const VfsUri& target, bool recursive)
         }
     }
 
+    const Session session(*this);
+    if (!session.ok())
+        return VfsError::make(VfsError::IoError, QStringLiteral("This machine cannot start an SMB session"));
     const QByteArray url = urlFor(target).toUtf8();
-    if (smbc_getFunctionRmdir(ctx)(ctx, url.constData()) != 0)
+    if (smbc_rmdir(url.constData()) != 0)
         return errorFromErrno(errno, QStringLiteral("Removing %1").arg(target.path()));
     return {};
 }
 
 Result<void> SmbFileSystem::rename(const VfsUri& from, const VfsUri& to)
 {
-    SMBCCTX* ctx = context();
-    if (!ctx)
+    const Session session(*this);
+    if (!session.ok())
         return VfsError::make(VfsError::IoError, QStringLiteral("This machine cannot start an SMB session"));
 
     const QByteArray fromUrl = urlFor(from).toUtf8();
     const QByteArray toUrl = urlFor(to).toUtf8();
-    if (smbc_getFunctionRename(ctx)(ctx, fromUrl.constData(), ctx, toUrl.constData()) != 0) {
+
+    // Refused rather than allowed to replace, which is what every other backend
+    // here does and what the conformance suite requires: a rename that silently
+    // overwrites is how a bulk rename destroys a file nobody mentioned. Samba's
+    // rename will overwrite if it is let, so the check is ours to make -- the
+    // commit of a finished write does not come through here, and says why.
+    struct stat already
+    {
+    };
+    if (smbc_stat(toUrl.constData(), &already) == 0) {
+        return VfsError::make(VfsError::AlreadyExists,
+            QStringLiteral("Renaming %1: there is already something called %2")
+                .arg(from.path(), to.fileName()));
+    }
+
+    if (smbc_rename(fromUrl.constData(), toUrl.constData()) != 0) {
         return errorFromErrno(errno, QStringLiteral("Renaming %1 to %2").arg(from.path(), to.fileName()));
     }
     return {};
@@ -416,16 +552,16 @@ Result<void> SmbFileSystem::rename(const VfsUri& from, const VfsUri& to)
 
 Result<std::unique_ptr<QIODevice>> SmbFileSystem::openRead(const VfsUri& target, qint64 expectedSize)
 {
-    SMBCCTX* ctx = context();
-    if (!ctx) {
+    const Session session(*this);
+    if (!session.ok()) {
         return Result<std::unique_ptr<QIODevice>>::failure(
             VfsError::IoError, QStringLiteral("This machine cannot start an SMB session"));
     }
 
     const QString what = QStringLiteral("Reading %1").arg(target.path());
     const QByteArray url = urlFor(target).toUtf8();
-    SMBCFILE* handle = smbc_getFunctionOpen(ctx)(ctx, url.constData(), O_RDONLY, 0);
-    if (!handle)
+    const int handle = smbc_open(url.constData(), O_RDONLY, 0);
+    if (handle < 0)
         return Result<std::unique_ptr<QIODevice>>(errorFromErrno(errno, what));
 
     // Nothing is staged and nothing is held: the share is read through as it is
@@ -436,11 +572,11 @@ Result<std::unique_ptr<QIODevice>> SmbFileSystem::openRead(const VfsUri& target,
         struct stat details
         {
         };
-        if (smbc_getFunctionFstat(ctx)(ctx, handle, &details) == 0)
+        if (smbc_fstat(handle, &details) == 0)
             length = static_cast<qint64>(details.st_size);
     }
 
-    auto file = std::make_unique<SmbFile>(ctx, handle, length, what);
+    auto file = std::make_unique<SmbFile>(*this, handle, length, what);
     if (!file->open(QIODevice::ReadOnly)) {
         return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, file->errorString());
     }
@@ -449,19 +585,21 @@ Result<std::unique_ptr<QIODevice>> SmbFileSystem::openRead(const VfsUri& target,
 
 Result<std::unique_ptr<QIODevice>> SmbFileSystem::openWrite(const VfsUri& target, qint64)
 {
-    SMBCCTX* ctx = context();
-    if (!ctx) {
+    const Session session(*this);
+    if (!session.ok()) {
         return Result<std::unique_ptr<QIODevice>>::failure(
             VfsError::IoError, QStringLiteral("This machine cannot start an SMB session"));
     }
 
     const QString what = QStringLiteral("Writing %1").arg(target.path());
-    const QByteArray url = urlFor(target).toUtf8();
-    SMBCFILE* handle = smbc_getFunctionOpen(ctx)(ctx, url.constData(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (!handle)
+    const VfsUri staging = partialWriteOf(target);
+    const QByteArray url = urlFor(staging).toUtf8();
+    const int handle = smbc_open(url.constData(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (handle < 0)
         return Result<std::unique_ptr<QIODevice>>(errorFromErrno(errno, what));
 
-    auto file = std::make_unique<SmbFile>(ctx, handle, -1, what);
+    auto file = std::make_unique<SmbFile>(*this, handle, -1, what);
+    file->commitOnCloseTo(staging, target);
     if (!file->open(QIODevice::WriteOnly)) {
         return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, file->errorString());
     }

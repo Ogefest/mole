@@ -214,6 +214,12 @@ void runFileSystemConformance(const ConformanceContext& context)
         Result<std::unique_ptr<QIODevice>> back = fs.openRead(written, small.size());
         QVERIFY2(back.ok(), qPrintable(back.error().message));
         QCOMPARE(back.value()->readAll(), small);
+        // Let go before writing over it. Reading and then overwriting while still
+        // holding the read open is not what this is about, and a share refuses it:
+        // Windows semantics do not let a file be replaced while somebody has it
+        // open, where POSIX quietly allows it. Every backend here reads the file
+        // and then writes it; none of them needs to do both at once.
+        back.value().reset();
 
         // Again, over the same name. An overwrite is ordinary -- it is what a
         // re-run of a failed copy does -- and it must neither be refused nor
@@ -231,6 +237,13 @@ void runFileSystemConformance(const ConformanceContext& context)
         back = fs.openRead(written, large.size());
         QVERIFY2(back.ok(), qPrintable(back.error().message));
         QCOMPARE(back.value()->readAll(), large);
+
+        // Let go of the read before removing. Holding it open was incidental --
+        // this step is about removing what was written -- and on SMB it is not
+        // incidental at all: a share refuses to unlink a file somebody has open,
+        // which is Windows semantics rather than a fault, and every POSIX backend
+        // allowed it only because POSIX does.
+        back.value().reset();
 
         QVERIFY2(fs.remove(written, false).ok(), "removing what this suite wrote must succeed");
     }

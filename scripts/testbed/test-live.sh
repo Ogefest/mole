@@ -40,6 +40,12 @@ export MOLE_TEST_SFTP_HOST="$ADDRESS" MOLE_TEST_SFTP_PORT=22
 export MOLE_TEST_SFTP_USER="$ACCOUNT" MOLE_TEST_SFTP_PASS="$PASSWORD"
 export MOLE_TEST_SFTP_BASE="/home/$ACCOUNT/sftp"
 
+# The Samba share services.sh puts on the machine. Named the same way as the
+# rest: the address and the password come from the environment, never from here.
+export MOLE_TEST_SMB_HOST="$ADDRESS"
+export MOLE_TEST_SMB_SHARE="${MOLE_TESTBED_SMB_SHARE:-moledata}"
+export MOLE_TEST_SMB_USER="$ACCOUNT" MOLE_TEST_SMB_PASS="$PASSWORD"
+
 export MOLE_TEST_WEBDAV_URL="http://$ADDRESS/dav"
 export MOLE_TEST_WEBDAV_USER="$ACCOUNT" MOLE_TEST_WEBDAV_PASS="$PASSWORD"
 
@@ -58,7 +64,26 @@ export MOLE_TEST_IGNORE_SELF_SIGNED_CERT=1
 
 export QT_QPA_PLATFORM=offscreen
 
-SUITES="tst_SftpFileSystem tst_WebdavFileSystem tst_FtpFileSystem tst_S3FileSystem"
+# QtTest's own watchdog, which is five minutes per test function and is not
+# enough here. A case that cuts a connection mid-read now waits for the
+# transfer's budget to run out rather than for a socket to fail (ADR-0013's
+# second amendment), and against a real server over a real link that is a minute
+# and a half on its own. Left at the default it reads as a hang, which is the
+# opposite of what this target is for.
+export QTEST_FUNCTION_TIMEOUT="${QTEST_FUNCTION_TIMEOUT:-900000}"
+
+# The control channel, when it is installed. One case in the SFTP suite cuts a
+# connection mid-read to prove that a truncated transfer does not read as a whole
+# file, and without this it skips -- which this target reports as not green,
+# because a suite that never met the server is what it exists to make visible.
+# Every interference clears itself; see scripts/testbed/control.sh.
+if [ -z "${MOLE_TEST_CONTROL:-}" ] \
+        && ssh -o BatchMode=yes -o ConnectTimeout=5 "$ACCOUNT@$ADDRESS" \
+            'command -v mole-control' >/dev/null 2>&1; then
+    export MOLE_TEST_CONTROL="ssh -o BatchMode=yes $ACCOUNT@$ADDRESS sudo mole-control"
+fi
+
+SUITES="tst_SftpFileSystem tst_WebdavFileSystem tst_FtpFileSystem tst_S3FileSystem tst_SmbFileSystem"
 
 printf '\n\033[1mLive suites against %s\033[0m\n\n' "$ADDRESS"
 

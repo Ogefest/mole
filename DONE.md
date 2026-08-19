@@ -9,6 +9,48 @@ wrong.
 
 ---
 
+## Mole could not open a Windows or NAS share, and the backend for it aborted
+
+**Asked for:** MOLE-36 — SMB, split from NFS on 2026-08-19 once one backend had shown that two with
+no design between them was a project rather than a ticket. The code was in the tree and offered
+nowhere: the conformance suite ended in `talloc: access after free` inside libsmbclient's
+allocator, about eighty milliseconds in and nowhere near the call that caused it.
+
+**The cause was that a context's function pointers are not the entry points.** libsmbclient's plain
+`smbc_*` wrappers do bookkeeping around every call that Samba's internals depend on — a talloc
+stackframe — and calling `smbc_getFunctionStat(ctx)(…)` directly skips it. Samba then runs with no
+stackframe, says so once and quietly, leaks into its arena, and aborts later somewhere unrelated.
+The library's own message was the whole clue and it was two lines above the abort:
+`no talloc stackframe at source3/lib/interface.c`.
+
+The wrappers act on one global context, so using them means having one — and that is the design
+now: **one session for the process, every operation serialised behind it.** A listing on one SMB
+drive waits for a read on another, which is a real cost and
+[ADR-0048](docs/adr/0048-windows-shares-through-libsmbclient.md) states it rather than hiding it.
+The alternative on offer was a backend that could take the process down.
+
+**AddressSanitizer had nothing to say**, which was itself informative: talloc manages its own
+memory out of large allocations, so a sanitizer watching malloc sees a healthy heap while Samba's
+arena is being corrupted. The library's own diagnostics were the only instrument that worked.
+
+**Then the conformance suite earned its keep three more times.** An abandoned write was being left
+under the name somebody asked for, so writes go under a working name and are renamed into place,
+the same rule as the local disk. A rename onto an existing name was silently replacing it, where
+every other backend refuses — Samba will overwrite if it is let, so the refusal is ours to make,
+and a rename that quietly overwrites is how a bulk rename destroys a file nobody mentioned.
+
+**And twice the suite itself was wrong about what it meant.** It held a read handle open across a
+remove and across an overwrite; on SMB a share refuses both, which is Windows semantics rather
+than a fault, and the steps in question are about removing and overwriting rather than about doing
+either while somebody has the file open. Every POSIX backend had passed only because POSIX allows
+it. The suite lets go of the handle now and says why.
+
+**`make test-live` is green whole for the first time**: five suites, no skips. The SMB suite is
+named in `SUITES`, and two gaps in that script turned up on the way — it never set the control
+channel, so a case that cuts a connection mid-read had been skipping silently since it was
+written, and QtTest's five-minute per-function watchdog is not enough for it now that the read
+waits for the transfer's budget rather than for a socket to fail.
+
 ## Mole did not own its transfer loop, so the stall guard was advice
 
 **Asked for:** MOLE-212 — written up while MOLE-108 was being measured, and by the end of that

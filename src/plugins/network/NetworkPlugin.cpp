@@ -41,17 +41,11 @@ public:
         registry.addFileSystemFactory(std::make_unique<FtpFileSystemFactory>());
         registry.addFileSystemFactory(std::make_unique<S3FileSystemFactory>());
         registry.addFileSystemFactory(std::make_unique<WebdavFileSystemFactory>());
-        // SMB is built but deliberately NOT offered yet. SmbFileSystem works --
-        // it lists, stats, creates, writes and reads against a real Samba share,
-        // and its own tests hold that -- but the conformance suite ends in an
-        // abort inside libsmbclient's allocator ("talloc: access after free",
-        // lib/param/loadparm.c) and the cause is not yet known.
-        //
-        // A drive kind that can take the process down with it is worse than one
-        // that is not there, so this line stays commented until the conformance
-        // run is green. See MOLE-36.
-        //
-        // registry.addFileSystemFactory(std::make_unique<SmbFileSystemFactory>());
+#ifdef MOLE_HAVE_SMB
+        // Only where Samba's client library was found. A drive kind that is
+        // offered and then cannot connect is worse than one that is not offered.
+        registry.addFileSystemFactory(std::make_unique<SmbFileSystemFactory>());
+#endif
     }
 };
 

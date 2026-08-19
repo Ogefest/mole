@@ -39,12 +39,23 @@ struct SmbSettings
 ///
 /// THREADS
 /// -------
-/// libsmbclient's context is not safe to share between threads, and Mole calls
-/// a backend from whichever pool thread picked the work up. So a context
-/// belongs to a thread and is built the first time that thread asks for one --
-/// the same shape SqliteTable uses for its connections, and DelimitedStore for
-/// its. The alternative, one context behind a mutex, would serialise every
-/// listing in the application behind every read.
+/// **One session for the process, and every operation serialised behind it.**
+/// That is a real cost -- a listing waits for a read -- and it is not the shape
+/// this started out as. A context per thread was tried first, the way
+/// SqliteTable keeps a connection per thread, and it aborts inside Samba's own
+/// allocator.
+///
+/// The reason is that the context's function pointers are not the entry points.
+/// libsmbclient's plain `smbc_*` wrappers do bookkeeping around each call that
+/// Samba's internals depend on -- a talloc stackframe -- and calling
+/// `smbc_getFunctionStat(ctx)(...)` directly skips it. Samba then runs with no
+/// stackframe, leaks into its arena, and aborts later somewhere unrelated:
+/// "no talloc stackframe", then "Bad talloc magic value". The wrappers act on
+/// one global context, so using them means having one.
+///
+/// The mutex therefore protects two process-wide things rather than one: the
+/// context every wrapper acts on, and the credentials the authentication
+/// callback reads back, which belong to whichever drive is asking.
 class SmbFileSystem final : public IFileSystem
 {
 public:
@@ -75,11 +86,29 @@ public:
     /// pointer it was told to keep.
     struct Credentials;
 
-private:
-    /// This thread's context, built on first use. Null when one cannot be made,
-    /// which is a configuration that cannot work rather than a network fault.
-    _SMBCCTX* context() const;
+    /// Holds the session for the length of one operation and points the
+    /// authentication callback at this drive's credentials.
+    ///
+    /// Everything that talks to a share takes one of these first, including a
+    /// read from an open file: the wrappers act on the global context whoever
+    /// last claimed it set up.
+    class Session
+    {
+    public:
+        explicit Session(const SmbFileSystem& drive);
+        ~Session();
+        Session(const Session&) = delete;
+        Session& operator=(const Session&) = delete;
 
+        /// False when no session could be started at all, which is a machine
+        /// that cannot do SMB rather than a share that cannot be reached.
+        bool ok() const { return m_ok; }
+
+    private:
+        bool m_ok = false;
+    };
+
+private:
     QString m_scheme;
     SmbSettings m_settings;
     /// Held so the authentication callback can find the credentials.
