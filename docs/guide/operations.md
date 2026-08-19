@@ -32,6 +32,11 @@ can open anywhere without being told how. A bare `.xz` is a single compressed st
 with no container, so it takes one file and no folders — the dialog says so rather than
 failing when you press Ok.
 
+Reading goes the other way and is wider: a single compressed file opens as a drive too.
+A `notes.txt.gz` — gzip alone, with no tar inside — opens with one row in it, named after
+the file that was compressed rather than after the archive, and `.xz`, `.bz2` and `.zst`
+do the same.
+
 Changing the kind changes the suffix and keeps the name you typed.
 
 A zip can also be protected with a password, encrypted with AES-256. The box is offered

@@ -34,6 +34,54 @@ QString packDirectory(const QString& sourceDir, const QString& outputPath, const
     return QFile::exists(outputPath) ? outputPath : QString();
 }
 
+/// Compresses one file into a single stream -- no container, no tar inside.
+///
+/// `gzip`, `xz` and `bzip2` all read standard input and write standard output
+/// with `-c`, so the fixture is built here rather than committed. `extraArgs` is
+/// how `gzip -n` gets asked for: with it, no original filename is stored.
+QString compressFile(const QString& tool, const QByteArray& contents, const QString& outputPath,
+    const QStringList& extraArgs = {})
+{
+    const QString found = QStandardPaths::findExecutable(tool);
+    if (found.isEmpty())
+        return {};
+
+    QProcess process;
+    process.setStandardOutputFile(outputPath);
+    process.start(found, QStringList { QStringLiteral("-c") } + extraArgs);
+    if (!process.waitForStarted(30000))
+        return {};
+    process.write(contents);
+    process.closeWriteChannel();
+    if (!process.waitForFinished(30000) || process.exitCode() != 0)
+        return {};
+    return QFile::exists(outputPath) ? outputPath : QString();
+}
+
+/// The same, but with the original filename stored, which only gzip does and only
+/// when it is the one doing the naming. `gzip notes.txt` writes `notes.txt.gz`
+/// carrying `notes.txt` in its header; there is no way to ask for that through a
+/// pipe, so the file has to exist under the name that is wanted.
+QString gzipInPlace(const QByteArray& contents, const QString& directory, const QString& fileName)
+{
+    const QString tool = QStandardPaths::findExecutable(QStringLiteral("gzip"));
+    if (tool.isEmpty())
+        return {};
+
+    const QString plain = QDir(directory).filePath(fileName);
+    QFile file(plain);
+    if (!file.open(QIODevice::WriteOnly) || file.write(contents) != contents.size())
+        return {};
+    file.close();
+
+    QProcess process;
+    process.start(tool, { plain });
+    if (!process.waitForFinished(30000) || process.exitCode() != 0)
+        return {};
+    const QString compressed = plain + QStringLiteral(".gz");
+    return QFile::exists(compressed) ? compressed : QString();
+}
+
 } // namespace
 
 class TestArchiveFileSystem : public QObject
@@ -59,6 +107,15 @@ private slots:
     void anArchiveCutInHalfIsAnErrorRatherThanAShortListing();
     void factoryRejectsMissingPath();
     void factoryAdvertisesMountableSuffixes();
+
+    void aFileCompressedWithGzipAloneOpensAsADriveWithOneMember();
+    void aGzipWithNoStoredNameIsNamedFromTheArchiveInstead();
+    void xzAndBzip2MembersAreNamedFromTheArchive_data();
+    void xzAndBzip2MembersAreNamedFromTheArchive();
+    void aSingleStreamMemberNeverClaimsToBeNoughtBytes();
+    void aFileNamedGzThatIsNotGzipIsStillRefused();
+    void aPlainFileIsStillNotAnArchive();
+    void aSevenZipIsUnaffected();
 
 private:
     QString m_tarGz;
@@ -469,6 +526,187 @@ void TestArchiveFileSystem::factoryAdvertisesMountableSuffixes()
     const QVariantMap config = factory.configForFile(QStringLiteral("/tmp/a.zip"));
     QCOMPARE(config.value(QStringLiteral("path")).toString(), QStringLiteral("/tmp/a.zip"));
     QCOMPARE(factory.rootUriForFile(QStringLiteral("/tmp/a.zip")).scheme(), QStringLiteral("archive"));
+}
+
+// ---- a single compressed stream is an archive of one thing ---------------
+//
+// `notes.txt.gz` -- gzip and nothing else, no tar inside -- was offered as
+// something to open as a drive and then could not be opened: libarchive's
+// support_format_all() deliberately leaves out the `raw` format, and a gzip
+// stream with no container in it is exactly what raw is for. The same held for a
+// bare .xz, .bz2 and .zst, all four of which the factory advertises. See
+// MOLE-216. What these assert is the fallback and, just as much, its three
+// conditions -- because raw enabled without them turns "this is not an archive"
+// into "an archive of one thing called data" for every file nothing recognises.
+
+void TestArchiveFileSystem::aFileCompressedWithGzipAloneOpensAsADriveWithOneMember()
+{
+    const QByteArray payload("one stream, no container, and a line of text\n");
+    const QString archive = gzipInPlace(payload, m_workspace->path(), QStringLiteral("notes.txt"));
+    if (archive.isEmpty())
+        QSKIP("gzip is not available");
+
+    FileSystemPtr fs = openArchive(archive);
+    Result<FileEntryList> listing = fs->list(rootOf(archive), CancelToken());
+    QVERIFY2(listing.ok(), qPrintable(listing.error().message));
+    QCOMPARE(listing.value().size(), 1);
+
+    // The name gzip stored in its header, which is why this is notes.txt and not
+    // `data` -- the name libarchive gives a raw member with nothing to go on.
+    const FileEntry member = listing.value().first();
+    QCOMPARE(member.name, QStringLiteral("notes.txt"));
+    QVERIFY(!member.isDir);
+
+    Result<std::unique_ptr<QIODevice>> device = fs->openRead(member.uri);
+    QVERIFY2(device.ok(), qPrintable(device.error().message));
+    QCOMPARE(device.value()->readAll(), payload);
+}
+
+void TestArchiveFileSystem::aGzipWithNoStoredNameIsNamedFromTheArchiveInstead()
+{
+    // `gzip -n` stores no original filename, and a stream written by a library
+    // usually does not either. libarchive then calls the member `data`, which
+    // tells the user nothing the archive's own name does not already say.
+    const QByteArray payload("no name in the header at all\n");
+    const QString archive = compressFile(QStringLiteral("gzip"), payload,
+        QDir(m_workspace->path()).filePath(QStringLiteral("anonymous.log.gz")), { QStringLiteral("-n") });
+    if (archive.isEmpty())
+        QSKIP("gzip is not available");
+
+    FileSystemPtr fs = openArchive(archive);
+    Result<FileEntryList> listing = fs->list(rootOf(archive), CancelToken());
+    QVERIFY2(listing.ok(), qPrintable(listing.error().message));
+    QCOMPARE(listing.value().size(), 1);
+    QCOMPARE(listing.value().first().name, QStringLiteral("anonymous.log"));
+
+    Result<std::unique_ptr<QIODevice>> device = fs->openRead(listing.value().first().uri);
+    QVERIFY2(device.ok(), qPrintable(device.error().message));
+    QCOMPARE(device.value()->readAll(), payload);
+}
+
+void TestArchiveFileSystem::xzAndBzip2MembersAreNamedFromTheArchive_data()
+{
+    QTest::addColumn<QString>("tool");
+    QTest::addColumn<QString>("archiveName");
+    QTest::addColumn<QString>("memberName");
+
+    // Neither format has a filename field at all, so the archive's own name is
+    // the only thing there is to go on.
+    QTest::newRow("xz") << QStringLiteral("xz") << QStringLiteral("report.txt.xz")
+                        << QStringLiteral("report.txt");
+    QTest::newRow("bzip2") << QStringLiteral("bzip2") << QStringLiteral("report.txt.bz2")
+                           << QStringLiteral("report.txt");
+    QTest::newRow("zstd") << QStringLiteral("zstd") << QStringLiteral("report.txt.zst")
+                          << QStringLiteral("report.txt");
+}
+
+void TestArchiveFileSystem::xzAndBzip2MembersAreNamedFromTheArchive()
+{
+    QFETCH(QString, tool);
+    QFETCH(QString, archiveName);
+    QFETCH(QString, memberName);
+
+    const QByteArray payload("compressed on its own, with no name inside\n");
+    const QString archive = compressFile(tool, payload, QDir(m_workspace->path()).filePath(archiveName));
+    if (archive.isEmpty())
+        QSKIP("this compressor is not available");
+
+    FileSystemPtr fs = openArchive(archive);
+    Result<FileEntryList> listing = fs->list(rootOf(archive), CancelToken());
+    QVERIFY2(listing.ok(), qPrintable(listing.error().message));
+    QCOMPARE(listing.value().size(), 1);
+    QCOMPARE(listing.value().first().name, memberName);
+
+    Result<std::unique_ptr<QIODevice>> device = fs->openRead(listing.value().first().uri);
+    QVERIFY2(device.ok(), qPrintable(device.error().message));
+    QCOMPARE(device.value()->readAll(), payload);
+}
+
+void TestArchiveFileSystem::aSingleStreamMemberNeverClaimsToBeNoughtBytes()
+{
+    // A compressed stream does not know its uncompressed length until it has been
+    // read, and raw says so by leaving the size unset. Nought would be a claim,
+    // and a wrong one about a member with a page of text in it.
+    const QByteArray payload(4096, 'a');
+    const QString archive = compressFile(
+        QStringLiteral("gzip"), payload, QDir(m_workspace->path()).filePath(QStringLiteral("sized.txt.gz")));
+    if (archive.isEmpty())
+        QSKIP("gzip is not available");
+
+    FileSystemPtr fs = openArchive(archive);
+    Result<FileEntryList> listing = fs->list(rootOf(archive), CancelToken());
+    QVERIFY2(listing.ok(), qPrintable(listing.error().message));
+    QCOMPARE(listing.value().size(), 1);
+    QVERIFY2(listing.value().first().size != 0,
+        "a member with contents was listed as nought bytes, which is a lie rather than an unknown");
+
+    Result<FileEntry> stated = fs->stat(listing.value().first().uri);
+    QVERIFY2(stated.ok(), qPrintable(stated.error().message));
+    QVERIFY(stated.value().size != 0);
+    // And what is actually there is the whole of it.
+    Result<std::unique_ptr<QIODevice>> device = fs->openRead(listing.value().first().uri);
+    QVERIFY2(device.ok(), qPrintable(device.error().message));
+    QCOMPARE(device.value()->readAll().size(), payload.size());
+}
+
+void TestArchiveFileSystem::aFileNamedGzThatIsNotGzipIsStillRefused()
+{
+    // The filter test earning its place. With raw enabled and nothing having
+    // decompressed anything, this file's own bytes would be offered as a member --
+    // so a text file with a misleading name would open as an archive of itself.
+    const QString liar = QDir(m_workspace->path()).filePath(QStringLiteral("pretending.gz"));
+    QFile file(liar);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("gzip starts with 1f 8b and this does not");
+    file.close();
+
+    FileSystemPtr fs = openArchive(liar);
+    Result<FileEntryList> listing = fs->list(rootOf(liar), CancelToken());
+    QVERIFY2(!listing.ok(), "a file that is not compressed at all was opened as a compressed stream");
+}
+
+void TestArchiveFileSystem::aPlainFileIsStillNotAnArchive()
+{
+    // The suffix test earning its place, and the error path the browser depends
+    // on: `canOpenAsDrive()` says no for a .txt, and if one is asked for anyway
+    // the answer has to stay "this is not an archive" rather than becoming an
+    // archive of one member called data.
+    const QString plain = QDir(m_workspace->path()).filePath(QStringLiteral("ordinary.txt"));
+    QFile file(plain);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("just a file");
+    file.close();
+
+    FileSystemPtr fs = openArchive(plain);
+    Result<FileEntryList> listing = fs->list(rootOf(plain), CancelToken());
+    QVERIFY2(!listing.ok(), "an ordinary text file was opened as an archive of itself");
+}
+
+void TestArchiveFileSystem::aSevenZipIsUnaffected()
+{
+    // A container the fallback must not come near: nothing here runs unless the
+    // ordinary open has already failed, and this one does not fail.
+    const QString tool = QStandardPaths::findExecutable(QStringLiteral("7z"));
+    if (tool.isEmpty())
+        QSKIP("7z is not available");
+
+    TempTree source;
+    QVERIFY(source.isValid());
+    QVERIFY(source.writeFile(QStringLiteral("inside.txt"), QByteArray("seven zip")));
+
+    const QString archive = QDir(m_workspace->path()).filePath(QStringLiteral("fixture.7z"));
+    QProcess process;
+    process.setWorkingDirectory(source.path());
+    process.start(tool, { QStringLiteral("a"), QStringLiteral("-bso0"), archive, QStringLiteral(".") });
+    if (!process.waitForFinished(30000) || process.exitCode() != 0)
+        QSKIP("7z could not build the fixture");
+
+    FileSystemPtr fs = openArchive(archive);
+    Result<FileEntryList> listing = fs->list(rootOf(archive), CancelToken());
+    QVERIFY2(listing.ok(), qPrintable(listing.error().message));
+    QCOMPARE(listing.value().size(), 1);
+    QCOMPARE(listing.value().first().name, QStringLiteral("inside.txt"));
+    QCOMPARE(listing.value().first().size, qint64(9));
 }
 
 MOLE_TEST_MAIN(TestArchiveFileSystem)
