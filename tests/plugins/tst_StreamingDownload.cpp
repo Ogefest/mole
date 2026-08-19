@@ -1,6 +1,7 @@
 #include "plugins/network/TransferStreams.h"
 #include "support/MoleTestMain.h"
 
+#include <QElapsedTimer>
 #include <QTest>
 
 #include <atomic>
@@ -293,7 +294,8 @@ private slots:
 
     void aFileLongerThanOneConnectionCanCarryStillArrivesWhole();
     void thatSameFileOverOneSpanResumesUntilItIsWhole();
-    void aSpanThatDeliversNothingIsTheEndOfIt();
+    void aSpanThatKeepsFailingEndsTheReadWhenTheBudgetIsSpent();
+    void aLinkThatComesBackInsideTheBudgetCostsNothing();
 
     void seekingToTheStartToTheEndAndPastIt();
     void aSpanBoundaryThatFallsOnAReadBoundaryIsInvisible();
@@ -354,7 +356,11 @@ void TestStreamingDownload::aTransferThatFailsPartWayIsAnError()
     FakeServer server(payload);
     server.failAfter(100 * 1024);
 
-    net::StreamingDownload stream(server.fetch(), payload.size(), 512 * 1024);
+    // A budget of a second rather than the two minutes a real read gets: what
+    // is being asserted is that a read which cannot finish comes back as a
+    // failure, and waiting out the real figure would make this the slowest test
+    // in the suite for no extra claim.
+    net::StreamingDownload stream(server.fetch(), payload.size(), 512 * 1024, std::chrono::seconds(1));
     QVERIFY(stream.open(QIODevice::ReadOnly));
 
     // What the caller must see is a failure, not a short file: read() answers
@@ -585,33 +591,78 @@ void TestStreamingDownload::thatSameFileOverOneSpanResumesUntilItIsWhole()
         server.asked().size() > 1, "the whole file arrived in one connection, so the limit was never met");
 }
 
-void TestStreamingDownload::aSpanThatDeliversNothingIsTheEndOfIt()
+void TestStreamingDownload::aSpanThatKeepsFailingEndsTheReadWhenTheBudgetIsSpent()
 {
-    // The bound, and the reason resuming cannot turn a dead link into a wait
-    // without end. A span is resumed because it carried bytes; one that carries
-    // none has nothing to resume from and no reason to expect better, so the
-    // read fails there.
+    // What bounds a read now, and the case that used to be bounded by counting
+    // attempts instead.
     //
-    // Without this the two cases would be indistinguishable: a server that
-    // re-keys is one that stops after delivering, and a link that has gone away
-    // is one that delivers nothing. Only the second may fail the read, and only
-    // the first may retry.
+    // This used to assert that a span delivering nothing ends the read there and
+    // then -- one stall, one attempt that gets nowhere, done. That covered a link
+    // that had gone for good and could not cover one that comes back, because
+    // the single retry met the dead link and failed a read the link was about to
+    // be able to finish. The bound is now the budget: however many connections
+    // it takes, what ends the read is nothing having arrived for long enough.
     const QByteArray payload = payloadOf(256 * 1024);
     FakeServer server(payload);
     server.failAfter(100 * 1024);
 
-    net::StreamingDownload stream(server.fetch(), payload.size(), 512 * 1024);
+    // A short budget so the test costs a moment. The mechanism is the same at
+    // half a second as at two minutes.
+    net::StreamingDownload stream(server.fetch(), payload.size(), 512 * 1024, std::chrono::seconds(1));
     QVERIFY(stream.open(QIODevice::ReadOnly));
 
+    QElapsedTimer clock;
+    clock.start();
     qint64 last = 0;
     const QByteArray collected = readAll(stream, &last);
+    const qint64 took = clock.elapsed();
+
     QCOMPARE(last, -1);
     QVERIFY(collected.size() < payload.size());
     QVERIFY2(stream.errorString().contains(QStringLiteral("hung up")), qPrintable(stream.errorString()));
 
-    // One attempt that carried bytes, and one that carried none and ended it.
-    // A third would mean a dead link costs a stall-guard wait per attempt.
-    QCOMPARE(server.spans(), 2);
+    // It kept trying rather than giving up on the first refusal -- that is the
+    // whole change -- and it stopped once the budget was spent rather than
+    // going on for ever.
+    QVERIFY2(server.spans() > 2,
+        qPrintable(QStringLiteral("only %1 attempts: a budget was not being spent").arg(server.spans())));
+    QVERIFY2(
+        took >= 1000, qPrintable(QStringLiteral("gave up after %1 ms, inside its own budget").arg(took)));
+    QVERIFY2(took < 20000, qPrintable(QStringLiteral("still going after %1 ms").arg(took)));
+}
+
+void TestStreamingDownload::aLinkThatComesBackInsideTheBudgetCostsNothing()
+{
+    // The case the old bound could not meet, and the reason for this ticket: a
+    // link that goes away and returns must not cost a transfer. Every attempt
+    // fails, delivering nothing, until the link comes back -- and then the file
+    // arrives whole.
+    //
+    // Counted in attempts rather than timed, so it is the same on every machine.
+    const QByteArray payload = payloadOf(300 * 1024);
+    FakeServer server(payload);
+
+    int refusals = 6;
+    auto flaky
+        = [&server, &refusals](QIODevice& sink, qint64 offset, qint64 span, const CancelToken& cancel) {
+              if (refusals > 0) {
+                  --refusals;
+                  return VfsError::make(VfsError::NetworkError, QStringLiteral("the link is down"));
+              }
+              return server.fetch()(sink, offset, span, cancel);
+          };
+
+    net::StreamingDownload stream(std::move(flaky), payload.size(), 128 * 1024, std::chrono::seconds(30));
+    QVERIFY(stream.open(QIODevice::ReadOnly));
+
+    qint64 last = 0;
+    const QByteArray collected = readAll(stream, &last);
+
+    QCOMPARE(last, 0);
+    QVERIFY2(!stream.error().isError(), qPrintable(stream.errorString()));
+    QVERIFY2(collected == payload,
+        "the file did not come back whole after the link returned, which is the whole point");
+    QCOMPARE(refusals, 0);
 }
 
 void TestStreamingDownload::seekingToTheStartToTheEndAndPastIt()
@@ -784,7 +835,9 @@ void TestStreamingDownload::readingAgainAfterAnErrorSaysTheSameThing()
     FakeServer server(payload);
     server.failAfter(64 * 1024);
 
-    net::StreamingDownload stream(server.fetch(), payload.size(), payload.size());
+    // A short budget, for the same reason as above: the claim is about the
+    // second read, not about how long the first one is willing to wait.
+    net::StreamingDownload stream(server.fetch(), payload.size(), payload.size(), std::chrono::seconds(1));
     QVERIFY(stream.open(QIODevice::ReadOnly));
 
     qint64 first = 0;

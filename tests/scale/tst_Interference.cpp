@@ -90,6 +90,7 @@ private slots:
     // them and reported "no route to host" would be reporting on the previous
     // case rather than on the product.
     void theDestinationFillsUpMidCopy();
+    void anOutageShorterThanTheGuardIsSurvived_data();
     void anOutageShorterThanTheGuardIsSurvived();
     void anOutageLongerThanTheGuardIsReported();
 
@@ -426,6 +427,13 @@ void TestInterference::aSlowOrLossyLinkStillDelivers()
     QVERIFY2(HeavyPayload::verify(*back.value(), bytes, &problem), qPrintable(problem));
 }
 
+void TestInterference::anOutageShorterThanTheGuardIsSurvived_data()
+{
+    QTest::addColumn<int>("unused");
+    QTest::newRow("a minute") << 0;
+    QTest::newRow("a second inside the budget") << 0;
+}
+
 void TestInterference::anOutageShorterThanTheGuardIsSurvived()
 {
     // Behind a variable, deliberately.
@@ -448,17 +456,19 @@ void TestInterference::anOutageShorterThanTheGuardIsSurvived()
               "than left running.");
     }
 
-    // The stall guard gives up after two minutes of nothing. An outage inside
-    // that is the case that must be ridden out: a link that comes back before
-    // the guard fires must not cost anybody their transfer.
+    // A transfer is given up on after two minutes with no byte arriving. An
+    // outage inside that has to be ridden out: the link comes back, the next
+    // attempt delivers, the clock resets and the file arrives whole. No single
+    // connection survives the outage -- they die and are retried, which is the
+    // point -- so what is being tested is the budget rather than a connection's
+    // luck.
     //
-    // RED, and known. Since the guard was made to fire at all (MOLE-108) this
-    // case fails: the span ends about forty seconds into the outage rather than
-    // at the two minutes anything here is set to, and the resume that follows
-    // meets a link that is still down. A minute of outage instead of one minute
-    // fifty-nine changes nothing, which rules out the margin being the cause.
-    // Recorded on MOLE-108 rather than deleted or quietly widened: what it
-    // claims is right, and it is the claim the fix has not met yet.
+    // Two rows, because they answer different questions. A minute is the honest
+    // regression case: comfortably inside the budget, and it must pass on any
+    // machine. One minute fifty-nine is the boundary, one second inside a budget
+    // of a hundred and twenty, and it is expected to be sensitive -- an attempt
+    // has to be in flight almost all of the time for it to pass, which is why
+    // the backoff between attempts is capped at two seconds.
     const VfsUri remote = seedRemote(m_name, m_payload);
     QVERIFY(remote.isValid());
 
@@ -478,17 +488,17 @@ void TestInterference::anOutageShorterThanTheGuardIsSurvived()
         { QStringLiteral("netem"), QStringLiteral("rate"), QStringLiteral("8mbit"), QStringLiteral("400") });
     QVERIFY2(limited.contains(QStringLiteral("rate limited")), qPrintable(limited));
 
-    const Interfered run = runInterfered(request, m_payload / 8, [] {
-        return TestbedControl::run(
-            { QStringLiteral("blackhole"), QStringLiteral("22"), QStringLiteral("119") });
+    const QString seconds = QString::number(QTest::currentDataTag() == QLatin1String("a minute") ? 60 : 119);
+    const Interfered run = runInterfered(request, m_payload / 8, [seconds] {
+        return TestbedControl::run({ QStringLiteral("blackhole"), QStringLiteral("22"), seconds });
     });
     VERIFY_IT_LANDED(run);
     TransferTask* task = run.task;
 
     QVERIFY2(task->isFinished(), "the download never finished");
     QVERIFY2(task->failures().isEmpty(),
-        qPrintable(QStringLiteral("an outage of 119 seconds was not survived: %1")
-                       .arg(task->failures().join(QLatin1Char(' ')))));
+        qPrintable(QStringLiteral("an outage of %1 seconds was not survived: %2")
+                       .arg(seconds, task->failures().join(QLatin1Char(' ')))));
 
     QFile copy(QDir(m_dir->path()).filePath(QStringLiteral("back/") + m_name));
     QVERIFY(copy.open(QIODevice::ReadOnly));
@@ -535,22 +545,20 @@ void TestInterference::anOutageLongerThanTheGuardIsReported()
         { QStringLiteral("netem"), QStringLiteral("rate"), QStringLiteral("8mbit"), QStringLiteral("400") });
     QVERIFY2(limited.contains(QStringLiteral("rate limited")), qPrintable(limited));
 
-    // Bounded at seven minutes, and the number is arithmetic rather than a
-    // guess. A link that has gone away costs the stall guard twice: once for the
-    // span that was carrying bytes and stopped, and once for the attempt that
-    // resumes it and gets nowhere -- see the amendment to ADR-0013, where only a
-    // span that delivered something is retried, which is what stops that from
-    // being three times or thirty. Two waits of two minutes, plus the time to
-    // notice, plus room for a slow machine. Anything past that is not slowness,
-    // it is a transfer that is never going to end -- and the number has to be
-    // finite for the verdict to mean anything.
+    // Back to three minutes, which is what the budget makes it. A read is over
+    // once nothing has arrived for two minutes, however many connections it has
+    // been through in the meantime -- so a link that has gone for good ends the
+    // transfer at the budget plus the time to notice, not at some multiple of it.
+    // Anything past three minutes is not slowness, it is a transfer that is never
+    // going to end, and the number has to be finite for the verdict to mean
+    // anything.
     const Interfered run = runInterfered(
         request, m_payload / 8,
         [] {
             return TestbedControl::run(
                 { QStringLiteral("blackhole"), QStringLiteral("22"), QStringLiteral("140") });
         },
-        420000);
+        180000);
     VERIFY_IT_LANDED(run);
     TransferTask* task = run.task;
 

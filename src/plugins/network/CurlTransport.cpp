@@ -131,6 +131,11 @@ namespace {
         return bytes;
     }
 
+    /// How long the kernel may go on retransmitting into a link that has gone
+    /// away before the socket is failed, in seconds. A figure somebody chose,
+    /// rather than one inherited from a guard that answers a different question.
+    constexpr long kSocketPatienceSeconds = 20;
+
     /// Bounds how long the kernel will go on retransmitting into a link that has
     /// gone away, on the socket libcurl has just opened.
     ///
@@ -152,25 +157,24 @@ namespace {
     /// the guard still fires and how long the socket takes to notice is the
     /// platform's business.
     ///
-    /// Set to the same wait the stall guard uses, so the two agree about how long
-    /// is too long.
+    /// **Short on purpose, and unrelated to how long the transfer may live.**
+    /// kSocketPatienceSeconds, not the stall wait: with StreamingDownload
+    /// resuming a failed span for as long as its budget lasts, a connection that
+    /// admits defeat quickly is a virtue -- the sooner the socket says so, the
+    /// sooner the next attempt is in flight.
     ///
-    /// **Known unfinished, and this is where it bites.** With this in place an
-    /// outage past the guard is reported instead of hanging, which is what
-    /// MOLE-108 asked for -- and an outage comfortably *shorter* than the guard,
-    /// which used to be ridden out, is now failed as well. The span ends around
-    /// forty seconds into an outage rather than at the two minutes either this or
-    /// the guard is set to, and nothing found so far explains which clock that
-    /// is: twice the wait behaves the same, and removing this brings back the
-    /// hang. `anOutageShorterThanTheGuardIsSurvived` is red because of it.
+    /// The two were the same figure once, and that was the mistake: one number
+    /// deciding both how patient a connection is and how long a transfer may go
+    /// without progress means a connection giving up is a transfer giving up,
+    /// and a link that comes back after two minutes costs somebody their copy.
     int boundTheSocketsPatience(void* userData, curl_socket_t handle, curlsocktype purpose)
     {
         if (purpose != CURLSOCKTYPE_IPCXN)
             return CURL_SOCKOPT_OK;
         const auto* options = static_cast<const TransportOptions*>(userData);
 #ifdef TCP_USER_TIMEOUT
-        if (options->stallSeconds > 0) {
-            const unsigned int ms = static_cast<unsigned int>(options->stallSeconds) * 1000;
+        if (kSocketPatienceSeconds > 0) {
+            const unsigned int ms = static_cast<unsigned int>(kSocketPatienceSeconds) * 1000;
             setsockopt(handle, IPPROTO_TCP, TCP_USER_TIMEOUT, &ms, sizeof(ms));
         }
 #endif

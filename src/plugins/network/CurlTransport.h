@@ -71,12 +71,12 @@ struct TransportOptions
 /// finishes nor fails is the one outcome a file manager may not produce: a job
 /// that is going to fail must fail while somebody is still watching.
 ///
-/// **This is half of the fix.** Aborting from the callback does not make
-/// `curl_easy_perform` return while the thread is inside the SSH layer waiting
-/// on a socket the kernel is still retransmitting into; `TCP_USER_TIMEOUT` is
-/// what ends that. It is set to twice this wait rather than to the same figure,
-/// because it is the backstop and this is the decision -- see the socket option
-/// callback in CurlTransport.cpp.
+/// **This ends a connection, not a transfer.** Aborting from the callback does
+/// not even make `curl_easy_perform` return while the thread is inside the SSH
+/// layer waiting on a socket the kernel is still retransmitting into;
+/// `TCP_USER_TIMEOUT`, set to its own short figure, is what ends that. What ends
+/// the *transfer* is StreamingDownload's budget, which is reset by every byte
+/// that arrives and does not care how many connections it took.
 ///
 /// Movement rather than speed, deliberately. libcurl's guard asks "is it slower
 /// than N bytes a second", which needs a rate and a window and gets both wrong

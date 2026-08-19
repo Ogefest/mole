@@ -1,5 +1,7 @@
 #include "plugins/network/TransferStreams.h"
 
+#include <QElapsedTimer>
+
 #include <algorithm>
 #include <cstring>
 
@@ -301,11 +303,28 @@ private:
     qint64 m_written = 0;
 };
 
-StreamingDownload::StreamingDownload(Fetch fetch, qint64 size, qint64 spanBytes)
+StreamingDownload::StreamingDownload(Fetch fetch, qint64 size, qint64 spanBytes, std::chrono::seconds budget)
     : m_fetch(std::move(fetch))
     , m_size(size)
     , m_spanBytes(spanBytes)
+    , m_budgetMs(budget.count() > 0 ? budget.count() * 1000 : 0)
 {
+}
+
+void StreamingDownload::pauseBeforeRetrying(int attempt)
+{
+    // A quarter of a second, doubling, capped at two. Capped low on purpose:
+    // the budget is what ends the read, so time spent waiting between attempts
+    // is time the link might have come back in and nobody was looking.
+    constexpr int kFirstPauseMs = 250;
+    constexpr int kLongestPauseMs = 2000;
+    const int pause = std::min(kLongestPauseMs, kFirstPauseMs << std::min(attempt - 1, 8));
+
+    // On the condition rather than a sleep: a reader that lets go must not wait
+    // out a pause it has no interest in.
+    std::unique_lock<std::mutex> lock(m_mutex);
+    m_drained.wait_for(
+        lock, std::chrono::milliseconds(pause), [this] { return !m_running || m_cancel.isCancelled(); });
 }
 
 StreamingDownload::~StreamingDownload()
@@ -354,6 +373,13 @@ void StreamingDownload::startFetching(qint64 offset)
 
     m_thread = std::thread([this, offset] {
         qint64 at = offset;
+        // The one clock that decides anything: how long since a byte arrived.
+        // Not how patient a connection is, which is the connection's business
+        // and is set far shorter -- see the socket option in CurlTransport.
+        QElapsedTimer sinceProgress;
+        sinceProgress.start();
+        int attempt = 0;
+
         while (!m_cancel.isCancelled() && at < m_size) {
             const qint64 span = std::min(m_spanBytes, m_size - at);
             Sink sink(*this);
@@ -361,35 +387,40 @@ void StreamingDownload::startFetching(qint64 offset)
             const qint64 delivered = sink.written();
             at += delivered;
 
+            if (delivered > 0) {
+                sinceProgress.restart();
+                attempt = 0;
+            }
+
             if (failed.isError()) {
                 // A cancelled fetch is the reader letting go, not a fault.
                 if (m_cancel.isCancelled())
                     break;
 
-                // A span that carried bytes and then stopped is resumed from
-                // where it got to, rather than failing the whole read.
+                // A span that stopped is fetched again from where it got to,
+                // for as long as the transfer's budget is unspent.
                 //
-                // ADR-0013 sized the span so that no connection would carry
-                // enough for the server's re-key to arrive, and rejected
-                // resuming because it costs a stall-guard wait per stall. A
-                // server whose RekeyLimit is exactly the span size puts the
-                // re-key *inside* the first span, and then the read cannot be
-                // done at all -- every attempt stops in the same place. No span
-                // size is safe for every server, because the client cannot know
-                // what the server's limit is, so the choice is one wait per
-                // re-key point against a file that cannot be read. See the
-                // amendment to ADR-0013.
+                // ADR-0013 sized spans so that no connection would carry enough
+                // for the server's re-key to arrive, and rejected resuming
+                // because it costs a stall-guard wait per stall. Its first
+                // amendment resumed once, when a span had carried bytes. That
+                // covered a server that re-keys and could not cover a link that
+                // goes away and comes back: the single retry met the dead link,
+                // delivered nothing, and failed a read the link was about to be
+                // able to finish.
                 //
-                // Only when it carried bytes. An attempt that delivered nothing
-                // has nothing to resume from and no reason to expect better, and
-                // that is what keeps a link which has really gone away bounded:
-                // one stall, one attempt that gets nowhere, and the read fails.
-                if (delivered > 0)
-                    continue;
+                // So the bound is the budget rather than the number of tries.
+                // While bytes are arriving the transfer is alive however many
+                // connections it has been through; when none has arrived for
+                // long enough, it is over whatever the connections say.
+                if (m_budgetMs > 0 && sinceProgress.elapsed() >= m_budgetMs) {
+                    const std::lock_guard<std::mutex> guard(m_mutex);
+                    m_error = failed;
+                    break;
+                }
 
-                const std::lock_guard<std::mutex> guard(m_mutex);
-                m_error = failed;
-                break;
+                pauseBeforeRetrying(++attempt);
+                continue;
             }
 
             // Short of what was asked for, with no error, is the end of the

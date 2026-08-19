@@ -7,6 +7,7 @@
 #include <QIODevice>
 #include <QTemporaryFile>
 
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <functional>
@@ -184,7 +185,19 @@ public:
 
     /// `size` is the length of the file, which the stream must know: a device
     /// that cannot say where it ends cannot be read by anything that asks.
-    StreamingDownload(Fetch fetch, qint64 size, qint64 spanBytes);
+    ///
+    /// `budget` is how long the *transfer* may go without a byte arriving before
+    /// it is given up on, and it is the only thing that ends a read. Every byte
+    /// delivered resets it; a span that fails while it is unspent is fetched
+    /// again from the offset it reached.
+    ///
+    /// It is a different question from how patient one connection is, and
+    /// conflating the two is what made a link that came back after two minutes
+    /// cost somebody their transfer: one number was deciding both, so a
+    /// connection giving up meant the transfer giving up. See the second
+    /// amendment to ADR-0013.
+    StreamingDownload(
+        Fetch fetch, qint64 size, qint64 spanBytes, std::chrono::seconds budget = std::chrono::seconds(120));
     ~StreamingDownload() override;
 
     bool open(OpenMode mode) override;
@@ -214,6 +227,10 @@ private:
     friend class Sink;
 
     void startFetching(qint64 offset);
+    /// Waits between attempts, and stops waiting the moment the reader lets go.
+    /// Short and capped: with a budget deciding the end, an attempt should be in
+    /// flight almost all of the time rather than sitting out a long pause.
+    void pauseBeforeRetrying(int attempt);
     void stopFetching();
     /// Called from the fetch thread. False means the reader has gone away.
     bool deliver(const char* data, qint64 size);
@@ -221,6 +238,7 @@ private:
     Fetch m_fetch;
     qint64 m_size = 0;
     qint64 m_spanBytes = 0;
+    qint64 m_budgetMs = 0;
 
     std::thread m_thread;
     CancelToken m_cancel;

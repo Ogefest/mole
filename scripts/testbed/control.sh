@@ -152,23 +152,34 @@ blackhole)
     # priomap routes by TOS, and ssh sets TOS -- which put this channel in the
     # dropping band along with the transfer, and cut the machine off exactly as
     # the whole-interface version did.
+    # A rate limit already in force is put back underneath, not thrown away.
+    #
+    # This used to replace the root qdisc outright, which deleted the
+    # `netem rate` both outage tests apply seconds beforehand -- and its clearer
+    # then left the interface with no qdisc at all. From the moment the outage
+    # started the link was at full speed and stayed there, so those tests were
+    # written on arithmetic ("the payload outlasts the outage") that had stopped
+    # being true. An instrument that quietly undoes the other half of the setup
+    # measures something nobody asked about.
+    rate="$(cat /run/mole-rate 2>/dev/null || true)"
+
     tc qdisc del dev "$IFACE" root 2>/dev/null
     tc qdisc add dev "$IFACE" root handle 1: prio bands 4 \
         priomap 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+    [ -n "$rate" ] && tc qdisc add dev "$IFACE" parent 1:1 handle 10: \
+        tbf rate "$rate" burst 32kbit latency 400ms
     tc qdisc add dev "$IFACE" parent 1:4 handle 40: netem loss 100%
     tc filter add dev "$IFACE" protocol ip parent 1:0 prio 4 u32 \
         match ip sport "$port" 0xffff flowid 1:4
     say "everything leaving port $port is dropped on $IFACE"
+    [ -n "$rate" ] && say "the $rate limit stays in force underneath it"
 
-    cat > /run/mole-netem-clear <<CLEARER
-#!/bin/bash
-sleep $seconds
-tc qdisc del dev $IFACE root 2>/dev/null
-CLEARER
-    chmod +x /run/mole-netem-clear
-    pkill -f /run/mole-netem-clear 2>/dev/null
-    setsid /run/mole-netem-clear >/dev/null 2>&1 &
-    say "it clears itself in ${seconds}s"
+    # Back to what was in force before the outage rather than to no qdisc at all.
+    schedule_undo "$seconds" "tc qdisc del dev $IFACE root 2>/dev/null; \
+        rate=\$(cat /run/mole-rate 2>/dev/null || true); \
+        [ -n \"\$rate\" ] && tc qdisc add dev $IFACE root tbf rate \"\$rate\" burst 32kbit latency 400ms; \
+        true"
+    say "it clears itself in ${seconds}s, scheduled with systemd"
     ;;
 
 netem)
@@ -187,26 +198,21 @@ netem)
     delay) tc qdisc add dev "$IFACE" root netem delay "${3:-200ms}"; say "netem delay ${3:-200ms} on $IFACE" ;;
     loss)  tc qdisc add dev "$IFACE" root netem loss "${3:-10%}";    say "netem loss ${3:-10%} on $IFACE" ;;
     rate)  tc qdisc add dev "$IFACE" root tbf rate "${3:-1mbit}" burst 32kbit latency 400ms
+           # Recorded so a blackhole can put it back underneath itself rather
+           # than replacing it -- see the note there.
+           printf '%s' "${3:-1mbit}" > /run/mole-rate
            say "rate limited to ${3:-1mbit} on $IFACE" ;;
-    clear) say "netem cleared on $IFACE"; exit 0 ;;
+    clear) rm -f /run/mole-rate; say "netem cleared on $IFACE"; exit 0 ;;
     *)     usage; exit 2 ;;
     esac
-    # The clearer is a named script, and a new one kills the old.
+    # Scheduled with systemd, and a new one replaces the old by name.
     #
     # It used to be an anonymous `sleep N; tc qdisc del`, which deletes whatever
-    # qdisc it finds when it wakes up rather than the one it was scheduled for.
-    # Two tests in a row then interfere with each other: the first one's timer
-    # fires in the middle of the second one and quietly ends its outage early,
-    # and the second test reports that the transfer survived something that had
-    # already stopped happening to it.
-    cat > /run/mole-netem-clear <<CLEARER
-#!/bin/bash
-sleep $seconds
-tc qdisc del dev $IFACE root 2>/dev/null
-CLEARER
-    chmod +x /run/mole-netem-clear
-    pkill -f /run/mole-netem-clear 2>/dev/null
-    setsid /run/mole-netem-clear >/dev/null 2>&1 &
+    # qdisc it finds when it wakes up rather than the one it was scheduled for --
+    # so two tests in a row interfered with each other. Then it was a named
+    # script started with setsid, which stopped surviving the ssh session at all.
+    # A transient timer is owned by init and cancels by name.
+    schedule_undo "$seconds" "tc qdisc del dev $IFACE root 2>/dev/null; rm -f /run/mole-rate; true"
     say "it clears itself in ${seconds}s, because this channel travels over the link it just damaged"
     ;;
 
@@ -265,6 +271,9 @@ status)
 
 restore)
     pkill -f /run/mole-netem-clear 2>/dev/null
+    # The recorded rate goes too, or the next blackhole would put back a limit
+    # nobody asked for.
+    rm -f /run/mole-rate
     rm -f "$BALLAST"
     if [ -f /etc/ssh/rekey/ssh_host_ed25519_key.original ]; then
         mv /etc/ssh/rekey/ssh_host_ed25519_key.original /etc/ssh/rekey/ssh_host_ed25519_key

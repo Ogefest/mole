@@ -11,6 +11,8 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-19 #MOLE-108 A transfer over a link that drops and comes back is no longer lost — a read keeps retrying from where it got to while bytes are still arriving, and gives up only once nothing has arrived for two minutes
+
 2026-08-19 #MOLE-96 An S3 drive can now be asked what uploads it never finished — the parts a killed process leaves behind are charged for until somebody removes them, and until now nothing in Mole could even see them
 
 2026-08-19 #MOLE-99 A large file can now be read from an SFTP server that re-keys part way through a span — the read resumes from the byte it reached instead of failing, so a file that could not be read at all now arrives whole

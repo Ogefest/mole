@@ -9,6 +9,57 @@ wrong.
 
 ---
 
+## A transfer cut off by a long outage hung instead of giving up
+
+**Asked for:** MOLE-108 — a transfer interrupted by a total outage neither finished nor failed. It
+sat there having moved 34 MB and was still sitting there 641 seconds later.
+
+**The standing guess was wrong, and measuring it was the whole first half.** The ticket supposed
+the SSH layer blocks inside a socket operation so the progress callback never runs. It runs —
+twice a second, throughout, with the byte count frozen. What does not happen is libcurl's own
+`CURLOPT_LOW_SPEED_LIMIT`/`TIME` reaching a verdict on SFTP at all.
+
+Two mechanisms came out of that. `net::StallWatch` applies the guard in the progress callback,
+counting movement rather than speed. And that alone does not end anything: with the callback
+returning stop on time, `curl_easy_perform` still does not return, because the thread sits in the
+SSH layer on a socket the kernel is faithfully retransmitting into. Keepalive does not cover it —
+keepalive runs only on an idle connection, and a transfer cut off in flight has unacknowledged
+data, so the bound is `tcp_retries2`, about fifteen minutes. **That is the 641 seconds.**
+
+**Then the fix broke the opposite case**, and the planning answer was that the choice was a false
+one: one number was doing two jobs. `stallSeconds` was both how patient a single connection is and
+how long the whole transfer may go without progress, so a connection giving up meant the transfer
+giving up.
+
+**Separated, both behaviours are available.** `StreamingDownload` gets one clock — how long since
+a byte arrived, reset by every byte — and while it is unspent a failed span is fetched again from
+the offset it reached, after a pause capped at two seconds and interruptible. `TCP_USER_TIMEOUT`
+becomes twenty seconds, chosen for the job it does rather than inherited from a guard answering a
+different question: with retries in place, a connection that admits defeat quickly is a virtue.
+[ADR-0013 carries the second amendment](docs/adr/0013-a-large-sftp-read-arrives-in-spans.md).
+
+**The bound stopped being a count and became a budget.** The first amendment's rule — one stall
+and one attempt that gets nowhere — covered a re-keying server and could not cover a link that
+comes back: the single retry met the dead link, delivered nothing, and failed a read the link was
+about to be able to finish. The case that used to survive a two-minute outage only ever survived it
+because one TCP connection happened to outlive it, which is a one-second margin decided by a kernel
+timer nobody set on purpose.
+
+**Two tests hold it with no server**, in the shape the brief asked for: a span that fails and then
+delivers is resumed until the file is whole, and a span that never delivers ends the read when the
+budget is spent and not before. `aSpanThatDeliversNothingIsTheEndOfIt` was the case that changed
+meaning, so it changed name.
+
+**The instrument was measuring something else, and still is.** Reading `control.sh` turned up that
+`blackhole` deleted the `netem rate` both outage cases set up seconds earlier, so from the moment
+the outage began the link was at full speed — the arithmetic in those tests was not what it said on
+the page. Fixed: a rate in force is put back underneath the outage and restored after it. Then a
+measurement showed worse: a blackhole asked to clear itself after sixty seconds was **still
+standing after ninety**, with no clearer process left on the machine — the detached `sleep` does
+not survive the ssh session that starts it. Replaced with a transient systemd timer, which is owned
+by init and cancels by name; the timer is created and has not yet been seen to fire, so the live
+outage cases are still not confirmed.
+
 ## Orphaned S3 multipart uploads could not be found, and were charged for
 
 **Asked for:** MOLE-96 — a multipart upload interrupted by the process being killed leaves its

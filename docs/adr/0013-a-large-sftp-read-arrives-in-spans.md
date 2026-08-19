@@ -148,3 +148,53 @@ With it, a dead link costs one stall and one attempt that gets nowhere.
 
 The total is therefore bounded by the file: every resume must make progress, so
 there can be no more of them than there are bytes.
+
+## Second amendment, 2026-08-19 (MOLE-108)
+
+**What ends a read is a budget on the transfer, not a verdict on a connection.**
+The first amendment's bound — "only a span that carried bytes is resumed, so a
+dead link costs one stall and one attempt that gets nowhere" — is replaced by a
+number somebody chose.
+
+### Why the first bound was not enough
+
+It covered a server that re-keys and could not cover a link that goes away and
+comes back. The single retry is issued at once, into a link that is still down;
+it delivers nothing and fails the whole read. Nothing anywhere waits for the link
+to return, so an outage of two minutes cost the transfer however briefly it had
+lasted — and the case that used to survive one only ever survived it because a
+single TCP connection happened to outlive the outage. That was a one-second
+margin decided by a kernel timer nobody had set on purpose.
+
+### The change
+
+`StreamingDownload` gets one clock: how long since a byte was delivered, reset by
+every byte that arrives. While it is unspent, a span that failed is fetched again
+from the offset it reached, after a short interruptible pause capped at two
+seconds. When it is spent, the read fails with the message it already produced.
+
+**One number was doing two jobs**, which is what made the two behaviours look
+mutually exclusive. How patient a single connection is, and how long a transfer
+may go without progress, are different questions:
+
+- The connection's patience is `TCP_USER_TIMEOUT`, now twenty seconds and chosen
+  for that job. With retries in place a connection that admits defeat quickly is
+  a virtue: the sooner the socket says so, the sooner the next attempt is in
+  flight.
+- The transfer's patience is this budget, two minutes by default.
+
+So a link that goes away always ends the transfer, and a link that comes back
+inside the budget costs nothing. On the re-keying server of the first amendment
+nothing changes except that it gets safer: every attempt there carries bytes, so
+the clock keeps resetting, where before a resume that happened to deliver nothing
+would have killed a read that was making progress.
+
+### What this does not fix
+
+On SFTP the stall guard still does not end anything by itself. `net::StallWatch`
+returns stop on time and `curl_easy_perform` goes on running; the socket timeout
+is what ends the transfer, and the error is relabelled afterwards. Three clocks
+over one download and none of them is the transfer's own. Owning the loop through
+libcurl's multi interface is what would make a guard a decision rather than an
+influence, on every protocol — that is MOLE-212 and this record does not wait for
+it.
