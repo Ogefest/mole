@@ -15,6 +15,7 @@ ADDRESS="${MOLE_TESTBED_ADDRESS:-}"
 ACCOUNT="${MOLE_TESTBED_ACCOUNT:-moletest}"
 PASSWORD="${MOLE_TESTBED_PASSWORD:-}"
 REKEY_PORT="${MOLE_TESTBED_REKEY_PORT:-2222}"
+CONTROL_PORT="${MOLE_TESTBED_CONTROL_PORT:-2022}"
 S3_PORT="${MOLE_TESTBED_S3_PORT:-9000}"
 
 [ -n "$ADDRESS" ] && [ -n "$PASSWORD" ] || {
@@ -63,6 +64,25 @@ elif [ "$first" = "$second" ]; then
     bad "both servers negotiate $second -- the second one is a port, not a different server"
 else
     ok "ciphers differ: $first on 22, $second on $REKEY_PORT"
+fi
+
+# The control channel's own server, and the two things that make it one.
+#
+# It has to answer, and `mole-control` has to refuse to damage it. A control
+# sshd that is reachable but that the instrument will happily blackhole is the
+# fault of ADR-0054 wearing a different port number.
+if ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=8 \
+       -p "$CONTROL_PORT" "$ACCOUNT@$ADDRESS" 'true' >/dev/null 2>&1; then
+    ok "the control channel answers on $CONTROL_PORT"
+    if ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=8 \
+           -p "$CONTROL_PORT" "$ACCOUNT@$ADDRESS" \
+           "sudo mole-control blackhole $CONTROL_PORT 1" >/dev/null 2>&1; then
+        bad "mole-control blackholed its own port -- it can still cut the machine off"
+    else
+        ok "mole-control refuses to blackhole port $CONTROL_PORT"
+    fi
+else
+    bad "the control channel on $CONTROL_PORT (run services.sh)"
 fi
 
 # --- WebDAV ------------------------------------------------------------------

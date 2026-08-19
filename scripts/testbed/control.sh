@@ -29,11 +29,30 @@ set -uo pipefail
 
 ADDRESS="${MOLE_TESTBED_ADDRESS:-}"
 ACCOUNT="${MOLE_TESTBED_ACCOUNT:-moletest}"
+# The sshd this channel arrives over, and the one no test may attack -- see
+# ADR-0054. services.sh puts it there; a machine provisioned before it existed
+# has only port 22, which is what the fallback below is for.
+CONTROL_PORT="${MOLE_TESTBED_CONTROL_PORT:-2022}"
 
 [ -n "$ADDRESS" ] || { echo "Set MOLE_TESTBED_ADDRESS." >&2; exit 2; }
 [ $# -ge 1 ] || { echo "Usage: control.sh install | <command> [argument…]" >&2; exit 2; }
 
-on_server() { ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$ACCOUNT@$ADDRESS" "$@"; }
+# The control port when it answers, port 22 when it does not. Falling back
+# matters exactly once -- installing on a machine that has no control sshd yet --
+# and is announced rather than silent, because a channel that quietly moved onto
+# the port the tier blackholes is the fault this whole file is about.
+PORT="$CONTROL_PORT"
+if ! ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 \
+        -p "$CONTROL_PORT" "$ACCOUNT@$ADDRESS" true 2>/dev/null; then
+    PORT=22
+    echo "control.sh: nothing answers on port $CONTROL_PORT; using port 22." >&2
+    echo "control.sh: run services.sh to put the control sshd there -- until then" >&2
+    echo "control.sh: an outage on port 22 cuts this channel with the transfer." >&2
+fi
+
+on_server() {
+    ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p "$PORT" "$ACCOUNT@$ADDRESS" "$@"
+}
 
 if [ "$1" = "install" ]; then
     on_server "sudo tee /usr/local/bin/mole-control >/dev/null" <<'CONTROL'
@@ -52,7 +71,17 @@ DATA=/srv/moledata
 BALLAST="$DATA/.mole-ballast"
 IFACE="$(ip -o -4 route show default | awk '{print $5}' | head -1)"
 
+# The port this channel arrives over, read from the server that serves it rather
+# than typed in twice. Everything below refuses to damage it: an instrument that
+# can cut off the machine it has to put back is not one anybody can leave
+# running. See ADR-0054.
+CONTROL_PORT="$(awk '/^Port /{print $2}' /etc/ssh/sshd_config.control 2>/dev/null | head -1)"
+CONTROL_UNIT=sshd-control
+
 say() { printf 'mole-control: %s\n' "$*"; }
+
+# Says no, and says why. Used where a command would take away the path back.
+refuse() { printf 'mole-control: refusing: %s\n' "$*" >&2; exit 3; }
 
 # Schedules the undo, with systemd rather than a detached `sleep`.
 #
@@ -91,16 +120,16 @@ mole-control <command>
   blackhole <port> [seconds]          every packet leaving that port is dropped,
                                       and nothing else is touched -- so a
                                       transfer stalls dead while this channel,
-                                      on another port, still answers
+                                      on its own port, still answers. Naming
+                                      that port is refused.
   netem delay <ms>|loss <pc>|rate <bits> [seconds]   clears itself after
                                       `seconds` (30 by default), because this
                                       channel travels over the link it damages
   netem clear                         now
   hostkey rotate|restore              the second sshd gets a new identity, and
-                                      gets its old one back. Never the first
-                                      one: this channel arrives over that, and a
-                                      client that correctly refuses a changed key
-                                      would refuse the command that puts it back
+                                      gets its old one back. Never the first one,
+                                      which every transfer in the tier uses, and
+                                      never this channel's own
   room <sftp|s3|webdav|ftp>           bytes free where that service keeps its
                                       files, so a test can decline to fill a
                                       disk it would take the machine down with
@@ -113,6 +142,11 @@ case "${1:-}" in
 service)
     action="${2:-}"; unit="${3:-}"
     [ -n "$action" ] && [ -n "$unit" ] || { usage; exit 2; }
+    # Stopping the server this command arrived over would end the command and
+    # leave nothing able to start it again.
+    if [ "$unit" = "$CONTROL_UNIT" ]; then
+        refuse "$CONTROL_UNIT is the server this channel arrives over"
+    fi
     systemctl "$action" "$unit"
     # vsftpd does not set SO_REUSEADDR, so a start treading on the previous
     # instance's port exits 2 in silence. Waiting is cheaper than debugging
@@ -173,6 +207,13 @@ blackhole)
     # nothing.
     port="${2:-22}"
     seconds="${3:-30}"
+    # The one port this may not have. Dropping what leaves it would cut this
+    # channel along with the transfer, which is exactly the fault the per-port
+    # instrument exists to avoid -- and it would do it silently, because the
+    # blackhole is applied before anything notices it is unreachable.
+    if [ -n "$CONTROL_PORT" ] && [ "$port" = "$CONTROL_PORT" ]; then
+        refuse "port $port is the control channel's own"
+    fi
     # Four bands with a priomap that sends *everything* to the first one, so the
     # only way into the band that drops packets is the filter below. A default
     # priomap routes by TOS, and ssh sets TOS -- which put this channel in the
@@ -250,9 +291,12 @@ netem)
 
 hostkey)
     # A changed host key is the one SSH warning nobody may wave through, so a
-    # test has to be able to cause it. Only ever on the second server: the
-    # control channel arrives over the first, and a client that correctly
-    # refuses a changed key would refuse this command as well.
+    # test has to be able to cause it. Only ever on the second server, and the
+    # reason changed with ADR-0054: this channel no longer arrives over the
+    # first, but every other case in the interference tier transfers over it, and
+    # a server whose identity moved under them would have them all failing for
+    # something that is not the product. The second server is the one nothing
+    # else is using.
     dir=/etc/ssh/rekey
     case "${2:-}" in
     rotate)
@@ -296,9 +340,16 @@ room)
 status)
     say "disk $(df --output=pcent "$DATA" | tail -1 | tr -d ' ') used, ballast $([ -f "$BALLAST" ] && echo present || echo absent)"
     say "netem $(tc qdisc show dev "$IFACE" | head -1)"
-    for unit in ssh sshd-rekey vsftpd apache2 minio; do
+    for unit in ssh sshd-rekey sshd-control vsftpd apache2 minio; do
         printf 'mole-control:   %-12s %s\n' "$unit" "$(systemctl is-active "$unit" 2>/dev/null || echo unknown)"
     done
+    if [ -n "$CONTROL_PORT" ]; then
+        say "control channel on port $CONTROL_PORT, which nothing here may damage"
+    else
+        # Said plainly rather than softened. On a machine with no control sshd
+        # this command arrives over port 22, which `blackhole 22` takes away.
+        say "WARNING: no control sshd; this channel is on port 22, which blackhole can cut"
+    fi
     ;;
 
 restore)
@@ -313,7 +364,7 @@ restore)
         systemctl restart sshd-rekey 2>/dev/null
     fi
     tc qdisc del dev "$IFACE" root 2>/dev/null
-    for unit in ssh sshd-rekey vsftpd apache2 minio; do
+    for unit in ssh sshd-rekey sshd-control vsftpd apache2 minio; do
         systemctl is-active --quiet "$unit" || systemctl start "$unit" 2>/dev/null
     done
     say "restored: no ballast, no netem, every server up"
@@ -336,7 +387,8 @@ SUDOERS
     on_server "sudo chmod 0440 /etc/sudoers.d/mole-control"
     on_server "sudo /usr/local/bin/mole-control status"
     printf '\nInstalled. Point the suite at it with:\n\n'
-    printf "  export MOLE_TEST_CONTROL='ssh -o BatchMode=yes %s@%s sudo mole-control'\n\n" "$ACCOUNT" "$ADDRESS"
+    printf "  export MOLE_TEST_CONTROL='ssh -o BatchMode=yes -p %s %s@%s sudo mole-control'\n\n" \
+        "$PORT" "$ACCOUNT" "$ADDRESS"
     exit 0
 fi
 

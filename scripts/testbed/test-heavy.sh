@@ -69,13 +69,25 @@ export MOLE_TEST_IGNORE_SELF_SIGNED_CERT=1
 export MOLE_TEST_HEAVY_BYTES="$BYTES"
 export MOLE_TEST_HEAVY_REPORT="${MOLE_TEST_HEAVY_REPORT:-$BUILD/heavy-report.txt}"
 
-# On the stock port, which is the one the host-key case leaves alone: it rotates
-# the second server's identity, and a channel arriving there would correctly
-# refuse to talk to the machine for the rest of the run. The outage cases want
-# the opposite -- they blackhole this port -- which is why they are the ones
-# behind a variable, and why sorting that out (MOLE-109) means sorting out the
-# port each one may use.
-CONTROL="${MOLE_TEST_CONTROL:-ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new $ACCOUNT@$ADDRESS sudo mole-control}"
+# On the control channel's own port, which is the whole of the answer to "which
+# port may this arrive over".
+#
+# Every other port on that machine is something a case in this tier attacks. The
+# stock one is blackholed by the outage cases and stopped by the restart case;
+# the second server's host key is rotated. A channel on either would be cut by
+# the tier it is meant to be driving -- which is what used to happen, and why the
+# outage cases were behind a variable. The third sshd is attacked by nothing and
+# `mole-control` refuses to be pointed at it. See ADR-0054.
+CONTROL_PORT="${MOLE_TESTBED_CONTROL_PORT:-2022}"
+if [ -z "${MOLE_TEST_CONTROL:-}" ] \
+        && ! ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 \
+            -p "$CONTROL_PORT" "$ACCOUNT@$ADDRESS" true 2>/dev/null; then
+    echo "Nothing answers on port $CONTROL_PORT: the control sshd is not there." >&2
+    echo "Run scripts/testbed/services.sh. This tier blackholes port 22, so a" >&2
+    echo "control channel on port 22 would be cut along with the transfer." >&2
+    exit 2
+fi
+CONTROL="${MOLE_TEST_CONTROL:-ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p $CONTROL_PORT $ACCOUNT@$ADDRESS sudo mole-control}"
 
 # What each destination has room for, from the machine itself. Missing answers
 # leave the cap unset, which means the suite goes ahead -- an absent control

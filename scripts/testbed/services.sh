@@ -31,6 +31,10 @@ PASSWORD="${MOLE_TESTBED_PASSWORD:-}"
 # that does not.
 REKEY_PORT="${MOLE_TESTBED_REKEY_PORT:-2222}"
 REKEY_LIMIT="${MOLE_TESTBED_REKEY_LIMIT:-256M}"
+# The third sshd, and the only one no test may touch. The control channel
+# arrives over it, so the instrument that damages this machine cannot damage the
+# path that undoes the damage -- see ADR-0054.
+CONTROL_PORT="${MOLE_TESTBED_CONTROL_PORT:-2022}"
 S3_PORT="${MOLE_TESTBED_S3_PORT:-9000}"
 # A bucket to aim at. Invented, like every other name in this repository.
 S3_BUCKET="${MOLE_TESTBED_S3_BUCKET:-mole-testbed}"
@@ -159,6 +163,63 @@ REMOTE
 note "port 22: aes256-gcm, sixteen-byte block, does not re-key at 2^30"
 note "port $REKEY_PORT: chacha20-poly1305, RekeyLimit $REKEY_LIMIT"
 
+# --- a third sshd, for the control channel alone -----------------------------
+#
+# The one server nothing is allowed to attack.
+#
+# Both of the others are targets. Port 22 is what the interference tier
+# blackholes and what it stops and starts; port $REKEY_PORT is where a host key
+# gets rotated. While the control channel arrived over port 22 -- which it did --
+# `blackhole 22` cut the transfer and the channel that would put the machine
+# back with the same rule, and the machine healed only because a timer on the
+# machine itself happened to fire. An instrument whose undo depends on nothing
+# having gone wrong is not an instrument.
+#
+# So this one exists to be dull: stock ciphers, no re-keying to speak of, its own
+# host key that is never rotated, and a port no test is allowed to name. See
+# ADR-0054.
+
+say "the control channel's own sshd"
+on_server <<REMOTE || die "could not configure the control sshd"
+set -euo pipefail
+install -d -m 0755 /etc/ssh/control
+
+# Its own identity, like the second server's, and for the stronger reason: this
+# key must never change, because a client that correctly refuses a changed key
+# would refuse the command that puts the machine back.
+[ -f /etc/ssh/control/ssh_host_ed25519_key ] \
+    || ssh-keygen -q -t ed25519 -N '' -f /etc/ssh/control/ssh_host_ed25519_key
+
+cat > /etc/ssh/sshd_config.control <<'CONF'
+Port $CONTROL_PORT
+HostKey /etc/ssh/control/ssh_host_ed25519_key
+PidFile /run/sshd-control.pid
+PasswordAuthentication yes
+PubkeyAuthentication yes
+CONF
+sed -i "s|^Port .*|Port $CONTROL_PORT|" /etc/ssh/sshd_config.control
+
+cat > /etc/systemd/system/sshd-control.service <<'UNIT'
+[Unit]
+Description=The sshd the Mole control channel arrives over, and nothing else
+After=network.target
+
+[Service]
+ExecStart=/usr/sbin/sshd -D -f /etc/ssh/sshd_config.control
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+sshd -t -f /etc/ssh/sshd_config.control || { echo "the control sshd config is broken"; exit 1; }
+systemctl daemon-reload
+systemctl enable --now sshd-control >/dev/null
+systemctl restart sshd-control
+REMOTE
+note "port $CONTROL_PORT: the control channel, attacked by nothing"
+
 # --- WebDAV ------------------------------------------------------------------
 
 say "WebDAV"
@@ -229,9 +290,29 @@ note "//$ADDRESS/$SMB_SHARE, root /srv/moledata/smb"
 # --- NFS ---------------------------------------------------------------------
 
 say "NFS"
-if [ -z "\$NFS_CLIENTS" ]; then
+# `$NFS_CLIENTS`, not `\$NFS_CLIENTS`. This line is in the script that runs here,
+# not in the heredoc four lines below, so the backslash it used to carry made the
+# test compare the literal string -- never empty, so the guard never held and the
+# branch below ran every time with an empty client list. `exportfs` reads a
+# missing host as `*`, which is how the export the comment above calls "never the
+# whole subnet by accident" was open read-write to every machine on the network
+# from the day this script was first run.
+if [ -z "$NFS_CLIENTS" ]; then
     note "skipped: set MOLE_TESTBED_NFS_CLIENTS to the address allowed to mount it."
     note "An export open to the whole LAN is not something to arrive at by default."
+    # And a stale one goes. This script owns /etc/exports -- the branch below
+    # writes it whole -- so it owns emptying it too, and a machine provisioned
+    # while the guard was broken is put right by running this again rather than
+    # by somebody remembering.
+    on_server <<'REMOTE' || die "could not withdraw the NFS export"
+set -euo pipefail
+if [ -s /etc/exports ]; then
+    cp /etc/exports /etc/exports.withdrawn
+    : > /etc/exports
+    exportfs -ra
+    echo "  withdrew the export that was there; the old file is /etc/exports.withdrawn"
+fi
+REMOTE
 else
 on_server <<REMOTE || die "could not configure the NFS server"
 set -euo pipefail

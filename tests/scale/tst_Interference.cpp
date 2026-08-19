@@ -90,6 +90,7 @@ private slots:
     // them and reported "no route to host" would be reporting on the previous
     // case rather than on the product.
     void theDestinationFillsUpMidCopy();
+    void theOutageCutsTheTransferAndNotTheChannel();
     void anOutageShorterThanTheGuardIsSurvived_data();
     void anOutageShorterThanTheGuardIsSurvived();
     void anOutageLongerThanTheGuardIsReported();
@@ -122,6 +123,13 @@ private:
     /// it, on a fast machine and on a slow one alike.
     Interfered runInterfered(const TransferTask::Request& request, qint64 atBytes,
         const std::function<QString()>& interfere, int timeoutMs = 600000);
+
+    /// The transfer `runInterfered` currently has in flight.
+    ///
+    /// An interfere callback is built before the task exists, so this is how one
+    /// asks what the transfer is doing while it is being attacked -- which is
+    /// the whole of what the case below checks.
+    TransferTask* m_running = nullptr;
 
     FileSystemPtr m_drive;
     std::shared_ptr<LocalFileSystem> m_disk;
@@ -192,6 +200,7 @@ void TestInterference::cleanup()
         dav->remove(landed, false);
         dav->remove(partialWriteOf(landed), false);
     }
+    m_running = nullptr; // the manager owns it, and the next case has its own
     m_tasks.reset();
     m_dir.reset();
     m_drive.reset();
@@ -241,6 +250,7 @@ TestInterference::Interfered TestInterference::runInterfered(const TransferTask:
 {
     Interfered out;
     out.task = new TransferTask(request);
+    m_running = out.task;
     m_tasks->submit(out.task);
 
     auto* task = out.task;
@@ -427,8 +437,133 @@ void TestInterference::aSlowOrLossyLinkStillDelivers()
     QVERIFY2(HeavyPayload::verify(*back.value(), bytes, &problem), qPrintable(problem));
 }
 
+/// The instrument, held against the one thing that made it unusable.
+///
+/// Everything else in this file assumes it can attack the machine and still
+/// reach it afterwards, and for a while that was luck. The first way of causing
+/// a total outage was `netem loss 100%` on the root qdisc, which stops the
+/// machine answering ARP: unreachable to everything, including the timer
+/// scheduled to clear the rule and the command that would check on it. It cost
+/// two rescues over the hypervisor's guest agent, and it is why the two cases
+/// below spent nine days behind an environment variable.
+///
+/// So this proves the property the rest of the tier rests on, rather than
+/// assuming it: while a transfer on one port is cut stone dead, the control
+/// channel on its own port answers *every time it is asked*, for the whole
+/// outage. One reply at the end would not do -- the interesting failure is a
+/// channel that goes away in the middle and comes back when the rule clears,
+/// which looks identical from either end of the outage.
+///
+/// See ADR-0054 for why the channel has a server to itself.
+void TestInterference::theOutageCutsTheTransferAndNotTheChannel()
+{
+    const VfsUri remote = seedRemote(m_name, m_payload);
+    QVERIFY(remote.isValid());
+
+    QVERIFY(QDir(m_dir->path()).mkpath(QStringLiteral("back")));
+    TransferTask::Request request;
+    request.sourceFileSystem = m_drive;
+    request.targetFileSystem = m_disk;
+    request.sources = { remote };
+    request.targetDirectory = VfsUri::fromLocalPath(QDir(m_dir->path()).filePath(QStringLiteral("back")));
+
+    // Slowed first, so the payload outlasts the outage and the outage lands in
+    // the middle of a transfer rather than after one.
+    //
+    // Faster than the two cases below, which want a link slow enough to survive
+    // two minutes of silence. Twenty seconds needs far less, and four megabytes
+    // a second still leaves about a minute of transfer after the trigger point --
+    // while the eight megabits those use would make this case four minutes long
+    // for nothing. The arithmetic is worth writing down, because the failure it
+    // guards against is silent: a transfer that ends before it is attacked
+    // passes every assertion here for the wrong reason, which is what
+    // VERIFY_IT_LANDED is for.
+    const QString limited = TestbedControl::run(
+        { QStringLiteral("netem"), QStringLiteral("rate"), QStringLiteral("32mbit"), QStringLiteral("300") });
+    QVERIFY2(limited.contains(QStringLiteral("rate limited")), qPrintable(limited));
+
+    // Twenty seconds, which is the figure MOLE-109 names, and comfortably inside
+    // the transfer's budget -- what is being measured here is the instrument,
+    // not the giving-up path.
+    const int outageSeconds = 20;
+    QStringList refusals;
+    int replies = 0;
+    qint64 movedEarly = -1;
+    qint64 movedLate = -1;
+
+    const Interfered run = runInterfered(request, m_payload / 8, [&] {
+        const QString started = TestbedControl::run(
+            { QStringLiteral("blackhole"), QStringLiteral("22"), QString::number(outageSeconds) });
+
+        QElapsedTimer outage;
+        outage.start();
+        // A short timeout on purpose. The default is a minute, and a channel
+        // that had been cut would spend the whole outage inside one call and
+        // then report a single failure -- which is the same answer as "asked
+        // once, at the end", and the thing this case exists not to accept.
+        const int patience = 8000;
+        while (outage.elapsed() < outageSeconds * 1000) {
+            const QString answer = TestbedControl::run({ QStringLiteral("status") }, patience);
+            if (answer.contains(QStringLiteral("mole-control:")))
+                ++replies;
+            else
+                refusals += QStringLiteral("at %1 ms: %2").arg(outage.elapsed()).arg(answer);
+
+            // Two readings of the transfer, three seconds apart at the ends of
+            // the outage. The first is late enough that bytes already in flight
+            // when the rule landed have arrived; anything between the two is a
+            // transfer the blackhole did not actually stop.
+            if (movedEarly < 0 && outage.elapsed() > 3000)
+                movedEarly = m_running->bytesDone();
+            if (outage.elapsed() > (outageSeconds - 3) * 1000)
+                movedLate = m_running->bytesDone();
+        }
+        return started;
+    });
+    VERIFY_IT_LANDED(run);
+
+    QVERIFY2(refusals.isEmpty(),
+        qPrintable(QStringLiteral("the control channel stopped answering during the outage: %1")
+                       .arg(refusals.join(QStringLiteral("; ")))));
+    QVERIFY2(replies >= 2,
+        qPrintable(QStringLiteral("the channel was only asked %1 times; that proves nothing about "
+                                  "the middle of the outage")
+                       .arg(replies)));
+
+    QVERIFY2(movedEarly >= 0 && movedLate >= 0, "the outage was too short to take two readings");
+    QVERIFY2(movedLate == movedEarly,
+        qPrintable(QStringLiteral("the transfer moved %1 bytes during a total outage, so the "
+                                  "blackhole did not cut it")
+                       .arg(movedLate - movedEarly)));
+
+    // And the machine comes back on its own, which is the other half of an
+    // instrument nobody has to watch: the rule clears itself and the transfer
+    // it interrupted finishes whole.
+    TransferTask* task = run.task;
+    QVERIFY2(waitForTask(task, 300000), "the transfer never finished after the outage cleared");
+    QVERIFY2(task->failures().isEmpty(),
+        qPrintable(QStringLiteral("a %1-second outage was not survived: %2")
+                       .arg(outageSeconds)
+                       .arg(task->failures().join(QLatin1Char(' ')))));
+
+    QFile copy(QDir(m_dir->path()).filePath(QStringLiteral("back/") + m_name));
+    QVERIFY(copy.open(QIODevice::ReadOnly));
+    QString problem;
+    QVERIFY2(HeavyPayload::verify(copy, m_payload, &problem), qPrintable(problem));
+}
+
 void TestInterference::anOutageShorterThanTheGuardIsSurvived_data()
 {
+    // Two rows, and they share one watchdog.
+    //
+    // QTest arms `QTEST_FUNCTION_TIMEOUT` once for the function and does not
+    // rearm it between data rows, while the time it prints when it fires is the
+    // *row's*. Each row here is about seven and a half minutes -- a quarter of a
+    // gigabyte at eight megabits, plus the outage -- so fifteen minutes kills the
+    // second one a minute before it would have finished, and reports "440
+    // seconds" while doing it, which looks like anything but the real cause.
+    // `make test-heavy` allows two hours. Anybody running this binary by hand
+    // wants at least twenty minutes.
     QTest::addColumn<int>("unused");
     QTest::newRow("a minute") << 0;
     QTest::newRow("a second inside the budget") << 0;
@@ -436,25 +571,20 @@ void TestInterference::anOutageShorterThanTheGuardIsSurvived_data()
 
 void TestInterference::anOutageShorterThanTheGuardIsSurvived()
 {
-    // Behind a variable, deliberately.
+    // Run unattended, which it was not for nine days.
     //
-    // The instrument these two need is a total outage, and the only one the
-    // control channel has cuts the path its own undoing travels: the machine
-    // stops answering ARP, the timer that should clear the rule is the one thing
-    // that can no longer be checked on, and the way back in is the hypervisor's
-    // guest agent (scripts/testbed/rescue.sh). It happened twice while this was
-    // being written.
+    // The outage these need used to be `netem loss 100%` on the root qdisc, and
+    // that stops the machine answering ARP: unreachable to everything, including
+    // the timer scheduled to clear the rule. Twice the way back in was the
+    // hypervisor's guest agent, now scripts/testbed/rescue.sh, and while that
+    // was the instrument these two cases sat behind an environment variable --
+    // which meant in practice they did not run, and they are the two that found
+    // MOLE-108.
     //
-    // A per-port version is in the control channel now and is closer, but a tier
-    // that can leave a machine unreachable must not be something somebody starts
-    // and walks away from. So these two are run on purpose, by somebody who is
-    // watching, until the instrument cannot cut the machine off -- which is a
-    // task of its own. They are the two cases that found MOLE-108.
-    if (env("MOLE_TEST_INTERFERENCE_OUTAGE").isEmpty()) {
-        QSKIP("Set MOLE_TEST_INTERFERENCE_OUTAGE=1 to run the outage cases. They cut the link, and "
-              "the way back is scripts/testbed/rescue.sh -- so they are run deliberately rather "
-              "than left running.");
-    }
+    // The outage is per-port now, over a control channel with a server to
+    // itself that mole-control refuses to be pointed at (ADR-0054), and
+    // theOutageCutsTheTransferAndNotTheChannel above holds that property
+    // directly. So they run with everything else.
 
     // A transfer is given up on after two minutes with no byte arriving. An
     // outage inside that has to be ridden out: the link comes back, the next
@@ -508,25 +638,20 @@ void TestInterference::anOutageShorterThanTheGuardIsSurvived()
 
 void TestInterference::anOutageLongerThanTheGuardIsReported()
 {
-    // Behind a variable, deliberately.
+    // Run unattended, which it was not for nine days.
     //
-    // The instrument these two need is a total outage, and the only one the
-    // control channel has cuts the path its own undoing travels: the machine
-    // stops answering ARP, the timer that should clear the rule is the one thing
-    // that can no longer be checked on, and the way back in is the hypervisor's
-    // guest agent (scripts/testbed/rescue.sh). It happened twice while this was
-    // being written.
+    // The outage these need used to be `netem loss 100%` on the root qdisc, and
+    // that stops the machine answering ARP: unreachable to everything, including
+    // the timer scheduled to clear the rule. Twice the way back in was the
+    // hypervisor's guest agent, now scripts/testbed/rescue.sh, and while that
+    // was the instrument these two cases sat behind an environment variable --
+    // which meant in practice they did not run, and they are the two that found
+    // MOLE-108.
     //
-    // A per-port version is in the control channel now and is closer, but a tier
-    // that can leave a machine unreachable must not be something somebody starts
-    // and walks away from. So these two are run on purpose, by somebody who is
-    // watching, until the instrument cannot cut the machine off -- which is a
-    // task of its own. They are the two cases that found MOLE-108.
-    if (env("MOLE_TEST_INTERFERENCE_OUTAGE").isEmpty()) {
-        QSKIP("Set MOLE_TEST_INTERFERENCE_OUTAGE=1 to run the outage cases. They cut the link, and "
-              "the way back is scripts/testbed/rescue.sh -- so they are run deliberately rather "
-              "than left running.");
-    }
+    // The outage is per-port now, over a control channel with a server to
+    // itself that mole-control refuses to be pointed at (ADR-0054), and
+    // theOutageCutsTheTransferAndNotTheChannel above holds that property
+    // directly. So they run with everything else.
 
     const VfsUri remote = seedRemote(m_name, m_payload);
     QVERIFY(remote.isValid());
@@ -668,10 +793,18 @@ void TestInterference::theDestinationFillsUpMidCopy()
 
 void TestInterference::aChangedHostKeyIsRefused()
 {
+    // The second server, and only ever the second server.
+    //
+    // Not because of the control channel any more -- that has a third sshd to
+    // itself now (ADR-0054) and would not notice. Because every other case in
+    // this file talks to port 22, and a server whose identity changed under them
+    // would have them all failing for a reason that has nothing to do with the
+    // product. `mole-control hostkey` refuses to touch port 22 for the same
+    // reason.
     const int port = env("MOLE_TEST_SFTP_REKEY_PORT").toInt();
     if (port <= 0)
-        QSKIP("No second server configured; rotating the key of the one this channel arrives over "
-              "would cut the way back in.");
+        QSKIP("No second server configured. The identity that gets rotated has to belong to a "
+              "server no other case in this file is using.");
 
     // Its own known-hosts file, so this proves the policy rather than whatever
     // the machine running the test happens to have in its home directory -- and

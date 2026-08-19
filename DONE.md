@@ -9,6 +9,71 @@ wrong.
 
 ---
 
+## The instrument for a total outage could cut off the machine it had to put back
+
+**Asked for:** MOLE-109 — the interference tier needs an outage with no packets at all, and the way
+it had of causing one took the machine away from the command that would undo it. Two cases had been
+sitting behind `MOLE_TEST_INTERFERENCE_OUTAGE=1` for nine days because of it, which meant in
+practice they did not run — and they are the two that found MOLE-108.
+
+**The fault was not the instrument. It was which port the control channel arrived on.** `blackhole
+<port>` was already there and already right: it drops what leaves one port and leaves the rest of
+the machine answering, unlike `netem loss 100%` on the root qdisc, which stops the machine
+answering ARP and cost two rescues over the hypervisor's guest agent. What nobody had written down
+is that **the control channel was on port 22, and port 22 is the port the outage cases blackhole**.
+So `blackhole 22` cut the transfer and the channel with one rule. The machine recovered anyway,
+every time, because a timer on the machine itself fired — which is to say the instrument was safe
+as long as nothing went wrong, at the one moment designed to make things go wrong.
+
+**Moving the channel to the second sshd would have been the same bug with a different number.**
+Port 2222 is a target too: `hostkey rotate` changes its identity on purpose, and a client that
+correctly refuses a changed host key would refuse the command that restores it. Safety by
+coincidence of which ports today's tests happen to attack is not safety, so the answer is a third
+sshd that exists to be dull — stock configuration, a host key that never changes, and a port
+nothing is allowed to name. [ADR-0054](docs/adr/0054-the-control-channel-arrives-over-a-server-no-test-attacks.md)
+records it, including why the hypervisor's guest agent — genuinely immune to everything — stays
+what it is, the way back in when the machine is already lost rather than the way in during ordinary
+work.
+
+**The port is not enough on its own, so `mole-control` refuses.** A dedicated port that the
+instrument would still happily blackhole if a test named it is a convention, and a convention is one
+absent-minded argument away from another rescue. `blackhole` on the control port and `service stop`
+on the control unit now exit 3 and say why; `check-services.sh` asserts both, and the unit is
+`Restart=always` so anything that does kill it brings it back. `test-heavy.sh` refuses to run at all
+when that port does not answer, because it is the tier that blackholes port 22 — `test-live.sh`,
+which does not, falls back and says so.
+
+**Proven rather than asserted.** `theOutageCutsTheTransferAndNotTheChannel` cuts port 22 for twenty
+seconds mid-download and asks the channel for its status throughout, requiring an answer every single
+time. One reply at the end would prove nothing: a channel that goes away in the middle and comes back
+when the rule clears looks identical from either end of the outage. It also takes two readings of the
+transfer's byte count three seconds apart, because a blackhole that did not actually stop the
+transfer would otherwise pass.
+
+The two outage cases came out from behind the variable, and the tier runs unattended: fifteen cases,
+fifteen passed, nothing skipped, in twenty-six minutes with nobody watching it. The run before that
+one is worth keeping too — it died on `SIGABRT` in the middle of an outage, and the machine still
+put its own rate limit back and answered on the control port throughout, which is the property
+under test arriving by accident.
+
+**One wrong turn, and the number it reported was no help at all.** Running the tier by hand with a
+fifteen-minute `QTEST_FUNCTION_TIMEOUT` killed the boundary outage case a minute before it would
+have finished, and said "440 seconds" while doing it. QTest arms that watchdog **once per test
+function and does not rearm it between data rows**, while the time it prints when it fires is the
+row's — so two rows of seven and a half minutes each consumed a fifteen-minute budget exactly, and
+the number in the message matched nothing. `make test-heavy` allows two hours and had never seen it.
+The case passes on its own in 407 seconds. That is now written in the `_data` function, because the
+next person to run this binary by hand will otherwise spend the same quarter of an hour.
+
+**A fault found on the way, and not this one's to fix.** Running `services.sh` again showed that its
+NFS guard has never held: `if [ -z "\$NFS_CLIENTS" ]` sits in the outer script rather than in the
+heredoc four lines below, so it compared a literal string that is never empty. Every machine the
+script has provisioned has had its share exported read-write to every host on its network — the
+thing the comment directly above the variable calls "never the whole subnet by accident". The guard
+is fixed here and the skip branch now withdraws a stale export, but **nothing in this repository
+could have caught it**: `tests/` is C++ through `mole_add_test` and there is no path that runs a
+shell script at all. That is MOLE-233.
+
 ## An NFS export could only be reached by mounting it outside Mole
 
 **Asked for:** MOLE-213 — the other half of what MOLE-36 was split from, and the last task in

@@ -83,10 +83,19 @@ export QTEST_FUNCTION_TIMEOUT="${QTEST_FUNCTION_TIMEOUT:-900000}"
 # file, and without this it skips -- which this target reports as not green,
 # because a suite that never met the server is what it exists to make visible.
 # Every interference clears itself; see scripts/testbed/control.sh.
-if [ -z "${MOLE_TEST_CONTROL:-}" ] \
-        && ssh -o BatchMode=yes -o ConnectTimeout=5 "$ACCOUNT@$ADDRESS" \
-            'command -v mole-control' >/dev/null 2>&1; then
-    export MOLE_TEST_CONTROL="ssh -o BatchMode=yes $ACCOUNT@$ADDRESS sudo mole-control"
+# It arrives over the third sshd, which no test attacks -- ADR-0054. A machine
+# provisioned before that server existed still answers on port 22, and this tier
+# does nothing to port 22, so falling back is safe here in a way it is not in
+# test-heavy.sh.
+CONTROL_PORT="${MOLE_TESTBED_CONTROL_PORT:-2022}"
+if [ -z "${MOLE_TEST_CONTROL:-}" ]; then
+    for port in "$CONTROL_PORT" 22; do
+        if ssh -o BatchMode=yes -o ConnectTimeout=5 -p "$port" "$ACCOUNT@$ADDRESS" \
+                'command -v mole-control' >/dev/null 2>&1; then
+            export MOLE_TEST_CONTROL="ssh -o BatchMode=yes -p $port $ACCOUNT@$ADDRESS sudo mole-control"
+            break
+        fi
+    done
 fi
 
 SUITES="tst_SftpFileSystem tst_WebdavFileSystem tst_FtpFileSystem tst_S3FileSystem tst_SmbFileSystem

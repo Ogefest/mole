@@ -103,17 +103,27 @@ scripts/testbed/check-services.sh
 |---|---|---|
 | SFTP | port 22 | OpenSSH, `aes256-gcm` — a sixteen-byte block, so it does not re-key at 2^30 |
 | SFTP | port 2222 | a second OpenSSH, `chacha20-poly1305` and `RekeyLimit 256M` |
+| ssh | port 2022 | a third OpenSSH, for the control channel and nothing else |
 | WebDAV | `/dav` | Apache `mod_dav`, root on the small disk |
 | FTP | port 21 | vsftpd, root on the small disk, passive 30000–30020 |
 | S3 | port 9000 | MinIO, store on the system disk |
 
-The two sshds exist to be **different**. The stall in
+The first two sshds exist to be **different**. The stall in
 [ADR-0013](../../docs/adr/0013-a-large-sftp-read-arrives-in-spans.md) is a
 property of a server's configuration, so the fix has to be held against a server
 that provokes it and one that does not. `check-services.sh` compares what the
 two actually negotiate and fails if they match — which it did, immediately, the
 first time it was run: OpenSSH prefers `chacha20-poly1305` by default, so both
 servers had ended up identical and the "second server" was a second port.
+
+The third exists to be **untouched** — see
+[ADR-0054](../../docs/adr/0054-the-control-channel-arrives-over-a-server-no-test-attacks.md).
+Both of the others are attacked by the interference tier: port 22 is blackholed
+and restarted, and port 2222 has its host key rotated. While the control channel
+arrived over port 22, an outage cut the channel along with the transfer, and the
+machine came back only because a timer on it happened to fire. Port 2022 is
+attacked by nothing, has a host key that never changes, and `mole-control`
+refuses to blackhole it or stop its unit.
 
 The WebDAV and FTP roots are on the small disk so that *the destination filled
 up* is a condition a test can create. MinIO's store is not: a bucket has no
@@ -161,16 +171,28 @@ default**: nothing reaches for it unless `MOLE_TEST_CONTROL` names the command,
 so a suite on somebody's own machine cannot start stopping services on anything.
 
 ```sh
-export MOLE_TEST_CONTROL='ssh -o BatchMode=yes moletest@<address> sudo mole-control'
+export MOLE_TEST_CONTROL='ssh -o BatchMode=yes -p 2022 moletest@<address> sudo mole-control'
 ```
 
-**Every `netem` clears itself after thirty seconds by default.** That is not
-tidiness. This channel reaches the machine over the network it is being asked to
-damage, so `netem loss 100%` cuts off the very command that would undo it — the
-machine goes unreachable, including to whoever is trying to put it back, and
-only a reboot from the hypervisor recovers it. That happened once while this was
-being written. The timer means a run that dies mid-test leaves a machine that
-heals itself.
+**Port 2022, and that is the whole of the answer to "which port".** The channel
+travels over the network it is being asked to damage, so the port it arrives on
+has to be one nothing attacks — which is what the third sshd is for, and what
+[ADR-0054](../../docs/adr/0054-the-control-channel-arrives-over-a-server-no-test-attacks.md)
+records. `mole-control` will not blackhole that port or stop that unit; both
+refusals exit 3 and say why.
+
+**`blackhole <port>` rather than a total outage.** It drops what leaves one
+port, so a transfer stalls dead — no bytes, no error, nothing — while everything
+else on the machine keeps answering. The obvious alternative, `netem loss 100%`
+on the root qdisc, stops the machine answering ARP: unreachable to everything,
+including the timer scheduled to clear the rule. That cost two rescues over the
+hypervisor's guest agent, which is `rescue.sh`.
+
+**Every `netem` clears itself after thirty seconds by default.** Belt as well as
+braces: the port the undo arrives on is safe now, but a run that dies mid-test
+should still leave a machine that heals itself rather than one waiting for
+somebody to notice. A failure to *schedule* that undo is said out loud rather
+than swallowed, because an unscheduled undo is a machine left damaged.
 
 ## Starting from the same place every time
 
