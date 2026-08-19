@@ -1,5 +1,6 @@
 #pragma once
 
+#include "plugins/builtin/thumbnails/ThumbnailLimits.h"
 #include "sdk/IThumbnailer.h"
 
 namespace mole {
@@ -43,11 +44,6 @@ public:
     /// one we cannot read would replace an icon with an empty tile.
     static QStringList imageSuffixes();
 
-    /// How much of a file is read while looking for the thumbnail a camera put
-    /// inside it. The same bound the EXIF walker uses, because it is the same
-    /// block: every APP1 a camera writes is near the front of the file.
-    static constexpr qint64 kPrefixBytes = 64 * 1024;
-
     /// How big a file on a drive that is not local is worth fetching **whole**
     /// when it has no thumbnail of its own inside it.
     ///
@@ -63,10 +59,6 @@ public:
     /// local read is cheap -- but not unbounded: a 400 MB TIFF decoded to make a
     /// 200-pixel tile is a minute of somebody's afternoon.
     static constexpr qint64 kLocalCeiling = 192LL * 1024 * 1024;
-
-    /// Whether a drive's reads are downloads. The local filesystem is the only one
-    /// that is exempt, and the scheme is what decides.
-    static bool isRemote(const VfsUri& uri);
 };
 
 } // namespace mole

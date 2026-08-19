@@ -11,6 +11,8 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-20 #MOLE-144 A folder of PDFs shows first pages and a folder of videos shows frames — not frame zero, which is black in a great many of them
+
 2026-08-20 #MOLE-143 A gallery over a network drive now reads the thumbnail a camera already put in each photograph — kilobytes rather than megabytes — and leaves a file past a ceiling alone rather than downloading it
 
 2026-08-20 #MOLE-142 A flick through a folder of photographs now makes thumbnails for what is on screen, a few at a time, newest request first — and leaving a folder takes its queue with it

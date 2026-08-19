@@ -292,7 +292,7 @@ void TestImageThumbnailer::aRemoteJpegWithAThumbnailInsideItCostsOneBoundedRead(
     // rather than nothing, which is the whole job.
     QVERIFY2(qMax(tile.width(), tile.height()) <= 200, "and still bounded by what was asked for");
 
-    QVERIFY2(counted->bytesRead() <= ImageThumbnailer::kPrefixBytes,
+    QVERIFY2(counted->bytesRead() <= thumbnails::kPrefixBytes,
         qPrintable(QStringLiteral("read %1 bytes of a %2-byte file")
                        .arg(counted->bytesRead())
                        .arg(photograph.size())));
@@ -314,7 +314,7 @@ void TestImageThumbnailer::aRemoteFileOverTheCeilingGetsNothingAndIsNotFetched()
     QVERIFY2(tile.isNull(), "an icon tile is a correct answer, not a failure");
     // The prefix was looked at, because that is where a camera's own thumbnail
     // would have been; the body was not.
-    QVERIFY2(counted->bytesRead() <= ImageThumbnailer::kPrefixBytes,
+    QVERIFY2(counted->bytesRead() <= thumbnails::kPrefixBytes,
         qPrintable(QStringLiteral("read %1 bytes").arg(counted->bytesRead())));
     QVERIFY2(counted->bytesRead() < claimed / 2, "nothing like the whole file was fetched");
 }
@@ -344,7 +344,7 @@ void TestImageThumbnailer::aLocalFileIsDecodedInFullAndLooksIt()
     entry.uri = VfsUri::fromLocalPath(path);
     entry.name = QStringLiteral("holiday.jpg");
     entry.size = QFileInfo(path).size();
-    QVERIFY(!ImageThumbnailer::isRemote(entry.uri));
+    QVERIFY(!thumbnails::isRemote(entry.uri));
 
     const QImage tile = m_thumbnailer.thumbnail(entry, 200, m_services, CancelToken {});
     QVERIFY(!tile.isNull());
@@ -373,7 +373,7 @@ void TestImageThumbnailer::anExifOffsetPointingOutsideThePrefixCostsThatThumbnai
     // No crash, no unbounded read, and the tile still comes from the file itself.
     QVERIFY(!tile.isNull());
     QCOMPARE(qMax(tile.width(), tile.height()), 120);
-    QVERIFY2(counted->bytesRead() < ImageThumbnailer::kPrefixBytes + bent.size() + 1,
+    QVERIFY2(counted->bytesRead() < thumbnails::kPrefixBytes + bent.size() + 1,
         qPrintable(QStringLiteral("read %1 bytes").arg(counted->bytesRead())));
 }
 
@@ -400,7 +400,7 @@ void TestImageThumbnailer::aFolderOfRemotePhotographsCostsKilobytesEach()
     // Kilobytes each, not megabytes: the whole point of the ticket, counted rather
     // than argued.
     const qint64 perPhotograph = counted->bytesRead() / photographs;
-    QVERIFY2(perPhotograph <= ImageThumbnailer::kPrefixBytes,
+    QVERIFY2(perPhotograph <= thumbnails::kPrefixBytes,
         qPrintable(QStringLiteral("%1 bytes each against %2 on the drive")
                        .arg(perPhotograph)
                        .arg(onTheDrive / photographs)));

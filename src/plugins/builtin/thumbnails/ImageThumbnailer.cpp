@@ -29,11 +29,6 @@ bool ImageThumbnailer::canThumbnail(const FileEntry& entry) const
     return supported.contains(entry.uri.suffix());
 }
 
-bool ImageThumbnailer::isRemote(const VfsUri& uri)
-{
-    return uri.scheme() != QLatin1String("file");
-}
-
 namespace {
 
     /// A bounded prefix of the file, for looking at what a camera wrote near the
@@ -89,7 +84,7 @@ QImage ImageThumbnailer::thumbnail(
     if (!fs)
         return {}; // an unplugged drive, which is an ordinary answer here
 
-    const bool remote = isRemote(entry.uri);
+    const bool remote = thumbnails::isRemote(entry.uri);
 
     // On a drive where reading is downloading, the picture a camera already put
     // in the file comes first: almost every camera JPEG carries a 160x120
@@ -100,7 +95,7 @@ QImage ImageThumbnailer::thumbnail(
     // Local files skip straight to the decode, which is the upgrade: reading the
     // whole file costs nothing there and the result is sharp.
     if (remote) {
-        const QByteArray prefix = prefixOf(fs, entry.uri, kPrefixBytes);
+        const QByteArray prefix = prefixOf(fs, entry.uri, thumbnails::kPrefixBytes);
         if (cancel.isCancelled())
             return {};
         if (const QByteArray embedded = ImageMetadataReader::embeddedThumbnail(prefix); !embedded.isEmpty()) {

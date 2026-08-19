@@ -249,6 +249,10 @@ mole_add_test(tst_ImageMetadata     SOURCES plugins/tst_ImageMetadata.cpp LIBS m
 # A picture of a picture: bounded, in the right orientation, and decoded scaled.
 mole_add_test(tst_ImageThumbnailer  SOURCES plugins/tst_ImageThumbnailer.cpp LIBS mole_builtin)
 
+# The other two kinds of picture: a document's first page and a frame from a
+# video. Each skips itself where its dependency is not in the build.
+mole_add_test(tst_MediaThumbnailers SOURCES plugins/tst_MediaThumbnailers.cpp LIBS mole_builtin)
+
 # Who wrote a document: a zip built by hand, walked from its front, and a PDF
 # written by the test. Includes the hostile container and the hostile XML.
 mole_add_test(tst_DocumentMetadata  SOURCES plugins/tst_DocumentMetadata.cpp LIBS mole_builtin)

@@ -23,6 +23,8 @@
 #include "plugins/builtin/previews/PreviewProviders.h"
 #include "plugins/builtin/previews/VideoPreview.h"
 #include "plugins/builtin/thumbnails/ImageThumbnailer.h"
+#include "plugins/builtin/thumbnails/PdfThumbnailer.h"
+#include "plugins/builtin/thumbnails/VideoThumbnailer.h"
 
 #include "core/automation/ScheduleStore.h"
 #include "core/automation/Scheduler.h"
@@ -133,6 +135,16 @@ void BuiltinPlugin::registerExtensions(PluginRegistry& registry)
     // the one that answers for anything Qt can decode and a later thumbnailer
     // for a format it cannot sits above it by priority.
     registry.addThumbnailer(std::make_unique<ImageThumbnailer>());
+#ifdef MOLE_HAVE_QTPDF
+    // The first page of a document. Absent in a build without Qt Pdf, where a PDF
+    // gets the icon tile exactly as it gets the information viewer.
+    registry.addThumbnailer(std::make_unique<PdfThumbnailer>());
+#endif
+#ifdef MOLE_HAVE_MULTIMEDIA
+    // A frame from a video, and only when this build can decode one at all.
+    if (VideoThumbnailer::isAvailable())
+        registry.addThumbnailer(std::make_unique<VideoThumbnailer>());
+#endif
 }
 
 } // namespace mole
