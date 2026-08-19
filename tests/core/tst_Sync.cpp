@@ -3,6 +3,7 @@
 #include "support/TestSupport.h"
 
 #include "core/CoreMetaTypes.h"
+#include "core/duplicates/ContentComparison.h"
 #include "core/sync/SyncTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/backends/LocalFileSystem.h"
@@ -30,6 +31,9 @@ private slots:
     void overwritesWhenAskedTo();
     void comparesBySizeAlone();
     void comparesByContents();
+    void twoFilesDifferingOnlyInTheirLastChunkAreSeenAsDifferent();
+    void twoIdenticalFilesAreLeftAloneAndNothingIsCopied();
+    void aFileThatCannotBeOpenedIsNotReportedAsDiffering();
     void toleratesSubSecondTimestampDrift();
 
     void filtersByPattern();
@@ -55,6 +59,11 @@ private:
     /// silently returns false rather than complaining.
     bool touch(const QString& relative, const QDateTime& when) const;
     QByteArray contentsOf(const QString& relative) const;
+    /// Why the plan says it would touch this file, or an empty string when it
+    /// would not touch it at all. The reason is half of what a contents
+    /// comparison answers: "differs" and "could not be read" are both a copy,
+    /// and only the words tell them apart.
+    QString reasonFor(const SyncPlan& plan, const QString& relative) const;
 
     std::unique_ptr<TempTree> m_tree;
     std::unique_ptr<TaskManager> m_tasks;
@@ -241,6 +250,113 @@ void TestSync::comparesByContents()
     QVERIFY(run(options));
     // Same size, so only a contents comparison catches it.
     QCOMPARE(contentsOf(QStringLiteral("dest/a.txt")), QByteArray("aaaa"));
+}
+
+QString TestSync::reasonFor(const SyncPlan& plan, const QString& relative) const
+{
+    for (const SyncPlan::Step& step : plan.steps()) {
+        if (step.relativePath == relative)
+            return step.reason;
+    }
+    return {};
+}
+
+// ---- what a contents comparison answers --------------------------------
+//
+// Sync was the one place left in the codebase that decided two files were the
+// same by hashing both of them whole with SHA-256. ADR-0046 replaced that shape
+// in the duplicates scan: Qt 6.4 carries its own SHA-2 and does not use the
+// processor's SHA-NI instructions, so hashing runs at about 218 MB/s whatever the
+// storage is, against 87 GB/s for a memcmp -- and a comparison stops at the first
+// chunk that differs, where a hash always reads both files to the end. See
+// MOLE-215. What has to survive the change is what the three answers mean.
+
+void TestSync::twoFilesDifferingOnlyInTheirLastChunkAreSeenAsDifferent()
+{
+    // Two chunks and a bit, identical until the very last byte: the case a
+    // comparison that stopped early, or that compared only a head, gets wrong --
+    // and the one a hash could never get wrong, which is what makes it the
+    // assertion worth having here.
+    QByteArray body(static_cast<int>(kComparisonChunkBytes * 2 + 4096), 'a');
+    QByteArray edited = body;
+    edited[edited.size() - 1] = 'b';
+    QVERIFY(m_tree->writeFile(QStringLiteral("src/page.bin"), body));
+    QVERIFY(m_tree->writeFile(QStringLiteral("dest/page.bin"), edited));
+
+    SyncOptions options;
+    options.compare = SyncOptions::Compare::Contents;
+    options.skipNewer = false;
+    options.dryRun = false;
+
+    SyncTask* task = run(options);
+    QVERIFY(task);
+    QCOMPARE(task->plan().countOf(SyncPlan::Action::Overwrite), 1);
+    QCOMPARE(reasonFor(task->plan(), QStringLiteral("page.bin")), QStringLiteral("contents differ"));
+    QCOMPARE(contentsOf(QStringLiteral("dest/page.bin")), body);
+}
+
+void TestSync::twoIdenticalFilesAreLeftAloneAndNothingIsCopied()
+{
+    // Larger than one chunk again, so the comparison has to run to the end of both
+    // to say so -- the answer a lockstep read gives only by agreeing all the way.
+    const QByteArray body(static_cast<int>(kComparisonChunkBytes + 1024), 'z');
+    QVERIFY(m_tree->writeFile(QStringLiteral("src/same.bin"), body));
+    QVERIFY(m_tree->writeFile(QStringLiteral("dest/same.bin"), body));
+
+    SyncOptions options;
+    options.compare = SyncOptions::Compare::Contents;
+    options.skipNewer = false;
+    options.dryRun = false;
+
+    SyncTask* task = run(options);
+    QVERIFY(task);
+    QCOMPARE(task->plan().countOf(SyncPlan::Action::Overwrite), 0);
+    QCOMPARE(task->plan().countOf(SyncPlan::Action::Copy), 0);
+    QCOMPARE(task->appliedCount(), 0);
+}
+
+void TestSync::aFileThatCannotBeOpenedIsNotReportedAsDiffering()
+{
+    // The one edge that decides whether this was a clean change or a silent one.
+    // partitionByContents() leaves a file it could not open out of its result
+    // altogether -- deliberately, because an unreadable file is not a match for
+    // every other unreadable file -- so a careless reading of the return value
+    // gives "contents differ" for a file nobody could look at. That is not a
+    // cosmetic difference in a sync: it is the difference between reporting a
+    // file that could not be read and quietly overwriting the other side with
+    // whatever was there.
+    const QByteArray body(4096, 'a');
+    QByteArray other(4096, 'a');
+    other[0] = 'b';
+    QVERIFY(m_tree->writeFile(QStringLiteral("src/secret.bin"), body));
+    QVERIFY(m_tree->writeFile(QStringLiteral("dest/secret.bin"), other));
+
+    const QString locked = m_tree->absolute(QStringLiteral("src/secret.bin"));
+    QVERIFY(QFile::setPermissions(locked, {}));
+    // Root, or a filesystem that does not enforce permissions, can still open it,
+    // and then there is nothing here to prove.
+    QFile probe(locked);
+    if (probe.open(QIODevice::ReadOnly)) {
+        probe.close();
+        QFile::setPermissions(locked, QFile::ReadOwner | QFile::WriteOwner);
+        QSKIP("this account can read a file with no permissions at all");
+    }
+
+    SyncOptions options;
+    options.compare = SyncOptions::Compare::Contents;
+    options.skipNewer = false;
+    options.dryRun = true;
+
+    SyncTask* task = run(options);
+    // Left readable again before any assertion, so a failure below does not leave
+    // a directory the fixture cannot clean up.
+    QFile::setPermissions(locked, QFile::ReadOwner | QFile::WriteOwner);
+
+    QVERIFY(task);
+    const QString reason = reasonFor(task->plan(), QStringLiteral("secret.bin"));
+    QCOMPARE(reason, QStringLiteral("could not be compared"));
+    QVERIFY2(reason != QStringLiteral("contents differ"),
+        "a file nobody could open must not be reported as one that differs");
 }
 
 void TestSync::toleratesSubSecondTimestampDrift()

@@ -13,6 +13,8 @@ the first release; they stay as they are.
 
 2026-08-19 #MOLE-210 A duplicate scan no longer stops the window responding as it fills — a confirmed group is added to the list instead of rebuilding every group already in it, so the results can be read and scrolled while the scan is still running
 
+2026-08-19 #MOLE-215 A sync that compares by contents is noticeably quicker over fast storage — the two files are compared byte for byte instead of both being hashed with SHA-256, and two that differ now stop at the first block that differs instead of being read to the end
+
 2026-08-19 #MOLE-214 A duplicate scan by content is much faster, and what it reports is now exact — the reads are spread across threads instead of running on one, nothing in the scan is capped by a digest any more, and a group reported as identical has been compared byte for byte rather than hashed
 
 2026-08-19 #MOLE-213 Mole can now open an NFS export as a drive, in the application and without mounting it or needing root

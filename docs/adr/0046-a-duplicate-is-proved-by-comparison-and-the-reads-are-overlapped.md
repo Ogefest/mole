@@ -108,8 +108,11 @@ about.
   — picks whichever fits.
 - **Measured end to end**, on 1.9 GB of duplicates warm in the page cache:
   9 330 ms before, 520 ms after.
-- Sync still compares two files by hashing both (`SyncPlan.cpp`). The same
-  argument applies there and it is not this change.
+- Sync's contents comparison uses the same path. `SyncPlan.cpp` called
+  `partitionByContents()` in place of hashing both files with SHA-256 on
+  2026-08-19 (MOLE-215), which applies this decision rather than revisiting it —
+  one answer in the codebase to "are these two files the same", and the same
+  measurements behind it.
 - **ThreadSanitizer has more to say about this suite than it did**: 18 warnings
   before, 55 after. None of the new ones are on this code's own data -- they are
   inside `QtConcurrent::ThreadEngineBase`'s throttling, and inside glibc's

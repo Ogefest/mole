@@ -1,6 +1,7 @@
 #include "core/sync/SyncPlan.h"
 
-#include <QCryptographicHash>
+#include "core/duplicates/ContentComparison.h"
+
 #include <QHash>
 
 #include <algorithm>
@@ -43,30 +44,47 @@ namespace {
         return out;
     }
 
-    /// Hashes a file for a contents comparison. An unreadable file gets an empty
-    /// hash, which never equals anything -- so it is treated as different and
-    /// copied, rather than silently assumed to match.
-    QString hashOf(IFileSystem* fs, const VfsUri& uri, const CancelToken& cancel)
-    {
-        if (!fs)
-            return {};
-        Result<std::unique_ptr<QIODevice>> opened = fs->openRead(uri);
-        if (!opened.ok())
-            return {};
-        std::unique_ptr<QIODevice> device = std::move(opened.value());
-        if (!device)
-            return {};
+    /// What a contents comparison can come back with. Three answers and not two:
+    /// a file nobody could read is not a file that differs, and treating it as
+    /// one is how a sync overwrites something it could not look at.
+    enum class Contents { Same, Different, Unreadable };
 
-        QCryptographicHash hash(QCryptographicHash::Sha256);
-        while (!device->atEnd()) {
-            if (cancel.isCancelled())
-                return {};
-            const QByteArray chunk = device->read(256 * 1024);
-            if (chunk.isEmpty())
-                break;
-            hash.addData(chunk);
-        }
-        return QString::fromLatin1(hash.result().toHex());
+    /// Whether two files of the same size hold the same bytes.
+    ///
+    /// The same path the duplicates scan settles a group with -- see ADR-0046 for
+    /// the measurements. Qt 6.4 carries its own SHA-2 and does not use the
+    /// processor's SHA-NI instructions, so hashing runs at about 218 MB/s whatever
+    /// the storage is, against 87 GB/s for a memcmp: a sync by contents over local
+    /// disks used to wait for a core rather than for the disk. Each file is still
+    /// read exactly once, and two that differ now stop at the first chunk that
+    /// differs, which in a sync is the common case -- the interesting files are
+    /// the ones that differ.
+    ///
+    /// partitionByContents() leaves a file it could not open out of its result
+    /// altogether, deliberately: an unreadable file is not a match for every
+    /// other unreadable file. So fewer than two files across the groups it hands
+    /// back is that condition rather than a difference.
+    Contents compareContents(IFileSystem* sourceFs, const FileEntry& source, IFileSystem* targetFs,
+        const FileEntry& target, const CancelToken& cancel)
+    {
+        if (!sourceFs || !targetFs)
+            return Contents::Unreadable;
+
+        // The two sides are told apart by their uri, which is the only thing that
+        // distinguishes them here -- and a sync of a tree onto itself, where they
+        // are the same file, wants the same answer either way.
+        const VfsUri sourceUri = source.uri;
+        const DriveLookup driveFor = [&](const FileEntry& entry) -> IFileSystem* {
+            return entry.uri == sourceUri ? sourceFs : targetFs;
+        };
+
+        const QList<QList<FileEntry>> groups = partitionByContents({ source, target }, driveFor, cancel);
+        int compared = 0;
+        for (const QList<FileEntry>& group : groups)
+            compared += static_cast<int>(group.size());
+        if (compared < 2)
+            return Contents::Unreadable;
+        return groups.size() == 1 ? Contents::Same : Contents::Different;
     }
 
     /// Whether the destination copy needs replacing, and why.
@@ -77,13 +95,18 @@ namespace {
         case SyncOptions::Compare::SizeOnly:
             return source.size != target.size ? QStringLiteral("size differs") : QString();
         case SyncOptions::Compare::Contents: {
+            // Two files of different sizes are settled without opening anything.
             if (source.size != target.size)
                 return QStringLiteral("size differs");
-            const QString a = hashOf(sourceFs, source.uri, cancel);
-            const QString b = hashOf(targetFs, target.uri, cancel);
-            if (a.isEmpty() || b.isEmpty())
+            switch (compareContents(sourceFs, source, targetFs, target, cancel)) {
+            case Contents::Same:
+                return {};
+            case Contents::Different:
+                return QStringLiteral("contents differ");
+            case Contents::Unreadable:
                 return QStringLiteral("could not be compared");
-            return a != b ? QStringLiteral("contents differ") : QString();
+            }
+            return QStringLiteral("could not be compared");
         }
         case SyncOptions::Compare::SizeAndTime:
             break;
