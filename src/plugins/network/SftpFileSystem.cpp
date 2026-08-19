@@ -67,6 +67,18 @@ SftpFileSystem::SftpFileSystem(QString scheme, SftpSettings settings)
     options.knownHostsPath
         = m_settings.knownHostsPath.isEmpty() ? defaultKnownHosts() : m_settings.knownHostsPath;
     options.acceptUnknownHostKey = m_settings.acceptNewHostKey;
+    // How patient one *connection* is, which on this backend is a much smaller
+    // question than how patient the transfer is. A read here is a span loop with
+    // a budget over it (StreamingDownload), so a connection that has stopped
+    // carrying bytes should be abandoned quickly and replaced -- the budget is
+    // what decides whether the transfer is over, and it cannot decide anything
+    // while a fetch that will never finish is still inside libcurl.
+    //
+    // Left long, the two collapse into one again: the fetch does not return for
+    // two minutes, the budget is never consulted, and a link that has gone away
+    // takes the transfer with it only after several times the wait somebody set.
+    // See the second amendment to ADR-0013.
+    options.stallSeconds = 25;
     m_pool = std::make_unique<net::CurlPool>(std::move(options));
 }
 

@@ -183,6 +183,17 @@ may go without progress, are different questions:
   flight.
 - The transfer's patience is this budget, two minutes by default.
 
+**Both figures had to move for either to mean anything.** A budget checked between
+attempts cannot bound a fetch that never returns, and on a download almost nothing
+is sent, so `TCP_USER_TIMEOUT` -- which bounds *unacknowledged sent* data -- may
+never start. Left at two minutes, the connection's own guard swallowed the whole
+outage, the budget was never consulted, and a link that had gone for good took
+several times the wait somebody had set. SFTP's connection patience is therefore
+twenty-five seconds: on this backend a read is a span loop with a budget over it,
+so a connection that has stopped carrying bytes should be abandoned quickly and
+replaced. Measured against a 200-second outage: the transfer fails, naming the
+file, 174 seconds after the link went away.
+
 So a link that goes away always ends the transfer, and a link that comes back
 inside the budget costs nothing. On the re-keying server of the first amendment
 nothing changes except that it gets safer: every attempt there carries bytes, so

@@ -54,6 +54,32 @@ IFACE="$(ip -o -4 route show default | awk '{print $5}' | head -1)"
 
 say() { printf 'mole-control: %s\n' "$*"; }
 
+# Schedules the undo, with systemd rather than a detached `sleep`.
+#
+# It used to write a small script and start it with `setsid ... &`, and that
+# stopped surviving the ssh session that started it: a blackhole asked to clear
+# itself after thirty seconds was measured still standing after ninety, with no
+# clearer process left on the machine. An outage then lasted until somebody
+# noticed, and every test written around "the outage is N seconds" was measuring
+# something else.
+#
+# AccuracySec is not a detail either. A transient timer defaults to a minute of
+# slack, so a thirty-second outage could last ninety on its own.
+schedule_undo() {
+    local seconds="$1"
+    shift
+    systemctl stop mole-netem-clear.timer 2>/dev/null || true
+    systemctl stop mole-netem-clear.service 2>/dev/null || true
+    systemctl reset-failed mole-netem-clear.service 2>/dev/null || true
+    if ! systemd-run --collect --unit=mole-netem-clear --on-active="${seconds}s" \
+            --timer-property=AccuracySec=1s /bin/bash -c "$*" >/dev/null 2>&1; then
+        # Said out loud rather than swallowed. An undo that was never scheduled
+        # is a machine left damaged, which is worth more than a tidy line.
+        say "WARNING: could not schedule the undo -- put it back by hand"
+        return 1
+    fi
+}
+
 usage() {
     cat <<'USAGE'
 mole-control <command>
@@ -166,19 +192,25 @@ blackhole)
     tc qdisc del dev "$IFACE" root 2>/dev/null
     tc qdisc add dev "$IFACE" root handle 1: prio bands 4 \
         priomap 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
-    [ -n "$rate" ] && tc qdisc add dev "$IFACE" parent 1:1 handle 10: \
-        tbf rate "$rate" burst 32kbit latency 400ms
+    # `if`, not `[ ... ] &&`. This script runs under `set -e`, where a test that
+    # comes out false is a command that failed -- so an absent rate limit killed
+    # the script here, silently, before it could schedule the undo. That is what
+    # "the blackhole never cleared" actually was.
+    if [ -n "$rate" ]; then
+        tc qdisc add dev "$IFACE" parent 1:1 handle 10: tbf rate "$rate" burst 32kbit latency 400ms
+    fi
     tc qdisc add dev "$IFACE" parent 1:4 handle 40: netem loss 100%
     tc filter add dev "$IFACE" protocol ip parent 1:0 prio 4 u32 \
         match ip sport "$port" 0xffff flowid 1:4
     say "everything leaving port $port is dropped on $IFACE"
-    [ -n "$rate" ] && say "the $rate limit stays in force underneath it"
+    if [ -n "$rate" ]; then
+        say "the $rate limit stays in force underneath it"
+    fi
 
     # Back to what was in force before the outage rather than to no qdisc at all.
     schedule_undo "$seconds" "tc qdisc del dev $IFACE root 2>/dev/null; \
         rate=\$(cat /run/mole-rate 2>/dev/null || true); \
-        [ -n \"\$rate\" ] && tc qdisc add dev $IFACE root tbf rate \"\$rate\" burst 32kbit latency 400ms; \
-        true"
+        if [ -n \"\$rate\" ]; then tc qdisc add dev $IFACE root tbf rate \"\$rate\" burst 32kbit latency 400ms; fi"
     say "it clears itself in ${seconds}s, scheduled with systemd"
     ;;
 

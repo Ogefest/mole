@@ -50,15 +50,29 @@ delivers is resumed until the file is whole, and a span that never delivers ends
 budget is spent and not before. `aSpanThatDeliversNothingIsTheEndOfIt` was the case that changed
 meaning, so it changed name.
 
-**The instrument was measuring something else, and still is.** Reading `control.sh` turned up that
-`blackhole` deleted the `netem rate` both outage cases set up seconds earlier, so from the moment
-the outage began the link was at full speed — the arithmetic in those tests was not what it said on
-the page. Fixed: a rate in force is put back underneath the outage and restored after it. Then a
-measurement showed worse: a blackhole asked to clear itself after sixty seconds was **still
-standing after ninety**, with no clearer process left on the machine — the detached `sleep` does
-not survive the ssh session that starts it. Replaced with a transient systemd timer, which is owned
-by init and cancels by name; the timer is created and has not yet been seen to fire, so the live
-outage cases are still not confirmed.
+**Both figures had to move.** A budget checked between attempts cannot bound a fetch that never
+returns, and on a download almost nothing is sent — so `TCP_USER_TIMEOUT`, which bounds
+unacknowledged *sent* data, may never start. With the connection's own patience left at two
+minutes it swallowed the whole outage, the budget was never consulted, and a 200-second outage
+still did not end the transfer. SFTP's connection patience is now twenty-five seconds, which is
+safe precisely there: it is the backend whose reads have a retry loop over them.
+
+**The instrument was measuring something else, three times over.** `blackhole` deleted the
+`netem rate` both outage cases apply seconds earlier, so from the moment the outage began the link
+ran at full speed and the arithmetic in those tests was fiction; a rate in force is now put back
+underneath and restored after. Then a blackhole asked to clear after sixty seconds was measured
+**still standing after ninety** — a detached `sleep` does not survive the ssh session that starts
+it, so it is a transient systemd timer now. Then that timer fired up to a minute late, because a
+transient timer defaults to `AccuracySec=1min`. And the function that scheduled it was never
+defined in the copy that runs on the machine, which the script reported only as
+`command not found` into `/dev/null`; a failure to schedule an undo now says so out loud, because
+an unscheduled undo is a machine left damaged.
+
+**All three live cases pass.** A minute of outage is ridden out, so is one second inside the
+budget, and 200 seconds ends the transfer with a failure naming the file — 174 seconds after the
+link went away, which is why the bound came down from seven minutes to four rather than to the
+three that was asked for: two minutes of budget plus one attempt's worth of noticing is what the
+number is made of.
 
 ## Orphaned S3 multipart uploads could not be found, and were charged for
 

@@ -545,20 +545,31 @@ void TestInterference::anOutageLongerThanTheGuardIsReported()
         { QStringLiteral("netem"), QStringLiteral("rate"), QStringLiteral("8mbit"), QStringLiteral("400") });
     QVERIFY2(limited.contains(QStringLiteral("rate limited")), qPrintable(limited));
 
-    // Back to three minutes, which is what the budget makes it. A read is over
-    // once nothing has arrived for two minutes, however many connections it has
-    // been through in the meantime -- so a link that has gone for good ends the
-    // transfer at the budget plus the time to notice, not at some multiple of it.
-    // Anything past three minutes is not slowness, it is a transfer that is never
-    // going to end, and the number has to be finite for the verdict to mean
-    // anything.
+    // Four minutes, and the number is arithmetic rather than a guess: the
+    // transfer's budget is two minutes with no byte arriving, plus one attempt's
+    // worth of noticing -- twenty seconds for the socket to admit the link has
+    // gone, twenty more for the connect that replaces it -- plus room for a slow
+    // machine. Measured at 174 seconds after the outage began.
+    //
+    // Down from seven minutes, which was two whole budgets: before, a dead link
+    // cost the guard once for the span that stopped and again for the single
+    // resume. Anything past four minutes now is not slowness, it is a transfer
+    // that is never going to end, and the number has to be finite for the
+    // verdict to mean anything.
     const Interfered run = runInterfered(
         request, m_payload / 8,
         [] {
+            // Comfortably past the budget rather than just past it. A hundred
+            // and forty against a hundred and twenty leaves twenty seconds of
+            // margin, and the clock does not start when the outage does -- it
+            // starts at the last byte, which is however long the connection took
+            // to notice plus whatever was still in flight. Measured: a 140-second
+            // outage was ridden out and the transfer went on, which is right
+            // behaviour and the wrong test.
             return TestbedControl::run(
-                { QStringLiteral("blackhole"), QStringLiteral("22"), QStringLiteral("140") });
+                { QStringLiteral("blackhole"), QStringLiteral("22"), QStringLiteral("200") });
         },
-        180000);
+        240000);
     VERIFY_IT_LANDED(run);
     TransferTask* task = run.task;
 
