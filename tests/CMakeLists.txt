@@ -207,6 +207,7 @@ mole_add_test(tst_BrowserPaneController SOURCES ui/tst_BrowserPaneController.cpp
 # The headless half of the thumbnails: the url that keys one, the thread it is
 # decoded on, and the cancellation that stops one nobody is waiting for.
 mole_add_test(tst_ThumbnailSource      SOURCES ui/tst_ThumbnailSource.cpp      LIBS mole_ui)
+mole_add_test(tst_ThumbnailCache       SOURCES ui/tst_ThumbnailCache.cpp       LIBS mole_ui)
 mole_add_test(tst_FileLauncher         SOURCES ui/tst_FileLauncher.cpp         LIBS mole_ui)
 
 # What a selection looks like once it has left the window. No window and no

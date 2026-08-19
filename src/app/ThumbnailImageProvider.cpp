@@ -41,7 +41,8 @@ private:
 };
 
 ThumbnailImageProvider::ThumbnailImageProvider(PluginServices services)
-    : m_pump(new ThumbnailPump(services))
+    : m_cache(std::make_unique<ThumbnailCache>())
+    , m_pump(new ThumbnailPump(services, m_cache.get()))
 {
     QObject::connect(m_pump, &ThumbnailPump::ready, m_pump, [](QObject* response, const QImage& image) {
         if (auto* waiting = qobject_cast<ThumbnailResponse*>(response))

@@ -30,6 +30,10 @@ namespace {
         { "MOLE_PREFERENCES_PATH", "preferences.json" },
         { "MOLE_SECRETS_PATH", "credentials.enc" },
         { "MOLE_REMOTES_PATH", "drives.json" },
+        // Recomputable, unlike the ten above, and still never the real one: a test
+        // that writes into the developer's own thumbnail cache is a test that
+        // changes the machine it runs on.
+        { "MOLE_THUMBNAILS_PATH", "thumbnails" },
     };
 
 } // namespace

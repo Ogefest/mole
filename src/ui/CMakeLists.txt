@@ -24,6 +24,8 @@ add_library(mole_ui STATIC
     models/DuplicateGroupModel.cpp
     models/BrowserPaneController.h
     models/BrowserPaneController.cpp
+    ThumbnailCache.h
+    ThumbnailCache.cpp
     ThumbnailSource.h
     ThumbnailSource.cpp
 

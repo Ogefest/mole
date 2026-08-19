@@ -2,6 +2,7 @@
 #include "support/FakePlugin.h"
 #include "support/MoleTestMain.h"
 #include "support/TestSupport.h"
+#include "ui/ThumbnailCache.h"
 #include "ui/ThumbnailSource.h"
 
 #include "core/events/EventBus.h"
@@ -36,6 +37,9 @@ private slots:
     void aFileNoThumbnailerClaimsAnswersWithNothing();
     void cancellingAResponseReachesTheDecode();
     void anAnswerArrivesExactlyOnceEvenForACancelledRequest();
+    void aPictureAskedForTwiceIsDecodedOnce();
+    void aSecondRunReadsFromDiskAndDecodesNothing();
+    void twoPanesAskingAtOnceDecodeItOnce();
 
 private:
     /// The answer for `id`, waited on rather than timed.
@@ -50,6 +54,9 @@ private:
     std::unique_ptr<ThumbnailRegistry> m_registry;
     PluginServices m_services;
     std::unique_ptr<ThumbnailPump> m_pump;
+    /// Built only by the tests that are about caching, so every other test here
+    /// counts real decodes.
+    std::unique_ptr<ThumbnailCache> m_cache;
 };
 
 void TestThumbnailSource::init()
@@ -75,12 +82,13 @@ void TestThumbnailSource::init()
 
     m_services = PluginServices { m_vfs.get(), m_tasks.get(), m_index.get(), m_events.get() };
     m_services.thumbnails = m_registry.get();
-    m_pump = std::make_unique<ThumbnailPump>(m_services);
+    m_pump = std::make_unique<ThumbnailPump>(m_services, nullptr);
 }
 
 void TestThumbnailSource::cleanup()
 {
     m_pump.reset();
+    m_cache.reset();
     m_tasks.reset();
     m_registry.reset();
     m_index.reset();
@@ -175,7 +183,7 @@ void TestThumbnailSource::theHighestPriorityThumbnailerAnswersAndTheOthersAreNot
     ThumbnailKey key;
     key.uri = VfsUri::fromString(QStringLiteral("mem:///photos/a.jpg"));
     key.size = 32;
-    auto* task = new ThumbnailTask(m_services, key);
+    auto* task = new ThumbnailTask(m_services, key, nullptr);
     m_tasks->submit(task);
     QVERIFY(waitForTask(task));
 
@@ -193,7 +201,7 @@ void TestThumbnailSource::aFileNoThumbnailerClaimsAnswersWithNothing()
     ThumbnailKey key;
     key.uri = VfsUri::fromString(QStringLiteral("mem:///notes.txt"));
     key.size = 32;
-    auto* task = new ThumbnailTask(m_services, key);
+    auto* task = new ThumbnailTask(m_services, key, nullptr);
     m_tasks->submit(task);
     QVERIFY(waitForTask(task));
 
@@ -237,10 +245,14 @@ void TestThumbnailSource::cancellingAResponseReachesTheDecode()
     m_pump->cancelFor(&response);
     gate->release();
 
+    // The response is answered at once -- Qt expects a cancelled one to finish
+    // rather than to hang -- and the decode itself finds its token set.
     QVERIFY(waitFor([&] { return arrived; }, 10000));
-    QCOMPARE(log->cancelled.load(), 1);
     QVERIFY2(answer.isNull(), "a cancelled decode is not a picture");
-    QCOMPARE(m_pump->outstanding(), 0);
+    QVERIFY2(waitFor([&] { return log->cancelled.load() == 1; }, 10000),
+        "the cancellation has to reach the decode, not only the response");
+    QVERIFY(waitFor([&] { return m_pump->outstanding() == 0; }, 10000));
+    QCOMPARE(m_pump->waiting(), 0);
 }
 
 void TestThumbnailSource::anAnswerArrivesExactlyOnceEvenForACancelledRequest()
@@ -264,6 +276,108 @@ void TestThumbnailSource::anAnswerArrivesExactlyOnceEvenForACancelledRequest()
     m_pump->cancelFor(&response);
     QTest::qWait(20);
     QCOMPARE(answers.count(), 1);
+}
+
+/// A GridView destroys a delegate that leaves its cache buffer and builds a new
+/// one when it comes back, so without a cache the second look at a picture costs
+/// exactly what the first one did. Counted rather than timed. See MOLE-141.
+void TestThumbnailSource::aPictureAskedForTwiceIsDecodedOnce()
+{
+    m_cache = std::make_unique<ThumbnailCache>(QDir(m_dir->path()).filePath(QStringLiteral("thumbs")));
+    m_pump = std::make_unique<ThumbnailPump>(m_services, m_cache.get());
+
+    auto log = std::make_shared<FakeThumbnailer::Log>();
+    QVERIFY(m_registry->addThumbnailer(
+        std::make_unique<FakeThumbnailer>(QStringLiteral("test.only"), QColor(Qt::green), 0, log)));
+
+    ThumbnailKey key;
+    key.uri = VfsUri::fromString(QStringLiteral("mem:///photos/a.jpg"));
+    key.size = 40;
+    key.mtime = 7;
+
+    QObject first;
+    QVERIFY(!awaitThumbnail(&first, key.toId()).isNull());
+    QCOMPARE(log->made.load(), 1);
+
+    // The same tile scrolled away and back: answered from memory, and on the spot
+    // rather than through a task.
+    QObject second;
+    QVERIFY(!awaitThumbnail(&second, key.toId()).isNull());
+    QCOMPARE(log->made.load(), 1);
+
+    // A different date is a different picture, which is what the date is for.
+    key.mtime = 8;
+    QObject edited;
+    QVERIFY(!awaitThumbnail(&edited, key.toId()).isNull());
+    QCOMPARE(log->made.load(), 2);
+}
+
+void TestThumbnailSource::aSecondRunReadsFromDiskAndDecodesNothing()
+{
+    const QString directory = QDir(m_dir->path()).filePath(QStringLiteral("thumbs"));
+    auto log = std::make_shared<FakeThumbnailer::Log>();
+    QVERIFY(m_registry->addThumbnailer(
+        std::make_unique<FakeThumbnailer>(QStringLiteral("test.only"), QColor(Qt::green), 0, log)));
+
+    ThumbnailKey key;
+    key.uri = VfsUri::fromString(QStringLiteral("mem:///photos/a.jpg"));
+    key.size = 40;
+    key.mtime = 7;
+
+    m_cache = std::make_unique<ThumbnailCache>(directory);
+    m_pump = std::make_unique<ThumbnailPump>(m_services, m_cache.get());
+    QObject first;
+    QVERIFY(!awaitThumbnail(&first, key.toId()).isNull());
+    QCOMPARE(log->made.load(), 1);
+
+    // A fresh cache and a fresh pump over the same directory, which is what
+    // opening the folder again tomorrow looks like.
+    m_pump.reset();
+    m_cache = std::make_unique<ThumbnailCache>(directory);
+    m_pump = std::make_unique<ThumbnailPump>(m_services, m_cache.get());
+
+    QObject again;
+    QVERIFY(!awaitThumbnail(&again, key.toId()).isNull());
+    QVERIFY2(log->made.load() == 1, "a second visit to a folder must not decode it again");
+}
+
+/// Two panes showing one folder ask for the same picture at the same moment, and
+/// decoding it twice is twice the work for one answer.
+void TestThumbnailSource::twoPanesAskingAtOnceDecodeItOnce()
+{
+    auto log = std::make_shared<FakeThumbnailer::Log>();
+    auto gate = std::make_shared<QSemaphore>();
+    GateRelease release(gate);
+    auto held = std::make_unique<FakeThumbnailer>(QStringLiteral("test.held"), QColor(Qt::green), 0, log);
+    held->holdUntilReleased(gate);
+    QVERIFY(m_registry->addThumbnailer(std::move(held)));
+
+    ThumbnailKey key;
+    key.uri = VfsUri::fromString(QStringLiteral("mem:///photos/a.jpg"));
+    key.size = 44;
+
+    QObject left;
+    QObject right;
+    QList<QObject*> answered;
+    QObject::connect(
+        m_pump.get(), &ThumbnailPump::ready, m_pump.get(), [&](QObject* who, const QImage& image) {
+            if (!image.isNull())
+                answered.append(who);
+        });
+
+    m_pump->startFor(&left, key.toId());
+    QVERIFY(waitFor([&] { return log->made.load() == 1; }));
+    // The second one arrives while the first is still being made.
+    m_pump->startFor(&right, key.toId());
+
+    QCOMPARE(m_pump->outstanding(), 1);
+    QCOMPARE(m_pump->waiting(), 2);
+    gate->release();
+
+    QVERIFY(waitFor([&] { return answered.size() == 2; }, 10000));
+    QVERIFY2(log->made.load() == 1, "one picture, one decode, however many are waiting for it");
+    QVERIFY(answered.contains(&left));
+    QVERIFY(answered.contains(&right));
 }
 
 MOLE_TEST_MAIN(TestThumbnailSource)

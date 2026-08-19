@@ -1,8 +1,11 @@
 #pragma once
 
+#include "ui/ThumbnailCache.h"
 #include "ui/ThumbnailSource.h"
 
 #include <QQuickAsyncImageProvider>
+
+#include <memory>
 
 namespace mole {
 
@@ -24,8 +27,10 @@ public:
     QQuickImageResponse* requestImageResponse(const QString& id, const QSize& requestedSize) override;
 
 private:
-    /// Lives on the thread that built the provider, which is the UI thread. Owned
-    /// here rather than by the engine because the engine deletes the provider.
+    /// Both live on the thread that built the provider, which is the UI thread.
+    /// Owned here rather than by the engine because the engine deletes the
+    /// provider, and one cache serves every pane in the window.
+    std::unique_ptr<ThumbnailCache> m_cache;
     ThumbnailPump* m_pump = nullptr;
 };
 

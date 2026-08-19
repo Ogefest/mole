@@ -1,6 +1,7 @@
 #include "ui/ThumbnailSource.h"
 
 #include "sdk/IThumbnailer.h"
+#include "ui/ThumbnailCache.h"
 
 #include "core/tasks/TaskManager.h"
 
@@ -46,10 +47,12 @@ ThumbnailKey ThumbnailKey::parse(const QString& id)
 
 // ------------------------------------------------------------------------ task
 
-ThumbnailTask::ThumbnailTask(PluginServices services, ThumbnailKey key, QObject* parent)
+ThumbnailTask::ThumbnailTask(
+    PluginServices services, ThumbnailKey key, ThumbnailCache* cache, QObject* parent)
     : Task(QStringLiteral("Thumbnail of %1").arg(key.uri.fileName()), parent)
     , m_services(services)
     , m_key(std::move(key))
+    , m_cache(cache)
 {
     noteTouching(m_key.uri);
 }
@@ -57,7 +60,20 @@ ThumbnailTask::ThumbnailTask(PluginServices services, ThumbnailKey key, QObject*
 void ThumbnailTask::run()
 {
     m_ranOn = QThread::currentThread();
-    if (!m_key.isValid() || !m_services.thumbnails)
+    if (!m_key.isValid())
+        return;
+
+    // The disk tier is asked here rather than before the task, because reading it
+    // is I/O and the UI thread never touches storage. The memory tier is asked on
+    // the way in, where it costs nothing.
+    if (m_cache) {
+        if (QImage kept = m_cache->onDisk(m_key); !kept.isNull()) {
+            m_image = std::move(kept);
+            m_fromCache = true;
+            return;
+        }
+    }
+    if (isCancelRequested() || !m_services.thumbnails)
         return;
 
     // Built from the url rather than from a stat(): a listing already knows a
@@ -80,15 +96,22 @@ void ThumbnailTask::run()
     } catch (...) {
         m_image = QImage();
     }
-    if (!m_image.isNull())
-        m_answeredBy = thumbnailer->id();
+    if (m_image.isNull())
+        return;
+    m_answeredBy = thumbnailer->id();
+    // Written after a successful decode, so the next visit to this folder costs a
+    // read rather than a decode -- and a cancelled one is not written, because
+    // what it produced is not the whole picture.
+    if (m_cache && !isCancelRequested())
+        m_cache->store(m_key, m_image);
 }
 
 // ------------------------------------------------------------------------ pump
 
-ThumbnailPump::ThumbnailPump(PluginServices services, QObject* parent)
+ThumbnailPump::ThumbnailPump(PluginServices services, ThumbnailCache* cache, QObject* parent)
     : QObject(parent)
     , m_services(services)
+    , m_cache(cache)
 {
 }
 
@@ -96,38 +119,77 @@ void ThumbnailPump::startFor(QObject* response, const QString& id)
 {
     if (!response)
         return;
-    if (m_running.contains(response))
+    if (m_keyOf.contains(response))
         return; // asked twice for the same response, which is not a second picture
 
     const ThumbnailKey key = ThumbnailKey::parse(id);
-    if (!key.isValid() || !m_services.tasks || !m_services.thumbnails) {
+    if (!key.isValid() || !m_services.tasks) {
         deliver(response, QImage());
         return;
     }
 
-    auto* task = new ThumbnailTask(m_services, key, this);
-    m_running.insert(response, task);
-    connect(task, &Task::finished, this, [this, response, task] {
+    // Already in memory, which is what a scroll back up a folder looks like: the
+    // answer without a task, on the spot.
+    if (m_cache) {
+        if (QImage kept = m_cache->inMemory(key); !kept.isNull()) {
+            deliver(response, kept);
+            return;
+        }
+    }
+
+    const QString slot = key.toId();
+    m_keyOf.insert(response, slot);
+
+    // Somebody is already making this picture. Two panes showing one folder ask at
+    // the same moment, and decoding it twice is twice the work for one answer.
+    if (const auto pending = m_pending.find(slot); pending != m_pending.end()) {
+        pending->waiting.append(response);
+        return;
+    }
+
+    auto* task = new ThumbnailTask(m_services, key, m_cache, this);
+    Pending fresh;
+    fresh.task = task;
+    fresh.waiting.append(response);
+    m_pending.insert(slot, fresh);
+
+    connect(task, &Task::finished, this, [this, slot, task] {
+        const auto pending = m_pending.constFind(slot);
+        if (pending == m_pending.constEnd())
+            return;
+        const QList<QObject*> waiting = pending->waiting;
+        m_pending.erase(pending);
         // The answer, whatever happened: a cancelled or failed decode is a null
         // image and the tile keeps its icon.
-        if (!m_running.contains(response))
-            return;
-        m_running.remove(response);
-        deliver(response, task->state() == Task::State::Succeeded ? task->image() : QImage());
+        const QImage answer = task->state() == Task::State::Succeeded ? task->image() : QImage();
+        for (QObject* response : waiting) {
+            m_keyOf.remove(response);
+            deliver(response, answer);
+        }
     });
     m_services.tasks->submit(task);
 }
 
 void ThumbnailPump::cancelFor(QObject* response)
 {
-    const auto found = m_running.constFind(response);
-    if (found == m_running.constEnd())
+    const auto slot = m_keyOf.constFind(response);
+    if (slot == m_keyOf.constEnd())
         return; // already answered, and the pointer may be gone with it
 
-    if (ThumbnailTask* task = found.value())
-        task->requestCancel();
-    // The task's own finished handler still delivers, because Qt expects a
-    // cancelled response to finish rather than to hang.
+    const auto pending = m_pending.find(*slot);
+    m_keyOf.erase(slot);
+    if (pending == m_pending.end())
+        return;
+
+    pending->waiting.removeAll(response);
+    // Only when nobody wants it any more: the other pane showing this folder is
+    // still waiting for the same picture.
+    if (pending->waiting.isEmpty() && pending->task)
+        pending->task->requestCancel();
+    // The task's own finished handler still delivers to whoever is left, and Qt
+    // expects a cancelled response to finish rather than to hang -- so this one
+    // gets its answer now.
+    deliver(response, QImage());
 }
 
 void ThumbnailPump::deliver(QObject* response, const QImage& image)
