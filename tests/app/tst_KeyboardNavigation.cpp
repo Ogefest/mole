@@ -69,8 +69,21 @@ private slots:
 
     void f3AndCtrlUpWorkWithTheKeyboardOutsideThePane();
 
+    void gridArrowsMoveInTwoDimensions();
+    void gridArrowsMoveOneEntryWhenOnlyOneColumnFits();
+    void pagingMovesByWhatIsVisibleRatherThanFifteen();
+    void ctrlArrowsStillNavigateHistoryInTheGrid();
+
 private:
     BrowserPaneController* pane() const;
+    BrowserController* browser() const;
+    /// Puts the tab in grid mode and waits for the tiles to have a size, since a
+    /// key sent before the grid is laid out measures nothing.
+    bool showTiles();
+    /// How many tiles fit across right now, the way the pane works it out.
+    int gridColumns() const;
+    /// Adds `files` entries so a page is smaller than the folder.
+    bool fillFolder(int files);
     /// QObject::findChild does not follow the visual tree that Loader and
     /// SplitView build, so walk the item tree instead.
     static QQuickItem* findItem(QQuickItem* root, const QString& objectName);
@@ -854,6 +867,168 @@ void TestKeyboardNavigation::f3AndCtrlUpWorkWithTheKeyboardOutsideThePane()
         "F3 has to preview the file under the pane's cursor with the keyboard in the sidebar");
     QCOMPARE(m_app->tabs()->currentController()->property("currentUri").toString(),
         m_tree->rootUri().child(QStringLiteral("one.txt")).toString());
+}
+
+// ------------------------------------------------------- the grid's own keys
+//
+// In grid mode the two arrows that obviously mean "the tile to the left" and
+// "the tile to the right" did nothing at all, and the two that worked moved by
+// one entry rather than by a visual row. Paging moved by fifteen, a constant that
+// is a guess at a list's page height and means nothing in either view at any
+// window size. See MOLE-138.
+
+BrowserController* TestKeyboardNavigation::browser() const
+{
+    return qobject_cast<BrowserController*>(m_app->tabs()->currentController());
+}
+
+bool TestKeyboardNavigation::showTiles()
+{
+    BrowserController* tab = browser();
+    if (!tab)
+        return false;
+    tab->setViewMode(BrowserController::ViewMode::Grid);
+    settle();
+    QQuickItem* grid = findItem(QStringLiteral("fileGrid"));
+    if (!grid || !grid->isVisible() || grid->width() <= 0)
+        return false;
+    // Waited for rather than assumed: the grid takes the keyboard when it
+    // becomes the visible view, and a key sent before that goes nowhere.
+    return waitFor([grid] { return grid->width() > 0 && grid->height() > 0; });
+}
+
+int TestKeyboardNavigation::gridColumns() const
+{
+    QQuickItem* grid = findItem(QStringLiteral("fileGrid"));
+    if (!grid)
+        return 0;
+    const qreal cell = grid->property("cellWidth").toReal();
+    return cell <= 0 ? 0 : qMax(1, int(grid->width() / cell));
+}
+
+/// Enough entries for a page to be smaller than the folder, so paging can be
+/// asserted as a distance rather than as a clamp to the end.
+bool TestKeyboardNavigation::fillFolder(int files)
+{
+    for (int i = 0; i < files; ++i) {
+        if (!m_tree->writeFile(QStringLiteral("row-%1.txt").arg(i, 3, 10, QLatin1Char('0'))))
+            return false;
+    }
+    pane()->refresh();
+    const int expected = 5 + files;
+    return waitFor([this, expected] { return pane()->files()->rowCount() == expected; }, 10000);
+}
+
+void TestKeyboardNavigation::gridArrowsMoveInTwoDimensions()
+{
+    QVERIFY(fillFolder(60));
+    QVERIFY(showTiles());
+
+    const int columns = gridColumns();
+    QVERIFY2(columns >= 2, qPrintable(QStringLiteral("this window fits %1 columns").arg(columns)));
+
+    QCOMPARE(pane()->currentIndex(), 0);
+
+    // Sideways, which used to do nothing at all.
+    pressKey(Qt::Key_Right);
+    QCOMPARE(pane()->currentIndex(), 1);
+    pressKey(Qt::Key_Left);
+    QCOMPARE(pane()->currentIndex(), 0);
+    // And neither leaves the folder at either end.
+    pressKey(Qt::Key_Left);
+    QCOMPARE(pane()->currentIndex(), 0);
+    pane()->cursorToEnd();
+    const int last = pane()->files()->rowCount() - 1;
+    QCOMPARE(pane()->currentIndex(), last);
+    pressKey(Qt::Key_Right);
+    QCOMPARE(pane()->currentIndex(), last);
+
+    // Down and up move a visual row, which is the column count -- not one entry.
+    pane()->cursorToStart();
+    pressKey(Qt::Key_Down);
+    QCOMPARE(pane()->currentIndex(), columns);
+    pressKey(Qt::Key_Down);
+    QCOMPARE(pane()->currentIndex(), 2 * columns);
+    pressKey(Qt::Key_Up);
+    QCOMPARE(pane()->currentIndex(), columns);
+}
+
+/// A window narrow enough for one column is the case an arithmetic mistake would
+/// leave standing still.
+void TestKeyboardNavigation::gridArrowsMoveOneEntryWhenOnlyOneColumnFits()
+{
+    QVERIFY(fillFolder(30));
+    QVERIFY(showTiles());
+
+    const QSize was = m_window->size();
+    m_window->resize(360, was.height());
+    QVERIFY(waitFor([this] { return gridColumns() == 1; }));
+    settle();
+
+    pane()->cursorToStart();
+    pressKey(Qt::Key_Down);
+    QCOMPARE(pane()->currentIndex(), 1);
+    pressKey(Qt::Key_Up);
+    QCOMPARE(pane()->currentIndex(), 0);
+
+    m_window->resize(was);
+    settle();
+}
+
+void TestKeyboardNavigation::pagingMovesByWhatIsVisibleRatherThanFifteen()
+{
+    QVERIFY(fillFolder(200));
+
+    QQuickItem* list = findItem(QStringLiteral("fileList"));
+    QVERIFY(list);
+    const int rowHeight = m_app->listRowHeight();
+    QVERIFY(rowHeight > 0);
+
+    const auto pageIs = [&] { return qMax(1, int(list->height() / rowHeight)); };
+
+    const QSize was = m_window->size();
+    for (int height : { was.height(), was.height() / 2 }) {
+        m_window->resize(was.width(), height);
+        QVERIFY(waitFor([&] { return list->height() > 0; }));
+        settle();
+
+        const int page = pageIs();
+        QVERIFY2(
+            page > 1, qPrintable(QStringLiteral("a %1px list fits %2 rows").arg(list->height()).arg(page)));
+
+        pane()->cursorToStart();
+        pressKey(Qt::Key_PageDown);
+        QCOMPARE(pane()->currentIndex(), page);
+        pressKey(Qt::Key_PageUp);
+        QCOMPARE(pane()->currentIndex(), 0);
+    }
+    // The two heights have to have measured different pages, or this asserted
+    // one number twice.
+    m_window->resize(was.width(), was.height());
+    QVERIFY(waitFor([&] { return list->height() > 0; }));
+    settle();
+    const int tall = pageIs();
+    m_window->resize(was.width(), was.height() / 2);
+    QVERIFY(waitFor([&] { return list->height() > 0; }));
+    settle();
+    QVERIFY2(pageIs() < tall, "the page has to follow the window, not a constant");
+
+    m_window->resize(was);
+    settle();
+}
+
+void TestKeyboardNavigation::ctrlArrowsStillNavigateHistoryInTheGrid()
+{
+    QVERIFY(showTiles());
+
+    const QString start = pane()->currentUri();
+    QVERIFY(pane()->activate(0)); // alpha, the first folder
+    QVERIFY(waitFor([this, start] { return pane()->currentUri() != start; }));
+
+    pressKey(Qt::Key_Left, Qt::ControlModifier);
+    QVERIFY(waitFor([this, start] { return pane()->currentUri() == start; }));
+    pressKey(Qt::Key_Right, Qt::ControlModifier);
+    QVERIFY(waitFor([this, start] { return pane()->currentUri() != start; }));
 }
 
 int main(int argc, char** argv)

@@ -34,32 +34,61 @@ FocusScope {
     // were demonstrably working while everything routed through onPressed was
     // not. Anything with a dedicated handler now uses it; onPressed is left
     // with the keys Qt has no handler for.
+    /// How many tiles fit across the grid, or 1 in the list where a visual row
+    /// is one entry. Never zero: a pane narrower than one cell still moves by
+    /// one entry rather than standing still.
+    function columnsAcross() {
+        if (!pane.gridMode || grid.cellWidth <= 0)
+            return 1
+        return Math.max(1, Math.floor(grid.width / grid.cellWidth))
+    }
+
+    /// How many entries a page is, measured from the viewport rather than
+    /// guessed. It was 15 -- a constant that is a guess at a list's page height
+    /// and means nothing in either view at any window size.
+    function entriesPerPage() {
+        if (pane.gridMode) {
+            if (grid.cellHeight <= 0)
+                return 1
+            return Math.max(1, Math.floor(grid.height / grid.cellHeight) * pane.columnsAcross())
+        }
+        if (App.listRowHeight <= 0)
+            return 1
+        return Math.max(1, Math.floor(list.height / App.listRowHeight))
+    }
+
     // Ctrl + arrows mirror the three toolbar buttons: back, forward, up.
-    // Without a modifier the arrows drive the cursor.
+    // Without a modifier the arrows drive the cursor -- and in the grid that
+    // means what it looks like it means: up and down move a visual row, left
+    // and right move one tile. They used to move one entry and nothing at all.
     Keys.onUpPressed: function(event) {
         if (!paneController || editingPath)
             return
         if (event.modifiers & Qt.ControlModifier)
             paneController.goUp()
         else
-            paneController.moveCursor(-1)
+            paneController.moveCursor(-pane.columnsAcross())
     }
     Keys.onDownPressed: function(event) {
         if (!paneController || editingPath)
             return
-        paneController.moveCursor(1)
+        paneController.moveCursor(pane.columnsAcross())
     }
     Keys.onLeftPressed: function(event) {
         if (!paneController || editingPath)
             return
         if (event.modifiers & Qt.ControlModifier)
             paneController.goBack()
+        else if (pane.gridMode)
+            paneController.moveCursor(-1)
     }
     Keys.onRightPressed: function(event) {
         if (!paneController || editingPath)
             return
         if (event.modifiers & Qt.ControlModifier)
             paneController.goForward()
+        else if (pane.gridMode)
+            paneController.moveCursor(1)
     }
     Keys.onReturnPressed: {
         pane.trace("Return", "Return")
@@ -118,11 +147,11 @@ FocusScope {
             event.accepted = true
             break
         case Qt.Key_PageUp:
-            paneController.moveCursor(-15)
+            paneController.moveCursor(-pane.entriesPerPage())
             event.accepted = true
             break
         case Qt.Key_PageDown:
-            paneController.moveCursor(15)
+            paneController.moveCursor(pane.entriesPerPage())
             event.accepted = true
             break
         case Qt.Key_Insert:
