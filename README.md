@@ -88,10 +88,12 @@ being added on top of it.
   every operation accepts exactly as it accepts a selection.
 - **A terminal panel.** A shell for the folder you are looking at, along the
   bottom of the window.
-- **Network drives.** SFTP, FTP and FTPS, S3 and WebDAV, each configured from a
-  short form the backend itself describes. One S3 engine serves AWS, Backblaze B2,
-  MinIO, Ceph, Wasabi and R2 — the endpoint and the addressing style are just
-  fields. They ship as a loadable plugin, and further backends arrive the same way.
+- **Network drives.** SFTP, FTP and FTPS, S3, WebDAV, SMB and NFS, each configured
+  from a short form the backend itself describes. One S3 engine serves AWS, Backblaze
+  B2, MinIO, Ceph, Wasabi and R2 — the endpoint and the addressing style are just
+  fields. A Windows or NAS share and an NFS export are reached in-application, with
+  no mount and no root. They ship as a loadable plugin, and further backends arrive
+  the same way.
 - **Credentials encrypted and portable.** Passwords live in an AES-256-GCM store
   keyed by a passphrase you choose, never in the settings file. It is not tied to
   this machine: back up the configuration and the same passphrase opens it on a
@@ -129,7 +131,9 @@ sudo apt install -y clang-format clang-tidy cppcheck valgrind
 rest of the application builds normally. The same goes for `libcurl4-openssl-dev`
 and `libssl-dev`, without which the network plugin is skipped and there are no
 SFTP, FTP, S3 or WebDAV drives — configure says so, rather than offering drives
-that cannot connect.
+that cannot connect. `libsmbclient-dev` and `libnfs-dev` are optional in the same
+way and one step finer: without either, the plugin still ships and only that drive
+kind is missing, which configure names.
 
 ### Getting a binary
 
@@ -266,7 +270,7 @@ The extension points:
 
 | To add | Implement |
 |---|---|
-| a drive (SFTP, S3, WebDAV, a git forge) | `IFileSystemFactory` + `IFileSystem` |
+| a drive (SFTP, S3, WebDAV, SMB, NFS, a git forge) | `IFileSystemFactory` + `IFileSystem` |
 | a tab (duplicates, analytics, bulk rename) | `IFeature` + `FeatureController` |
 | a viewer (PDF, SQLite, Parquet, bytes) | `IPreviewProvider` + `PreviewController` |
 | what a file says about itself (EXIF, tags) | `IMetadataReader` |
@@ -364,9 +368,9 @@ object past the part size so the upload is a multipart one, sized by
 
 ## Roadmap
 
-Backends: SFTP, FTP, S3 and WebDAV ship today; NFS and SMB are not written yet.
-Google Drive, Dropbox and OneDrive speak proprietary APIs and would each need a
-plugin of their own — see [ADR-0011](docs/adr/0011-network-drives-without-rclone.md).
+Backends: SFTP, FTP, S3, WebDAV, SMB and NFS all ship today. Google Drive, Dropbox
+and OneDrive speak proprietary APIs and would each need a plugin of their own — see
+[ADR-0011](docs/adr/0011-network-drives-without-rclone.md).
 Previews: video *playback* (needs `qt6-multimedia-dev`, not installed here) and
 DuckDB tables. PDF, SQLite and Parquet are done; so are image metadata and audio
 tags, which read a header rather than linking `exiv2` or `taglib` — a reader is

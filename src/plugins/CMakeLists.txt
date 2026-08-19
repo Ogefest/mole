@@ -188,6 +188,24 @@ if(CURL_FOUND AND OpenSSL_FOUND)
     else()
         message(STATUS "Windows shares: unavailable (install libsmbclient-dev)")
     endif()
+
+    # NFS through libnfs, a userspace client -- no mount, no root. Optional the
+    # same way, and for the same reason. See ADR-0050.
+    if(PkgConfig_FOUND)
+        pkg_check_modules(LIBNFS QUIET libnfs)
+    endif()
+    if(LIBNFS_FOUND)
+        target_sources(mole_network_backends PRIVATE
+            network/NfsFileSystem.h
+            network/NfsFileSystem.cpp)
+        target_compile_definitions(mole_network_backends PUBLIC MOLE_HAVE_NFS)
+        target_include_directories(mole_network_backends PRIVATE ${LIBNFS_INCLUDE_DIRS})
+        target_link_directories(mole_network_backends PRIVATE ${LIBNFS_LIBRARY_DIRS})
+        target_link_libraries(mole_network_backends PRIVATE ${LIBNFS_LIBRARIES})
+        message(STATUS "NFS exports: nfs (libnfs ${LIBNFS_VERSION})")
+    else()
+        message(STATUS "NFS exports: unavailable (install libnfs-dev)")
+    endif()
     target_include_directories(mole_network_backends PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
     target_link_libraries(mole_network_backends
         PUBLIC mole_core

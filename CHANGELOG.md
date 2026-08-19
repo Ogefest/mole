@@ -11,6 +11,8 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-19 #MOLE-213 Mole can now open an NFS export as a drive, in the application and without mounting it or needing root
+
 2026-08-19 #MOLE-36 Mole can now open a Windows or NAS share (SMB) as a drive, without mounting it and without root
 
 2026-08-19 #MOLE-212 A transfer that stops moving is given up on when Mole's own guard says so, on every protocol, instead of when the operating system happens to notice — and cancelling one takes effect at once

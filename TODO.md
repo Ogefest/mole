@@ -134,11 +134,21 @@ project, and a contributor should never hit a wall of text they cannot read.
   it is checked in `tst_TransferTaskUnderFault`. What is missing is the other
   half: nothing tells the user that the drive they just removed is still being
   written to. Left as it is until somebody hits it.
+- **Two threads stamping a listing's times race inside glibc's timezone cache.**
+  ThreadSanitizer says so when the conformance suite's concurrency case runs against
+  a real server: `QDateTime::fromSecsSinceEpoch` reaches `localtime_r`, and glibc's
+  `tzset_internal` caches what `TZ` said without a lock. It is not ours — no backend
+  frame appears in the report — and any backend that stamps a modified time from two
+  threads can reach it. It stays documented rather than worked around because the
+  first touch decides it: in the application the interface has read a local time long
+  before a worker thread does, and nothing here ever changes `TZ`. If it is ever worth
+  closing, the fix is to touch the timezone once at startup rather than to lock
+  anything.
 - **Sync does not ask whether a read ended early**, the question
   [ADR-0027](docs/adr/0027-a-read-that-ends-early-is-not-a-file-that-shrank.md)
   added to `TransferTask`. Its copy loop has a worse version of the same fault
   and is tracked as MOLE-98.
 
 Tracked as issues rather than kept here: the full-screen window geometry (#31),
-FTP staging (#34), WebDAV against a real server (#35), NFS and SMB (#36), video
-preview (#37) and the terminal on Windows (#38).
+FTP staging (#34), WebDAV against a real server (#35), video preview (#37) and
+the terminal on Windows (#38).

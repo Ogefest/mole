@@ -1,6 +1,9 @@
 #include "plugins/network/FtpFileSystem.h"
 #include "plugins/network/S3FileSystem.h"
 #include "plugins/network/SftpFileSystem.h"
+#ifdef MOLE_HAVE_NFS
+#include "plugins/network/NfsFileSystem.h"
+#endif
 #ifdef MOLE_HAVE_SMB
 #include "plugins/network/SmbFileSystem.h"
 #endif
@@ -45,6 +48,10 @@ public:
         // Only where Samba's client library was found. A drive kind that is
         // offered and then cannot connect is worse than one that is not offered.
         registry.addFileSystemFactory(std::make_unique<SmbFileSystemFactory>());
+#endif
+#ifdef MOLE_HAVE_NFS
+        // Likewise: only where libnfs was found.
+        registry.addFileSystemFactory(std::make_unique<NfsFileSystemFactory>());
 #endif
     }
 };

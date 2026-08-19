@@ -9,6 +9,72 @@ wrong.
 
 ---
 
+## An NFS export could only be reached by mounting it outside Mole
+
+**Asked for:** MOLE-213 — the other half of what MOLE-36 was split from, and the last task in
+EPIC-20. NFS is what a Linux or BSD file server offers first and what a NAS offers beside SMB, and
+Mole had no way to reach one: the route was mounting it in the operating system and browsing it as a
+local path, which is what a virtual drive exists not to need.
+
+**libnfs, a userspace client, optional at configure time exactly as `libsmbclient` is.** A build
+without it ships the other drives and names the one it is missing. That part went as the ticket
+described.
+
+**The ticket asked for a context per thread, and that would have been wrong.** It named the shape
+SMB had settled on — a context built on first use, kept for the life of the thread, the way
+`SqliteTable` keeps its connections — and it is right for the metadata calls and wrong for the ones
+that matter. **A handle belongs to the context it was opened on.** `openRead` hands back a
+`QIODevice`, and the thread that reads a file is not the thread that opened it: a transfer opens on
+one pool thread and streams on another. A per-thread context means the read is issued on a context
+that has never heard of the handle.
+
+So a context is **leased** instead. An operation borrows one for its own duration; an open file
+borrows one for as long as it is open, which is what keeps its handle and its context together on
+whatever thread does the reading. Connections are pooled per server-and-export and four are kept
+idle, because mounting is two round trips and a directory walk should not pay for one per
+directory. One session for the process — SMB's answer — was rejected for a stated reason rather
+than by taste: SMB has no choice, since its wrappers act on a global context, and libnfs does,
+since a context is self-contained. Copying the scar without the reason would have serialised every
+NFS operation behind one connection.
+[ADR-0050](docs/adr/0050-nfs-through-libnfs-and-a-leased-mount.md) records all of it.
+
+**A broken connection is closed rather than returned to the pool.** libnfs keeps one TCP connection
+per context, and once it is gone every later call on that context answers with the same failure —
+so a failure is classified. The server answering a question about a file (`ENOENT`, `EEXIST`,
+`EACCES`, …) hands the connection back; anything else abandons it. Without that a single timeout
+leaves a drive broken until Mole restarts.
+
+**The conformance suite found one fault, on the first run, and it was the interesting one.** NFS has
+no open: libnfs looks a name up and hands back a handle, and a directory answers that lookup as
+readily as a file does. Reading a directory therefore *succeeded*, and then failed on the first
+read — which arrives as a failed copy rather than as a refused one. The fix is that the
+`nfs_fstat64` which used to be skipped when the caller already knew the size is now always made,
+and it is what refuses. Everything else passed first time, which is what a conformance suite is
+for: the rules it enforces were paid for by other backends.
+
+**Two library shapes are worth knowing before writing against libnfs.** `nfs_read` and `nfs_write`
+take the count *before* the buffer, which compiles either way round because the buffer is `void*`.
+And a directory entry carries the attributes for free through READDIRPLUS, so unlike a share
+(ADR-0048) an ordinary listing needs no stat per entry — the fallback for a server offering only
+plain READDIR is written and on the testbed it never runs.
+
+**Nine cases, eight of which need no server.** The form, the pasted `server:/srv/media` line that
+is already on somebody's clipboard, the path built inside the export, what does and does not share
+a connection, and a drive pointed at a machine that is not answering — which comes back with an
+error rather than a hang, because twenty seconds of patience is set explicitly and libnfs left to
+itself waits for the kernel. The ninth is the conformance suite against the export on the testbed.
+
+**`make test-live` is green whole again, six suites and no skips**, and `make test` is 91.
+
+**One thing found on the way and left documented rather than fixed:** under ThreadSanitizer,
+against the live export, the two threads of the conformance suite's concurrency case race inside
+glibc's `tzset_internal` — the timezone cache, reached through `QDateTime::fromSecsSinceEpoch`
+while stamping a listing's modified times. Nothing in the backend appears in either report, every
+backend that stamps a time from two threads can reach it, and in the application the interface has
+touched the timezone long before a worker does. It is in TODO.md.
+
+---
+
 ## Mole could not open a Windows or NAS share, and the backend for it aborted
 
 **Asked for:** MOLE-36 — SMB, split from NFS on 2026-08-19 once one backend had shown that two with

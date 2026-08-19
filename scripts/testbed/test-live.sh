@@ -46,6 +46,12 @@ export MOLE_TEST_SMB_HOST="$ADDRESS"
 export MOLE_TEST_SMB_SHARE="${MOLE_TESTBED_SMB_SHARE:-moledata}"
 export MOLE_TEST_SMB_USER="$ACCOUNT" MOLE_TEST_SMB_PASS="$PASSWORD"
 
+# The kernel's NFS export. No account and no password, because NFS has neither:
+# the export list decides who may mount, which is why services.sh asks for an
+# address to allow rather than a user to create.
+export MOLE_TEST_NFS_HOST="$ADDRESS"
+export MOLE_TEST_NFS_EXPORT="${MOLE_TESTBED_NFS_EXPORT:-/srv/moledata/nfs}"
+
 export MOLE_TEST_WEBDAV_URL="http://$ADDRESS/dav"
 export MOLE_TEST_WEBDAV_USER="$ACCOUNT" MOLE_TEST_WEBDAV_PASS="$PASSWORD"
 
@@ -83,7 +89,8 @@ if [ -z "${MOLE_TEST_CONTROL:-}" ] \
     export MOLE_TEST_CONTROL="ssh -o BatchMode=yes $ACCOUNT@$ADDRESS sudo mole-control"
 fi
 
-SUITES="tst_SftpFileSystem tst_WebdavFileSystem tst_FtpFileSystem tst_S3FileSystem tst_SmbFileSystem"
+SUITES="tst_SftpFileSystem tst_WebdavFileSystem tst_FtpFileSystem tst_S3FileSystem tst_SmbFileSystem
+tst_NfsFileSystem"
 
 printf '\n\033[1mLive suites against %s\033[0m\n\n' "$ADDRESS"
 

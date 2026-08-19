@@ -294,14 +294,14 @@ a password, whether it is advanced, which provider it applies to — and the
 configuration dialog is built from that. Adding a backend means implementing the
 interface. It never means touching the interface layer.
 
-The network drives are the worked example: **SFTP, FTP, S3 and WebDAV**, in
-`src/plugins/network/`, built as the loadable `mole_plugin_network` rather than
+The network drives are the worked example: **SFTP, FTP, S3, WebDAV, SMB and NFS**,
+in `src/plugins/network/`, built as the loadable `mole_plugin_network` rather than
 compiled into the application. They replaced rclone, which bought forty providers
 for 115 MB of Go and a form nobody could fill in —
 [ADR-0011](docs/adr/0011-network-drives-without-rclone.md) records why that trade
 was reversed.
 
-All four sit on one dependency, **libcurl**, which speaks sftp, ftp, ftps and
+The first four sit on one dependency, **libcurl**, which speaks sftp, ftp, ftps and
 https between them. That choice follows from the threading contract above rather
 than from a feature list: `IFileSystem` is synchronous and called only on worker
 threads, and libcurl's easy interface is blocking. `QNetworkAccessManager` would
@@ -312,6 +312,17 @@ A curl handle is not thread-safe and `IFileSystem` must tolerate concurrent call
 so each backend keeps a small pool and lends one out per call. That satisfies the
 contract and keeps libcurl's connection cache, which is what stops an SFTP drive
 renegotiating SSH for every listing.
+
+SMB and NFS each bring a library of their own — Samba's `libsmbclient` and `libnfs`
+— and each is optional at configure time, so a machine without one gets the other
+drives rather than a build failure. Neither library is thread-safe in the way
+libcurl is not, and the two answers are different because the libraries are: SMB
+serialises the whole process behind one session, because its `smbc_*` wrappers act
+on a global context and calling round them corrupts Samba's allocator
+([ADR-0048](docs/adr/0048-windows-shares-through-libsmbclient.md)); NFS leases a
+mounted context from a small pool, because a libnfs context is self-contained and a
+file handle belongs to the context it was opened on
+([ADR-0050](docs/adr/0050-nfs-through-libnfs-and-a-leased-mount.md)).
 
 S3 request signing (AWS SigV4) is implemented here, in about a hundred and fifty
 lines of HMAC-SHA256 over the OpenSSL that the credential store already required.
