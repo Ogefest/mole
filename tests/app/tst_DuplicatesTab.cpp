@@ -3,6 +3,7 @@
 #include "support/QmlAppHarness.h"
 #include "support/TestSupport.h"
 #include "ui/AppController.h"
+#include "ui/models/DuplicateGroupModel.h"
 #include "ui/models/TabsModel.h"
 
 #include "core/CoreMetaTypes.h"
@@ -18,6 +19,7 @@
 #include <QGuiApplication>
 #include <QQuickItem>
 #include <QQuickStyle>
+#include <QSignalSpy>
 #include <QTest>
 
 using namespace mole;
@@ -60,6 +62,11 @@ private slots:
     void theChoiceHasWeightOnTheScreen();
     void everyStrategyNameFitsInThePickerThatOffersIt();
 
+    void confirmingEachGroupInsertsOneRowAndResetsNothing();
+    void twoHundredGroupsCostTwoHundredInsertionsAndNothingElse();
+    void tickingOneCopyChangesOneRowAndRebuildsNothing();
+    void aGroupArrivingLeavesTheScrollPositionWhereItWas();
+
 private:
     /// Builds the whole window. Files go in *its* fixture and not in `m_tree`:
     /// the application mounts its own, and a scan pointed at a directory the
@@ -80,6 +87,17 @@ private:
     /// popup, where the delegates are built by the style and carry no objectName
     /// of ours to look them up by.
     static QQuickItem* itemShowing(QQuickItem* root, const QString& text);
+    /// Services enough for a controller with no window behind it. Three of these
+    /// assertions are about the model rather than about the screen, and a
+    /// headless controller is the cheapest place to hold them.
+    PluginServices guiless() const;
+    /// `count` groups of two copies each, every group at a size of its own so the
+    /// last stage has `count` buckets and confirms them one at a time.
+    bool writeGroups(int count);
+    /// A group no scan produced. The only way to make one arrive at a chosen
+    /// instant: a scan decides for itself when it has confirmed something, and
+    /// what the view costs on an arrival is the claim being made.
+    static DuplicateGroup madeUpGroup(const QString& name, qint64 size);
 
     std::unique_ptr<QmlAppHarness> m_harness;
     std::unique_ptr<TempTree> m_tree;
@@ -168,6 +186,44 @@ QQuickItem* TestDuplicatesTab::itemShowing(QQuickItem* root, const QString& text
     return nullptr;
 }
 
+PluginServices TestDuplicatesTab::guiless() const
+{
+    PluginServices services;
+    services.vfs = m_vfs.get();
+    services.tasks = m_tasks.get();
+    services.index = m_index.get();
+    services.events = m_events.get();
+    return services;
+}
+
+bool TestDuplicatesTab::writeGroups(int count)
+{
+    for (int i = 0; i < count; ++i) {
+        // A size of its own, so every group is settled in a bucket of its own.
+        const QByteArray body(1024 + i * 8, static_cast<char>('a' + i % 26));
+        if (!m_tree->writeFile(QStringLiteral("pile/%1/one.bin").arg(i), body))
+            return false;
+        if (!m_tree->writeFile(QStringLiteral("pile/%1/two.bin").arg(i), body))
+            return false;
+    }
+    return true;
+}
+
+DuplicateGroup TestDuplicatesTab::madeUpGroup(const QString& name, qint64 size)
+{
+    DuplicateGroup group;
+    for (int i = 0; i < 2; ++i) {
+        FileEntry entry;
+        entry.name = name;
+        entry.uri = VfsUri::fromLocalPath(QStringLiteral("/made-up/%1/%2").arg(i).arg(name));
+        entry.size = size;
+        entry.modified = QDateTime::fromSecsSinceEpoch(1700000000);
+        group.files.append(entry);
+    }
+    group.reclaimable = size;
+    return group;
+}
+
 void TestDuplicatesTab::cleanup()
 {
     m_harness.reset();
@@ -231,11 +287,13 @@ void TestDuplicatesTab::noSelectionRuleEverProposesDeletingEveryCopy()
     const QSet<QString> selected(chosen.constBegin(), chosen.constEnd());
     QVERIFY2(!selected.isEmpty(), "a rule that selects nothing is not a rule");
 
-    // The assertion, group by group: at least one file is not on the list.
-    const QVariantList groups = controller.groups();
-    for (const QVariant& value : groups) {
-        const QVariantMap group = value.toMap();
-        const QVariantList files = group.value(QStringLiteral("files")).toList();
+    // The assertion, group by group: at least one file is not on the list. Read
+    // through the model's own rows, which is where the groups live since
+    // MOLE-210 -- the claim is unchanged and only the reading of it moved.
+    DuplicateGroupModel* model = controller.groups();
+    QVERIFY(model);
+    for (int row = 0; row < model->rowCount(); ++row) {
+        const QVariantList files = model->data(model->index(row), DuplicateGroupModel::FilesRole).toList();
         QVERIFY(files.size() > 1);
 
         int kept = 0;
@@ -824,6 +882,169 @@ void TestDuplicatesTab::everyStrategyNameFitsInThePickerThatOffersIt()
                            .arg(row->implicitWidth())
                            .arg(row->width())));
     }
+}
+
+// ---- the list is a model, and an arrival is an insertion ----------------
+//
+// A duplicate scan over a tree with many duplicates in it used to stop the window
+// responding, and the list of groups redrew so often that it could not be read or
+// scrolled while it filled. The scan was never what was blocked: the groups were
+// a QVariantList rebuilt from scratch every time it was read, and it was read once
+// per confirmed group -- G² maps and twice as many formatting calls on the drawing
+// thread, the last rebuild the largest. A QVariantList also carries no notion of a
+// row being added, so every arrival was a wholesale replacement of the view's
+// contents. These four assert the shape that fixed it. See MOLE-210.
+
+void TestDuplicatesTab::confirmingEachGroupInsertsOneRowAndResetsNothing()
+{
+    QVERIFY(writeGroups(3));
+
+    DuplicatesController controller(guiless());
+    controller.setStrategyId(QStringLiteral("content"));
+    controller.setMinimumSize(1);
+    controller.setTargets({ m_tree->rootUri().toString() });
+
+    DuplicateGroupModel* model = controller.groups();
+    QVERIFY(model);
+    QSignalSpy inserted(model, &QAbstractItemModel::rowsInserted);
+    QSignalSpy reset(model, &QAbstractItemModel::modelReset);
+    QSignalSpy changed(model, &QAbstractItemModel::dataChanged);
+
+    controller.scan();
+    QVERIFY(waitFor([&] { return !controller.isScanning() && controller.hasRun(); }, 30000));
+
+    QCOMPARE(model->rowCount(), 3);
+    // One insertion per confirmed group, and not one reset. The reset is the whole
+    // difference: it means a new list, which is every delegate destroyed and built
+    // again and the scroll position gone with them.
+    QCOMPARE(inserted.count(), 3);
+    QCOMPARE(reset.count(), 0);
+    // And no row was touched because another one arrived, which is precisely what
+    // the rebuild did to every row it had.
+    QCOMPARE(changed.count(), 0);
+    for (const QList<QVariant>& one : inserted)
+        QCOMPARE(one.at(1).toInt(), one.at(2).toInt()); // first == last: one row
+}
+
+void TestDuplicatesTab::twoHundredGroupsCostTwoHundredInsertionsAndNothingElse()
+{
+    // The size at which this was noticed. Two hundred groups meant two hundred
+    // rebuilds of a list that was two hundred groups long by the end, so the
+    // drawing thread was handed work that grew with the square of the answer.
+    const int groups = 200;
+    QVERIFY(writeGroups(groups));
+
+    DuplicatesController controller(guiless());
+    controller.setStrategyId(QStringLiteral("content"));
+    controller.setMinimumSize(1);
+    controller.setTargets({ m_tree->rootUri().toString() });
+
+    DuplicateGroupModel* model = controller.groups();
+    QVERIFY(model);
+    QSignalSpy inserted(model, &QAbstractItemModel::rowsInserted);
+    QSignalSpy reset(model, &QAbstractItemModel::modelReset);
+    QSignalSpy changed(model, &QAbstractItemModel::dataChanged);
+
+    controller.scan();
+    QVERIFY(waitFor([&] { return !controller.isScanning() && controller.hasRun(); }, 120000));
+
+    QCOMPARE(model->rowCount(), groups);
+    // Bounded by the number of groups rather than by their square, which is the
+    // same claim MOLE-188 made about a status line reported per entry: what the
+    // drawing thread is given has to be bounded by something.
+    QCOMPARE(inserted.count(), groups);
+    QCOMPARE(reset.count(), 0);
+    QCOMPARE(changed.count(), 0);
+
+    // The totals are kept as the groups arrive rather than found again by walking
+    // all of them, and they are read on every confirmation.
+    QCOMPARE(model->copyCount(), groups * 2);
+    QVERIFY(model->reclaimableBytes() > 0);
+    QVERIFY(controller.summary().contains(QStringLiteral("200 groups")));
+}
+
+void TestDuplicatesTab::tickingOneCopyChangesOneRowAndRebuildsNothing()
+{
+    QVERIFY(writeGroups(3));
+
+    DuplicatesController controller(guiless());
+    controller.setStrategyId(QStringLiteral("content"));
+    controller.setMinimumSize(1);
+    controller.setTargets({ m_tree->rootUri().toString() });
+    controller.scan();
+    QVERIFY(waitFor([&] { return !controller.isScanning() && controller.hasRun(); }, 30000));
+
+    DuplicateGroupModel* model = controller.groups();
+    QCOMPARE(model->rowCount(), 3);
+
+    const QVariantList files = model->data(model->index(1), DuplicateGroupModel::FilesRole).toList();
+    QVERIFY(!files.isEmpty());
+    const QString ticked = files.first().toMap().value(QStringLiteral("uri")).toString();
+    QVERIFY(!ticked.isEmpty());
+
+    QSignalSpy inserted(model, &QAbstractItemModel::rowsInserted);
+    QSignalSpy reset(model, &QAbstractItemModel::modelReset);
+    QSignalSpy changed(model, &QAbstractItemModel::dataChanged);
+
+    controller.toggle(ticked);
+
+    // One row, announced once. Ticking a checkbox in a result of five hundred
+    // groups used to rebuild and re-create all of them.
+    QCOMPARE(changed.count(), 1);
+    QCOMPARE(changed.first().at(0).value<QModelIndex>().row(), 1);
+    QCOMPARE(changed.first().at(1).value<QModelIndex>().row(), 1);
+    QCOMPARE(inserted.count(), 0);
+    QCOMPARE(reset.count(), 0);
+    QCOMPARE(controller.selectedCount(), 1);
+    QVERIFY(model->isSelected(ticked));
+}
+
+void TestDuplicatesTab::aGroupArrivingLeavesTheScrollPositionWhereItWas()
+{
+    // Through the real window: the claim is about what the view does with an
+    // arrival, and a scroll position is something only a view has.
+    QVERIFY(startWindow());
+    for (int i = 0; i < 14; ++i) {
+        const QByteArray body(1024 + i * 8, static_cast<char>('a' + i % 26));
+        QVERIFY(m_harness->writeFile(QStringLiteral("pile/%1/one.bin").arg(i), body));
+        QVERIFY(m_harness->writeFile(QStringLiteral("pile/%1/two.bin").arg(i), body));
+    }
+
+    DuplicatesController* controller = openTabOn({ fixtureRoot(QStringLiteral("pile")) });
+    QVERIFY(controller);
+    controller->setStrategyId(QStringLiteral("content"));
+    controller->setMinimumSize(1);
+    controller->scan();
+    QVERIFY(m_harness->until([controller] { return !controller->isScanning() && controller->hasRun(); }));
+    QVERIFY(m_harness->until([this] { return shown(QStringLiteral("duplicateGroupList")) != nullptr; }));
+    m_harness->settle();
+
+    QQuickItem* list = shown(QStringLiteral("duplicateGroupList"));
+    QVERIFY(list);
+    const qreal reach = list->property("contentHeight").toReal() - list->height();
+    QVERIFY2(reach > 0, "the list fits on screen, so there is no scroll position to lose");
+
+    const qreal scrolled = qMin<qreal>(reach, 60);
+    list->setProperty("contentY", scrolled);
+    m_harness->settle();
+    QCOMPARE(list->property("contentY").toReal(), scrolled);
+
+    DuplicateGroupModel* model = controller->groups();
+    QSignalSpy reset(model, &QAbstractItemModel::modelReset);
+
+    // Below what is on screen: the rows in view are untouched, so the position is
+    // unchanged to the pixel.
+    model->insertGroup(madeUpGroup(QStringLiteral("late.bin"), 512), model->rowCount());
+    m_harness->settle();
+    QCOMPARE(list->property("contentY").toReal(), scrolled);
+
+    // And above it. The rows in view move down the list, so the number is allowed
+    // to change to keep them where they are -- what is not allowed is the jump back
+    // to the top that a replaced list gave every time.
+    model->insertGroup(madeUpGroup(QStringLiteral("earlier.bin"), 4096), 0);
+    m_harness->settle();
+    QVERIFY2(list->property("contentY").toReal() > 0, "the list jumped back to the top when a group arrived");
+    QCOMPARE(reset.count(), 0);
 }
 
 // A real window, so a real QGuiApplication rather than the guiless one

@@ -549,16 +549,21 @@ Item {
                 visible: view.showingResults
                 clip: true
                 spacing: 8
-                model: controller ? controller.groups : []
+                // A model, not a list: a confirmed group is one row inserted,
+                // so the delegates already built are left alone and the scroll
+                // position with them. See MOLE-210 and DuplicateGroupModel.
+                model: controller ? controller.groups : null
 
                 delegate: Rectangle {
-                    required property var modelData
+                    required property int copies
+                    required property string sizeText
+                    required property string reclaimableText
+                    required property var files
 
                     // Whether anything in this group is ticked. Until something is,
                     // every copy is equally kept and marking them all "keeping"
                     // would be noise on a screen where nothing has been decided.
                     readonly property bool decided: {
-                        const files = modelData.files
                         for (let i = 0; i < files.length; ++i) {
                             if (files[i].selected)
                                 return true
@@ -582,7 +587,7 @@ Item {
                         RowLayout {
                             Layout.fillWidth: true
                             Label {
-                                text: modelData.count + " copies · " + modelData.sizeText + " each"
+                                text: copies + " copies · " + sizeText + " each"
                                 font.pixelSize: 12
                                 font.bold: true
                             }
@@ -598,14 +603,14 @@ Item {
                                 font.pixelSize: 11
                             }
                             Label {
-                                text: modelData.reclaimableText + " could be freed"
+                                text: reclaimableText + " could be freed"
                                 color: "#d9a441"
                                 font.pixelSize: 11
                             }
                         }
 
                         Repeater {
-                            model: modelData.files
+                            model: files
                             delegate: RowLayout {
                                 required property var modelData
                                 Layout.fillWidth: true

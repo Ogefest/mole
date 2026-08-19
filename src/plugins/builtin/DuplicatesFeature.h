@@ -3,6 +3,7 @@
 #include "sdk/FeatureController.h"
 #include "sdk/IFeature.h"
 #include "sdk/PluginServices.h"
+#include "ui/models/DuplicateGroupModel.h"
 
 #include "core/duplicates/FindDuplicatesTask.h"
 
@@ -25,7 +26,11 @@ class DuplicatesController final : public FeatureController
     Q_PROPERTY(QString strategyId READ strategyId WRITE setStrategyId NOTIFY optionsChanged)
     Q_PROPERTY(QString strategyDescription READ strategyDescription NOTIFY optionsChanged)
     Q_PROPERTY(qint64 minimumSize READ minimumSize WRITE setMinimumSize NOTIFY optionsChanged)
-    Q_PROPERTY(QVariantList groups READ groups NOTIFY resultsChanged)
+    /// The confirmed groups, as a model. Constant because the object never
+    /// changes -- what changes is its contents, and it says so itself, one row at
+    /// a time. A list property re-read on every confirmation is the fault
+    /// MOLE-210 fixed; see DuplicateGroupModel.
+    Q_PROPERTY(mole::DuplicateGroupModel* groups READ groups CONSTANT)
     Q_PROPERTY(int groupCount READ groupCount NOTIFY resultsChanged)
     Q_PROPERTY(QString summary READ summary NOTIFY resultsChanged)
     Q_PROPERTY(bool scanning READ isScanning NOTIFY resultsChanged)
@@ -66,15 +71,15 @@ public:
     qint64 minimumSize() const { return m_minimumSize; }
     void setMinimumSize(qint64 bytes);
 
-    QVariantList groups() const;
-    int groupCount() const { return static_cast<int>(m_groups.size()); }
+    DuplicateGroupModel* groups() const { return m_groups; }
+    int groupCount() const { return m_groups->rowCount(); }
     QString summary() const;
     bool isScanning() const { return !m_task.isNull(); }
     bool hasRun() const { return m_hasRun; }
     QString progressText() const { return m_progressText; }
     bool wasCancelled() const { return m_wasCancelled; }
 
-    int selectedCount() const { return static_cast<int>(m_selected.size()); }
+    int selectedCount() const { return m_groups->selectedCount(); }
     QString selectedSizeText() const;
     int copyCount() const;
     QString ruleText() const { return m_ruleText; }
@@ -139,8 +144,7 @@ private:
     QStringList m_roots;
     QString m_strategyId = QStringLiteral("content");
     qint64 m_minimumSize = 1024;
-    QList<DuplicateGroup> m_groups;
-    QSet<QString> m_selected;
+    DuplicateGroupModel* m_groups = nullptr;
     bool m_hasRun = false;
     bool m_wasCancelled = false;
     QString m_ruleText;

@@ -27,6 +27,7 @@ namespace {
 DuplicatesController::DuplicatesController(PluginServices services, QObject* parent)
     : FeatureController(QStringLiteral("Duplicates"), parent)
     , m_services(services)
+    , m_groups(new DuplicateGroupModel(this))
 {
 }
 
@@ -94,73 +95,46 @@ void DuplicatesController::setMinimumSize(qint64 bytes)
     emit stateChanged();
 }
 
-QVariantList DuplicatesController::groups() const
-{
-    QVariantList out;
-    const QLocale locale;
-
-    for (const DuplicateGroup& group : m_groups) {
-        QVariantList files;
-        for (const FileEntry& entry : group.files) {
-            const QString uri = entry.uri.toString();
-            files.append(QVariantMap { { QStringLiteral("uri"), uri }, { QStringLiteral("name"), entry.name },
-                { QStringLiteral("location"), entry.uri.parent().toString() },
-                { QStringLiteral("sizeText"), locale.formattedDataSize(entry.size) },
-                { QStringLiteral("modifiedText"),
-                    entry.modified.toString(QStringLiteral("yyyy-MM-dd HH:mm")) },
-                { QStringLiteral("selected"), m_selected.contains(uri) } });
-        }
-
-        out.append(QVariantMap { { QStringLiteral("count"), group.files.size() },
-            { QStringLiteral("sizeText"), locale.formattedDataSize(group.files.first().size) },
-            { QStringLiteral("reclaimableText"), locale.formattedDataSize(group.reclaimable) },
-            { QStringLiteral("files"), files } });
-    }
-    return out;
-}
-
 QString DuplicatesController::summary() const
 {
-    qint64 reclaimable = 0;
-    for (const DuplicateGroup& group : m_groups)
-        reclaimable += group.reclaimable;
+    // Both figures are kept by the model as they change. Walking every group for
+    // them was cheap on its own and ruinous where it sat: this is read on every
+    // confirmation, and there may be five hundred groups by the end.
     const QString found = QStringLiteral("%1 groups · %2 could be freed")
-                              .arg(m_groups.size())
-                              .arg(QLocale().formattedDataSize(reclaimable));
+                              .arg(m_groups->rowCount())
+                              .arg(QLocale().formattedDataSize(m_groups->reclaimableBytes()));
 
     // Groups arrive as they are confirmed, so a scan in flight has something to
     // say about itself beyond "scanning…" -- and what it has found so far is
     // already on screen, which would make a summary that ignored it read wrong.
     if (isScanning())
-        return m_groups.isEmpty() ? QStringLiteral("scanning…") : found + QStringLiteral(" so far");
+        return m_groups->rowCount() == 0 ? QStringLiteral("scanning…") : found + QStringLiteral(" so far");
     if (!m_hasRun)
         return {};
     // A stopped scan says so. What it found is kept -- every group of it agreed
     // at every stage -- but "no duplicates found" about a scan that was cut off
     // after ten seconds of a ten-minute tree is not true.
     if (m_wasCancelled) {
-        return m_groups.isEmpty() ? QStringLiteral("stopped before anything was found")
-                                  : found + QStringLiteral(" · stopped early");
+        return m_groups->rowCount() == 0 ? QStringLiteral("stopped before anything was found")
+                                         : found + QStringLiteral(" · stopped early");
     }
-    if (m_groups.isEmpty())
+    if (m_groups->rowCount() == 0)
         return QStringLiteral("no duplicates found");
     return found;
 }
 
 QStringList DuplicatesController::selectedUris() const
 {
-    QStringList out = m_selected.values();
-    out.sort();
-    return out;
+    return m_groups->selectedUris();
 }
 
 QVariantList DuplicatesController::selectedDetails() const
 {
     QVariantList out;
     const QLocale locale;
-    for (const DuplicateGroup& group : m_groups) {
+    for (const DuplicateGroup& group : m_groups->groups()) {
         for (const FileEntry& entry : group.files) {
-            if (!m_selected.contains(entry.uri.toString()))
+            if (!m_groups->isSelected(entry.uri.toString()))
                 continue;
             out.append(QVariantMap { { QStringLiteral("name"), entry.uri.toString() },
                 { QStringLiteral("isDir"), false },
@@ -172,10 +146,7 @@ QVariantList DuplicatesController::selectedDetails() const
 
 int DuplicatesController::copyCount() const
 {
-    int copies = 0;
-    for (const DuplicateGroup& group : m_groups)
-        copies += static_cast<int>(group.files.size());
-    return copies;
+    return m_groups->copyCount();
 }
 
 void DuplicatesController::setRuleText(const QString& text)
@@ -190,14 +161,7 @@ void DuplicatesController::setRuleText(const QString& text)
 
 QString DuplicatesController::selectedSizeText() const
 {
-    qint64 bytes = 0;
-    for (const DuplicateGroup& group : m_groups) {
-        for (const FileEntry& entry : group.files) {
-            if (m_selected.contains(entry.uri.toString()))
-                bytes += entry.size;
-        }
-    }
-    return QLocale().formattedDataSize(bytes);
+    return QLocale().formattedDataSize(m_groups->selectedBytes());
 }
 
 void DuplicatesController::scan()
@@ -209,8 +173,7 @@ void DuplicatesController::scan()
     for (const QString& uri : std::as_const(m_roots))
         roots.append(VfsUri::fromString(uri));
 
-    m_groups.clear();
-    m_selected.clear();
+    m_groups->clear();
     m_wasCancelled = false;
     m_ruleText.clear();
     m_progressText.clear();
@@ -230,7 +193,10 @@ void DuplicatesController::scan()
         task, &FindDuplicatesTask::groupFound, this, [this, task](const DuplicateGroup& group, int position) {
             if (m_task != task)
                 return;
-            m_groups.insert(qBound(0, position, static_cast<int>(m_groups.size())), group);
+            // An insertion, announced as one. The scalar properties -- the count,
+            // the summary -- are read again off resultsChanged and cost nothing;
+            // what used to cost was that the list was read again with them.
+            m_groups->insertGroup(group, position);
             emit resultsChanged();
         });
     connect(task, &Task::statusTextChanged, this, [this, task] {
@@ -267,67 +233,39 @@ void DuplicatesController::cancel()
 
 void DuplicatesController::toggle(const QString& uri)
 {
-    if (m_selected.contains(uri))
-        m_selected.remove(uri);
-    else
-        m_selected.insert(uri);
+    // One row changes and the model says so. No resultsChanged: nothing about
+    // the results changed, and it used to be what rebuilt all of them.
+    m_groups->toggle(uri);
     // A rule that has been edited is no longer the rule. Saying "keeping the
     // newest" over ticks somebody has since changed by hand would be the view
     // asserting something untrue about what will be deleted.
-    setRuleText(m_selected.isEmpty() ? QString {} : QStringLiteral("Chosen by hand"));
+    setRuleText(m_groups->selectedCount() == 0 ? QString {} : QStringLiteral("Chosen by hand"));
     emit selectionChanged();
-    emit resultsChanged();
 }
 
 void DuplicatesController::keepOnly(const QString& uri)
 {
     // The group this copy belongs to, and only that one: the point of a per-group
-    // override is that the other forty-nine keep whatever they were given.
-    for (const DuplicateGroup& group : m_groups) {
-        bool mine = false;
-        for (const FileEntry& entry : group.files) {
-            if (entry.uri.toString() == uri)
-                mine = true;
-        }
-        if (!mine)
-            continue;
-
-        for (const FileEntry& entry : group.files) {
-            const QString each = entry.uri.toString();
-            if (each == uri)
-                m_selected.remove(each);
-            else
-                m_selected.insert(each);
-        }
-        setRuleText(QStringLiteral("Chosen by hand"));
-        emit selectionChanged();
-        emit resultsChanged();
-        return;
-    }
+    // override is that the other forty-nine keep whatever they were given -- and
+    // the model announces the one row, so they are not even redrawn.
+    m_groups->keepOnly(uri);
+    setRuleText(QStringLiteral("Chosen by hand"));
+    emit selectionChanged();
 }
 
 void DuplicatesController::clearSelection()
 {
-    m_selected.clear();
+    m_groups->clearSelection();
     setRuleText({});
     emit selectionChanged();
-    emit resultsChanged();
 }
 
 void DuplicatesController::selectAllBut(
     const QString& rule, const std::function<int(const QList<FileEntry>&)>& chooseKeeper)
 {
-    m_selected.clear();
-    for (const DuplicateGroup& group : m_groups) {
-        const int keeper = chooseKeeper(group.files);
-        for (int i = 0; i < group.files.size(); ++i) {
-            if (i != keeper)
-                m_selected.insert(group.files.at(i).uri.toString());
-        }
-    }
-    setRuleText(m_groups.isEmpty() ? QString {} : rule);
+    m_groups->selectAllBut(chooseKeeper);
+    setRuleText(m_groups->rowCount() == 0 ? QString {} : rule);
     emit selectionChanged();
-    emit resultsChanged();
 }
 
 void DuplicatesController::keepNewest()
@@ -393,12 +331,13 @@ QString DuplicatesController::buildSetFromTicked(const QString& name)
 
 void DuplicatesController::deleteSelected()
 {
-    if (!m_services.isValid() || m_selected.isEmpty() || m_task)
+    if (!m_services.isValid() || m_groups->selectedCount() == 0 || m_task)
         return;
 
     // Grouped by drive, because a delete task belongs to one backend.
     QHash<QString, QList<VfsUri>> byDrive;
-    for (const QString& uri : std::as_const(m_selected)) {
+    const QStringList ticked = m_groups->selectedUris();
+    for (const QString& uri : ticked) {
         const VfsUri parsed = VfsUri::fromString(uri);
         if (parsed.isValid())
             byDrive[parsed.scheme() + QLatin1Char('/') + parsed.authority()].append(parsed);
@@ -413,8 +352,7 @@ void DuplicatesController::deleteSelected()
         connect(task, &Task::finished, this, [this] {
             // The results now describe files that may be gone, so they are
             // cleared rather than left to look actionable.
-            m_groups.clear();
-            m_selected.clear();
+            m_groups->clear();
             m_ruleText.clear();
             m_hasRun = false;
             emit resultsChanged();

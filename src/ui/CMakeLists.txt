@@ -20,6 +20,8 @@ add_library(mole_ui STATIC
     models/TableModel.cpp
     models/BreakdownModel.h
     models/BreakdownModel.cpp
+    models/DuplicateGroupModel.h
+    models/DuplicateGroupModel.cpp
     models/BrowserPaneController.h
     models/BrowserPaneController.cpp
     models/RepositoryInfo.h

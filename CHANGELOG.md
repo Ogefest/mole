@@ -11,6 +11,8 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-19 #MOLE-210 A duplicate scan no longer stops the window responding as it fills — a confirmed group is added to the list instead of rebuilding every group already in it, so the results can be read and scrolled while the scan is still running
+
 2026-08-19 #MOLE-213 Mole can now open an NFS export as a drive, in the application and without mounting it or needing root
 
 2026-08-19 #MOLE-36 Mole can now open a Windows or NAS share (SMB) as a drive, without mounting it and without root
