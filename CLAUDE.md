@@ -78,12 +78,20 @@ not part of any larger effort. The `no epic` column of the `By epic` view should
 always be empty, and a card appearing in it means one fell out.
 
 **The catch-all is a batch, and its name changes.** It fills, gets worked, closes when its
-last task lands, and planning creates the next one when the next small thing arrives. It is
-`Loose ends II` today — the first batch closed on 2026-08-19 — and will be `Loose ends III` after
-that. **So never type the name from memory and never attach a task to a finished epic** — that is
-what happened to `Testing: phase 6 — automation`, whose card was closed while `MOLE-29` stayed
-open, and the task was unreachable for eight days because the queue is the epics and a finished
-epic is never offered.
+last task lands, and planning creates the next one when the next small thing arrives. `Loose ends`
+was the first and closed on 2026-08-19; `Loose ends II` was made and closed the same day; the next
+is `Loose ends III`. **So never type the name from memory and never attach a task to a finished
+epic** — that is what happened to `Testing: phase 6 — automation`, whose card was closed while
+`MOLE-29` stayed open, and the task was unreachable for eight days because the queue is the epics
+and a finished epic is never offered.
+
+**Much of the time no catch-all is open at all**, because one closes the moment its last task lands
+and the next is made only when something needs it. That is the normal state and not a fault — as of
+the evening of 2026-08-19 there is none. When you open a small task and the open-epic list holds no
+catch-all, **leave the task with no `epic:` label and say so in the message you send.** Planning
+sees it in the `no epic` column, which is exactly what that column is for, and makes the next batch.
+An unlabelled task waiting an hour is recoverable; a task filed into a finished epic is invisible,
+and that is the failure above.
 
 **The catch-all is the last resort and not the default.** It was broken up on
 2026-08-18 after growing to eighteen open tasks over six unrelated subjects. A
