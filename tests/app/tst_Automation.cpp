@@ -10,10 +10,12 @@
 
 #include "core/CoreMetaTypes.h"
 #include "core/analysis/AnalysisStore.h"
+#include "core/automation/ScheduleRule.h"
 #include "core/automation/ScheduleStore.h"
 #include "core/automation/Scheduler.h"
 
 #include <QDir>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QTemporaryDir>
 #include <QTest>
@@ -40,6 +42,7 @@ private slots:
     void theTrackingTabPutsFailuresFirst();
     void ruleSurvivesARestartOfTheApplication();
     void aScheduledRescanRunsSurvivesARestartAndCatchesUp();
+    void anIntervalCanBeChosenChangedAndTurnedOffForAFolder();
 
 private:
     /// The search tab, which is where a folder is put on a clock for indexing.
@@ -277,7 +280,7 @@ void TestAutomation::aScheduledRescanRunsSurvivesARestartAndCatchesUp()
     const QString uri = m_tree->rootUri().toString();
     LiveSearchController* form = search();
     QVERIFY(form);
-    QVERIFY(!form->scheduleScan(uri, 24).isEmpty());
+    QVERIFY(!form->scheduleScan(uri, 24 * 3600).isEmpty());
     QCOMPARE(form->scheduledScanId(uri).isEmpty(), false);
     // Noted before the restart takes the form with it: what the scan was asked
     // for is what the rule has to repeat.
@@ -330,6 +333,47 @@ void TestAutomation::aScheduledRescanRunsSurvivesARestartAndCatchesUp()
     QVERIFY(reopened);
     QVERIFY2(reopened->indexCoversRoot() || !reopened->volumeLabels().isEmpty(),
         "a scheduled scan has to leave a volume behind");
+}
+
+/// The nightly re-index used to be a checkbox that created a rule when it was
+/// ticked and did nothing at all when it was unticked, over an interval written
+/// as 24 in the QML. All three of those are one control now, and it reads like
+/// the report tab's. See MOLE-227.
+void TestAutomation::anIntervalCanBeChosenChangedAndTurnedOffForAFolder()
+{
+    const QString uri = m_tree->rootUri().toString();
+    LiveSearchController* form = search();
+    QVERIFY(form);
+    QCOMPARE(form->scheduledScanSeconds(uri), 0);
+
+    // Chosen for a folder that has none.
+    const QString id = form->scheduleScan(uri, 7 * 24 * 3600);
+    QVERIFY(!id.isEmpty());
+    QCOMPARE(m_app->schedules()->rules().size(), 1);
+    QCOMPARE(form->scheduledScanSeconds(uri), 7 * 24 * 3600);
+
+    // Changed for a folder that has one, keeping the rule rather than being
+    // ignored -- which is what happened while the first rule won.
+    QCOMPARE(form->scheduleScan(uri, 24 * 3600), id);
+    QCOMPARE(m_app->schedules()->rules().size(), 1);
+    QCOMPARE(form->scheduledScanSeconds(uri), 24 * 3600);
+
+    // And turned off, which is what the zero entry of the picker means.
+    QVERIFY(form->scheduleScan(uri, 0).isEmpty());
+    QVERIFY(m_app->schedules()->rules().isEmpty());
+    QVERIFY(form->scheduledScanId(uri).isEmpty());
+    QCOMPARE(form->scheduledScanSeconds(uri), 0);
+
+    // The intervals offered are the ones every other repeating job is offered,
+    // so the two dialogs cannot drift apart.
+    QCOMPARE(form->schedulePresets().size(), ScheduleRule::presets().size());
+
+    // Named for the folder, because a rule sits in Automation beside the report
+    // rules and the whole uri of a deep tree tells a reader nothing.
+    QVERIFY(!form->scheduleScan(uri, 24 * 3600).isEmpty());
+    const QString label = m_app->schedules()->rules().first().label;
+    QVERIFY2(!label.contains(uri), qPrintable(label));
+    QVERIFY2(label.contains(QFileInfo(m_tree->path()).fileName()), qPrintable(label));
 }
 
 int main(int argc, char** argv)

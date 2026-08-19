@@ -150,6 +150,7 @@ private slots:
     void theCopyDialogSaysWhichButtonActsAndGoesRedForOverwrite();
     void forgettingEveryReportForAFolderAsksInRed();
     void indexingAFolderIsAskedForWithTheVerbAndTypedInto();
+    void theIndexDialogOpensOnTheIntervalTheFolderIsAlreadyOn();
     void aDialogWithOneButtonStillHoldsTheKeyboard();
     void analysesAFolder();
     void schedulesTheReportAndTracksIt();
@@ -2482,6 +2483,39 @@ void TestWalkthrough::indexingAFolderIsAskedForWithTheVerbAndTypedInto()
     m_harness->type(m_harness->fixturePath());
     QVERIFY(m_harness->until([accept] { return accept->property("enabled").toBool(); }));
     QVERIFY2(looksBlue(fillOf(accept)), "indexing is not destructive, so blue rather than red");
+}
+
+/// How often a folder is re-indexed is chosen where the folder is indexed, and
+/// the control opens on the interval it is already on -- a picker that always
+/// says "never" is one that offers to turn a nightly run off every time somebody
+/// looks at it. It was a checkbox over an interval written as 24 in the QML. See
+/// MOLE-227.
+void TestWalkthrough::theIndexDialogOpensOnTheIntervalTheFolderIsAlreadyOn()
+{
+    QVERIFY(m_harness->app()->openFeatureTab(QStringLiteral("mole.livesearch")) >= 0);
+    m_harness->settle(6);
+    auto* search = qobject_cast<LiveSearchController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY(search);
+
+    QObject* dialog = m_harness->object(QStringLiteral("scanDialog"));
+    QVERIFY(dialog);
+    QVERIFY(QMetaObject::invokeMethod(dialog, "open"));
+    QVERIFY(m_harness->until([dialog] { return dialog->property("visible").toBool(); }));
+    m_harness->settle();
+
+    QQuickItem* picker = m_harness->item(QStringLiteral("nightlyScanPicker"));
+    QVERIFY(picker);
+    // Never, for a folder that is on no clock, and the entry says so in words.
+    QCOMPARE(picker->property("currentText").toString(), QStringLiteral("Repeat: never"));
+
+    // Put on one, and typed into so the picker is looking at that folder.
+    QVERIFY(!search->scheduleScan(m_harness->fixtureUri(), 7 * 24 * 3600).isEmpty());
+    QQuickItem* path = m_harness->item(QStringLiteral("scanPath"));
+    QVERIFY(path);
+    QVERIFY(path->setProperty("text", m_harness->fixturePath()));
+    m_harness->settle(4);
+
+    QCOMPARE(picker->property("currentText").toString(), QStringLiteral("Repeat: every week"));
 }
 
 void TestWalkthrough::aDialogWithOneButtonStillHoldsTheKeyboard()

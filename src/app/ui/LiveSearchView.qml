@@ -658,14 +658,24 @@ Item {
 
         onOpened: scanPath.forceActiveFocus()
 
+        // What was typed, as a uri. A bare path is a local one, and every
+        // control in here has to agree about that -- the picker asking what a
+        // folder is already on gets no answer for "/home/you/photos" if only
+        // the accept handler knows it means "file:///home/you/photos".
+        function scanUri() {
+            var uri = scanPath.text.trim()
+            if (uri.length === 0)
+                return ""
+            return uri.indexOf("://") < 0 ? "file://" + uri : uri
+        }
+
         onAccepted: {
-            if (controller && scanPath.text.length > 0) {
-                var uri = scanPath.text.trim()
-                if (uri.indexOf("://") < 0)
-                    uri = "file://" + uri
+            var uri = scanDialog.scanUri()
+            if (controller && uri.length > 0) {
                 controller.scanDirectory(uri, scanLabel.text, fullRescan.checked)
-                if (nightly.checked)
-                    controller.scheduleScan(uri, 24)
+                // Always asked, because zero is a real answer: it is how
+                // "Repeat: never" turns an existing nightly run off.
+                controller.scheduleScan(uri, nightly.model[nightly.currentIndex].seconds)
             }
         }
 
@@ -718,13 +728,48 @@ Item {
                 text: "Full rescan — walk everything, keep nothing"
                 font.pixelSize: App.secondaryTextSize
             }
-            CheckBox {
-                objectName: "nightlyScanToggle"
-                id: nightly
-                text: "Keep it up to date every night"
-                font.pixelSize: App.secondaryTextSize
-                checked: controller && scanPath.text.length > 0
-                         && controller.scheduledScanId(scanPath.text.trim()).length > 0
+            // How often, and *whether* -- the same picker the report tab puts a
+            // scan on a clock with, and the same words. It was a checkbox that
+            // created a rule when ticked and did nothing at all when unticked,
+            // over an interval written as 24 in the QML.
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                Label {
+                    text: "Keep it up to date"
+                    font.pixelSize: App.secondaryTextSize
+                }
+
+                Picker {
+                    objectName: "nightlyScanPicker"
+                    id: nightly
+                    font.pixelSize: App.secondaryTextSize
+                    textRole: "text"
+                    model: {
+                        var out = [{ seconds: 0, text: "Repeat: never" }]
+                        var presets = controller ? controller.schedulePresets() : []
+                        for (var i = 0; i < presets.length; ++i)
+                            out.push({ seconds: presets[i].seconds,
+                                       text: "Repeat: " + presets[i].label.toLowerCase() })
+                        return out
+                    }
+                    // The interval this folder is already on, so re-opening the
+                    // dialog does not offer to turn a nightly run off by default.
+                    currentIndex: {
+                        var folder = scanDialog.scanUri()
+                        if (!controller || folder.length === 0)
+                            return 0
+                        var on = controller.scheduledScanSeconds(folder)
+                        for (var i = 0; i < model.length; ++i) {
+                            if (model[i].seconds === on)
+                                return i
+                        }
+                        return 0
+                    }
+                }
+
+                Item { Layout.fillWidth: true }
             }
             Label {
                 Layout.fillWidth: true

@@ -218,14 +218,31 @@ public:
     /// suspect the index.
     Q_INVOKABLE void scanDirectory(const QString& uri, const QString& label, bool full = false);
 
-    /// Asks for `uri` to be re-indexed every `hours`, through the same
+    /// Asks for `uri` to be re-indexed every `seconds`, through the same
     /// scheduler every other repeating job goes through -- so it survives a
     /// restart and catches up on a run missed while the machine was off.
-    /// Returns the rule's id, or empty when there is no scheduler.
-    Q_INVOKABLE QString scheduleScan(const QString& uri, int hours);
+    ///
+    /// Seconds rather than hours, because that is what a `ScheduleRule` holds
+    /// and what `ScheduleRule::presets()` offers; hours bought nothing and made
+    /// the two dialogs that put work on a clock read differently.
+    ///
+    /// `seconds <= 0` removes the rule, which is how *Repeat: never* is said --
+    /// the same shape as `AnalysisTarget::setSchedule()`. A folder that already
+    /// has a rule has its interval changed, keeping the rule's id, rather than
+    /// being left on the interval it was first given.
+    ///
+    /// Returns the rule's id, or empty when it was removed or there is no
+    /// scheduler.
+    Q_INVOKABLE QString scheduleScan(const QString& uri, qint64 seconds);
     /// Whether a rule already exists for this folder, so the form can offer to
     /// stop rather than to start again.
     Q_INVOKABLE QString scheduledScanId(const QString& uri) const;
+    /// How often this folder is re-indexed, or zero when it is not. What the
+    /// picker shows, so it opens on the interval a folder is already on.
+    Q_INVOKABLE qint64 scheduledScanSeconds(const QString& uri) const;
+    /// The intervals to offer, as `{ label, seconds }`. The same list every
+    /// other repeating job is offered.
+    Q_INVOKABLE QVariantList schedulePresets() const;
     Q_INVOKABLE void unscheduleScan(const QString& uri);
 
     /// Takes what a person types -- "10M", "1.5 GB", "500k", or nothing at all --

@@ -162,8 +162,10 @@ lingering. A drive that does not date its folders gives the scan nothing to work
 it walks the lot and says so, and *Full rescan* walks everything and keeps nothing — which
 is what to reach for when you suspect the index.
 
-*Keep it up to date every night* puts the folder on the same clock every other repeating job
-in Mole uses: it survives a restart and catches up on a night the machine was off.
+*Keep it up to date* puts the folder on the same clock every other repeating job in Mole
+uses — every hour through to every month, and *never* to take it off again. It survives a
+restart and catches up on a run missed while the machine was off, and choosing a different
+interval for a folder that is already on one changes it.
 
 **The index can be deleted without losing anything but time.** It holds nothing that is not
 already in your files; throwing it away costs a rescan and nothing else.
