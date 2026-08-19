@@ -48,6 +48,8 @@ add_library(mole_builtin STATIC
     builtin/previews/AudioMetadata.cpp
     builtin/previews/PdfPreview.h
     builtin/previews/PdfPreview.cpp
+    builtin/previews/VideoPreview.h
+    builtin/previews/VideoPreview.cpp
 )
 
 # Qt PDF renders the pages. Optional: without it the provider still compiles and
@@ -61,6 +63,39 @@ else()
     message(STATUS
         "Qt6 Pdf not found -- PDFs will open in the information viewer. "
         "Install qt6-pdf-dev (Debian/Ubuntu) to render them.")
+endif()
+
+# Qt Multimedia plays the video. Optional in exactly the same shape as Qt PDF:
+# without it the provider still compiles and still refuses every file, so a video
+# falls through to the information viewer instead of opening a frame nothing can
+# fill.
+#
+# Two halves, checked separately, because they are two packages and either can be
+# missing on its own: the C++ library this compiles against, and the QML module
+# `import QtMultimedia` resolves to at run time. There is no `MultimediaQuick`
+# CMake component to ask for -- Debian ships the QML module without one -- so the
+# module is looked for where Qt says its QML modules live.
+find_package(Qt6 QUIET COMPONENTS Multimedia)
+set(MOLE_QTMULTIMEDIA_QML "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_QML}/QtMultimedia/qmldir")
+if(Qt6Multimedia_FOUND AND EXISTS "${MOLE_QTMULTIMEDIA_QML}")
+    target_link_libraries(mole_builtin PUBLIC Qt6::Multimedia)
+    target_compile_definitions(mole_builtin PUBLIC MOLE_HAVE_MULTIMEDIA)
+    # For the test suite, which asserts playback through the real player and needs
+    # the same enums. The same shape MOLE_HAVE_ARCHIVE_PLUGIN uses below.
+    set(MOLE_HAVE_MULTIMEDIA ON CACHE INTERNAL "")
+elseif(Qt6Multimedia_FOUND)
+    message(STATUS
+        "Qt6 Multimedia is installed but its QML module is not (looked for "
+        "${MOLE_QTMULTIMEDIA_QML}) -- videos will open in the information viewer. "
+        "Install qml6-module-qtmultimedia (Debian/Ubuntu) to play them.")
+else()
+    message(STATUS
+        "Qt6 Multimedia not found -- videos will open in the information viewer. "
+        "Install qt6-multimedia-dev and qml6-module-qtmultimedia (Debian/Ubuntu) "
+        "to play them.")
+endif()
+if(NOT MOLE_HAVE_MULTIMEDIA)
+    set(MOLE_HAVE_MULTIMEDIA OFF CACHE INTERNAL "")
 endif()
 
 add_library(mole::builtin ALIAS mole_builtin)

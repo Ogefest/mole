@@ -35,8 +35,9 @@ being added on top of it.
   everywhere indexed, or a path — and a query line above the form is the same
   query seen twice, so `report ext:pdf size>10M` is the whole of it.
 - **Preview with F3.** Source code coloured for twenty-odd languages, Markdown
-  rendered, images, CSV/TSV, SQLite databases and Parquet files as a grid with
-  filtering and copyable cells, and the bytes of anything else. What a file *is*
+  rendered, images, video paused at its first frame, CSV/TSV, SQLite databases and
+  Parquet files as a grid with filtering and copyable cells, and the bytes of
+  anything else. What a file *is*
   comes from what is in it rather than from its name, so a `Dockerfile` opens as
   a coloured Dockerfile. Every viewer has a details panel: a photograph's camera
   and exposure, a document's author, a video's codecs, an audio file's tags. A
@@ -371,11 +372,10 @@ object past the part size so the upload is a multipart one, sized by
 Backends: SFTP, FTP, S3, WebDAV, SMB and NFS all ship today. Google Drive, Dropbox
 and OneDrive speak proprietary APIs and would each need a plugin of their own — see
 [ADR-0011](docs/adr/0011-network-drives-without-rclone.md).
-Previews: video *playback* (needs `qt6-multimedia-dev`, not installed here) and
-DuckDB tables. PDF, SQLite and Parquet are done; so are image metadata and audio
-tags, which read a header rather than linking `exiv2` or `taglib` — a reader is
-handed a bounded prefix of a file that may be on a remote drive, and neither
-library works that way. See
+Previews: DuckDB tables. PDF, SQLite, Parquet and video playback are done; so are
+image metadata and audio tags, which read a header rather than linking `exiv2` or
+`taglib` — a reader is handed a bounded prefix of a file that may be on a remote
+drive, and neither library works that way. See
 [ADR-0034](docs/adr/0034-what-a-file-says-about-itself.md).
 
 Cross-platform: nothing in the codebase is Linux-specific, but Windows and

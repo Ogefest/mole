@@ -20,6 +20,7 @@
 #include "plugins/builtin/previews/MetadataReaders.h"
 #include "plugins/builtin/previews/PdfPreview.h"
 #include "plugins/builtin/previews/PreviewProviders.h"
+#include "plugins/builtin/previews/VideoPreview.h"
 
 #include "core/automation/ScheduleStore.h"
 #include "core/automation/Scheduler.h"
@@ -108,6 +109,7 @@ void BuiltinPlugin::registerExtensions(PluginRegistry& registry)
     registry.addPreviewProvider(std::make_unique<ParquetPreviewProvider>(services));
     registry.addPreviewProvider(std::make_unique<TablePreviewProvider>(services));
     registry.addPreviewProvider(std::make_unique<ImagePreviewProvider>(services));
+    registry.addPreviewProvider(std::make_unique<VideoPreviewProvider>(services));
     registry.addPreviewProvider(std::make_unique<TextPreviewProvider>(services));
     registry.addPreviewProvider(std::make_unique<HexPreviewProvider>(services));
     registry.addPreviewProvider(std::make_unique<FileInfoPreviewProvider>(services));

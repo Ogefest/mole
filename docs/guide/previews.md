@@ -120,6 +120,25 @@ camera is looked at rather than scrolled around. Whatever Qt on this machine can
 is claimed — png, jpeg, webp, and the rest of that list — and anything it cannot is left
 to the viewer of last resort below.
 
+## Video
+
+A video opens paused at its first frame, with a play button, a position and somewhere to
+drag it to. It does not start on its own: `F3` walks a folder with the arrows, and a
+preview that begins making noise as the cursor passes over a file is nobody's idea of a
+preview. There is no volume slider and no playlist — this is for recognising a file, not
+for watching one.
+
+What can be played is what this machine's codecs can decode, and that is not knowable
+from the file's name: a container Mole opens may still hold a stream nothing installed
+can decode. When that happens the viewer says so in words, and the details panel still
+says what the file is. A build without Qt Multimedia has no video viewer at all and
+shows those facts instead.
+
+*No picture here, and that is deliberate: the guide's pictures are all taken by the same
+offscreen run so that they are of the same window whatever machine took them, and that
+renderer composites no video frame. A picture of this viewer would be a black rectangle,
+which is the one thing it must not look like.*
+
 ## Databases
 
 ![A SQLite database](images/21-preview-sqlite.png)

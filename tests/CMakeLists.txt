@@ -254,6 +254,14 @@ mole_add_test(tst_DuplicatesTab     SOURCES app/tst_DuplicatesTab.cpp   LIBS mol
 # Screenshots land in MOLE_SCREENSHOT_DIR when it is set; `make screenshots`
 # does that. No X server, no window manager, no input lottery.
 mole_add_test(tst_Walkthrough       SOURCES app/tst_Walkthrough.cpp     LIBS mole_qml_harness)
+# Video playback is asserted through the real MediaPlayer, so the test needs the
+# same enums the view is written against. Both cases are real: a build without Qt
+# Multimedia skips those assertions, which is the other half of MOLE-37.
+if(MOLE_HAVE_MULTIMEDIA)
+    find_package(Qt6 QUIET COMPONENTS Multimedia)
+    target_link_libraries(tst_Walkthrough PRIVATE Qt6::Multimedia)
+    target_compile_definitions(tst_Walkthrough PRIVATE MOLE_TEST_HAVE_MULTIMEDIA)
+endif()
 
 # The drive rows in the sidebar. Their own binary rather than more of the
 # walkthrough: this one configures drives and connects them, which is state the

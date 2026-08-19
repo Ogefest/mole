@@ -48,13 +48,19 @@
 #include <QPageSize>
 #include <QPainter>
 #include <QPdfWriter>
+#include <QProcess>
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickTextDocument>
 #include <QQuickWindow>
 #include <QSignalSpy>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
+
+#ifdef MOLE_TEST_HAVE_MULTIMEDIA
+#include <QMediaPlayer>
+#endif
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QThread>
@@ -121,6 +127,9 @@ private slots:
     void theCopyPathKeysActuallyCopyAPath();
     void theCommandPaletteFindsAndRunsThings();
     void theWindowBehindAPopupIsNotWashedOut();
+    void aVideoShowsItsFirstFrameAndPlaysWhenAsked();
+    void aVideoThatCannotBeDecodedSaysSoRatherThanShowingABlackFrame();
+    void steppingOffAVideoLeavesNoPlayerBehind();
     void theHeaderAdvertisesTheCommandPalette();
     void ctrlFIsASearchBoxYouCanTypeInto();
     void aPartlyIndexedFolderShowsWhereEachRowCameFrom();
@@ -179,6 +188,10 @@ private:
     /// Asserts that the window behind an open popup is dimmed rather than washed
     /// out. `what` names the popup, for the message a failure prints.
     void assertTheWindowBehindAPopupIsDimmed(const char* what);
+    /// Writes a one-second video into the fixture with whatever encoder the
+    /// machine has, and answers false when it has none. Built rather than
+    /// committed: a binary fixture in the repository is one nobody can read.
+    bool writeVideo(const QString& relativePath);
     /// Writes the fixture tree every test starts from. See its definition for
     /// what is in it and why.
     void buildFixture();
@@ -1438,6 +1451,139 @@ void TestWalkthrough::theWindowBehindAPopupIsNotWashedOut()
 
     QVERIFY(QMetaObject::invokeMethod(palette, "close"));
     QVERIFY(m_harness->until([palette] { return !palette->property("opened").toBool(); }));
+}
+
+bool TestWalkthrough::writeVideo(const QString& relativePath)
+{
+    const QString tool = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (tool.isEmpty())
+        return false;
+
+    const QString path = m_harness->fixturePath() + QLatin1Char('/') + relativePath;
+    QProcess process;
+    process.start(tool,
+        { QStringLiteral("-y"), QStringLiteral("-f"), QStringLiteral("lavfi"), QStringLiteral("-i"),
+            QStringLiteral("testsrc=duration=1:size=160x120:rate=10"), QStringLiteral("-pix_fmt"),
+            QStringLiteral("yuv420p"), path });
+    if (!process.waitForFinished(60000) || process.exitCode() != 0)
+        return false;
+    return QFile::exists(path);
+}
+
+void TestWalkthrough::aVideoShowsItsFirstFrameAndPlaysWhenAsked()
+{
+#ifndef MOLE_TEST_HAVE_MULTIMEDIA
+    QSKIP("this build has no Qt Multimedia, which is the case the provider refuses in");
+#else
+    if (!writeVideo(QStringLiteral("clip.mp4")))
+        QSKIP("no ffmpeg to build a video with");
+
+    PreviewTabController* preview = previewOf(QStringLiteral("clip.mp4"));
+    QVERIFY(preview);
+    QVERIFY(viewerOf(preview));
+    QCOMPARE(preview->viewerName(), QStringLiteral("Video"));
+
+    QObject* player = m_harness->object(QStringLiteral("videoPlayer"));
+    QVERIFY2(player, "the view has no player in it");
+
+    // Loaded and paused at its first frame. Both halves are the claim: a picture on
+    // screen, and nothing running -- because F3 walks a folder with the arrows and a
+    // viewer that starts making noise as the cursor passes over a file is the wrong
+    // default.
+    QVERIFY2(m_harness->until([player] {
+        return player->property("mediaStatus").toInt() == QMediaPlayer::LoadedMedia
+            || player->property("mediaStatus").toInt() == QMediaPlayer::BufferedMedia;
+    }),
+        "the player never loaded the file");
+    QVERIFY2(player->property("hasVideo").toBool(), "loaded, but with no video in it");
+    QVERIFY(player->property("duration").toLongLong() > 0);
+    QCOMPARE(player->property("playbackState").toInt(), int(QMediaPlayer::PausedState));
+
+    // And it plays on being asked, through the button rather than through the
+    // player: what a reader presses is what has to work.
+    QQuickItem* play = m_harness->item(QStringLiteral("videoPlayButton"));
+    QVERIFY(play);
+    QCOMPARE(play->property("text").toString(), QStringLiteral("Play"));
+    QVERIFY(QMetaObject::invokeMethod(play, "clicked"));
+    QVERIFY2(m_harness->until([player] {
+        return player->property("playbackState").toInt() == QMediaPlayer::PlayingState
+            || player->property("position").toLongLong() > 0;
+    }),
+        "asked to play, and did not");
+
+#endif
+}
+
+void TestWalkthrough::aVideoThatCannotBeDecodedSaysSoRatherThanShowingABlackFrame()
+{
+#ifndef MOLE_TEST_HAVE_MULTIMEDIA
+    QSKIP("this build has no Qt Multimedia");
+#else
+    // A container this build claims by name and cannot decode a frame of. The
+    // answer has to be words: a black frame reads as a broken file, and the file
+    // may be perfectly good on a machine with the codec.
+    QVERIFY(m_harness->writeFile(QStringLiteral("broken.mp4"), QByteArray(4096, '\x01')));
+
+    PreviewTabController* preview = previewOf(QStringLiteral("broken.mp4"));
+    QVERIFY(preview);
+    QVERIFY(viewerOf(preview));
+    QCOMPARE(preview->viewerName(), QStringLiteral("Video"));
+
+    QQuickItem* said = nullptr;
+    QVERIFY2(m_harness->until([this, &said] {
+        for (QQuickItem* candidate : m_harness->items(QStringLiteral("videoErrorText"))) {
+            if (candidate->isVisible() && !candidate->property("text").toString().isEmpty()) {
+                said = candidate;
+                return true;
+            }
+        }
+        return false;
+    }),
+        "the viewer showed a frame nothing could fill and said nothing");
+    QVERIFY(said);
+
+    // The controls go with it: there is nothing to play.
+    QQuickItem* controls = m_harness->item(QStringLiteral("videoControls"));
+    QVERIFY(controls);
+    QVERIFY(!controls->isVisible());
+#endif
+}
+
+void TestWalkthrough::steppingOffAVideoLeavesNoPlayerBehind()
+{
+#ifndef MOLE_TEST_HAVE_MULTIMEDIA
+    QSKIP("this build has no Qt Multimedia");
+#else
+    if (!writeVideo(QStringLiteral("aaa-clip.mp4")))
+        QSKIP("no ffmpeg to build a video with");
+
+    PreviewTabController* preview = previewOf(QStringLiteral("aaa-clip.mp4"));
+    QVERIFY(preview);
+    QVERIFY(viewerOf(preview));
+    QCOMPARE(preview->viewerName(), QStringLiteral("Video"));
+
+    QObject* player = m_harness->object(QStringLiteral("videoPlayer"));
+    QVERIFY(player);
+    QVERIFY(m_harness->until([player] { return player->property("duration").toLongLong() > 0; }));
+    QVERIFY(QMetaObject::invokeMethod(player, "play"));
+
+    // Held by weak pointers: what is being asserted is that they die, and a
+    // strong reference here would be the thing keeping them alive.
+    const QPointer<QObject> viewer = preview->viewer();
+    const QPointer<QObject> playing = player;
+    QVERIFY(viewer && playing);
+
+    // The arrows work on the folder, so the siblings have to have arrived first.
+    QVERIFY(m_harness->until([preview] { return preview->position() > 0; }));
+    preview->next();
+    QVERIFY(m_harness->until([preview, viewer] { return preview->viewer() != viewer; }));
+    m_harness->settle(4);
+
+    QVERIFY2(!viewer, "the video viewer outlived the file it was showing");
+    QVERIFY2(!playing, "a player was left running behind the next preview");
+    QVERIFY2(preview->viewerName() != QStringLiteral("Video"),
+        "the next file in the fixture is not a video, so this proved nothing");
+#endif
 }
 
 void TestWalkthrough::theHeaderAdvertisesTheCommandPalette()
@@ -3448,7 +3594,17 @@ void TestWalkthrough::everyFeatureAndPreviewHasAPictureInTheGuide()
 
     // Deliberately without one, each with the reason. An entry here is a decision;
     // an id in neither list is an omission, which is what this test is for.
-    static const QHash<QString, QString> exempt {};
+    static const QHash<QString, QString> exempt {
+        // The viewer works and is asserted three ways above -- what cannot be
+        // photographed is a frame. `make screenshots` runs offscreen on purpose,
+        // so that every picture is of the same window whatever machine took it,
+        // and the offscreen renderer composites no video frame into a grab: the
+        // picture comes out as a black rectangle, which is exactly what this
+        // viewer must never look like. Measured rather than assumed -- the same
+        // grab under xcb has the frame in it. See MOLE-37.
+        { QStringLiteral("mole.preview.video"),
+            QStringLiteral("no frame is composited in an offscreen grab") },
+    };
 
     // This run's own output when there is one, the committed guide otherwise. Both
     // matter and they are different questions: a screenshot run has to have

@@ -54,6 +54,7 @@ set(MOLE_QML_FILES
     ui/DataGrid.qml
     ui/SqlitePreview.qml
     ui/ParquetPreview.qml
+    ui/VideoPreview.qml
     ui/FileSetsView.qml
     ui/BulkRenameView.qml
     ui/DuplicatesView.qml

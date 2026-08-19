@@ -8,6 +8,7 @@
 #include "plugins/builtin/previews/PdfPreview.h"
 #include "plugins/builtin/previews/PreviewProviders.h"
 #include "plugins/builtin/previews/SyntaxHighlighter.h"
+#include "plugins/builtin/previews/VideoPreview.h"
 #include "support/FakePlugin.h"
 #include "support/FaultyFileSystem.h"
 #include "support/TableFixtures.h"
@@ -268,6 +269,12 @@ private slots:
     void aFileNamedGzThatIsNotGzipKeepsTodaysBehaviour();
     void steppingOnReleasesTheSubstitutedMember();
     void withNoArchiveBackendTheTabBehavesAsItDidBefore();
+
+    void aVideoIsClaimedByTheVideoViewer_data();
+    void aVideoIsClaimedByTheVideoViewer();
+    void aSuffixNoFormatKnowsFallsThroughToTheInformationViewer();
+    void aVideoOnADriveThatCannotBePlayedFromIsCopiedLocally();
+    void aVideoThatCannotBeDecodedSaysSoWhereEveryViewerSaysIt();
 
 private:
     IPreviewProvider* providerFor(const QString& relativePath) const;
@@ -899,10 +906,17 @@ void TestPreview::bytesAreShownForWhatNothingElseClaims_data()
 
     // Everything Mole can name says what it is instead. Showing somebody the
     // first 64 kB of their holiday video in hexadecimal is strictly less than
-    // telling them how long it runs.
+    // telling them how long it runs -- and since MOLE-37 a video does better than
+    // either, which is what the row below now asserts.
     QTest::newRow("a zip under any name")
         << "bundle" << (QByteArrayLiteral("PK\x03\x04") + QByteArray(400, '\x01')) << "mole.preview.fileinfo";
-    QTest::newRow("a video") << "holiday.mp4" << mp4File() << "mole.preview.fileinfo";
+    // The one row whose answer depends on the build, and it is the answer MOLE-37
+    // promised: with Qt Multimedia the video viewer takes it, and without the
+    // module the very same file gets the information viewer it always had.
+    QTest::newRow("a video") << "holiday.mp4" << mp4File()
+                             << (VideoPreviewProvider::isAvailable()
+                                        ? QStringLiteral("mole.preview.video")
+                                        : QStringLiteral("mole.preview.fileinfo"));
     QTest::newRow("an mp3") << "song.mp3" << mp3File() << "mole.preview.fileinfo";
     QTest::newRow("a document") << "report.docx" << docxFile() << "mole.preview.fileinfo";
 
@@ -934,11 +948,15 @@ void TestPreview::theBytesAreAChoiceOnEveryFileThatHasNoViewer()
 {
     // The other half of narrowing the claim: the bytes did not go away, they
     // became a choice -- and one that is remembered, like every other viewer's.
-    QVERIFY(m_tree->writeFile(QStringLiteral("holiday.mp4"), mp4File()));
-    QVERIFY(m_tree->writeFile(QStringLiteral("second.mp4"), mp4File()));
+    //
+    // On audio, because a video has a viewer of its own since MOLE-37 and this is
+    // about the files that have none. An mp3 is still one of them: Mole says what
+    // it is and what it holds, and does not play it.
     QVERIFY(m_tree->writeFile(QStringLiteral("song.mp3"), mp3File()));
+    QVERIFY(m_tree->writeFile(QStringLiteral("second.mp3"), mp3File()));
+    QVERIFY(m_tree->writeFile(QStringLiteral("report.docx"), docxFile()));
 
-    PreviewTabController* preview = openPreview(QStringLiteral("holiday.mp4"));
+    PreviewTabController* preview = openPreview(QStringLiteral("song.mp3"));
     QVERIFY(preview);
     QCOMPARE(preview->viewerName(), QStringLiteral("File information"));
 
@@ -961,7 +979,7 @@ void TestPreview::theBytesAreAChoiceOnEveryFileThatHasNoViewer()
         hex->rows().first().toMap().value(QStringLiteral("offset")).toString(), QStringLiteral("00000000"));
 
     // The next file of the same type opens the way the last one was left.
-    PreviewTabController* second = openPreview(QStringLiteral("second.mp4"));
+    PreviewTabController* second = openPreview(QStringLiteral("second.mp3"));
     QCOMPARE(second->viewerOptions().first().toMap().value(QStringLiteral("chosen")).toString(),
         QStringLiteral("Bytes"));
     auto* secondViewer = qobject_cast<FileInfoPreviewController*>(second->viewer());
@@ -969,7 +987,7 @@ void TestPreview::theBytesAreAChoiceOnEveryFileThatHasNoViewer()
     QVERIFY2(secondViewer->isShowingBytes(), "and it is applied before the file is read, not after");
 
     // A different type is untouched, which is what per-file-type means.
-    PreviewTabController* other = openPreview(QStringLiteral("song.mp3"));
+    PreviewTabController* other = openPreview(QStringLiteral("report.docx"));
     QCOMPARE(other->viewerOptions().first().toMap().value(QStringLiteral("chosen")).toString(),
         QStringLiteral("Information"));
 }
@@ -2480,6 +2498,116 @@ void TestPreview::withNoArchiveBackendTheTabBehavesAsItDidBefore()
     QCOMPARE(preview->title(), QStringLiteral("alone.txt.gz"));
     QCOMPARE(internalMounts(), 0);
     QVERIFY2(!preview->viewerName().isEmpty(), "the tab still chose a viewer the way it always did");
+}
+
+// ---- video ---------------------------------------------------------------
+//
+// Video was the last family of file with no viewer at all: a .mp4 reached the
+// information viewer and got nine facts out of stat(). The provider joins the
+// others rather than changing anything, as an optional dependency in the shape
+// Qt PDF already has. See MOLE-37.
+
+void TestPreview::aVideoIsClaimedByTheVideoViewer_data()
+{
+    QTest::addColumn<QString>("fileName");
+
+    // The containers anybody previews video in. Claimed by name, from the system's
+    // own MIME database -- see VideoPreviewProvider::videoSuffixes() for why Qt's
+    // list of decodable formats cannot be the oracle here.
+    QTest::newRow("mp4") << "holiday.mp4";
+    QTest::newRow("mkv") << "recording.mkv";
+    QTest::newRow("webm") << "clip.webm";
+    QTest::newRow("mov") << "camera.mov";
+}
+
+void TestPreview::aVideoIsClaimedByTheVideoViewer()
+{
+    QFETCH(QString, fileName);
+
+    if (!VideoPreviewProvider::isAvailable())
+        QSKIP("this build has no video decoder, which is the other half of this ticket");
+
+    IPreviewProvider* provider = providerFor(fileName);
+    QVERIFY2(provider, qPrintable(QStringLiteral("nothing claimed %1").arg(fileName)));
+    QCOMPARE(provider->id(), QStringLiteral("mole.preview.video"));
+    QCOMPARE(provider->displayName(), QStringLiteral("Video"));
+}
+
+void TestPreview::aSuffixNoFormatKnowsFallsThroughToTheInformationViewer()
+{
+    // The rule the whole optional dependency rests on: what is not claimed falls
+    // to a viewer that can say something useful. A `.mp5` is a name nothing knows,
+    // which is what a container this installation cannot open looks like from
+    // here.
+    QVERIFY(!VideoPreviewProvider::videoSuffixes().contains(QStringLiteral("mp5")));
+
+    QVERIFY(m_tree->writeFile(QStringLiteral("mystery.mp5"), QByteArray(64, '\x01')));
+    PreviewTabController* preview = openPreview(QStringLiteral("mystery.mp5"));
+    QVERIFY(preview);
+    QVERIFY2(preview->viewerName() != QStringLiteral("Video"),
+        "a suffix no format knows was claimed by the video viewer");
+    QVERIFY2(!preview->viewerName().isEmpty(), "and something still shows it");
+}
+
+void TestPreview::aVideoOnADriveThatCannotBePlayedFromIsCopiedLocally()
+{
+    if (!VideoPreviewProvider::isAvailable())
+        QSKIP("this build has no video decoder");
+
+    // MediaPlayer cannot open an `archive://` uri or a remote one, so the viewer
+    // asks for a local copy the way the image and document viewers do. A memory
+    // drive is the cheapest thing that is not a local disk.
+    auto memory = std::make_shared<MemoryFileSystem>();
+    memory->addFile(QStringLiteral("/clip.mp4"), QByteArray(2048, 'v'));
+
+    Mount mount;
+    mount.id = QStringLiteral("elsewhere");
+    mount.displayName = QStringLiteral("elsewhere");
+    mount.root = VfsUri::fromString(QStringLiteral("mem://elsewhere/"));
+    mount.fileSystem = memory;
+    m_app->services().vfs->addMount(mount);
+
+    m_app->previewFile(QStringLiteral("mem://elsewhere/clip.mp4"));
+    auto* preview = qobject_cast<PreviewTabController*>(m_app->tabs()->currentController());
+    QVERIFY(preview);
+    QVERIFY(waitFor([preview] { return preview->viewer() != nullptr; }, 5000));
+    QCOMPARE(preview->viewerName(), QStringLiteral("Video"));
+
+    QObject* viewer = preview->viewer();
+    QVERIFY(viewer);
+    QVERIFY2(waitFor([viewer] { return !viewer->property("source").toString().isEmpty(); }, 30000),
+        "the viewer never got a local copy to play");
+    const QString source = viewer->property("source").toString();
+    QVERIFY2(source.startsWith(QStringLiteral("file:")), qPrintable(source));
+    QVERIFY(QFile::exists(QUrl(source).toLocalFile()));
+}
+
+void TestPreview::aVideoThatCannotBeDecodedSaysSoWhereEveryViewerSaysIt()
+{
+    if (!VideoPreviewProvider::isAvailable())
+        QSKIP("this build has no video decoder");
+
+    // A container this build can demux may still hold a stream it has no decoder
+    // for, and nothing can know before trying -- so the player's refusal reaches
+    // the tab through the same errorText every other viewer reports through, and
+    // the details panel still says what the file is. The view calls this when the
+    // player errors; tst_Walkthrough asserts the player really does.
+    QVERIFY(m_tree->writeFile(QStringLiteral("broken.mp4"), QByteArray("not a container at all")));
+    PreviewTabController* preview = openPreview(QStringLiteral("broken.mp4"));
+    QVERIFY(preview);
+    QCOMPARE(preview->viewerName(), QStringLiteral("Video"));
+
+    QObject* viewer = preview->viewer();
+    QVERIFY(viewer);
+    QVERIFY(viewer->property("errorText").toString().isEmpty());
+    QVERIFY(QMetaObject::invokeMethod(viewer, "reportPlaybackFailure",
+        Q_ARG(QString, QStringLiteral("Cannot decode: no h265 decoder installed"))));
+    QVERIFY2(viewer->property("errorText").toString().contains(QStringLiteral("no h265 decoder")),
+        qPrintable(viewer->property("errorText").toString()));
+
+    // And a refusal with nothing to say still says something.
+    QVERIFY(QMetaObject::invokeMethod(viewer, "reportPlaybackFailure", Q_ARG(QString, QString())));
+    QVERIFY(!viewer->property("errorText").toString().isEmpty());
 }
 
 int main(int argc, char** argv)
