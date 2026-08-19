@@ -457,9 +457,11 @@ void TestHeavyTransfers::aLargeFileMakesTheRoundTrip()
         // difference is invisible until the file is bigger than the disk.
         const qint64 allowed = qMax<qint64>(64LL * 1024 * 1024, m_payloadBytes / 50);
         QVERIFY2(watch.peakScratchBytes() < allowed,
-            qPrintable(QStringLiteral("uploading %1 used %2 of temporary space, which is staging")
-                           .arg(QLocale().formattedDataSize(m_payloadBytes),
-                               QLocale().formattedDataSize(watch.peakScratchBytes()))));
+            qPrintable(
+                QStringLiteral("uploading %1 used %2 of temporary space, which is staging. "
+                               "The largest of it was %3")
+                    .arg(QLocale().formattedDataSize(m_payloadBytes),
+                        QLocale().formattedDataSize(watch.peakScratchBytes()), watch.largestScratchEntry())));
         QVERIFY2(watch.peakResidentGrowthBytes() < 1024LL * 1024 * 1024,
             qPrintable(
                 QStringLiteral("the upload grew by %1 KiB").arg(watch.peakResidentGrowthBytes() / 1024)));
@@ -493,9 +495,11 @@ void TestHeavyTransfers::aLargeFileMakesTheRoundTrip()
 
         const qint64 allowed = qMax<qint64>(64LL * 1024 * 1024, m_payloadBytes / 50);
         QVERIFY2(watch.peakScratchBytes() < allowed,
-            qPrintable(QStringLiteral("downloading %1 used %2 of temporary space, which is staging")
-                           .arg(QLocale().formattedDataSize(m_payloadBytes),
-                               QLocale().formattedDataSize(watch.peakScratchBytes()))));
+            qPrintable(
+                QStringLiteral("downloading %1 used %2 of temporary space, which is staging. "
+                               "The largest of it was %3")
+                    .arg(QLocale().formattedDataSize(m_payloadBytes),
+                        QLocale().formattedDataSize(watch.peakScratchBytes()), watch.largestScratchEntry())));
 
         QFile copy(QDir(m_dir->path()).filePath(QStringLiteral("back/") + name));
         QVERIFY2(copy.open(QIODevice::ReadOnly), "nothing came back");

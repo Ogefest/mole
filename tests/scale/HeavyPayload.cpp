@@ -193,24 +193,35 @@ void ResourceWatch::sample()
 
     while (m_running.load()) {
         qint64 scratch = 0;
+        QString largest;
+        qint64 largestBytes = 0;
         QDirIterator it(m_tempPath, QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden);
         while (it.hasNext()) {
             const QString path = it.next();
             if (baseline.contains(path))
                 continue;
             const QFileInfo info = it.fileInfo();
+            qint64 here = 0;
             if (info.isDir()) {
                 QDirIterator inner(path, QDir::Files | QDir::Hidden, QDirIterator::Subdirectories);
                 while (inner.hasNext()) {
                     inner.next();
-                    scratch += inner.fileInfo().size();
+                    here += inner.fileInfo().size();
                 }
             } else {
-                scratch += info.size();
+                here = info.size();
+            }
+            scratch += here;
+            if (here > largestBytes) {
+                largestBytes = here;
+                largest = path;
             }
         }
-        if (scratch > m_peakScratch.load())
+        if (scratch > m_peakScratch.load()) {
             m_peakScratch.store(scratch);
+            const std::lock_guard<std::mutex> guard(m_namesGuard);
+            m_largestEntry = largest;
+        }
 
         const qint64 growth = residentBytes() - m_baselineRss;
         if (growth > m_peakRss.load())
@@ -218,6 +229,12 @@ void ResourceWatch::sample()
 
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
+}
+
+QString ResourceWatch::largestScratchEntry() const
+{
+    const std::lock_guard<std::mutex> guard(m_namesGuard);
+    return m_largestEntry;
 }
 
 int ResourceWatch::openDescriptors()

@@ -9,6 +9,45 @@ wrong.
 
 ---
 
+## A large SFTP read died at the re-key point on a server that re-keys early
+
+**Asked for:** MOLE-99 — found by the scale tier, which is where it was meant to be found. ADR-0013
+fetches a large SFTP read in 256 MiB spans so that no connection carries enough for the server's
+re-key to arrive. A server whose `RekeyLimit` is exactly `256M` puts the re-key *inside* the first
+span, and then the file cannot be read at all: every attempt stops 640 KiB short of 256 MiB.
+
+**No span size is safe for every server**, which is what makes this a design question rather than
+a constant to tune. The client cannot know what the server's limit is, and a smaller span only
+moves the wall while costing a handshake more often for every server that would not have re-keyed.
+
+**So a span that carried bytes and then stopped is resumed from where it got to.** That reverses
+the part of ADR-0013 that rejected resuming, and the reversal is the whole decision: the original
+reasoning was right about the cost — a stall-guard wait per re-key point — and wrong about the
+alternative, which is not "spans never meet the fault" but "the file cannot be read".
+
+**Only a span that carried bytes.** One that carried none has nothing to resume from and no reason
+to expect better, so the read fails there. Without that rule a dead link would cost a stall-guard
+wait per attempt for ever, because a server that re-keys and a link that has gone away look the
+same from here: one stops after delivering, the other delivers nothing. With it, the total is
+bounded by the file — every resume must make progress, so there cannot be more of them than there
+are bytes.
+
+**Measured.** A gibibyte from the server whose limit is `256M`, previously unreadable, arrives
+whole and verified byte for byte, at 1.8 MiB/s against 14.9 from the server that does not re-key.
+That is four stall-guard waits and it is the price the amendment names out loud.
+
+**The control test asserted the old contract and now asserts the new one**, with the bound beside
+it: a span that delivers nothing ends the read after exactly two attempts, so a dead link cannot
+become a wait without end.
+
+**Two things that were not the code.** The tier reported the resumed download using 199 MiB of
+temporary space, which it calls staging — it was this session's own experiments writing into
+`/tmp`, which is the directory the tier watches. `ResourceWatch` now names the largest entry it
+counted, so the next person reads a filename instead of reproducing the run with a shell watching
+`/tmp`. And QtTest's own five-minute per-function watchdog fires before a legitimately ten-minute
+transfer ends, which looks exactly like the hang this tier exists to tell apart from slowness; the
+suite now sets it.
+
 ## Sync took a dropped connection for the end of a file
 
 **Asked for:** MOLE-98 — noticed while writing the hostile slice through `TransferTask`.

@@ -11,6 +11,8 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-19 #MOLE-99 A large file can now be read from an SFTP server that re-keys part way through a span — the read resumes from the byte it reached instead of failing, so a file that could not be read at all now arrives whole
+
 2026-08-19 #MOLE-98 Sync no longer takes a dropped connection for the end of a file — a read that dies half way is a failure instead of a file counted as copied, and a destination that fills up says so instead of saying "short write"
 
 2026-08-19 #MOLE-127 An FTP drive can now read a file larger than the local scratch space — reads stream a span at a time instead of downloading the whole file first, which was the last place a backend staged anything

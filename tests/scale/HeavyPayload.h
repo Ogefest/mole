@@ -4,6 +4,7 @@
 #include <QString>
 
 #include <atomic>
+#include <mutex>
 #include <thread>
 
 class QIODevice;
@@ -68,6 +69,12 @@ public:
     /// The most bytes seen in temporary files that were not there when this
     /// started. This is the number that catches staging.
     qint64 peakScratchBytes() const { return m_peakScratch.load(); }
+    /// Which entry was the largest when that peak was taken.
+    ///
+    /// A bare number says a transfer staged and not what did the staging, which
+    /// is the first thing anybody looking at a red line here has to find out --
+    /// and finding it out meant reproducing the run with a shell watching /tmp.
+    QString largestScratchEntry() const;
     /// How much the resident set grew above the baseline, at its worst.
     qint64 peakResidentGrowthBytes() const { return m_peakRss.load(); }
     /// Open file descriptors now, and how many there were at the start.
@@ -82,6 +89,8 @@ private:
 
     std::atomic_bool m_running { true };
     std::atomic<qint64> m_peakScratch { 0 };
+    mutable std::mutex m_namesGuard;
+    QString m_largestEntry;
     std::atomic<qint64> m_peakRss { 0 };
     qint64 m_baselineRss = 0;
     int m_baselineFds = 0;

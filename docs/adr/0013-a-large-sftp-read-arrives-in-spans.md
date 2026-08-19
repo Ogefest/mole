@@ -102,3 +102,49 @@ this file" is "wait for the next Ubuntu" is not a file manager.
 Both of those were taken up immediately afterwards, in
 [ADR-0014](0014-remote-files-stream-rather-than-stage.md): reads and writes now
 stream, and the span loop is how each of them fetches and sends.
+
+## Amendment, 2026-08-19 (MOLE-99)
+
+**A span that stalls is resumed from the byte it reached.** This reverses the
+"Why spans rather than resuming after the stall" reasoning above; everything else
+in this record still holds, and the span loop stays.
+
+### What the spans did not cover
+
+The span size was chosen as "far enough below the fault that a server re-keying
+earlier is still covered". That is not true of a server whose `RekeyLimit` is
+exactly `256M`: the re-key point falls *inside* the first span, the read dies
+there, and every retry stops in the same place, 640 KiB short of 256 MiB. The
+file cannot be read at all. Uploading the same file to the same server works, so
+it is the read path alone.
+
+**No span size is safe for every server.** The client cannot know what the
+server's `RekeyLimit` is, and a smaller span only moves the wall — it does not
+remove it, and it costs a handshake more often for every server that would not
+have re-keyed anyway.
+
+### The decision, and its price
+
+A span that carried bytes and then stopped is fetched again from where it got to.
+The original reasoning against this was that each attempt has to sit through the
+stall guard first — two minutes per gibibyte, most of an hour on a twenty-gigabyte
+file. That reasoning was right about the cost and wrong about the alternative:
+the alternative is not "spans, which never meet the fault", it is "the file
+cannot be read".
+
+The price is real and measured. A gibibyte from the server whose limit is `256M`
+arrives at 1.8 MiB/s, against 14.9 MiB/s from the server that does not re-key.
+That is four stall-guard waits, and it is what the tier's own five-minute
+per-function watchdog now has to be told about.
+
+### What keeps it bounded
+
+**Only a span that carried bytes is resumed.** One that carried none has nothing
+to resume from and no reason to expect better, so the read fails there. Without
+that rule the two cases are indistinguishable — a server that re-keys is one that
+stops after delivering, and a link that has gone away is one that delivers
+nothing — and a dead link would cost a stall-guard wait per attempt for ever.
+With it, a dead link costs one stall and one attempt that gets nowhere.
+
+The total is therefore bounded by the file: every resume must make progress, so
+there can be no more of them than there are bytes.

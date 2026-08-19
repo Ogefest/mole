@@ -372,7 +372,15 @@ if(MOLE_HAVE_NETWORK_PLUGIN)
                                        LIBS mole_network_backends CURL::libcurl)
     # An hour is not enough for 10 GB over a slow link, and a tier that times
     # out is a tier nobody trusts.
-    set_tests_properties(tst_HeavyTransfers PROPERTIES TIMEOUT 7200 LABELS heavy)
+    # Two clocks, and both have to be told. CTest's TIMEOUT bounds the binary;
+    # QtTest has a watchdog of its own -- five minutes per test function -- and
+    # it is the one that fires first here. A read from a server that re-keys
+    # inside the span pays a stall-guard wait at every re-key point (ADR-0013's
+    # amendment), so a gibibyte legitimately takes about ten minutes. Left at the
+    # default it looks like a hang, which is exactly what this tier exists to
+    # tell apart from slowness.
+    set_tests_properties(tst_HeavyTransfers PROPERTIES TIMEOUT 7200 LABELS heavy
+                         ENVIRONMENT "QTEST_FUNCTION_TIMEOUT=3600000")
 
     # The same transfers with the server being attacked while they run. Needs
     # the control channel as well as an account, and skips itself with the
