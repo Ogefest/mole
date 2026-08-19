@@ -5,6 +5,7 @@
 #include "ui/models/FileListModel.h"
 
 #include "core/index/IndexDatabase.h"
+#include "core/index/ScanOptions.h"
 #include "core/search/LiveSearchTask.h"
 #include "core/search/QueryLine.h"
 #include "core/search/SearchQuery.h"
@@ -288,13 +289,10 @@ private:
     /// is smaller for anything that is not the local disk, where reading is
     /// downloading.
     SearchIo searchIoFor(const FileSystemPtr& fileSystem, const VfsUri& root) const;
-    /// What a file says about itself, through the readers that fill the details
-    /// panel. The same readers, so the index and the panel can never disagree.
-    std::function<QList<SearchFact>(const FileEntry&)> factReaderFor(const FileSystemPtr& fileSystem) const;
-    /// Rows for what lives inside a container, through whichever mounted
-    /// backend claims that kind of file. Null when nothing can open one, which
-    /// is what a build without the archive plugin looks like from here.
-    std::function<QList<IndexedFile>(const FileEntry&, bool*)> containerReaderFor(const VfsUri& root) const;
+    /// Everything the form is asking a scan for. `incremental` is the caller's,
+    /// because "full rescan" is a button and not a checkbox; the other two are
+    /// the form's own.
+    ScanOptions scanOptions(bool incremental) const;
     /// The backend that owns `uri`, mounting a container on demand. What lets a
     /// content search reach inside an archive nobody has opened.
     FileSystemPtr backendFor(const VfsUri& uri) const;

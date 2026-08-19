@@ -62,7 +62,7 @@ void ScanTask::run()
     // What the last finished scan recorded about the folders, which is the only
     // thing an incremental scan has to go on.
     QHash<QString, qint64> knownFolders;
-    if (m_incremental) {
+    if (m_options.incremental) {
         if (Result<QHash<QString, qint64>> previous = m_index->directoryTimes(volumeId); previous.ok())
             knownFolders = previous.value();
     }
@@ -103,7 +103,7 @@ void ScanTask::run()
         // was. Carried across rather than re-walked -- and only because this
         // walk just saw the folder in its parent's listing, which is what makes
         // a deleted subtree disappear rather than linger.
-        if (entry.isDir && m_incremental && entry.modified.isValid()) {
+        if (entry.isDir && m_options.incremental && entry.modified.isValid()) {
             m_datesFolders = true;
             const auto known = knownFolders.constFind(entry.uri.path());
             if (known != knownFolders.constEnd() && *known == entry.modified.toSecsSinceEpoch()) {
@@ -180,9 +180,9 @@ void ScanTask::run()
 
     setProgress(100);
     QStringList extras;
-    if (m_incremental && m_carried > 0)
+    if (m_options.incremental && m_carried > 0)
         extras.append(QStringLiteral("%1 unchanged and kept").arg(m_carried));
-    if (m_incremental && !m_datesFolders) {
+    if (m_options.incremental && !m_datesFolders) {
         // A drive that does not date its folders gives an incremental scan
         // nothing to work from. Saying so beats looking like a slow one.
         extras.append(QStringLiteral("this drive does not date its folders, so all of it was walked"));

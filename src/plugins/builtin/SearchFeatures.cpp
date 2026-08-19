@@ -1,18 +1,16 @@
 #include "plugins/builtin/SearchFeatures.h"
 
 #include "plugins/builtin/IndexScanJob.h"
-#include "sdk/IMetadataReader.h"
+#include "sdk/ScanReaders.h"
 #include "ui/models/FileListModel.h"
 
 #include "core/automation/ScheduleStore.h"
-#include "core/data/FileType.h"
 #include "core/events/EventBus.h"
 #include "core/index/IndexDatabase.h"
 #include "core/index/IndexSearchTask.h"
 #include "core/index/ScanTask.h"
 #include "core/sets/FileSetStore.h"
 #include "core/tasks/TaskManager.h"
-#include "core/vfs/DirectoryWalker.h"
 #include "core/vfs/VfsManager.h"
 
 #include <QIODevice>
@@ -152,8 +150,12 @@ QString LiveSearchController::scheduleScan(const QString& uri, int hours)
     rule.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     rule.jobKind = IndexScanJob::kind();
     rule.label = QStringLiteral("Re-index %1").arg(uri);
+    // Every option the scan was asked for, not just the incremental flag: a
+    // rule that carried less rebuilt the volume as a poorer scan every night.
     rule.parameters
-        = { { IndexScanJob::rootUriParameter(), uri }, { IndexScanJob::incrementalParameter(), true } };
+        = { { IndexScanJob::rootUriParameter(), uri }, { IndexScanJob::incrementalParameter(), true },
+              { IndexScanJob::metadataParameter(), m_scanReadsMetadata },
+              { IndexScanJob::archivesParameter(), m_scanOpensArchives } };
     rule.intervalSeconds = qMax(1, hours) * 3600LL;
     m_services.scheduler->store()->put(rule);
     m_services.scheduler->store()->save();
@@ -183,6 +185,15 @@ void LiveSearchController::unscheduleScan(const QString& uri)
     }
 }
 
+ScanOptions LiveSearchController::scanOptions(bool incremental) const
+{
+    ScanOptions options;
+    options.incremental = incremental;
+    options.metadata = m_scanReadsMetadata;
+    options.archives = m_scanOpensArchives;
+    return options;
+}
+
 void LiveSearchController::scanDirectory(const QString& uri, const QString& label, bool full)
 {
     if (!m_services.isValid())
@@ -196,16 +207,7 @@ void LiveSearchController::scanDirectory(const QString& uri, const QString& labe
     }
 
     auto* task = new ScanTask(fs, root, label.isEmpty() ? uri : label, m_services.index);
-    // Keeps what has not changed, unless somebody asked for the whole thing.
-    task->setIncremental(!full);
-    // Asked for per scan rather than assumed: reading every file in a tree is
-    // bounded per file and unbounded in aggregate. See ADR-0039.
-    if (m_scanReadsMetadata)
-        task->setFactReader(factReaderFor(fs));
-    // On for a local drive, where a zip is one read; off for a remote one,
-    // where listing an archive means fetching it whole.
-    if (m_scanOpensArchives)
-        task->setContainerReader(containerReaderFor(root));
+    applyScanOptions(*task, scanOptions(!full), m_services, fs, root);
 
     // Announced on the bus rather than called back directly, so every open
     // search refreshes and not only the one that asked for the scan.
@@ -888,21 +890,6 @@ void LiveSearchController::narrowToIndexedPart()
                       .arg(partial.first().rootUri, was));
 }
 
-namespace {
-
-    /// What one container may contribute.
-    ///
-    /// Twenty thousand rather than everything, because one file holding a
-    /// million entries would put a million rows in the index and make every
-    /// search over that volume answer for it. A container that gives up more
-    /// says so on its own row rather than being trimmed in silence.
-    constexpr int kMaxContainerEntries = 20000;
-    /// And how big a container is worth opening on a drive where opening it
-    /// means fetching it whole.
-    constexpr qint64 kRemoteContainerCeiling = 32 * 1024 * 1024;
-
-} // namespace
-
 FileSystemPtr LiveSearchController::backendFor(const VfsUri& uri) const
 {
     if (!m_services.vfs)
@@ -928,121 +915,6 @@ FileSystemPtr LiveSearchController::backendFor(const VfsUri& uri) const
         }
     }
     return {};
-}
-
-std::function<QList<IndexedFile>(const FileEntry&, bool*)> LiveSearchController::containerReaderFor(
-    const VfsUri& root) const
-{
-    if (!m_services.vfs)
-        return {};
-
-    // Whichever backend claims this kind of file, which is a plugin's business
-    // and not this one's. A build without one simply has no factory that does.
-    QList<IFileSystemFactory*> openers;
-    for (IFileSystemFactory* factory : m_services.vfs->factories()) {
-        if (!factory->mountableFileSuffixes().isEmpty())
-            openers.append(factory);
-    }
-    if (openers.isEmpty())
-        return {};
-
-    const bool remote = root.scheme() != QLatin1String("file");
-    return [openers, remote](const FileEntry& entry, bool* truncatedOut) -> QList<IndexedFile> {
-        // Nested containers are rows and nothing more. Following one is an
-        // unbounded recursion with a bad failure mode, and a container inside a
-        // container is a member like any other.
-        if (entry.uri.scheme() == QLatin1String("archive"))
-            return {};
-        // Listing one on a remote drive means fetching it.
-        if (remote && entry.size > kRemoteContainerCeiling)
-            return {};
-
-        const QString suffix = entry.uri.suffix();
-        IFileSystemFactory* opener = nullptr;
-        for (IFileSystemFactory* factory : openers) {
-            if (factory->mountableFileSuffixes().contains(suffix)) {
-                opener = factory;
-                break;
-            }
-        }
-        const QString localPath = entry.uri.toLocalPath();
-        if (!opener || localPath.isEmpty())
-            return {};
-
-        QString error;
-        FileSystemPtr inside = opener->create(opener->configForFile(localPath), &error);
-        if (!inside)
-            return {}; // corrupt, encrypted, or nothing this build can open
-
-        QList<IndexedFile> rows;
-        bool cut = false;
-        DirectoryWalker walker(inside);
-        const Result<void> walked = walker.walk(
-            opener->rootUriForFile(localPath), CancelToken {}, [&](const FileEntry& member, int) {
-                if (rows.size() >= kMaxContainerEntries) {
-                    cut = true;
-                    return DirectoryWalker::Action::Stop;
-                }
-                IndexedFile row;
-                row.name = member.name;
-                row.path = member.uri.path();
-                row.parentPath = member.uri.parent().path();
-                row.extension = member.uri.suffix();
-                row.isDir = member.isDir;
-                row.size = member.size;
-                row.modifiedEpoch = member.modified.isValid() ? member.modified.toSecsSinceEpoch() : 0;
-                // Addressed as it really is, not as the volume is: a member
-                // lives on the archive's own authority, and rebuilding its uri
-                // from the volume's scheme would put it loose on the disk.
-                row.uri = member.uri.toString();
-                rows.append(row);
-                return DirectoryWalker::Action::Continue;
-            });
-        // A container that could not be read costs its own rows and nothing
-        // else; the scan carries on either way.
-        if (!walked.ok() && rows.isEmpty())
-            return {};
-
-        if (truncatedOut)
-            *truncatedOut = cut;
-        return rows;
-    };
-}
-
-std::function<QList<SearchFact>(const FileEntry&)> LiveSearchController::factReaderFor(
-    const FileSystemPtr& fileSystem) const
-{
-    if (!fileSystem || !m_services.metadata)
-        return {};
-
-    IMetadataLookup* lookup = m_services.metadata;
-    return [fileSystem, lookup](const FileEntry& entry) -> QList<SearchFact> {
-        const QList<IMetadataReader*> readers = lookup->readersFor(entry);
-        if (readers.isEmpty())
-            return {};
-
-        // The page the type sniff would have read, read once and handed to
-        // every reader -- which is the contract IMetadataReader already states.
-        QByteArray head;
-        if (Result<std::unique_ptr<QIODevice>> stream
-            = fileSystem->openRead(entry.uri, FileType::kSampleBytes);
-            stream.ok() && stream.value()) {
-            head = stream.value()->read(FileType::kSampleBytes);
-        }
-
-        QList<SearchFact> out;
-        for (IMetadataReader* reader : readers) {
-            // A reader that throws its hands up costs its own rows and nobody
-            // else's, which is what the extension point promises.
-            for (const FileFact& fact : reader->read(entry, head, PluginServices {}, CancelToken {})) {
-                if (!fact.isAskable())
-                    continue;
-                out.append(SearchFact {
-                    fact.key, fact.value, fact.hasNumber() ? fact.number : 0, fact.hasNumber() });
-            }
-        }
-        return out;
-    };
 }
 
 void LiveSearchController::notePlan(const SearchQuery& query, SearchSource source)

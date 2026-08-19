@@ -11,6 +11,17 @@
 using namespace mole;
 using namespace mole::test;
 
+namespace {
+/// A scan asked to keep what has not changed, and nothing else. The only
+/// option most of these cases vary.
+ScanOptions incrementally()
+{
+    ScanOptions options;
+    options.incremental = true;
+    return options;
+}
+}
+
 class TestScanTask : public QObject
 {
     Q_OBJECT
@@ -38,6 +49,7 @@ private slots:
     void aFullRescanDoesWhatItSays();
     void whatIsInsideAContainerIsIndexedBesideIt();
     void aContainerNothingCanOpenCostsItsOwnRowsAndNoMore();
+    void anIncrementalScanKeepsWhatBothHalvesOfTheTreeWereAskedFor();
 
 private:
     ScanTask* startScan(const QString& rootPath = QStringLiteral("/"));
@@ -483,7 +495,7 @@ void TestScanTask::aSecondScanOfAnUnchangedTreeWalksNothing()
 
     auto* again = new ScanTask(m_fs, VfsUri(QStringLiteral("mem"), QString(), QStringLiteral("/")),
         QStringLiteral("scratch"), m_index.get());
-    again->setIncremental(true);
+    again->setOptions(incrementally());
     m_tasks->submit(again);
     QVERIFY(waitForTask(again));
 
@@ -522,7 +534,7 @@ void TestScanTask::whatChangedIsReflectedAndWhatWentIsGone()
 
     auto* again = new ScanTask(m_fs, VfsUri(QStringLiteral("mem"), QString(), QStringLiteral("/")),
         QStringLiteral("scratch"), m_index.get());
-    again->setIncremental(true);
+    again->setOptions(incrementally());
     m_tasks->submit(again);
     QVERIFY(waitForTask(again));
 
@@ -552,7 +564,7 @@ void TestScanTask::aDriveThatDoesNotDateItsFoldersIsWalkedInFullAndSaysSo()
 
     auto* again = new ScanTask(m_fs, VfsUri(QStringLiteral("mem"), QString(), QStringLiteral("/")),
         QStringLiteral("scratch"), m_index.get());
-    again->setIncremental(true);
+    again->setOptions(incrementally());
     m_tasks->submit(again);
     QVERIFY(waitForTask(again));
 
@@ -581,6 +593,93 @@ void TestScanTask::aFullRescanDoesWhatItSays()
     QCOMPARE(again->carriedForward(), 0);
     QCOMPARE(m_fs->listCallCount() - listedInFull, listedInFull);
     QCOMPARE(m_index->fileCount().value(), 2);
+}
+
+/// The half a scheduled re-index used to lose. An incremental scan carries the
+/// unchanged subtrees across and re-walks the rest, and the rows it writes for
+/// the part it re-walked have to say as much about those files as the rows it
+/// carried say about theirs -- otherwise the index answers for the parts of the
+/// tree nobody has touched and stops answering for the parts they have.
+void TestScanTask::anIncrementalScanKeepsWhatBothHalvesOfTheTreeWereAskedFor()
+{
+    m_fs->addFile(QStringLiteral("/steady/kept.jpg"));
+    m_fs->addFile(QStringLiteral("/steady/kept.bag"));
+    m_fs->addFile(QStringLiteral("/churn/moved.jpg"));
+    m_fs->addFile(QStringLiteral("/churn/moved.bag"));
+
+    // Dated before the scan, so the second one has something it can trust.
+    const QDateTime settled = QDateTime::currentDateTime().addSecs(-3600);
+    for (const QString& folder :
+        { QStringLiteral("/"), QStringLiteral("/steady"), QStringLiteral("/churn") }) {
+        m_fs->setModified(folder, settled);
+    }
+
+    const auto camera = [](const FileEntry& entry) -> QList<SearchFact> {
+        if (entry.uri.suffix() != QLatin1String("jpg"))
+            return {};
+        return { SearchFact { QStringLiteral("image.camera"), QStringLiteral("X100V"), 0, false } };
+    };
+    const auto inside = [](const FileEntry& entry, bool*) -> QList<IndexedFile> {
+        if (entry.uri.suffix() != QLatin1String("bag"))
+            return {};
+        // Named after its container, because the index answers about names and
+        // not about where a row sits.
+        const QString name = entry.name + QStringLiteral("-member.txt");
+        IndexedFile member;
+        member.name = name;
+        member.path = entry.uri.path() + QLatin1Char('!') + name;
+        member.parentPath = entry.uri.path();
+        member.extension = QStringLiteral("txt");
+        member.uri = entry.uri.toString() + QLatin1Char('!') + name;
+        return { member };
+    };
+
+    auto* first = new ScanTask(m_fs, VfsUri(QStringLiteral("mem"), QString(), QStringLiteral("/")),
+        QStringLiteral("scratch"), m_index.get());
+    first->setFactReader(camera);
+    first->setContainerReader(inside);
+    m_tasks->submit(first);
+    QVERIFY(waitForTask(first));
+    QCOMPARE(first->state(), Task::State::Succeeded);
+
+    // One subtree moves and the other does not, which is what makes the second
+    // scan carry half the tree and re-walk half of it.
+    m_fs->setModified(QStringLiteral("/churn"), QDateTime::currentDateTime());
+
+    ScanOptions options;
+    options.incremental = true;
+    options.metadata = true;
+    options.archives = true;
+    auto* again = new ScanTask(m_fs, VfsUri(QStringLiteral("mem"), QString(), QStringLiteral("/")),
+        QStringLiteral("scratch"), m_index.get());
+    again->setOptions(options);
+    again->setFactReader(camera);
+    again->setContainerReader(inside);
+    m_tasks->submit(again);
+    QVERIFY(waitForTask(again));
+    QCOMPARE(again->state(), Task::State::Succeeded);
+    QVERIFY2(again->carriedForward() > 0, "the unchanged subtree has to have been carried, not re-walked");
+
+    // Named rather than located, because each half is one file and a name is
+    // what the index answers about most directly.
+    const auto cameraFor = [this](const QString& name) {
+        SearchQuery query;
+        query.add(SearchPredicate::metadataIs(QStringLiteral("image.camera"), QStringLiteral("x100v")));
+        query.add(SearchPredicate::name(name));
+        const Result<QList<IndexSearchHit>> hits = m_index->search(query);
+        return hits.ok() ? hits.value().size() : -1;
+    };
+    QCOMPARE(cameraFor(QStringLiteral("kept.jpg")), 1); // carried across
+    QCOMPARE(cameraFor(QStringLiteral("moved.jpg")), 1); // re-walked, and the half that used to go
+
+    const auto memberOf = [this](const QString& name) {
+        SearchQuery query;
+        query.add(SearchPredicate::name(name));
+        const Result<QList<IndexSearchHit>> hits = m_index->search(query);
+        return hits.ok() ? hits.value().size() : -1;
+    };
+    QCOMPARE(memberOf(QStringLiteral("kept.bag-member.txt")), 1);
+    QCOMPARE(memberOf(QStringLiteral("moved.bag-member.txt")), 1);
 }
 
 MOLE_TEST_MAIN(TestScanTask)

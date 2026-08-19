@@ -525,6 +525,12 @@ namespace {
 
         const QString label = args.value(QStringLiteral("label"), root.toString());
         auto* task = new ScanTask(fs, root, label, index);
+        // The options this tool can ask for, which is one of the three. Reading
+        // what a file says about itself and listing what is inside a container
+        // both need the readers, and those live above this layer.
+        ScanOptions options;
+        options.incremental = args.flag(QStringLiteral("incremental"));
+        task->setOptions(options);
         const int code = await(task, environment.tasks(), out, quiet);
         out << task->filesIndexed() << " indexed, " << task->skippedDirectories() << " directories skipped"
             << Qt::endl;
@@ -633,7 +639,7 @@ Commands:
   compress    --from <uri>… --to <archive> [--format zip|tar.gz|tar.xz|7z|xz] [--password <p>]
   rename      --in <dir> [--find <s> --replace <s> [--regex]] [--case upper|lower|title|sentence]
               [--prefix <s>] [--suffix <s>] [--number-from <n>] [--apply]
-  scan        <uri> [--label <name>]
+  scan        <uri> [--label <name>] [--incremental]
   duplicates  <uri>… [--by content|size|name|name+size] [--min-size <bytes>]
   verify      <uri>
   drives      what is mounted, and how to address it

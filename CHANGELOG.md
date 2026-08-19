@@ -11,6 +11,8 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-19 #MOLE-226 A scheduled re-index now repeats the scan that created it — a folder indexed with metadata or archive contents no longer loses them, a subtree at a time, every night
+
 2026-08-19 #MOLE-126 A sync now reports how much it has copied — the figure and the progress bar used to stop advancing part way through and settle on a fraction of the real total, while the copy itself was correct all along
 
 2026-08-19 #MOLE-224 The drives dialog's Kind picker now names the drive you selected, instead of the one you looked at before

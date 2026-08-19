@@ -1,5 +1,7 @@
 #include "plugins/builtin/IndexScanJob.h"
 
+#include "sdk/ScanReaders.h"
+
 #include "core/events/EventBus.h"
 #include "core/index/ScanTask.h"
 #include "core/tasks/TaskManager.h"
@@ -11,6 +13,17 @@ IndexScanJob::IndexScanJob(PluginServices services, QObject* parent)
     : QObject(parent)
     , m_services(services)
 {
+}
+
+ScanOptions IndexScanJob::optionsFor(const ScheduleRule& rule)
+{
+    ScanOptions options;
+    // Incremental unless the rule says otherwise, which is the whole point of
+    // running this every night rather than once a quarter.
+    options.incremental = rule.parameters.value(incrementalParameter(), true).toBool();
+    options.metadata = rule.parameters.value(metadataParameter(), false).toBool();
+    options.archives = rule.parameters.value(archivesParameter(), false).toBool();
+    return options;
 }
 
 bool IndexScanJob::start(const ScheduleRule& rule, std::function<void(bool, QString)> done)
@@ -31,10 +44,11 @@ bool IndexScanJob::start(const ScheduleRule& rule, std::function<void(bool, QStr
         return false;
     }
 
-    auto* task = new ScanTask(std::move(fs), root, rule.label, m_services.index);
-    // Incremental unless the rule says otherwise, which is the whole point of
-    // running this every night rather than once a quarter.
-    task->setIncremental(rule.parameters.value(incrementalParameter(), true).toBool());
+    auto* task = new ScanTask(fs, root, rule.label, m_services.index);
+    // Everything the rule asks for, readers and all. Setting only the
+    // incremental flag here is what quietly stripped the metadata and the
+    // archive rows out of every subtree a nightly run re-walked.
+    applyScanOptions(*task, optionsFor(rule), m_services, fs, root);
 
     connect(task, &Task::finished, this, [this, task, rootUri, done] {
         const bool ok = task->state() == Task::State::Succeeded;

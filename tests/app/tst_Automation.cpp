@@ -2,6 +2,7 @@
 #include "plugins/builtin/AnalysisJob.h"
 #include "plugins/builtin/AutomationFeature.h"
 #include "plugins/builtin/BuiltinPlugin.h"
+#include "plugins/builtin/IndexScanJob.h"
 #include "plugins/builtin/SearchFeatures.h"
 #include "support/TestSupport.h"
 #include "ui/AppController.h"
@@ -278,6 +279,10 @@ void TestAutomation::aScheduledRescanRunsSurvivesARestartAndCatchesUp()
     QVERIFY(form);
     QVERIFY(!form->scheduleScan(uri, 24).isEmpty());
     QCOMPARE(form->scheduledScanId(uri).isEmpty(), false);
+    // Noted before the restart takes the form with it: what the scan was asked
+    // for is what the rule has to repeat.
+    const bool askedForMetadata = form->scanReadsMetadata();
+    const bool askedForArchives = form->scanOpensArchives();
 
     // Survives a restart, which is the scheduler's own behaviour and has to
     // hold for this job type like any other.
@@ -293,6 +298,14 @@ void TestAutomation::aScheduledRescanRunsSurvivesARestartAndCatchesUp()
     const ScheduleRule restored = m_app->schedules()->rules().first();
     QCOMPARE(restored.jobKind, QStringLiteral("index"));
     QCOMPARE(restored.intervalSeconds, 24 * 3600);
+
+    // Every option the scan was asked for, read back out of the store: a rule
+    // that carried only the incremental flag repeated the scan as a poorer one
+    // and stripped the metadata out of every subtree it re-walked. MOLE-226.
+    const ScanOptions asked = IndexScanJob::optionsFor(restored);
+    QVERIFY(asked.incremental);
+    QCOMPARE(asked.metadata, askedForMetadata);
+    QCOMPARE(asked.archives, askedForArchives);
 
     // A rule created and never run is due at once, so the restart may already
     // have caught it. Let that settle before staging the missed night.

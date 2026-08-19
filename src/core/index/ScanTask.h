@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/index/IndexDatabase.h"
+#include "core/index/ScanOptions.h"
 #include "core/tasks/Task.h"
 #include "core/vfs/IFileSystem.h"
 
@@ -25,11 +26,13 @@ public:
     /// goes when it is asked to.
     qint64 filesRead() const { return m_filesRead; }
 
-    /// Keeps what has not changed rather than rewriting it.
+    /// What this scan was asked for, as one thing rather than three calls a
+    /// caller can make two of.
     ///
-    /// A directory whose modification time has not moved since the last scan
-    /// has the same children, so its subtree is carried across and not walked.
-    /// On the trees this exists for that is the difference between minutes and
+    /// `incremental` keeps what has not changed rather than rewriting it. A
+    /// directory whose modification time has not moved since the last scan has
+    /// the same children, so its subtree is carried across and not walked. On
+    /// the trees this exists for that is the difference between minutes and
     /// hours to learn that nothing much has moved.
     ///
     /// **Nothing is carried forward that this walk did not just see in a
@@ -39,7 +42,13 @@ public:
     ///
     /// A full rescan is this turned off, and is what somebody reaches for when
     /// they suspect the index.
-    void setIncremental(bool incremental) { m_incremental = incremental; }
+    ///
+    /// `metadata` and `archives` say what the scan was asked to record; the
+    /// readers that do it are installed separately, because core cannot name
+    /// them. `mole::applyScanOptions()` in `sdk` does both in one line, which is
+    /// what every caller with services to hand should use.
+    void setOptions(const ScanOptions& options) { m_options = options; }
+    const ScanOptions& options() const { return m_options; }
 
     /// How many entries came across untouched, and whether the drive gave the
     /// scan anything to go on.
@@ -89,7 +98,7 @@ private:
     qint64 m_filesIndexed = 0;
     qint64 m_filesRead = 0;
     qint64 m_containedEntries = 0;
-    bool m_incremental = false;
+    ScanOptions m_options;
     bool m_datesFolders = false;
     qint64 m_carried = 0;
     std::function<QList<IndexedFile>(const FileEntry&, bool*)> m_containers;

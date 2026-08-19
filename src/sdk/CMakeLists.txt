@@ -10,6 +10,8 @@ add_library(mole_sdk STATIC
     IMetadataReader.h
     FeatureController.h
     FeatureController.cpp
+    ScanReaders.h
+    ScanReaders.cpp
 )
 
 add_library(mole::sdk ALIAS mole_sdk)

@@ -253,6 +253,11 @@ mole_add_test(tst_MediaMetadata     SOURCES plugins/tst_MediaMetadata.cpp LIBS m
 # longer than the block it is in.
 mole_add_test(tst_AudioMetadata     SOURCES plugins/tst_AudioMetadata.cpp LIBS mole_builtin)
 mole_add_test(tst_AnalysisTab       SOURCES app/tst_AnalysisTab.cpp     LIBS mole_builtin)
+# The nightly re-index, and whether the rule it runs from asks for the same scan
+# the one that created it did. A stub metadata reader and a drive that mounts a
+# fake container keep this off a real archive library. See MOLE-226.
+mole_add_test(tst_IndexScanJob      SOURCES plugins/tst_IndexScanJob.cpp LIBS mole_builtin)
+
 mole_add_test(tst_Automation        SOURCES app/tst_Automation.cpp      LIBS mole_builtin)
 mole_add_test(tst_FileSets          SOURCES app/tst_FileSets.cpp        LIBS mole_builtin)
 

@@ -3,6 +3,7 @@
 #include "sdk/PluginServices.h"
 
 #include "core/automation/Scheduler.h"
+#include "core/index/ScanOptions.h"
 
 #include <QObject>
 
@@ -33,6 +34,12 @@ public:
     static QString incrementalParameter() { return QStringLiteral("incremental"); }
     /// Whether the scan also records what each file says about itself.
     static QString metadataParameter() { return QStringLiteral("metadata"); }
+    /// Whether it also records what lives inside a container.
+    static QString archivesParameter() { return QStringLiteral("archives"); }
+
+    /// What `rule` asks a scan for. Every option the rule carries, so a nightly
+    /// run repeats the scan that created it rather than a poorer one.
+    static ScanOptions optionsFor(const ScheduleRule& rule);
 
     explicit IndexScanJob(PluginServices services, QObject* parent = nullptr);
 
