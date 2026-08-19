@@ -11,6 +11,8 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-20 #MOLE-142 A flick through a folder of photographs now makes thumbnails for what is on screen, a few at a time, newest request first — and leaving a folder takes its queue with it
+
 2026-08-20 #MOLE-141 Thumbnails are kept, in memory for the scroll and on disk for the next visit, so a folder of photographs is decoded once rather than on every look
 
 2026-08-20 #MOLE-140 The gallery now shows what pictures look like: thumbnails are a new extension point, made off the UI thread, bounded in size, and in the right orientation for a photograph taken upright

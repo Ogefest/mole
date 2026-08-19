@@ -140,55 +140,106 @@ void ThumbnailPump::startFor(QObject* response, const QString& id)
     const QString slot = key.toId();
     m_keyOf.insert(response, slot);
 
-    // Somebody is already making this picture. Two panes showing one folder ask at
-    // the same moment, and decoding it twice is twice the work for one answer.
+    // Somebody is already making this picture, or it is already in the queue. Two
+    // panes showing one folder ask at the same moment, and decoding it twice is
+    // twice the work for one answer.
     if (const auto pending = m_pending.find(slot); pending != m_pending.end()) {
         pending->waiting.append(response);
         return;
     }
+    if (const auto waiting = m_waitingFor.find(slot); waiting != m_waitingFor.end()) {
+        waiting->append(response);
+        // Newly asked for again, so it goes back to the front: whatever brought it
+        // up a second time is what the viewport is looking at now.
+        m_queue.removeAll(slot);
+        m_queue.prepend(slot);
+        return;
+    }
 
-    auto* task = new ThumbnailTask(m_services, key, m_cache, this);
-    Pending fresh;
-    fresh.task = task;
-    fresh.waiting.append(response);
-    m_pending.insert(slot, fresh);
+    m_waitingFor.insert(slot, { response });
+    m_queue.prepend(slot);
+    pumpQueue();
+}
 
-    connect(task, &Task::finished, this, [this, slot, task] {
-        const auto pending = m_pending.constFind(slot);
-        if (pending == m_pending.constEnd())
-            return;
-        const QList<QObject*> waiting = pending->waiting;
-        m_pending.erase(pending);
-        // The answer, whatever happened: a cancelled or failed decode is a null
-        // image and the tile keeps its icon.
-        const QImage answer = task->state() == Task::State::Succeeded ? task->image() : QImage();
-        for (QObject* response : waiting) {
-            m_keyOf.remove(response);
-            deliver(response, answer);
-        }
-    });
-    m_services.tasks->submit(task);
+int ThumbnailPump::defaultConcurrency()
+{
+    // The task pool itself is cores - 2, bounded to [2, 8]; taking half of that
+    // for pictures leaves the listing, the search and the copy their own room.
+    return qBound(1, QThread::idealThreadCount() / 2 - 1, 4);
+}
+
+void ThumbnailPump::setConcurrency(int decodes)
+{
+    m_concurrency = qMax(1, decodes);
+    pumpQueue();
+}
+
+void ThumbnailPump::pumpQueue()
+{
+    while (!m_queue.isEmpty() && int(m_pending.size()) < m_concurrency) {
+        const QString slot = m_queue.takeFirst();
+        const QList<QObject*> waiting = m_waitingFor.take(slot);
+        if (waiting.isEmpty())
+            continue; // everybody who wanted it has gone
+
+        const ThumbnailKey key = ThumbnailKey::parse(slot);
+        auto* task = new ThumbnailTask(m_services, key, m_cache, this);
+        Pending fresh;
+        fresh.task = task;
+        fresh.waiting = waiting;
+        m_pending.insert(slot, fresh);
+
+        connect(task, &Task::finished, this, [this, slot, task] {
+            // The answer, whatever happened: a cancelled or failed decode is a
+            // null image and the tile keeps its icon.
+            settle(slot, task->state() == Task::State::Succeeded ? task->image() : QImage());
+            pumpQueue();
+        });
+        m_services.tasks->submit(task);
+    }
+}
+
+void ThumbnailPump::settle(const QString& slot, const QImage& answer)
+{
+    const auto pending = m_pending.constFind(slot);
+    if (pending == m_pending.constEnd())
+        return;
+    const QList<QObject*> waiting = pending->waiting;
+    m_pending.erase(pending);
+    for (QObject* response : waiting) {
+        m_keyOf.remove(response);
+        deliver(response, answer);
+    }
 }
 
 void ThumbnailPump::cancelFor(QObject* response)
 {
-    const auto slot = m_keyOf.constFind(response);
-    if (slot == m_keyOf.constEnd())
+    const auto found = m_keyOf.constFind(response);
+    if (found == m_keyOf.constEnd())
         return; // already answered, and the pointer may be gone with it
 
-    const auto pending = m_pending.find(*slot);
-    m_keyOf.erase(slot);
-    if (pending == m_pending.end())
-        return;
+    const QString slot = *found;
+    m_keyOf.erase(found);
 
-    pending->waiting.removeAll(response);
-    // Only when nobody wants it any more: the other pane showing this folder is
-    // still waiting for the same picture.
-    if (pending->waiting.isEmpty() && pending->task)
-        pending->task->requestCancel();
-    // The task's own finished handler still delivers to whoever is left, and Qt
-    // expects a cancelled response to finish rather than to hang -- so this one
-    // gets its answer now.
+    if (const auto pending = m_pending.find(slot); pending != m_pending.end()) {
+        pending->waiting.removeAll(response);
+        // Only when nobody wants it any more: the other pane showing this folder
+        // is still waiting for the same picture.
+        if (pending->waiting.isEmpty() && pending->task)
+            pending->task->requestCancel();
+    } else if (const auto waiting = m_waitingFor.find(slot); waiting != m_waitingFor.end()) {
+        // Not started yet, so it costs nothing at all: leaving a folder has to
+        // take its queue with it, or walking through five folders leaves five
+        // folders' worth of decoding behind the one on screen.
+        waiting->removeAll(response);
+        if (waiting->isEmpty()) {
+            m_waitingFor.erase(waiting);
+            m_queue.removeAll(slot);
+        }
+    }
+
+    // Qt expects a cancelled response to finish rather than to hang, so this one
+    // gets its answer now; the running task still delivers to whoever is left.
     deliver(response, QImage());
 }
 

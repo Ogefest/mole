@@ -20,6 +20,8 @@ class QTemporaryDir;
 
 namespace mole {
 class AppController;
+class ThumbnailImageProvider;
+class ThumbnailPump;
 }
 
 namespace mole::test {
@@ -149,6 +151,10 @@ public:
     /// Spins until `predicate` holds, or the timeout expires.
     bool until(const std::function<bool()>& predicate, int timeoutMs = 10000);
 
+    /// The thumbnail queue the window's own image provider is driving, so a test
+    /// can hold a claim about the view and the queue together. Null before start().
+    ThumbnailPump* thumbnails() const;
+
     /// Finds an item by objectName. Walks the visual tree, because
     /// QObject::findChild does not follow what Loader and SplitView build.
     QQuickItem* item(const QString& objectName) const;
@@ -194,6 +200,8 @@ private:
     std::unique_ptr<AppController> m_app;
     std::unique_ptr<QQmlApplicationEngine> m_engine;
     QQuickWindow* m_window = nullptr;
+    /// Owned by the engine, kept here so thumbnails() can reach the queue.
+    ThumbnailImageProvider* m_thumbnails = nullptr;
     QString m_screenshotDirectory;
     /// The payload of a drag in flight. One at a time, because a pointer is one.
     std::unique_ptr<QMimeData> m_dragged;

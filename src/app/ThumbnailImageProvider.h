@@ -26,6 +26,12 @@ public:
 
     QQuickImageResponse* requestImageResponse(const QString& id, const QSize& requestedSize) override;
 
+    /// The queue behind the provider. Exposed so a test can drive the real view
+    /// and still see how many decodes are running, which is a claim about the two
+    /// together and cannot be made about either alone.
+    ThumbnailPump* pump() const { return m_pump; }
+    ThumbnailCache* cache() const { return m_cache.get(); }
+
 private:
     /// Both live on the thread that built the provider, which is the UI thread.
     /// Owned here rather than by the engine because the engine deletes the

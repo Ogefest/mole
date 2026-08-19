@@ -40,6 +40,9 @@ private slots:
     void aPictureAskedForTwiceIsDecodedOnce();
     void aSecondRunReadsFromDiskAndDecodesNothing();
     void twoPanesAskingAtOnceDecodeItOnce();
+    void onlySoManyDecodeAtOnceAndTheRestQueue();
+    void whatCameIntoViewLastIsServedFirst();
+    void abandoningARequestBeforeItStartsCostsNothing();
 
 private:
     /// The answer for `id`, waited on rather than timed.
@@ -378,6 +381,137 @@ void TestThumbnailSource::twoPanesAskingAtOnceDecodeItOnce()
     QVERIFY2(log->made.load() == 1, "one picture, one decode, however many are waiting for it");
     QVERIFY(answered.contains(&left));
     QVERIFY(answered.contains(&right));
+}
+
+/// A flick through eight hundred photographs asked for eight hundred decodes at
+/// once. Unbounded parallel decode of 4K JPEGs is a way to make the whole
+/// application unresponsive while the file listing is what the user is waiting
+/// for. See MOLE-142.
+void TestThumbnailSource::onlySoManyDecodeAtOnceAndTheRestQueue()
+{
+    auto log = std::make_shared<FakeThumbnailer::Log>();
+    auto gate = std::make_shared<QSemaphore>();
+    GateRelease release(gate);
+    auto held = std::make_unique<FakeThumbnailer>(QStringLiteral("test.held"), QColor(Qt::green), 0, log);
+    held->holdUntilReleased(gate);
+    QVERIFY(m_registry->addThumbnailer(std::move(held)));
+
+    // Two at a time, so the queue is visible on a machine of any size.
+    m_pump->setConcurrency(2);
+
+    std::vector<std::unique_ptr<QObject>> responses;
+    for (int i = 0; i < 12; ++i) {
+        responses.push_back(std::make_unique<QObject>());
+        ThumbnailKey key;
+        key.uri = VfsUri::fromString(QStringLiteral("mem:///photos/shot-%1.jpg").arg(i));
+        key.size = 40;
+        m_pump->startFor(responses.back().get(), key.toId());
+    }
+
+    QVERIFY(waitFor([&] { return log->made.load() == 2; }));
+    // And it stays at two: the other ten are asked for and not started.
+    QTest::qWait(50);
+    QCOMPARE(m_pump->outstanding(), 2);
+    QCOMPARE(log->made.load(), 2);
+    QCOMPARE(m_pump->queued(), 10);
+    QCOMPARE(m_pump->waiting(), 12);
+
+    // Released, and the queue drains without ever going over the bound.
+    int seenOver = 0;
+    QObject::connect(m_pump.get(), &ThumbnailPump::ready, m_pump.get(), [&](QObject*, const QImage&) {
+        if (m_pump->outstanding() > 2)
+            ++seenOver;
+    });
+    gate->release(64);
+    QVERIFY(waitFor([&] { return m_pump->waiting() == 0; }, 20000));
+    QCOMPARE(log->made.load(), 12);
+    QCOMPARE(seenOver, 0);
+}
+
+/// Without this the view fills in listing order, which is the order the user is
+/// scrolling away from.
+void TestThumbnailSource::whatCameIntoViewLastIsServedFirst()
+{
+    auto log = std::make_shared<FakeThumbnailer::Log>();
+    auto gate = std::make_shared<QSemaphore>();
+    GateRelease release(gate);
+    auto held = std::make_unique<FakeThumbnailer>(QStringLiteral("test.held"), QColor(Qt::green), 0, log);
+    held->holdUntilReleased(gate);
+    QVERIFY(m_registry->addThumbnailer(std::move(held)));
+
+    m_pump->setConcurrency(1);
+
+    // One decode holds the only slot; the next two queue behind it.
+    QObject busy;
+    QObject early;
+    QObject late;
+    const auto keyFor = [](const QString& name) {
+        ThumbnailKey key;
+        key.uri = VfsUri::fromString(QStringLiteral("mem:///photos/%1").arg(name));
+        key.size = 40;
+        return key;
+    };
+    m_pump->startFor(&busy, keyFor(QStringLiteral("busy.jpg")).toId());
+    QVERIFY(waitFor([&] { return log->made.load() == 1; }));
+
+    m_pump->startFor(&early, keyFor(QStringLiteral("early.jpg")).toId());
+    m_pump->startFor(&late, keyFor(QStringLiteral("late.jpg")).toId());
+    QCOMPARE(m_pump->queued(), 2);
+
+    QStringList order;
+    QObject::connect(m_pump.get(), &ThumbnailPump::ready, m_pump.get(), [&](QObject* who, const QImage&) {
+        order.append(who == &busy ? QStringLiteral("busy")
+                : who == &early   ? QStringLiteral("early")
+                                  : QStringLiteral("late"));
+    });
+
+    gate->release(64);
+    QVERIFY(waitFor([&] { return order.size() == 3; }, 20000));
+    QCOMPARE(order.first(), QStringLiteral("busy"));
+    QVERIFY2(order.indexOf(QStringLiteral("late")) < order.indexOf(QStringLiteral("early")),
+        qPrintable(QStringLiteral("served in the order %1").arg(order.join(QStringLiteral(", ")))));
+}
+
+/// Leaving a folder destroys its delegates, which is how the queue is cleared:
+/// walking through five folders must not leave five folders' worth of decoding
+/// behind the one on screen.
+void TestThumbnailSource::abandoningARequestBeforeItStartsCostsNothing()
+{
+    auto log = std::make_shared<FakeThumbnailer::Log>();
+    auto gate = std::make_shared<QSemaphore>();
+    GateRelease release(gate);
+    auto held = std::make_unique<FakeThumbnailer>(QStringLiteral("test.held"), QColor(Qt::green), 0, log);
+    held->holdUntilReleased(gate);
+    QVERIFY(m_registry->addThumbnailer(std::move(held)));
+
+    m_pump->setConcurrency(1);
+
+    QObject busy;
+    std::vector<std::unique_ptr<QObject>> leaving;
+    ThumbnailKey key;
+    key.uri = VfsUri::fromString(QStringLiteral("mem:///photos/busy.jpg"));
+    key.size = 40;
+    m_pump->startFor(&busy, key.toId());
+    QVERIFY(waitFor([&] { return log->made.load() == 1; }));
+
+    for (int i = 0; i < 6; ++i) {
+        leaving.push_back(std::make_unique<QObject>());
+        ThumbnailKey queued;
+        queued.uri = VfsUri::fromString(QStringLiteral("mem:///gone/shot-%1.jpg").arg(i));
+        queued.size = 40;
+        m_pump->startFor(leaving.back().get(), queued.toId());
+    }
+    QCOMPARE(m_pump->queued(), 6);
+
+    // The folder is left, so Qt cancels every one of its requests.
+    for (const auto& response : leaving)
+        m_pump->cancelFor(response.get());
+    QCOMPARE(m_pump->queued(), 0);
+    QCOMPARE(m_pump->waiting(), 1); // only the one that was already running
+
+    gate->release(64);
+    QVERIFY(waitFor([&] { return m_pump->waiting() == 0; }, 20000));
+    QVERIFY2(log->made.load() == 1, "a queued decode that nobody wants any more costs nothing at all");
 }
 
 MOLE_TEST_MAIN(TestThumbnailSource)

@@ -95,6 +95,7 @@ bool QmlAppHarness::start(const Options& options, QString* errorOut)
 bool QmlAppHarness::restart(QString* errorOut)
 {
     m_engine.reset();
+    m_thumbnails = nullptr; // the engine owned it
     m_window = nullptr;
     m_app.reset();
     return build(errorOut);
@@ -141,8 +142,9 @@ bool QmlAppHarness::build(QString* errorOut)
     m_engine->rootContext()->setContextProperty(QStringLiteral("App"), m_app.get());
     // The same provider the window registers, from the same library: a provider
     // wired up only in main.cpp is a provider no test can be wrong about.
-    m_engine->addImageProvider(
-        mole::ThumbnailKey::providerName(), new mole::ThumbnailImageProvider(m_app->services()));
+    // Kept, so a test can ask the queue what it is doing. The engine owns it.
+    m_thumbnails = new mole::ThumbnailImageProvider(m_app->services());
+    m_engine->addImageProvider(mole::ThumbnailKey::providerName(), m_thumbnails);
     m_engine->load(QUrl(QStringLiteral("qrc:/qt/qml/Mole/ui/Main.qml")));
 
     if (m_engine->rootObjects().isEmpty())
@@ -167,6 +169,7 @@ void QmlAppHarness::stop()
     // stale value would send the next application in this process to nowhere.
     qunsetenv("MOLE_DRIVES");
     m_engine.reset();
+    m_thumbnails = nullptr; // the engine owned it
     m_window = nullptr;
     m_app.reset();
     if (!m_fixedFixture.isEmpty()) {
@@ -370,6 +373,11 @@ QPoint QmlAppHarness::centreOf(const QQuickItem* item) const
         return {};
     const QPointF centre = item->mapToScene(QPointF(item->width() / 2, item->height() / 2));
     return centre.toPoint();
+}
+
+ThumbnailPump* QmlAppHarness::thumbnails() const
+{
+    return m_thumbnails ? m_thumbnails->pump() : nullptr;
 }
 
 QQuickItem* QmlAppHarness::itemIn(QQuickItem* root, const QString& objectName)

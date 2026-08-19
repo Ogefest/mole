@@ -103,13 +103,25 @@ public:
     /// fresh decode, which is what a test that counts decodes usually wants.
     explicit ThumbnailPump(PluginServices services, ThumbnailCache* cache, QObject* parent = nullptr);
 
-    /// How many decodes are being worked on right now. Two panes asking for the
-    /// same picture are one, which is the point of counting keys rather than
-    /// requests. For a test, and for the scheduling MOLE-142 adds.
+    /// How many decodes are running right now. Two panes asking for the same
+    /// picture are one, which is the point of counting keys rather than requests.
     int outstanding() const { return int(m_pending.size()); }
+    /// How many are asked for and not started, because the bound is reached.
+    int queued() const { return int(m_queue.size()); }
     /// How many requests are waiting for an answer, which is more than
-    /// outstanding() when two of them want the same picture.
+    /// outstanding() plus queued() when two of them want the same picture.
     int waiting() const { return int(m_keyOf.size()); }
+
+    /// How many decodes may run at once.
+    ///
+    /// Of the order of the machine's cores, minus room for the work the user
+    /// actually asked for: the listing, the search and the copy run on the same
+    /// pool, and a folder of 4K JPEGs decoded in parallel would put the whole
+    /// application behind a queue of pictures nobody is waiting for yet.
+    static int defaultConcurrency();
+    /// Lowered by a test that wants to see the queue rather than a machine with
+    /// enough cores to hide it.
+    void setConcurrency(int decodes);
 
 public slots:
     /// Starts work for `id` on behalf of `response`, which is only ever used as
@@ -137,10 +149,27 @@ private:
         QList<QObject*> waiting;
     };
 
+    /// Starts the next queued decode, if there is room. Mutex-free: everything
+    /// here happens on the UI thread.
+    void pumpQueue();
+    /// Forgets `slot` and answers everybody who was waiting for it.
+    void settle(const QString& slot, const QImage& answer);
+
     PluginServices m_services;
     ThumbnailCache* m_cache = nullptr;
-    /// Key to the decode making its picture, and who is waiting.
+    int m_concurrency = defaultConcurrency();
+    /// Key to the decode making its picture, and who is waiting. A key in here is
+    /// running; a key in m_queue is not started yet.
     QHash<QString, Pending> m_pending;
+    /// Asked for and not started, **most recently asked first**.
+    ///
+    /// That ordering is the whole of "serve the visible first": the request the
+    /// viewport just made is the newest one, and the ones queued while scrolling
+    /// past are the ones being scrolled away from. Nothing here has to know where
+    /// the viewport is.
+    QStringList m_queue;
+    /// Who is waiting for a key that has not started yet.
+    QHash<QString, QList<QObject*>> m_waitingFor;
     /// Which key a response is waiting on. Touched only on the UI thread, which is
     /// what makes an identity comparison against a pointer that may already be
     /// gone safe: it is never dereferenced.
