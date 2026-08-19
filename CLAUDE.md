@@ -72,16 +72,25 @@ Vikunja has no single feature that does the job:
   is where the epic's own brief lives, where its progress is counted, and **where
   the order of the work is decided** — see below
 
-A task belonging to nothing would be a task nobody ever reaches, which is why
-`Loose ends` exists: the epic for a single fault or a single small change that is
+A task belonging to nothing would be a task nobody ever reaches, which is why there is
+always a **catch-all** epic: the one for a single fault or a single small change that is
 not part of any larger effort. The `no epic` column of the `By epic` view should
 always be empty, and a card appearing in it means one fell out.
 
-**`Loose ends` is the last resort and not the default.** It was broken up on
+**The catch-all is a batch, and its name changes.** It fills, gets worked, closes when its
+last task lands, and planning creates the next one when the next small thing arrives. It is
+`Loose ends` today and will be `Loose ends II` after that. **So never type the name from
+memory and never attach a task to a finished epic** — that is what happened to `Testing:
+phase 6 — automation`, whose card was closed while `MOLE-29` stayed open, and the task was
+unreachable for eight days because the queue is the epics and a finished epic is never
+offered.
+
+**The catch-all is the last resort and not the default.** It was broken up on
 2026-08-18 after growing to eighteen open tasks over six unrelated subjects. A
 fault found in a transfer belongs in the transfer epic, one found in a preview in
-the preview epic; reach for `Loose ends` only when no epic fits. The titles are one
-call away, and reading them costs nothing:
+the preview epic; reach for the catch-all only when no epic fits. The open titles are one
+call away, and reading them costs nothing — note `select(.done|not)`, which is what keeps a
+finished epic out of the answer:
 
 ```sh
 v "/projects/$epics/tasks?per_page=50" | jq -r '.items[]|select(.done|not)|.title'
@@ -125,19 +134,33 @@ id=$(jq -n --arg t "A cancelled task is logged as a failure" \
         --rawfile d "$SCRATCH/task.md" '{title:$t, description:$d}' \
      | v "/projects/$root/tasks?format=markdown" -X POST -d @- | jq -r .id)
 
-# The epic this belongs to. Loose ends only when nothing else fits -- see above.
-epicTitle="Loose ends"
+# The epic this belongs to. The catch-all only when nothing else fits -- see above.
+# Read the title from the board; do not type it from memory.
+epicTitle="<one of the open titles printed above>"
+
+# The card, and it must be an OPEN one. Empty means the epic is finished or absent:
+# stop, do not fall back to another epic, and see below.
+epic=$(v "/projects/$epics/tasks?per_page=50" \
+       | jq -r --arg t "$epicTitle" '.items[]|select(.done|not)|select(.title==$t)|.id')
+[ -n "$epic" ] || echo "no open epic called $epicTitle -- read the note below"
 
 lab() { v /labels | jq -r --arg t "$1" '.items[]|select(.title==$t)|.id'; }
 for t in bug area:vfs "epic: $epicTitle"; do        # what it is, where it lives, its epic
   v "/tasks/$id/labels" -X POST -d "{\"label_id\":$(lab "$t")}"
 done
 
-epic=$(v "/projects/$epics/tasks?per_page=50" \
-       | jq -r --arg t "$epicTitle" '.items[]|select(.title==$t)|.id')
 v "/tasks/$epic/relations" -X POST \
   -d "{\"relation_kind\":\"subtask\",\"other_task_id\":$id}"
 ```
+
+**If no catch-all epic is open**, which happens as a matter of course once one closes:
+open the task, give it its `what it is` and `where it lives` labels, and **leave it with no
+`epic:` label at all**. Say so when you hand back. It will show up in the `no epic` column,
+which is the alarm built for exactly this, and planning creates the next batch for it. That
+is the right outcome — **filing it into a finished epic instead would hide it completely**,
+and leaving it out of an epic makes it visible within one call. Do not create the epic
+yourself: a label a new account has never seen cannot be attached, and inventing vocabulary
+is planning work.
 
 It lands in `Backlog`, which is right: whether it is dispatchable is not yours to
 decide. Say what you opened and where, and leave it there.
