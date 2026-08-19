@@ -27,7 +27,13 @@ Item {
         objectName: "videoPlayer"
         source: controller ? controller.source : ""
         videoOutput: output
-        audioOutput: AudioOutput {}
+        audioOutput: AudioOutput {
+            // Bound rather than assigned. The answer lives in the controller
+            // because that is where it is remembered -- one setting for every
+            // video, kept across files and across restarts -- and this is the one
+            // place it is applied.
+            muted: view.controller ? view.controller.muted : false
+        }
 
         // Starts on its own, as soon as there is something to start. Opening a
         // preview of a video is asking to see it move: the answer to *what is in
@@ -126,6 +132,28 @@ Item {
             text: view.clockText(player.position) + " / " + view.clockText(player.duration)
             color: "#8b93a7"
             font.pixelSize: App.smallTextSize
+        }
+
+        // The sound, off or on. It exists because the viewer plays by itself since
+        // MOLE-223: a preview that makes noise on arrival and offers no way to stop
+        // it is worse than one that waited to be told to play. A speaker rather
+        // than a slider -- mute is the question actually being asked, and a value
+        // to drag would be a value to argue about in a viewer whose whole point is
+        // that it is small. See MOLE-225.
+        Button {
+            objectName: "videoMuteButton"
+            text: view.controller && view.controller.muted ? "\u{1F507}" : "\u{1F50A}"
+            flat: true
+            focusPolicy: Qt.NoFocus
+            // Icon-only, so it takes the window's hit-target floor and the text
+            // size inside it, like the bookmark and close-tab buttons.
+            font.pixelSize: App.textSize
+            implicitWidth: App.minimumTarget
+            implicitHeight: App.minimumTarget
+            ToolTip.text: view.controller && view.controller.muted ? "Turn the sound on" : "Turn the sound off"
+            ToolTip.visible: hovered
+            ToolTip.delay: 600
+            onClicked: if (view.controller) view.controller.setMuted(!view.controller.muted)
         }
     }
 }

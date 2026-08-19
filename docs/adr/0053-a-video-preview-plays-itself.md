@@ -2,6 +2,8 @@
 
 - **Date:** 2026-08-19
 - **Status:** Accepted
+- **Revised:** 2026-08-19 — the contingency below fired the same day: the viewer has a
+  mute control, and it is remembered. See *Revision* at the end.
 
 ## Context
 
@@ -70,3 +72,40 @@ remembers a viewer's other choices.
 - MOLE-37's reasoning is not deleted anywhere. The code comments say what the
   argument was and that it was overruled, because a reader who meets autoplay and
   thinks *surely somebody considered the noise* deserves to find that somebody did.
+
+## Revision, 2026-08-19: the contingency fired
+
+The paragraph above said that if the noise became the louder complaint, the answer was
+not a paused first frame again but the volume control this viewer does not have,
+remembered the way ADR-0006 remembers a viewer's other choices. It became the louder
+complaint within the hour, which is a fair result rather than an embarrassing one: the
+guess about *which* cost would be felt was wrong, and the guess about *what to do
+about it* was written down and held.
+
+**The viewer has a mute button, and whether the sound is off is remembered for every
+video and across restarts.** A speaker glyph in the controls, `App.minimumTarget`
+square like every other icon-only control in this window, and an `AudioOutput` whose
+`muted` is bound to the controller rather than held in the view.
+
+**Mute rather than a volume slider.** A slider is a value to argue about, to draw, and
+to remember to a precision nobody asked for, in a viewer whose stated point is that it
+is small. Mute is the question actually being asked — *not in this room, not right
+now* — and it is answered in one press and undone in one press. If somebody one day
+wants a video preview at 30% volume, that is a different request and gets its own
+decision.
+
+**One key for every video, not one per suffix, and that is the opposite of ADR-0006.**
+`preview.video.muted`. ADR-0006 keys a viewer *option* by provider and suffix because
+*render this `.html` as a page* is a choice about a file type, and choosing it for
+`.html` must not answer for `.xml`. Whether the room is quiet is not a fact about a
+container format: remembering it separately for `.mp4` and `.mkv` would mean muting a
+video and then being surprised by the next one. That is the argument
+`PreviewTabController::setDetailsOpen()` already makes for the details panel, and this
+is the second thing shaped like it — a choice about the person rather than about the
+file.
+
+**What this does not do is make autoplay conditional.** The muted state is remembered,
+so somebody who wants silence gets silence from the second video onwards; the first
+one after a fresh install plays with sound. Nothing here is a volume default that
+survives being wrong, because it is the reader's own last answer rather than a guess
+Mole made.

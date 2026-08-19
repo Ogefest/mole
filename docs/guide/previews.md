@@ -126,7 +126,11 @@ A video starts playing as soon as it opens, with a pause button, a position and 
 to drag it to. Pressing `F3` on a video is asking what is in it, and for a video that
 answer is the first few seconds rather than a still frame — the name was already in the
 listing. Stepping onto the next video with `←`/`→` plays that one too, so the rule is the
-same however you got to the file, and the sound comes with it. There is no volume slider
+same however you got to the file, and the sound comes with it.
+
+The speaker beside the position turns the sound off, and **Mole remembers which way you
+left it** — for every video, and after a restart. So a folder walked through in a quiet
+room is walked through in silence, once you have said so once. There is no volume slider
 and no playlist — this is for recognising a file, not for watching one.
 
 What can be played is what this machine's codecs can decode, and that is not knowable

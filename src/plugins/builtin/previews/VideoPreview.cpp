@@ -2,6 +2,8 @@
 
 #include "plugins/builtin/previews/PreviewProviders.h"
 
+#include "core/settings/Preferences.h"
+
 #include <QMimeDatabase>
 #include <QMimeType>
 
@@ -21,8 +23,22 @@ namespace {
 
 #ifdef MOLE_HAVE_MULTIMEDIA
 
+namespace {
+
+    /// One key for every video, not one per suffix.
+    ///
+    /// The opposite of what ADR-0006 keys a viewer *option* by, and on purpose:
+    /// *render this .html as a page* is a choice about a file type, and *this room
+    /// is quiet* is a choice about the person -- remembering it separately for
+    /// `.mp4` and `.mkv` would be the surprise rather than the courtesy. Same
+    /// argument, same shape, as `preview.details.open`.
+    const QString kMutedKey = QStringLiteral("preview.video.muted");
+
+} // namespace
+
 VideoPreviewController::VideoPreviewController(PluginServices services, QObject* parent)
     : PreviewController(parent)
+    , m_services(services)
     , m_copy(new LocalCopyProvider(services, this))
 {
     connect(m_copy, &LocalCopyProvider::ready, this, [this](const QString& url) {
@@ -34,6 +50,12 @@ VideoPreviewController::VideoPreviewController(PluginServices services, QObject*
         setLoading(false);
         setErrorText(reason);
     });
+
+    // Read on the way in, which is what makes the next video open the way the last
+    // one was left: a controller is built per file, so there is no state here to
+    // carry and the preference is the only thing that survives between them.
+    if (m_services.preferences)
+        m_muted = m_services.preferences->value(kMutedKey, false).toBool();
 }
 
 void VideoPreviewController::load(const FileEntry& entry)
@@ -47,6 +69,22 @@ void VideoPreviewController::load(const FileEntry& entry)
     // video means -- the alternative is a viewer that plays the first minute of
     // something and stops.
     m_copy->request(entry.uri);
+}
+
+void VideoPreviewController::setMuted(bool muted)
+{
+    // Written before the early return, the shape setDetailsOpen() uses: the value
+    // belongs to the application rather than to this viewer, and this controller is
+    // not necessarily the one that last wrote it. Preferences::setValue() does
+    // nothing when the value is already what is stored, so this costs no file
+    // write.
+    if (m_services.preferences)
+        m_services.preferences->setValue(kMutedKey, muted);
+
+    if (m_muted == muted)
+        return;
+    m_muted = muted;
+    emit mutedChanged();
 }
 
 void VideoPreviewController::reportPlaybackFailure(const QString& reason)

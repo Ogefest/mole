@@ -130,6 +130,7 @@ private slots:
     void aVideoStartsPlayingOnItsOwnAndStopsOnTheButton();
     void aVideoThatCannotBeDecodedSaysSoRatherThanShowingABlackFrame();
     void steppingOffAVideoLeavesNoPlayerBehind();
+    void aVideoCanBeSilencedFromTheControls();
     void theHeaderAdvertisesTheCommandPalette();
     void ctrlFIsASearchBoxYouCanTypeInto();
     void aPartlyIndexedFolderShowsWhereEachRowCameFrom();
@@ -1606,6 +1607,57 @@ void TestWalkthrough::steppingOffAVideoLeavesNoPlayerBehind()
     QVERIFY2(!playing, "a player was left running behind the next preview");
     QVERIFY2(preview->viewerName() != QStringLiteral("Video"),
         "the next file in the fixture is not a video, so this proved nothing");
+#endif
+}
+
+void TestWalkthrough::aVideoCanBeSilencedFromTheControls()
+{
+#ifndef MOLE_TEST_HAVE_MULTIMEDIA
+    QSKIP("this build has no Qt Multimedia");
+#else
+    if (!writeVideo(QStringLiteral("quiet.mp4")))
+        QSKIP("no ffmpeg to build a video with");
+
+    // Since MOLE-223 a video preview plays by itself, sound included, so the way to
+    // turn it off is not a nicety -- see MOLE-225 and the revision in ADR-0053.
+    // Asserted through the button and the player's own AudioOutput, because a
+    // controller that says "muted" over a player still making noise is the fault
+    // worth catching.
+    PreviewTabController* preview = previewOf(QStringLiteral("quiet.mp4"));
+    QVERIFY(preview);
+    QVERIFY(viewerOf(preview));
+    QCOMPARE(preview->viewerName(), QStringLiteral("Video"));
+
+    QQuickItem* mute = m_harness->item(QStringLiteral("videoMuteButton"));
+    QVERIFY2(mute, "the controls have no way to turn the sound off");
+
+    // Icon-only, so it lives under the same floor as the others -- the rule
+    // theIconOnlyControlsAreBigEnoughToHit sets for the controls in the window,
+    // applied here because this one only exists while a video is open and so
+    // cannot be in that test's list.
+    const int floor = m_harness->app()->minimumTarget();
+    QVERIFY2(mute->width() >= floor,
+        qPrintable(QStringLiteral("mute is %1 wide, floor is %2").arg(mute->width()).arg(floor)));
+    QVERIFY(mute->height() >= floor);
+    QCOMPARE(mute->property("font").value<QFont>().pixelSize(), m_harness->app()->textSize());
+
+    QObject* player = m_harness->object(QStringLiteral("videoPlayer"));
+    QVERIFY(player);
+    QObject* sound = player->property("audioOutput").value<QObject*>();
+    QVERIFY2(sound, "the player has no audio output to silence");
+    QVERIFY2(!sound->property("muted").toBool(), "a video preview has its sound on to begin with");
+
+    const QString loud = mute->property("text").toString();
+    QVERIFY(QMetaObject::invokeMethod(mute, "clicked"));
+    QVERIFY2(m_harness->until([sound] { return sound->property("muted").toBool(); }),
+        "pressed the speaker and the player is still audible");
+    QVERIFY2(mute->property("text").toString() != loud,
+        "the glyph has to say which way it is now, or it is a button with no state");
+
+    // And back on: a setting that only turns one way is a trap rather than a setting.
+    QVERIFY(QMetaObject::invokeMethod(mute, "clicked"));
+    QVERIFY(m_harness->until([sound] { return !sound->property("muted").toBool(); }));
+    QCOMPARE(mute->property("text").toString(), loud);
 #endif
 }
 

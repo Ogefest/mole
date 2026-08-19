@@ -275,6 +275,7 @@ private slots:
     void aSuffixNoFormatKnowsFallsThroughToTheInformationViewer();
     void aVideoOnADriveThatCannotBePlayedFromIsCopiedLocally();
     void aVideoThatCannotBeDecodedSaysSoWhereEveryViewerSaysIt();
+    void theSoundIsOneSettingForEveryVideo();
 
 private:
     IPreviewProvider* providerFor(const QString& relativePath) const;
@@ -2608,6 +2609,58 @@ void TestPreview::aVideoThatCannotBeDecodedSaysSoWhereEveryViewerSaysIt()
     // And a refusal with nothing to say still says something.
     QVERIFY(QMetaObject::invokeMethod(viewer, "reportPlaybackFailure", Q_ARG(QString, QString())));
     QVERIFY(!viewer->property("errorText").toString().isEmpty());
+}
+
+void TestPreview::theSoundIsOneSettingForEveryVideo()
+{
+    if (!VideoPreviewProvider::isAvailable())
+        QSKIP("this build has no video decoder");
+
+    // Nothing here has to be a decodable video: the viewer is claimed by suffix and
+    // the answer to "is the sound off" is read before anybody finds out what is in
+    // the container. So this costs no ffmpeg and runs on every machine.
+    QVERIFY(m_tree->writeFile(QStringLiteral("first.mp4"), QByteArray(2048, 'v')));
+    QVERIFY(m_tree->writeFile(QStringLiteral("second.mp4"), QByteArray(2048, 'v')));
+
+    PreviewTabController* first = openPreview(QStringLiteral("first.mp4"));
+    QVERIFY(first);
+    auto* sound = qobject_cast<VideoPreviewController*>(first->viewer());
+    QVERIFY2(sound, "the video viewer is what holds the answer");
+    QVERIFY2(!sound->isMuted(), "a video preview has its sound on until somebody says otherwise");
+
+    sound->setMuted(true);
+    QVERIFY(sound->isMuted());
+
+    // The next video opens the way the last one was left, which is the whole point.
+    // One key for every video rather than one per suffix: whether the room is quiet
+    // is a fact about the person, not about a container format.
+    auto* next = qobject_cast<VideoPreviewController*>(openPreview(QStringLiteral("second.mp4"))->viewer());
+    QVERIFY(next);
+    QVERIFY2(next->isMuted(), "muting one video did not carry to the next one");
+
+    // And it survives a restart, because it is a preference rather than a mood --
+    // the same claim theDetailsAreOneSettingForEveryFile makes, checked the same way.
+    m_app->saveSessionNow();
+    m_app.reset();
+    drainEvents();
+
+    m_app = std::make_unique<AppController>();
+    std::vector<std::unique_ptr<IPlugin>> builtIns;
+    builtIns.push_back(std::make_unique<BuiltinPlugin>(m_tree->rootUri().toString()));
+    QString error;
+    QVERIFY2(m_app->initialise(std::move(builtIns), &error), qPrintable(error));
+
+    auto* afterRestart
+        = qobject_cast<VideoPreviewController*>(openPreview(QStringLiteral("first.mp4"))->viewer());
+    QVERIFY(afterRestart);
+    QVERIFY2(afterRestart->isMuted(), "a remembered setting that does not survive a restart is a mood");
+
+    // And back on again, for everything: a setting that can only be turned one way
+    // is a trap rather than a setting.
+    afterRestart->setMuted(false);
+    auto* last = qobject_cast<VideoPreviewController*>(openPreview(QStringLiteral("second.mp4"))->viewer());
+    QVERIFY(last);
+    QVERIFY(!last->isMuted());
 }
 
 int main(int argc, char** argv)

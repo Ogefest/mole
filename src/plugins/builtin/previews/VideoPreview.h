@@ -31,12 +31,28 @@ class VideoPreviewController final : public PreviewController
     Q_OBJECT
     /// A `file:` url the player can open, empty until the copy is in place.
     Q_PROPERTY(QString source READ source NOTIFY sourceChanged)
+    /// Whether the sound is off. Remembered, so the view binds rather than holds it.
+    Q_PROPERTY(bool muted READ isMuted NOTIFY mutedChanged)
 
 public:
     explicit VideoPreviewController(PluginServices services, QObject* parent = nullptr);
 
     QString source() const { return m_source; }
+    bool isMuted() const { return m_muted; }
     void load(const FileEntry& entry) override;
+
+    /// Turns the sound off or on and remembers which, for every video and across
+    /// restarts.
+    ///
+    /// **One key for every video rather than one per suffix**, which is the
+    /// opposite of what ADR-0006 keys a viewer *option* by, and deliberately:
+    /// whether the room is quiet is a fact about the person, not about a container
+    /// format, so remembering it per `.mp4` and per `.mkv` separately would be a
+    /// surprise rather than a courtesy. It is the argument
+    /// `PreviewTabController::setDetailsOpen()` already makes for the details
+    /// panel. See the revision in
+    /// docs/adr/0053-a-video-preview-plays-itself.md.
+    Q_INVOKABLE void setMuted(bool muted);
 
     /// What the view calls when the player refuses the file.
     ///
@@ -49,9 +65,12 @@ public:
 
 signals:
     void sourceChanged();
+    void mutedChanged();
 
 private:
+    PluginServices m_services;
     QString m_source;
+    bool m_muted = false;
     LocalCopyProvider* m_copy = nullptr;
 };
 
