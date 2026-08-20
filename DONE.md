@@ -9,6 +9,48 @@ wrong.
 
 ---
 
+## Setting an index's Repeat crashed the application
+
+**Asked for:** MOLE-265. The other half of the same report; the preserved-log half is below.
+
+**The backtrace named it exactly**, once one survived. Read from the bottom:
+
+```
+QQuickComboBox::activated(int)                    the dropdown emits
+  QQmlBoundSignalExpression::evaluate             onActivated runs
+    IndexesController::setSchedule(x, x)
+      IndexesController::volumesChanged()         emitted straight out
+        QQmlBinding::update
+          QQuickItemView::setModel(QVariant)      the list rebinds its model
+            QQuickItem::setParentItem             the delegates are torn down
+              QQuickDeliveryAgentPrivate::clearFocusInScope
+                QQuickComboBox::focusOutEvent     the box loses focus
+                  QQuickTransition::prepare       the popup's exit transition
+                    qmlExecuteDeferred(QObject*)  on an object already half gone
+                      signal 11 at 0x8
+```
+
+`volumesChanged()` is the notify signal for the `volumes` property and the list's model binds
+to it, so emitting it from inside a slot QML called re-enters the engine and destroys the very
+delegate whose handler is still on the stack. `announceVolumes()` now queues the emit to the
+next turn of the event loop — all four sites, not just the one that crashed, because any of them
+can be reached from a delegate. It is the idiom `Task::execute()` already uses for `finished()`,
+and the comment there gives the same reason.
+
+**Three attempts at a test passed against the broken build, and the fourth is why.** Emitting
+`activated` from C++, opening the popup and clicking the row, and both again on a real X11
+display instead of offscreen — all survived. The missing ingredient is in the trace: the crash
+goes through `focusOutEvent`, which only runs if the control had focus to lose, and a synthetic
+click in an inactive window never gave it any. One `forceActiveFocus()` and the test dies with
+signal 11, exactly as reported. **A reproduction that needs the right kind of nothing is worth
+saying out loud**, so the test says why that line is there.
+
+`tests/app/tst_IndexesView.cpp` is new because there was no window-level coverage of this view
+at all — `tst_IndexesTab` is headless, which is precisely why a fault in a delegate could not
+be reached from it.
+
+---
+
 ## A crash's backtrace was rotated away before anybody read it
 
 **Asked for:** MOLE-265, reported from use: changing a row's *Repeat* from `never` to daily in

@@ -171,6 +171,14 @@ void TestIndexesView::choosingFromTheOpenDropdownDoesNotTakeTheProcessWithIt()
     QVERIFY(picker);
     QCOMPARE(indexes->scheduledCount(), 0);
 
+    // The dropdown has to hold the keyboard, and this is not a detail: the crash
+    // goes through QQuickComboBox::focusOutEvent, which only runs if it had focus to
+    // lose. Without this the delegate is still destroyed under the handler and the
+    // process survives it, which is why the first three attempts at this test passed
+    // against the broken build. See MOLE-265.
+    picker->forceActiveFocus();
+    QVERIFY(m_harness->until([picker] { return picker->hasActiveFocus(); }));
+
     auto* popup = picker->property("popup").value<QObject*>();
     QVERIFY(popup);
     QMetaObject::invokeMethod(popup, "open");

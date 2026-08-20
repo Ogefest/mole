@@ -88,6 +88,16 @@ signals:
     void filterChanged();
 
 private:
+    /// Emits volumesChanged() on the next turn of the event loop, never straight
+    /// out of a slot QML called.
+    ///
+    /// It is the notify signal for the `volumes` property and the list's model binds
+    /// to it, so emitting it re-enters the QML engine, rebuilds the delegates, and
+    /// destroys whichever one called us -- while that delegate's own handler is still
+    /// on the stack. See MOLE-265 for the crash that is, and Task::execute(), which
+    /// queues finished() for the same reason.
+    void announceVolumes();
+
     void rebuild();
     /// Follows a scan so the row it belongs to can show what it has covered, and
     /// rebuilds when it ends.

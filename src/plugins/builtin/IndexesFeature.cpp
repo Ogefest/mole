@@ -156,7 +156,7 @@ bool IndexesController::rescan(qint64 volumeId, bool full)
             m_services.events->postIndexUpdated(-1, task->filesIndexed());
     });
     m_services.tasks->submit(task);
-    emit volumesChanged();
+    announceVolumes();
     return true;
 }
 
@@ -171,7 +171,7 @@ bool IndexesController::setSchedule(qint64 volumeId, qint64 seconds)
     ScanOptions nightly = optionsFor(*volume, false);
     IndexScanJob::schedule(*m_services.scheduler->store(), volume->rootUri, seconds, nightly,
         QStringLiteral("Re-index %1").arg(volume->label));
-    emit volumesChanged();
+    announceVolumes();
     return true;
 }
 
@@ -234,7 +234,7 @@ void IndexesController::rebuild()
             ? QStringLiteral("nothing indexed yet")
             : QStringLiteral("%1 indexes, %2 entries").arg(volumeCount()).arg(totalEntriesText()));
 
-    emit volumesChanged();
+    announceVolumes();
 }
 
 void IndexesController::refresh()
@@ -338,13 +338,29 @@ int IndexesController::scheduledCount() const
     return kept;
 }
 
+void IndexesController::announceVolumes()
+{
+    // Queued, and the reason is a segmentation fault rather than a worry. Setting a
+    // row's *Repeat* went: the ComboBox emits `activated`, QML runs `onActivated`,
+    // that calls setSchedule(), which emitted volumesChanged() straight out --
+    // whereupon a binding re-evaluated `QQuickItemView::setModel`, the delegates were
+    // torn down, `clearFocusInScope` reached `QQuickComboBox::focusOutEvent`, and the
+    // popup's exit transition ran `qmlExecuteDeferred` on an object that was already
+    // half gone. Signal 11 at address 0x8. See MOLE-265.
+    //
+    // The data is already updated when this is called; all that waits is the QML side
+    // noticing, which is exactly the thing that must not happen inside somebody
+    // else's handler. Task::execute() queues finished() for the same reason.
+    QMetaObject::invokeMethod(this, [this] { emit volumesChanged(); }, Qt::QueuedConnection);
+}
+
 void IndexesController::setFilter(const QString& filter)
 {
     if (m_filter == filter)
         return;
     m_filter = filter;
     emit filterChanged();
-    emit volumesChanged();
+    announceVolumes();
 }
 
 QVariantMap IndexesController::saveState() const

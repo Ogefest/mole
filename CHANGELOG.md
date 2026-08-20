@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-20 #MOLE-265 Setting an index's Repeat no longer crashes the application
 2026-08-20 #MOLE-265 A crash's backtrace survives the restarts that follow it, instead of being rotated away by the second one
 2026-08-20 #MOLE-258 The task strip lists and counts the jobs you asked for, not the hundreds of thumbnails and listings browsing produces
 2026-08-20 #MOLE-263 A session log opens with what the run started with: the build, the plugins, the drives and their state, the indexes and the restored session
