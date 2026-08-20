@@ -323,6 +323,16 @@ public:
     /// that dialog holding no focus, and then nothing inside it can take the
     /// keyboard either.
     Q_INVOKABLE bool goTo(const QString& uri);
+
+    /// Goes to whatever a saved place points at, `kind` saying how to read
+    /// `target` -- the two the bookmark model hands out. See ADR-0061.
+    ///
+    /// Taken before goTo(), which would try to parse a set's id as a uri and
+    /// fail with a message about a drive. A drive row and a folder bookmark are
+    /// kind "folder" and go straight through, so there is one path rather than
+    /// one per caller. False, having said so, for a bookmark whose set has been
+    /// deleted. See MOLE-208.
+    Q_INVOKABLE bool openPlace(const QString& kind, const QString& target);
     /// Opens the folder holding this file with the cursor on it -- what "show me
     /// where this is" means at the end of a search.
     Q_INVOKABLE void revealFile(const QString& fileUri);

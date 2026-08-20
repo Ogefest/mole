@@ -2,14 +2,18 @@
 #include "support/QmlAppHarness.h"
 #include "support/TestSupport.h"
 #include "ui/AppController.h"
+#include "ui/models/BookmarkModel.h"
 #include "ui/models/DriveListModel.h"
+#include "ui/models/TabsModel.h"
 
 #include "core/CoreMetaTypes.h"
+#include "core/sets/FileSetStore.h"
 #include "core/tasks/TaskManager.h"
 
 #include <QGuiApplication>
 #include <QQuickItem>
 #include <QSemaphore>
+#include <QSignalSpy>
 #include <QTest>
 #include <QVariantMap>
 
@@ -55,6 +59,10 @@ private slots:
     void aDriveOpenInATabThatIsNotVisibleStillReadsAsOpen();
     void connectingPulsesTheRingAndUnreachableIsFilledRed();
     void workRunningOnADriveMakesItsDotBreatheInGreen();
+
+    void clickingABookmarkedSetShowsTheSetsTabWithItCurrent();
+    void aBookmarkToADeletedSetSaysSoAndChangesNothing();
+    void theBookmarksMenuOpensASetTheSameWayTheSidebarDoes();
 
 private:
     /// The passphrase dialog, which is a Popup and so never appears in the
@@ -704,6 +712,109 @@ void TestSidebar::workRunningOnADriveMakesItsDotBreatheInGreen()
     QVERIFY2(after.motion.isEmpty(), "a finished task must not leave a drive breathing");
     QCOMPARE(after.colour, QColor(QStringLiteral("#8b93a7")));
     gate->release(8);
+}
+
+// ------------------------------------------- a bookmark that is not a folder
+//
+// A bookmark used to be a name and a uri, so the three places that act on one
+// all handed a single string to goTo(). A set is not somewhere the VFS can be
+// sent. See ADR-0061 and MOLE-208.
+
+void TestSidebar::clickingABookmarkedSetShowsTheSetsTabWithItCurrent()
+{
+    FileSetStore* sets = m_harness->app()->sets();
+    QVERIFY(sets);
+    const FileSet set = sets->create(QStringLiteral("Reading list"));
+    QVERIFY(m_harness->app()->bookmarks()->addSet(set.id));
+    QVERIFY(m_harness->until([this] { return rowNamed(QStringLiteral("Reading list")) != nullptr; }));
+
+    // From a browser tab, which is where somebody would be.
+    TabsModel* tabs = m_harness->app()->tabs();
+    const int before = tabs->rowCount();
+    press(rowNamed(QStringLiteral("Reading list")));
+
+    QVERIFY2(m_harness->until([tabs] {
+        QObject* controller = tabs->currentController();
+        return controller && controller->property("currentSetId").isValid();
+    }),
+        "clicking a bookmarked set has to show the Sets tab");
+    QCOMPARE(tabs->currentController()->property("currentSetId").toString(), set.id);
+    QCOMPARE(tabs->rowCount(), before + 1);
+
+    // Again, from the Sets tab itself this time: one tab, not two.
+    press(rowNamed(QStringLiteral("Reading list")));
+    QCOMPARE(tabs->rowCount(), before + 1);
+    QCOMPARE(tabs->currentController()->property("currentSetId").toString(), set.id);
+
+    // And from a second set's bookmark, the same tab pointed somewhere else.
+    const FileSet other = sets->create(QStringLiteral("To print"));
+    QVERIFY(m_harness->app()->bookmarks()->addSet(other.id));
+    QVERIFY(m_harness->until([this] { return rowNamed(QStringLiteral("To print")) != nullptr; }));
+    press(rowNamed(QStringLiteral("To print")));
+    QCOMPARE(tabs->rowCount(), before + 1);
+    QCOMPARE(tabs->currentController()->property("currentSetId").toString(), other.id);
+}
+
+void TestSidebar::aBookmarkToADeletedSetSaysSoAndChangesNothing()
+{
+    FileSetStore* sets = m_harness->app()->sets();
+    const FileSet set = sets->create(QStringLiteral("Reading list"));
+    QVERIFY(m_harness->app()->bookmarks()->addSet(set.id));
+    QVERIFY(m_harness->until([this] { return rowNamed(QStringLiteral("Reading list")) != nullptr; }));
+    QVERIFY(sets->remove(set.id));
+    m_harness->settle(3);
+
+    TabsModel* tabs = m_harness->app()->tabs();
+    const int before = tabs->rowCount();
+    const int wasCurrent = tabs->currentIndex();
+    QSignalSpy said(m_harness->app(), &AppController::notification);
+
+    // The row is still there -- the bookmark is kept, not dropped -- and it is
+    // still clickable. What it must not do is open a Sets tab with nothing
+    // selected, which would read as though the bookmark had worked.
+    press(rowNamed(QStringLiteral("Reading list")));
+
+    QVERIFY2(said.count() == 1, "a bookmark to a set that has gone has to say so");
+    QCOMPARE(tabs->rowCount(), before);
+    QCOMPARE(tabs->currentIndex(), wasCurrent);
+}
+
+void TestSidebar::theBookmarksMenuOpensASetTheSameWayTheSidebarDoes()
+{
+    FileSetStore* sets = m_harness->app()->sets();
+    const FileSet set = sets->create(QStringLiteral("Reading list"));
+    QVERIFY(m_harness->app()->bookmarks()->addSet(set.id));
+    m_harness->settle(3);
+
+    // The generated entry, found by its id: a set gets its own form because its
+    // target is not a uri, and every bookmark needs an id of its own.
+    const QString id = QStringLiteral("mole.bookmarks.go.set.") + set.id;
+    QVERIFY2(m_harness->app()->triggerAction(id), qPrintable(QStringLiteral("no menu entry %1").arg(id)));
+
+    TabsModel* tabs = m_harness->app()->tabs();
+    QVERIFY(m_harness->until([tabs] {
+        QObject* controller = tabs->currentController();
+        return controller && controller->property("currentSetId").isValid();
+    }));
+    QCOMPARE(tabs->currentController()->property("currentSetId").toString(), set.id);
+
+    // The entry says what the set is called now, not what it was called when it
+    // was bookmarked.
+    QVERIFY(sets->rename(set.id, QStringLiteral("Sent to the printer")));
+    m_harness->settle(3);
+    const QVariantList menu = m_harness->app()->buildMenu();
+    bool found = false;
+    for (const QVariant& sectionEntry : menu) {
+        const QVariantList entries = sectionEntry.toMap().value(QStringLiteral("actions")).toList();
+        for (const QVariant& entry : entries) {
+            if (entry.toMap().value(QStringLiteral("id")).toString() == id) {
+                QCOMPARE(entry.toMap().value(QStringLiteral("title")).toString(),
+                    QStringLiteral("Sent to the printer"));
+                found = true;
+            }
+        }
+    }
+    QVERIFY2(found, "the Bookmarks menu lost the entry when the set was renamed");
 }
 
 int main(int argc, char** argv)

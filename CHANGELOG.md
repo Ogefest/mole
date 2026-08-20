@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-20 #MOLE-208 A bookmarked set opens the Sets tab with that set current, from the sidebar, the menu or the palette
 2026-08-20 #MOLE-207 A bookmark can point at a set as well as a folder, by id, so a rename follows and a deleted set reads as dead
 2026-08-20 #MOLE-206 Add to set shows the Sets tab that is already open instead of opening another
 2026-08-20 #MOLE-205 A set's members have a cursor: arrows walk them, Enter opens the member itself and F3 previews it

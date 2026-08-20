@@ -268,6 +268,9 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     // ADR-0061.
     m_bookmarks = new BookmarkModel(BookmarkModel::defaultFilePath(), m_sets, this);
     connect(m_bookmarks, &BookmarkModel::countChanged, this, &AppController::refreshBookmarkActions);
+    // A set bookmark's name comes from the store, so renaming a set changes what
+    // the Bookmarks menu should say without any bookmark being added or removed.
+    connect(m_bookmarks, &BookmarkModel::dataChanged, this, &AppController::refreshBookmarkActions);
 
     // Before the palette, which is handed a pointer to it. Built after, the palette
     // held a null one for the lifetime of the application and quietly offered no
@@ -289,6 +292,7 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     m_commands = new CommandPaletteModel(m_actions, m_bookmarks, m_drives, this);
     connect(m_commands, &CommandPaletteModel::actionRequested, this, &AppController::triggerAction);
     connect(m_commands, &CommandPaletteModel::locationRequested, this, &AppController::goTo);
+    connect(m_commands, &CommandPaletteModel::bookmarkRequested, this, &AppController::openPlace);
     // The same calls the sidebar buttons make, so the two cannot drift into
     // doing subtly different things to the same drive.
     connect(m_commands, &CommandPaletteModel::driveCommandRequested, this,
@@ -1073,6 +1077,33 @@ bool AppController::goTo(const QString& uri)
         return true;
     }
     openLocation(uri);
+    return true;
+}
+
+bool AppController::openPlace(const QString& kind, const QString& target)
+{
+    if (target.isEmpty())
+        return false;
+    if (kind != QLatin1String("set"))
+        return goTo(target);
+
+    const FileSet set = m_sets ? m_sets->set(target) : FileSet {};
+    if (!set.isValid()) {
+        // Said out loud, the way a navigation that cannot happen is. Opening the
+        // Sets tab with nothing selected would look like the bookmark worked.
+        emit notification(static_cast<int>(EventBus::Severity::Warning), QStringLiteral("That set is gone"),
+            QStringLiteral("The bookmark still remembers it, so you can remove it when you are sure."));
+        return false;
+    }
+
+    // One Sets tab, whatever the current tab is. currentSetId is already
+    // writable and already saved with the session, so pointing a tab at a set
+    // needs nothing new in the feature.
+    const int row = openStandingTab(QStringLiteral("core.filesets"));
+    if (row < 0)
+        return false;
+    if (QObject* controller = m_tabs->controllerAt(row))
+        controller->setProperty("currentSetId", target);
     return true;
 }
 
@@ -2227,21 +2258,22 @@ void AppController::refreshBookmarkActions()
     m_actions->removeActionsStartingWith(prefix);
 
     int order = 100;
-    for (const Bookmark& bookmark : m_bookmarks->bookmarks()) {
-        // Folders only for the moment. What a menu entry for a set does -- and
-        // the form its id takes, since a set's target is not a uri -- is
-        // MOLE-208.
-        if (bookmark.kind != Bookmark::Kind::Folder)
-            continue;
+    for (int row = 0; row < m_bookmarks->rowCount(); ++row) {
+        const QModelIndex at = m_bookmarks->index(row, 0);
+        const QString kind = at.data(BookmarkModel::KindRole).toString();
+        const QString target = at.data(BookmarkModel::TargetRole).toString();
 
         MenuAction action;
-        action.id = prefix + bookmark.target;
+        // A folder keeps the id it has always had. A set's id is not a uri, so it
+        // gets its own form rather than being concatenated into the same space:
+        // one id per bookmark, whatever it points at.
+        action.id = kind == QLatin1String("set") ? prefix + QStringLiteral("set.") + target : prefix + target;
         action.section = MenuAction::Section::Bookmarks;
-        action.title = bookmark.name;
+        // The set's current name, read from the store by the model.
+        action.title = at.data(BookmarkModel::NameRole).toString();
         action.sortOrder = order;
         action.separatorBefore = order == 100;
-        const QString uri = bookmark.target;
-        action.trigger = [this, uri] { goTo(uri); };
+        action.trigger = [this, kind, target] { openPlace(kind, target); };
         m_actions->addAction(std::move(action));
         order += 10;
     }

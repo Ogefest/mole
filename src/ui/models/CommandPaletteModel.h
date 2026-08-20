@@ -73,8 +73,11 @@ signals:
     void filterChanged();
     /// A menu entry was chosen.
     void actionRequested(const QString& actionId);
-    /// A bookmark or a drive was chosen.
+    /// A drive was chosen, or anywhere else named by a uri alone.
     void locationRequested(const QString& uri);
+    /// A bookmark was chosen. Carries the kind beside the target, because a set
+    /// bookmark's target is an id rather than a place. See ADR-0061.
+    void bookmarkRequested(const QString& kind, const QString& target);
     /// Something is to be *done* to a drive rather than gone to. Emitted rather
     /// than acted on, like everything else here: this model knows what can be
     /// done and nothing about how.
@@ -93,6 +96,10 @@ private:
         QString uri;
         QString driveId;
         DriveCommand verb = DriveCommand::Check;
+        /// Set only on a bookmark row: "folder" or "set". The kind travels beside
+        /// the target the same way `verb` travels beside a drive id, because a set
+        /// bookmark's target is not somewhere goTo() can go.
+        QString bookmarkKind;
 
         QString path() const { return group + QStringLiteral(" → ") + title; }
     };

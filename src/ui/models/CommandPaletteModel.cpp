@@ -95,9 +95,11 @@ void CommandPaletteModel::refresh()
     if (m_bookmarks) {
         for (int row = 0; row < m_bookmarks->rowCount(); ++row) {
             const QModelIndex index = m_bookmarks->index(row, 0);
-            m_all.append(Command { m_bookmarks->data(index, BookmarkModel::NameRole).toString(),
+            Command command { m_bookmarks->data(index, BookmarkModel::NameRole).toString(),
                 QStringLiteral("Bookmarks"), QString(), QStringLiteral("☆"), QString(),
-                m_bookmarks->data(index, BookmarkModel::UriRole).toString(), QString() });
+                m_bookmarks->data(index, BookmarkModel::TargetRole).toString(), QString() };
+            command.bookmarkKind = m_bookmarks->data(index, BookmarkModel::KindRole).toString();
+            m_all.append(std::move(command));
         }
     }
 
@@ -205,6 +207,10 @@ void CommandPaletteModel::activate(int row)
 
     if (!command.actionId.isEmpty()) {
         emit actionRequested(command.actionId);
+        return;
+    }
+    if (!command.bookmarkKind.isEmpty()) {
+        emit bookmarkRequested(command.bookmarkKind, command.uri);
         return;
     }
     if (!command.uri.isEmpty()) {

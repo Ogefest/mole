@@ -6,6 +6,7 @@
 #include "ui/models/DriveListModel.h"
 
 #include "core/credentials/SecretStore.h"
+#include "core/sets/FileSetStore.h"
 #include "core/vfs/RemoteRegistry.h"
 #include "core/vfs/VfsManager.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
@@ -67,6 +68,7 @@ private slots:
     void bookmarksAreInTheSameList();
     void choosingAMenuEntryAsksForThatAction();
     void choosingABookmarkAsksForThatPlace();
+    void choosingASetBookmarkAsksForItByKind();
     void refreshingPicksUpWhatHasChangedSince();
 
     void aDriveOffersWhatCanBeDoneToItAndNotOnlyWhereItGoes();
@@ -82,6 +84,7 @@ private:
     void connectConfigured(const QString& driveId);
 
     std::unique_ptr<ActionRegistry> m_actions;
+    std::unique_ptr<FileSetStore> m_sets;
     std::unique_ptr<BookmarkModel> m_bookmarks;
     std::unique_ptr<QTemporaryDir> m_profile;
     std::unique_ptr<SecretStore> m_secrets;
@@ -137,8 +140,9 @@ void TestCommandPalette::init()
     m_actions = std::make_unique<ActionRegistry>();
     m_profile = std::make_unique<QTemporaryDir>();
     QVERIFY(m_profile->isValid());
-    m_bookmarks
-        = std::make_unique<BookmarkModel>(QDir(m_profile->path()).filePath(QStringLiteral("bookmarks.json")));
+    m_sets = std::make_unique<FileSetStore>(QDir(m_profile->path()).filePath(QStringLiteral("sets.json")));
+    m_bookmarks = std::make_unique<BookmarkModel>(
+        QDir(m_profile->path()).filePath(QStringLiteral("bookmarks.json")), m_sets.get());
 
     m_actions->addAction(makeAction(QStringLiteral("mole.tools.terminal"), MenuAction::Section::Operations,
         QStringLiteral("Terminal here"), QStringLiteral("Ctrl+`")));
@@ -157,6 +161,7 @@ void TestCommandPalette::cleanup()
     m_registry.reset();
     m_secrets.reset();
     m_bookmarks.reset();
+    m_sets.reset();
     m_profile.reset();
     m_actions.reset();
 }
@@ -299,13 +304,46 @@ void TestCommandPalette::choosingABookmarkAsksForThatPlace()
     palette.setFilter(QStringLiteral("holiday"));
     QCOMPARE(palette.rowCount(), 1);
 
-    QSignalSpy places(&palette, &CommandPaletteModel::locationRequested);
+    QSignalSpy places(&palette, &CommandPaletteModel::bookmarkRequested);
     QSignalSpy actions(&palette, &CommandPaletteModel::actionRequested);
     palette.activate(0);
 
     QCOMPARE(places.count(), 1);
-    QCOMPARE(places.first().first().toString(), QStringLiteral("file:///tmp/photos"));
+    QCOMPARE(places.first().at(0).toString(), QStringLiteral("folder"));
+    QCOMPARE(places.first().at(1).toString(), QStringLiteral("file:///tmp/photos"));
     QCOMPARE(actions.count(), 0);
+}
+
+/// A set bookmark's target is an id, not a place, so the kind has to travel
+/// beside it -- the same shape a drive command's verb already has. Handing the
+/// id to goTo() would try to parse it as a uri and fail with a message about a
+/// drive. See ADR-0061 and MOLE-208.
+void TestCommandPalette::choosingASetBookmarkAsksForItByKind()
+{
+    const FileSet set = m_sets->create(QStringLiteral("Reading list"));
+    QVERIFY(m_bookmarks->addSet(set.id));
+
+    CommandPaletteModel palette(m_actions.get(), m_bookmarks.get(), nullptr);
+    palette.refresh();
+    palette.setFilter(QStringLiteral("reading"));
+    QCOMPARE(palette.rowCount(), 1);
+
+    QSignalSpy asked(&palette, &CommandPaletteModel::bookmarkRequested);
+    QSignalSpy locations(&palette, &CommandPaletteModel::locationRequested);
+    palette.activate(0);
+
+    QCOMPARE(asked.count(), 1);
+    QCOMPARE(asked.first().at(0).toString(), QStringLiteral("set"));
+    QCOMPARE(asked.first().at(1).toString(), set.id);
+    // Never as a location: that is the road that would parse an id as a path.
+    QCOMPARE(locations.count(), 0);
+
+    // And it is offered under the set's current name, not a copy taken when it
+    // was bookmarked.
+    QVERIFY(m_sets->rename(set.id, QStringLiteral("Sent to the printer")));
+    palette.refresh();
+    palette.setFilter(QStringLiteral("printer"));
+    QCOMPARE(palette.rowCount(), 1);
 }
 
 void TestCommandPalette::refreshingPicksUpWhatHasChangedSince()

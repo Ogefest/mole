@@ -64,6 +64,9 @@ Rectangle {
         objectName: "placeRow"
         required property string label
         required property string target
+        /// What `target` is: "folder" for a place a uri can point at -- which is
+        /// every drive row -- or "set". See ADR-0061.
+        property string kind: "folder"
         property bool removable: false
         // Capacity, when the drive has one. A bucket or an archive has no
         // meaningful size, and the row is simply a name in that case rather
@@ -125,7 +128,9 @@ Rectangle {
         // modal takes it out of that modal for good: the popup is left holding no
         // focus, so nothing inside it can take the keyboard afterwards either.
         onClicked: {
-            if (App.goTo(target))
+            // openPlace() rather than goTo(): a set is not somewhere the VFS can
+            // be sent, and a drive row is kind "folder" and goes straight through.
+            if (App.openPlace(row.kind, row.target))
                 sidebar.focusWanted()
         }
 
@@ -456,10 +461,13 @@ Rectangle {
             delegate: PlaceRow {
                 required property int index
                 required property string name
-                required property string uri
+                // The roles go straight into the properties they are named after:
+                // a `kind: kind` binding would be the delegate assigning a
+                // property to itself.
+                required kind
+                required target
 
                 label: name
-                target: uri
                 removable: true
                 onRemoveRequested: App.bookmarks.removeAt(index)
             }
