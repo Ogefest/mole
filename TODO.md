@@ -27,6 +27,28 @@ project, and a contributor should never hit a wall of text they cannot read.
 
 ## Notes
 
+- **The sweep spares a run on another machine by its open files, not by its pid.**
+  A payload is named `mole-<what>-<pid>`, and that pid belongs to the test binary
+  on whoever's machine started the run — it means nothing on the server. So
+  `mole-control sweep` is *told* which pids to spare, and `test-heavy.sh` and
+  `test-live.sh` tell it what `pgrep` finds locally. Two tiers started side by side
+  on one machine are covered by that; two started from *different* machines are
+  covered only by the second rule, which is that anything a server currently holds
+  open is a transfer in flight and survives. A payload that a run has stopped
+  writing to but has not finished with — between two cases, say — could still be
+  taken by a sweep started elsewhere. Nobody runs the tiers from two machines
+  today, and the fix would be a lease file rather than a cleverer pattern.
+
+- **The FTP root on the testbed holds about three megabytes the sweep will not
+  touch.** `f16-<pid>.bin`, `fresh-<size>-<pid>.bin`, `probe-<size>.bin`,
+  `t-<pid>.bin`, `rangeprobe.bin` and friends, left by suites that have since been
+  renamed. They predate the `mole-` convention, so no pattern the sweep could
+  reasonably carry would match them without also matching other people's files —
+  and carrying dead patterns for code that no longer exists is how a sweep becomes
+  something nobody trusts. They are removed by hand, once.
+  `tst_MoleControl.sh` now fails if any suite invents a pid-stamped name outside
+  the convention, so the situation cannot recur.
+
 - **`shellcheck` is not in the suite, and the rules it would enforce are held by
   hand instead.** `shellcheck` flags the class of fault MOLE-233 was about — a
   `\$` on a line that runs in the outer shell rather than in a heredoc — and is

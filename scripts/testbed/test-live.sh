@@ -98,6 +98,20 @@ if [ -z "${MOLE_TEST_CONTROL:-}" ]; then
     done
 fi
 
+# What earlier runs left behind, taken away before this one starts rather than
+# only after it. These suites clean up in `cleanup()`, which covers every case
+# that reaches the end -- but the litter measured on 2026-08-19 was mostly theirs:
+# fifty-four `mole-dav-*` collections and forty-odd `mole-smb-*` directories from
+# runs cut short. It matters here for the same reason it matters in test-heavy.sh:
+# these suites decline when a destination has no room, and room taken by our own
+# leftovers makes that skip a lie. Any run already going is named so its payload
+# survives -- see MOLE-235.
+if [ -n "${MOLE_TEST_CONTROL:-}" ]; then
+    running=$(pgrep -f "$BUILD/tests/tst_" 2>/dev/null | tr '\n' ' ')
+    [ -z "$running" ] || echo "  sparing payloads of runs already going: $running"
+    $MOLE_TEST_CONTROL sweep $running || true
+fi
+
 SUITES="tst_SftpFileSystem tst_WebdavFileSystem tst_FtpFileSystem tst_S3FileSystem tst_SmbFileSystem
 tst_NfsFileSystem"
 

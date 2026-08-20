@@ -156,7 +156,9 @@ who vouches for the certificate, not whether the connection is encrypted.
 MOLE_TESTBED_ADDRESS=… scripts/testbed/control.sh install
 MOLE_TESTBED_ADDRESS=… scripts/testbed/control.sh fill 95
 MOLE_TESTBED_ADDRESS=… scripts/testbed/control.sh netem loss 30% 15
+MOLE_TESTBED_ADDRESS=… scripts/testbed/control.sh sweep --dry-run
 MOLE_TESTBED_ADDRESS=… scripts/testbed/control.sh restore
+scripts/testbed/control.sh emit          # print the program, no machine needed
 ```
 
 The difference between a server and a piece of test equipment is whether a test
@@ -166,6 +168,25 @@ fill the small disk to a chosen percentage and empty it, and apply or remove
 `tc netem`. Every command prints what it did, because a test that fails after
 interfering has to be able to say what it interfered with.
 
+`sweep` is the other odd one, and the only command that runs *before* a tier
+rather than during it. Both heavy tiers clean up in `cleanup()`, which covers
+every run that reaches the end of a case; a run killed by a watchdog, by
+`SIGABRT`, by Ctrl-C or by the machine going away leaves its payload where it was,
+and nothing used to take it away. Nineteen gigabytes over two days had built up
+when this was written, and the cost is not untidiness — **every case in both tiers
+declines with a reason when the destination has no room**, so room eaten by our
+own abandoned payloads makes the tier skip for a reason that is not true and
+report green for having done nothing.
+
+It matches the naming convention rather than a record of what a run made, because
+the runs it exists for died before they could write one: every remote name a suite
+creates is `mole-<what>-<pid>`, which is what tells our litter from anything else
+on the machine. Two things are spared: a pid named on the command line, which is
+how `test-heavy.sh` and `test-live.sh` protect a run already going, and anything a
+server currently holds open — a real condition rather than a clock, and the only
+thing that covers a run started from a *different* machine, whose pids mean
+nothing here. `sweep --dry-run` says what it would take and takes nothing.
+
 `many-files <count>` is the odd one out: it makes a fixture rather than causing a
 fault. A directory of a hundred thousand entries is a real question for a
 listing — what it costs in memory, whether anything paginates, what the progress
@@ -173,6 +194,12 @@ reading does with it — and making one *through* the backend would be a hundred
 thousand round trips. The machine does it in about eight seconds instead, and the
 test does the part actually under examination. `no-files` takes it away, and so
 does `restore`.
+
+`emit` prints `mole-control` itself and needs no address. That is how it is read,
+and how it is tested: `tests/scripts/tst_MoleControl.sh` runs the emitted program
+against a temp tree with `MOLE_CONTROL_DATA` and `MOLE_CONTROL_HOME` pointed at it,
+so the sweep is asserted on every change rather than on the days somebody has a
+machine to hand. Nothing on a real testbed sets those variables.
 
 From C++ it is `TestbedControl` in `tests/support`, and **it is absent by
 default**: nothing reaches for it unless `MOLE_TEST_CONTROL` names the command,

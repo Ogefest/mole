@@ -121,6 +121,8 @@ if(BASH_PROGRAM)
                         SCRIPT scripts/tst_TestbedProvisioning.sh)
     mole_add_shell_test(tst_ShellScripts
                         SCRIPT scripts/tst_ShellScripts.sh)
+    mole_add_shell_test(tst_MoleControl
+                        SCRIPT scripts/tst_MoleControl.sh)
 else()
     message(WARNING "Shell tests skipped: no bash found")
 endif()

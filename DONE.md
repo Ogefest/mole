@@ -9,6 +9,78 @@ wrong.
 
 ---
 
+## A killed heavy run left gigabytes on the test server, and the next one skipped for want of room
+
+**Asked for:** MOLE-235 — a sweep that takes away what a run that never reached `cleanup()`
+left behind, run before a tier rather than only after it.
+
+**The fault.** Both heavy tiers clean up in `cleanup()`, which is the right place and works
+for every run that reaches the end of a case. A run that does not — killed by a watchdog, by
+`SIGABRT`, by somebody pressing Ctrl-C, or by the machine going away — leaves whatever it had
+seeded. Nineteen gigabytes in twenty-five files, across two days, had built up when the ticket
+was written, and MOLE-113's five-gibibyte S3 case had nowhere to go until they were removed by
+hand.
+
+**Why it is not tidiness.** Every case in both tiers declines with a reason when the
+destination has no room. That is right, and it is what stops a suite taking a test machine
+down with it — but room consumed by our own abandoned payloads is indistinguishable from a
+machine that is genuinely too small. The tier then skips for a reason that is not true and
+reports green for having done nothing, which is the exact failure the testing project exists
+to remove, arriving by a different door.
+
+**The rule is the naming convention, not a record.** The whole point is the runs that never
+got to write one down, so `mole-control sweep` matches `mole-*-[0-9]*`: every remote name any
+suite creates is `mole-<what>-<pid>`, which tells our litter from anything else on the machine
+and leaves `mole-many-files`, `mole-ftp-test` and `.mole-ballast` alone by their having no pid.
+A matched directory is taken whole (`find -prune`), so the count means "runs that died" rather
+than "files somebody wrote".
+
+**Sparing a run in progress, without a clock.** The pid in the name belongs to the test binary
+on whoever's machine started the run, so the server cannot ask whether it is alive. Two rules
+instead. A pid named on the command line is spared, and `test-heavy.sh` and `test-live.sh`
+pass what `pgrep` finds locally — that covers two tiers started side by side. And **anything a
+server currently holds open is spared**, which is a real condition rather than a modification
+time, and is the only thing that covers a run started from another machine. A sweep that
+spared files younger than N minutes would pass here and delete a live transfer somewhere else.
+
+**Where the first answer was wrong, three times.** The open-file check was
+`find … | xargs -r fuser -s`, and `xargs` with nothing to run exits 0 — so an *empty* leftover
+directory read as a transfer in flight and would have been spared for ever. Worse, across more
+than one batch `xargs` collapses "some batch found an open file" into 123, which reads as
+*not* in use and would have deleted a live transfer. It now asks one file at a time and
+returns on the first hit. Then `${kept:+…}` fired on the string `0`, so a clean machine
+reported "nothing left behind, 0 in progress" — which reads as though something had been
+spared. All three were found by the test, not by inspection.
+
+**Testing it needed the program to be reachable.** `mole-control` lives in a heredoc in
+`control.sh` and is written to a machine by `install`, so there was no way to run it here. It
+is now produced by a function, and `control.sh emit` prints it with no address and no machine
+— which is how it is read as well as how it is tested. The layout it works on became three
+overridable variables (`MOLE_CONTROL_DATA`, `MOLE_CONTROL_HOME`, `MOLE_CONTROL_MINIO`), so
+`tests/scripts/tst_MoleControl.sh` runs the real program against a temp tree with no ssh, no
+server and no root, in about a second. `room` and `sweep` now ask one `service_root()` for the
+layout rather than carrying two lists that have to agree.
+
+**And the convention is now held by a test.** The sweep is only as good as the naming, so
+`tst_MoleControl.sh` fails if any suite builds a pid-stamped name without a `mole-` prefix. It
+was not hypothetical: the FTP root still held `f16-<pid>.bin`, `fresh-<size>-<pid>.bin`,
+`probe-<size>.bin`, `t-<pid>.bin` and `rangeprobe.bin` from suites since renamed — three and a
+half megabytes no sweep could match, because they were written before there was a convention.
+Those are removed by hand once; see `TODO.md`.
+
+**Verified against the machine, and the ticket's own test.** A dry run found 69 leftovers and
+1.6 GB, all `mole-dav-*` and `mole-dav-large-*` from live runs cut short; sweeping took them
+and the small disk went from 2.2 GB free to 3.7 GB — a second sweep is a no-op. Then the
+ticket's own condition: a heavy run was killed part way with 426 MB of
+`mole-heavy-<pid>.bin.mole-partial` on the server, the tier was started again, and it reported
+`sweep: took 1 leftover, 427MB` before asking for room — 29 GB free rather than a figure
+reduced by our own litter — and went on to pass its cases. Five regressions injected into the
+sweep and each caught: the keep list ignored, the open-file check removed, the pid read as the
+last number in the name rather than the first, the pattern broadened past the convention, and
+`-prune` dropped.
+
+---
+
 ## The provisioning scripts had no test, and a dead guard exported NFS to the whole network
 
 **Asked for:** MOLE-233 — a place for a shell script to be tested, and the NFS fault held in

@@ -12,6 +12,7 @@
 #
 # Two halves:
 #
+#   emit     prints the `mole-control` program, and needs no machine
 #   install  puts `mole-control` on the machine
 #   <command> runs one, over ssh, and prints what it did
 #
@@ -34,28 +35,12 @@ ACCOUNT="${MOLE_TESTBED_ACCOUNT:-moletest}"
 # has only port 22, which is what the fallback below is for.
 CONTROL_PORT="${MOLE_TESTBED_CONTROL_PORT:-2022}"
 
-[ -n "$ADDRESS" ] || { echo "Set MOLE_TESTBED_ADDRESS." >&2; exit 2; }
-[ $# -ge 1 ] || { echo "Usage: control.sh install | <command> [argument…]" >&2; exit 2; }
+[ $# -ge 1 ] || { echo "Usage: control.sh emit | install | <command> [argument…]" >&2; exit 2; }
 
-# The control port when it answers, port 22 when it does not. Falling back
-# matters exactly once -- installing on a machine that has no control sshd yet --
-# and is announced rather than silent, because a channel that quietly moved onto
-# the port the tier blackholes is the fault this whole file is about.
-PORT="$CONTROL_PORT"
-if ! ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 \
-        -p "$CONTROL_PORT" "$ACCOUNT@$ADDRESS" true 2>/dev/null; then
-    PORT=22
-    echo "control.sh: nothing answers on port $CONTROL_PORT; using port 22." >&2
-    echo "control.sh: run services.sh to put the control sshd there -- until then" >&2
-    echo "control.sh: an outage on port 22 cuts this channel with the transfer." >&2
-fi
-
-on_server() {
-    ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p "$PORT" "$ACCOUNT@$ADDRESS" "$@"
-}
-
-if [ "$1" = "install" ]; then
-    on_server "sudo tee /usr/local/bin/mole-control >/dev/null" <<'CONTROL'
+# The payload, in one place, produced rather than piped inline: `install` sends it
+# to a machine and `emit` prints it here. Two copies of a heredoc would drift.
+control_payload() {
+    cat <<'CONTROL'
 #!/usr/bin/env bash
 #
 # Does something to this machine on purpose, and says what it did.
@@ -67,9 +52,36 @@ if [ "$1" = "install" ]; then
 #
 set -uo pipefail
 
-DATA=/srv/moledata
+# The machine's layout, in one place and overridable. The defaults are what
+# services.sh built; the overrides exist so this program can be run against a temp
+# tree with no machine at all -- which is how the sweep below is tested. Nothing on
+# a real testbed sets them.
+DATA="${MOLE_CONTROL_DATA:-/srv/moledata}"
+MINIO_STORE="${MOLE_CONTROL_MINIO:-/var/lib/minio}"
 BALLAST="$DATA/.mole-ballast"
-IFACE="$(ip -o -4 route show default | awk '{print $5}' | head -1)"
+IFACE="$(ip -o -4 route show default 2>/dev/null | awk '{print $5}' | head -1)"
+
+# Where each service keeps its files. Asked once rather than spelled out at every
+# call site: `room` and `sweep` have to agree about the layout, and two lists that
+# must agree are one list.
+service_root() {
+    case "$1" in
+    sftp)   printf '%s\n' "$(sftp_home)/sftp" ;;
+    s3)     printf '%s\n' "$MINIO_STORE" ;;
+    webdav) printf '%s\n' "$DATA/webdav" ;;
+    ftp)    printf '%s\n' "$DATA/ftp" ;;
+    smb)    printf '%s\n' "$DATA/smb" ;;
+    nfs)    printf '%s\n' "$DATA/nfs" ;;
+    *)      return 1 ;;
+    esac
+}
+
+# The account the services run as, taken from who owns the data disk, so nothing
+# here has an account name typed into it.
+sftp_home() {
+    if [ -n "${MOLE_CONTROL_HOME:-}" ]; then printf '%s\n' "$MOLE_CONTROL_HOME"; return; fi
+    getent passwd "$(stat -c %U "$DATA")" | cut -d: -f6
+}
 
 # The port this channel arrives over, read from the server that serves it rather
 # than typed in twice. Everything below refuses to damage it: an instrument that
@@ -136,9 +148,18 @@ mole-control <command>
                                       creations over SFTP is a hundred thousand
                                       round trips. `no-files` removes it.
   no-files                            and takes it away again
-  room <sftp|s3|webdav|ftp>           bytes free where that service keeps its
+  room <sftp|s3|webdav|ftp|smb|nfs>   bytes free where that service keeps its
                                       files, so a test can decline to fill a
                                       disk it would take the machine down with
+  sweep [--dry-run] [pid…]            removes payloads left by runs that never
+                                      reached cleanup() -- killed, aborted, or
+                                      on a machine that went away -- and says
+                                      how much it took. Matches the naming
+                                      convention rather than a record of this
+                                      run, because the runs it is for never
+                                      wrote one. A named pid is spared, and so
+                                      is anything a server currently holds
+                                      open: that is a transfer in flight
   status                              what is currently being done to this machine
   restore                             undo everything: no ballast, no netem, all up
 USAGE
@@ -340,7 +361,7 @@ many-files)
     case "$count" in
     ''|*[!0-9]*) refuse "many-files takes a count" ;;
     esac
-    home=$(getent passwd "$(stat -c %U "$DATA")" | cut -d: -f6)
+    home=$(sftp_home)
     dir="$home/sftp/mole-many-files"
     rm -rf "$dir"
     mkdir -p "$dir"
@@ -355,9 +376,118 @@ many-files)
     ;;
 
 no-files)
-    home=$(getent passwd "$(stat -c %U "$DATA")" | cut -d: -f6)
+    home=$(sftp_home)
     rm -rf "$home/sftp/mole-many-files"
     say "the many-files directory is gone"
+    ;;
+
+sweep)
+    # Takes away what runs that died left behind, by name rather than by memory.
+    #
+    # Both tiers clean up in `cleanup()`, which is right and works for every run
+    # that reaches the end of a case. A run that does not -- killed by a watchdog,
+    # by SIGABRT, by Ctrl-C, or by the machine going away -- leaves its payload
+    # where it was. Nineteen gigabytes in twenty-five files had accumulated over
+    # two days when MOLE-235 was written, and the cost is not untidiness: **every
+    # case in both tiers declines with a reason when the destination has no room**,
+    # so room eaten by our own abandoned payloads is indistinguishable from a
+    # machine that is genuinely too small. The tier then skips for a reason that is
+    # not true and reports green for having done nothing.
+    #
+    # So the rule is the naming convention, not a record of what this run made --
+    # the whole point is the runs that never got to write one down. Every remote
+    # name any suite creates is `mole-<what>-<pid>`, so `mole-*-[0-9]*` tells our
+    # litter from anything else on the machine, and `mole-many-files`,
+    # `mole-ftp-test` and `.mole-ballast` are outside it by having no pid.
+    dry=
+    keep=
+    shift
+    for arg in "$@"; do
+        case "$arg" in
+        --dry-run) dry=1 ;;
+        ''|*[!0-9]*) refuse "sweep takes --dry-run and pids to spare, not \"$arg\"" ;;
+        *) keep="$keep $arg " ;;
+        esac
+    done
+
+    # A payload a server currently holds open is a transfer in progress, whatever
+    # its name says. This is a real condition rather than a clock, which is why it
+    # is asked instead of a modification time: a test that spares files younger
+    # than N minutes passes on one machine and deletes a live transfer on another.
+    have_fuser=1
+    command -v fuser >/dev/null 2>&1 || have_fuser=
+    [ -n "$have_fuser" ] || say "WARNING: no fuser here; a transfer in flight cannot be told from litter"
+
+    in_use() {
+        [ -n "$have_fuser" ] || return 1
+        if [ ! -d "$1" ]; then fuser -s "$1" 2>/dev/null; return; fi
+        # A directory is in use when something holds one of its files open, asked
+        # one file at a time. Two wrong answers were measured before this shape:
+        # piping into `xargs -r fuser -s` reports an *empty* directory as in use,
+        # because xargs with nothing to run exits 0 -- so every empty leftover
+        # directory was spared for ever -- and across more than one batch xargs
+        # collapses "some batch found an open file" into 123, which reads as not in
+        # use and would have deleted a live transfer.
+        local f
+        while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            fuser -s "$f" 2>/dev/null && return 0
+        done <<INNER
+$(find "$1" -type f 2>/dev/null)
+INNER
+        return 1
+    }
+
+    swept=0; bytes=0; kept=0; listed=0
+    for service in sftp s3 webdav ftp smb nfs; do
+        root=$(service_root "$service") || continue
+        [ -d "$root" ] || continue
+        # -prune so a matched directory is reported once rather than walked into.
+        # -maxdepth 2 because the FTP suite works inside /Shared rather than at the
+        # root, and depth is cheaper than a second list of paths to keep in step.
+        while IFS= read -r path; do
+            [ -n "$path" ] || continue
+            name=${path##*/}
+            pid=$(printf '%s\n' "$name" | sed -E 's/^mole-[a-z-]*-([0-9]+).*/\1/')
+            case " $keep " in
+            *" $pid "*)
+                kept=$((kept + 1))
+                say "  kept $path -- run $pid is still going"
+                continue ;;
+            esac
+            if in_use "$path"; then
+                kept=$((kept + 1))
+                say "  kept $path -- a transfer has it open"
+                continue
+            fi
+            size=$(du -sb "$path" 2>/dev/null | cut -f1)
+            case "$size" in ''|*[!0-9]*) size=0 ;; esac
+            swept=$((swept + 1)); bytes=$((bytes + size))
+            if [ -z "$dry" ]; then rm -rf "$path" || { swept=$((swept - 1)); continue; }; fi
+            # Every path up to a point, then a count. A run that died leaves one or
+            # two; a fortnight of them leaves fifty, and fifty lines of output ahead
+            # of a tier is noise rather than signal.
+            if [ "$listed" -lt 20 ]; then
+                listed=$((listed + 1))
+                say "  $([ -n "$dry" ] && echo would take || echo took) $path ($(numfmt --to=iec --suffix=B "$size" 2>/dev/null || echo "$size bytes"))"
+            fi
+        done <<LIST
+$(find "$root" -mindepth 1 -maxdepth 2 -name 'mole-*-[0-9]*' -prune -print 2>/dev/null)
+LIST
+    done
+    [ "$swept" -le "$listed" ] || say "  ...and $((swept - listed)) more"
+
+    # Said out loud even when it is nothing, because "the sweep ran and found
+    # nothing" and "the sweep never ran" are different facts and a tier that
+    # skipped for want of room needs to be able to tell them apart.
+    inprogress=
+    [ "$kept" -eq 0 ] || inprogress=", $kept in progress"
+    if [ "$swept" -eq 0 ]; then
+        say "sweep: nothing left behind$inprogress"
+    else
+        say "sweep: $([ -n "$dry" ] && echo would take || echo took) $swept leftover$([ "$swept" = 1 ] || echo s), $(numfmt --to=iec --suffix=B "$bytes" 2>/dev/null || echo "$bytes bytes")${inprogress:+, kept $kept in progress}"
+        [ -n "$dry" ] || say "sweep: that many is how often a run is dying without reaching cleanup()"
+    fi
     ;;
 
 room)
@@ -365,13 +495,7 @@ room)
     # asked for ten gigabytes on the four-gigabyte disk would take every other
     # suite down with it. So the question is asked here rather than answered by
     # a number typed into a script somewhere else.
-    case "${2:-}" in
-    sftp)   path=$(getent passwd "$(stat -c %U "$DATA")" | cut -d: -f6)/sftp ;;
-    s3)     path=/var/lib/minio ;;
-    webdav) path="$DATA/webdav" ;;
-    ftp)    path="$DATA/ftp" ;;
-    *)      usage; exit 2 ;;
-    esac
+    path=$(service_root "${2:-}") || { usage; exit 2; }
     [ -d "$path" ] || path="$(dirname "$path")"
     df --output=avail -B1 "$path" | tail -1 | tr -d ' '
     ;;
@@ -397,7 +521,7 @@ restore)
     # nobody asked for.
     rm -f /run/mole-rate
     rm -f "$BALLAST"
-    home=$(getent passwd "$(stat -c %U "$DATA")" | cut -d: -f6)
+    home=$(sftp_home)
     rm -rf "$home/sftp/mole-many-files"
     if [ -f /etc/ssh/rekey/ssh_host_ed25519_key.original ]; then
         mv /etc/ssh/rekey/ssh_host_ed25519_key.original /etc/ssh/rekey/ssh_host_ed25519_key
@@ -417,7 +541,39 @@ restore)
     ;;
 esac
 CONTROL
+}
 
+# `emit` prints the payload and stops. It needs no machine and no address, which
+# is the point: `mole-control` is a program of its own and this is how it is read
+# and how it is tested. tests/scripts/tst_MoleControl.sh runs the emitted file
+# against a temp tree, so the sweep below is asserted without a server.
+if [ "$1" = "emit" ]; then
+    control_payload
+    exit 0
+fi
+
+[ -n "$ADDRESS" ] || { echo "Set MOLE_TESTBED_ADDRESS." >&2; exit 2; }
+
+# The control port when it answers, port 22 when it does not. Falling back
+# matters exactly once -- installing on a machine that has no control sshd yet --
+# and is announced rather than silent, because a channel that quietly moved onto
+# the port the tier blackholes is the fault this whole file is about.
+PORT="$CONTROL_PORT"
+if ! ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 \
+        -p "$CONTROL_PORT" "$ACCOUNT@$ADDRESS" true 2>/dev/null; then
+    PORT=22
+    echo "control.sh: nothing answers on port $CONTROL_PORT; using port 22." >&2
+    echo "control.sh: run services.sh to put the control sshd there -- until then" >&2
+    echo "control.sh: an outage on port 22 cuts this channel with the transfer." >&2
+fi
+
+on_server() {
+    ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p "$PORT" "$ACCOUNT@$ADDRESS" "$@"
+}
+
+
+if [ "$1" = "install" ]; then
+    control_payload | on_server "sudo tee /usr/local/bin/mole-control >/dev/null"
     on_server "sudo chmod +x /usr/local/bin/mole-control"
     # Passwordless for this one command only. The account already has full sudo
     # on a disposable machine, so this changes nothing about what is possible --

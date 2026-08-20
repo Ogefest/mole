@@ -89,6 +89,23 @@ if [ -z "${MOLE_TEST_CONTROL:-}" ] \
 fi
 CONTROL="${MOLE_TEST_CONTROL:-ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p $CONTROL_PORT $ACCOUNT@$ADDRESS sudo mole-control}"
 
+# Before the tier and not only after it, because the runs this is for never
+# reached the end. Both tiers clean up in `cleanup()`, which works for every run
+# that finishes a case; a run killed by a watchdog, by SIGABRT, by Ctrl-C or by the
+# machine going away leaves its payload where it was, and nothing used to take it
+# away. Nineteen gigabytes in twenty-five files had built up over two days when
+# MOLE-235 was written, and the cost is not untidiness: the room check below then
+# reports a skip for want of space that is really our own litter, so the tier goes
+# green for having done nothing.
+#
+# Any test binary already running is named, so its payload is spared -- two tiers
+# started side by side must not delete each other's work. `mole-control` also
+# spares anything a server currently holds open, which is what covers a run
+# started from another machine, whose pids mean nothing here.
+running=$(pgrep -f "$BUILD/tests/tst_" 2>/dev/null | tr '\n' ' ')
+[ -z "$running" ] || echo "  sparing payloads of runs already going: $running"
+$CONTROL sweep $running || echo "  the sweep did not run; the room figures below may be our own litter" >&2
+
 # What each destination has room for, from the machine itself. Missing answers
 # leave the cap unset, which means the suite goes ahead -- an absent control
 # channel must not silently turn the tier off.
