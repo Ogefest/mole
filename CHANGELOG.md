@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-20 #MOLE-238 Starting Mole no longer builds the GStreamer stack, which cost most of a second
 2026-08-20 #MOLE-239 A video thumbnail seeks to its frame, so a file over a minute gets a tile at all
 2026-08-20 #MOLE-237 Fix the sanitizer tier going red on GStreamer's device monitor and on a pooled NFS mount
 2026-08-20 #MOLE-144 A folder of PDFs shows first pages and a folder of videos shows frames — not frame zero, which is black in a great many of them

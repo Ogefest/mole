@@ -30,8 +30,12 @@ bool VideoThumbnailer::canThumbnail(const FileEntry& entry) const
     // one: a video that is not on the local disk gets the icon tile.
     if (thumbnails::isRemote(entry.uri))
         return false;
+    // The suffix first, the decoder second. A folder of photographs and text asks
+    // this of every file no earlier thumbnailer claimed, and the MIME database
+    // answers for nothing; waking Qt Multimedia to be told the same thing costs
+    // most of a second.
     static const QStringList supported = VideoPreviewProvider::videoSuffixes();
-    return supported.contains(entry.uri.suffix());
+    return supported.contains(entry.uri.suffix()) && VideoPreviewProvider::isAvailable();
 }
 
 QImage VideoThumbnailer::thumbnail(

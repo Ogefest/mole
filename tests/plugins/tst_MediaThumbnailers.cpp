@@ -39,6 +39,7 @@ private slots:
     void aLongVideoIsSeekedRatherThanPlayedTo();
     void aVideoThatCannotBeDecodedInTimeYieldsNothing();
     void aVideoOnADriveThatIsNotLocalIsNotClaimed();
+    void aVideoIsClaimedOnlyByABuildThatCanDecodeOne();
     void bothAreAbsentFromABuildWithoutTheirDependency();
     void neitherRunsOnTheGuiThreadAndBothStopWhenTold();
 
@@ -303,6 +304,34 @@ void TestMediaThumbnailers::aVideoOnADriveThatIsNotLocalIsNotClaimed()
 
 /// The other half of "present only when its dependency is": a build without one
 /// compiles, is green, and shows the icon tile.
+/// The other half of deferring the codec question: a suffix that looks like a
+/// video is not on its own a promise of a tile.
+///
+/// canThumbnail() checks the name against the MIME database first, because that
+/// costs nothing, and asks Qt Multimedia second, because asking it anything builds
+/// the whole GStreamer stack. Cheap-first is only correct if the second half is
+/// still asked -- otherwise a build with the module and no decoders would claim
+/// every `.mp4` and hand back nothing, which is a folder of blank tiles where it
+/// used to be a folder of icons. Deliberately not skipped when there is no
+/// decoder: that is the case being held.
+void TestMediaThumbnailers::aVideoIsClaimedOnlyByABuildThatCanDecodeOne()
+{
+#ifndef MOLE_HAVE_MULTIMEDIA
+    QSKIP("this build has no Qt Multimedia, so a video gets the icon tile");
+#else
+    QVERIFY(m_dir);
+    QVERIFY(QFile(QDir(m_dir->path()).filePath(QStringLiteral("holiday.mp4"))).open(QIODevice::WriteOnly));
+
+    const VideoThumbnailer thumbnailer;
+    QCOMPARE(
+        thumbnailer.canThumbnail(localEntry(QStringLiteral("holiday.mp4"))), VideoThumbnailer::isAvailable());
+
+    // And a name no video format goes by is refused either way, without the
+    // decoder being consulted at all.
+    QVERIFY(!thumbnailer.canThumbnail(localEntry(QStringLiteral("holiday.mp5"))));
+#endif
+}
+
 void TestMediaThumbnailers::bothAreAbsentFromABuildWithoutTheirDependency()
 {
 #if defined(MOLE_HAVE_QTPDF) || defined(MOLE_HAVE_MULTIMEDIA)

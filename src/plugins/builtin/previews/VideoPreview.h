@@ -122,6 +122,12 @@ public:
     /// narrows with a narrower installation -- and whether the stream inside can
     /// actually be decoded is answered by trying, with the failure reported in
     /// words. See VideoPreviewController::reportPlaybackFailure().
+    ///
+    /// **This answers regardless of isAvailable(), and must keep doing so.** The
+    /// MIME database is free; isAvailable() builds the GStreamer stack, at 710 ms
+    /// and five threads. Folding the check in here made every caller pay that to
+    /// learn what a file is called, which put it on application startup. Ask this
+    /// first and isAvailable() only for a file whose suffix matched.
     static QStringList videoSuffixes();
 
 private:

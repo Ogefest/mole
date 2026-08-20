@@ -117,9 +117,11 @@ bool VideoPreviewProvider::isAvailable()
 
 QStringList VideoPreviewProvider::videoSuffixes()
 {
-    if (!isAvailable())
-        return {};
-
+    // Deliberately not gated on isAvailable(). What a video file is called is a
+    // question for the MIME database and costs nothing; whether this build can
+    // decode one wakes the whole GStreamer stack. Folding the two together meant
+    // every caller paid the second price to ask the first -- see the note in the
+    // header. Callers check availability themselves, after the suffix.
     QStringList suffixes;
     const QList<QMimeType> types = QMimeDatabase().allMimeTypes();
     for (const QMimeType& type : types) {
@@ -139,8 +141,11 @@ bool VideoPreviewProvider::canPreview(const FileEntry& entry) const
 {
     if (entry.isDir)
         return false;
+    // The suffix first and the decoder second, and that order is the whole point:
+    // only a file that really looks like a video is worth asking Qt Multimedia
+    // about, and asking it anything costs most of a second.
     static const QStringList supported = videoSuffixes();
-    return supported.contains(entry.uri.suffix());
+    return supported.contains(entry.uri.suffix()) && isAvailable();
 }
 
 QUrl VideoPreviewProvider::viewSource() const

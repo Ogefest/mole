@@ -9,6 +9,56 @@ wrong.
 
 ---
 
+## Starting Mole spent most of a second building a media stack nobody had asked for
+
+**Asked for:** MOLE-238 — found while diagnosing the sanitizer tier (MOLE-237): every app
+suite's leak report ran through one line of plugin registration.
+
+**One `if` reached the whole of GStreamer.** `BuiltinPlugin::registerExtensions` guarded the
+video thumbnailer with `if (VideoThumbnailer::isAvailable())`, which asks
+`QMediaFormat::supportedVideoCodecs()`. That call creates Qt Multimedia's platform
+integration, and creating it builds a `GstDeviceMonitor` with every device provider it can
+find: ALSA cards enumerated, a PulseAudio context opened, PipeWire threads started. Measured
+offscreen on the author's machine: **710 ms and five extra threads**, on the GUI thread inside
+`AppController::initialise`, on every launch, whether or not the session ever looked at a
+video.
+
+**And the guard bought nothing.** `canThumbnail()` already answered `false` in a build with
+no decoders, because it tested the suffix against `videoSuffixes()`, which returned an empty
+list when `isAvailable()` was false. The check at registration was the same question asked
+earlier and more expensively.
+
+**Removing it alone would only have moved the cost**, which is the part worth writing down.
+`canThumbnail` initialised its suffix list from that same gated call, so the first file no
+higher-priority thumbnailer claimed — a `.txt` in a galleried folder is enough, since
+`ThumbnailRegistry::thumbnailerFor` asks every thumbnailer in turn — would have paid the same
+710 ms.
+
+So the two questions were separated. "What is a video called" comes from `QMimeDatabase` and
+costs nothing; `videoSuffixes()` no longer folds availability into its answer. "Can this build
+decode one" is asked second, by `canThumbnail()` and `canPreview()`, and only for a file whose
+suffix already matched. Cheap first, and the expensive half still asked — a build with the
+module and no decoders must keep offering no tile, or a folder of `.mp4` goes from icons to
+blanks. The header now says why it is not gated, because folding it back in is the obvious
+tidy-up and it is the bug.
+
+**The test is the loader's own table.** There is no Qt API for "has Qt Multimedia been brought
+up yet", because asking it anything is what brings it up. So the new case reads
+`/proc/self/maps` after the application has started and holds that no `libgst` is mapped —
+then asks the video thumbnailer about a text file and holds it again. It skips where the
+platform cannot say, and it fails on the old code with the reported cause.
+
+**What it bought, measured.** Every suite that starts the application got faster:
+`tst_Walkthrough` 101.1 s → 82.9 s, `tst_DuplicatesTab` 18.0 s → 11.5 s, `tst_TabStrip`
+9.5 s → 7.5 s, `tst_Thumbnails` 8.1 s → 5.4 s, `tst_Session` 2.1 s → 1.3 s. The whole suite
+went 101.1 s → 82.9 s.
+
+It also narrowed MOLE-237's suppression from a blanket to a scope. `leak:libgst*` used to be
+exercised by every app suite; now only the suites that genuinely decode video reach it —
+`tst_MediaThumbnailers` (369 records), `tst_Walkthrough` (281) and `tst_Preview` (26).
+`tst_Thumbnails` reaches none at all. The entry stays, because those three are real, but a
+GStreamer leak can no longer hide behind a suite that had no business loading GStreamer.
+
 ## A folder of videos spent five seconds a tile and showed icons
 
 **Asked for:** MOLE-239 — reported from use: photographs filled with tiles, videos took

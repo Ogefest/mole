@@ -1,5 +1,6 @@
 #include "host/ThumbnailRegistry.h"
 #include "plugins/builtin/BrowserFeature.h"
+#include "plugins/builtin/thumbnails/VideoThumbnailer.h"
 #include "support/FakePlugin.h"
 #include "support/QmlAppHarness.h"
 #include "support/TestSupport.h"
@@ -33,6 +34,7 @@ private slots:
     void init();
     void cleanup();
 
+    void startingTheApplicationDoesNotBuildTheMediaStack();
     void scrollingAFolderNeverRunsMoreDecodesThanTheBound();
     void leavingAFolderTakesItsQueueWithIt();
     void aListingIsNeverBehindAQueueOfDecodes();
@@ -48,6 +50,29 @@ private:
     std::shared_ptr<FakeThumbnailer::Log> m_log;
     std::shared_ptr<QSemaphore> m_gate;
 };
+
+namespace {
+
+/// The shared objects the loader has actually mapped into this process.
+///
+/// Empty when the platform cannot say, which the caller checks: a test that holds
+/// "this library was never loaded" is worthless if the instrument silently answers
+/// nothing. Linux only, and asking the loader is the point -- there is no Qt API
+/// for "has Qt Multimedia been brought up yet", because bringing it up is what
+/// asking it anything does.
+QString modulesLoadedIntoThisProcess()
+{
+#ifdef Q_OS_LINUX
+    QFile maps(QStringLiteral("/proc/self/maps"));
+    if (!maps.open(QIODevice::ReadOnly | QIODevice::Text))
+        return {};
+    return QString::fromLatin1(maps.readAll());
+#else
+    return {};
+#endif
+}
+
+} // namespace
 
 void TestThumbnails::init()
 {
@@ -110,6 +135,45 @@ QQuickItem* TestThumbnails::tiles()
     if (!grid)
         return nullptr;
     return m_harness->until([grid] { return grid->isVisible() && grid->width() > 0; }) ? grid : nullptr;
+}
+
+/// Starting the application must not bring up Qt Multimedia.
+///
+/// Asking it anything -- and `QMediaFormat::supportedVideoCodecs()` is anything --
+/// creates its platform integration, and creating that builds the whole GStreamer
+/// stack: a device monitor with every provider it can find, enumerating ALSA
+/// cards, opening a PulseAudio context and starting PipeWire threads. Measured at
+/// 710 ms and five extra threads on the author's machine, on the GUI thread, before
+/// the window appears. A file manager cannot spend that on the chance that the
+/// session might look at a video.
+///
+/// So the question is deferred to the file that needs it answered, and this is the
+/// guard on that: the loader's own table, read after the application has started
+/// and its plugins have registered.
+void TestThumbnails::startingTheApplicationDoesNotBuildTheMediaStack()
+{
+    const QString loaded = modulesLoadedIntoThisProcess();
+    if (loaded.isEmpty())
+        QSKIP("nothing here can say which modules the loader mapped");
+
+    QVERIFY2(!loaded.contains(QLatin1String("libgst")),
+        "starting the application built the GStreamer stack, which costs most of a second "
+        "before the window appears");
+
+#ifdef MOLE_HAVE_MULTIMEDIA
+    // And asking about an ordinary file must not build it either, or the first
+    // gallery of anything at all pays the same price. The suffix is a question for
+    // the MIME database, which costs nothing; only a file that really looks like a
+    // video is worth waking a decoder for.
+    QVERIFY(m_harness->writeFile(QStringLiteral("notes.txt")));
+    FileEntry text;
+    text.uri = VfsUri::fromLocalPath(QDir(m_harness->fixturePath()).filePath(QStringLiteral("notes.txt")));
+    text.name = QStringLiteral("notes.txt");
+    const VideoThumbnailer thumbnailer;
+    QVERIFY(!thumbnailer.canThumbnail(text));
+    QVERIFY2(!modulesLoadedIntoThisProcess().contains(QLatin1String("libgst")),
+        "asking the video thumbnailer about a text file built the GStreamer stack");
+#endif
 }
 
 void TestThumbnails::scrollingAFolderNeverRunsMoreDecodesThanTheBound()

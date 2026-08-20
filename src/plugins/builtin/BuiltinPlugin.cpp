@@ -141,9 +141,14 @@ void BuiltinPlugin::registerExtensions(PluginRegistry& registry)
     registry.addThumbnailer(std::make_unique<PdfThumbnailer>());
 #endif
 #ifdef MOLE_HAVE_MULTIMEDIA
-    // A frame from a video, and only when this build can decode one at all.
-    if (VideoThumbnailer::isAvailable())
-        registry.addThumbnailer(std::make_unique<VideoThumbnailer>());
+    // A frame from a video. Registered without asking whether this build can
+    // decode one: that question creates Qt Multimedia's platform integration,
+    // which builds the whole GStreamer stack -- a device monitor enumerating ALSA
+    // cards, a PulseAudio context, PipeWire threads -- for 710 ms on the GUI
+    // thread before the window appears. canThumbnail() asks it instead, and only
+    // for a file whose suffix is a video's, so a build with no decoders still
+    // offers no tile and a session that never opens a video never pays.
+    registry.addThumbnailer(std::make_unique<VideoThumbnailer>());
 #endif
 }
 
