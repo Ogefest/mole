@@ -27,6 +27,25 @@ project, and a contributor should never hit a wall of text they cannot read.
 
 ## Notes
 
+- **`shellcheck` is not in the suite, and the rules it would enforce are held by
+  hand instead.** `shellcheck` flags the class of fault MOLE-233 was about — a
+  `\$` on a line that runs in the outer shell rather than in a heredoc — and is
+  the better long-term answer to it. It is not installed on this machine and is
+  not a build dependency, so committing a `make` target for it would have meant a
+  gate nobody here could run. `tests/scripts/tst_ShellScripts.sh` holds the rules
+  that matter instead: every script parses, every script sets `-u`, no line that
+  runs locally defers expansion to a machine, and no private address is written
+  into a tracked file. If `shellcheck` is ever taken on as a dependency, the first
+  three of those become redundant and should be dropped rather than kept beside
+  it — see [ADR-0062](docs/adr/0062-shell-scripts-are-tested-by-stubbing-ssh.md).
+
+- **A shell test asserts what was sent to a machine, not what the machine does
+  with it.** The stub `ssh` in `tests/support/shelltest.sh` records the script it
+  would have run and exits 0, so an export line that is correctly formed and wrong
+  about how `exportfs` behaves passes. That question belongs to
+  `scripts/testbed/check-services.sh` against a real machine, and the two answer
+  different things — the same split as the live suites.
+
 - **A changed host key is the one interference case a fake cannot mirror.** Every
   other case in the interference tier has a cheap twin that runs on every change:
   a connection dying mid-read or mid-write, a service that goes away and comes

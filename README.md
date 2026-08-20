@@ -235,6 +235,7 @@ src/plugins    built-in features + archive plugin
 src/app        main() and the QML shell
 src/tools      mole-tasks, the console runner       (no GUI)
 tests          one binary per unit, plus an integration suite
+tests/scripts  the shell scripts, run against a stub ssh
 ```
 
 ## Using it

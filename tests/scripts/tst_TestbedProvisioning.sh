@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+#
+# What `services.sh` sends to a machine, asserted without a machine.
+#
+# The fault this exists for: the guard deciding whether to export the NFS share
+# was written `[ -z "\$NFS_CLIENTS" ]` -- with a backslash belonging to a heredoc
+# four lines further down. The line runs in the outer script, so the test compared
+# the literal string `$NFS_CLIENTS`, which is never empty. The guard never held,
+# the `else` branch ran every time with an empty client list, and `exportfs` reads
+# a missing host as `*`. Every machine this script provisioned had its NFS share
+# exported read-write to every host on its network, for nine days, while the
+# comment above the variable said the export must never be "the whole subnet by
+# accident".
+#
+# The skip branch the author wrote as the safe default was dead code that had
+# never printed once, and nothing in this repository could have noticed: `tests/`
+# was C++ only and no shellcheck ran anywhere.
+#
+# So the general form is what is asserted, not just the one line: an export whose
+# host field is empty must never reach a machine, whatever the guard does.
+#
+. "$(dirname "${BASH_SOURCE[0]}")/../support/shelltest.sh"
+
+# Invented, and deliberately not the address of anything. The stub `ssh` goes
+# nowhere, so these only have to be non-empty -- and a real address in a test
+# fixture is exactly what CLAUDE.md forbids.
+export MOLE_TESTBED_ADDRESS=testbed.invalid
+export MOLE_TESTBED_PASSWORD=throwaway-not-a-real-password
+export MOLE_TESTBED_ACCOUNT=moletest
+
+# The export path the script owns, and the signature of the fault: the path,
+# whitespace, then straight into the option list with no host in between.
+EXPORT_PATH=/srv/moledata/nfs
+EMPTY_HOST="^$EXPORT_PATH[[:space:]]*\("
+
+# --- the guard holds ---------------------------------------------------------
+
+begin "with no client named, no export reaches the machine and the skip is announced"
+stub_ssh
+unset MOLE_TESTBED_NFS_CLIENTS
+run_script scripts/testbed/services.sh
+exited 0
+# The whole point: nothing that reaches the machine writes an export line.
+never_reached "$EXPORT_PATH ("
+never_reached_matching "$EMPTY_HOST"
+never_reached_matching "^$EXPORT_PATH.*\(rw,"
+# And the branch that was dead code for nine days now prints.
+said "skipped: set MOLE_TESTBED_NFS_CLIENTS"
+said "An export open to the whole LAN is not something to arrive at by default."
+# A machine provisioned while the guard was broken is put right by running this
+# again, so the skip has to withdraw a stale export rather than ignore it.
+reached "exportfs -ra"
+reached_matching ': > /etc/exports'
+
+# --- the guard lets a named client through -----------------------------------
+
+begin "with a client named, the export names that client and only that client"
+stub_ssh
+export MOLE_TESTBED_NFS_CLIENTS=203.0.113.7
+run_script scripts/testbed/services.sh
+exited 0
+reached "$EXPORT_PATH 203.0.113.7(rw,sync,insecure,no_subtree_check)"
+# Still no empty host, and no wildcard: `exportfs` reads both as the whole LAN.
+never_reached_matching "$EMPTY_HOST"
+never_reached_matching "^$EXPORT_PATH[[:space:]]+\*\("
+# no_root_squash is not an option this export may ever carry: the share is a
+# place to put files, not a way to become root on the machine. Asserted against
+# the export line rather than the whole transcript -- the script has a comment
+# saying it is deliberately not set, and a test that cannot tell a comment from
+# an option is a test that goes red for the wrong reason.
+never_reached_matching "^$EXPORT_PATH.*no_root_squash"
+said "203.0.113.7"
+
+# --- a client list, still no wildcard ----------------------------------------
+
+begin "several named clients are still several named clients"
+stub_ssh
+export MOLE_TESTBED_NFS_CLIENTS=203.0.113.7
+run_script scripts/testbed/services.sh
+exited 0
+never_reached_matching "$EMPTY_HOST"
+never_reached_matching "[[:space:]]\*\(rw"
+
+# --- and it refuses to run on nothing ----------------------------------------
+
+begin "without an address the script provisions nothing and says why"
+stub_ssh
+unset MOLE_TESTBED_ADDRESS
+run_script scripts/testbed/services.sh
+exited 1
+said "Set MOLE_TESTBED_ADDRESS"
+# Nothing at all was sent: a script that refuses must refuse before it acts.
+if [ -s "$TRANSCRIPT" ]; then fail "it reached a machine after refusing to run"; fi
+export MOLE_TESTBED_ADDRESS=testbed.invalid
+
+done_testing

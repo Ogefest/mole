@@ -93,6 +93,38 @@ function(mole_add_test name)
         TIMEOUT 180)
 endfunction()
 
+# A test that is a shell script rather than a C++ binary.
+#
+# `mole_add_test` above compiles and links; the scripts that build and damage the
+# test environment are shell, and until MOLE-233 there was no path in this
+# directory that ran one at all. That gap cost nine days of an NFS share exported
+# read-write to a whole network, by way of a guard that had never once held --
+# nothing here could have caught it, because nothing here ran the file.
+#
+# Bash by name rather than the executable bit, so the test runs the same whether
+# or not the checkout preserved the mode. See tests/support/shelltest.sh for the
+# stub `ssh` these use to provision nothing.
+find_program(BASH_PROGRAM bash)
+
+function(mole_add_shell_test name)
+    cmake_parse_arguments(ARG "" "SCRIPT" "" ${ARGN})
+    add_test(NAME ${name}
+             COMMAND ${BASH_PROGRAM} ${CMAKE_CURRENT_SOURCE_DIR}/${ARG_SCRIPT})
+    # No offscreen platform and no leak suppressions: there is no Qt here. The
+    # timeout is short because these touch nothing outside a temp directory --
+    # one that runs for a minute is one that found a machine to talk to.
+    set_tests_properties(${name} PROPERTIES TIMEOUT 60 LABELS shell)
+endfunction()
+
+if(BASH_PROGRAM)
+    mole_add_shell_test(tst_TestbedProvisioning
+                        SCRIPT scripts/tst_TestbedProvisioning.sh)
+    mole_add_shell_test(tst_ShellScripts
+                        SCRIPT scripts/tst_ShellScripts.sh)
+else()
+    message(WARNING "Shell tests skipped: no bash found")
+endif()
+
 # --- core: no GUI, no plugins -----------------------------------------------
 mole_add_test(tst_VfsUri            SOURCES core/tst_VfsUri.cpp)
 mole_add_test(tst_LocalFileSystem   SOURCES core/tst_LocalFileSystem.cpp)

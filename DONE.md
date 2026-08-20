@@ -9,6 +9,80 @@ wrong.
 
 ---
 
+## The provisioning scripts had no test, and a dead guard exported NFS to the whole network
+
+**Asked for:** MOLE-233 — a place for a shell script to be tested, and the NFS fault held in
+it. The fault itself was fixed in MOLE-109, which found it; this is the part that stops it
+coming back.
+
+**The fault.** `services.sh` decided whether to export the NFS share by asking whether
+`MOLE_TESTBED_NFS_CLIENTS` was set, and wrote it `[ -z "\$NFS_CLIENTS" ]` — with a backslash
+belonging to a heredoc four lines further down. That line runs in the outer script, so the
+test compared the literal string `$NFS_CLIENTS`, which is never empty. The guard never held.
+The `else` branch ran on every provisioning run with an empty client list, and `exportfs`
+reads a missing host as `*`, so every machine the script ever provisioned had its NFS share
+exported read-write to every host on its network — `insecure` set, only `root_squash` in the
+way — under a comment saying the export must be one address and "never the whole subnet by
+accident". The `note "skipped: …"` line the author wrote as the safe default was dead code
+that had never printed once.
+
+**Why nothing caught it.** `tests/` was C++ throughout — `mole_add_test` compiles sources and
+registers a binary — so there was no path in the test directory that ran a shell script at
+all, and `shellcheck`, which flags exactly this class, was in neither `make tidy` nor anywhere
+else. The scripts that build and damage the test environment were the least covered code in
+the repository and the code whose failures are silent: this one printed an `exportfs` warning
+into a wall of provisioning output and nobody read it.
+
+**The answer: a stub `ssh`.** Everything these scripts do to a machine goes through one
+function — `on_server`, a single `ssh` reading a heredoc on stdin — so a stub `ssh` earlier on
+`PATH` intercepts all of it. It records its arguments and its standard input to a transcript
+and exits 0, and the test asserts on the transcript. `services.sh` can now be run in full, on
+a laptop, with no testbed and no network, in a tenth of a second. `tests/support/shelltest.sh`
+holds the stub, a temp tree taken away on exit, and assertions that keep two questions apart:
+`reached`/`never_reached` ask what was sent to the machine, `said` asks what the operator was
+told. The NFS fault conflated exactly those — it announced nothing and exported everything.
+
+`mole_add_shell_test` in `tests/CMakeLists.txt` is the second hook, running the file under
+`bash` rather than compiling it, labelled `shell` so `make test` picks it up. See
+[ADR-0062](docs/adr/0062-shell-scripts-are-tested-by-stubbing-ssh.md) for why a stub and not a
+container.
+
+**Two kinds of case.** `tst_TestbedProvisioning.sh` runs `services.sh` with the variable unset
+and set, and asserts the general form rather than the one line: no export whose host field is
+empty ever reaches a machine, no wildcard, no `no_root_squash`, the skip is announced, and a
+stale export is withdrawn so a machine provisioned while the guard was broken is put right by
+running the script again. Reverting the backslash turns it red with the offending export line
+printed. `tst_ShellScripts.sh` holds the rules that can be checked by reading, over every
+script at once, so a new script joins the suite by existing: it parses, it sets `-u`, no line
+that runs locally defers expansion to a machine, and no private address is written into a
+tracked file.
+
+**The audit found nothing else.** No other script in `scripts/` carries a `\$` on an outer
+line, and all eleven parse and set `-u`. Worth knowing rather than assuming, since the ticket
+noted that every script in that directory mixes heredocs with outer-script logic the same way.
+
+**Where the first answer was wrong, twice.** The deferred-expansion checker was written inline
+in the test and reported *itself* — a checker looking for `\$` written with `\$` in it. It
+moved to `tests/support/deferred-expansion.awk` with the pattern passed in through `-v`.
+Then the real one: heredoc depth was tracked across all files in one `awk` run, and
+`<<<"hello"` in `check-services.sh` read as `<` followed by `<<"hello"`, opening a heredoc
+that never closed. Every file after it was skipped as heredoc body, and the check went green
+by looking at nothing — including, at first, the injected fault it was written to catch. Depth
+now resets per file, here-strings are excluded, and **a heredoc the checker cannot close is
+reported as a finding** rather than assumed away. A check that can go blind silently is worse
+than no check, so it says when it loses count.
+
+**`shellcheck` was considered and declined for now.** It flags this class statically and is
+the better long-term answer, but it is not installed on this machine and is not a build
+dependency, so adding a target for it would have committed a gate nobody here could run. The
+rules are held in the test instead; `TODO.md` records the gap.
+
+**Verified:** all five faults injected and caught — the backslash-dollar, a missing `set -u`, a
+private address, a script that does not parse, and a heredoc the checker cannot close — then
+`scripts/` restored and the suite run: 101 tests, all green.
+
+---
+
 ## Starting Mole spent most of a second building a media stack nobody had asked for
 
 **Asked for:** MOLE-238 — found while diagnosing the sanitizer tier (MOLE-237): every app

@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-20 #MOLE-233 Shell scripts are tested: a stub ssh holds the NFS export guard, and every script is parsed and checked statically
 2026-08-20 #MOLE-209 A bookmark row says whether it is a folder or a set, a dead one reads as dead, and Ctrl+D in the Sets tab bookmarks the set
 2026-08-20 #MOLE-208 A bookmarked set opens the Sets tab with that set current, from the sidebar, the menu or the palette
 2026-08-20 #MOLE-207 A bookmark can point at a set as well as a folder, by id, so a rename follows and a deleted set reads as dead
