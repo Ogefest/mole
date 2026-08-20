@@ -205,7 +205,7 @@ Check a packaged build without a display:
 | `F3` | preview the file under the cursor |
 | `Ctrl+F` / `Ctrl+Shift+I` | search this folder / search everywhere indexed (new tab) |
 | `Ctrl+Shift+C` / `Ctrl+Shift+F` | copy this folder's path / the selected file's path |
-| `Ctrl+D` | bookmark this folder |
+| `Ctrl+D` | bookmark this folder — or, in the Sets tab, the set you are looking at |
 | `Ctrl+G` or `Ctrl+L` | type a destination in the path bar |
 | `Ctrl+←` / `Ctrl+→` / `Ctrl+↑` | back / forward / up |
 | `↑ ↓ PgUp PgDn Home End` | move the cursor |
@@ -216,6 +216,11 @@ Check a packaged build without a display:
 | `F2` `F5` `F6` `F7` `F8` | rename, copy, move, new folder, delete |
 
 The `⌨` button in the toolbar shows the same list in the app.
+
+In the **Sets** tab the same keys do the same kind of thing to a set's members: the
+arrows walk them, `Enter` opens the member itself in a browser with the cursor already
+on it, and `F3` previews it without leaving the set. A member whose file has gone says
+so rather than opening the folder it used to be in.
 
 The first block works wherever the keyboard is; so do `F3` and `Ctrl+←/→/↑`,
 because what they act on is the pane in front of you rather than whatever holds

@@ -283,3 +283,31 @@ several drives and it makes no difference.
 A set holds locations, not copies. A file that has moved or gone since is shown as
 missing rather than quietly dropped, because "where did that go" is a question worth
 being able to ask.
+
+### Walking a set
+
+The members have a cursor, so a set is somewhere you can look through rather than a
+list you can only act on in bulk. The arrows walk it. **Enter** opens the member
+itself — a browser at the folder that holds it, with the cursor already on the file,
+not the folder for you to find it in again. **F3** previews it without leaving the
+set, in the one preview tab everything else uses. A member whose file has gone says
+so and opens nothing, which is the honest answer: opening the folder it used to be in
+would look like the file was still there and you had missed it.
+
+### Bookmarking a set
+
+**Ctrl+D** in the Sets tab bookmarks the set you are looking at — the same key that
+bookmarks a folder in a browser, doing the same thing to whatever kind of place you
+are in. With no set selected there is nothing to bookmark and the key does nothing.
+
+![A folder bookmark and a set bookmark](images/18b-bookmarks-of-both-kinds.png)
+
+The sidebar then holds both kinds, and says which is which without being asked: 📁
+for a folder, ☷ for a set. Clicking a bookmarked set shows the Sets tab with that set
+current — the tab you already have, not another one — and the Bookmarks menu and the
+command palette do exactly the same thing by the same route.
+
+A bookmark points at a set by its id rather than by its name, so renaming the set
+leaves the bookmark pointing at it. Deleting the set does not remove the bookmark
+either: the row is greyed and keeps its name, because deciding a bookmark has stopped
+being useful belongs to the person who made it and not to us.

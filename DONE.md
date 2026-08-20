@@ -9,6 +9,48 @@ wrong.
 
 ---
 
+## The guide said nothing about a set being somewhere you can go
+
+**Asked for:** MOLE-257 — the file-set section of the guide describing what the *A set is a
+place you can go to* epic added, and one picture showing the two kinds of bookmark side by side.
+
+**What was missing.** `docs/guide/searching.md` described building a set and stopped, which was
+the whole of it until that epic landed. None of what it added was written down anywhere a
+reader would find: the members' cursor, Enter and F3 on a member, Ctrl+D in the Sets tab, the
+two glyphs in the sidebar, and a bookmarked set opening the Sets tab pointed at that set.
+
+**Two new sections, in the guide's own voice.** *Walking a set* says the members have a cursor,
+that Enter opens the member itself with the cursor already on it rather than the folder for you
+to find it in again, that F3 previews without leaving, and that a member whose file has gone
+says so and opens nothing — with the reason, which is that opening the folder it used to be in
+would look like the file was still there. *Bookmarking a set* covers Ctrl+D being the same key
+that bookmarks a folder, the two glyphs, clicking a bookmarked set showing the Sets tab you
+already have rather than another one, and a bookmark pointing at a set by id — so a rename
+follows and a deletion greys the row rather than removing it.
+
+Every claim was read off the tests rather than off the ticket: `tst_SetsTab` names the cursor,
+arrow, Enter, F3 and missing-member behaviours, and `tst_Sidebar` names the glyphs, the dead
+row, Ctrl+D and the three routes into a bookmarked set. The prose says what those assert.
+
+**The picture needed a state that did not exist.** All fifty-three of the guide's pictures
+showed the sidebar's bookmark list empty, reading "No bookmarks yet" — so the glyph that tells
+a folder from a set was undocumented in pictures as well as in prose. `tst_Walkthrough` now has
+a step that bookmarks a folder and the set the previous step built, asserts that there are two
+rows, that they are of different kinds, that each carries its own glyph, and that two glyphs
+are actually drawn — and only then photographs it, as `18b-bookmarks-of-both-kinds`. It builds
+its own set if run on its own, because a step that only works in sequence is a step nobody can
+debug.
+
+**`README.md` says it too.** Its key table listed F3 and Enter for the browser and said nothing
+about a set, so `Ctrl+D` now reads "bookmark this folder — or, in the Sets tab, the set you are
+looking at", and a paragraph after the table says what the arrows, Enter and F3 do to a set's
+members.
+
+**Verified:** the new walkthrough step passes on its own and in sequence, the picture shows
+`documents` with the folder glyph and `To sort out` with the set glyph, and the suite is green.
+
+---
+
 ## tst_RepositoryBand failed once in a parallel run and the assertion was not captured
 
 **Asked for:** MOLE-256 — catch the failure first, then name the reason rather than infer it.

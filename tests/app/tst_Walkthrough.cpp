@@ -181,6 +181,7 @@ private slots:
     void aTileShowsThePictureAndAnUndecodableFileKeepsItsIcon();
     void theGalleryShowsWhatThePicturesLookLike();
     void aFileSetIsAListYouCarryAround();
+    void theSidebarHoldsBothKindsOfBookmarkAndSaysWhichIsWhich();
     void duplicatesFindsTheSamePictureThreeTimes();
     void anImageIsFittedToThePane();
     void aSqliteFileOpensItsTables();
@@ -3755,6 +3756,67 @@ void TestWalkthrough::aFileSetIsAListYouCarryAround()
     QVERIFY(m_harness->until([sets] { return sets->property("memberCount").toInt() == 5; }));
     QVERIFY2(sets->property("summary").toString().length() > 0, "a set says what it adds up to");
     m_harness->screenshot(QStringLiteral("18-file-sets"));
+}
+
+/// The one picture in the guide showing a bookmark row at all.
+///
+/// Every one of the other fifty-two shows the sidebar's bookmark list empty,
+/// reading "No bookmarks yet" -- so the glyph that tells a folder from a set was
+/// undocumented in pictures as well as in prose, which is what MOLE-257 is about.
+/// A folder and a set, side by side, with the two glyphs visible: 📁 for a folder,
+/// ☷ for a set.
+void TestWalkthrough::theSidebarHoldsBothKindsOfBookmarkAndSaysWhichIsWhich()
+{
+    BookmarkModel* bookmarks = m_harness->app()->bookmarks();
+    QVERIFY(bookmarks);
+    FileSetStore* store = m_harness->app()->services().sets;
+    QVERIFY(store);
+
+    // The set the previous step built, so the picture is of the guide's own story
+    // rather than of something invented for it -- and one of its own if this case is
+    // run on its own, because a step that only works in sequence is a step nobody
+    // can debug.
+    QList<FileSet> existing = store->sets();
+    if (existing.isEmpty()) {
+        QVERIFY(!store->create(QStringLiteral("To sort out")).id.isEmpty());
+        existing = store->sets();
+    }
+    QVERIFY(!existing.isEmpty());
+    const FileSet set = existing.first();
+
+    QVERIFY(bookmarks->add(m_harness->fixtureUri() + QStringLiteral("/documents")));
+    QVERIFY(bookmarks->addSet(set.id));
+    QVERIFY(m_harness->until([bookmarks] { return bookmarks->rowCount() == 2; }));
+
+    // Asserted before it is photographed, like every other picture here: the two
+    // rows are there, they are of different kinds, and each carries the glyph for
+    // its kind. A picture of two rows that happened to look right would document
+    // nothing.
+    QStringList glyphs;
+    QStringList labels;
+    for (int row = 0; row < bookmarks->rowCount(); ++row) {
+        const QModelIndex at = bookmarks->index(row, 0);
+        glyphs.append(at.data(BookmarkModel::KindRole).toString());
+        labels.append(at.data(BookmarkModel::NameRole).toString());
+    }
+    QCOMPARE(glyphs.size(), 2);
+    QVERIFY2(glyphs.contains(QStringLiteral("set")), qPrintable(glyphs.join(QLatin1Char(','))));
+    QVERIFY2(glyphs.contains(QStringLiteral("folder")), qPrintable(glyphs.join(QLatin1Char(','))));
+    QVERIFY2(labels.contains(set.name), qPrintable(labels.join(QLatin1Char(','))));
+    QVERIFY2(labels.contains(QStringLiteral("documents")), qPrintable(labels.join(QLatin1Char(','))));
+
+    // And on the screen, which is the half only the window can prove: two rows in
+    // the sidebar's place list, each with a glyph beside its name.
+    QVERIFY(m_harness->until([this] {
+        int rows = 0;
+        for (QQuickItem* row : m_harness->items(QStringLiteral("placeRowGlyph"))) {
+            if (row->isVisible() && !row->property("text").toString().isEmpty())
+                ++rows;
+        }
+        return rows >= 2;
+    }));
+
+    m_harness->screenshot(QStringLiteral("18b-bookmarks-of-both-kinds"));
 }
 
 void TestWalkthrough::duplicatesFindsTheSamePictureThreeTimes()
