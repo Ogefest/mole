@@ -249,6 +249,20 @@ public:
     /// should search that folder, not a default nobody asked for.
     Q_INVOKABLE int openFeatureTab(const QString& featureId);
 
+    /// Shows the one tab of `featureId`, opening it only if it is not there.
+    ///
+    /// For the standing tools ADR-0032 names -- the alerts list, the saved
+    /// reports, the schedule, the sets. Opening a second tab of one leaves two
+    /// controllers over the same store, each with its own idea of what is
+    /// current, and the user with two tabs that look the same.
+    ///
+    /// Asked for by name rather than decided from a predicate on IFeature: that
+    /// would be a reshaping of the extension point, and reusing on the existing
+    /// opensFromNothing() would be wrong -- a duplicate scan and a bulk rename
+    /// also answer false, and reusing a Duplicates tab halfway through a scan
+    /// would throw the scan away. See MOLE-206.
+    Q_INVOKABLE int openStandingTab(const QString& featureId);
+
     /// Opens the search with its scope set to every indexed volume.
     ///
     /// There used to be a second search tab behind Ctrl+Shift+I. The question it

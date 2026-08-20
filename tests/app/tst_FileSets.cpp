@@ -39,6 +39,8 @@ private slots:
     void aSetNamesItsTargetsTheSameWayAPaneDoes();
     void anOperationTakesASetWithoutKnowingWhatOneIs();
     void addToSetTakesWhateverTheCurrentTabIsAimedAt();
+    void addToSetTwiceLeavesOneSetsTab();
+    void twoBrowsersAreStillTwoBrowsersAndTwoSearchesTwoSearches();
 
     void bulkRenameTakesASetLikeAnyOtherOperation();
     void bulkRenameRefusesABatchThatWouldCollide();
@@ -55,6 +57,8 @@ private slots:
 
 private:
     FileSetsController* openSets();
+    /// How many tabs of one kind are open.
+    int tabsOfFeature(const QString& featureId) const;
 
     PrivateProfile m_profile;
     std::unique_ptr<TempTree> m_tree;
@@ -101,6 +105,16 @@ FileSetsController* TestFileSets::openSets()
 {
     const int row = m_app->tabs()->openTab(QStringLiteral("core.filesets"));
     return row < 0 ? nullptr : qobject_cast<FileSetsController*>(m_app->tabs()->controllerAt(row));
+}
+
+int TestFileSets::tabsOfFeature(const QString& featureId) const
+{
+    int found = 0;
+    for (int row = 0; row < m_app->tabs()->rowCount(); ++row) {
+        if (m_app->tabs()->index(row, 0).data(TabsModel::FeatureIdRole).toString() == featureId)
+            ++found;
+    }
+    return found;
 }
 
 void TestFileSets::createsAndRemembersASet()
@@ -238,6 +252,52 @@ void TestFileSets::addToSetTakesWhateverTheCurrentTabIsAimedAt()
     QCOMPARE(m_app->addToSet({}, QStringLiteral("From the browser")), 1);
     QCOMPARE(m_app->sets()->sets().size(), 1);
     QCOMPARE(m_app->sets()->sets().first().count(), 1);
+}
+
+/// Ctrl+Shift+S twice used to leave two Sets tabs, three times three -- each with
+/// its own controller over the same store and its own idea of which set is
+/// current. ADR-0032 calls the sets a standing tool that exists once, and a
+/// second tab of one is a duplicate of the first. See MOLE-206.
+void TestFileSets::addToSetTwiceLeavesOneSetsTab()
+{
+    auto* browser = qobject_cast<BrowserController*>(m_app->tabs()->controllerAt(0));
+    QVERIFY(browser);
+    QVERIFY(waitFor([browser] { return browser->activePane()->files()->rowCount() > 0; }));
+    FileListModel* files = browser->activePane()->files();
+
+    const int a = files->rowOfUri(m_tree->rootUri().child(QStringLiteral("a.txt")).toString());
+    const int b = files->rowOfUri(m_tree->rootUri().child(QStringLiteral("b.txt")).toString());
+    QVERIFY(a >= 0);
+    QVERIFY(b >= 0);
+
+    files->toggleSelected(a);
+    QVERIFY(m_app->triggerAction(QStringLiteral("mole.tools.addToSet")));
+    QCOMPARE(tabsOfFeature(QStringLiteral("core.filesets")), 1);
+
+    // Back to the browser for the second lot: from the Sets tab the shell is
+    // aimed at the set's own members, which is a different question.
+    m_app->tabs()->setCurrentIndex(0);
+    files->clearSelection();
+    files->toggleSelected(b);
+    QVERIFY(m_app->triggerAction(QStringLiteral("mole.tools.addToSet")));
+
+    QCOMPARE(tabsOfFeature(QStringLiteral("core.filesets")), 1);
+    QCOMPARE(m_app->sets()->sets().size(), 1);
+    QCOMPARE(m_app->sets()->sets().first().count(), 2);
+}
+
+/// The reuse is for the tabs that are asked for by name as standing tools, and
+/// for nothing else. A browser and a search are things people open several of.
+void TestFileSets::twoBrowsersAreStillTwoBrowsersAndTwoSearchesTwoSearches()
+{
+    const int browsers = tabsOfFeature(QStringLiteral("mole.browser"));
+    QVERIFY(m_app->tabs()->openTab(QStringLiteral("mole.browser")) >= 0);
+    QVERIFY(m_app->tabs()->openTab(QStringLiteral("mole.browser")) >= 0);
+    QCOMPARE(tabsOfFeature(QStringLiteral("mole.browser")), browsers + 2);
+
+    QVERIFY(m_app->tabs()->openTab(QStringLiteral("mole.livesearch")) >= 0);
+    QVERIFY(m_app->tabs()->openTab(QStringLiteral("mole.livesearch")) >= 0);
+    QCOMPARE(tabsOfFeature(QStringLiteral("mole.livesearch")), 2);
 }
 
 // ---- a set outlives the files in it ------------------------------------

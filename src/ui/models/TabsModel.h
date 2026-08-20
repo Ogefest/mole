@@ -58,6 +58,15 @@ public:
     Q_INVOKABLE QObject* controllerAt(int index) const;
     Q_INVOKABLE QObject* currentController() const;
 
+    /// The row of the first open tab of `featureId`, or -1 when there is none.
+    ///
+    /// For the tabs there is only ever one of: the preview, and the standing
+    /// tools ADR-0032 names -- the alerts list, the saved reports, the schedule,
+    /// the sets. A second tab of one of those is a duplicate of the first, with
+    /// its own controller over the same store and its own idea of what is
+    /// current. See MOLE-206.
+    Q_INVOKABLE int rowOfFeature(const QString& featureId) const;
+
     /// The row of a tab of `featureId` that was opened from the current one, or
     /// -1 when there is none.
     ///

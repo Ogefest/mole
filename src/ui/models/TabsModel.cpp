@@ -212,6 +212,15 @@ QObject* TabsModel::currentController() const
     return controllerAt(m_currentIndex);
 }
 
+int TabsModel::rowOfFeature(const QString& featureId) const
+{
+    for (int row = 0; row < m_tabs.size(); ++row) {
+        if (m_tabs.at(row).featureId == featureId)
+            return row;
+    }
+    return -1;
+}
+
 int TabsModel::rowOpenedFromCurrent(const QString& featureId) const
 {
     if (m_currentIndex < 0 || m_currentIndex >= m_tabs.size())

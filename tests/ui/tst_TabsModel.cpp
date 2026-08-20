@@ -56,6 +56,7 @@ private slots:
     void closingOutOfRangeIsIgnored();
     void controllerRenameUpdatesTheTabLabel();
     void exposesViewSourceForTheShell();
+    void rowOfFeatureFindsTheFirstTabOfAKind();
 
 private:
     FeatureRegistry* m_registry = nullptr;
@@ -253,6 +254,30 @@ void TestTabsModel::exposesViewSourceForTheShell()
     QCOMPARE(index.data(TabsModel::ViewSourceRole).toUrl(), QUrl(QStringLiteral("qrc:/fake/View.qml")));
     QCOMPARE(index.data(TabsModel::FeatureIdRole).toString(), QStringLiteral("test.fake"));
     QVERIFY(index.data(TabsModel::ControllerRole).value<QObject*>() != nullptr);
+}
+
+/// What the callers who may only ever have one tab of something ask. Named
+/// rather than written out where it was needed: the preview had its own copy of
+/// this loop and Add to set was about to want a second. See MOLE-206.
+void TestTabsModel::rowOfFeatureFindsTheFirstTabOfAKind()
+{
+    TabsModel tabs(m_registry);
+    QCOMPARE(tabs.rowOfFeature(QStringLiteral("test.fake")), -1);
+    QCOMPARE(tabs.rowOfFeature(QStringLiteral("nope")), -1);
+
+    tabs.openTab(QStringLiteral("test.renaming"));
+    tabs.openTab(QStringLiteral("test.fake"));
+    tabs.openTab(QStringLiteral("test.fake"));
+
+    QCOMPARE(tabs.rowOfFeature(QStringLiteral("test.renaming")), 0);
+    // The first, not the last: whoever asks is about to show it, and the one
+    // that has been open longest is the one anything else already points at.
+    QCOMPARE(tabs.rowOfFeature(QStringLiteral("test.fake")), 1);
+
+    tabs.closeTab(1);
+    QCOMPARE(tabs.rowOfFeature(QStringLiteral("test.fake")), 1);
+    tabs.closeTab(1);
+    QCOMPARE(tabs.rowOfFeature(QStringLiteral("test.fake")), -1);
 }
 
 MOLE_TEST_MAIN(TestTabsModel)

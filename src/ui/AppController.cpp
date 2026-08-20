@@ -942,6 +942,16 @@ int AppController::openFeatureTab(const QString& featureId)
     return row;
 }
 
+int AppController::openStandingTab(const QString& featureId)
+{
+    const int existing = m_tabs->rowOfFeature(featureId);
+    if (existing >= 0) {
+        m_tabs->setCurrentIndex(existing);
+        return existing;
+    }
+    return openFeatureTab(featureId);
+}
+
 int AppController::browserTabForCurrent()
 {
     // The browser this tab has already opened, switched to; otherwise a new one.
@@ -1542,7 +1552,7 @@ void AppController::registerShellActions()
                 ? QString()
                 : choices.last().toMap().value(QStringLiteral("id")).toString();
             addToSet(id, QStringLiteral("New set"));
-            openFeatureTab(QStringLiteral("core.filesets"));
+            openStandingTab(QStringLiteral("core.filesets"));
         };
         m_actions->addAction(std::move(action));
     }
@@ -1809,15 +1819,13 @@ void AppController::previewFile(const QString& uri)
         return;
 
     // One preview tab, reused. Pressing F3 on twenty files should not leave
-    // twenty tabs behind.
-    for (int row = 0; row < m_tabs->rowCount(); ++row) {
-        if (m_tabs->index(row, 0).data(TabsModel::FeatureIdRole).toString()
-            != QLatin1String("mole.preview")) {
-            continue;
-        }
-        if (QObject* controller = m_tabs->controllerAt(row)) {
+    // twenty tabs behind. Not openStandingTab(): a preview is not a standing
+    // tool and has to be told which file it is about.
+    const int existing = m_tabs->rowOfFeature(QStringLiteral("mole.preview"));
+    if (existing >= 0) {
+        if (QObject* controller = m_tabs->controllerAt(existing)) {
             QMetaObject::invokeMethod(controller, "open", Q_ARG(QString, uri));
-            m_tabs->setCurrentIndex(row);
+            m_tabs->setCurrentIndex(existing);
             return;
         }
     }

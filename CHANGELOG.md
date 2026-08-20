@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-20 #MOLE-206 Add to set shows the Sets tab that is already open instead of opening another
 2026-08-20 #MOLE-205 A set's members have a cursor: arrows walk them, Enter opens the member itself and F3 previews it
 2026-08-20 #MOLE-204 F3 in a search result previews the row under the cursor instead of doing nothing
 2026-08-20 #MOLE-238 Starting Mole no longer builds the GStreamer stack, which cost most of a second
