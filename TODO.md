@@ -27,6 +27,23 @@ project, and a contributor should never hit a wall of text they cannot read.
 
 ## Notes
 
+- **An emoji in the interface is a resampled bitmap, not an outline, and that costs
+  determinism.** No outline font on this machine covers the astral plane, so 📄 📁 🎵 and
+  the rest of what `FileListModel` and the sidebar draw all fall back to Unifont Upper,
+  a bitmap font, and are resampled to whatever pixel size the label asks for. Something
+  in Qt's render path flips between two states about one run in six; with an outline
+  glyph that flip costs one level out of 255 and with a resampled bitmap it costs
+  thirty-seven — enough to be seen, and enough to rewrite a picture in the guide.
+  MOLE-266 measured it over twenty runs and moved the two dialogs that showed it to ▤
+  and ▦ from DejaVu.
+
+  **The file listing still uses emoji throughout and is stable in every picture**, so
+  this is not a rule that every emoji must go. What it means is that an emoji in a
+  *dialog* — anything that scales, animates, or is built while something else is
+  happening — is a glyph whose pixels nobody has promised. If another picture starts
+  moving in a 7-by-10 patch, this is the first thing to check.
+
+
 - **`click(centreOf(item))` reads a position and clicks it at a different instant,
   and four call sites still do it.** `tests/app/tst_SetsTab.cpp` and three places in
   `tests/app/tst_Dragging.cpp` click or double-click a position taken from an item.
@@ -58,12 +75,6 @@ project, and a contributor should never hit a wall of text they cannot read.
   than a cause, and it is not written down as one. **It is the only name in that list
   which is not a claim about the picture, and it should stay the only one** — a list of
   "we do not know" is a list nobody can act on either.
-
-  `13-compress` and `14-delete` are the last two, and they carry a lesson: the 📄 glyph
-  in their icon column does not rasterise to the same pixels twice, and that was
-  blamed on a scrollbar in MOLE-260 on the strength of a bounding box nobody looked
-  inside. MOLE-266 has the measurement. The same codepoint is stable in the sidebar,
-  which is the thread to pull.
 
   What changed is that a second sighting will explain itself. `compare-shots` now
   prints the box the differences fall inside, and `check-screenshots.sh` copies both

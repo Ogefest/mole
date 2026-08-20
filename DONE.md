@@ -9,6 +9,54 @@ wrong.
 
 ---
 
+## An emoji did not rasterise the same twice, and a scrollbar was blamed for it
+
+**Asked for:** MOLE-266 — the ticket I opened against my own wrong diagnosis in MOLE-260.
+
+**Two wrong answers before the right one, and both were under-powered samples.**
+
+The first was MOLE-260's: a 7-by-41 bounding box is the right shape for a scrollbar handle,
+`TargetList` did have a real transient-scrollbar problem, and after fixing it `13-compress`
+stopped moving. That read as confirmation and was coincidence. Nobody looked at the pixels.
+
+The second was mine here. Blown up, the differing pixels are the icon column, so I tried
+`renderType: Text.NativeRendering` to bypass the glyph cache, ran **four** passes, got four
+identical pictures and nearly believed it. Twenty passes said otherwise: two outcomes for *both*
+pictures, and `13-compress` — which four passes had shown as byte-identical — is affected too.
+The split is **skewed, not even**: 18/2 and 16/4. At a one-in-six minority, four passes agreeing
+has about a 41% chance of happening by luck, which is what happened twice.
+
+**What is actually true, measured.** `fc-match` shows no outline font on this machine covers
+📄 or 📁 — every astral-plane emoji falls back to **Unifont Upper, a bitmap font** — while BMP
+symbols like ▤ ▦ ☷ come from scalable DejaVu Sans. Something in the render path flips between
+two states about one run in six; I did not chase which, because the ratio is *identical* with
+either glyph set, so the flip is not what the fix is about. What the fix is about is the cost of
+that flip:
+
+| icon column | worst delta | pixels above tolerance |
+|---|---|---|
+| 📄 📁 — Unifont bitmap, resampled to 11px | **37** | 116 |
+| ▤ ▦ — DejaVu outlines | **1** | 0 |
+
+Twenty runs apiece. A resampled bitmap turns an invisible flip into a visible one; an outline
+absorbs it into the one-level noise ADR-0063 already lives with.
+
+**So the change is the font, and the glyphs are a judgement call.** The ticket sanctioned this —
+*the icon column of a confirmation dialog is not a place that needs a colour emoji* — and it is
+also simply better to look at: the old glyph was a muddy resampled bitmap and ▤ is a crisp page
+of lines. The kind is in the name too, which already carries a trailing slash for a folder. What
+is measured is the font; ▤ and ▦ are mine and can be changed without redoing any of this.
+
+`13-compress` and `14-delete` come out of the expected-to-differ list, which is back to seven.
+
+**The lesson is the one this ticket was opened to record, and it caught me a second time.** A
+pixel count and a bounding box are a lead, not a diagnosis. A symptom that stops is not evidence
+the cause was understood. And a sample of four against a one-in-six event is not a measurement —
+the honest number here was twenty, and it was cheap once the two walkthrough steps were run on
+their own instead of the whole thing.
+
+---
+
 ## Four of the five standing tools still opened a second tab
 
 **Asked for:** MOLE-259, which I opened while doing MOLE-254 and which planning corrected from

@@ -77,17 +77,10 @@ WALKTHROUGH="$BUILD/tests/tst_Walkthrough"
 #                              **A sighting now explains itself**: the line names the
 #                              box the differences fall inside and both copies are
 #                              kept, which is what was missing the first time.
-#   13-compress, 14-delete     the 📄 and 📁 glyphs in the list of what an operation
-#                              is aimed at do not rasterise to the same pixels twice:
-#                              two 7x10 patches, up to 37 levels out, in the icon
-#                              column. Named with the real reason after being blamed
-#                              on a scrollbar in MOLE-260 -- the 41-pixel span
-#                              between the two icons was read as a scrollbar's height
-#                              without anybody looking at the pixels. MOLE-266.
 #
 # Everything else must be identical. Anything new appearing below is a regression
 # in determinism, and the honest response is to fix it rather than to add a line.
-EXPECTED='01d-slow-folder,02b-preview-csv-loading,24-transfer-running,08-automation,16-alerts,17-reports,26-indexes,13-compress,14-delete'
+EXPECTED='01d-slow-folder,02b-preview-csv-loading,24-transfer-running,08-automation,16-alerts,17-reports,26-indexes'
 
 # A pixel differs when a channel is more than eight levels out -- below that is the
 # renderer's own noise, invisible and unavoidable. A picture has changed when even

@@ -66,7 +66,24 @@ Rectangle {
 
             Label {
                 Layout.leftMargin: 8
-                text: modelData.isDir ? "📁" : "📄"
+                // Glyphs from a scalable font, not the 📁 and 📄 that were here.
+                //
+                // Nothing on this machine has an outline for those codepoints: every
+                // astral-plane emoji falls back to Unifont Upper, which is a *bitmap*
+                // font, so the glyph is resampled to this pixel size. Something in the
+                // render path flips between two states about one run in six -- the
+                // cache or the atlas, and it was not worth chasing further -- and with
+                // a resampled bitmap that flip costs 37 levels out of 255 in 116
+                // pixels, which is enough to be seen and enough to rewrite two of the
+                // guide's pictures. With DejaVu's outlines the same flip costs one
+                // level, which is the ordinary noise ADR-0063 already lives with.
+                // Measured over twenty runs apiece.
+                //
+                // ▤ is a page of lines and ▦ a grid of things; the kind is also in the
+                // name, which carries a trailing slash for a folder. They are a
+                // judgement call rather than a finding -- what is measured is the
+                // font, not the choice of character. See MOLE-266.
+                text: modelData.isDir ? "▦" : "▤"
                 font.pixelSize: App.secondaryTextSize
             }
             Label {
