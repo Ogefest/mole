@@ -330,6 +330,10 @@ mole_add_test(tst_DuplicatesTab     SOURCES app/tst_DuplicatesTab.cpp   LIBS mol
 # the controller answers; the fault in MOLE-265 was in the delegate the Repeat
 # dropdown lives in, which a headless controller does not have.
 mole_add_test(tst_IndexesView       SOURCES app/tst_IndexesView.cpp     LIBS mole_qml_harness mole_builtin)
+# Where the search form's criteria land on the screen. tst_MixedSearch is headless and
+# covers what a search answers; MOLE-270 was six labels on a different row from the
+# field they name, which only a window can see.
+mole_add_test(tst_SearchForm        SOURCES app/tst_SearchForm.cpp      LIBS mole_qml_harness mole_builtin)
 
 # The gallery and the thumbnail queue together: the bound, and what a folder
 # somebody has left leaves behind. Neither is a claim about either alone.

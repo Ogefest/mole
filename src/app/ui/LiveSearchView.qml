@@ -117,6 +117,15 @@ Item {
                 id: queryField
                 objectName: "searchQueryField"
                 Layout.fillWidth: true
+                // Two cells, so this row fills the grid. A GridLayout wraps at
+                // `columns`, and an item that will not fit in what is left of a row
+                // moves to the next one -- so a row one cell short does not leave a
+                // gap at the end, it pulls the next item up into it. With this at one
+                // cell the row came to three of four and "Extension" was dragged onto
+                // it, leaving its own field to start a row alone. Every row in both
+                // grids has to add up, and tst_SearchForm holds that by comparing
+                // each label's position against its field's. See MOLE-270.
+                Layout.columnSpan: 2
                 text: controller ? controller.queryText : ""
                 selectByMouse: true
                 font.pixelSize: App.secondaryTextSize
@@ -395,7 +404,8 @@ Item {
             Label { text: "Is a"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
             Flow {
                 objectName: "typeClasses"
-                Layout.columnSpan: 4
+                // Five, so this row fills the grid's six -- see searchQueryField above.
+                Layout.columnSpan: 5
                 Layout.fillWidth: true
                 spacing: 6
 
@@ -439,12 +449,12 @@ Item {
                 font.pixelSize: App.secondaryTextSize
                 onTextEdited: if (controller) controller.modifiedTo = text
             }
-            Item { Layout.fillWidth: true }
+            Item { Layout.fillWidth: true; Layout.columnSpan: 2 }
 
             Label { text: "Path has"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
             TextField {
                 objectName: "pathField"
-                Layout.columnSpan: 3
+                Layout.columnSpan: 4
                 Layout.fillWidth: true
                 placeholderText: "invoices/2026"
                 text: controller ? controller.pathText : ""
@@ -462,7 +472,7 @@ Item {
             Label { text: "Skip folders"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
             TextField {
                 objectName: "excludedField"
-                Layout.columnSpan: 4
+                Layout.columnSpan: 5
                 Layout.fillWidth: true
                 placeholderText: "node_modules, .git, build"
                 text: controller ? controller.excluded : ""
@@ -472,7 +482,7 @@ Item {
 
             Label { text: "Shape"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
             RowLayout {
-                Layout.columnSpan: 4
+                Layout.columnSpan: 5
                 Layout.fillWidth: true
                 spacing: 8
 
@@ -533,7 +543,7 @@ Item {
                 font.pixelSize: App.secondaryTextSize
                 onTextEdited: if (controller) controller.setSizeRange(minSizeField.text, maxSizeField.text)
             }
-            Item { Layout.fillWidth: true }
+            Item { Layout.fillWidth: true; Layout.columnSpan: 2 }
 
             // The index answers instantly and might be out of date, so the toggle
             // sits with the criteria and says how old it is. See ADR-0005. It is

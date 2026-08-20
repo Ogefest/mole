@@ -9,6 +9,57 @@ wrong.
 
 ---
 
+## Six labels in the search form were each on the wrong row
+
+**Asked for:** MOLE-270 — the criteria labels in the search form do not line up with
+their fields.
+
+**What was wrong.** `LiveSearchView` lays its criteria out in two `GridLayout`s, and
+neither one's rows added up. A `GridLayout` fills cells in order and wraps at
+`columns`, so a row that uses one cell fewer than the grid has does **not** leave a
+gap at the end — it pulls the next item up into it. Every row in the More panel was
+one cell short of six, so the deficit accumulated and six labels each ended up on a
+different row from the field they name. In the basic form the query row came to three
+of four, which dragged `Extension` onto it and left its own field starting a row
+alone. The guide picture makes it plain: before the fix, `Extension`, `Changed`,
+`Path has`, `Skip folders`, `Shape` and `Size from` are all stranded in a column down
+the right-hand edge, one row above what each of them describes.
+
+**The fix is arithmetic** — seven spans, so that each logical row fills its grid:
+`searchQueryField` to two of four, and in the More panel `typeClasses` 4→5,
+`pathField` 3→4, `excludedField` 4→5, the Shape row's `RowLayout` 4→5, and the two
+trailing fillers on the `Changed` and `Size from` rows to two cells each.
+
+The alternative the ticket offered was to restructure both grids into a column of
+`RowLayout`s, which cannot get out of step at all. It was not taken, because the
+guard against a future criterion breaking the arithmetic is the new test rather than
+the structure: `tests/app/tst_SearchForm.cpp` compares each label's vertical band
+against *its own* field's, across four states — basic form only, More open, More open
+searching contents, More open everywhere indexed. Whichever way the rows are built,
+that assertion is what holds them.
+
+**Six of the seven spans were each proved load-bearing** by reverting them one at a
+time and watching the test fail. The seventh — the filler on the `Size from` row — the
+test cannot witness, because what follows it is a span-2 checkbox that wraps to its
+own row either way, so the missing cell leaves a gap rather than displacing a label.
+It is kept anyway: the `Changed` row directly above it has the identical shape and
+does need it, and two rows that look the same wanting to be written differently is
+the trap this ticket was about.
+
+**Something it uncovered.** Rows that stack properly take more room than rows crammed
+into a right-hand column — the panel grew about 37 px — and in a 900-tall window that
+puts the size range and the `Use the index` toggle underneath the task strip. Nothing
+in that view scrolls, so at that height they are unreachable. Pre-existing, newly
+visible, and now **MOLE-272**; the guide's `12-search-box.png` stops at `Shape` where
+it used to show `Size from`.
+
+**Four guide pictures** moved — `12-search-box`, `12b-search-results`,
+`12c-search-mixed`, `12d-search-content` — out of 54. `make guide-images` reported
+nine, the other five being the ones already known to differ between any two runs;
+those were put back so the diff is the change and nothing else.
+
+---
+
 ## An emoji did not rasterise the same twice, and a scrollbar was blamed for it
 
 **Asked for:** MOLE-266 — the ticket I opened against my own wrong diagnosis in MOLE-260.
