@@ -447,6 +447,22 @@ void TestDuplicatesTab::resultsTakeTheSpaceTheEmptyStateWasHolding()
 
     DuplicatesController* controller = openTabOn({ fixtureRoot(QStringLiteral("pile")) });
     QVERIFY(controller);
+    // One finished job before anything is measured, because the task strip's header
+    // grows by twenty pixels the first time it has something to count and that is
+    // not what this test is about.
+    //
+    // It never had to be done before: browsing counted as jobs, so the strip was
+    // already grown by the time any of these tests looked. Once a crowd stopped
+    // being counted (MOLE-258) the strip became honest about having finished
+    // nothing -- and then grew in the middle of this test, which the arithmetic
+    // below read as the body losing height it had not lost. Settled here rather
+    // than compensated for: a number that accounts for a control above the body is
+    // the tolerance the comment below refuses.
+    m_harness->app()->services().tasks->submit(
+        new ScriptedTask(QStringLiteral("something worth counting"), [](ScriptedTask&) {}));
+    QVERIFY(m_harness->until([this] { return m_harness->app()->tasks()->finishedCount() > 0; }));
+    m_harness->settle();
+
     const qreal beforeScan = bodyHeight();
     QVERIFY(beforeScan > 200);
 

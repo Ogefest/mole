@@ -3642,6 +3642,25 @@ void TestWalkthrough::theGalleryShowsWhatThePicturesLookLike()
     };
     QVERIFY2(m_harness->until(everyTileReady, 30000), "every tile on screen has to show its picture");
 
+    // The strip's count has to be the same on every run, and it was not: browsing a
+    // folder of photographs counted thumbnail jobs, and whether a given tile needed
+    // a job at all depended on what was still in the memory cache. `27-gallery`
+    // therefore said "16 finished" on some runs and "17" on others, over an
+    // unchanged tree. A crowd is no longer counted, so what is left is the jobs the
+    // walkthrough actually asked for. See MOLE-258.
+    //
+    // Not "the count is N": a single run cannot see a count moving, and pinning a
+    // number would break for whoever adds a step above. What a run can assert is
+    // that no crowd is being counted, which is the property that made it move.
+    // `make screenshots-check` proves the stability by taking the pictures twice.
+    for (int row = 0; row < m_harness->app()->tasks()->rowCount(); ++row) {
+        const QString title = m_harness->app()->tasks()->index(row, 0).data(Qt::DisplayRole).toString();
+        QVERIFY2(!title.startsWith(QStringLiteral("Thumbnail of")),
+            qPrintable(QStringLiteral("a thumbnail is in the task strip: %1").arg(title)));
+        QVERIFY2(!title.startsWith(QStringLiteral("List ")),
+            qPrintable(QStringLiteral("a listing is in the task strip: %1").arg(title)));
+    }
+
     m_harness->screenshot(QStringLiteral("27-gallery"));
 }
 

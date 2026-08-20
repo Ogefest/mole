@@ -9,6 +9,59 @@ wrong.
 
 ---
 
+## The same thumbnail looked like it was decoded twice
+
+**Asked for:** MOLE-258 — find out whether a second request for a tile that has left the memory
+cache costs a decode, and make the walkthrough's task count stop moving.
+
+**The first question had a clean answer: no.** `ThumbnailTask::run()` asks the disk tier before
+it decodes anything and flags `cameFromCache()`, so a tile that is still on disk costs a task
+and a file read, not a decode. The ticket's fear of duplicate decoding was unfounded — but the
+path was untested. `aSecondRunReadsFromDiskAndDecodesNothing` covered the *next process*, with a
+fresh cache over the same directory; nothing covered the case that actually happens, which is
+the memory tier letting a tile go **inside one run**. That is now
+`aTileEvictedFromMemoryComesBackFromDiskWithoutDecoding`, built with a one-byte memory cap so
+the eviction is a fact rather than a hope. It passes, which is the answer.
+
+**The second question was the real fault, and it was in the strip.** `TaskListModel` dropped
+housekeeping and kept everything else, so browsing a folder of photographs filled the task list
+with `Thumbnail of …` rows and `finishedCount` counted them. Whether a given tile needed a job
+at all depended on what was still resident, so `27-gallery` in the guide said "16 finished" on
+some runs and "17" on others over an unchanged tree.
+
+The fix is the property MOLE-262 introduced, used for its own reasons: a crowd is kept out of
+the strip as well as out of the log. The existing comment there already had the argument — *a
+free space check every minute would push their actual copy off the list within the hour* — and
+three hundred thumbnails do it within seconds. **The strip is where somebody looks for a job
+they started and might want to stop, and none of those is one.** A slow listing already says so
+where it is happening, in the pane's own "Reading …" panel.
+
+**Which is why all fifty-four pictures changed.** The strip is twenty pixels shorter and, at the
+point `01-browser` is taken, says `No background work` where it used to say `3 finished` — those
+three being folder listings. That is the strip becoming honest, and it moved every picture in
+the guide. `make screenshots-check` reported **0 changed** beforehand, so the fifty-four are the
+change and not noise, which is what MOLE-255's tooling exists to be able to say.
+
+**`27-gallery` is out of the expected-to-differ list**: 49 of 54 pictures now come out
+byte-identical, up from 45, with five named exceptions and nothing unexplained except
+`26-indexes` (MOLE-261).
+
+**What the walkthrough asserts is the property, not a number.** A single run cannot watch a count
+move, and pinning "N finished" would break for whoever adds a step above it. So the gallery step
+asserts that nothing in the strip is a thumbnail or a listing — the property that made the count
+move — and `screenshots-check` proves the stability by taking the pictures twice.
+
+**One test had been leaning on the old noise.**
+`tst_DuplicatesTab::resultsTakeTheSpaceTheEmptyStateWasHolding` measures the body's height before
+a scan and asserts it gives up exactly the keep panel's height afterwards. That silently
+depended on nothing above the body changing size — and the task strip's header grows twenty
+pixels the first time it has something to count, which used to have happened already because
+browsing counted. Now it happened in the middle of the test. It runs one job of its own first so
+the strip is settled before either measurement, rather than compensating with a number, which is
+the tolerance that test's own comment refuses.
+
+---
+
 ## A session log did not say what Mole started with
 
 **Asked for:** MOLE-263 — the build, the plugins, the drives and the indexes, written once at

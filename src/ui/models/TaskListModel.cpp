@@ -27,12 +27,25 @@ namespace {
     /// Housekeeping the user never asked for is dropped from the strip. A free
     /// space check every minute would otherwise push their actual copy off the
     /// list within the hour.
+    ///
+    /// And so is a crowd, for the same reason at a different speed: a folder of
+    /// three hundred photographs is three hundred thumbnail jobs, which would push
+    /// that copy off the list within seconds. The strip is where somebody looks for
+    /// a job they started and might want to stop; none of those is one. A slow
+    /// listing already says so where it is happening, in the pane's own "Reading …"
+    /// panel, rather than as a row here.
+    ///
+    /// It also made the strip's own numbers move. `finishedCount` counted whatever
+    /// had run, so browsing a photo folder said "16 finished" on one run and "17" on
+    /// the next -- the difference being whether one tile was still in the memory
+    /// cache and needed no job at all. A count that depends on that says nothing to
+    /// anybody. See Task::isOneOfMany(), ADR-0064 and MOLE-258.
     QList<Task*> visibleOnly(const QList<Task*>& tasks)
     {
         QList<Task*> out;
         out.reserve(tasks.size());
         for (Task* task : tasks) {
-            if (task && !task->isBackground())
+            if (task && !task->isBackground() && !task->isOneOfMany())
                 out.append(task);
         }
         return out;
@@ -151,7 +164,7 @@ void TaskListModel::reload()
 
 void TaskListModel::onTaskAppended(Task* task)
 {
-    if (!task || task->isBackground())
+    if (!task || task->isBackground() || task->isOneOfMany())
         return;
 
     if (!m_rows.contains(task)) {

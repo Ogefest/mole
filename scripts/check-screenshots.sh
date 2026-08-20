@@ -64,11 +64,6 @@ WALKTHROUGH="$BUILD/tests/tst_Walkthrough"
 #                              and "16 ms" the next, and the duration is the content
 #   16-alerts                  when the check ran, to the minute
 #   17-reports                 how long the analysis took
-#   27-gallery                 the task strip counts one thumbnail decode more in
-#                              some runs than others -- the same file is asked for
-#                              twice when it has fallen out of the memory cache,
-#                              which is a duplicate decode and a fault of its own
-#                              rather than something about this picture. MOLE-258.
 #   26-indexes                 **not understood.** It moved once, by six and a half
 #                              thousand pixels, and has not recurred. That is not
 #                              rendering noise and not a clock -- something about
@@ -81,7 +76,7 @@ WALKTHROUGH="$BUILD/tests/tst_Walkthrough"
 #
 # Everything else must be identical. Anything new appearing below is a regression
 # in determinism, and the honest response is to fix it rather than to add a line.
-EXPECTED='01d-slow-folder,02b-preview-csv-loading,24-transfer-running,08-automation,16-alerts,17-reports,27-gallery,26-indexes'
+EXPECTED='01d-slow-folder,02b-preview-csv-loading,24-transfer-running,08-automation,16-alerts,17-reports,26-indexes'
 
 # A pixel differs when a channel is more than eight levels out -- below that is the
 # renderer's own noise, invisible and unavoidable. A picture has changed when even
