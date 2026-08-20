@@ -124,6 +124,16 @@ bool Scheduler::dispatch(const ScheduleRule& rule)
     ScheduleRule running = rule;
     running.lastStatus = RunStatus::Running;
     running.lastMessage.clear();
+    // Recorded here and not only in finish(), so a run that never finishes still says
+    // it started.
+    //
+    // `put()` saves immediately, and serialisation writes a Running rule out as Failed
+    // on purpose -- a process that died mid-run did not succeed. What it used to
+    // discard is this field, and without it dueAt() reads the rule as never run, which
+    // means due now and staying due. So a job killed along with the process fired again
+    // at the next start, and again after that: the loop MOLE-264's unreachable window
+    // made unavoidable, because killing the process was the only way out of it.
+    running.lastRunAt = startedAt;
     m_store->put(running);
     emit runStarted(rule.id);
 

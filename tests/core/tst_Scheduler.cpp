@@ -366,7 +366,19 @@ void TestScheduler::aRunInterruptedByAQuitComesBackAsFailed()
     QVERIFY(reopened.load());
     const ScheduleRule rule = reopened.rule(QStringLiteral("a"));
     QCOMPARE(rule.lastStatus, RunStatus::Failed);
-    QVERIFY(rule.isDueAt(m_now));
+
+    // It recovers on its own clock rather than at once. This case used to assert it
+    // was due immediately, which was how "it recovered" showed up when a started run
+    // left nothing behind: no `lastRunAt` reads as never run, and never run is due
+    // now. That turned out to be a loop -- due, fires, killed, still due -- and
+    // MOLE-268 records the start, so the next attempt is an interval away.
+    //
+    // The claim this case exists for is unchanged and is the line above: a rule does
+    // not come back stuck in `Running`. Being due one interval later is recovery; being
+    // due again the instant the application restarts is what made a scan that killed
+    // the window impossible to escape.
+    QVERIFY2(!rule.isDueAt(m_now), "a run that just started is not owed another one");
+    QVERIFY2(rule.isDueAt(m_now.addSecs(3600)), "and it is owed one when its interval is up");
 }
 
 void TestScheduler::historyIsCappedAndNewestFirst()

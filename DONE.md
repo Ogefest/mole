@@ -9,6 +9,46 @@ wrong.
 
 ---
 
+## A killed run looked exactly like one that never happened
+
+**Asked for:** MOLE-268. Found through MOLE-264, where a scan made the window unreachable so
+killing the process was the only way out — and then every restart began the scan again.
+
+**Three correct-looking pieces making a loop.** `dispatch()` wrote the rule back before handing
+it to the job and set only `lastStatus`; `lastRunAt` was set in `finish()` and nowhere else. The
+store saves immediately, so what reached disk the moment a run started was `Running` with no
+`lastRunAt`. Serialisation then turns `Running` into `Failed` on the way out **on purpose** — a
+process that died mid-run did not succeed, and a rule stuck in `Running` would be skipped by
+every future poll — but the fact it discarded is the one that stops the rule re-firing. And
+`dueAt()` treats a rule with no `lastRunAt` as due now and staying due, which is right on its own
+terms: it is what makes a nightly job missed while the application was closed happen at the next
+start instead of waiting a whole further interval.
+
+Due, fires, killed, still due. The rule this was found on read `lastStatus: failed` with no
+`lastRunAt`, which is exactly what those three write.
+
+**One field, where the status was already being written.** `running.lastRunAt = startedAt` in
+`dispatch()`. A killed run now reads as *ran, failed*, which is what happened, and the next
+attempt is an interval away.
+
+**An existing test asserted the opposite, and it was right at the time.**
+`tst_Scheduler::aRunInterruptedByAQuitComesBackAsFailed` asserted the reloaded rule *was* due
+immediately. Its stated concern is in its own comment — *a rule in that state is skipped by every
+future poll and would never recover* — and the assertion that carries that concern is
+`Running → Failed`, which is untouched. Being due at once was how "it recovered" happened to show
+up when a started run left nothing behind. It now asserts the recovery that is actually true: not
+due now, due when its interval is up. Changed with the reason written beside it rather than
+quietly flipped, because an assertion that reverses direction is either a fault being fixed or a
+promise being broken, and a reader a year from now cannot tell which without being told.
+
+**Verified:** both cases fail with the field removed — the new one on the missing `lastRunAt`, the
+old one on being due immediately — and the suite is green with it.
+
+**Not this ticket:** whether a rule that keeps failing should back off further than one interval.
+`consecutiveFailures` is already counted in `finish()` and nothing reads it yet.
+
+---
+
 ## A picture moved once with nothing changed, and the cause was never found
 
 **Asked for:** MOLE-261 — either name the cause of `26-indexes` moving, or reproduce it enough

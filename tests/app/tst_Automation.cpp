@@ -44,6 +44,8 @@ private slots:
     void aScheduledRescanRunsSurvivesARestartAndCatchesUp();
     void anIntervalCanBeChosenChangedAndTurnedOffForAFolder();
     void nothingScheduledRunsWhileTheWindowIsStillComingUp();
+    void aRunKilledPartWayIsNotDueAgainImmediately();
+    void aRuleThatHasGenuinelyNeverRunIsStillDueNow();
 
 private:
     /// The search tab, which is where a folder is put on a clock for indexing.
@@ -186,6 +188,88 @@ void TestAutomation::aScheduledReportRunsWithoutATabOpen()
     // And the report is filed where a tab opened later will find it.
     AnalysisStore store(QString::fromLocal8Bit(qgetenv("MOLE_ANALYSIS_PATH")));
     QVERIFY2(!store.history(uri).isEmpty(), "the scheduled run must leave a report behind");
+}
+
+namespace {
+
+/// A job that starts and never answers -- which is what a process killed
+/// mid-run looks like from the store's point of view. `done` is dropped on
+/// purpose: the point is the state left on disk when nobody ever calls it.
+class JobThatNeverFinishes final : public IScheduledJob
+{
+public:
+    static QString kind() { return QStringLiteral("never-finishes"); }
+    QString displayName() const override { return QStringLiteral("A job that hangs"); }
+    bool start(const ScheduleRule&, std::function<void(bool, QString)>) override
+    {
+        ++started;
+        return true;
+    }
+    int started = 0;
+};
+
+} // namespace
+
+/// A killed run must not look exactly like one that never happened.
+///
+/// `dispatch()` wrote the rule back before handing it to the job and set only
+/// `lastStatus`; `lastRunAt` was set in `finish()` and nowhere else. So what reached
+/// disk the moment a run started was `Running` with no `lastRunAt` -- and
+/// serialisation turns `Running` into `Failed` on the way out, deliberately, discarding
+/// the one fact that would stop the rule re-firing. `dueAt()` treats a rule with no
+/// `lastRunAt` as due now and staying due, which is right on its own terms. The three
+/// together are a loop: due, fires, killed, still due.
+///
+/// Found through MOLE-264, where a scan made the window unreachable so killing the
+/// process was the only way out, and every restart began the scan again. See MOLE-268.
+void TestAutomation::aRunKilledPartWayIsNotDueAgainImmediately()
+{
+    m_app->scheduler()->stop();
+
+    JobThatNeverFinishes job;
+    m_app->scheduler()->registerJob(JobThatNeverFinishes::kind(), &job);
+
+    ScheduleRule rule;
+    rule.id = QStringLiteral("killed-part-way");
+    rule.jobKind = JobThatNeverFinishes::kind();
+    rule.label = QStringLiteral("Something that will be interrupted");
+    rule.intervalSeconds = 86400;
+    m_app->schedules()->put(rule);
+
+    // It is due, because it has never run. That is the behaviour being built on.
+    QCOMPARE(m_app->scheduler()->checkDue(), 1);
+    QCOMPARE(job.started, 1);
+
+    // And now the process dies. Read the rule back off disk, which is all a new
+    // process gets: a fresh store over the same file, so nothing in memory can carry
+    // the answer for it.
+    const QString path = QString::fromLocal8Bit(qgetenv("MOLE_SCHEDULE_PATH"));
+    QVERIFY(!path.isEmpty());
+    ScheduleStore reopened(path);
+    QVERIFY(reopened.load());
+    const ScheduleRule survived = reopened.rule(rule.id);
+    QVERIFY2(survived.isValid(), "the rule itself has to survive a restart");
+
+    QVERIFY2(survived.lastRunAt.isValid(),
+        "a run that started has to say so on disk, or nothing can tell it from one that never did");
+    QVERIFY2(!survived.isDueAt(QDateTime::currentDateTime()),
+        "the rule is due again immediately, so the next start runs it again -- and the one after that");
+}
+
+/// The other half, and the reason the fix is one field away from breaking it: a rule
+/// that has genuinely never run is due now, so a nightly job missed while the
+/// application was closed happens at the next start rather than waiting a whole
+/// further interval.
+void TestAutomation::aRuleThatHasGenuinelyNeverRunIsStillDueNow()
+{
+    ScheduleRule rule;
+    rule.id = QStringLiteral("never-run");
+    rule.jobKind = AnalysisJob::kind();
+    rule.label = QStringLiteral("Something nobody has run yet");
+    rule.intervalSeconds = 86400;
+    QVERIFY(!rule.lastRunAt.isValid());
+    QVERIFY2(rule.isDueAt(QDateTime::currentDateTime()),
+        "a rule that has never run has to be due, or a missed night is skipped entirely");
 }
 
 /// A start that has work waiting must still put the window up first.
