@@ -92,29 +92,47 @@ QImage VideoThumbnailer::thumbnail(
         loop.quit();
     });
 
+    // Where the frame is chosen, and *when* is the whole of it. LoadedMedia says the
+    // file has been opened, not that the pipeline can be moved: at that point
+    // isSeekable() is still false and setPosition() is dropped without an error or
+    // a signal, leaving the player at zero. Playing then runs the file from its
+    // beginning and the position guard below rejects every frame until playback has
+    // genuinely arrived at the target -- so the tile costs its own seek offset in
+    // wall clock, and anything past the time limit never produces one at all.
+    //
+    // seekableChanged is the signal that says a seek will land. It comes a moment
+    // after LoadedMedia and before any frame. Asked at every status as well, and
+    // guarded on isSeekable() rather than on which signal woke it: a source already
+    // seekable when it finished loading never emits the change.
+    auto seekAndPlay = [&] {
+        if (sought || !player.isSeekable())
+            return;
+        // A tenth of the way in, bounded: a title card is usually over by a
+        // second, and a minute in is a scene nobody would recognise the file by.
+        const qint64 duration = player.duration();
+        // Never past nine tenths of the file, so a two-second clip still has a
+        // frame to give rather than seeking off the end of itself.
+        const qint64 latest = duration > 0 ? qMax<qint64>(1, duration * 9 / 10) : kMinimumSeekMs;
+        const qint64 at = duration > 0
+            ? qBound<qint64>(qMin(kMinimumSeekMs, latest), duration / 10, qMin(kMaximumSeekMs, latest))
+            : kMinimumSeekMs;
+        sought = true;
+        seekTo = at;
+        player.setPosition(at);
+        // Playing is what makes the pipeline produce a frame at all; it is
+        // stopped the moment one arrives.
+        player.play();
+    };
+
+    QObject::connect(&player, &QMediaPlayer::seekableChanged, &loop, [&](bool) { seekAndPlay(); });
+
     QObject::connect(
         &player, &QMediaPlayer::mediaStatusChanged, &loop, [&](QMediaPlayer::MediaStatus status) {
             if (status == QMediaPlayer::InvalidMedia) {
                 loop.quit();
                 return;
             }
-            if (sought || status != QMediaPlayer::LoadedMedia)
-                return;
-            // A tenth of the way in, bounded: a title card is usually over by a
-            // second, and a minute in is a scene nobody would recognise the file by.
-            const qint64 duration = player.duration();
-            // Never past nine tenths of the file, so a two-second clip still has a
-            // frame to give rather than seeking off the end of itself.
-            const qint64 latest = duration > 0 ? qMax<qint64>(1, duration * 9 / 10) : kMinimumSeekMs;
-            const qint64 at = duration > 0
-                ? qBound<qint64>(qMin(kMinimumSeekMs, latest), duration / 10, qMin(kMaximumSeekMs, latest))
-                : kMinimumSeekMs;
-            sought = true;
-            seekTo = at;
-            player.setPosition(at);
-            // Playing is what makes the pipeline produce a frame at all; it is
-            // stopped the moment one arrives.
-            player.play();
+            seekAndPlay();
         });
 
     QObject::connect(&player, &QMediaPlayer::errorOccurred, &loop,

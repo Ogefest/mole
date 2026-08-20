@@ -36,6 +36,7 @@ private slots:
     void aDamagedPdfIsAnOrdinaryAnswer();
     void aPdfOnARemoteDriveOverTheCeilingIsLeftAlone();
     void aVideoShowsAFrameThatIsNotTheFirst();
+    void aLongVideoIsSeekedRatherThanPlayedTo();
     void aVideoThatCannotBeDecodedInTimeYieldsNothing();
     void aVideoOnADriveThatIsNotLocalIsNotClaimed();
     void bothAreAbsentFromABuildWithoutTheirDependency();
@@ -204,6 +205,45 @@ void TestMediaThumbnailers::aVideoShowsAFrameThatIsNotTheFirst()
 
     // The frame is from after the opening, which is the whole claim: a folder of
     // black tiles is less useful than a folder of icons.
+    const QColor middle = tile.pixelColor(tile.width() / 2, tile.height() / 2);
+    QVERIFY2(middle.red() > 80 || middle.blue() > 80,
+        qPrintable(QStringLiteral("the frame came back %1, which is the black opening").arg(middle.name())));
+#endif
+}
+
+/// The case a five-second fixture cannot make: a video long enough that seeking to
+/// the frame and playing to it are different outcomes rather than different speeds.
+///
+/// A tenth of the way into a minute is six seconds, and the thumbnailer gives
+/// itself five. So a build that seeks answers at once, and a build that cannot seek
+/// -- and therefore plays the opening at 1x waiting to arrive -- runs out of time
+/// and produces nothing. That is exactly what a folder of real videos showed:
+/// tiles for the short ones, icons for everything over about a minute.
+void TestMediaThumbnailers::aLongVideoIsSeekedRatherThanPlayedTo()
+{
+#ifndef MOLE_HAVE_MULTIMEDIA
+    QSKIP("this build has no Qt Multimedia, so a video gets the icon tile");
+#else
+    if (!VideoThumbnailer::isAvailable())
+        QSKIP("this build can decode no video at all");
+    if (!fixtures::videoEncoderAvailable())
+        QSKIP("no encoder to make a video fixture with");
+
+    const QString path = QDir(m_dir->path()).filePath(QStringLiteral("lecture.mp4"));
+    QVERIFY2(fixtures::writeMinuteLongVideoWithBlackOpening(path),
+        "the fixture is a minute long, opening on black");
+
+    VideoThumbnailer thumbnailer;
+    const FileEntry entry = localEntry(QStringLiteral("lecture.mp4"));
+    QVERIFY(thumbnailer.canThumbnail(entry));
+
+    const QImage tile = thumbnailer.thumbnail(entry, 120, m_services, CancelToken {});
+    QVERIFY2(!tile.isNull(),
+        "a video over a minute has to have a tile too -- playing to the frame instead of "
+        "seeking to it cannot reach one inside the time limit");
+
+    // And it is the frame that was asked for, not whatever the opening happened to
+    // hold: six seconds in is well past the black.
     const QColor middle = tile.pixelColor(tile.width() / 2, tile.height() / 2);
     QVERIFY2(middle.red() > 80 || middle.blue() > 80,
         qPrintable(QStringLiteral("the frame came back %1, which is the black opening").arg(middle.name())));

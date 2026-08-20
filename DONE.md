@@ -9,6 +9,67 @@ wrong.
 
 ---
 
+## A folder of videos spent five seconds a tile and showed icons
+
+**Asked for:** MOLE-239 — reported from use: photographs filled with tiles, videos took
+time and then showed nothing.
+
+**The seek never happened, for any video.** `VideoThumbnailer::thumbnail` aims a tenth of
+the way in, and it asked for that from the `mediaStatusChanged` handler at `LoadedMedia`.
+That status says the file has been opened, not that the pipeline can be moved:
+`QMediaPlayer::isSeekable()` is still false there and `setPosition()` is **dropped without
+an error or a signal**, leaving the player at zero. Traced on a real file:
+
+```
+[status] LoadedMedia  seekable=0
+[after setPosition]   pos=0
+```
+
+`play()` then ran the file from its beginning, delivering frames 16 ms apart, and the guard
+that exists to reject the black opening — `player.position() + 40 < seekTo` — rejected every
+one of them until playback had genuinely *arrived* at the target. So a tile cost its own seek
+offset in wall clock, and `kTimeLimitMs` was a hard ceiling on that. The offset is
+`duration / 10` bounded to [2 s, 10 s], so a video under about fifty seconds did produce a
+tile after seconds of playing its opening at 1x, and anything longer was rejected frame by
+frame for the full five seconds and ended as an icon. Measured over ten real files on the
+author's disk: **seven came back null**, and the three that worked took 2.6–4.1 s each.
+
+**`seekableChanged` is the signal that says a seek will land.** It arrives a moment after
+`LoadedMedia` and before any frame — established rather than assumed, by printing which
+signal the seek actually fired from:
+
+```
+[status] LoadedMedia                seekable=0   <- the old code seeked here, and lost it
+[seek? from=status]        sought=0  seekable=0
+[seek? from=seekableChanged] sought=0 seekable=1  <- and here it lands
+[seek] to=6120  landed=6120
+```
+
+Seeking there instead makes the same ten files **ten of ten, in 52–393 ms each**. The attempt
+is still made at every status as well, and guarded on `isSeekable()` rather than on which
+signal woke it: a source already seekable when it finished loading never emits the change.
+
+**Why the suite passed on all of this.** `writeVideoWithBlackOpening` made a five-second
+fixture, whose target is the 2000 ms floor — which real-time playback reaches inside the same
+five-second ceiling. So `aVideoShowsAFrameThatIsNotTheFirst` passed on broken code, and
+passed for the wrong reason: it proved a frame came from after the black opening, not that
+anything had seeked. The off-the-GUI-thread case shared the blind spot.
+
+The fixture is now given its length, and the new case uses a **minute-long** one: a tenth of
+sixty seconds is six, against a ceiling of five, so seeking to the frame and playing to it are
+different outcomes rather than different speeds. It fails on the old code with exactly the
+reported symptom. The five-second cases stay — they cover the short-file path the long one
+does not.
+
+Two things this was not, both ruled out before the fix. It is not the platform plugin: the
+video cases pass under `offscreen` and under `xcb` alike. And it is not the pool thread: the
+suite already drove a video thumbnail through a real `ThumbnailTask` off the GUI thread, and
+that passed too. What separated the working files from the failing ones was **length**, which
+is why the fixture grew one.
+
+A side effect worth naming: `tst_MediaThumbnailers` went from 5749 ms to 1008 ms, because the
+short fixtures had been playing their openings in real time as well.
+
 ## The sanitizer tier went red in eighteen suites, and only one of them was our leak
 
 **Asked for:** MOLE-237 — `make asan` was not green. Eighteen of its ninety-eight suites failed,
