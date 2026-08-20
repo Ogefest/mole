@@ -9,6 +9,52 @@ wrong.
 
 ---
 
+## The sanitizer tier went red in eighteen suites, and only one of them was our leak
+
+**Asked for:** MOLE-237 — `make asan` was not green. Eighteen of its ninety-eight suites failed,
+and none of them failed an assertion: every one reported `0 failed` in its own totals and then died
+at exit on a LeakSanitizer report. Seventy-seven leak records in all.
+
+**Seventy-six were inside GStreamer, and one line of ours let them in.** Asking Qt Multimedia what
+this build can decode creates its platform integration, and creating that starts a
+`GstDeviceMonitor` — which starts every device provider it can find and keeps what they allocate.
+ALSA strdups a card name, PulseAudio keeps a subscription record, and the PipeWire provider builds
+a list on a thread of its own that is still running when the process exits. None of it is reachable
+from anything of ours and the monitor has no API for letting go.
+
+What put every app suite in reach of it was `if (VideoThumbnailer::isAvailable())` in
+`BuiltinPlugin::registerExtensions`, added the day before with the video thumbnailer: a codec probe
+during plugin registration, so any suite that builds an application built the media stack too.
+Suppressed by module, the way Qt's scene graph, QPdfDocument and libgit2 already are — one
+`leak:libgst*` entry, because every one of the seventy-six records carries a `libgst` frame, so it
+covers the backend, its device plugins and Qt's own `libgstreamermediaplugin` without reaching past
+GStreamer. **The scope was checked rather than assumed**: a deliberate four-kilobyte leak added to
+`main` in `tst_MediaThumbnailers` — the suite where 199 records are suppressed — still failed the
+run.
+
+That check caught a wrong first attempt, too. The first canary was a `static void* volatile`, which
+does not leak at all: a pointer in the data segment is a root LeakSanitizer traces from, so the
+allocation was reachable and the suite passed. The canary had to drop the pointer to be a canary.
+
+**The seventy-seventh was ours, and it was the container rather than the contents.** `poolFor` in
+`NfsFileSystem.cpp` news a `MountPool` and deliberately never deletes it — one per
+server-and-export a session ever touches, and a stable address is what lets a lease hand its
+context back without holding a lock. That intent is sound. The fault was that the `QHash` holding
+the pointers was a plain function-local static, so it *was* destroyed, and LeakSanitizer's check
+runs after static destructors: by then the process had thrown away its only handle and the pools
+were genuinely unreachable. The hash now outlives the process it belongs to, which is what "never
+freed" was supposed to mean, and it covers the idle `nfs_context`s the same hash reaches — those
+would have been reported the same way by a run with a real export to hand.
+
+**What was left for its own task.** The codec probe costs 710 ms and five threads, measured
+offscreen on this machine, spent on the main thread inside `AppController::initialise` on every
+launch. The guard also buys nothing: `canThumbnail` already answers `false` in a build that can
+decode nothing, because `videoSuffixes()` returns an empty list when `isAvailable()` is false. But
+removing the guard alone only moves the cost — `canThumbnail` initialises its suffix list from the
+same call, so the first file no higher-priority thumbnailer claims pays the same 710 ms. Making it
+cheap means separating "is this a video?" from "can this build decode one?", which is a change to
+how availability is decided rather than a leak fix. MOLE-238.
+
 ## The heavy tier never met the sizes where a backend changes its mind
 
 **Asked for:** MOLE-113 — three sizes and one shape decide which code path a backend takes, and

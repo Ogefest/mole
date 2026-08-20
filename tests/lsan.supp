@@ -21,3 +21,14 @@ leak:libQt6Pdf.so
 # and no API to force it: git_error_clear() drops the message and keeps the buffer.
 # Suppressed by module like the rest.
 leak:libgit2.so
+
+# Asking Qt Multimedia what this build can decode creates its platform integration,
+# and creating that starts a GstDeviceMonitor -- which starts every device provider
+# it can find and keeps what they allocate. ALSA strdups a card name, PulseAudio
+# keeps a subscription record, and the PipeWire provider builds a list on a thread
+# of its own that is still running at exit. None of it is reachable from anything of
+# ours and the monitor has no API for letting go, so there is nothing here to free.
+# Every record in the tier carries a libgst frame, so one entry covers the backend,
+# its device plugins and Qt's own libgstreamermediaplugin without reaching past
+# GStreamer -- a leak in our own code still fails the build.
+leak:libgst*

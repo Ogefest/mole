@@ -129,10 +129,17 @@ namespace {
         return only;
     }
 
+    /// Deliberately never destroyed, and a raw `new` rather than a plain static for
+    /// that reason: the pools it holds outlive every lease, and a hash destroyed at
+    /// static-destruction time would throw away the only handle to them while a task
+    /// thread could still be holding one. Keeping the handle in the data segment is
+    /// also what makes the intent legible to LeakSanitizer, whose check runs after
+    /// static destructors -- a destroyed hash left the pools genuinely unreachable
+    /// and reported as leaked, together with any idle context they still held.
     QHash<QString, MountPool*>& pools()
     {
-        static QHash<QString, MountPool*> all;
-        return all;
+        static auto* all = new QHash<QString, MountPool*>;
+        return *all;
     }
 
     /// The pool for one mount. Pools themselves are never freed -- there is one
