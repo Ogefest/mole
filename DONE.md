@@ -9,6 +9,52 @@ wrong.
 
 ---
 
+## Four of the five standing tools still opened a second tab
+
+**Asked for:** MOLE-259, which I opened while doing MOLE-254 and which planning corrected from
+three to four — because the fifth standing tool was missing from ADR-0032's list.
+
+**The same fault, a fourth time.** ADR-0032 names the tabs that should exist once; MOLE-206
+built `openStandingTab()` and gave it to the sets; MOLE-208 found a bookmark route; MOLE-254
+found the last two for the sets. Each ticket fixed the callers it happened to touch. The four
+menu actions — *Saved reports*, *Indexes*, *Alerts*, *Scheduled jobs* — were never touched by any
+of them, and a button in the Indexes view made a fifth route.
+
+**So the tools are a named list and the routes are not.** That split is the point. The list stays
+hand-written for the reason `openStandingTab()`'s own comment gives: a predicate on `IFeature`
+would be a reshaping of the extension point, and `opensFromNothing()` is the wrong predicate
+because a duplicate scan answers `false` too — reusing a Duplicates tab halfway through a scan
+would throw the scan away. What must not be a list is the callers, because missed callers are
+what made this recur four times. The test walks `buildMenu()`, triggers every action whose
+`opensFeature` names a standing tool twice, and asserts one tab apiece — so it reaches every menu
+and palette route without knowing what they are, including one added next year.
+
+Two things the test needed to be honest. It asserts that every *named* tool was actually found
+among the routes, because a renamed feature id would otherwise make it quietly check nothing. And
+it selects a file first: `core.filesets`'s only menu route is *Add to set*, which opens the tab as
+a side effect of doing something and is disabled with nothing to act on — skipping a disabled
+route would have been a way of not testing the very route MOLE-206 was written about.
+
+**The button now takes the menu's route rather than being a second one.**
+`IndexesView.qml`'s *Automation* button called `openFeatureTab()` directly, so once the four
+actions were converted it was the one remaining way to get a second Schedule tab. It triggers
+`mole.tools.automation` instead: one route, and the registry test covers it without knowing it
+exists. Its own case in `tst_IndexesView` checks the part the registry cannot see — that the
+button really does go through the action — and fails with two tabs if it is pointed back.
+
+**Checked rather than assumed, as the ticket asked.** MOLE-208's finding was that reuse leaving a
+tab showing the wrong thing is worse than a duplicate tab, so each of the four was looked at for
+a current-item property that a reused tab would leave stale. Only `ReportsFeature` has one,
+`selectedRoot` — and it is written from nowhere but the Reports view itself, so no route arrives
+with a subject and there is nothing to point a reused tab at. Showing the tab as the user left it
+is what showing an existing tab means.
+
+**ADR-0032 now names five.** The list of four was written on 2026-08-10 and the Indexes tab
+arrived on 2026-08-20, so it was a list written before the fifth existed rather than a decision
+to leave it out. The amendment says that, and says why the list stays hand-written.
+
+---
+
 ## A killed run looked exactly like one that never happened
 
 **Asked for:** MOLE-268. Found through MOLE-264, where a scan made the window unreachable so

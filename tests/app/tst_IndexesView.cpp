@@ -33,6 +33,7 @@ private slots:
 
     void settingARowsScheduleFromTheDropdownDoesNotTakeTheProcessWithIt();
     void choosingFromTheOpenDropdownDoesNotTakeTheProcessWithIt();
+    void theScheduleButtonOpensTheOneScheduleTab();
 
 private:
     bool seed(const QString& label, int files);
@@ -200,6 +201,43 @@ void TestIndexesView::choosingFromTheOpenDropdownDoesNotTakeTheProcessWithIt()
     m_harness->settle(6);
 
     QCOMPARE(indexes->scheduledCount(), 1);
+}
+
+/// The button that opens the schedule is a route like any other.
+///
+/// It called `openFeatureTab()` directly, so once the menu entry had been pointed at
+/// `openStandingTab()` this button was the one way left to get a second Schedule tab.
+/// It now triggers the menu's own action, which means one route rather than two -- and
+/// the test that walks the action registry covers it without knowing it exists. This
+/// case is the part that registry cannot see: that the button really does go through
+/// the action. See MOLE-259.
+void TestIndexesView::theScheduleButtonOpensTheOneScheduleTab()
+{
+    QVERIFY(seed(QStringLiteral("photos"), 4));
+    QVERIFY(openIndexes());
+    QVERIFY(m_harness->until([this] { return shown(QStringLiteral("openAutomationButton")) != nullptr; }));
+
+    const auto scheduleTabs = [this] {
+        int found = 0;
+        TabsModel* tabs = m_harness->app()->tabs();
+        for (int row = 0; row < tabs->rowCount(); ++row) {
+            if (tabs->index(row, 0).data(TabsModel::FeatureIdRole).toString()
+                == QStringLiteral("core.automation"))
+                ++found;
+        }
+        return found;
+    };
+    QCOMPARE(scheduleTabs(), 0);
+
+    QVERIFY(m_harness->clickOn(shown(QStringLiteral("openAutomationButton"))));
+    QVERIFY(m_harness->until([&scheduleTabs] { return scheduleTabs() == 1; }));
+
+    // Back to the indexes tab, and press it again.
+    QVERIFY(openIndexes());
+    QVERIFY(m_harness->until([this] { return shown(QStringLiteral("openAutomationButton")) != nullptr; }));
+    QVERIFY(m_harness->clickOn(shown(QStringLiteral("openAutomationButton"))));
+    m_harness->settle(4);
+    QCOMPARE(scheduleTabs(), 1);
 }
 
 int main(int argc, char** argv)

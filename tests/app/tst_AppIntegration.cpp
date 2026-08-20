@@ -87,6 +87,7 @@ private slots:
     void theTypeScaleIsOrderedAndAboveTheFloor();
     void menuOffersANewTabOnlyForWhatOpensFromNothing();
     void everyFeatureIsReachableFromTheMenu();
+    void everyStandingToolOpensOneTabHoweverItIsReached();
     void menuEntryOpensTheTab();
     void viewMenuReflectsAndTogglesTheCurrentTab();
     void menuEntriesGreyOutWhenTheyDoNotApply();
@@ -97,6 +98,8 @@ private slots:
 
 private:
     std::vector<std::unique_ptr<IPlugin>> builtIns() const;
+    /// How many tabs of a feature are open.
+    int tabsOfFeature(const QString& featureId) const;
     /// Puts both panes in place for a transfer and returns the browser.
     BrowserController* readyToTransfer(const QString& destination);
     /// A finished search over the temp tree for `text`, and the row its tab sits
@@ -1316,6 +1319,16 @@ void TestAppIntegration::menuOffersANewTabOnlyForWhatOpensFromNothing()
     QVERIFY(!menuEntry(menu, QStringLiteral("mole.file.drives")).isEmpty());
 }
 
+int TestAppIntegration::tabsOfFeature(const QString& featureId) const
+{
+    int found = 0;
+    for (int row = 0; row < m_app->tabs()->rowCount(); ++row) {
+        if (m_app->tabs()->index(row, 0).data(TabsModel::FeatureIdRole).toString() == featureId)
+            ++found;
+    }
+    return found;
+}
+
 void TestAppIntegration::everyFeatureIsReachableFromTheMenu()
 {
     // The other half of the rule above, and the reason it is safe. Most features
@@ -1341,6 +1354,89 @@ void TestAppIntegration::everyFeatureIsReachableFromTheMenu()
         qPrintable(QStringLiteral("no menu entry opens these features, so nothing in the window "
                                   "and nothing in the palette can reach them: %1")
                        .arg(orphaned.join(QStringLiteral(", ")))));
+}
+
+/// A tab that should exist once has to exist once whichever route asks for it.
+///
+/// ADR-0032 names the standing tools, and MOLE-206 built `openStandingTab()` for them
+/// and gave it to the sets. Then the same fault was found three more times, once per
+/// ticket, because each one fixed the callers it happened to touch: MOLE-206 the entry
+/// it was written about, MOLE-208 a bookmark, MOLE-254 the last two for the sets. The
+/// four remaining actions were never touched by any of them.
+///
+/// So the tools are a named list and the routes are not. The list is deliberate --
+/// `openStandingTab()`'s own comment says naming them from a predicate on `IFeature`
+/// would be a reshaping of the extension point, and that `opensFromNothing()` is the
+/// wrong predicate because a duplicate scan answers false too, and reusing a
+/// Duplicates tab halfway through a scan would throw the scan away. What must not be a
+/// list is the callers, because missed callers are what made this the same fault four
+/// times. Walking `buildMenu()` reaches every menu and palette route without knowing
+/// what they are, including one added next year. See MOLE-259.
+void TestAppIntegration::everyStandingToolOpensOneTabHoweverItIsReached()
+{
+    // In the order ADR-0032 names them, with the Indexes tab, which arrived ten days
+    // after that record was written and is the same shape: one store, everything in it
+    // listed, actions offered on the rows.
+    static const QStringList standing {
+        QStringLiteral("core.alerts"),
+        QStringLiteral("core.reports"),
+        QStringLiteral("core.automation"),
+        QStringLiteral("core.filesets"),
+        QStringLiteral("core.indexes"),
+    };
+
+    // Something selected before the menu is read, because one of these routes is not a
+    // plain "open it": *Add to set* opens the Sets tab as a side effect of doing
+    // something, and is disabled with nothing to act on. Skipping a disabled route
+    // would be a way of not testing it, and it is the route MOLE-206 was written about.
+    auto* browser = qobject_cast<BrowserController*>(m_app->tabs()->controllerAt(0));
+    QVERIFY(browser);
+    QVERIFY(waitFor([browser] { return browser->activePane()->files()->rowCount() > 0; }));
+    browser->activePane()->files()->toggleSelected(0);
+
+    // The routes, found rather than listed.
+    QList<QPair<QString, QString>> routes; // action id, feature it opens
+    for (const QVariant& sectionEntry : m_app->buildMenu()) {
+        for (const QVariant& entry : sectionEntry.toMap().value(QStringLiteral("actions")).toList()) {
+            const QVariantMap action = entry.toMap();
+            const QString opens = action.value(QStringLiteral("opensFeature")).toString();
+            if (standing.contains(opens))
+                routes.append({ action.value(QStringLiteral("id")).toString(), opens });
+        }
+    }
+
+    // Every named tool has to have been found, or a renamed feature id would make this
+    // test quietly check nothing.
+    QSet<QString> covered;
+    for (const auto& route : routes)
+        covered.insert(route.second);
+    QStringList unreachable;
+    for (const QString& tool : standing) {
+        if (!covered.contains(tool))
+            unreachable.append(tool);
+    }
+    QVERIFY2(unreachable.isEmpty(),
+        qPrintable(QStringLiteral("no menu action opens these standing tools, so this test is not "
+                                  "checking them: %1")
+                       .arg(unreachable.join(QStringLiteral(", ")))));
+
+    for (const auto& [actionId, featureId] : routes) {
+        QVERIFY2(m_app->triggerAction(actionId),
+            qPrintable(QStringLiteral("%1 would not fire, so this route is untested").arg(actionId)));
+        QVERIFY2(m_app->triggerAction(actionId), qPrintable(actionId));
+        QVERIFY2(tabsOfFeature(featureId) == 1,
+            qPrintable(QStringLiteral("%1 left %2 tabs of %3")
+                           .arg(actionId)
+                           .arg(tabsOfFeature(featureId))
+                           .arg(featureId)));
+    }
+
+    // And the reuse is for these and nothing else: a browser and a search are things
+    // people open several of. tst_FileSets asserts this too; it is repeated here
+    // because this is the test that would make the mistake.
+    const int browsers = tabsOfFeature(QStringLiteral("mole.browser"));
+    QVERIFY(m_app->tabs()->openTab(QStringLiteral("mole.browser")) >= 0);
+    QCOMPARE(tabsOfFeature(QStringLiteral("mole.browser")), browsers + 1);
 }
 
 void TestAppIntegration::menuEntryOpensTheTab()

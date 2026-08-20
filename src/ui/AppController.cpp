@@ -1678,13 +1678,18 @@ void AppController::registerShellActions()
     }
     {
         MenuAction action;
+        // openStandingTab() for this and the three below: each is a tab ADR-0032 calls
+        // a standing tool, and openFeatureTab() always builds a new one -- so
+        // triggering the entry twice left two tabs over one store, each with its own
+        // idea of what was current. MOLE-206 built openStandingTab() and gave it to
+        // the sets; this is the rest of the list, four tickets later. See MOLE-259.
         action.id = QStringLiteral("mole.tools.reports");
         action.opensFeature = QStringLiteral("core.reports");
         action.section = MenuAction::Section::Workflows;
         action.title = QStringLiteral("Saved reports");
         action.sortOrder = 50;
         action.enabled = [] { return true; };
-        action.trigger = [this] { openFeatureTab(QStringLiteral("core.reports")); };
+        action.trigger = [this] { openStandingTab(QStringLiteral("core.reports")); };
         m_actions->addAction(std::move(action));
     }
     {
@@ -1698,7 +1703,7 @@ void AppController::registerShellActions()
         // reason to open it is usually that a search answered from something
         // older than you thought, and nothing else points you at it.
         action.enabled = [] { return true; };
-        action.trigger = [this] { openFeatureTab(QStringLiteral("core.indexes")); };
+        action.trigger = [this] { openStandingTab(QStringLiteral("core.indexes")); };
         m_actions->addAction(std::move(action));
     }
     {
@@ -1710,7 +1715,7 @@ void AppController::registerShellActions()
         action.shortcut = QStringLiteral("Ctrl+Shift+L");
         action.sortOrder = 60;
         action.enabled = [] { return true; };
-        action.trigger = [this] { openFeatureTab(QStringLiteral("core.alerts")); };
+        action.trigger = [this] { openStandingTab(QStringLiteral("core.alerts")); };
         m_actions->addAction(std::move(action));
     }
     {
@@ -1724,7 +1729,7 @@ void AppController::registerShellActions()
         // Always available: the reason to open it is usually that something is
         // failing, which is exactly when nothing else points you at it.
         action.enabled = [] { return true; };
-        action.trigger = [this] { openFeatureTab(QStringLiteral("core.automation")); };
+        action.trigger = [this] { openStandingTab(QStringLiteral("core.automation")); };
         m_actions->addAction(std::move(action));
     }
     {

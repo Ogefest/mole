@@ -45,10 +45,22 @@ There are three kinds of feature, and one predicate separates the one from the t
   answer `needsContext()` — which is a different question, about whether a tab would
   be *empty*, and is what the empty window reads to decide which buttons to offer.
 - **A standing tool that exists once** — the alerts list, the saved reports, the
-  schedule, the sets. `false`. Opening a second tab of one is a duplicate of the
-  first, and the entry reads better as its own name in the Workflows section than as
-  something being created: *Saved reports*, not *New Reports tab*. ADR-0003 already
-  put those in Workflows.
+  schedule, the sets, and the list of indexes. `false`. Opening a second tab of one is
+  a duplicate of the first, and the entry reads better as its own name in the
+  Workflows section than as something being created: *Saved reports*, not *New Reports
+  tab*. ADR-0003 already put those in Workflows.
+
+  **Amended 2026-08-21 (MOLE-259): the list of indexes is the fifth.** It was not left
+  out on purpose — this record was written on 2026-08-10 and the Indexes tab arrived on
+  2026-08-20, so the list of four is a list written before the fifth existed. It is the
+  same shape as the alerts list and the schedule: one store, everything in it listed,
+  actions offered on the rows, and a second one is the same duplicate with its own idea
+  of what is selected. Named here rather than derived from a predicate, for the reason
+  `openStandingTab()`'s own comment gives: `opensFromNothing()` is the wrong test,
+  because a duplicate scan and a bulk rename answer `false` too and reusing a
+  Duplicates tab halfway through a scan would throw the scan away. So a sixth arriving
+  is a line somebody has to add here on purpose, which is the same bargain the
+  File-menu test below makes.
 
 **The default is `false`.** A feature gets no *New … tab* entry unless it asks for one.
 

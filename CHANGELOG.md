@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-21 #MOLE-259 Saved reports, Indexes, Alerts and Schedule show the tab you already have instead of opening another
 2026-08-21 #MOLE-268 A scheduled job killed part way is due again after its interval, not at the next start and every start after that
 2026-08-20 #MOLE-261 A picture that moves says where it moved and keeps both copies, so an unexplained one explains itself next time
 2026-08-20 #MOLE-264 Scheduled jobs wait a few seconds after startup, so the window comes up before the work does

@@ -274,7 +274,13 @@ Item {
                 objectName: "openAutomationButton"
                 text: "Automation"
                 flat: true
-                onClicked: App.openFeatureTab("core.automation")
+                // The menu's own entry rather than a second way in. It opened the tab
+                // directly, which meant two routes to the same place and only one of
+                // them going through openStandingTab() -- so this button left a second
+                // Schedule tab after the menu had stopped doing that. Triggering the
+                // action means there is one route, and the test that walks the action
+                // registry covers this button without knowing it exists. See MOLE-259.
+                onClicked: App.triggerAction("mole.tools.automation")
             }
         }
     }
