@@ -26,7 +26,7 @@ Nothing here needs a mouse.
 nothing to preview and a key that does nothing is indistinguishable from one that is
 broken.
 
-## Two panes, or a grid
+## Four ways of looking at a folder
 
 ![Two panes](images/05-dual-pane.png)
 
@@ -35,8 +35,53 @@ politely rather than mysteriously when both sides are showing the same folder.
 
 ![A grid](images/06-grid.png)
 
-The same listing as icons, for the times when what a file looks like matters more than
-its name.
+The same listing as small icons, for when a name in a column is not what you are
+looking for.
+
+### The gallery
+
+![A gallery of photographs](images/27-gallery.png)
+
+Tiles big enough to see the picture in. **It is a fourth way of looking at the same
+folder, not a separate mode of working**: the same listing, the same cursor, the same
+selection. Ticking with `Insert`, `F5` and `F6`, `F8`, sorting, filtering by typing and
+`F3` all behave exactly as they do in the list, because it is the same pane underneath.
+The arrow keys move as the tiles look — left and right by one, up and down by a row.
+
+![A gallery of files that are not pictures](images/06b-gallery.png)
+
+A file with nothing to show keeps its icon, drawn at a size that suits the tile, with
+the name and the size under it. **An icon in the gallery never means "broken"** — it
+means there is no picture to make, which is the ordinary answer for a folder of source
+files, and a directory says *folder* under its name so it cannot be mistaken for a
+photograph that failed to load.
+
+Pictures, PDFs and videos have something to show. A PDF shows its first page; a video
+shows a frame from a little way in rather than the first, because a great many videos
+open on black and a folder of black tiles is worse than a folder of icons.
+
+### What it costs, especially on a network drive
+
+**Only what is on screen is made.** Scrolling fast does not queue up a folder's worth
+of work, and leaving a folder takes its queue with it — so walking through five folders
+does not leave the sixth waiting behind all of them. A few are made at a time, and the
+tile you just scrolled to is served before one you scrolled past.
+
+**On a drive that is not local, a photograph is not downloaded to make a tile.** Almost
+every camera JPEG carries a small version of itself in its first 64 kB, and that is what
+is read: a sixty-fourth of a megabyte instead of eight. It is softer than the tile, and
+it tells you which picture it is, which is the whole job. A file with nothing inside it
+and past a size worth fetching is left alone entirely and shows its icon — on a metered
+bucket that is the difference between a few kilobytes and four gigabytes for one folder.
+Locally there is no such worry, so the whole file is read and the tile is sharp.
+
+**The pictures are cached, and the cache can be deleted.** They are kept in memory while
+you scroll and on disk for the next visit, under your cache directory —
+`~/.cache/Mole/Mole/thumbnails` on Linux, and `MOLE_THUMBNAILS_PATH` moves it. It is the
+one thing Mole stores that holds nothing you do not already have: throwing it away costs
+a few seconds of remaking tiles and nothing else. It has a ceiling and evicts what has
+not been looked at for longest, so it does not grow for ever. Editing a file gets a new
+tile, because a thumbnail is keyed on when the file was last changed.
 
 ## How big is that folder?
 

@@ -5,8 +5,10 @@
 #include <QHash>
 #include <QImage>
 #include <QImageWriter>
+#include <QLinearGradient>
 #include <QList>
 #include <QPainter>
+#include <QPolygon>
 #include <QSize>
 
 #include <optional>
@@ -220,6 +222,44 @@ inline QImage texturedImage(QSize size)
             image.setPixel(x, y, qRgb(mixed, (mixed * 5) % 251, (mixed * 11) % 251));
         }
     }
+    return image;
+}
+
+/// A picture that reads as a photograph at tile size: a sky, a horizon, a sun and
+/// a hill, with the hue turned by `seed` so a folder of them is a folder of
+/// visibly different pictures rather than a folder of grey squares.
+///
+/// It exists for the guide. A picture of the gallery is only worth having if a
+/// reader can see that the tiles are showing what the files look like, and
+/// deterministic noise averages to grey at 200 pixels.
+inline QImage photographLike(QSize size, int seed)
+{
+    QImage image(size, QImage::Format_RGB32);
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing);
+
+    const int hue = (seed * 47) % 360;
+    QLinearGradient sky(0, 0, 0, size.height());
+    sky.setColorAt(0.0, QColor::fromHsv(hue, 150, 235));
+    sky.setColorAt(1.0, QColor::fromHsv((hue + 40) % 360, 90, 255));
+    painter.fillRect(image.rect(), sky);
+
+    const int horizon = int(size.height() * (0.58 + 0.08 * ((seed % 3) - 1)));
+    painter.setBrush(QColor::fromHsv((hue + 200) % 360, 120, 90));
+    painter.setPen(Qt::NoPen);
+    QPolygon hill;
+    hill << QPoint(-10, size.height() + 10) << QPoint(-10, horizon)
+         << QPoint(size.width() / 3, horizon - size.height() / 6)
+         << QPoint(size.width() * 2 / 3, horizon + size.height() / 20)
+         << QPoint(size.width() + 10, horizon - size.height() / 12)
+         << QPoint(size.width() + 10, size.height() + 10);
+    painter.drawPolygon(hill);
+
+    const int sun = qMax(8, size.height() / 10);
+    painter.setBrush(QColor::fromHsv((hue + 20) % 360, 40, 255));
+    painter.drawEllipse(QRect(size.width() / 5 + (seed % 5) * size.width() / 12,
+        horizon - sun * 2 - (seed % 4) * sun / 2, sun, sun));
+    painter.end();
     return image;
 }
 

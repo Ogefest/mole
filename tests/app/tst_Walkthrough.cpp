@@ -15,6 +15,7 @@
 #include "plugins/builtin/previews/PdfPreview.h"
 #include "plugins/builtin/previews/PreviewProviders.h"
 #include "support/GitFixture.h"
+#include "support/ImageFixtures.h"
 #include "support/QmlAppHarness.h"
 #include "support/TableFixtures.h"
 #include "support/TestSupport.h"
@@ -178,6 +179,7 @@ private slots:
     void savedReportsAreAListYouCanOpen();
     void theListOfIndexesSaysHowOldEachOneIsAndWhatIsInIt();
     void aTileShowsThePictureAndAnUndecodableFileKeepsItsIcon();
+    void theGalleryShowsWhatThePicturesLookLike();
     void aFileSetIsAListYouCarryAround();
     void duplicatesFindsTheSamePictureThreeTimes();
     void anImageIsFittedToThePane();
@@ -3529,6 +3531,54 @@ void TestWalkthrough::alertsSayWhatWentOutsideItsBounds()
     // Waited on the answer rather than on a clock: the check walks the tree.
     QVERIFY(m_harness->until([this] { return m_harness->app()->alerts()->triggeredCount() > 0; }, 20000));
     m_harness->screenshot(QStringLiteral("16-alerts"));
+}
+
+/// The picture the gallery is for: a folder of photographs, each tile showing what
+/// it actually is. The other half -- a folder with nothing thumbnailable in it --
+/// is 06b-gallery, which is the fixture root as tiles. See MOLE-145.
+void TestWalkthrough::theGalleryShowsWhatThePicturesLookLike()
+{
+    // Real photographs, made here rather than in the fixture: they exist for this
+    // one picture and nothing else in the suite counts them.
+    QVERIFY(m_harness->makeDirs(QStringLiteral("gallery")));
+    for (int i = 0; i < 12; ++i) {
+        ExifBuilder exif(false);
+        exif.addAscii(0x010f, "Fujifilm");
+        exif.addAscii(0x0110, "X100V");
+        const QByteArray photograph
+            = jpegOf(photographLike(QSize(1400, i % 3 == 0 ? 1400 : 1000), i + 1), exif.build());
+        QVERIFY(m_harness->writeFile(QStringLiteral("gallery/IMG_44%1.jpg").arg(17 + i), photograph));
+    }
+
+    auto* browser = qobject_cast<BrowserController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY(browser);
+    browser->activePane()->navigateTo(m_harness->fixtureUri() + QStringLiteral("/gallery"));
+    QVERIFY(m_harness->until([browser] { return browser->activePane()->files()->rowCount() == 12; }, 20000));
+
+    browser->setViewMode(BrowserController::ViewMode::Gallery);
+    m_harness->settle(4);
+
+    QQuickItem* tiles = m_harness->item(QStringLiteral("fileGrid"));
+    QVERIFY(tiles);
+    QVERIFY(m_harness->until([tiles] { return tiles->width() > 0; }));
+
+    // Photographed only once every tile on screen really shows its picture: a
+    // picture of tiles still loading would be a picture of nothing.
+    const auto everyTileReady = [tiles] {
+        for (int row = 0; row < 12; ++row) {
+            QQuickItem* tile = nullptr;
+            QMetaObject::invokeMethod(tiles, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, tile), Q_ARG(int, row));
+            if (!tile)
+                continue; // not built yet, which is the view's business and not this claim
+            QQuickItem* image = QmlAppHarness::itemIn(tile, QStringLiteral("tileThumbnail"));
+            if (!image || !image->property("hasPicture").toBool())
+                return false;
+        }
+        return true;
+    };
+    QVERIFY2(m_harness->until(everyTileReady, 30000), "every tile on screen has to show its picture");
+
+    m_harness->screenshot(QStringLiteral("27-gallery"));
 }
 
 /// The whole chain, through the real provider the window registers: a delegate

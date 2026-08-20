@@ -11,7 +11,7 @@ picture is here, something checks it.
 
 | | |
 |---|---|
-| [Browsing](browsing.md) | panes, tabs, the keyboard, folder sizes, git state |
+| [Browsing](browsing.md) | panes, tabs, the gallery, the keyboard, folder sizes, git state |
 | [Looking inside files](previews.md) | text, code, Markdown, tables, PDFs, HTML, images, databases |
 | [Finding things](searching.md) | searching a tree, the indexes you have, doing something with the results |
 | [Operations](operations.md) | compressing, dragging files in and out, renaming in bulk, the terminal, analysis, duplicates, sync, alerts |

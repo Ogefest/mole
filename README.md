@@ -22,9 +22,9 @@ being added on top of it.
 - **Virtual drives.** Local disk, an in-memory scratch space and read-only
   archives (zip, tar, 7z, ...) are all mounts of the same `IFileSystem`
   interface. Activating an archive mounts it and browses inside.
-- **Tabs as workflows.** Browser (single pane, dual pane or a grid of icons),
-  search, previews, reports and the rest — each a separate feature, opened from
-  the same menu.
+- **Tabs as workflows.** Browser (single pane, dual pane, a grid of icons or a
+  gallery of thumbnails), search, previews, reports and the rest — each a
+  separate feature, opened from the same menu.
 - **Filter by typing.** Start typing in a listing and it narrows to what you
   typed — no shortcut, no storage access. A search that walks the tree is a
   separate tab on `Ctrl+F`.
@@ -70,6 +70,11 @@ being added on top of it.
   *Indexes* tab lists every index there is — how old each one is, what kind of
   scan built it, whether anything is keeping it fresh — and is where one is
   rescanned, stopped or thrown away.
+- **Thumbnails, and a gallery to put them in.** Pictures, PDF first pages and
+  video frames, made off the UI thread, a few at a time, only for what is on
+  screen, and cached in memory and on disk. On a drive that is not local the
+  thumbnail a camera wrote into the file is read instead of the file — kilobytes
+  rather than megabytes — and anything past a ceiling is left alone.
 - **Sessions.** Open tabs, their folders, their layout and the window's own
   size come back after a restart. Each tab kind decides what it remembers,
   plugins included.
