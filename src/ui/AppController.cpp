@@ -263,7 +263,10 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
         m_plugins->addBuiltIn(std::move(plugin));
     m_plugins->loadFromDefaultPaths();
 
-    m_bookmarks = new BookmarkModel(BookmarkModel::defaultFilePath(), this);
+    // Handed the sets store, because a set bookmark's name and its liveness are
+    // read from it rather than copied. The store exists by now -- see above. See
+    // ADR-0061.
+    m_bookmarks = new BookmarkModel(BookmarkModel::defaultFilePath(), m_sets, this);
     connect(m_bookmarks, &BookmarkModel::countChanged, this, &AppController::refreshBookmarkActions);
 
     // Before the palette, which is handed a pointer to it. Built after, the palette
@@ -2225,13 +2228,19 @@ void AppController::refreshBookmarkActions()
 
     int order = 100;
     for (const Bookmark& bookmark : m_bookmarks->bookmarks()) {
+        // Folders only for the moment. What a menu entry for a set does -- and
+        // the form its id takes, since a set's target is not a uri -- is
+        // MOLE-208.
+        if (bookmark.kind != Bookmark::Kind::Folder)
+            continue;
+
         MenuAction action;
-        action.id = prefix + bookmark.uri;
+        action.id = prefix + bookmark.target;
         action.section = MenuAction::Section::Bookmarks;
         action.title = bookmark.name;
         action.sortOrder = order;
         action.separatorBefore = order == 100;
-        const QString uri = bookmark.uri;
+        const QString uri = bookmark.target;
         action.trigger = [this, uri] { goTo(uri); };
         m_actions->addAction(std::move(action));
         order += 10;
