@@ -9,6 +9,37 @@ wrong.
 
 ---
 
+## A start with work waiting put the work first
+
+**Asked for:** by the author, from use — *startowanie taskow przy starcie aplikacji powinno byc
+odrobine opoznione*. The window should be up before scheduled work begins. It is MOLE-264's
+second point, and the one that shows.
+
+**What it was.** `Scheduler::start()` called `checkDue()` synchronously, and
+`AppController::initialise()` calls `start()` — so an overdue rule submitted its job before
+there was a window at all. On a small tree that is a start that feels heavy. On the author's
+own, 797,128 files, it was worse than heavy: the scan holds `IndexDatabase`'s one mutex for the
+length of the walk, and session restore asks the index which volumes there are, so **the window
+never appeared**. Two symptoms, one cause, and the second was a report of its own.
+
+**The first check now waits five seconds.** Its own `QTimer` rather than a `singleShot`, so
+`stop()` can cancel it — a grace still pending after `stop()` would start a job in a test that
+had just asked for silence, which is the kind of thing that makes a suite flaky for reasons
+nobody can find. `start(poll, 0)` keeps the old behaviour for a test that is not testing the
+wait.
+
+**Measured against the condition that used to lock the application out.** With the overdue index
+rule enabled on a copy of the author's profile: window viewable at **two seconds**, and the scan
+following at about eight — CPU climbing 17%, 41%, 55% while the window sat there. Before this,
+the same profile never produced a window at all, at any point up to sixty seconds.
+
+**What this does not fix.** The interface can still stall *later* if it asks the index while a
+scan holds the mutex; that is MOLE-264's first point and the substantial one. What changes is
+that the window arrives first, so the Schedule tab is reachable and turning a rule off no longer
+means editing `schedule.json` by hand.
+
+---
+
 ## Setting an index's Repeat crashed the application
 
 **Asked for:** MOLE-265. The other half of the same report; the preserved-log half is below.

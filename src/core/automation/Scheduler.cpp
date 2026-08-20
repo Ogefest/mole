@@ -8,6 +8,8 @@ Scheduler::Scheduler(ScheduleStore* store, QObject* parent)
     : QObject(parent)
     , m_store(store)
 {
+    m_grace.setSingleShot(true);
+    connect(&m_grace, &QTimer::timeout, this, [this] { checkDue(); });
     m_timer.setSingleShot(false);
     connect(&m_timer, &QTimer::timeout, this, [this] { checkDue(); });
 }
@@ -43,16 +45,30 @@ QStringList Scheduler::jobKinds() const
     return kinds;
 }
 
-void Scheduler::start(int pollIntervalMs)
+void Scheduler::start(int pollIntervalMs, int graceMs)
 {
     m_timer.setInterval(std::max(1000, pollIntervalMs));
     m_timer.start();
-    checkDue();
+
+    // The window first, the scheduled work after it. This used to call checkDue()
+    // here, synchronously, from inside AppController::initialise() -- so a rule that
+    // was due submitted its scan before the window existed. On a large tree that is a
+    // start that drags, and it was worse than that: the scan holds the index's one
+    // mutex for the length of the walk, and session restore asks the index which
+    // volumes it knows about, so the window never appeared at all. See MOLE-264.
+    if (graceMs <= 0) {
+        checkDue();
+        return;
+    }
+    m_grace.setInterval(graceMs);
+    m_grace.start();
 }
 
 void Scheduler::stop()
 {
     m_timer.stop();
+    // Or a grace still pending would start a job just after somebody asked for none.
+    m_grace.stop();
 }
 
 int Scheduler::checkDue()

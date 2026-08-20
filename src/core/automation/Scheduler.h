@@ -58,9 +58,19 @@ public:
     IScheduledJob* job(const QString& jobKind) const;
     QStringList jobKinds() const;
 
-    /// Begins polling. The first check happens immediately, so a rule that
-    /// came due while the application was closed runs on start.
-    void start(int pollIntervalMs = 60000);
+    /// How long after start() the first check waits, by default.
+    ///
+    /// A rule that came due while the application was closed should run -- but not
+    /// while the window is still being built. Starting a scan of a large tree during
+    /// startup makes the application feel like it is dragging itself up, and in the
+    /// worst case takes the window with it: the scan holds the index's mutex and the
+    /// first thing the interface does is ask the index what volumes there are. So the
+    /// window goes first and the scheduled work follows a few seconds later, by which
+    /// time somebody is looking at something. See MOLE-264.
+    static constexpr int kStartupGraceMs = 5000;
+    /// Begins polling. The first check waits `graceMs`; pass 0 for immediately, which
+    /// is what a test wants when it is not testing the wait.
+    void start(int pollIntervalMs = 60000, int graceMs = kStartupGraceMs);
     void stop();
     bool isRunning() const { return m_timer.isActive(); }
 
@@ -87,6 +97,10 @@ private:
     QHash<QString, IScheduledJob*> m_jobs;
     QHash<QString, QDateTime> m_inFlight;
     QTimer m_timer;
+    /// The wait before the first check. Its own timer rather than a singleShot, so
+    /// stop() can cancel it -- a grace still pending after stop() would start a job
+    /// in a test that had just asked for silence.
+    QTimer m_grace;
     Clock m_clock;
 };
 

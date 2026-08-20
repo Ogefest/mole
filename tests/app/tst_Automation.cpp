@@ -43,6 +43,7 @@ private slots:
     void ruleSurvivesARestartOfTheApplication();
     void aScheduledRescanRunsSurvivesARestartAndCatchesUp();
     void anIntervalCanBeChosenChangedAndTurnedOffForAFolder();
+    void nothingScheduledRunsWhileTheWindowIsStillComingUp();
 
 private:
     /// The search tab, which is where a folder is put on a clock for indexing.
@@ -185,6 +186,42 @@ void TestAutomation::aScheduledReportRunsWithoutATabOpen()
     // And the report is filed where a tab opened later will find it.
     AnalysisStore store(QString::fromLocal8Bit(qgetenv("MOLE_ANALYSIS_PATH")));
     QVERIFY2(!store.history(uri).isEmpty(), "the scheduled run must leave a report behind");
+}
+
+/// A start that has work waiting must still put the window up first.
+///
+/// `Scheduler::start()` called `checkDue()` synchronously, from inside
+/// `AppController::initialise()` -- so an overdue rule submitted its job before there
+/// was a window. On a large tree that is a start that drags, and it was worse: the
+/// scan holds the index's one mutex for the length of the walk and session restore
+/// asks the index which volumes there are, so the window never appeared at all. The
+/// first check now waits. See MOLE-264.
+void TestAutomation::nothingScheduledRunsWhileTheWindowIsStillComingUp()
+{
+    m_app->scheduler()->stop();
+
+    ScheduleRule rule;
+    rule.id = QStringLiteral("overdue");
+    rule.jobKind = AnalysisJob::kind();
+    rule.label = QStringLiteral("Something that was due while we were closed");
+    rule.parameters.insert(AnalysisJob::rootUriParameter(), m_tree->rootUri().toString());
+    rule.intervalSeconds = 3600;
+    rule.lastRunAt = QDateTime::currentDateTime().addSecs(-7200);
+    m_app->schedules()->put(rule);
+
+    // A grace short enough for a test to wait out and long enough that the check
+    // below is not a race: what is asserted is that nothing has run *yet*, and that
+    // is true the instant start() returns whatever the grace is.
+    m_app->scheduler()->start(60000, 250);
+    QVERIFY2(
+        m_app->scheduler()->runningRules().isEmpty(), "a job was dispatched before the window could exist");
+    QCOMPARE(m_app->schedules()->rules().first().lastStatus, RunStatus::Never);
+
+    // And then it does run, because a rule that came due while the application was
+    // closed still has to happen -- just not first.
+    QVERIFY2(
+        waitFor([this] { return m_app->schedules()->rules().first().lastStatus != RunStatus::Never; }, 20000),
+        "the overdue rule never ran at all");
 }
 
 void TestAutomation::aFailedRunShowsUpInTheTrackingList()
