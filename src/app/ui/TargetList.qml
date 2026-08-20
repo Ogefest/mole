@@ -40,9 +40,16 @@ Rectangle {
         // `implicitHeight` above chases `list.contentHeight`, which is zero until the
         // delegates exist -- so the box starts one row tall with a full model behind
         // it, the content overflows for those frames, and an AsNeeded scrollbar goes
-        // active and then fades out again. A scrollbar appearing and vanishing in a
-        // dialog that never needed one, and the tail of the fade was in the guide's
-        // pictures of this dialog and the delete one, on some runs and not others.
+        // active and then fades out again: a scrollbar appearing and vanishing in a
+        // dialog that never needed one.
+        //
+        // It was *also* blamed for the guide's pictures of this dialog and the delete
+        // one differing between runs, and that was wrong -- see MOLE-266. Those
+        // differences are the 📄 glyph below rasterising differently, in two 7x10
+        // patches whose 41-pixel span was mistaken for a scrollbar's height without
+        // anybody looking at the pixels. This binding is still right on its own
+        // terms, and the test on it asserts something that was genuinely false
+        // before; it just never fixed what it was credited with.
         //
         // `list.count` comes from the model and does not wait for a layout, so the
         // answer is known before there is anything to get wrong. See MOLE-260.

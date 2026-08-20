@@ -44,6 +44,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QImage>
+#include <QRect>
 #include <QSet>
 #include <QStringList>
 #include <QTextStream>
@@ -73,6 +74,10 @@ Difference compare(const QImage& before, const QImage& after, int tolerance)
 
     const QImage a = before.convertToFormat(QImage::Format_RGB32);
     const QImage b = after.convertToFormat(QImage::Format_RGB32);
+    int left = a.width();
+    int top = a.height();
+    int right = -1;
+    int bottom = -1;
     for (int y = 0; y < a.height(); ++y) {
         const auto* rowA = reinterpret_cast<const QRgb*>(a.constScanLine(y));
         const auto* rowB = reinterpret_cast<const QRgb*>(b.constScanLine(y));
@@ -84,10 +89,17 @@ Difference compare(const QImage& before, const QImage& after, int tolerance)
             const int delta = std::max({ std::abs(qRed(pa) - qRed(pb)), std::abs(qGreen(pa) - qGreen(pb)),
                 std::abs(qBlue(pa) - qBlue(pb)) });
             result.worstDelta = std::max(result.worstDelta, delta);
-            if (delta > tolerance)
-                ++result.changedPixels;
+            if (delta <= tolerance)
+                continue;
+            ++result.changedPixels;
+            left = std::min(left, x);
+            top = std::min(top, y);
+            right = std::max(right, x);
+            bottom = std::max(bottom, y);
         }
     }
+    if (right >= 0)
+        result.where = QRect(QPoint(left, top), QPoint(right, bottom));
     return result;
 }
 

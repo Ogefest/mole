@@ -64,19 +64,30 @@ WALKTHROUGH="$BUILD/tests/tst_Walkthrough"
 #                              and "16 ms" the next, and the duration is the content
 #   16-alerts                  when the check ran, to the minute
 #   17-reports                 how long the analysis took
-#   26-indexes                 **not understood.** It moved once, by six and a half
-#                              thousand pixels, and has not recurred. That is not
-#                              rendering noise and not a clock -- something about
-#                              what the view was showing differed. It is named here
-#                              so the check stays usable rather than going red for a
-#                              reason nobody can act on, and MOLE-261 carries the
-#                              measurement. This is the only entry in this list that
-#                              is not a claim about the picture, and it comes out
-#                              when that task closes.
+#   26-indexes                 **seen once and never again.** It moved on 2026-08-20
+#                              by 6652 pixels, and did not recur in eight further
+#                              pairs of runs, two of them under a load average above
+#                              seven. The one clock in that view is the row's
+#                              "scanned just now", which `ageInWords()` turns into
+#                              "2 minutes ago" at exactly 120 seconds -- but the step
+#                              scans and photographs well inside that even under
+#                              load, so it is a mechanism without evidence rather
+#                              than a cause. Named so the check stays usable, and it
+#                              comes out when MOLE-261 closes on a second sighting.
+#                              **A sighting now explains itself**: the line names the
+#                              box the differences fall inside and both copies are
+#                              kept, which is what was missing the first time.
+#   13-compress, 14-delete     the 📄 and 📁 glyphs in the list of what an operation
+#                              is aimed at do not rasterise to the same pixels twice:
+#                              two 7x10 patches, up to 37 levels out, in the icon
+#                              column. Named with the real reason after being blamed
+#                              on a scrollbar in MOLE-260 -- the 41-pixel span
+#                              between the two icons was read as a scrollbar's height
+#                              without anybody looking at the pixels. MOLE-266.
 #
 # Everything else must be identical. Anything new appearing below is a regression
 # in determinism, and the honest response is to fix it rather than to add a line.
-EXPECTED='01d-slow-folder,02b-preview-csv-loading,24-transfer-running,08-automation,16-alerts,17-reports,26-indexes'
+EXPECTED='01d-slow-folder,02b-preview-csv-loading,24-transfer-running,08-automation,16-alerts,17-reports,26-indexes,13-compress,14-delete'
 
 # A pixel differs when a channel is more than eight levels out -- below that is the
 # renderer's own noise, invisible and unavoidable. A picture has changed when even
@@ -84,6 +95,14 @@ EXPECTED='01d-slow-folder,02b-preview-csv-loading,24-transfer-running,08-automat
 # about how many, or a real one-word change would slip through.
 TOLERANCE=8
 PIXELS=0
+
+# Where a sighting is left behind. Both runs go into temporary directories that are
+# taken away on exit, and that is how MOLE-261 got away: `26-indexes` moved once, the
+# run printed a pixel count, and by the time anybody asked what had moved both copies
+# were gone. Anything that changes is copied out to here instead, so the next
+# occurrence explains itself without somebody having to be watching.
+KEPT="${MOLE_SHOTS_KEPT:-$BUILD/screenshots-changed}"
+rm -rf "$KEPT"
 
 first="$(mktemp -d)"; second="$(mktemp -d)"
 trap 'rm -rf "$first" "$second"' EXIT
@@ -98,7 +117,8 @@ for pass in "$first" "$second"; do
 done
 
 echo
-"$COMPARE" "$first" "$second" --tolerance "$TOLERANCE" --pixels "$PIXELS" --allow "$EXPECTED"
+"$COMPARE" "$first" "$second" --tolerance "$TOLERANCE" --pixels "$PIXELS" --allow "$EXPECTED" \
+    --keep "$KEPT"
 status=$?
 echo
 if [ "$status" -eq 0 ]; then
@@ -107,5 +127,8 @@ else
     echo "A picture moved with nothing changed. Either find what is not fixed yet," >&2
     echo "or -- if it is genuinely a picture of something in motion -- name it in" >&2
     echo "EXPECTED above, with the reason." >&2
+    echo >&2
+    echo "Both versions of each one are in $KEPT, and the line above says which" >&2
+    echo "box the differences fall inside. Look before re-running: it may not come back." >&2
 fi
 exit $status

@@ -41,21 +41,36 @@ project, and a contributor should never hit a wall of text they cannot read.
   changing four passing tests on a hunch. `clickOn` has no double-click twin yet,
   which is what `tst_SetsTab` would need.
 
-- **Eight of the guide's pictures cannot be identical twice running, and they are
+- **Nine of the guide's pictures cannot be identical twice running, and they are
   named in `scripts/check-screenshots.sh`.** Three are of something in motion on
   purpose — a folder still loading, a CSV part-read, a transfer in flight — and
   photographing the settled state instead would lose the point of the picture. Three
   carry a duration or a timestamp as their *content*: a run's row saying "26 ms" one
   time and "16 ms" the next is the row working correctly, and freezing the clock
   application-wide would mean a test seam in thirty-eight call sites across twenty
-  files, which is not proportionate to a picture. `27-gallery` waits on MOLE-258.
+  files, which is not proportionate to a picture.
 
-  The eighth, `26-indexes`, is the odd one: it moved once by six and a half thousand
-  pixels and the cause was never identified. It is named so the check stays usable
-  rather than going red for a reason nobody can act on, MOLE-261 carries the
-  measurement, and the entry comes out when that task closes. **It is the only name in
-  that list which is not a claim about the picture, and it should stay the only one** —
-  a list of "we do not know" is a list nobody can act on either.
+  The seventh, `26-indexes`, is the odd one: it moved once, by 6652 pixels, and did not
+  recur in eight further pairs of runs — two of them under a load average above seven.
+  The only clock in that view is the row's "scanned just now", which `ageInWords()`
+  turns into "2 minutes ago" at exactly 120 seconds; the step scans and photographs
+  well inside that even under load, so that is a mechanism without evidence rather
+  than a cause, and it is not written down as one. **It is the only name in that list
+  which is not a claim about the picture, and it should stay the only one** — a list of
+  "we do not know" is a list nobody can act on either.
+
+  `13-compress` and `14-delete` are the last two, and they carry a lesson: the 📄 glyph
+  in their icon column does not rasterise to the same pixels twice, and that was
+  blamed on a scrollbar in MOLE-260 on the strength of a bounding box nobody looked
+  inside. MOLE-266 has the measurement. The same codepoint is stable in the sidebar,
+  which is the thread to pull.
+
+  What changed is that a second sighting will explain itself. `compare-shots` now
+  prints the box the differences fall inside, and `check-screenshots.sh` copies both
+  versions of anything that moved into `build/debug/screenshots-changed` instead of
+  letting the two temporary directories take them away. That is what was missing the
+  first time: the run said *6652 pixels* and nothing else, and by the time anybody
+  asked what had moved there was nothing left to look at.
 
 - **`make screenshots-check` compares what an eye can see, not bytes, and that is
   a measurement rather than a preference.** With every cause fixed, two runs still

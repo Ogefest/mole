@@ -59,7 +59,7 @@ commit holds the change rather than the noise.
 fixed, what remained between two runs was one to five levels out of 255, in a few
 dozen pixels, in pictures whose content was letter-for-letter identical: Qt's scene
 graph does not render a given frame to the same bytes twice. Forty-six of the
-fifty-three do come out byte-identical, and which seven do not moves from run to
+fifty-three do come out byte-identical, and which few do not moves from run to
 run — so a byte comparison with a list of exceptions would be a flaky check, and a
 flaky check is worse than none because it teaches everyone to ignore red.
 
@@ -106,7 +106,14 @@ between Qt versions: an upgrade must not rewrite the guide.
 - A picture that is genuinely of something in motion has to be named, with a
   reason, in one place. That list is a claim about the picture and not a place to
   put things that are merely hard, and it is short: three pictures of work in
-  progress, three rows that say when or how long, and one that waits on MOLE-258.
+  progress, three rows that say when or how long, and one sighting nobody has
+  explained (MOLE-261).
+- **A count of changed pixels is not a lead.** The first thing the check ever caught
+  that was not already understood said *6652 pixels* and nothing else, and by the time
+  anybody asked what had moved, both runs' copies were gone with their temporary
+  directories. It now prints the box the differences fall inside and copies both
+  versions out, so the next unexplained sighting explains itself. A check that finds
+  something nobody can then look at is only half a check.
 - The tolerance could hide a change of one to eight levels across a whole picture
   — a barely-shifted background colour, say. Nothing in the guide is that kind of
   change, and the alternative is a check nobody can keep green.

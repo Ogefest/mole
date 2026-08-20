@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-20 #MOLE-261 A picture that moves says where it moved and keeps both copies, so an unexplained one explains itself next time
 2026-08-20 #MOLE-264 Scheduled jobs wait a few seconds after startup, so the window comes up before the work does
 2026-08-20 #MOLE-265 Setting an index's Repeat no longer crashes the application
 2026-08-20 #MOLE-265 A crash's backtrace survives the restarts that follow it, instead of being rotated away by the second one

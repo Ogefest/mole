@@ -9,6 +9,46 @@ wrong.
 
 ---
 
+## A picture moved once with nothing changed, and the cause was never found
+
+**Asked for:** MOLE-261 — either name the cause of `26-indexes` moving, or reproduce it enough
+times to say what varies.
+
+**Neither, honestly.** It moved on 2026-08-20 by 6652 pixels and has not moved since: eight
+further pairs of runs, two of them under a load average above seven, all clean. So this entry is
+the third outcome, the one MOLE-256's brief spelled out for its own case — *the honest answer is
+that the fault could not be caught, and the thing to fix instead is the reason it got away.*
+
+**The mechanism I found is not evidence, and is not written down as a cause.** The one clock in
+that view is the row's `scanned just now`, which `ageInWords()` turns into `2 minutes ago` at
+exactly 120 seconds. It is in the picture — the crop shows it — and it would move a whole row's
+worth of pixels. But the step scans and photographs well inside two minutes even under load, so
+it is a mechanism without evidence. Naming it in the exceptions list would have been a guess
+wearing the clothes of a finding, and that list is supposed to be claims.
+
+**What got away was the evidence, and that is fixed.** The run that saw it printed *6652 pixels*
+and nothing else. Both copies were in temporary directories that `check-screenshots.sh` deletes
+on exit, so by the time anybody asked *what* had moved there was nothing left to look at — the
+same shape as MOLE-256's lost assertion, in a different tool.
+
+- `compare-shots` now reports the box the differences fall inside: `56 pixels, worst 221, in
+  37x48 at 821,443`. A count says something changed; a box says where to look.
+- `check-screenshots.sh` copies both versions of anything that moved into
+  `build/debug/screenshots-changed`, and says so when it fails.
+
+`26-indexes` stays in the exceptions list, with the run count and the date, and the entry says
+plainly that it is the one name there which is not a claim about the picture. It comes out on a
+second sighting — which will now arrive with a box and two files.
+
+**A mistake worth recording.** The comparator change was written, then interrupted by a crash
+report, and swept into an unrelated commit by a `git add -A`. Worse, the part that tracks the box
+had silently not applied: `make format` had reflowed the line the patch was anchored to, and that
+one replacement was the only one without an assertion on its anchor. It built, ran, and printed
+`in 0x0 at 0,0` for every picture — a feature that looked present and did nothing. The check that
+caught it was reading the output rather than trusting the diff.
+
+---
+
 ## A start with work waiting put the work first
 
 **Asked for:** by the author, from use — *startowanie taskow przy starcie aplikacji powinno byc
@@ -317,9 +357,20 @@ one.
 
 **How it was caught.** `make screenshots-check` went red with the same signature in both
 dialogs, to the pixel: a 7 by 41 strip, no channel more than 37 levels out — `13-compress` at
-(526,336) and `14-delete` at (536,425). The tail of the fade, caught at a different point on
-different runs. Raising the grab budget to 2.4 seconds during MOLE-255 had made it rarer rather
-than gone, which is what racing a fade rather than avoiding it looks like.
+(526,336) and `14-delete` at (536,425).
+
+**And that signature was not this fault. See MOLE-266.** Nobody looked at those pixels: a
+7-wide, 41-tall box is the right shape for a scrollbar handle, this list did have a real
+transient-scrollbar problem, and after the fix `13-compress` stopped moving — which read as
+confirmation and was coincidence. `14-delete` returned with the identical signature on the next
+check, and blown up it is the 📄 glyph in the icon column rasterising differently: two 7 by 10
+patches, thirty-one pixels apart, which is where the "41" came from.
+
+The fix below stays, because an `AsNeeded` scrollbar over a list that fits was real and its test
+asserts something that was false before. What is corrected is the credit: it never fixed the
+pictures. **A pixel count and a bounding box are a lead, not a diagnosis, and a symptom that
+stops is not evidence that the cause was understood** — `compare-shots --keep` now exists so the
+pixels can be looked at, and this is the fault that shows why they have to be.
 
 **The fix says it outright instead of inferring it.** The list only ever scrolls when there are
 more rows than `maximumRows`, and `list.count` comes from the model rather than from a layout —
@@ -338,8 +389,9 @@ whole fixture root, which is far more than the five rows the dialog shows, and a
 scrollbar *is* visible with a handle smaller than the track. Turning the policy to `AlwaysOff`
 unconditionally passes the two-row assertion and fails this one, which is what was checked.
 
-**Verified:** both halves fail against their own wrong answers, the suite is green, and
-`make guide-images` now rewrites only the five pictures named as expected to differ.
+**Verified:** both halves fail against their own wrong answers, and the suite is green. The
+claim about `guide-images` rewriting only the named pictures was true of the run that measured it
+and was not the scrollbar's doing — see the correction above.
 
 ---
 
