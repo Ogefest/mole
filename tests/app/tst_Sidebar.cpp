@@ -11,6 +11,8 @@
 #include "core/tasks/TaskManager.h"
 
 #include <QGuiApplication>
+#include <QQmlContext>
+#include <QQmlProperty>
 #include <QQuickItem>
 #include <QSemaphore>
 #include <QSignalSpy>
@@ -63,6 +65,11 @@ private slots:
     void clickingABookmarkedSetShowsTheSetsTabWithItCurrent();
     void aBookmarkToADeletedSetSaysSoAndChangesNothing();
     void theBookmarksMenuOpensASetTheSameWayTheSidebarDoes();
+    void aFolderBookmarkAndASetBookmarkCanBeToldApartWithoutClicking();
+    void aDeadSetBookmarkReadsAsDeadAndKeepsItsName();
+    void ctrlDInTheSetsTabBookmarksTheCurrentSet();
+    void ctrlDStillAddsTheFolderInABrowser();
+    void ctrlDIsGreyedOutWithNoSetSelected();
 
 private:
     /// The passphrase dialog, which is a Popup and so never appears in the
@@ -90,6 +97,15 @@ private:
     {
         return buttonIn(rowNamed(driveName), QStringLiteral("placeStateDot"));
     }
+    /// The kind mark on a row, which is the whole of what tells a folder bookmark
+    /// from a set one without clicking either.
+    QString glyphOn(const QString& label) const
+    {
+        QQuickItem* glyph = buttonIn(rowNamed(label), QStringLiteral("placeRowGlyph"));
+        return glyph && glyph->isVisible() ? glyph->property("text").toString() : QString();
+    }
+    /// Whether one entry in the menu is offered, and under what name.
+    QVariantMap menuEntry(const QString& id) const;
     /// The three channels of one dot, as the view actually has them.
     struct DotLook
     {
@@ -815,6 +831,133 @@ void TestSidebar::theBookmarksMenuOpensASetTheSameWayTheSidebarDoes()
         }
     }
     QVERIFY2(found, "the Bookmarks menu lost the entry when the set was renamed");
+}
+
+QVariantMap TestSidebar::menuEntry(const QString& id) const
+{
+    for (const QVariant& sectionEntry : m_harness->app()->buildMenu()) {
+        const QVariantList entries = sectionEntry.toMap().value(QStringLiteral("actions")).toList();
+        for (const QVariant& entry : entries) {
+            if (entry.toMap().value(QStringLiteral("id")).toString() == id)
+                return entry.toMap();
+        }
+    }
+    return {};
+}
+
+// ------------------------------------- telling a folder from a set, and Ctrl+D
+
+void TestSidebar::aFolderBookmarkAndASetBookmarkCanBeToldApartWithoutClicking()
+{
+    const FileSet set = m_harness->app()->sets()->create(QStringLiteral("Reading list"));
+    QVERIFY(m_harness->app()->bookmarks()->addSet(set.id));
+    QVERIFY(m_harness->app()->bookmarks()->add(m_harness->fixtureUri(), QStringLiteral("Fixture")));
+    QVERIFY(m_harness->until([this] { return rowNamed(QStringLiteral("Fixture")) != nullptr; }));
+
+    // The names say nothing about what they point at, so the mark has to.
+    QCOMPARE(glyphOn(QStringLiteral("Fixture")), QStringLiteral("\U0001F4C1"));
+    QCOMPARE(glyphOn(QStringLiteral("Reading list")), QStringLiteral("\u2637"));
+
+    // And a drive row still has none: every drive is the same kind of thing, and a
+    // mark that says only "this is a place" is the decoration this list refuses.
+    DriveListModel* drives = m_harness->app()->drives();
+    QVERIFY(drives->rowCount() > 0);
+    const QString drive = drives->index(0, 0).data(DriveListModel::DisplayNameRole).toString();
+    QVERIFY(rowNamed(drive));
+    QCOMPARE(glyphOn(drive), QString());
+}
+
+void TestSidebar::aDeadSetBookmarkReadsAsDeadAndKeepsItsName()
+{
+    FileSetStore* sets = m_harness->app()->sets();
+    const FileSet set = sets->create(QStringLiteral("Reading list"));
+    QVERIFY(m_harness->app()->bookmarks()->addSet(set.id));
+    QVERIFY(m_harness->until([this] { return rowNamed(QStringLiteral("Reading list")) != nullptr; }));
+
+    QQuickItem* label = buttonIn(rowNamed(QStringLiteral("Reading list")), QStringLiteral("placeRowLabel"));
+    QVERIFY(label);
+    const QColor alive = label->property("color").value<QColor>();
+
+    QVERIFY(sets->remove(set.id));
+    m_harness->settle(3);
+
+    // Still listed, still under the last name anybody saw, and visibly not
+    // somewhere to go.
+    QQuickItem* row = rowNamed(QStringLiteral("Reading list"));
+    QVERIFY2(row, "a bookmark whose set has gone must stay in the list");
+    QVERIFY(row->property("dead").toBool());
+    QQuickItem* after = buttonIn(row, QStringLiteral("placeRowLabel"));
+    QVERIFY(after);
+    QVERIFY2(after->property("color").value<QColor>() != alive,
+        "a dead bookmark has to look different from a live one");
+    QCOMPARE(after->property("color").value<QColor>(), QColor(QStringLiteral("#8b93a7")));
+    // The tooltip is where the reason is. An attached property, so read the way
+    // QML reads it rather than through QObject::property, which cannot see it.
+    const QString tip = QQmlProperty(row, QStringLiteral("ToolTip.text"), qmlContext(row)).read().toString();
+    QVERIFY2(tip.contains(QStringLiteral("deleted")),
+        qPrintable(QStringLiteral("the tooltip has to say the set is gone, and says: %1").arg(tip)));
+}
+
+void TestSidebar::ctrlDInTheSetsTabBookmarksTheCurrentSet()
+{
+    FileSetStore* sets = m_harness->app()->sets();
+    const FileSet set = sets->create(QStringLiteral("Reading list"));
+    const int row = m_harness->app()->tabs()->openTab(QStringLiteral("core.filesets"));
+    QVERIFY(row >= 0);
+    QObject* controller = m_harness->app()->tabs()->controllerAt(row);
+    QVERIFY(controller);
+    controller->setProperty("currentSetId", set.id);
+    m_harness->settle(3);
+
+    // The entry says what it is about to act on, rather than reading as though it
+    // were about a folder.
+    QCOMPARE(menuEntry(QStringLiteral("mole.bookmarks.add")).value(QStringLiteral("title")).toString(),
+        QStringLiteral("Add this set"));
+    QVERIFY(menuEntry(QStringLiteral("mole.bookmarks.add")).value(QStringLiteral("enabled")).toBool());
+
+    QVERIFY(m_harness->app()->triggerAction(QStringLiteral("mole.bookmarks.add")));
+    QVERIFY(m_harness->app()->bookmarks()->containsSet(set.id));
+    QCOMPARE(m_harness->app()->bookmarks()->rowCount(), 1);
+
+    // Again adds nothing, and the entry says so by being greyed.
+    m_harness->settle(3);
+    QVERIFY(!menuEntry(QStringLiteral("mole.bookmarks.add")).value(QStringLiteral("enabled")).toBool());
+    m_harness->app()->triggerAction(QStringLiteral("mole.bookmarks.add"));
+    QCOMPARE(m_harness->app()->bookmarks()->rowCount(), 1);
+
+    // And Remove is about the set too.
+    QCOMPARE(menuEntry(QStringLiteral("mole.bookmarks.remove")).value(QStringLiteral("title")).toString(),
+        QStringLiteral("Remove this set"));
+    QVERIFY(m_harness->app()->triggerAction(QStringLiteral("mole.bookmarks.remove")));
+    QCOMPARE(m_harness->app()->bookmarks()->rowCount(), 0);
+}
+
+void TestSidebar::ctrlDStillAddsTheFolderInABrowser()
+{
+    // The browser the window opened on. Nothing about sets is in front of the
+    // user, so Ctrl+D means what it always meant.
+    QCOMPARE(menuEntry(QStringLiteral("mole.bookmarks.add")).value(QStringLiteral("title")).toString(),
+        QStringLiteral("Add current folder"));
+    QVERIFY(m_harness->app()->triggerAction(QStringLiteral("mole.bookmarks.add")));
+
+    QCOMPARE(m_harness->app()->bookmarks()->rowCount(), 1);
+    QCOMPARE(m_harness->app()->bookmarks()->index(0, 0).data(BookmarkModel::KindRole).toString(),
+        QStringLiteral("folder"));
+    QVERIFY(m_harness->app()->bookmarks()->contains(m_harness->fixtureUri()));
+}
+
+void TestSidebar::ctrlDIsGreyedOutWithNoSetSelected()
+{
+    // A Sets tab with nothing chosen has no subject at all: not a folder, because
+    // it has no location, and not a set, because none is current.
+    const int row = m_harness->app()->tabs()->openTab(QStringLiteral("core.filesets"));
+    QVERIFY(row >= 0);
+    m_harness->settle(3);
+
+    QVERIFY2(!menuEntry(QStringLiteral("mole.bookmarks.add")).value(QStringLiteral("enabled")).toBool(),
+        "Ctrl+D with no set selected has to be greyed out");
+    m_harness->app()->triggerAction(QStringLiteral("mole.bookmarks.add"));
+    QCOMPARE(m_harness->app()->bookmarks()->rowCount(), 0);
 }
 
 int main(int argc, char** argv)

@@ -57,8 +57,18 @@ Rectangle {
         return "#4f8cc9"
     }
 
-    // A row in either list. No icons: a glyph nobody can decode is worse than
-    // the name it replaced.
+    // A row in either list.
+    //
+    // No glyph for the sake of decoration: one nobody can decode is worse than the
+    // name it replaced, which is why the drives have none -- every drive row is
+    // the same kind of thing and the name is the whole of what distinguishes them.
+    // The bookmarks are not: a folder and a set are unlike, and once both can be
+    // bookmarked the name alone leaves them indistinguishable until one is
+    // clicked. So a bookmark row wears a mark of its *kind*, borrowed rather than
+    // invented -- 📁 is how a folder is drawn in every listing and ☷ is the Sets
+    // feature's own glyph, so a set bookmark wears the mark of the tab it opens.
+    // The palette has shown a glyph beside every bookmark since it was built, so
+    // this is the window agreeing with itself. See MOLE-209.
     component PlaceRow: ItemDelegate {
         id: row
         objectName: "placeRow"
@@ -67,6 +77,12 @@ Rectangle {
         /// What `target` is: "folder" for a place a uri can point at -- which is
         /// every drive row -- or "set". See ADR-0061.
         property string kind: "folder"
+        /// The mark for that kind. Empty for a list holding only one kind.
+        property string glyph: ""
+        /// The thing this points at is gone -- a set that has been deleted. The
+        /// row stays: deciding a bookmark has stopped being useful belongs to the
+        /// person who made it, so it reads as dead rather than disappearing.
+        property bool dead: false
         property bool removable: false
         // Capacity, when the drive has one. A bucket or an archive has no
         // meaningful size, and the row is simply a name in that case rather
@@ -142,7 +158,7 @@ Rectangle {
 
         ToolTip.visible: hovered
         ToolTip.text: {
-            var lines = [target]
+            var lines = [row.dead ? qsTr("This set has been deleted") : target]
             if (row.stateCaption !== "")
                 lines.push(row.stateCaption)
             if (capacityKnown)
@@ -242,6 +258,16 @@ Rectangle {
                     }
                 }
                 Label {
+                    objectName: "placeRowGlyph"
+                    visible: row.glyph !== ""
+                    text: row.glyph
+                    // From the scale, not a literal: the mark sits beside the name
+                    // and has to keep sitting beside it when the scale changes.
+                    font.pixelSize: App.secondaryTextSize
+                    color: row.dead ? sidebar.mutedText : Material.foreground
+                    Layout.alignment: Qt.AlignVCenter
+                }
+                Label {
                     objectName: "placeRowLabel"
                     Layout.fillWidth: true
                     text: row.label
@@ -249,9 +275,11 @@ Rectangle {
                     font.pixelSize: App.textSize
                     // A drive nobody has connected is still a drive, and still
                     // worth listing -- but it is not somewhere you can go right
-                    // now, and the row should not read as though it were.
-                    color: row.actionable && row.connectable ? sidebar.mutedText
-                                                             : Material.foreground
+                    // now, and the row should not read as though it were. A
+                    // bookmark whose set has gone reads the same way, for the same
+                    // reason: still listed, not somewhere to go.
+                    color: row.dead || (row.actionable && row.connectable) ? sidebar.mutedText
+                                                                          : Material.foreground
                 }
                 Label {
                     // Shown whether or not the pointer is here. It used to be
@@ -466,8 +494,10 @@ Rectangle {
                 // property to itself.
                 required kind
                 required target
+                required dead
 
                 label: name
+                glyph: kind === "set" ? "☷" : "📁"
                 removable: true
                 onRemoveRequested: App.bookmarks.removeAt(index)
             }

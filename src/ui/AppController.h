@@ -497,6 +497,8 @@ private:
     bool restoreSession();
     /// Rebuilds the one-entry-per-bookmark part of the menu.
     void refreshBookmarkActions();
+    /// The set the current tab is about, or empty when it is not about one.
+    QString currentSetId() const;
     /// Where the current tab is pointing, or an empty string for a tab that
     /// has no location.
     QString currentLocation() const;

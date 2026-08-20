@@ -367,6 +367,10 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     m_taskModel = new TaskListModel(m_taskManager, this);
     m_terminal = new TerminalController(this);
     m_tabs = new TabsModel(m_features, this);
+    // What Ctrl+D is about -- a folder or a set -- depends on which tab is in
+    // front of you, so the two entries that act on where you are are rebuilt when
+    // that changes. See MOLE-209.
+    connect(m_tabs, &TabsModel::currentIndexChanged, this, &AppController::refreshBookmarkActions);
 
     // Registered after the plugins so the "new tab" entries cover every
     // feature that exists, built-in or not.
@@ -1420,30 +1424,6 @@ void AppController::registerShellActions()
     //
     // The saved places themselves are appended below, rebuilt whenever the
     // list changes, so they are reachable from the keyboard like anything else.
-    {
-        MenuAction action;
-        action.id = QStringLiteral("mole.bookmarks.add");
-        action.section = MenuAction::Section::Bookmarks;
-        action.title = QStringLiteral("Add current folder");
-        action.shortcut = QStringLiteral("Ctrl+D");
-        action.sortOrder = 10;
-        action.enabled = [this] {
-            const QString here = currentLocation();
-            return !here.isEmpty() && !m_bookmarks->contains(here);
-        };
-        action.trigger = [this] { m_bookmarks->add(currentLocation()); };
-        m_actions->addAction(std::move(action));
-    }
-    {
-        MenuAction action;
-        action.id = QStringLiteral("mole.bookmarks.remove");
-        action.section = MenuAction::Section::Bookmarks;
-        action.title = QStringLiteral("Remove current folder");
-        action.sortOrder = 20;
-        action.enabled = [this] { return m_bookmarks->contains(currentLocation()); };
-        action.trigger = [this] { m_bookmarks->removeUri(currentLocation()); };
-        m_actions->addAction(std::move(action));
-    }
     refreshBookmarkActions();
 
     // --- Tools --------------------------------------------------------
@@ -2247,15 +2227,80 @@ QVariantList AppController::setChoices() const
     return out;
 }
 
+QString AppController::currentSetId() const
+{
+    QObject* controller = m_tabs ? m_tabs->currentController() : nullptr;
+    if (!controller)
+        return {};
+    // By property, not by type, the same way currentTargets() finds targetUris():
+    // a controller with a non-empty currentSetId is a tab whose subject is a set,
+    // and nothing here has to learn what a set is. See MOLE-209.
+    return controller->property("currentSetId").toString();
+}
+
 void AppController::refreshBookmarkActions()
 {
     if (!m_actions || !m_bookmarks)
         return;
 
     // Rebuilt wholesale rather than kept in sync row by row: the list is a
-    // handful of entries and correctness beats cleverness here.
-    static const QString prefix = QStringLiteral("mole.bookmarks.go.");
+    // handful of entries and correctness beats cleverness here. The two entries
+    // that act on where you are are rebuilt too, because what they act on -- a
+    // folder or a set -- depends on which tab is in front of you, and an entry
+    // that says "folder" while about to bookmark a set is worse than no entry.
+    static const QString prefix = QStringLiteral("mole.bookmarks.");
     m_actions->removeActionsStartingWith(prefix);
+
+    const bool aboutASet = !currentSetId().isEmpty();
+    {
+        MenuAction action;
+        action.id = QStringLiteral("mole.bookmarks.add");
+        action.section = MenuAction::Section::Bookmarks;
+        action.title = aboutASet ? QStringLiteral("Add this set") : QStringLiteral("Add current folder");
+        action.shortcut = QStringLiteral("Ctrl+D");
+        action.sortOrder = 10;
+        // The predicates read the tab again rather than trusting the title: the
+        // title is a label rebuilt on a tab change, and these decide what happens.
+        action.enabled = [this] {
+            const QString set = currentSetId();
+            if (!set.isEmpty())
+                return !m_bookmarks->containsSet(set);
+            const QString here = currentLocation();
+            return !here.isEmpty() && !m_bookmarks->contains(here);
+        };
+        action.trigger = [this] {
+            const QString set = currentSetId();
+            if (!set.isEmpty()) {
+                m_bookmarks->addSet(set);
+                return;
+            }
+            m_bookmarks->add(currentLocation());
+        };
+        m_actions->addAction(std::move(action));
+    }
+    {
+        MenuAction action;
+        action.id = QStringLiteral("mole.bookmarks.remove");
+        action.section = MenuAction::Section::Bookmarks;
+        action.title
+            = aboutASet ? QStringLiteral("Remove this set") : QStringLiteral("Remove current folder");
+        action.sortOrder = 20;
+        action.enabled = [this] {
+            const QString set = currentSetId();
+            return set.isEmpty() ? m_bookmarks->contains(currentLocation()) : m_bookmarks->containsSet(set);
+        };
+        action.trigger = [this] {
+            const QString set = currentSetId();
+            if (!set.isEmpty()) {
+                m_bookmarks->removeSet(set);
+                return;
+            }
+            m_bookmarks->removeUri(currentLocation());
+        };
+        m_actions->addAction(std::move(action));
+    }
+
+    static const QString goPrefix = QStringLiteral("mole.bookmarks.go.");
 
     int order = 100;
     for (int row = 0; row < m_bookmarks->rowCount(); ++row) {
@@ -2267,7 +2312,8 @@ void AppController::refreshBookmarkActions()
         // A folder keeps the id it has always had. A set's id is not a uri, so it
         // gets its own form rather than being concatenated into the same space:
         // one id per bookmark, whatever it points at.
-        action.id = kind == QLatin1String("set") ? prefix + QStringLiteral("set.") + target : prefix + target;
+        action.id
+            = kind == QLatin1String("set") ? goPrefix + QStringLiteral("set.") + target : goPrefix + target;
         action.section = MenuAction::Section::Bookmarks;
         // The set's current name, read from the store by the model.
         action.title = at.data(BookmarkModel::NameRole).toString();
