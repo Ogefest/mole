@@ -326,6 +326,10 @@ mole_add_test(tst_SetsTab           SOURCES app/tst_SetsTab.cpp         LIBS mol
 # Choosing what to keep, which is the half of a duplicate scan that can lose a
 # file: no rule may ever propose deleting every copy of anything.
 mole_add_test(tst_DuplicatesTab     SOURCES app/tst_DuplicatesTab.cpp   LIBS mole_qml_harness mole_builtin)
+# The indexes tab with a window behind it. tst_IndexesTab is headless and covers what
+# the controller answers; the fault in MOLE-265 was in the delegate the Repeat
+# dropdown lives in, which a headless controller does not have.
+mole_add_test(tst_IndexesView       SOURCES app/tst_IndexesView.cpp     LIBS mole_qml_harness mole_builtin)
 
 # The gallery and the thumbnail queue together: the bound, and what a folder
 # somebody has left leaves behind. Neither is a claim about either alone.

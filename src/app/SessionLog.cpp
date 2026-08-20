@@ -4,6 +4,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QMutex>
 #include <QStandardPaths>
 #include <QTextStream>
@@ -175,6 +176,30 @@ namespace {
 
 } // namespace
 
+namespace {
+
+    /// How many crashes are kept. Enough to see a pattern, few enough that nobody
+    /// finds them by wondering where their disk went.
+    constexpr int kCrashLogsKept = 5;
+
+    /// Whether a log records a crash, which is the only thing that makes it worth
+    /// more than the one rotation slot.
+    ///
+    /// The tail rather than the whole file: with `MOLE_LOG` turned up a log runs to
+    /// megabytes, and the marker is written just before the process dies.
+    bool endsInACrash(const QString& path)
+    {
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly))
+            return false;
+        constexpr qint64 kTail = 64 * 1024;
+        if (file.size() > kTail)
+            file.seek(file.size() - kTail);
+        return QString::fromUtf8(file.readAll()).contains(QStringLiteral("crashed: signal"));
+    }
+
+} // namespace
+
 QString defaultPath()
 {
     const QByteArray override = qgetenv("MOLE_LOG_PATH");
@@ -195,6 +220,30 @@ QString install()
     const QFileInfo info(path);
     if (!QDir().mkpath(info.absolutePath()))
         return {};
+
+    // A log that ends in a crash is moved somewhere rotation never looks.
+    //
+    // Keeping one previous run is right for an ordinary restart and not enough for a
+    // crash: noticing one takes a restart and diagnosing it takes another, and the
+    // second is what destroys the evidence. That is how the backtrace for MOLE-265
+    // was lost -- a segfault, then two attempts to start again, and the frames that
+    // named the fault were gone. Named for the moment it is set aside, so no later
+    // run can reuse the name.
+    if (endsInACrash(path)) {
+        const QFileInfo crashed(path);
+        const QString aside = crashed.dir().filePath(
+            QStringLiteral("%1-crash-%2.log")
+                .arg(crashed.completeBaseName(),
+                    QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-ddTHH-mm-ss"))));
+        QFile::rename(path, aside);
+        // And a ceiling, because a directory that fills with crash logs is its own
+        // bug report. Newest kept, oldest dropped.
+        const QFileInfoList saved
+            = crashed.dir().entryInfoList({ crashed.completeBaseName() + QStringLiteral("-crash-*.log") },
+                QDir::Files, QDir::Name | QDir::Reversed);
+        for (qsizetype i = kCrashLogsKept; i < saved.size(); ++i)
+            QFile::remove(saved.at(i).absoluteFilePath());
+    }
 
     // Keep exactly one previous run. The way anybody notices a crash is by
     // starting the program again, and that restart is what would otherwise

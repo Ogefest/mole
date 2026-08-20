@@ -23,7 +23,15 @@
 //
 // Usage:
 //   compare-shots <before> <after> [--tolerance N] [--pixels N] [--allow name,...]
+//                                  [--keep <dir>]
 //   compare-shots <before> <after> --list-changed
+//
+// Every reported picture carries the box the differences fall inside, because a
+// pixel count on its own is not a lead: `26-indexes` moved once by six and a half
+// thousand pixels, the run said so and nothing else, and the pairs of runs after it
+// did not reproduce it -- so there was nothing left to look at and the cause was
+// never found. `--keep <dir>` goes further and copies both versions out, so a
+// sighting survives the temporary directories the two runs went into.
 //
 // `--list-changed` prints one file name per line and nothing else, which is how
 // `make guide-images` knows which pictures to copy over the committed ones: a
@@ -47,6 +55,12 @@ struct Difference
     int changedPixels = 0;
     int worstDelta = 0;
     bool comparable = true;
+    /// Where, in the picture's own coordinates. The count alone was not enough:
+    /// `26-indexes` moved once by six and a half thousand pixels and the run said
+    /// so and nothing else, so the next pair of runs -- which did not reproduce it
+    /// -- had nothing to compare against and the cause was never found. A box says
+    /// which part of the window to look at. See MOLE-261.
+    QRect where;
 };
 
 Difference compare(const QImage& before, const QImage& after, int tolerance)
@@ -91,6 +105,7 @@ int main(int argc, char** argv)
     int tolerance = 8;
     int pixelBudget = 0;
     bool listChanged = false;
+    QString keepDirectory;
     QSet<QString> allowed;
     QStringList directories;
     for (int i = 0; i < arguments.size(); ++i) {
@@ -102,6 +117,8 @@ int main(int argc, char** argv)
             pixelBudget = value().toInt();
         else if (argument == QStringLiteral("--list-changed"))
             listChanged = true;
+        else if (argument == QStringLiteral("--keep"))
+            keepDirectory = value();
         else if (argument == QStringLiteral("--allow")) {
             for (const QString& name : value().split(QLatin1Char(','), Qt::SkipEmptyParts))
                 allowed.insert(name.trimmed());
@@ -125,6 +142,28 @@ int main(int argc, char** argv)
         err << "no pictures in " << after.path() << '\n';
         return 2;
     }
+
+    // Copies of anything that moved, so a sighting outlives the run that saw it.
+    if (!keepDirectory.isEmpty() && !QDir().mkpath(keepDirectory)) {
+        err << "cannot write to " << keepDirectory << '\n';
+        return 2;
+    }
+    const auto keep = [&](const QString& name, const QDir& from, const QString& suffix) {
+        if (keepDirectory.isEmpty())
+            return;
+        const QString stem = QFileInfo(name).completeBaseName();
+        QFile::remove(QDir(keepDirectory).filePath(stem + suffix));
+        QFile::copy(from.filePath(name), QDir(keepDirectory).filePath(stem + suffix));
+    };
+    const auto describe = [](const Difference& difference) {
+        return QStringLiteral("%1 pixels, worst %2, in %3x%4 at %5,%6")
+            .arg(difference.changedPixels)
+            .arg(difference.worstDelta)
+            .arg(difference.where.width())
+            .arg(difference.where.height())
+            .arg(difference.where.left())
+            .arg(difference.where.top());
+    };
 
     int changed = 0;
     int excused = 0;
@@ -157,17 +196,13 @@ int main(int argc, char** argv)
             continue;
         }
         if (allowed.contains(stem) || allowed.contains(name)) {
-            out << QStringLiteral("  expected %1  (%2 pixels, worst %3)\n")
-                       .arg(name, -34)
-                       .arg(difference.changedPixels)
-                       .arg(difference.worstDelta);
+            out << QStringLiteral("  expected %1  (%2)\n").arg(name, -34).arg(describe(difference));
             ++excused;
             continue;
         }
-        out << QStringLiteral("  CHANGED  %1  (%2 pixels, worst %3)\n")
-                   .arg(name, -34)
-                   .arg(difference.changedPixels)
-                   .arg(difference.worstDelta);
+        out << QStringLiteral("  CHANGED  %1  (%2)\n").arg(name, -34).arg(describe(difference));
+        keep(name, before, QStringLiteral(".before.png"));
+        keep(name, after, QStringLiteral(".after.png"));
         ++changed;
     }
 

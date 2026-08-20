@@ -26,6 +26,7 @@ private slots:
     void init();
     void writesWhatTheProgramSays();
     void keepsThePreviousRun();
+    void aLogThatEndsInACrashSurvivesTheRunsAfterIt();
     void aCrashLeavesABacktrace();
     void aCrashStillReachesTheDefaultHandler();
 
@@ -94,6 +95,44 @@ void TestSessionLog::keepsThePreviousRun()
     QVERIFY(contents().contains(QStringLiteral("the run after it")));
 }
 
+/// One previous run is not enough when the previous run crashed.
+///
+/// Noticing a crash takes one restart and diagnosing it takes another, and two
+/// restarts is exactly what rotation keeping a single `.1` throws away. That is how
+/// the backtrace for MOLE-265 was lost: a segfault, then two `make run` attempts, and
+/// the frames that named the fault were gone. A log that ends in a crash is the one
+/// log worth keeping, so it is moved aside under a name rotation never reuses.
+void TestSessionLog::aLogThatEndsInACrashSurvivesTheRunsAfterIt()
+{
+    sessionLog::install();
+    qWarning("the run that crashed");
+    // The marker the crash handler writes, put there through the ordinary handler
+    // rather than by crashing this process: what is being tested is the rotation, and
+    // the real signal path is covered by aCrashLeavesABacktrace below.
+    qWarning("---- crashed: signal 11 at 0xdeadbeef ----");
+    sessionLog::shutdown();
+
+    // Two more runs, which is one more than rotation keeps.
+    for (const char* line : { "the run that noticed", "the run that went looking" }) {
+        sessionLog::install();
+        qWarning("%s", line);
+        sessionLog::shutdown();
+    }
+
+    const QFileInfoList kept
+        = QDir(m_dir->path())
+              .entryInfoList({ QStringLiteral("session-crash-*.log") }, QDir::Files, QDir::Name);
+    QCOMPARE(kept.size(), 1);
+    QFile crashed(kept.first().absoluteFilePath());
+    QVERIFY(crashed.open(QIODevice::ReadOnly));
+    const QString text = QString::fromUtf8(crashed.readAll());
+    QVERIFY2(text.contains(QStringLiteral("the run that crashed")), qPrintable(text));
+    QVERIFY2(text.contains(QStringLiteral("crashed: signal")), qPrintable(text));
+
+    // And an ordinary run is still only kept once, so a tidy directory stays tidy.
+    QVERIFY(QFile::exists(m_path + QStringLiteral(".1")));
+}
+
 void TestSessionLog::aCrashLeavesABacktrace()
 {
     const int status = died([] {
@@ -112,6 +151,21 @@ void TestSessionLog::aCrashLeavesABacktrace()
     QVERIFY2(text.contains(QStringLiteral("backtrace:")), qPrintable(text));
     // A backtrace of no frames is a header, not a backtrace.
     QVERIFY2(text.count(QLatin1Char('\n')) > 6, qPrintable(text));
+
+    // And the next start sets this log aside rather than rotating it towards
+    // oblivion -- checked here against the marker the handler really wrote, because
+    // aLogThatEndsInACrashSurvivesTheRunsAfterIt puts that marker there itself and
+    // would go on passing if the two ever stopped matching.
+    sessionLog::install();
+    sessionLog::shutdown();
+    const QFileInfoList kept
+        = QDir(m_dir->path())
+              .entryInfoList({ QStringLiteral("session-crash-*.log") }, QDir::Files, QDir::Name);
+    QCOMPARE(kept.size(), 1);
+    QFile crashed(kept.first().absoluteFilePath());
+    QVERIFY(crashed.open(QIODevice::ReadOnly));
+    QVERIFY2(QString::fromUtf8(crashed.readAll()).contains(QStringLiteral("about to fall over")),
+        "the log set aside is the one that crashed");
 }
 
 void TestSessionLog::aCrashStillReachesTheDefaultHandler()

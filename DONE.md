@@ -9,6 +9,50 @@ wrong.
 
 ---
 
+## A crash's backtrace was rotated away before anybody read it
+
+**Asked for:** MOLE-265, reported from use: changing a row's *Repeat* from `never` to daily in
+the Indexes tab segfaulted. Two faults in one report, and this entry is the half that could be
+finished.
+
+**The crash is not fixed, and is not guessed at either.** All that survived of the backtrace was
+its last two frames — both inside libc, above `__libc_start_main`, which name nothing. Four
+attempts to reproduce it failed, and they are written down in the ticket rather than in a
+guess: emitting the ComboBox's `activated` from C++ after moving `currentIndex`; opening the
+popup and clicking the row a person clicks; both again on a real X11 display instead of
+offscreen. All four pass. They are kept — `tests/app/tst_IndexesView.cpp` is new, and that path
+had no window-level coverage at all, which is exactly why the fault could not be reached from
+`tst_IndexesTab`, which is headless.
+
+Two candidates are recorded in the ticket in order of likelihood, with what would prove each,
+and neither is being fixed on suspicion. The reporter's index is 797,128 files against the
+four-file one a test seeds, and a scan of that tree was probably running at the time; that
+difference is the first thing to try.
+
+**What could be fixed is why there was nothing to read.** `SessionLog`'s crash handler writes
+`---- crashed: signal … ----` and the whole backtrace into the session log, which is right, and
+`install()` rotates `session.log` to `session.log.1` keeping nothing older. Its comment already
+had the argument — *the way anybody notices a crash is by starting the program again, and that
+restart is what would otherwise destroy the log that explains it* — and stopped one restart
+short. **Noticing a crash takes one restart and diagnosing it takes another.** Two attempts to
+start the application again, and the frames that named the fault were gone. No core either:
+apport is the handler on this machine and its spool is empty.
+
+So a log that ends in a crash is now moved to `session-crash-<when>.log`, a name ordinary
+rotation never reuses, and the newest five are kept — a directory that fills with crash logs
+being its own bug report. The marker is looked for in the last 64 KB rather than the whole file,
+because a log with `MOLE_LOG` turned up runs to megabytes and the marker is written just before
+the process dies.
+
+**Two tests, and the second exists because the first could rot.**
+`aLogThatEndsInACrashSurvivesTheRunsAfterIt` writes the marker itself, then starts twice more —
+one more than rotation keeps — and finds the log still there. But a test that writes its own
+marker goes on passing if the handler's wording ever drifts from what the detector looks for, so
+`aCrashLeavesABacktrace` now raises a real `SIGSEGV`, restarts, and checks the log the *handler*
+marked was the one set aside.
+
+---
+
 ## The same thumbnail looked like it was decoded twice
 
 **Asked for:** MOLE-258 — find out whether a second request for a tile that has left the memory
