@@ -18,6 +18,9 @@ ReadRangeTask::ReadRangeTask(
     , m_offset(std::max<qint64>(0, offset))
     , m_length(std::max<qint64>(0, length))
 {
+    // One of a crowd: a preview of anything large is a run of ranged reads, and a hex
+    // view scrolled is one per screenful. See Task::isOneOfMany() and ADR-0064.
+    setOneOfMany(true);
 }
 
 void ReadRangeTask::run()

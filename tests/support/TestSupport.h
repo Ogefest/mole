@@ -42,6 +42,7 @@ public:
     using Task::setBackground;
     using Task::setBytesDone;
     using Task::setByteTotal;
+    using Task::setOneOfMany;
     using Task::setProgress;
     using Task::setStatusText;
 
@@ -141,14 +142,23 @@ QString errorTextOf(const Task& task);
 /// is the absence of a line. The other is the opposite: that a real failure
 /// still says so, which is what stops the first fix from being "log nothing".
 ///
-/// Warnings and worse are captured; everything below goes on to the handler
-/// that was installed before, so ordinary test output is unaffected. The
-/// handler is removed in the destructor, and messages logged from a pool thread
-/// are counted safely.
+/// Warnings and worse by default; everything below goes on to the handler that
+/// was installed before, so ordinary test output is unaffected. The handler is
+/// removed in the destructor, and messages logged from a pool thread are counted
+/// safely.
+///
+/// Pass a lower `from` to see the quieter levels. `QtInfoMsg` is what a claim
+/// about the *session log* needs: ADR-0064 put a task's start and end at info, so
+/// the assertion "this ran and left a line" and its opposite "this one left none"
+/// are both about lines this class could not see before. Anything at or above
+/// `from` is captured and does not reach the previous handler; anything below is
+/// passed through untouched.
 class CapturedWarnings
 {
 public:
-    CapturedWarnings();
+    /// `from` is the quietest level to capture. The default keeps every existing
+    /// test reading exactly as it did.
+    explicit CapturedWarnings(QtMsgType from = QtWarningMsg);
     ~CapturedWarnings();
 
     CapturedWarnings(const CapturedWarnings&) = delete;

@@ -51,6 +51,9 @@ ReadMetadataTask::ReadMetadataTask(FileSystemPtr fileSystem, FileEntry entry, QB
     , m_readers(std::move(readers))
     , m_services(services)
 {
+    // One of a crowd: the details drawer reads whatever the cursor lands on, so walking
+    // a folder with the arrow keys is one of these per row. See Task::isOneOfMany() and ADR-0064.
+    setOneOfMany(true);
 }
 
 void ReadMetadataTask::run()

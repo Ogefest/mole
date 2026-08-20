@@ -774,7 +774,12 @@ void TestDuplicates::groupsArriveAsTheyAreConfirmedRatherThanAllAtTheEnd()
         task, &Task::finished, this, [&announcements] { announcements.append(QStringLiteral("finished")); });
 
     m_tasks->submit(task);
-    QVERIFY(waitFor([task] { return task->isFinished(); }, 30000));
+    // Waited on the announcement, not on the state. `isFinished()` is true as soon
+    // as the task sets it, but `finished()` is emitted through a queued call -- so a
+    // wait on the state can return with the third entry not yet delivered, and the
+    // comparison below then sees two. It did, once, in a parallel run: the same shape
+    // as MOLE-256, waiting for something adjacent to the thing being asserted.
+    QVERIFY(waitFor([&announcements] { return announcements.contains(QStringLiteral("finished")); }, 30000));
 
     const QStringList expected { QStringLiteral("group"), QStringLiteral("group"),
         QStringLiteral("finished") };

@@ -136,6 +136,21 @@ public:
     /// ask for. Still cancelled and awaited like anything else.
     bool isBackground() const { return m_background; }
 
+    /// One of a crowd: a job the user's gesture produced by the hundred, where
+    /// this particular one is of no interest on its own.
+    ///
+    /// A different question from isBackground(), and about different jobs. A
+    /// thumbnail is *not* background -- opening a folder of photographs is
+    /// exactly asking for it -- but it is one of three hundred, and neither the
+    /// log nor the task strip is improved by naming each. A copy, a scan, a sync
+    /// or a duplicate hunt is one job somebody remembers starting and will ask
+    /// about afterwards; that is the other answer.
+    ///
+    /// **False by default, which is the loud answer.** A task type written next
+    /// year is in the log because nobody had to remember to put it there; the
+    /// four bulk types say so for themselves. See ADR-0064.
+    bool isOneOfMany() const { return m_oneOfMany; }
+
     /// Safe to call from any thread. Cooperative -- run() must poll.
     Q_INVOKABLE void requestCancel();
 
@@ -179,6 +194,9 @@ protected:
     bool isCancelRequested() const { return m_cancel.isCancelled(); }
     const CancelToken& cancelToken() const { return m_cancel; }
     void setBackground(bool background) { m_background = background; }
+    /// Says this job is one of a crowd -- see isOneOfMany(). Called from the
+    /// constructor, like setBackground().
+    void setOneOfMany(bool oneOfMany) { m_oneOfMany = oneOfMany; }
     /// Names a location this task reads or writes. Called from the constructor,
     /// where the task's own arguments are, and never afterwards: the answer must
     /// not change while something is watching it.
@@ -255,6 +273,7 @@ private:
 
     // --- owned by the UI thread ---
     bool m_background = false;
+    bool m_oneOfMany = false;
     /// Fixed when the task is built, so it is safe to read from any thread.
     QList<VfsUri> m_touching;
     QDateTime m_startedAt;

@@ -9,6 +9,65 @@ wrong.
 
 ---
 
+## A session log said nothing about the work that ran
+
+**Asked for:** MOLE-262 — a task's start and end reach the session log without anybody having
+set `MOLE_LOG` beforehand.
+
+**The fault.** A session log from an ordinary run held two lines: where the log was going, and
+— only if `MOLE_LOG` was set — which categories were recording. Every job that started,
+finished, was cancelled or took forty seconds went through `Task::execute`'s two `qCDebug`
+lines, so none of it was in the file unless somebody had asked in advance, which is the one
+thing nobody does before the run that goes wrong. The lines existed, they were already uniform
+for every job that will ever be written, and they were switched off.
+
+**ADR-0012 decided that, and its reason was sound and partial.** The browser cancels a listing
+on every keystroke that narrows a filter, so a line apiece would bury the copy somebody opened
+the log to find. True of listings, thumbnails, metadata reads and ranged reads — which come by
+the hundred — and not true of a copy, a scan, a sync or a duplicate hunt, which are jobs
+somebody remembers starting.
+
+**`Task::isOneOfMany()`**, beside `isBackground()` and answering a different question about
+different objects: *this job is one of many identical ones one gesture produced.* A thumbnail
+is not background — opening a folder of photographs is exactly asking for it, and it belongs in
+the task strip — but it is one of three hundred. **False by default, which is the loud answer**,
+so a task type written next year is in the log without anybody remembering to put it there; the
+four bulk types say otherwise for themselves. `Task::execute()` picks `qCInfo` or `qCDebug` from
+it, and `MOLE_LOG=task` still turns on everything it did before. See
+[ADR-0064](docs/adr/0064-what-a-session-log-says-when-nobody-asked.md).
+
+**The second half of the rule was learned by running it, not by reading.** With only
+`isOneOfMany()` consulted, a plain eight-second start wrote forty-two lines of which **thirty
+were `Check free space on …`**: `QuerySpaceTask` is background but is not a crowd in that
+sense, and it runs once per mount every minute for as long as the window is open. That is
+ADR-0012's burial arriving through a different door. The log now asks both questions —
+housekeeping the user did not ask for is not something they would look for either — and the two
+properties stay separate, because it is only the log that wants both answers to be no.
+
+Checked afterwards rather than assumed: `TransferTask`, `ScanTask`, `SyncTask`,
+`FindDuplicatesTask`, `CompressTask`, `AnalyseDirectoryTask` and `DeleteTask` are all loud.
+
+**`CapturedWarnings` could not see the lines the claim is about.** It captured
+`QtWarningMsg` and above and passed everything quieter to the previous handler, so neither
+*this ran and left a line* nor *this one left none* was testable. It now takes the quietest
+level to capture, defaulting to warnings so every existing test reads exactly as before. Its
+ordering helper is worth knowing about: `QtMsgType`'s values are not quiet-to-loud — info is
+**4**, added after the others — so comparing the enum directly would have made "info and above"
+mean "info and fatal".
+
+**Three cases**, including the one that matters most: a `Task` subclass that says nothing about
+itself is loud, so the default is asserted rather than trusted. Verified by reverting the start
+line to `qCDebug` and watching the right case go red — which also showed the third case was too
+weak, passing on the outcome line alone, and it now checks both.
+
+**One pre-existing flake surfaced.** `tst_Duplicates::groupsArriveAsTheyAreConfirmed…` waited
+for `task->isFinished()` and then asserted on a list built by the queued `finished()` signal —
+adjacent to the thing being asserted, not the thing itself, exactly MOLE-256's shape. Two info
+lines per task shifted the timing enough to expose it. It now waits for the announcement it
+compares against.
+
+---
+
 ## A dialog flashed a scrollbar it did not need
 
 **Asked for:** MOLE-260 — found by the check MOLE-255 built, on the first run after a picture

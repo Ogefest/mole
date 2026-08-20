@@ -180,23 +180,45 @@ namespace {
     QStringList g_captured;
     QtMessageHandler g_capturePrevious = nullptr;
     bool g_capturing = false;
+    QtMsgType g_captureFrom = QtWarningMsg;
+
+    /// Quiet to loud, which QtMsgType's own values are not: debug is 0, warning 1,
+    /// critical 2, fatal 3 and **info 4**, added later and numbered last. Comparing
+    /// the enum directly would make "info and above" mean "info and fatal".
+    int loudness(QtMsgType type)
+    {
+        switch (type) {
+        case QtDebugMsg:
+            return 0;
+        case QtInfoMsg:
+            return 1;
+        case QtWarningMsg:
+            return 2;
+        case QtCriticalMsg:
+            return 3;
+        case QtFatalMsg:
+            return 4;
+        }
+        return 0;
+    }
 
     void captureHandler(QtMsgType type, const QMessageLogContext& context, const QString& text)
     {
-        if (type == QtWarningMsg || type == QtCriticalMsg) {
+        // Fatal is never captured: the process has to die on one, and swallowing it
+        // would turn a crash into a test that hangs.
+        if (type != QtFatalMsg && loudness(type) >= loudness(g_captureFrom)) {
             const QMutexLocker lock(&g_captureMutex);
             g_captured.append(text);
             return;
         }
-        // Fatal messages are passed on so the process still dies on one, and
-        // debug and info go through so a test run stays readable.
+        // Everything quieter goes through, so a test run stays readable.
         if (g_capturePrevious)
             g_capturePrevious(type, context, text);
     }
 
 } // namespace
 
-CapturedWarnings::CapturedWarnings()
+CapturedWarnings::CapturedWarnings(QtMsgType from)
 {
     // Nesting two of these would leave the inner one's handler installed when
     // the outer one restored, so say so rather than mislead a later test.
@@ -206,6 +228,7 @@ CapturedWarnings::CapturedWarnings()
         g_captured.clear();
     }
     g_capturing = true;
+    g_captureFrom = from;
     m_previous = qInstallMessageHandler(captureHandler);
     g_capturePrevious = m_previous;
 }
@@ -215,6 +238,7 @@ CapturedWarnings::~CapturedWarnings()
     qInstallMessageHandler(m_previous);
     g_capturePrevious = nullptr;
     g_capturing = false;
+    g_captureFrom = QtWarningMsg;
 }
 
 QStringList CapturedWarnings::messages() const

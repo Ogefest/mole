@@ -43,7 +43,25 @@ void Task::execute()
     // Here rather than in each task, so a scan, a copy, a rename and whatever is
     // written next all announce themselves the same way and a log can be read
     // without knowing which task wrote which line.
-    qCDebug(taskLog, "%s [%s]: started", qPrintable(m_title), qPrintable(m_id.left(8)));
+    //
+    // At info for a job somebody would look for afterwards, at debug for anything
+    // else. ADR-0012 put both at debug, on the argument that the browser cancels a
+    // listing on every keystroke and a line apiece would bury the copy the log was
+    // opened to find. That argument is sound and it only covers the crowd: a listing,
+    // a thumbnail, a metadata read and a ranged read come by the hundred, and a copy
+    // or a scan does not. So the two are told apart rather than both silenced, and a
+    // session log from an ordinary run finally says what ran. See ADR-0064.
+    //
+    // Both questions, not just the crowd. Housekeeping is not something anybody looks
+    // for either: with only isOneOfMany() consulted, a plain eight-second run wrote
+    // forty-two lines of which thirty were `Check free space on …`, because
+    // QuerySpaceTask runs per mount every minute for ever. That is the same burial by
+    // a different door.
+    const bool loud = !isOneOfMany() && !isBackground();
+    if (loud)
+        qCInfo(taskLog, "%s [%s]: started", qPrintable(m_title), qPrintable(m_id.left(8)));
+    else
+        qCDebug(taskLog, "%s [%s]: started", qPrintable(m_title), qPrintable(m_id.left(8)));
 
     QElapsedTimer clock;
     clock.start();
@@ -77,8 +95,13 @@ void Task::execute()
         setState(State::Succeeded);
     }
 
-    qCDebug(taskLog, "%s [%s]: %s after %lld ms -- %s", qPrintable(m_title), qPrintable(m_id.left(8)),
-        outcome, elapsed, qPrintable(m_lastPostedStatus));
+    if (loud) {
+        qCInfo(taskLog, "%s [%s]: %s after %lld ms -- %s", qPrintable(m_title), qPrintable(m_id.left(8)),
+            outcome, elapsed, qPrintable(m_lastPostedStatus));
+    } else {
+        qCDebug(taskLog, "%s [%s]: %s after %lld ms -- %s", qPrintable(m_title), qPrintable(m_id.left(8)),
+            outcome, elapsed, qPrintable(m_lastPostedStatus));
+    }
 
     // A task that failed is worth a line whether anyone asked for logging or
     // not: it is the thing the user will be asking about later.
@@ -86,7 +109,7 @@ void Task::execute()
     // Cancellation is not that. The browser cancels a listing every time the
     // folder changes or a keystroke narrows a filter, so a warning apiece
     // buries the lines somebody opened the log to find. It is already accounted
-    // for in the debug line above, along with the rest of what the task did.
+    // for in the outcome line above, along with the rest of what the task did.
     if (m_error.isError() && m_error.code != VfsError::Cancelled) {
         qCWarning(taskLog, "%s failed: %s", qPrintable(m_title), qPrintable(m_error.message));
     }

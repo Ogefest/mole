@@ -7,6 +7,9 @@ ListDirectoryTask::ListDirectoryTask(FileSystemPtr fileSystem, VfsUri directory,
     , m_fileSystem(std::move(fileSystem))
     , m_directory(std::move(directory))
 {
+    // One of a crowd: the browser lists a folder on every navigation and cancels it on
+    // every keystroke that narrows a filter. See Task::isOneOfMany() and ADR-0064.
+    setOneOfMany(true);
 }
 
 void ListDirectoryTask::run()

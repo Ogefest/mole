@@ -39,6 +39,7 @@ private slots:
     void anAnswerArrivesExactlyOnceEvenForACancelledRequest();
     void aPictureAskedForTwiceIsDecodedOnce();
     void aSecondRunReadsFromDiskAndDecodesNothing();
+    void aTileEvictedFromMemoryComesBackFromDiskWithoutDecoding();
     void twoPanesAskingAtOnceDecodeItOnce();
     void onlySoManyDecodeAtOnceAndTheRestQueue();
     void whatCameIntoViewLastIsServedFirst();
@@ -346,6 +347,62 @@ void TestThumbnailSource::aSecondRunReadsFromDiskAndDecodesNothing()
     QObject again;
     QVERIFY(!awaitThumbnail(&again, key.toId()).isNull());
     QVERIFY2(log->made.load() == 1, "a second visit to a folder must not decode it again");
+}
+
+/// The same picture asked for again *in the same run*, after the memory tier has
+/// let it go.
+///
+/// aSecondRunReadsFromDiskAndDecodesNothing above builds a fresh cache over the
+/// same directory, which is what opening the folder again tomorrow looks like. This
+/// is the other case and the one that actually happens: the memory tier is a few
+/// tens of megabytes, a folder of several hundred photographs walks straight past
+/// it, and the first tile is the first evicted. Scrolling back to the top then asks
+/// for it again inside the same cache object.
+///
+/// Found through the task strip: `27-gallery` in the guide counted seventeen
+/// finished jobs on some runs and sixteen on others, because whether that second
+/// request needed a task at all depended on what was still resident. What it must
+/// never need is a second decode. See MOLE-258.
+void TestThumbnailSource::aTileEvictedFromMemoryComesBackFromDiskWithoutDecoding()
+{
+    const QString directory = QDir(m_dir->path()).filePath(QStringLiteral("thumbs"));
+    auto log = std::make_shared<FakeThumbnailer::Log>();
+    QVERIFY(m_registry->addThumbnailer(
+        std::make_unique<FakeThumbnailer>(QStringLiteral("test.only"), QColor(Qt::green), 0, log)));
+    m_fs->addFile(QStringLiteral("/photos/b.jpg"), QByteArray("pretend too"));
+
+    const auto keyFor = [](const QString& path) {
+        ThumbnailKey key;
+        key.uri = VfsUri::fromString(QStringLiteral("mem://") + path);
+        key.size = 40;
+        key.mtime = 7;
+        return key;
+    };
+    const ThumbnailKey first = keyFor(QStringLiteral("/photos/a.jpg"));
+    const ThumbnailKey second = keyFor(QStringLiteral("/photos/b.jpg"));
+
+    // A memory tier that holds one tile and no more, so asking for the second
+    // evicts the first -- the same thing a real cap does over a real folder, at a
+    // size a test can be sure of. The disk tier keeps its default room.
+    m_cache = std::make_unique<ThumbnailCache>(directory, 1, ThumbnailCache::kDefaultDiskCap);
+    m_pump = std::make_unique<ThumbnailPump>(m_services, m_cache.get());
+
+    QObject one;
+    QVERIFY(!awaitThumbnail(&one, first.toId()).isNull());
+    QCOMPARE(log->made.load(), 1);
+    QObject two;
+    QVERIFY(!awaitThumbnail(&two, second.toId()).isNull());
+    QCOMPARE(log->made.load(), 2);
+    QVERIFY2(m_cache->inMemory(first).isNull(),
+        "the point of the case is that the first tile is no longer resident");
+
+    // And now the scroll back up. It may cost a task -- reading storage is not
+    // something the interface thread may do -- but it may not cost a decode.
+    QObject again;
+    QVERIFY(!awaitThumbnail(&again, first.toId()).isNull());
+    QVERIFY2(log->made.load() == 2,
+        qPrintable(QStringLiteral("a tile that is still on disk was decoded again: %1 decodes")
+                       .arg(log->made.load())));
 }
 
 /// Two panes showing one folder ask for the same picture at the same moment, and

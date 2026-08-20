@@ -57,6 +57,11 @@ ThumbnailTask::ThumbnailTask(
     , m_key(std::move(key))
     , m_cache(cache)
 {
+    // One of a crowd: a folder of three hundred photographs is three hundred of
+    // these, and none of them is a job anybody remembers starting. Not background
+    // though -- opening that folder is exactly asking for them, so they stay in the
+    // task strip's list. See Task::isOneOfMany() and ADR-0064.
+    setOneOfMany(true);
     noteTouching(m_key.uri);
 }
 

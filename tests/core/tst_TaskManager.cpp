@@ -5,6 +5,7 @@
 #include "core/vfs/backends/MemoryFileSystem.h"
 
 #include <QLocale>
+#include <QLoggingCategory>
 #include <QSignalSpy>
 #include <QThread>
 
@@ -47,6 +48,10 @@ private slots:
     void progressNeverGoesBackwardsAndNeverPassesTheTotal();
     void bytesDoneIsWhatTheTaskActuallyMoved();
     void aTaskWhoseBodyThrowsIsReportedFailedAndThePoolSurvives();
+
+    void aJobSomebodyStartedIsInTheLogWithNothingSwitchedOn();
+    void oneOfACrowdIsNotAndTurningTheCategoryUpBringsItBack();
+    void aTaskThatSaysNothingAboutItselfIsLoud();
     void tenThousandMetricUpdatesDoNotFloodTheQueue();
     void tenThousandStatusLinesDoNotFloodTheQueue();
     void aCountReportedPerItemIsCoalescedTheSameWay();
@@ -423,6 +428,83 @@ void TestTaskManager::elapsedTimeStopsWhenTheTaskDoes()
 /// fifteen milliseconds from an ordinary startup. The log is the one file
 /// somebody opens when something has gone wrong, so a decision the application
 /// took on purpose must not read like a fault there.
+/// A session log from an ordinary run has to say what ran.
+///
+/// ADR-0012 put a task's start and end at debug, so neither reached the file unless
+/// somebody had set MOLE_LOG beforehand -- which is the one thing nobody has done
+/// before the run that goes wrong. The lines existed and were switched off. See
+/// MOLE-262 and ADR-0064.
+void TestTaskManager::aJobSomebodyStartedIsInTheLogWithNothingSwitchedOn()
+{
+    TaskManager manager;
+    auto* task = new ScriptedTask(QStringLiteral("Copy 4 files"), [](ScriptedTask&) {});
+
+    // From info, because that is the level the claim is about. Nothing in the
+    // environment is touched: this is what a plain run writes.
+    CapturedWarnings log(QtInfoMsg);
+    manager.submit(task);
+    QVERIFY(waitForTask(task));
+
+    QVERIFY2(log.contains(QStringLiteral("Copy 4 files")) && log.contains(QStringLiteral("started")),
+        qPrintable(QStringLiteral("no start line: %1").arg(log.joined())));
+    QVERIFY2(log.contains(QStringLiteral("finished")),
+        qPrintable(QStringLiteral("no outcome line: %1").arg(log.joined())));
+}
+
+/// And the crowd stays out of it, which is what ADR-0012 was right about.
+void TestTaskManager::oneOfACrowdIsNotAndTurningTheCategoryUpBringsItBack()
+{
+    TaskManager manager;
+    auto* task = new ScriptedTask(QStringLiteral("List somewhere"), [](ScriptedTask&) {});
+    task->setOneOfMany(true);
+
+    {
+        CapturedWarnings log(QtInfoMsg);
+        manager.submit(task);
+        QVERIFY(waitForTask(task));
+        QVERIFY2(!log.contains(QStringLiteral("List somewhere")),
+            qPrintable(QStringLiteral("a listing wrote to the log: %1").arg(log.joined())));
+    }
+
+    // Nothing became unseeable: the category still turns everything on. Captured
+    // from debug, which is where a crowd's lines are.
+    auto* again = new ScriptedTask(QStringLiteral("List somewhere else"), [](ScriptedTask&) {});
+    again->setOneOfMany(true);
+    QLoggingCategory::setFilterRules(QStringLiteral("mole.task.debug=true"));
+    {
+        CapturedWarnings log(QtDebugMsg);
+        manager.submit(again);
+        QVERIFY(waitForTask(again));
+        QVERIFY2(log.contains(QStringLiteral("List somewhere else")),
+            qPrintable(QStringLiteral("MOLE_LOG=task stopped working: %1").arg(log.joined())));
+    }
+    QLoggingCategory::setFilterRules(QString());
+}
+
+/// The default is the loud one, asserted rather than assumed.
+///
+/// A task type written next year should be in the log because nobody had to
+/// remember to put it there. `ScriptedTask` says nothing about itself here -- no
+/// setOneOfMany, no setBackground -- which is exactly the shape of that new type.
+void TestTaskManager::aTaskThatSaysNothingAboutItselfIsLoud()
+{
+    TaskManager manager;
+    auto* task = new ScriptedTask(QStringLiteral("Whatever gets written next"), [](ScriptedTask&) {});
+    QVERIFY2(!task->isOneOfMany(), "the default has to be the loud answer");
+
+    CapturedWarnings log(QtInfoMsg);
+    manager.submit(task);
+    QVERIFY(waitForTask(task));
+    // Both lines, not just the title: the outcome line alone would let a revert of
+    // the start line through, which is what happened the first time this was run
+    // against a deliberately broken build.
+    QVERIFY2(log.contains(QStringLiteral("Whatever gets written next: started"))
+            || log.contains(QStringLiteral("]: started")),
+        qPrintable(QStringLiteral("no start line: %1").arg(log.joined())));
+    QVERIFY2(log.contains(QStringLiteral("Whatever gets written next")),
+        qPrintable(QStringLiteral("a task that said nothing was silent: %1").arg(log.joined())));
+}
+
 void TestTaskManager::aCancelledTaskIsNotLoggedAsAFailure()
 {
     TaskManager manager;
