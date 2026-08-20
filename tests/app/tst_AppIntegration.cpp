@@ -18,6 +18,7 @@
 #include "core/sets/FileSetStore.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/VfsManager.h"
+#include "core/vfs/backends/MemoryFileSystem.h"
 
 #include <QDir>
 #include <QFile>
@@ -41,6 +42,8 @@ private slots:
     void cleanup();
 
     void startsWithBuiltinFeaturesAndDrives();
+    void theLogSaysWhatThisRunStartedWith();
+    void aDriveThatArrivesLaterSaysSoToo();
     void opensABrowserTabByDefault();
     void everyRegisteredFeatureCanOpenATab();
     void browserTabBrowsesTheRealFilesystem();
@@ -158,6 +161,83 @@ void TestAppIntegration::startsWithBuiltinFeaturesAndDrives()
     // Home and Filesystem are always there.
     QVERIFY(m_app->drives()->rowCount() >= 2);
     QVERIFY(m_app->services().isValid());
+}
+
+/// A report has to be able to answer three questions before anybody reads a line
+/// of it: which build is this, what did it load, and what drives were there.
+///
+/// None of it was written down. The log opened with "Logging this session to …" and
+/// went straight to whatever happened first, and `runDiagnostics()` -- which already
+/// formats the version and the plugin list -- prints to the console and nowhere
+/// else, so a report from a packaged build could not say whether a plugin had failed
+/// to load. That is the case that function was written for. See MOLE-263.
+void TestAppIntegration::theLogSaysWhatThisRunStartedWith()
+{
+    // Something in the index, so the count is a count rather than "none".
+    const Result<qint64> volume
+        = m_app->services().index->upsertVolume(m_tree->rootUri(), QStringLiteral("the scratch tree"));
+    QVERIFY2(volume.ok(), qPrintable(volume.error().message));
+
+    // The block is written inside initialise(), so the capture has to be installed
+    // before a controller exists. The fixture's goes first, or two of them would be
+    // holding the same profile files open.
+    m_app.reset();
+    CapturedWarnings log(QtInfoMsg);
+    m_app = std::make_unique<AppController>();
+    QString error;
+    QVERIFY2(m_app->initialise(builtIns(), &error), qPrintable(error));
+
+    // The build. Not the exact wording -- the version and the Qt it is running
+    // against are the facts.
+    QVERIFY2(log.contains(QStringLiteral("Mole ") + QCoreApplication::applicationVersion()),
+        qPrintable(QStringLiteral("no build line: %1").arg(log.joined())));
+    QVERIFY2(log.contains(QStringLiteral("Qt ") + QString::fromLatin1(qVersion())),
+        qPrintable(QStringLiteral("the build line does not say which Qt: %1").arg(log.joined())));
+
+    // What it loaded, and separately what failed to.
+    QVERIFY2(log.contains(QStringLiteral("Plugins:")),
+        qPrintable(QStringLiteral("no plugin line: %1").arg(log.joined())));
+
+    // The drives, each with the state in words. A configured drive reading "Not
+    // connected" or "Locked" at startup is the operational fact this is for.
+    QVERIFY2(log.contains(QStringLiteral("Drives:")),
+        qPrintable(QStringLiteral("no drive line: %1").arg(log.joined())));
+    QVERIFY2(log.contains(DriveListModel::stateText(DriveListModel::State::Idle)),
+        qPrintable(QStringLiteral("no drive state: %1").arg(log.joined())));
+
+    // The indexes, with the count -- so a search about to answer out of something a
+    // week old is visible before anybody wonders why.
+    QVERIFY2(log.contains(QStringLiteral("the scratch tree")),
+        qPrintable(QStringLiteral("the index is not named: %1").arg(log.joined())));
+    QVERIFY2(log.contains(QStringLiteral("files")),
+        qPrintable(QStringLiteral("the index line carries no count: %1").arg(log.joined())));
+
+    // And nothing in it may be a credential or a uri: a log is a file people send to
+    // other people. Only the scheme is written, never the root.
+    QVERIFY2(!log.contains(m_tree->rootUri().toString()),
+        qPrintable(QStringLiteral("a drive's uri reached the log: %1").arg(log.joined())));
+}
+
+/// A drive that appears an hour later is the same fact arriving late.
+void TestAppIntegration::aDriveThatArrivesLaterSaysSoToo()
+{
+    CapturedWarnings log(QtInfoMsg);
+
+    Mount mount;
+    mount.displayName = QStringLiteral("a drive from nowhere");
+    mount.root = VfsUri::fromString(QStringLiteral("mem:///"));
+    mount.fileSystem = std::make_shared<MemoryFileSystem>();
+    const QString id = m_app->services().vfs->addMount(mount);
+    QVERIFY(!id.isEmpty());
+
+    QVERIFY2(log.contains(QStringLiteral("Drive added: a drive from nowhere")),
+        qPrintable(QStringLiteral("a mount arrived silently: %1").arg(log.joined())));
+    QVERIFY2(log.contains(QStringLiteral("(mem)")),
+        qPrintable(QStringLiteral("the scheme is not in the line: %1").arg(log.joined())));
+
+    m_app->services().vfs->removeMount(id);
+    QVERIFY2(log.contains(QStringLiteral("Drive removed")),
+        qPrintable(QStringLiteral("a mount left silently: %1").arg(log.joined())));
 }
 
 void TestAppIntegration::opensABrowserTabByDefault()

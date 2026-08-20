@@ -48,6 +48,7 @@
 #include <QScreen>
 #include <QSortFilterProxyModel>
 #include <QStandardPaths>
+#include <QSysInfo>
 #include <QTimer>
 #include <QWindow>
 
@@ -68,14 +69,28 @@ bool AppController::restoreSession()
 
     const Session saved = m_session->load();
     m_window = saved.window;
-    if (saved.tabs.isEmpty())
+    if (saved.tabs.isEmpty()) {
+        // Said rather than left out. A window that came up on a default tab is
+        // either a first run or a session file that went missing, and those are
+        // different problems.
+        qInfo("Session: nothing to restore");
         return false;
+    }
 
     // Opening tabs marks the session dirty; suppress that so a restore cannot
     // overwrite the file it is still reading from.
     m_restoring = true;
     const int restored = m_tabs->restoreSession(saved);
     m_restoring = false;
+
+    // Logged here rather than in recordStartup(), because this is where the fact
+    // is. A tab in the file that no longer has a feature to open -- a plugin that
+    // did not load this time -- is silently absent otherwise, and "4 of 5" is the
+    // line that would explain a window that came back missing something.
+    if (restored == saved.tabs.size())
+        qInfo("Session: %d tabs restored", restored);
+    else
+        qInfo("Session: %d of %lld tabs restored", restored, static_cast<long long>(saved.tabs.size()));
 
     return restored > 0;
 }
@@ -397,6 +412,11 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
                     QStringLiteral("A scheduled job failed"), message);
             }
         });
+    // Before the scheduler, and the comment on recordStartup() says why: start()
+    // runs checkDue() synchronously, and a due index rule would have a scan holding
+    // the index's mutex by the time the block below tried to read it.
+    recordStartup();
+
     m_scheduler->start();
 
     // Debounced: a tab reports state changes on every navigation, and the
@@ -419,6 +439,16 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     // a controller's own signal.
     connect(m_tabs, &TabsModel::countChanged, this, &AppController::refreshOpenDrives);
     connect(m_vfs, &VfsManager::mountsChanged, this, &AppController::refreshOpenDrives);
+    // A drive that appears an hour later is the same fact arriving late, and a
+    // report about "the drive was there a minute ago" needs it. Scheme only, never
+    // the uri: an sftp root carries an account name and a log gets sent to people.
+    connect(m_vfs, &VfsManager::mountAdded, this, [this](const QString& id) {
+        const Mount mount = m_vfs->mount(id);
+        if (mount.isValid() && !mount.internal)
+            qInfo("Drive added: %s (%s)", qPrintable(mount.displayName), qPrintable(mount.root.scheme()));
+    });
+    connect(m_vfs, &VfsManager::mountRemoved, this,
+        [](const QString& id) { qInfo("Drive removed: %s", qPrintable(id)); });
 
     if (!restoreSession()) {
         // Nothing to come back to: start on something useful rather than an
@@ -1133,6 +1163,58 @@ bool AppController::openPlace(const QString& kind, const QString& target)
     if (QObject* controller = m_tabs->controllerAt(row))
         controller->setProperty("currentSetId", target);
     return true;
+}
+
+void AppController::recordStartup() const
+{
+    // One line per subject rather than a paragraph per drive: this block is read by
+    // somebody scrolling past it to the interesting part.
+    qInfo("Mole %s, Qt %s, %s", qPrintable(QCoreApplication::applicationVersion()), qVersion(),
+        qPrintable(QSysInfo::productType()));
+
+    const QStringList loaded = pluginSummary();
+    const QStringList failed = pluginErrors();
+    qInfo("Plugins: %lld loaded, %lld failed", static_cast<long long>(loaded.size()),
+        static_cast<long long>(failed.size()));
+    // Named individually, because "1 failed" without saying which is the report
+    // arriving without the one fact it was sent for.
+    for (const QString& problem : failed)
+        qInfo("Plugin problem: %s", qPrintable(problem));
+
+    if (m_drives) {
+        QStringList described;
+        for (int row = 0; row < m_drives->rowCount(); ++row) {
+            const QModelIndex at = m_drives->index(row, 0);
+            const QString name = at.data(DriveListModel::DisplayNameRole).toString();
+            const QString scheme = at.data(DriveListModel::SchemeRole).toString();
+            const QString state = at.data(DriveListModel::StateTextRole).toString();
+            // Space is left out on purpose: it arrives from QuerySpaceTask, which
+            // has not run yet at this point, and asking the filesystem here would
+            // put a synchronous storage read on the startup path -- the shape of
+            // fault MOLE-264 is about. A drive reading "Not connected" or "Locked"
+            // is the operational fact wanted anyway.
+            described.append(QStringLiteral("%1 (%2) %3").arg(name, scheme, state));
+        }
+        qInfo("Drives: %s",
+            qPrintable(described.isEmpty() ? QStringLiteral("none") : described.join(QStringLiteral(" | "))));
+    }
+
+    if (m_services.index) {
+        QStringList described;
+        if (Result<QList<IndexVolume>> listed = m_services.index->volumes(); listed.ok()) {
+            for (const IndexVolume& volume : listed.value()) {
+                described.append(QStringLiteral("%1 %2 files, scanned %3")
+                                     .arg(volume.label)
+                                     .arg(volume.fileCount)
+                                     .arg(volume.lastScan.isValid() ? volume.lastScan.toString(Qt::ISODate)
+                                                                    : QStringLiteral("never")));
+            }
+        }
+        // Said either way. "Indexes: none" answers "why did my search find nothing",
+        // which an absent line does not.
+        qInfo("Indexes: %s",
+            qPrintable(described.isEmpty() ? QStringLiteral("none") : described.join(QStringLiteral(" | "))));
+    }
 }
 
 void AppController::refreshOpenDrives()

@@ -258,6 +258,30 @@ public:
     QStringList pluginSummary() const;
     QStringList pluginErrors() const;
 
+    /// Writes what this run started with to the session log: the build, the
+    /// plugins, the drives and the indexes.
+    ///
+    /// A log could not answer the three questions anybody asks of a report before
+    /// reading a line of it -- which build is this, what did it load, what drives
+    /// were there -- and every one of those facts was already assembled at
+    /// startup, two of them already formatted by `runDiagnostics()`, which prints
+    /// to the console and nowhere else. So a report from a packaged build could
+    /// not say whether a plugin had failed to load, which is the case that
+    /// function was written for.
+    ///
+    /// **Called from initialise(), not from main.cpp**, and deliberately before
+    /// `Scheduler::start()`. That call runs `checkDue()` synchronously, so a due
+    /// index rule submits its scan there and then -- and the scan holds the
+    /// index's one mutex for as long as the walk lasts, which would make the
+    /// `volumes()` read below wait for it. See MOLE-264. Before the scheduler is
+    /// the one moment when every fact is known and nothing is competing for the
+    /// index.
+    ///
+    /// Nothing here may be a credential or a path outside the profile: a log is a
+    /// file people send to other people. A drive's display name is a name the
+    /// user chose and is fine; its uri is not, so only the scheme is written.
+    void recordStartup() const;
+
     /// Opens a browser tab already pointing at `uri`.
     /// Opens a tab and, when the new tab has somewhere to start from, points
     /// it at wherever the user currently is. A search opened from a folder

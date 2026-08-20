@@ -9,6 +9,65 @@ wrong.
 
 ---
 
+## A session log did not say what Mole started with
+
+**Asked for:** MOLE-263 — the build, the plugins, the drives and the indexes, written once at
+`info` so a report can be read.
+
+**The fault.** A log opened with *Logging this session to …* and went straight to whatever
+happened first, so it could not answer the three questions anybody asks before reading a line:
+which build is this, what did it load, what drives were there. Every one of those facts was
+already assembled at startup and two were already formatted — by `runDiagnostics()`, which
+prints them to the console under `--version` and `--plugins` and nowhere else. So a report from
+a packaged build could not say whether a plugin had failed to load, which is the case that
+function was written for.
+
+**What a plain run now writes**, measured against the author's own profile:
+
+```
+Mole 0.1.0, Qt 6.4.2, ubuntu
+Plugins: 3 loaded, 0 failed
+Drives: Home (file) Idle | Root (file) Idle | nas (file) Idle | b2 (b2) Locked | …
+Indexes: workspace 797128 files, scanned 2026-08-19T16:40:06
+Session: 2 tabs restored
+```
+
+Three configured remotes reading `Locked` is exactly the operational fact the ticket asked for.
+
+**Two deviations from the brief, both for the same reason.**
+
+The brief said `main.cpp` should call this after `initialise()` returned. It is called *inside*
+`initialise()`, immediately before `m_scheduler->start()` — because `Scheduler::start()` runs
+`checkDue()` **synchronously**, so a due index rule submits its scan there and then, and the
+scan holds the index's one mutex for the length of the walk. Reading `volumes()` after that
+returned would queue behind it. Before the scheduler is the one moment when every fact is known
+and nothing is competing for the index. That is MOLE-264's mutex, met from the other side.
+
+For the same reason the drive lines carry no free-space figures: space arrives from
+`QuerySpaceTask`, which has not run yet, and asking the filesystem here would put a synchronous
+storage read on the startup path — the shape of the fault MOLE-264 is about. The brief's own
+wording, *"the free and total space where the mount has them"*, is satisfied by a mount that
+does not have them yet.
+
+**And one fact is logged where it lives rather than in the block.** The session line is written
+by `restoreSession()`, which is the only place that knows both how many tabs the file held and
+how many came back. It says `4 of 5` when they differ, because a tab whose feature did not load
+this time is otherwise silently absent — and `nothing to restore` when the file is empty, since
+a first run and a lost session file are different problems.
+
+**Nothing in it may be sent to somebody else's disadvantage.** Only a drive's display name — a
+name the user chose — and its scheme; never the root uri, because an SFTP root carries an
+account name. Asserted: the test fails if the fixture's own uri appears anywhere in the block.
+
+**Two cases**, both verified against a deliberately broken build: the block itself, asserting
+the build line, the plugin line, a drive with its state in words, the index named with its
+count, and the absence of the uri; and a drive mounted after startup leaving `Drive added: …
+(mem)` with `Drive removed` on the way out. The capture has to be installed before the
+controller exists, which is why that test builds its own rather than using the fixture's — two
+controllers would hold the same profile files open.
+
+---
+
 ## A session log said nothing about the work that ran
 
 **Asked for:** MOLE-262 — a task's start and end reach the session log without anybody having
