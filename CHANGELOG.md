@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-20 #MOLE-256 A test that clicks something clicks it where the layout put it, and a failing run says where its log is
 2026-08-20 #MOLE-254 Building a set from a duplicate scan or a search shows the Sets tab that is already open, pointed at the new set
 2026-08-20 #MOLE-255 Regenerating the guide's pictures rewrites only what changed, and the terminal picture no longer carries a real machine name
 2026-08-20 #MOLE-255 A sync plan and a duplicate group are listed in a stable order, so a second look matches the first

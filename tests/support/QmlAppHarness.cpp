@@ -410,6 +410,27 @@ void QmlAppHarness::click(const QPoint& where)
     settle(3);
 }
 
+bool QmlAppHarness::clickOn(QQuickItem* item)
+{
+    if (!item || !m_window)
+        return false;
+
+    // Twenty rounds is about eight hundred milliseconds. A settled item leaves
+    // after two; nothing in this window moves for longer than that except the
+    // animations grab() is about, and none of those is something a test clicks.
+    QRectF previous;
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        const QRectF here(item->mapToScene(QPointF(0, 0)), QSizeF(item->width(), item->height()));
+        if (!here.isEmpty() && here == previous) {
+            click(here.center().toPoint());
+            return true;
+        }
+        previous = here;
+        settle(1);
+    }
+    return false;
+}
+
 void QmlAppHarness::doubleClick(const QPoint& where)
 {
     if (!m_window)

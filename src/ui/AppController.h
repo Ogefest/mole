@@ -103,9 +103,9 @@ class AppController : public QObject
     /// A still picture cannot show something that breathes; it can only catch one
     /// arbitrary phase of it. A drive's dot pulses for ever while the drive is
     /// waiting or working, so the user guide's picture of the sidebar came out at a
-    /// different opacity every time it was taken -- and the dot is in all
-    /// fifty-three pictures, so that put every one of them at risk rather than a
-    /// nameable few. Held still, the dot is drawn at the opacity it rests at, which
+    /// different opacity every time it was taken -- and the dot is in *every* one of
+    /// the guide's pictures, so that put all of them at risk rather than a nameable
+    /// few. Held still, the dot is drawn at the opacity it rests at, which
     /// is the honest still rendering of that state.
     ///
     /// Set from `MOLE_STILL_PICTURES`, the same way `MOLE_DRIVES` fixes the drive

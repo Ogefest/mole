@@ -9,6 +9,71 @@ wrong.
 
 ---
 
+## tst_RepositoryBand failed once in a parallel run and the assertion was not captured
+
+**Asked for:** MOLE-256 — catch the failure first, then name the reason rather than infer it.
+And if it could not be caught, fix the thing that let it get away instead.
+
+**It was caught, on the fiftieth run.** `--repeat until-fail:50` on its own reproduced it, and
+the assertion is `theCountOpensAListNamingEveryPathGitReported` — `openChangedPaths()` returned
+false, "the count did not open". The same helper is used by four cases and the failure moved
+between them from run to run, which is why one run's summary line told nobody anything.
+
+**Naming the assertion was not the answer, only the first step.** "The count did not open" has
+three causes behind it — no label, a click that went nowhere, or a popup that never filled — so
+the helper was made to say which, and then to say what the numbers were. That turned the next
+failure into: *clicked, but no row appeared; 0 rows exist, the model has 0 entries, and the
+band text is empty.* The band had been there a moment before, so something was throwing it
+away.
+
+**Four rounds of probes to get from there to the cause**, each answering one question:
+
+- what clears the band → `setHead("")`, arriving after it was populated;
+- who called it → a read of the *parent* folder, with the pane's current location back at the
+  parent, and no `navigateTo` anywhere in the log;
+- how the location moved without `navigateTo` → `goBack()`;
+- which of the four things that call `goBack()` → the pane's `←` toolbar button, clicked.
+
+**The cause.** `openChangedPaths()` did `click(centreOf(label))`. Those are two instants. The
+label had just become visible, and an item that has just become visible reports the position it
+has *before* the layout pass places it — for a child of a `ColumnLayout`, the top of its
+parent. Measured: the label said it was at scene `(260,154)`, 68 by 16, so its centre is
+`(294,162)`; the pane's back button occupies `(252,154)`, 48 by 48. **The label's centre is
+inside the back button.** The click went to the button, the pane navigated to the parent
+folder, the band cleared, and the helper reported that the count had not opened — which was
+true and told nobody why.
+
+Once in about fifty runs, never in isolation, and it needed the machine loaded: under load the
+polish pass that lays out the band is late enough for the read to happen first.
+
+**The fix is a condition, not a longer wait.** `QmlAppHarness::clickOn(item)` reads the item's
+scene rectangle until two consecutive reads agree, turning the event loop between them, and
+then clicks the centre of *that*. A layout pass runs on polish, so one round of the loop is
+enough for the position to change; two the same means it has settled. It returns false rather
+than clicking somewhere arbitrary if the item never settles. The suite's own rule was the
+guide here — a test for a race waits for the thing itself, never for a clock — and
+`click(centreOf(...))` was a clock in disguise: it worked because the layout was usually
+already done.
+
+Three call sites moved to it: the helper, the popup row the deleted-entry case clicks, and the
+buttons `tst_DuplicatesTab` clicks — all of them items that had just appeared. Four others
+remain and are named in `TODO.md`: they click things that have been on screen a while, so they
+are a latent risk rather than a known fault, and converting four passing tests on a hunch is
+not a fix.
+
+**And the reason it got away for a fortnight is fixed too.** The ticket asked for a failure to
+record itself. CTest already did: `Testing/Temporary/LastTest.log` holds every test's full
+output and `LastTestsFailed.log` holds the names. The gap was that nobody knew, so the one run
+that saw the assertion had its output filtered to a summary line and the evidence was gone.
+`make test` and `make test-verbose` now print both paths when they fail, and say plainly to
+read them before re-running, because an intermittent failure may not come back.
+
+**Verified:** the assertion reproduced and named; then, with the fix in, several hundred runs of
+the four cases that use the helper across six concurrent processes with a full parallel suite
+running beside them, and ten consecutive full parallel runs — all green.
+
+---
+
 ## Two ways of building a set each opened another Sets tab
 
 **Asked for:** MOLE-254 — the two routes MOLE-206 and MOLE-208 left behind.

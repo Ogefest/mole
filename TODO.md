@@ -27,8 +27,22 @@ project, and a contributor should never hit a wall of text they cannot read.
 
 ## Notes
 
-- **Seven of the guide's fifty-three pictures cannot be identical twice running,
-  and they are named in `scripts/check-screenshots.sh`.** Three are of something in
+- **`click(centreOf(item))` reads a position and clicks it at a different instant,
+  and four call sites still do it.** `tests/app/tst_SetsTab.cpp` and three places in
+  `tests/app/tst_Dragging.cpp` click or double-click a position taken from an item.
+  That is the shape of MOLE-256: an item that has just become visible reports where
+  it was before the layout pass placed it, and under load the click goes to whatever
+  is really there — in that case the pane's back button, which navigated away and
+  left the test saying the thing it clicked had not opened.
+  `QmlAppHarness::clickOn()` reads the position until two consecutive reads agree
+  and is what a new test should use. The four that remain are clicking items that
+  have been on screen for a while rather than ones that just appeared, so they are a
+  latent risk rather than a known fault — and converting them blind would be
+  changing four passing tests on a hunch. `clickOn` has no double-click twin yet,
+  which is what `tst_SetsTab` would need.
+
+- **Seven of the guide's pictures cannot be identical twice running, and they are
+  named in `scripts/check-screenshots.sh`.** Three are of something in
   motion on purpose — a folder still loading, a CSV part-read, a transfer in flight
   — and photographing the settled state instead would lose the point of the
   picture. Three carry a duration or a timestamp as their *content*: a run's row
@@ -41,8 +55,8 @@ project, and a contributor should never hit a wall of text they cannot read.
   a measurement rather than a preference.** With every cause fixed, two runs still
   differ by one to five levels out of 255 in a few dozen pixels of pictures whose
   content is letter-for-letter the same: Qt's scene graph does not render a frame
-  to identical bytes twice. Forty-six of the fifty-three do come out
-  byte-identical and *which* seven do not moves between runs, so a byte comparison
+  to identical bytes twice. Most of them do come out byte-identical and *which* few
+  do not moves between runs, so a byte comparison
   with a fixed exception list would be flaky — and a flaky check is worse than
   none. See [ADR-0063](docs/adr/0063-the-guides-pictures-are-compared-by-eye.md).
 

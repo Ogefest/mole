@@ -8,7 +8,7 @@ JOBS ?= $(shell nproc)
 PREFIX ?= /usr/local
 DESTDIR ?=
 
-.PHONY: all build configure release run test test-live test-heavy test-verbose tsan clean distclean format tidy help guide-images \
+.PHONY: all build configure release run test test-live test-heavy test-verbose tsan clean distclean format tidy help guide-images where-the-log-is \
         install uninstall bundle licence-check screenshots
 
 all: build
@@ -54,7 +54,24 @@ run-gdb: build
 ##       The heavy tier is excluded by label: it moves gigabytes and needs a
 ##       server, and `make test` has to stay something anybody can run.
 test: build
-	@ctest --test-dir $(BUILD_DIR) --output-on-failure --parallel $(JOBS) --label-exclude heavy
+	@ctest --test-dir $(BUILD_DIR) --output-on-failure --parallel $(JOBS) --label-exclude heavy \
+		|| { $(MAKE) --no-print-directory where-the-log-is; exit 1; }
+
+## where-the-log-is: print where a failing run's full output was written
+#
+# Printed by `test` and `test-verbose` when they fail, because not knowing is what
+# cost MOLE-256 a fortnight: one assertion failed once in a parallel run and was
+# never seen again, the terminal output having been filtered to its summary line
+# before anybody read it. CTest had written all of it down the whole time.
+where-the-log-is:
+	@echo ""
+	@echo "  Every test's full output, passed and failed alike, is in"
+	@echo "    $(BUILD_DIR)/Testing/Temporary/LastTest.log"
+	@echo "  and the names that failed are in"
+	@echo "    $(BUILD_DIR)/Testing/Temporary/LastTestsFailed.log"
+	@echo ""
+	@echo "  Read those before re-running. An intermittent failure may not come back,"
+	@echo "  and the assertion is only in the log of the run that saw it."
 
 ## test-live: run the suites that need a real server, against the testbed
 ##            Needs MOLE_TESTBED_ADDRESS and MOLE_TESTBED_PASSWORD, which live
@@ -74,7 +91,8 @@ test-heavy: build
 
 ## test-verbose: same, printing every assertion
 test-verbose: build
-	@ctest --test-dir $(BUILD_DIR) --output-on-failure --verbose --label-exclude heavy
+	@ctest --test-dir $(BUILD_DIR) --output-on-failure --verbose --label-exclude heavy \
+		|| { $(MAKE) --no-print-directory where-the-log-is; exit 1; }
 
 ## asan: build and test with address and undefined-behaviour sanitizers
 asan:

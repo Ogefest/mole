@@ -189,15 +189,39 @@ std::unique_ptr<GitFixture> TestRepositoryBand::checkoutInEveryState(const QStri
 
 bool TestRepositoryBand::openChangedPaths()
 {
+    // Says which step failed. "The count did not open" is a sentence with three
+    // causes behind it, and this used to fail about once in fifty runs under load
+    // with no way to tell them apart -- the failing run's output was filtered to
+    // its summary line and the assertion was lost for a fortnight. See MOLE-256.
     QQuickItem* count = nullptr;
     for (QQuickItem* label : m_harness->items(QStringLiteral("repositoryChanges"))) {
         if (label->isVisible())
             count = label;
     }
-    if (!count)
+    if (!count) {
+        qWarning().noquote() << "openChangedPaths: no visible repositoryChanges label;"
+                             << m_harness->items(QStringLiteral("repositoryChanges")).size()
+                             << "exist, band text is" << changesText();
         return false;
-    m_harness->click(m_harness->centreOf(count));
-    return m_harness->until([this] { return !changedPathRows().isEmpty(); });
+    }
+
+    // clickOn() rather than click(centreOf()): the label has only just become
+    // visible, and reading its position before the layout pass places it gives the
+    // top of its parent -- which is the pane's toolbar, whose back button then took
+    // the click and navigated away. That is the whole of MOLE-256.
+    if (!m_harness->clickOn(count)) {
+        qWarning().noquote() << "openChangedPaths: the label never stopped moving";
+        return false;
+    }
+    if (m_harness->until([this] { return !changedPathRows().isEmpty(); }))
+        return true;
+
+    qWarning().noquote() << "openChangedPaths: clicked the label at" << count->mapToScene(QPointF(0, 0))
+                         << "but no row appeared;"
+                         << m_harness->items(QStringLiteral("repositoryChangedPath")).size()
+                         << "exist, the model has" << changedPathEntries().size() << "entries, band text is"
+                         << changesText();
+    return false;
 }
 
 QStringList TestRepositoryBand::changedPathRows() const
@@ -643,7 +667,10 @@ void TestRepositoryBand::activatingADeletedEntryLandsOnTheFolderThatHeldIt()
             row = candidate;
     }
     QVERIFY(row);
-    m_harness->click(m_harness->centreOf(row));
+    // clickOn(), for the same reason as in openChangedPaths(): this row appeared a
+    // moment ago inside a popup, and reading where it is before the layout has put
+    // it there is what MOLE-256 was.
+    QVERIFY(m_harness->clickOn(row));
 
     // A deleted file has nowhere to go, so it goes to the folder that held it --
     // which is the folder already carrying the roll-up dot.
@@ -676,7 +703,7 @@ void TestRepositoryBand::aCleanCheckoutHasNothingToOpen()
             count = label;
     }
     QVERIFY(count);
-    m_harness->click(m_harness->centreOf(count));
+    QVERIFY(m_harness->clickOn(count));
     m_harness->settle();
     QVERIFY(changedPathRows().isEmpty());
 }

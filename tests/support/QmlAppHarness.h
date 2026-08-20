@@ -132,6 +132,25 @@ public:
     void moveTo(const QPoint& where);
     void release(const QPoint& where, Qt::MouseButton button = Qt::LeftButton);
     void click(const QPoint& where);
+    /// Clicks an item once the layout has actually put it somewhere.
+    ///
+    /// `click(centreOf(item))` reads a position and sends a click at it, and those
+    /// are two different instants. An item that has just become visible reports the
+    /// position it has *before* the layout pass places it -- which for a child of a
+    /// ColumnLayout is the top of its parent, on top of whatever is really there.
+    /// Under load that is what happened: the repository band's changed-count label
+    /// reported scene (260,154), the pane's back button occupies (252,154) 48x48,
+    /// and the click at the label's centre went to the back button. The pane
+    /// navigated away, the band cleared, and the test failed saying the count did
+    /// not open. Once in about fifty runs, and never in isolation. See MOLE-256.
+    ///
+    /// So the position is read until two consecutive reads agree, with the event
+    /// loop turned between them -- a condition, not a wait long enough to be
+    /// probably fine. A layout pass runs on polish, so one round of the loop is
+    /// enough for the position to change; two the same means it has settled.
+    /// Returns false if it never settles, which is a real answer rather than a
+    /// click sent somewhere arbitrary.
+    bool clickOn(QQuickItem* item);
     void doubleClick(const QPoint& where);
     /// Presses at `from` and moves well past the platform's drag threshold, which
     /// is what turns a press into a drag. The button is still down when this
@@ -198,8 +217,9 @@ public:
     /// It should, almost always. The task strip is in every picture and says how
     /// many jobs have finished, so a job that lands between one run's grab and the
     /// next turns "16 finished" into "17 finished" -- a picture rewritten for a
-    /// reason that has nothing to do with the change being reviewed, and it can
-    /// happen to any of the fifty-three. Waiting for the count to stop moving
+    /// reason that has nothing to do with the change being reviewed, and because the
+    /// strip is always on screen it can happen to any picture at all rather than a
+    /// nameable few. Waiting for the count to stop moving
     /// makes it "everything the walkthrough has run so far", which is fixed.
     ///
     /// `Working` is for the handful of pictures that are *of* something still

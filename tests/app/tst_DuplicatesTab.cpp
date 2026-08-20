@@ -182,7 +182,10 @@ void TestDuplicatesTab::clickShown(const QString& objectName)
 {
     QQuickItem* button = shown(objectName);
     QVERIFY2(button, qPrintable(QStringLiteral("no visible %1").arg(objectName)));
-    m_harness->click(m_harness->centreOf(button));
+    // clickOn() reads the position until it stops moving. A button whose enabled
+    // state has just changed can still be where the layout had it before -- see
+    // MOLE-256, where a click at a label's centre landed on the pane's back button.
+    QVERIFY2(m_harness->clickOn(button), qPrintable(objectName + QStringLiteral(" never settled")));
     m_harness->settle();
 }
 
