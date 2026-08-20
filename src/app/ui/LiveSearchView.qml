@@ -625,10 +625,13 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             canBuildSet: true
+            // openPlace() rather than openFeatureTab(), and for the reason spelled
+            // out at the other caller in DuplicatesView.qml: one Sets tab, pointed
+            // at the set that was just built. See MOLE-254.
             onBuildSetRequested: {
                 const id = controller.buildSetFromResults("")
                 if (id.length > 0)
-                    App.openFeatureTab("core.filesets")
+                    App.openPlace("set", id)
             }
             visible: !(controller && controller.running === true
                        && (controller.results ? controller.results.count === 0 : true))

@@ -340,10 +340,19 @@ Item {
                             ToolTip.visible: hovered
                             ToolTip.text: "The ticked copies become a file set, which every " +
                                           "operation in Mole takes"
+                            // openPlace() rather than openFeatureTab(): the sets
+                            // are a standing tool that exists once (ADR-0032), and
+                            // openFeatureTab() always builds a new tab -- so this
+                            // left two Sets tabs when it was pressed twice.
+                            // openPlace() shows the one tab *and* points it at the
+                            // set just built, which is the half that makes reuse
+                            // right: a reused tab still showing whichever set was
+                            // current before would file the new one out of sight.
+                            // See MOLE-254.
                             onClicked: {
                                 const id = controller.buildSetFromTicked("")
                                 if (id.length > 0)
-                                    App.openFeatureTab("core.filesets")
+                                    App.openPlace("set", id)
                             }
                         }
                         Button {

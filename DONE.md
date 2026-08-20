@@ -9,6 +9,44 @@ wrong.
 
 ---
 
+## Two ways of building a set each opened another Sets tab
+
+**Asked for:** MOLE-254 — the two routes MOLE-206 and MOLE-208 left behind.
+
+**The fault.** `DuplicatesView.qml` and `LiveSearchView.qml` both called
+`App.openFeatureTab("core.filesets")` after building a set, and `openFeatureTab()` always
+builds a new tab. So *Make a set* twice from a duplicate scan left two Sets tabs, once from a
+scan and once from a search left two as well — each with its own controller over the same
+store and its own idea of which set is current, which ADR-0032 is explicitly against: the sets
+are a standing tool that exists once.
+
+**The fix is two lines each, and the second line is the point.** `openPlace("set", id)` shows
+the one Sets tab and writes `currentSetId`, so the tab is reused *and* pointed at the set that
+was just built. Reuse on its own would have been worse than the duplicate tab: a Sets tab
+reused and left showing whichever set was current before files the new set away out of sight.
+
+**The test drives the button, not the controller.** `buildSetFromTicked()` was never the part
+that was wrong, and the two existing tests in `tst_DuplicatesTab.cpp` call it directly — which
+is why they passed throughout. The new cases click `makeSetFromDuplicatesButton` and
+`buildSetFromResultsButton` through the harness and count the tabs of `core.filesets`. Both
+failed with two tabs where one was expected before the change.
+
+**Where the first version of the test was wrong.** It set `root` and `pattern` on the search
+controller, whose properties are `rootUri` and `queryText`. `QObject::setProperty` on a name a
+class does not have quietly adds a dynamic property instead of failing, so the search ran on
+its defaults, matched everything, and the assertion passed for the wrong reason. The test now
+checks the return of `setProperty` and asserts the result count, so a typo cannot make it
+green.
+
+**Three more places have the same fault, and they are a task rather than a quiet widening.**
+ADR-0032 names four standing tools — the alerts list, the saved reports, the schedule, the
+sets. MOLE-206 gave `openStandingTab()` to the sets alone, and the actions for the other three
+still call `openFeatureTab()`, so `Saved reports`, `Alerts` and `Schedule` each leave a second
+tab when triggered twice. That is the same shape as this ticket's own complaint — "neither
+ticket named these two callers" — so it is written down rather than repeated: MOLE-259.
+
+---
+
 ## `make guide-images` rewrote two thirds of the pictures with nothing changed
 
 **Asked for:** MOLE-255 — two consecutive runs of `make screenshots` over an unchanged tree

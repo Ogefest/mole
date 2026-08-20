@@ -67,7 +67,17 @@ private slots:
     void tickingOneCopyChangesOneRowAndRebuildsNothing();
     void aGroupArrivingLeavesTheScrollPositionWhereItWas();
 
+    void buildingASetTwiceLeavesOneSetsTabShowingTheSecondSet();
+    void aSetBuiltFromASearchSharesTheOneSetsTab();
+
 private:
+    /// How many tabs of a feature are open.
+    int tabsOfFeature(const QString& featureId) const;
+    /// Clicks the one visible item with this objectName, and fails the test if
+    /// there is not one. The button rather than the controller, because the fault
+    /// in MOLE-254 was in what the button did afterwards.
+    void clickShown(const QString& objectName);
+
     /// Builds the whole window. Files go in *its* fixture and not in `m_tree`:
     /// the application mounts its own, and a scan pointed at a directory the
     /// window never mounted answers with nothing while looking exactly like a
@@ -155,6 +165,25 @@ DuplicatesController* TestDuplicatesTab::openTabOn(const QStringList& roots)
     m_harness->app()->tabs()->setCurrentIndex(row);
     m_harness->settle();
     return controller;
+}
+
+int TestDuplicatesTab::tabsOfFeature(const QString& featureId) const
+{
+    int found = 0;
+    TabsModel* tabs = m_harness->app()->tabs();
+    for (int row = 0; row < tabs->rowCount(); ++row) {
+        if (tabs->index(row, 0).data(TabsModel::FeatureIdRole).toString() == featureId)
+            ++found;
+    }
+    return found;
+}
+
+void TestDuplicatesTab::clickShown(const QString& objectName)
+{
+    QQuickItem* button = shown(objectName);
+    QVERIFY2(button, qPrintable(QStringLiteral("no visible %1").arg(objectName)));
+    m_harness->click(m_harness->centreOf(button));
+    m_harness->settle();
 }
 
 QQuickItem* TestDuplicatesTab::shown(const QString& objectName) const
@@ -578,6 +607,127 @@ void TestDuplicatesTab::tickedCopiesAcrossGroupsBecomeOneSet()
         fixtureRoot(QStringLiteral("pile/deep/two-copy.bin")) };
     expected.sort();
     QCOMPARE(members, expected);
+}
+
+/// Two routes to a set each opened another Sets tab.
+///
+/// `DuplicatesView.qml` and `LiveSearchView.qml` both called
+/// `App.openFeatureTab("core.filesets")` after building one, and openFeatureTab()
+/// always builds a new tab -- so *Make a set* twice from a scan left two Sets tabs,
+/// each with its own controller over the same store and its own idea of which set
+/// is current. ADR-0032 calls the sets a standing tool that exists once.
+///
+/// MOLE-206 fixed it for *Add to set* and MOLE-208 for a bookmark; neither named
+/// these two callers, and the fault stayed behind them. Driven through the button
+/// rather than the controller, because `buildSetFromTicked()` was never the part
+/// that was wrong. See MOLE-254.
+void TestDuplicatesTab::buildingASetTwiceLeavesOneSetsTabShowingTheSecondSet()
+{
+    QVERIFY(startWindow());
+    const QByteArray first(4096, 'a');
+    const QByteArray second(9000, 'b');
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/one.bin"), first));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/deep/one-copy.bin"), first));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/two.bin"), second));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/deep/two-copy.bin"), second));
+
+    DuplicatesController* controller = openTabOn({ fixtureRoot(QStringLiteral("pile")) });
+    QVERIFY(controller);
+    controller->setStrategyId(QStringLiteral("content"));
+    controller->setMinimumSize(1);
+    controller->scan();
+    QVERIFY(m_harness->until([controller] { return !controller->isScanning() && controller->hasRun(); }));
+    QCOMPARE(controller->groupCount(), 2);
+    QCOMPARE(tabsOfFeature(QStringLiteral("core.filesets")), 0);
+
+    const int duplicatesTab = m_harness->app()->tabs()->currentIndex();
+
+    controller->toggle(fixtureRoot(QStringLiteral("pile/deep/one-copy.bin")));
+    QCOMPARE(controller->selectedCount(), 1);
+    clickShown(QStringLiteral("makeSetFromDuplicatesButton"));
+
+    QCOMPARE(tabsOfFeature(QStringLiteral("core.filesets")), 1);
+    FileSetStore* store = m_harness->app()->services().sets;
+    QVERIFY(store);
+    QCOMPARE(store->sets().size(), 1);
+
+    // Back to the scan, tick something else, and build a second set. The tab must
+    // be reused *and* pointed at the new one: reusing it while it went on showing
+    // the set that was current before would file the new set away out of sight,
+    // which is worse than the second tab.
+    m_harness->app()->tabs()->setCurrentIndex(duplicatesTab);
+    m_harness->settle();
+    controller->toggle(fixtureRoot(QStringLiteral("pile/deep/one-copy.bin")));
+    controller->toggle(fixtureRoot(QStringLiteral("pile/deep/two-copy.bin")));
+    QCOMPARE(controller->selectedCount(), 1);
+    clickShown(QStringLiteral("makeSetFromDuplicatesButton"));
+
+    QCOMPARE(tabsOfFeature(QStringLiteral("core.filesets")), 1);
+    QCOMPARE(store->sets().size(), 2);
+
+    const int setsRow = m_harness->app()->openStandingTab(QStringLiteral("core.filesets"));
+    QVERIFY(setsRow >= 0);
+    QObject* sets = m_harness->app()->tabs()->controllerAt(setsRow);
+    QVERIFY(sets);
+    // The set built second, named by the member that went into it.
+    const QString current = sets->property("currentSetId").toString();
+    QVERIFY2(!current.isEmpty(), "the Sets tab was reused and left pointing at nothing");
+    const FileSet showing = store->set(current);
+    QVERIFY(showing.isValid());
+    QCOMPARE(showing.uris, QStringList { fixtureRoot(QStringLiteral("pile/deep/two-copy.bin")) });
+}
+
+/// And a set built from a search shares that one tab, whichever route came first.
+///
+/// The two callers were separate lines in separate files, so fixing one and not the
+/// other would leave "one of each leaves two tabs" -- which is the same fault with
+/// a longer path to it. See MOLE-254.
+void TestDuplicatesTab::aSetBuiltFromASearchSharesTheOneSetsTab()
+{
+    QVERIFY(startWindow());
+    const QByteArray same(4096, 'a');
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/one.bin"), same));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/deep/one-copy.bin"), same));
+
+    DuplicatesController* controller = openTabOn({ fixtureRoot(QStringLiteral("pile")) });
+    QVERIFY(controller);
+    controller->setStrategyId(QStringLiteral("content"));
+    controller->setMinimumSize(1);
+    controller->scan();
+    QVERIFY(m_harness->until([controller] { return !controller->isScanning() && controller->hasRun(); }));
+    controller->toggle(fixtureRoot(QStringLiteral("pile/deep/one-copy.bin")));
+    clickShown(QStringLiteral("makeSetFromDuplicatesButton"));
+    QCOMPARE(tabsOfFeature(QStringLiteral("core.filesets")), 1);
+
+    // Now the other route. A search over the same folder, its results built into a
+    // set through the button in LiveSearchView.
+    const int searchRow = m_harness->app()->openFeatureTab(QStringLiteral("mole.livesearch"));
+    QVERIFY(searchRow >= 0);
+    auto* search = m_harness->app()->tabs()->controllerAt(searchRow);
+    QVERIFY(search);
+    // The real property names. `setProperty` on a name the controller does not
+    // have quietly adds a dynamic one instead of failing, so a typo here would
+    // leave the search running on its defaults and the assertion below passing for
+    // the wrong reason -- which is what happened the first time this was written.
+    QVERIFY(search->setProperty("rootUri", fixtureRoot(QStringLiteral("pile"))));
+    QVERIFY(search->setProperty("queryText", QStringLiteral("one")));
+    QVERIFY(QMetaObject::invokeMethod(search, "start"));
+    QVERIFY(m_harness->until([search] {
+        auto* results = search->property("results").value<QObject*>();
+        return !search->property("running").toBool() && results && results->property("count").toInt() > 0;
+    }));
+    m_harness->settle();
+    // Both files match "one", so the set the search builds is not the set the scan
+    // built -- if it were, "two sets" below would be satisfied by an accident.
+    QCOMPARE(search->property("results").value<QObject*>()->property("count").toInt(), 2);
+
+    clickShown(QStringLiteral("buildSetFromResultsButton"));
+
+    // One of each, and still one tab.
+    QCOMPARE(tabsOfFeature(QStringLiteral("core.filesets")), 1);
+    FileSetStore* store = m_harness->app()->services().sets;
+    QVERIFY(store);
+    QCOMPARE(store->sets().size(), 2);
 }
 
 void TestDuplicatesTab::whatTheShellAimsAtIsWhatIsTicked()
