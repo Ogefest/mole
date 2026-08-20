@@ -59,6 +59,7 @@ private slots:
     void narrowingResultsDoesNotSearchAgain();
     void aSetCanBeBuiltFromWhatTheSearchFound();
     void revealingAFileOpensItsFolderWithTheCursorOnIt();
+    void revealingAFileInAFolderStillBeingListedStillLandsOnIt();
     void examiningASearchsResultsLeavesOneBrowserTab();
     void aFolderResultAndAFileResultShareTheOneBrowserTab();
     void previewingFromASearchLeavesTheRevealTabAlone();
@@ -588,6 +589,40 @@ void TestAppIntegration::revealingAFileOpensItsFolderWithTheCursorOnIt()
     const QString other = m_tree->rootUri().child(QStringLiteral("reports/deep/haystack.txt")).toString();
     m_app->revealFile(other);
     QCOMPARE(pane->files()->uriAt(pane->currentIndex()), other);
+}
+
+/// A reveal into the folder a pane is *already* showing was dropped when the
+/// listing had not arrived yet.
+///
+/// The "already here" branch reasoned that there was no listing coming to put
+/// the cursor on the file -- true for a pane that has settled, false for one
+/// opened a moment ago. A tab opened in order to show a file is exactly that
+/// case, so Enter on a set's member landed in the right folder with the cursor
+/// on the first row. See MOLE-205.
+void TestAppIntegration::revealingAFileInAFolderStillBeingListedStillLandsOnIt()
+{
+    QVERIFY(m_tree->writeFile(QStringLiteral("wanted.txt"), QByteArray("x")));
+    const QString wanted = m_tree->rootUri().child(QStringLiteral("wanted.txt")).toString();
+
+    // A brand-new browser tab, asked about a file in its starting folder before
+    // it can possibly have finished listing it.
+    const int row = m_app->tabs()->openTab(QStringLiteral("mole.browser"));
+    QVERIFY(row >= 0);
+    auto* opened = qobject_cast<BrowserController*>(m_app->tabs()->controllerAt(row));
+    QVERIFY(opened);
+    BrowserPaneController* pane = opened->activePane();
+    QVERIFY(pane);
+    QVERIFY2(pane->isLoading(), "this test is about a pane that has not listed its folder yet");
+
+    m_app->revealFile(wanted);
+
+    QVERIFY(waitFor([pane] { return !pane->isLoading(); }, 10000));
+    QVERIFY2(waitFor(
+                 [pane, wanted] {
+                     return pane->currentIndex() >= 0 && pane->files()->uriAt(pane->currentIndex()) == wanted;
+                 },
+                 10000),
+        "the cursor has to land on the revealed file once the listing arrives");
 }
 
 LiveSearchController* TestAppIntegration::finishedSearchFor(const QString& text, int* rowOut)

@@ -348,6 +348,15 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
             m_drives->noteFailureAt(target, error);
     });
 
+    // A plugin's voice. `EventBus::postNotification()` was declared for exactly
+    // this from the start and nothing was listening, so anything a feature said
+    // through the bus went nowhere -- a view has no toast of its own and the
+    // shell owns the one there is. See MOLE-205.
+    connect(m_events, &EventBus::notificationPosted, this,
+        [this](EventBus::Severity severity, const QString& title, const QString& detail) {
+            emit notification(static_cast<int>(severity), title, detail);
+        });
+
     m_taskModel = new TaskListModel(m_taskManager, this);
     m_terminal = new TerminalController(this);
     m_tabs = new TabsModel(m_features, this);

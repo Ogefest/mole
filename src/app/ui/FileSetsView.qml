@@ -10,6 +10,7 @@ import QtQuick.Layouts
 // selection does — which is why there is nothing here about copying or reporting.
 Item {
     id: view
+    objectName: "setsView"
     property var controller: null
 
     readonly property color panelColor: "#1b2029"
@@ -17,6 +18,87 @@ Item {
     readonly property color mutedColor: "#8b93a7"
 
     function focusActivePane() { body.forceActiveFocus() }
+
+    // ---- the cursor over the members ---------------------------------------
+    //
+    // A list of its own rather than the browser's FileListModel. That model backs
+    // the browser panes and the search results, and teaching it what a set is
+    // would put a third tenant into shared code on behalf of a view that wants a
+    // cursor and nothing else. The cost is real and is this: no sorting by
+    // column, no selecting several members, no type-to-filter. None of the three
+    // existed here before either. See MOLE-205.
+    //
+    // No `activePane` on the controller, deliberately. It would have made these
+    // keys work with no view code at all, and it would also have switched on four
+    // menu actions whose only condition is that the property exists -- one of
+    // which reads a location a set does not have. See ADR-0060.
+
+    readonly property var memberRows: controller ? controller.members : []
+
+    /// Where the cursor is, as a uri rather than a row number.
+    ///
+    /// The member list is rebuilt from scratch whenever anything about the set
+    /// changes -- a check finishing, a member removed, the filter narrowed -- and
+    /// a ListView handed a new model puts its cursor back on the first row. A row
+    /// number would quietly come to mean a different file; a uri either is still
+    /// in the list or is not.
+    property string cursorUri: ""
+
+    /// The row the cursor is on now: the remembered member while it is still
+    /// there, otherwise the first one, because arriving at a list of files should
+    /// land on one rather than on nothing.
+    readonly property int cursorRow: {
+        if (view.memberRows.length === 0)
+            return -1
+        for (var i = 0; i < view.memberRows.length; ++i) {
+            if (view.memberRows[i].uri === view.cursorUri)
+                return i
+        }
+        return 0
+    }
+
+    readonly property var currentMember:
+        view.cursorRow >= 0 ? view.memberRows[view.cursorRow] : null
+
+    // The three functions the window's key fallback looks for by name. See
+    // Main.qml and ADR-0060.
+
+    function moveCursorBy(delta) {
+        if (view.memberRows.length === 0)
+            return
+        var next = Math.max(0, Math.min(view.memberRows.length - 1, view.cursorRow + delta))
+        view.cursorUri = view.memberRows[next].uri
+        memberList.positionViewAtIndex(next, ListView.Contain)
+    }
+
+    function activateCurrentRow() {
+        var member = view.currentMember
+        if (!member)
+            return
+        // A member whose file has gone has nothing to open, and opening the folder
+        // it used to be in -- which is what the double click did -- reads as
+        // though the file were still there.
+        if (member.missing) {
+            if (controller)
+                controller.reportMissing(member.uri)
+            return
+        }
+        // The member itself, not its folder: a browser opens with the cursor on
+        // it, so the next key acts on the file that was asked for.
+        App.revealFile(member.uri)
+    }
+
+    function previewCurrentRow() {
+        var member = view.currentMember
+        if (!member)
+            return
+        if (member.missing) {
+            if (controller)
+                controller.reportMissing(member.uri)
+            return
+        }
+        App.previewFile(member.uri)
+    }
 
     FocusScope {
         id: body
@@ -201,23 +283,44 @@ Item {
                     }
 
                     ListView {
+                        id: memberList
                         objectName: "setMemberList"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         clip: true
-                        model: controller ? controller.members : []
+                        model: view.memberRows
+                        // No currentIndex of its own, deliberately. A ListView
+                        // handed a new model sets that property itself, which
+                        // replaces a binding's value without removing the binding
+                        // -- so the highlight would stay on the first row until
+                        // something else happened to move it. view.cursorRow is
+                        // the one cursor there is.
 
                         delegate: Rectangle {
+                            id: memberRow
+                            objectName: "setMemberRow"
                             required property var modelData
+                            required property int index
                             width: ListView.view.width
                             implicitHeight: 30
-                            color: memberMouse.containsMouse ? "#20262f" : "transparent"
+                            color: memberRow.index === view.cursorRow ? "#26303f"
+                                 : memberMouse.containsMouse ? "#20262f" : "transparent"
 
                             MouseArea {
                                 id: memberMouse
                                 anchors.fill: parent
                                 hoverEnabled: true
-                                onDoubleClicked: App.goTo(modelData.location)
+                                // One click moves the cursor, so the mouse and the
+                                // keyboard agree about where the work is.
+                                onClicked: view.cursorUri = memberRow.modelData.uri
+                                // And a double click does what Enter does: opens the
+                                // member. It used to open the member's *folder*,
+                                // which left the person finding the file again by
+                                // hand.
+                                onDoubleClicked: {
+                                    view.cursorUri = memberRow.modelData.uri
+                                    view.activateCurrentRow()
+                                }
                             }
 
                             RowLayout {

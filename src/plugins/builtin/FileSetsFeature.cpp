@@ -1,5 +1,6 @@
 #include "plugins/builtin/FileSetsFeature.h"
 
+#include "core/events/EventBus.h"
 #include "core/sets/VerifySetTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/VfsManager.h"
@@ -234,6 +235,19 @@ void FileSetsController::verify()
             emit membersChanged();
         });
     m_services.tasks->submit(task);
+}
+
+void FileSetsController::reportMissing(const QString& uri)
+{
+    if (!m_services.events)
+        return;
+
+    const VfsUri parsed = VfsUri::fromString(uri);
+    m_services.events->postNotification(EventBus::Severity::Warning,
+        QStringLiteral("%1 is not there any more").arg(parsed.fileName()),
+        QStringLiteral("The set still remembers it. Use Forget missing to drop it, or put the file "
+                       "back at %1.")
+            .arg(parsed.parent().toString()));
 }
 
 QVariantMap FileSetsController::saveState() const

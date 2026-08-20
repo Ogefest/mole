@@ -277,6 +277,10 @@ mole_add_test(tst_IndexesTab        SOURCES app/tst_IndexesTab.cpp     LIBS mole
 mole_add_test(tst_Automation        SOURCES app/tst_Automation.cpp      LIBS mole_builtin)
 mole_add_test(tst_FileSets          SOURCES app/tst_FileSets.cpp        LIBS mole_builtin)
 
+# The Sets tab under the keyboard: a set is somewhere to work, which means a
+# cursor, arrows, Enter and F3 -- not a list to point at.
+mole_add_test(tst_SetsTab           SOURCES app/tst_SetsTab.cpp         LIBS mole_qml_harness mole_builtin)
+
 # Choosing what to keep, which is the half of a duplicate scan that can lose a
 # file: no rule may ever propose deleting every copy of anything.
 mole_add_test(tst_DuplicatesTab     SOURCES app/tst_DuplicatesTab.cpp   LIBS mole_qml_harness mole_builtin)

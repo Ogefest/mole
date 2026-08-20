@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-20 #MOLE-205 A set's members have a cursor: arrows walk them, Enter opens the member itself and F3 previews it
 2026-08-20 #MOLE-204 F3 in a search result previews the row under the cursor instead of doing nothing
 2026-08-20 #MOLE-238 Starting Mole no longer builds the GStreamer stack, which cost most of a second
 2026-08-20 #MOLE-239 A video thumbnail seeks to its frame, so a file over a minute gets a tile at all

@@ -375,7 +375,12 @@ void BrowserPaneController::revealFile(const QString& fileUri)
     m_pendingRevealMissing = false;
     const VfsUri folder = file.parent();
     if (folder == m_current) {
-        // Already here, so there is no listing coming to put the cursor on it.
+        // Already here -- but "here" is not the same as "listed". A pane opened a
+        // moment ago in order to show this file has a listing in flight, and that
+        // listing honours the request when it lands; answering from the rows there
+        // are now would answer from none. See MOLE-205.
+        if (m_pending)
+            return;
         const int row = m_files->rowOfUri(fileUri);
         m_pendingReveal.clear();
         if (row >= 0) {

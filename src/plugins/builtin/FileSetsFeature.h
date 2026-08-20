@@ -66,6 +66,13 @@ public:
     Q_INVOKABLE int forgetMissing();
     /// Re-checks each member against its drive.
     Q_INVOKABLE void verify();
+    /// Says out loud that a member's file has gone.
+    ///
+    /// The view already knows -- each member carries `missing` -- and has no
+    /// voice of its own; this has the event bus. Called when a key declines to
+    /// act on a member, because a key that does nothing cannot be told apart
+    /// from a key that is broken. See MOLE-205.
+    Q_INVOKABLE void reportMissing(const QString& uri);
 
     QVariantMap saveState() const override;
     void restoreState(const QVariantMap& state) override;
