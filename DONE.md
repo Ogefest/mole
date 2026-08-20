@@ -9,6 +9,52 @@ wrong.
 
 ---
 
+## A dialog flashed a scrollbar it did not need
+
+**Asked for:** MOLE-260 — found by the check MOLE-255 built, on the first run after a picture
+was added.
+
+**The fault.** `TargetList.qml` is the "which ones" list that the compress and delete dialogs
+both show, and its height chases its own content:
+
+```qml
+implicitHeight: Math.min(App.listRowHeight * maximumRows,
+                         Math.max(App.listRowHeight, list.contentHeight + 2))
+```
+
+`contentHeight` is zero until the delegates exist, so the box starts one row tall with a full
+model behind it. For those frames the content overflows, an `AsNeeded` scrollbar goes active,
+and then it fades out again — a scrollbar appearing and vanishing in a dialog that never needed
+one.
+
+**How it was caught.** `make screenshots-check` went red with the same signature in both
+dialogs, to the pixel: a 7 by 41 strip, no channel more than 37 levels out — `13-compress` at
+(526,336) and `14-delete` at (536,425). The tail of the fade, caught at a different point on
+different runs. Raising the grab budget to 2.4 seconds during MOLE-255 had made it rarer rather
+than gone, which is what racing a fade rather than avoiding it looks like.
+
+**The fix says it outright instead of inferring it.** The list only ever scrolls when there are
+more rows than `maximumRows`, and `list.count` comes from the model rather than from a layout —
+so the policy is `AlwaysOff` below that and `AsNeeded` above it, and there is nothing to get
+wrong while the height settles.
+
+**Asserted as "there is no scrollbar", not as "it did not flash."** The first version of the
+test watched the scrollbar's `active` property through the dialog's opening and passed against
+the unfixed code: the whole flash is over inside one turn of the event loop, before a polling
+loop gets its first look. So the test asks the durable question instead — with two rows the
+scrollbar's `size` is 1 and the scrollbar is not visible at all — which failed on the unfixed
+code for the right reason.
+
+**And the other half, because the wrong fix passes the first half.** A second case selects the
+whole fixture root, which is far more than the five rows the dialog shows, and asserts the
+scrollbar *is* visible with a handle smaller than the track. Turning the policy to `AlwaysOff`
+unconditionally passes the two-row assertion and fails this one, which is what was checked.
+
+**Verified:** both halves fail against their own wrong answers, the suite is green, and
+`make guide-images` now rewrites only the five pictures named as expected to differ.
+
+---
+
 ## The guide said nothing about a set being somewhere you can go
 
 **Asked for:** MOLE-257 — the file-set section of the guide describing what the *A set is a

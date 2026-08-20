@@ -34,7 +34,22 @@ Rectangle {
         anchors.fill: parent
         anchors.margins: 1
         clip: true
-        ScrollBar.vertical: ScrollBar {}
+        // Off outright when the rows fit, rather than left to work it out from a
+        // height that is still settling.
+        //
+        // `implicitHeight` above chases `list.contentHeight`, which is zero until the
+        // delegates exist -- so the box starts one row tall with a full model behind
+        // it, the content overflows for those frames, and an AsNeeded scrollbar goes
+        // active and then fades out again. A scrollbar appearing and vanishing in a
+        // dialog that never needed one, and the tail of the fade was in the guide's
+        // pictures of this dialog and the delete one, on some runs and not others.
+        //
+        // `list.count` comes from the model and does not wait for a layout, so the
+        // answer is known before there is anything to get wrong. See MOLE-260.
+        ScrollBar.vertical: ScrollBar {
+            objectName: "targetListScrollBar"
+            policy: list.count > root.maximumRows ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+        }
 
         delegate: RowLayout {
             required property var modelData

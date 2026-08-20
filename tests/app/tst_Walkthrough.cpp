@@ -1996,7 +1996,29 @@ void TestWalkthrough::compressingTheSelectionMakesAnArchiveBesideIt()
     m_harness->app()->triggerAction(QStringLiteral("mole.tools.compress"));
     QObject* dialog = m_harness->object(QStringLiteral("compressDialog"));
     QVERIFY(dialog);
+
     QVERIFY(m_harness->until([dialog] { return dialog->property("opened").toBool(); }));
+
+    // A list of two rows may not have a scrollbar at all -- not a hidden one, not a
+    // faded one, none.
+    //
+    // TargetList's height chases its own `contentHeight`, which is zero until the
+    // delegates exist, so the box began one row tall with two rows of content in it.
+    // For those frames the content overflowed, the scrollbar went active, and then it
+    // faded out again: a scrollbar in a dialog that never needed one, whose fade was
+    // still faintly there when `13-compress` and `14-delete` were photographed on
+    // some runs and not others. Asserted as "there is no scrollbar" rather than as
+    // "it did not flash", because the flash is over inside one turn of the event loop
+    // and a test that polls for it would pass by missing it. See MOLE-260.
+    QQuickItem* bar = nullptr;
+    for (QQuickItem* candidate : m_harness->items(QStringLiteral("targetListScrollBar"))) {
+        if (candidate->parentItem() && candidate->parentItem()->isVisible())
+            bar = candidate;
+    }
+    QVERIFY2(bar, "the target list has a scrollbar to ask about");
+    QCOMPARE(bar->property("size").toDouble(), 1.0);
+    QVERIFY2(
+        !bar->isVisible(), "two rows fit, so there is nothing for a scrollbar to do and it must not exist");
 
     QQuickItem* name = m_harness->item(QStringLiteral("archiveNameField"));
     QVERIFY(name);
@@ -2049,6 +2071,31 @@ void TestWalkthrough::compressingTheSelectionMakesAnArchiveBesideIt()
     QVERIFY(written.open(QIODevice::ReadOnly));
     QCOMPARE(written.read(2), QByteArray("PK"));
     QVERIFY(written.size() > 2);
+
+    // And the other half of the claim above: a list that really does overflow still
+    // scrolls. Turning the scrollbar off when the rows fit would be a bad fix if it
+    // also turned it off when they do not. The fixture root has far more than the
+    // five rows this dialog shows at once.
+    pane()->navigateTo(m_harness->fixtureUri());
+    QVERIFY(m_harness->until([this] { return !pane()->isLoading() && pane()->files()->rowCount() > 6; }));
+    pane()->files()->selectAll();
+    m_harness->settle();
+    m_harness->app()->triggerAction(QStringLiteral("mole.tools.compress"));
+    QVERIFY(m_harness->until([dialog] { return dialog->property("opened").toBool(); }));
+
+    QQuickItem* overflowing = nullptr;
+    for (QQuickItem* candidate : m_harness->items(QStringLiteral("targetListScrollBar"))) {
+        if (candidate->parentItem() && candidate->parentItem()->isVisible())
+            overflowing = candidate;
+    }
+    QVERIFY(overflowing);
+    QVERIFY2(overflowing->isVisible(), "more rows than fit have to be reachable");
+    QVERIFY2(overflowing->property("size").toDouble() < 1.0,
+        "and the handle has to say how much of the list is showing");
+
+    QVERIFY(QMetaObject::invokeMethod(dialog, "reject"));
+    QVERIFY(m_harness->until([dialog] { return !dialog->property("opened").toBool(); }));
+    pane()->files()->clearSelection();
 }
 
 // The dialog with no second chance behind it. It used to ask "delete 2 items?", which

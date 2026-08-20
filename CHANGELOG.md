@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-20 #MOLE-260 The compress and delete dialogs no longer flash a scrollbar over a list that fits
 2026-08-20 #MOLE-257 The guide says a set is somewhere you can go: walking the members, Ctrl+D, and a picture of both kinds of bookmark
 2026-08-20 #MOLE-256 A test that clicks something clicks it where the layout put it, and a failing run says where its log is
 2026-08-20 #MOLE-254 Building a set from a duplicate scan or a search shows the Sets tab that is already open, pointed at the new set

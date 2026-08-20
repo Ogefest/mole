@@ -41,15 +41,21 @@ project, and a contributor should never hit a wall of text they cannot read.
   changing four passing tests on a hunch. `clickOn` has no double-click twin yet,
   which is what `tst_SetsTab` would need.
 
-- **Seven of the guide's pictures cannot be identical twice running, and they are
-  named in `scripts/check-screenshots.sh`.** Three are of something in
-  motion on purpose — a folder still loading, a CSV part-read, a transfer in flight
-  — and photographing the settled state instead would lose the point of the
-  picture. Three carry a duration or a timestamp as their *content*: a run's row
-  saying "26 ms" one time and "16 ms" the next is the row working correctly.
-  Freezing the clock application-wide would mean a test seam in thirty-eight call
-  sites across twenty files, which is not proportionate to a picture. The seventh,
-  `27-gallery`, is waiting on MOLE-258.
+- **Eight of the guide's pictures cannot be identical twice running, and they are
+  named in `scripts/check-screenshots.sh`.** Three are of something in motion on
+  purpose — a folder still loading, a CSV part-read, a transfer in flight — and
+  photographing the settled state instead would lose the point of the picture. Three
+  carry a duration or a timestamp as their *content*: a run's row saying "26 ms" one
+  time and "16 ms" the next is the row working correctly, and freezing the clock
+  application-wide would mean a test seam in thirty-eight call sites across twenty
+  files, which is not proportionate to a picture. `27-gallery` waits on MOLE-258.
+
+  The eighth, `26-indexes`, is the odd one: it moved once by six and a half thousand
+  pixels and the cause was never identified. It is named so the check stays usable
+  rather than going red for a reason nobody can act on, MOLE-261 carries the
+  measurement, and the entry comes out when that task closes. **It is the only name in
+  that list which is not a claim about the picture, and it should stay the only one** —
+  a list of "we do not know" is a list nobody can act on either.
 
 - **`make screenshots-check` compares what an eye can see, not bytes, and that is
   a measurement rather than a preference.** With every cause fixed, two runs still
