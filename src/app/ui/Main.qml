@@ -196,8 +196,21 @@ ApplicationWindow {
     // stays in FilePane: cursor movement, type-to-filter and selection mean
     // nothing without the keyboard.
     Shortcut {
+        // The view is asked first, by name, the way Ctrl+G asks for
+        // focusPathBar() and the arrows ask for moveCursorBy(): a tab with a
+        // cursor over files but no pane -- a search, a set -- can answer for
+        // itself. A browser has no previewCurrentRow() and keeps resolving
+        // through its active pane, because the pane's cursor is the tab's own
+        // idea of where it is and the view does not own it. See MOLE-204.
         sequence: "F3"
-        onActivated: App.previewCurrent()
+        onActivated: {
+            var view = root.currentTabItem()
+            if (view && view.previewCurrentRow) {
+                view.previewCurrentRow()
+                return
+            }
+            App.previewCurrent()
+        }
     }
     Shortcut {
         sequence: "Ctrl+Up"

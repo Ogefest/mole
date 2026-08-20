@@ -177,23 +177,11 @@ FocusScope {
             }
             break
         // --- commander function keys ---
-        case Qt.Key_F3:
-            // Handled here as well as by the window shortcut: the pane is
-            // where the file under the cursor is known, and a key that only
-            // works when a shortcut happens to fire is a key that will one day
-            // stop working.
-            //
-            // A folder has nothing to preview, and a key that does nothing is
-            // indistinguishable from one that is broken -- so on a folder F3
-            // opens it, which is the same thing Return does. The menu entry
-            // stays literally "Preview this file" and stays disabled here,
-            // because that is what it says it does.
-            if (paneController && paneController.files.isDirAt(paneController.currentIndex))
-                pane.openRow(paneController.currentIndex)
-            else
-                App.triggerAction("mole.tools.preview")
-            event.accepted = true
-            break
+        //
+        // No F3 here. It is a window shortcut, which is matched before the key
+        // reaches this item, so a handler for it could never run -- and two
+        // mechanisms for one key is how ADR-0019's fault happened the first
+        // time. The window resolves it through this pane. See MOLE-204.
         case Qt.Key_F2:
             renameDialog.open()
             event.accepted = true

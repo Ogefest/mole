@@ -36,10 +36,19 @@ Rectangle {
             App.revealFile(uri)
     }
 
-    function previewCurrent() {
+    /// What F3 means over a result. Named the way the window asks for it: the key
+    /// is a window shortcut, so it never reaches this list, and the view above
+    /// forwards it here. See MOLE-204.
+    ///
+    /// A folder has nothing to preview, and a key that does nothing cannot be
+    /// told apart from one that is broken -- so a folder is opened, which is what
+    /// Enter does and what F3 already does in a listing.
+    function previewCurrentRow() {
         if (list.currentIndex < 0 || !resultsModel)
             return
-        if (!resultsModel.isDirAt(list.currentIndex))
+        if (resultsModel.isDirAt(list.currentIndex))
+            revealCurrent()
+        else
             App.previewFile(resultsModel.uriAt(list.currentIndex))
     }
 
@@ -84,7 +93,7 @@ Rectangle {
                 ToolTip.text: "Look at this without leaving the results  (F3)"
                 ToolTip.visible: hovered
                 ToolTip.delay: 600
-                onClicked: results.previewCurrent()
+                onClicked: results.previewCurrentRow()
             }
 
             Item { Layout.fillWidth: true }
@@ -128,12 +137,6 @@ Rectangle {
 
         Keys.onReturnPressed: results.revealCurrent()
         Keys.onEnterPressed: results.revealCurrent()
-        Keys.onPressed: function(event) {
-            if (event.key === Qt.Key_F3) {
-                results.previewCurrent()
-                event.accepted = true
-            }
-        }
 
         delegate: ItemDelegate {
             required property int index

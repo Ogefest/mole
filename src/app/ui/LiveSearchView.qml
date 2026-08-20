@@ -13,6 +13,11 @@ Item {
     // the start -- reaching for the mouse to click into a search field is exactly
     // what Ctrl+F is supposed to save.
     function focusActivePane() { queryField.forceActiveFocus() }
+
+    /// F3, asked for by name by the window. A search tab has no pane for the
+    /// window to resolve the key through; the results list is where its cursor
+    /// is. See MOLE-204.
+    function previewCurrentRow() { resultList.previewCurrentRow() }
     Component.onCompleted: Qt.callLater(queryField.forceActiveFocus)
 
     ColumnLayout {

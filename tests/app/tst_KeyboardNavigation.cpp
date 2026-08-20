@@ -63,6 +63,8 @@ private slots:
     void modifiedKeysDoNotStartFiltering();
     void f3OpensAPreviewAndReusesTheTab();
     void f3OnAFolderOpensItInstead();
+    void f3PreviewsTheResultUnderTheCursor();
+    void f3OnAFolderInTheResultsOpensIt();
     void previewArrowsStepThroughTheFolder();
     void newTabShortcutOpensATab();
     void f4MenuWalksIntoSubmenusWithTheKeyboard();
@@ -85,6 +87,9 @@ private:
     int gridColumns() const;
     /// Adds `files` entries so a page is smaller than the folder.
     bool fillFolder(int files);
+    /// Opens a search tab over the temporary tree, runs `query` to the end and
+    /// leaves the tab current. Null if anything went wrong.
+    QObject* searchFor(const QString& query);
     /// QObject::findChild does not follow the visual tree that Loader and
     /// SplitView build, so walk the item tree instead.
     static QQuickItem* findItem(QQuickItem* root, const QString& objectName);
@@ -670,6 +675,70 @@ void TestKeyboardNavigation::f3OnAFolderOpensItInstead()
     pressKey(Qt::Key_F3);
     QCOMPARE(m_app->tabs()->rowCount(), tabsBefore + 1);
     QCOMPARE(browser->currentUri(), here);
+}
+
+QObject* TestKeyboardNavigation::searchFor(const QString& query)
+{
+    const int row = m_app->tabs()->openTab(QStringLiteral("mole.livesearch"));
+    if (row < 0)
+        return nullptr;
+    QObject* search = m_app->tabs()->controllerAt(row);
+    if (!search)
+        return nullptr;
+    search->setProperty("rootUri", m_tree->rootUri().toString());
+    search->setProperty("queryText", query);
+    if (!QMetaObject::invokeMethod(search, "start"))
+        return nullptr;
+    if (!waitFor([search] { return !search->property("running").toBool(); }, 10000))
+        return nullptr;
+    settle();
+    return search;
+}
+
+// F3 is a window shortcut, so it never reaches the item holding the keyboard --
+// which is why the results list had a handler for it that could not run. The
+// window resolved the key through activePane, and only a browser tab has one.
+// See MOLE-204.
+void TestKeyboardNavigation::f3PreviewsTheResultUnderTheCursor()
+{
+    QObject* search = searchFor(QStringLiteral("one"));
+    QVERIFY(search);
+    auto* found = search->property("results").value<FileListModel*>();
+    QVERIFY(found);
+    QVERIFY(waitFor([found] { return found->rowCount() == 1; }, 5000));
+
+    QQuickItem* list = findItem(QStringLiteral("searchResults"));
+    QVERIFY2(list, "the results list has to be on screen for its cursor to mean anything");
+    QVERIFY(waitFor([list] { return list->property("currentIndex").toInt() == 0; }, 5000));
+
+    const int before = m_app->tabs()->rowCount();
+    pressKey(Qt::Key_F3);
+
+    QVERIFY2(waitFor([this, before] { return m_app->tabs()->rowCount() == before + 1; }, 5000),
+        "F3 in a search result has to preview the row under the cursor");
+    QCOMPARE(m_app->tabs()->currentController()->property("currentUri").toString(),
+        m_tree->rootUri().child(QStringLiteral("one.txt")).toString());
+}
+
+void TestKeyboardNavigation::f3OnAFolderInTheResultsOpensIt()
+{
+    QObject* search = searchFor(QStringLiteral("alpha"));
+    QVERIFY(search);
+    auto* found = search->property("results").value<FileListModel*>();
+    QVERIFY(found);
+    QVERIFY(waitFor([found] { return found->rowCount() == 1; }, 5000));
+    QVERIFY2(found->isDirAt(0), "this test is about a folder in the results");
+
+    QQuickItem* list = findItem(QStringLiteral("searchResults"));
+    QVERIFY(list);
+    QVERIFY(waitFor([list] { return list->property("currentIndex").toInt() == 0; }, 5000));
+
+    // A folder has nothing to preview, so F3 opens it -- the same as Return, and
+    // the same as F3 on a folder in a listing.
+    pressKey(Qt::Key_F3);
+    QVERIFY2(
+        waitFor([this] { return pane() && pane()->currentUri().endsWith(QStringLiteral("/alpha")); }, 5000),
+        "F3 on a folder in the results has to open it");
 }
 
 void TestKeyboardNavigation::previewArrowsStepThroughTheFolder()
