@@ -86,12 +86,14 @@ epic** — that is what happened to `Testing: phase 6 — automation`, whose car
 and a finished epic is never offered.
 
 **Much of the time no catch-all is open at all**, because one closes the moment its last task lands
-and the next is made only when something needs it. That is the normal state and not a fault — as of
-the evening of 2026-08-19 there is none. When you open a small task and the open-epic list holds no
-catch-all, **leave the task with no `epic:` label and say so in the message you send.** Planning
-sees it in the `no epic` column, which is exactly what that column is for, and makes the next batch.
-An unlabelled task waiting an hour is recoverable; a task filed into a finished epic is invisible,
-and that is the failure above.
+and the next is made only when something needs it. That is the normal state and not a fault. **As of
+the morning of 2026-08-20 `Loose ends III` is open** — planning made it for the two tasks you had
+correctly left unlabelled the night before, `MOLE-233` and `MOLE-235`. Never take that from this
+page, though: read the open titles, because a batch can close between one task and the next. When
+you open a small task and the open-epic list holds no catch-all, **leave the task with no `epic:`
+label and say so in the message you send.** Planning sees it in the `no epic` column, which is
+exactly what that column is for, and makes the next batch. An unlabelled task waiting an hour is
+recoverable; a task filed into a finished epic is invisible, and that is the failure above.
 
 **The catch-all is the last resort and not the default.** It was broken up on
 2026-08-18 after growing to eighteen open tasks over six unrelated subjects. A
@@ -201,6 +203,19 @@ itself: `vikunja.md` there holds the address and the only copy of the bot token.
 task labelled `needs-server` is one whose work depends on those facts, and that
 directory is the first thing to read before starting one. Reading a path outside
 this checkout may ask for permission the first time; that is the mechanism working.
+
+**There is a second label of that shape, and it means a machine that does not exist
+yet: `needs-windows`.** A task carries it when the code can be written and reviewed
+here but the answer it needs can only be measured on Windows — whether a media
+pipeline can be built on a pool thread, whether a manifest really lifts the
+260-character ceiling, whether a terminal panel over ConPTY works at all. Planning
+keeps those in `Backlog` rather than `Ready`, so you will not be handed one; the
+machine itself is `MOLE-253`. **What this asks of you is the other direction**: when
+you open a task whose *done when* cannot be reached without a Windows machine, say so
+in the message and let planning apply the label, rather than writing a "done when"
+that quietly cannot be met. Splitting the assertable half from the measurement is
+better still, and three of the tasks in *Windows and macOS, built and run* are
+written exactly that way.
 
 Nothing comes back the other way. Not into a commit message, a code comment, a
 test fixture, a task, a pull request, or a log attached to one. Anything the
