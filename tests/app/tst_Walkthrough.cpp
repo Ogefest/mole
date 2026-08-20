@@ -487,6 +487,17 @@ void TestWalkthrough::buildFixture()
         if (QFileInfo(QDir(m_harness->fixturePath()).filePath(path)).isDir())
             QVERIFY2(m_harness->setModified(path, stamp), qPrintable(path));
     }
+
+    // And then everything else, whether anybody remembered it or not.
+    //
+    // The list above is hand-written, and a hand-written list of what must not
+    // carry the clock is a list that goes stale the first time somebody adds a
+    // fixture file. It had: `photos/IMG_4417.jpg` and its two copies were in three
+    // photographed views and in none of the entries above, so the duplicates
+    // picture carried today's date and was rewritten every day. Deriving a date
+    // from the path closes that off -- a file nobody listed still gets a fixed
+    // one, and the entries above stay as the dates the guide's prose refers to.
+    QVERIFY(m_harness->fixDatesUnder(QString(), epoch));
 }
 
 void TestWalkthrough::cleanup()
@@ -782,7 +793,7 @@ void TestWalkthrough::aSlowFolderSaysSoInTheMiddleOfThePane()
     QVERIFY2(loading->width() >= fileList->width() - 1,
         "the waiting view spans the pane rather than hugging one edge");
 
-    m_harness->screenshot(QStringLiteral("01d-slow-folder"));
+    m_harness->screenshot(QStringLiteral("01d-slow-folder"), QmlAppHarness::Settle::Working);
 
     // Stop rather than sit through the rest of the delay, which is also what
     // the Stop button on that view does.
@@ -854,6 +865,11 @@ void TestWalkthrough::aCheckoutSaysWhichBranchAndWhatChanged()
     QVERIFY(!checkout.commitAll(QStringLiteral("Set the project up")).isEmpty());
     QVERIFY(checkout.writeFile(QStringLiteral("README.md"), "# A project\n\nWith a line added.\n"));
     QVERIFY(checkout.writeFile(QStringLiteral("notes.txt"), "not committed yet\n"));
+
+    // Made here rather than in buildFixture, so it needs its own fixed dates: the
+    // date column of this listing is in the picture below, and a checkout written
+    // seconds ago carries the clock. See MOLE-255.
+    QVERIFY(m_harness->fixDatesUnder(QStringLiteral("project"), QDate(2026, 3, 14)));
 
     pane()->navigateTo(m_harness->fixtureUri() + QStringLiteral("/project"));
     QVERIFY(m_harness->until([this] {
@@ -1040,7 +1056,7 @@ void TestWalkthrough::aSlowTableSaysSoAndThenFillsAsItReads()
 
     QVERIFY2(m_harness->until([&] { return visibleLoadingView() != nullptr; }, 6000),
         "past a second with nothing to show yet, the view has to say it is reading");
-    m_harness->screenshot(QStringLiteral("02b-preview-csv-loading"));
+    m_harness->screenshot(QStringLiteral("02b-preview-csv-loading"), QmlAppHarness::Settle::Working);
 
     // And once rows start landing the message gets out of the way, because the
     // rows themselves are the better answer to "is this stuck".
@@ -3946,7 +3962,7 @@ void TestWalkthrough::aTransferInFlightShowsASpeedAndABar()
     QVERIFY(rate);
     QVERIFY2(m_harness->until([rate] { return rate->isVisible(); }, 30000), "a copy in flight has a speed");
     QVERIFY2(tasks->activeProgress() > 0, "and a bar that has moved off nothing");
-    m_harness->screenshot(QStringLiteral("24-transfer-running"));
+    m_harness->screenshot(QStringLiteral("24-transfer-running"), QmlAppHarness::Settle::Working);
 
     // Left tidy: a task still running when the harness is torn down is noise in
     // the next test's log.

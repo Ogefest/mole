@@ -9,6 +9,107 @@ wrong.
 
 ---
 
+## `make guide-images` rewrote two thirds of the pictures with nothing changed
+
+**Asked for:** MOLE-255 — two consecutive runs of `make screenshots` over an unchanged tree
+producing identical files, checked by something anybody can run, with the pictures that
+genuinely cannot be deterministic named and excluded.
+
+**Measured first: fifty of the fifty-three, not thirty-two.** The ticket's figure was taken
+from `make screenshots`; taking them twice and comparing pixel by pixel found fifty. So a
+ticket that moved one thing on screen produced a diff of fifty binary files, of which one was
+the change — nobody could tell whether the picture that mattered had moved, and a regression in
+an unrelated picture was invisible. It had already cost a ticket: MOLE-209 asked for the
+pictures to be regenerated if the sidebar was in any of them, and the honest answer was to read
+all fifty-three by hand and decline.
+
+**Seven separate causes, found by masking each one out and looking at what was left.** In the
+order of how many pictures each touched:
+
+- **the drives' free space**, in thirty-nine of them. `135,81 GiB free` became `135,80 GiB
+  free` between two runs minutes apart, because the fixture sits on the real disk. The drive
+  *names* had already been fixed for exactly this reason — `MOLE_DRIVES` exists and its comment
+  says so — and the figures had not. An entry may now carry `|free:total`, a `Mount` may be
+  told its size instead of measured, and the harness invents a plausible size for each. The
+  sidebar is a better illustration for it: two drives with different capacities, one of them
+  ninety per cent full, so the amber bar the guide documents is now visible;
+- **the clock**, in the date column of everything the run created rather than the fixture.
+  `buildFixture()` already fixed dates from a hand-written list of thirty paths — and the list
+  was missing `photos/IMG_4417.jpg` and its two copies, which are in three photographed views.
+  A hand-written list of what must not carry the clock goes stale the first time somebody adds
+  a fixture file, so `fixDatesUnder()` now gives everything a date derived from its own path
+  (FNV-1a, not `qHash`, whose seed is not promised stable between Qt versions — an upgrade must
+  not rewrite the guide). The explicit entries still win, and `.git` is skipped because
+  rewriting times inside a checkout makes libgit2 recheck what the picture is *of*;
+- **the order of a list.** `SyncPlan::build()` sorted by action with a *stable* sort, so within
+  a rank the order was whatever the filesystem listed; a duplicate group kept its files in walk
+  order and two groups freeing the same amount sat in confirmation order. All three now break
+  ties by path. This is the part that is not test scaffolding: **a plan is something somebody
+  reads before agreeing to it, and one that shuffles between one look and the next cannot be
+  compared with the last look**;
+- **the terminal's prompt.** The panel starts `$SHELL -i`, which was the shell of whoever ran
+  the suite — so `10-terminal.png` carried a real user name and a real machine name into a
+  public repository, which is what CLAUDE.md forbids anywhere in this checkout. It also decided
+  whether the echoed command wrapped, so the panel had scrolled by one line in one run and not
+  the next. The harness now writes a wrapper that execs `bash --norc --noprofile -i` and
+  exports a prompt of its own; `\w` keeps the folder in it, which is the claim the picture is
+  evidence for;
+- **the text caret**, which blinks, so the same state gave `report|` and `report`. Qt is told
+  not to flash it. `grab()` cannot help with a blink: it is a change that never stops, so there
+  is no pair of identical frames to wait for;
+- **the task strip**, which is in every picture and says how many jobs have finished. A grab
+  now waits for the window to stop working first, which makes the count "everything run so
+  far". The three pictures that are *of* something working say `Settle::Working` at the call
+  site, because waiting there would photograph the finished state and break the rule that a
+  picture shows what the assertions just checked;
+- **an animation's tail.** `grab()` already waited for two identical frames — the comment
+  there records an earlier round of this — but two is not enough at the end of a fade whose
+  last steps round to the same pixels. Three, and a budget of 2.4 s rather than 0.8 s, because
+  a scrollbar does not transition: it fades itself out on a delay after nothing touches it, and
+  the faint remains of one were in the compress dialog on some runs.
+
+**And an eighth, found by the check itself.** With all of that fixed the check went red on
+`12c-search-mixed`: fifty-two pixels, sixty-five levels out, in the drive's status dot. The dot
+*breathes* — a `SequentialAnimation` looping for ever between opacity 0.35 and 1.0 while a
+drive is waiting or working — so a still picture can only ever catch one arbitrary phase of it,
+and the dot is in all fifty-three pictures. `App.stillPictures`, from `MOLE_STILL_PICTURES` the
+same way `MOLE_DRIVES` works, holds it at the opacity it rests at, which is the honest still
+rendering of that state.
+
+**Byte-identical turned out not to be reachable, and that changed the deliverable.** What
+remains between two runs is one to five levels out of 255, in a few dozen pixels of pictures
+whose content is letter-for-letter the same: Qt's scene graph does not render a given frame to
+identical bytes twice. Forty-six of the fifty-three do come out byte-identical, and *which*
+seven do not moves from run to run — so a byte comparison with a fixed exception list would be
+flaky, and a flaky check teaches everyone to ignore red. So the check compares what an eye can
+see: `tests/tools/compare-shots.cpp` counts a pixel as different when a channel is more than
+eight levels out, and a picture as changed when even one such pixel is found. A tolerance on
+*how different* a pixel is, never on how many — allowing a few dozen would hide a changed word
+in a label. Qt rather than ImageMagick or Pillow, both of which were to hand on this machine
+and are not the same as being to hand for a contributor. See
+[ADR-0063](docs/adr/0063-the-guides-pictures-are-compared-by-eye.md).
+
+**What anybody can now run.** `make screenshots-check` takes the pictures twice and says
+whether a regeneration would be reviewable, failing when anything moved that is not named with
+a reason. `make guide-images` copies only what changed by that measure, so a commit holds the
+change rather than fifty files of nothing.
+
+**Named, with reasons, in `scripts/check-screenshots.sh`:** three pictures of work in progress
+(a folder loading, a CSV part-read, a transfer running), three rows whose content *is* a
+duration or a timestamp, and `27-gallery`, which waits on MOLE-258.
+
+**One fault opened rather than folded in.** `27-gallery` moved because the task strip counted
+one thumbnail decode more in some runs than others. Dumping the task list showed
+`Thumbnail of IMG_4417.jpg` twice: the first picture in the folder is the first evicted from
+the memory tier, and the gallery asks for it again after the listing already had it.
+`ThumbnailPump::startFor()` refuses duplicate work three ways but cannot refuse a decode that
+has already finished, and only the *memory* tier is consulted before a task is made — so
+whether the disk tier should have answered is a real question with a real cost when a folder of
+hundreds of pictures is scrolled. That is a fault of its own with its own test to write, not a
+property of a screenshot, so it is MOLE-258 in `Loose ends III`.
+
+---
+
 ## A killed heavy run left gigabytes on the test server, and the next one skipped for want of room
 
 **Asked for:** MOLE-235 — a sweep that takes away what a run that never reached `cleanup()`

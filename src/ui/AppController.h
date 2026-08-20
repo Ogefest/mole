@@ -98,6 +98,20 @@ class AppController : public QObject
     Q_PROPERTY(mole::TerminalController* terminal READ terminal CONSTANT)
     /// The credential store's state, so the interface can ask for a passphrase
     /// once rather than failing drive by drive.
+    /// True when this window is being photographed rather than used.
+    ///
+    /// A still picture cannot show something that breathes; it can only catch one
+    /// arbitrary phase of it. A drive's dot pulses for ever while the drive is
+    /// waiting or working, so the user guide's picture of the sidebar came out at a
+    /// different opacity every time it was taken -- and the dot is in all
+    /// fifty-three pictures, so that put every one of them at risk rather than a
+    /// nameable few. Held still, the dot is drawn at the opacity it rests at, which
+    /// is the honest still rendering of that state.
+    ///
+    /// Set from `MOLE_STILL_PICTURES`, the same way `MOLE_DRIVES` fixes the drive
+    /// list and for the same reason. Nothing sets it in an ordinary run.
+    /// See MOLE-255 and ADR-0063.
+    Q_PROPERTY(bool stillPictures READ stillPictures CONSTANT)
     Q_PROPERTY(bool credentialsAvailable READ credentialsAvailable CONSTANT)
     Q_PROPERTY(bool credentialsExist READ credentialsExist NOTIFY credentialsChanged)
     Q_PROPERTY(bool credentialsUnlocked READ credentialsUnlocked NOTIFY credentialsChanged)
@@ -143,6 +157,7 @@ public:
     FileSetStore* sets() const { return m_sets; }
     RemoteRegistry* remotes() const { return m_remotes; }
 
+    bool stillPictures() const { return m_stillPictures; }
     bool credentialsAvailable() const;
     bool credentialsExist() const;
     bool credentialsUnlocked() const;
@@ -550,6 +565,7 @@ private:
     QTimer* m_sessionSaveTimer = nullptr;
     /// Restoring opens tabs, which would immediately mark the session dirty.
     bool m_restoring = false;
+    const bool m_stillPictures = !qEnvironmentVariableIsEmpty("MOLE_STILL_PICTURES");
     TabsModel* m_tabs = nullptr;
     /// Tells the drive list which locations the window has open, so a drive can
     /// say that somebody is on it. Called when a tab moves, opens or closes, and

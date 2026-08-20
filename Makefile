@@ -163,10 +163,24 @@ screenshots: build
 	@echo "  screenshots: $(BUILD_DIR)/screenshots"
 
 ## guide-images: refresh the user guide's screenshots from the test suite
+##               Only the pictures that actually changed are written, so the diff
+##               is the change rather than fifty binary files of rendering noise.
 guide-images: screenshots
 	@mkdir -p docs/guide/images
-	@cp $(BUILD_DIR)/screenshots/*.png docs/guide/images/
-	@echo "  guide images: docs/guide/images ($(shell ls $(BUILD_DIR)/screenshots/*.png 2>/dev/null | wc -l) files)"
+	@cmake --build $(BUILD_DIR) --target compare-shots --parallel $(JOBS) >/dev/null
+	@changed=$$($(BUILD_DIR)/compare-shots docs/guide/images $(BUILD_DIR)/screenshots \
+		--tolerance 8 --pixels 0 --list-changed); \
+	count=0; for name in $$changed; do \
+		cp $(BUILD_DIR)/screenshots/$$name docs/guide/images/$$name; count=$$((count + 1)); \
+	done; \
+	echo "  guide images: $$count of $$(ls $(BUILD_DIR)/screenshots/*.png | wc -l) rewritten"
+
+## screenshots-check: take the pictures twice and prove a regeneration is reviewable
+##                    Fails when a picture moves with nothing changed. The ones that
+##                    are genuinely of something in motion are named in the script.
+screenshots-check: build
+	@cmake --build $(BUILD_DIR) --target compare-shots tst_Walkthrough --parallel $(JOBS) >/dev/null
+	@scripts/check-screenshots.sh $(BUILD_DIR)
 
 ## licence-check: verify the Qt LGPL conditions still hold
 licence-check:

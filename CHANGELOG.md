@@ -11,6 +11,8 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-20 #MOLE-255 Regenerating the guide's pictures rewrites only what changed, and the terminal picture no longer carries a real machine name
+2026-08-20 #MOLE-255 A sync plan and a duplicate group are listed in a stable order, so a second look matches the first
 2026-08-20 #MOLE-235 A killed test run's payload is swept from the test server before the next run, so a skip for want of room is never our own litter
 2026-08-20 #MOLE-233 Shell scripts are tested: a stub ssh holds the NFS export guard, and every script is parsed and checked statically
 2026-08-20 #MOLE-209 A bookmark row says whether it is a folder or a set, a dead one reads as dead, and Ctrl+D in the Sets tab bookmarks the set

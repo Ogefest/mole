@@ -127,6 +127,14 @@ else()
     message(WARNING "Shell tests skipped: no bash found")
 endif()
 
+# The guide-picture comparator. Not a test: a small program `make screenshots-check`
+# runs after taking the pictures twice, which says whether a regeneration would be
+# reviewable. In this directory because it exists for the test suite's own output
+# and links nothing of Mole's. See tests/tools/compare-shots.cpp and MOLE-255.
+qt_add_executable(compare-shots tools/compare-shots.cpp)
+target_link_libraries(compare-shots PRIVATE Qt6::Gui mole_flags)
+set_target_properties(compare-shots PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+
 # --- core: no GUI, no plugins -----------------------------------------------
 mole_add_test(tst_VfsUri            SOURCES core/tst_VfsUri.cpp)
 mole_add_test(tst_LocalFileSystem   SOURCES core/tst_LocalFileSystem.cpp)

@@ -33,6 +33,17 @@ struct Mount
     /// `.gz` files must not leave two hundred drives behind, or flash one into
     /// the sidebar for each. See MOLE-219.
     bool internal = false;
+    /// The size this mount reports, instead of the one measured underneath it.
+    ///
+    /// Invalid by default, which means "ask the backend" -- the ordinary case. It
+    /// is set for a drive configured through `MOLE_DRIVES`, so a window
+    /// photographed for the user guide shows a plausible fixed capacity rather
+    /// than whatever the machine that took the picture happens to have free. The
+    /// names were already fixed for that reason; the figures were not, and they
+    /// moved between one regeneration and the next, which is what made
+    /// `make guide-images` rewrite most of the guide with nothing changed.
+    /// See MOLE-255 and mountDefaultDrives().
+    SpaceInfo declaredSpace;
 
     bool isValid() const { return !id.isEmpty() && fileSystem != nullptr; }
 };

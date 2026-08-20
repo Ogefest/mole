@@ -231,8 +231,17 @@ SyncPlan SyncPlan::build(IFileSystem* sourceFs, const VfsUri& source, IFileSyste
     walk(sourceFs, source, targetFs, target, options, QString(), cancel, plan.m_steps, plan.m_unreadable);
 
     // Directories before the files that go in them, deletions last: a mirror
-    // that deleted first would remove a file it was about to be given back.
-    std::stable_sort(plan.m_steps.begin(), plan.m_steps.end(), [](const Step& a, const Step& b) {
+    // that deleted first would remove a file it was about to be given back. And
+    // within one rank, by path.
+    //
+    // The path was the part that was missing. `walk()` hands back entries in
+    // whatever order the filesystem lists them, and a stable sort by action alone
+    // keeps that order -- so two previews of the same pair of folders produced the
+    // same steps in different orders. A plan is a thing somebody reads before
+    // agreeing to it, and one that shuffles between one look and the next cannot
+    // be compared with the last look. It also made two regenerations of the user
+    // guide's picture of this view differ with nothing changed. See MOLE-255.
+    std::sort(plan.m_steps.begin(), plan.m_steps.end(), [](const Step& a, const Step& b) {
         const auto rank = [](Action action) {
             switch (action) {
             case Action::CreateDirectory:
@@ -247,7 +256,9 @@ SyncPlan SyncPlan::build(IFileSystem* sourceFs, const VfsUri& source, IFileSyste
             }
             return 4;
         };
-        return rank(a.action) < rank(b.action);
+        if (rank(a.action) != rank(b.action))
+            return rank(a.action) < rank(b.action);
+        return a.relativePath < b.relativePath;
     });
     return plan;
 }

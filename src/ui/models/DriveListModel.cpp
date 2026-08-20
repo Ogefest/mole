@@ -397,6 +397,13 @@ void DriveListModel::refreshSpace()
         if (!row.isMounted())
             continue; // a drive that is not connected has nothing to ask
         const Mount& mount = row.mount;
+        // A mount that was told its size is not measured. Nothing on a real
+        // machine sets this; a drive configured through MOLE_DRIVES does, so a
+        // window photographed for the guide shows the same figures every time.
+        if (mount.declaredSpace.isValid()) {
+            onSpaceReady(mount.id, mount.declaredSpace);
+            continue;
+        }
         if (!mount.fileSystem || !mount.fileSystem->capabilities().testFlag(VfsCapability::ReportsSpace)) {
             continue; // nothing to ask, and nothing to draw
         }

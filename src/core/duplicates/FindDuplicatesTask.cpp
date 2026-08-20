@@ -355,6 +355,14 @@ void FindDuplicatesTask::confirm(const QList<FileEntry>& files)
 
     DuplicateGroup group;
     group.files = files;
+    // By path inside the group, rather than in the order the walk happened to
+    // reach them. Which copy to keep is a decision somebody makes by reading the
+    // paths, and a list that puts them in a different order on a second scan of
+    // the same tree cannot be compared with the first. It also made two
+    // regenerations of the guide's picture of this view differ with nothing
+    // changed. See MOLE-255.
+    std::sort(group.files.begin(), group.files.end(),
+        [](const FileEntry& a, const FileEntry& b) { return a.uri.toString() < b.uri.toString(); });
     // What keeping one and removing the rest would free. The first copy is not a
     // saving -- it is the file.
     group.reclaimable = files.first().size * (files.size() - 1);
@@ -364,8 +372,15 @@ void FindDuplicatesTask::confirm(const QList<FileEntry>& files)
     // largest saving is at the top at every instant of a scan and not only after
     // it. See ADR-0043 for why that beats a list which is in arrival order for
     // the whole of a long scan and then rearranges itself.
-    const auto at = std::upper_bound(m_groups.begin(), m_groups.end(), group,
-        [](const DuplicateGroup& a, const DuplicateGroup& b) { return a.reclaimable > b.reclaimable; });
+    // Two groups that would free the same amount used to sit in the order they
+    // were confirmed in, which depends on which read finished first. Broken by
+    // the first path, so the list is the same list twice running.
+    const auto at = std::upper_bound(
+        m_groups.begin(), m_groups.end(), group, [](const DuplicateGroup& a, const DuplicateGroup& b) {
+            if (a.reclaimable != b.reclaimable)
+                return a.reclaimable > b.reclaimable;
+            return a.files.first().uri.toString() < b.files.first().uri.toString();
+        });
     const int position = static_cast<int>(at - m_groups.begin());
     m_groups.insert(at, group);
 

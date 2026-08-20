@@ -220,7 +220,12 @@ Rectangle {
                     // sources on one property fight over who owns it when neither is
                     // running.
                     SequentialAnimation {
+                        // Held still for a photograph. A picture cannot show a
+                        // breath, only one phase of one, so the guide's sidebar
+                        // came out at a different opacity every time it was taken.
+                        // See App.stillPictures and MOLE-255.
                         running: stateDot.motion === "waiting" && stateDot.visible
+                                 && !App.stillPictures
                         loops: Animation.Infinite
                         alwaysRunToEnd: true
                         onRunningChanged: if (!running) stateDot.opacity = 1.0
@@ -244,6 +249,7 @@ Rectangle {
                     // revision in docs/adr/0052-a-drives-dot-says-what-it-is-doing.md.
                     SequentialAnimation {
                         running: stateDot.motion === "working" && stateDot.visible
+                                 && !App.stillPictures
                         loops: Animation.Infinite
                         alwaysRunToEnd: true
                         onRunningChanged: if (!running) stateDot.opacity = 1.0

@@ -27,6 +27,32 @@ project, and a contributor should never hit a wall of text they cannot read.
 
 ## Notes
 
+- **Seven of the guide's fifty-three pictures cannot be identical twice running,
+  and they are named in `scripts/check-screenshots.sh`.** Three are of something in
+  motion on purpose — a folder still loading, a CSV part-read, a transfer in flight
+  — and photographing the settled state instead would lose the point of the
+  picture. Three carry a duration or a timestamp as their *content*: a run's row
+  saying "26 ms" one time and "16 ms" the next is the row working correctly.
+  Freezing the clock application-wide would mean a test seam in thirty-eight call
+  sites across twenty files, which is not proportionate to a picture. The seventh,
+  `27-gallery`, is waiting on MOLE-258.
+
+- **`make screenshots-check` compares what an eye can see, not bytes, and that is
+  a measurement rather than a preference.** With every cause fixed, two runs still
+  differ by one to five levels out of 255 in a few dozen pixels of pictures whose
+  content is letter-for-letter the same: Qt's scene graph does not render a frame
+  to identical bytes twice. Forty-six of the fifty-three do come out
+  byte-identical and *which* seven do not moves between runs, so a byte comparison
+  with a fixed exception list would be flaky — and a flaky check is worse than
+  none. See [ADR-0063](docs/adr/0063-the-guides-pictures-are-compared-by-eye.md).
+
+- **A picture can leak what a text file would never be allowed to.** `10-terminal.png`
+  carried a real user name and a real machine name into a public repository for as
+  long as it existed, because the terminal panel starts `$SHELL` and that was
+  whoever ran the suite. The panel now starts a shell with no rc files and a prompt
+  of its own. Worth remembering when adding a picture of anything that shows an
+  environment: the rule in CLAUDE.md about host names applies to pixels too.
+
 - **The sweep spares a run on another machine by its open files, not by its pid.**
   A payload is named `mole-<what>-<pid>`, and that pid belongs to the test binary
   on whoever's machine started the run — it means nothing on the server. So

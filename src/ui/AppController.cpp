@@ -439,7 +439,7 @@ void AppController::mountDefaultDrives()
     if (!factory)
         return;
 
-    const auto mountLocal = [&](const QString& displayName, const QString& path) {
+    const auto mountLocal = [&](const QString& displayName, const QString& path, SpaceInfo declared = {}) {
         QString error;
         FileSystemPtr fs = factory->create({}, &error);
         if (!fs)
@@ -449,17 +449,26 @@ void AppController::mountDefaultDrives()
         mount.displayName = displayName;
         mount.root = VfsUri::fromLocalPath(path);
         mount.fileSystem = std::move(fs);
+        mount.declaredSpace = declared;
         m_vfs->addMount(std::move(mount));
     };
 
     // A fixed list, when one is given, instead of whatever this machine has
-    // mounted. Written as "Name=/path;Other=/path".
+    // mounted. Written as "Name=/path;Other=/path", and a path may be followed by
+    // "|free:total" to say what the drive should report having rather than what is
+    // measured underneath it.
     //
     // For the screenshots, and for any test that photographs the window. The
     // sidebar otherwise lists the volumes of whoever ran it, by their own names
     // and with their own capacities -- which then went into a public repository
     // as an illustration of what the application looks like. A picture of the
     // fixture says the same thing about the software and nothing about a desk.
+    //
+    // The capacities are why the sizes are here too. Fixing the names left the
+    // figures coming from the real disk, so "135,81 GiB free" became "135,80 GiB
+    // free" between one regeneration and the next and thirty-nine of the guide's
+    // fifty-three pictures changed with nothing else different -- which made
+    // `make guide-images` unreviewable. See MOLE-255.
     const QByteArray fixed = qgetenv("MOLE_DRIVES");
     if (!fixed.isEmpty()) {
         const QStringList entries = QString::fromLocal8Bit(fixed).split(QLatin1Char(';'), Qt::SkipEmptyParts);
@@ -467,7 +476,22 @@ void AppController::mountDefaultDrives()
             const qsizetype split = entry.indexOf(QLatin1Char('='));
             if (split <= 0)
                 continue;
-            mountLocal(entry.left(split), entry.mid(split + 1));
+            QString path = entry.mid(split + 1);
+            SpaceInfo declared;
+            // Only the last "|free:total" counts, and only when it is exactly
+            // two numbers -- a bar is a legal character in a path, and a path
+            // that happens to end in one keeps it.
+            const qsizetype bar = path.lastIndexOf(QLatin1Char('|'));
+            if (bar > 0) {
+                static const QRegularExpression sizes(QStringLiteral("^(\\d+):(\\d+)$"));
+                const QRegularExpressionMatch match = sizes.match(path.mid(bar + 1));
+                if (match.hasMatch()) {
+                    declared.freeBytes = match.captured(1).toLongLong();
+                    declared.totalBytes = match.captured(2).toLongLong();
+                    path.truncate(bar);
+                }
+            }
+            mountLocal(entry.left(split), path, declared);
         }
         return;
     }

@@ -98,6 +98,23 @@ public:
     /// Sets a file's modification time, so the date column holds more than one
     /// date and a listing sorted by age has something to sort.
     bool setModified(const QString& relativePath, const QDateTime& when);
+    /// Gives everything under `relativePath` that still carries the clock a date
+    /// derived from its own path, at or before `epoch`.
+    ///
+    /// The complement of setModified(), which is a hand-written list -- and a
+    /// hand-written list of what must not carry the clock goes stale the first
+    /// time somebody adds a fixture file. It had: three photographed views showed
+    /// files nobody had listed, so their date column read as today and the
+    /// pictures were rewritten every day. Anything already stamped at or before
+    /// `epoch` is left exactly as it is, so the explicit dates still win.
+    ///
+    /// `.git` is skipped. Rewriting the times inside a checkout makes libgit2
+    /// recheck what it had cached and can change the very answer the picture is of.
+    ///
+    /// Deterministic from the path rather than random, and a hash of our own
+    /// rather than qHash, whose seed is not promised to be stable between Qt
+    /// versions -- an upgrade must not rewrite the guide. See MOLE-255.
+    bool fixDatesUnder(const QString& relativePath, const QDate& epoch);
     bool makeDirs(const QString& relativePath);
 
     // ---- driving it ------------------------------------------------------
@@ -176,11 +193,29 @@ public:
 
     // ---- looking at it ---------------------------------------------------
 
+    /// Whether a grab waits for the application to stop working first.
+    ///
+    /// It should, almost always. The task strip is in every picture and says how
+    /// many jobs have finished, so a job that lands between one run's grab and the
+    /// next turns "16 finished" into "17 finished" -- a picture rewritten for a
+    /// reason that has nothing to do with the change being reviewed, and it can
+    /// happen to any of the fifty-three. Waiting for the count to stop moving
+    /// makes it "everything the walkthrough has run so far", which is fixed.
+    ///
+    /// `Working` is for the handful of pictures that are *of* something still
+    /// going: a folder still loading, a CSV part-read, a transfer running. Waiting
+    /// there would photograph the finished state and break the rule that a picture
+    /// shows what the assertions just checked. See MOLE-255.
+    enum class Settle {
+        Idle,
+        Working,
+    };
+
     /// Renders the window. Empty when screenshots are disabled or grabbing
     /// failed, which the caller should treat as "skip", not as a failure.
-    QImage grab();
+    QImage grab(Settle mode = Settle::Idle);
     /// Renders and writes `<screenshotDirectory>/<name>.png`. Returns the path.
-    QString screenshot(const QString& name);
+    QString screenshot(const QString& name, Settle mode = Settle::Idle);
 
 private:
     /// Everything from building the controller to the window being exposed.
