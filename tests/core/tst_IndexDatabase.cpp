@@ -50,6 +50,7 @@ private slots:
     void anAbandonedScanLeavesTheRecordedOptionsAlone();
     void anIndexWrittenBeforeTheOptionsAnswersNotKnown();
     void survivesAccessFromSeveralThreads();
+    void aReadDoesNotWaitForAWriteInFlight();
     void operationsFailCleanlyWhenClosed();
 
 private:
@@ -858,6 +859,96 @@ void TestIndexDatabase::survivesAccessFromSeveralThreads()
     reader.join();
 
     QCOMPARE(seen.load(), kRowsEach);
+}
+
+void TestIndexDatabase::aReadDoesNotWaitForAWriteInFlight()
+{
+    // The index opens its database in WAL mode so that a scan can write while
+    // the interface reads, and then used to put both behind one mutex, which
+    // handed that concurrency straight back. Measured on an index of 723,405
+    // files, the thread that draws the window sat at 0% CPU for sixty seconds
+    // while the scan ran at 99.9% and the window never appeared. See ADR-0065.
+    //
+    // The claim is a condition and not a clock: **the read returns while the
+    // write is still in flight**. Both directions of that rest on orderings with
+    // margins of a thousandfold, not on a scheduler being fair:
+    //
+    //  - the writer holds the lock before the reader asks for it, because it
+    //    acquires nanoseconds after setting writeStarted while the reader is
+    //    still being spawned, which is microseconds;
+    //  - under one lock the read cannot return until the write ends, and by then
+    //    writeDone is set -- the writer sets it nanoseconds after releasing,
+    //    while the woken reader still has a select to run;
+    //  - under two, the read returns inside a transaction that has hundreds of
+    //    milliseconds left.
+    //
+    // Two earlier shapes of this test were thrown away for asserting nothing.
+    // One built its rows inside the writer's loop, which left a gap on every
+    // iteration and passed 20 times out of 20 against the fault. The other read
+    // in a tight loop, which barged the writer out of its own lock: it was the
+    // *writer* that starved, writeDone never came, and every read counted.
+    constexpr int kRows = 50000;
+
+    const Result<qint64> volume
+        = m_db->upsertVolume(VfsUri::fromString(QStringLiteral("file:///data")), QStringLiteral("vol"));
+    QVERIFY(volume.ok());
+    const Result<qint64> scan = m_db->beginScan(volume.value());
+    QVERIFY(scan.ok());
+
+    // Built by hand rather than through makeFile(): fifty thousand VfsUri
+    // parses would be the test's runtime rather than its subject.
+    QList<IndexedFile> rows;
+    rows.reserve(kRows);
+    for (int i = 0; i < kRows; ++i) {
+        IndexedFile row;
+        row.name = QStringLiteral("f%1.txt").arg(i);
+        row.parentPath = QStringLiteral("/data");
+        row.path = row.parentPath + QLatin1Char('/') + row.name;
+        row.extension = QStringLiteral("txt");
+        row.size = i;
+        row.modifiedEpoch = 1700000000;
+        rows.append(std::move(row));
+    }
+
+    std::atomic_bool writeStarted { false };
+    std::atomic_bool writeDone { false };
+    std::atomic_bool writeOk { false };
+
+    std::thread writer([this, &writeStarted, &writeDone, &writeOk, &rows, volumeId = volume.value(),
+                           generation = scan.value()] {
+        writeStarted = true;
+        writeOk = m_db->insertBatch(volumeId, generation, rows).ok();
+        writeDone = true;
+    });
+
+    // Wait for the writer to be underway, not for a length of time.
+    while (!writeStarted.load())
+        std::this_thread::yield();
+
+    std::atomic_bool readOk { false };
+    std::atomic_bool writerStillWorking { false };
+    std::thread reader([this, &readOk, &writeDone, &writerStillWorking] {
+        // volumes() is the read the window makes on startup: a select over a
+        // handful of rows, which is why sixty seconds of it was never the
+        // query's fault. Its own connection is opened here, under no lock of
+        // ours, which is itself part of what changed.
+        const bool ok = m_db->volumes().ok();
+        // Sampled the instant the read returns, before anything else can move.
+        writerStillWorking = !writeDone.load();
+        readOk = ok;
+    });
+
+    reader.join();
+    writer.join();
+
+    QVERIFY2(writeOk.load(), "the writer's batch must have gone in");
+    QVERIFY2(readOk.load(), "the read must have succeeded");
+    QVERIFY2(writerStillWorking.load(),
+        "the read did not return until the write had finished -- it is queueing behind the writer "
+        "instead of taking its own snapshot");
+
+    // And the write was real, so the read was not racing an idle thread.
+    QCOMPARE(rowsInTable(), qint64(kRows));
 }
 
 void TestIndexDatabase::operationsFailCleanlyWhenClosed()

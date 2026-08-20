@@ -12,6 +12,7 @@
 #include <QSqlDatabase>
 #include <QString>
 
+#include <atomic>
 #include <optional>
 
 class QThread;
@@ -88,7 +89,31 @@ struct IndexSearchHit
 /// be used from any other -- Qt refuses the call outright. Since scans run on
 /// pool threads while the UI searches, this class opens one connection per
 /// calling thread on demand and lets SQLite's WAL mode handle the overlap.
-/// The mutex guards the connection bookkeeping, not the database itself.
+///
+/// There are two locks and readers take neither, which is ADR-0065:
+///
+/// - `m_registry` guards the connection bookkeeping -- `m_connections` and
+///   `m_nextConnection` -- and is held for a hash lookup and a connection setup,
+///   never across a query. Every method that touches the database takes it, for
+///   microseconds, inside connectionForCurrentThread().
+/// - `m_writers` serialises Mole's own writers against each other, exactly as
+///   the single lock used to: open, close, applyMigrations, upsertVolume,
+///   removeVolume, beginScan, carryForward, commitScan, abandonScan, insertBatch.
+///   They stay serialised deliberately, because letting two of them race would
+///   turn a slow write into a SQLITE_BUSY that commitScan()'s whole-generation
+///   transaction has no caller written to handle.
+/// - **The readers run their SQL under no lock of ours at all**: isOpen,
+///   directoryTimes, volumes, search, factKeys, fileCount. WAL gives each one a
+///   consistent snapshot without asking anybody's permission.
+///
+/// The one lock this replaced meant a scan's tens of thousands of short writes
+/// starved the read the window was waiting for -- QMutex is not fair, so a
+/// thread that releases and immediately reacquires can leave a waiter untouched.
+/// Measured on an index of 723,405 files, the main thread sat at 0% CPU for
+/// sixty seconds and the window never appeared.
+///
+/// Taken in that order when both are needed -- writers, then registry -- and
+/// close() is the only place that needs both.
 class IndexDatabase
 {
 public:
@@ -194,17 +219,22 @@ public:
     [[nodiscard]] Result<QStringList> factKeys(qint64 volumeId = -1) const;
 
 private:
-    /// Opens (or reuses) this thread's connection. Callers must hold m_mutex.
+    /// Opens (or reuses) this thread's connection. Takes m_registry itself, so
+    /// callers hold nothing of ours -- which is what lets a reader call it.
     QSqlDatabase connectionForCurrentThread() const;
     Result<void> applyMigrations();
     static Result<void> sqlError(const QSqlDatabase& db, const QString& context);
 
     QString m_filePath;
     QString m_baseName;
-    mutable QMutex m_mutex;
+    /// Serialises Mole's own writers. Readers never take it.
+    mutable QMutex m_writers;
+    /// Guards the two members below, and is never held across a query.
+    mutable QMutex m_registry;
     mutable QHash<QThread*, QString> m_connections;
     mutable int m_nextConnection = 0;
-    bool m_open = false;
+    /// Atomic because a reader looks at it holding no lock.
+    std::atomic<bool> m_open = false;
 };
 
 } // namespace mole

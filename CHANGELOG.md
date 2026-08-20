@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-21 #MOLE-269 A search, or the list of indexes, no longer waits for a running scan to stop writing
 2026-08-21 #MOLE-270 Search form: every criterion label sits beside the field it names
 2026-08-21 #MOLE-266 The list of what an operation is aimed at draws its icons from a scalable font, so they are sharp and the guide's pictures hold still
 2026-08-21 #MOLE-259 Saved reports, Indexes, Alerts and Schedule show the tab you already have instead of opening another

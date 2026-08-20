@@ -27,6 +27,20 @@ project, and a contributor should never hit a wall of text they cannot read.
 
 ## Notes
 
+- **The write-ahead log grows a little faster now that a read does not wait for a
+  write, and nothing collects it explicitly.** Measured over 2,000 short
+  transactions with a thread doing nothing but read: under the single lock the log
+  peaked at 4,268 KiB, the same as a writer with no reader at all, because a
+  serialised read can never hold a snapshot across a commit. With the two locks of
+  [ADR-0065](docs/adr/0065-the-index-serialises-writers-and-lets-readers-through.md)
+  it peaked at 4,888 KiB — 14.5% more — and that was a reader running flat out,
+  129,154 reads, where the interface makes a handful. So the mechanism is real and
+  the magnitude is small, which is why it is a note and not a task. If it does
+  become a problem the answer is an explicit `wal_checkpoint(TRUNCATE)` at a quiet
+  moment and **not** a return to one lock, which would bring back the sixty seconds
+  the split was for. The reproduction machine already carries a 152 MB log against
+  a 734 MB database, so the thing to watch is whether that ratio moves.
+
 - **An emoji in the interface is a resampled bitmap, not an outline, and that costs
   determinism.** No outline font on this machine covers the astral plane, so 📄 📁 🎵 and
   the rest of what `FileListModel` and the sidebar draw all fall back to Unifont Upper,

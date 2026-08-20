@@ -30,6 +30,11 @@ IndexDatabase::~IndexDatabase()
 
 QSqlDatabase IndexDatabase::connectionForCurrentThread() const
 {
+    // Its own lock, held for a hash lookup and a connection setup and nothing
+    // else. Sharing one with the SQL was the fault ADR-0065 describes: a reader
+    // queued behind a scan's transactions for want of a QHash read.
+    QMutexLocker lock(&m_registry);
+
     QThread* thread = QThread::currentThread();
 
     const auto cached = m_connections.constFind(thread);
@@ -77,7 +82,7 @@ QString IndexDatabase::defaultFilePath()
 
 Result<void> IndexDatabase::open()
 {
-    QMutexLocker lock(&m_mutex);
+    QMutexLocker lock(&m_writers);
     if (m_open)
         return {};
 
@@ -105,13 +110,16 @@ Result<void> IndexDatabase::open()
 
 void IndexDatabase::close()
 {
-    QMutexLocker lock(&m_mutex);
+    QMutexLocker lock(&m_writers);
     if (!m_open)
         return;
     m_open = false;
 
     // Close every thread's connection. Safe only once no task can still be
     // using the index -- the application tears down its TaskManager first.
+    // That contract is what makes this safe now that a reader holds no lock of
+    // ours while its query runs: nothing here waits for one to finish.
+    QMutexLocker registry(&m_registry);
     QThread* const self = QThread::currentThread();
     for (auto it = m_connections.cbegin(); it != m_connections.cend(); ++it) {
         if (it.key() == self) {
@@ -129,7 +137,6 @@ void IndexDatabase::close()
 
 bool IndexDatabase::isOpen() const
 {
-    QMutexLocker lock(&m_mutex);
     return m_open;
 }
 
@@ -141,7 +148,7 @@ Result<void> IndexDatabase::sqlError(const QSqlDatabase& db, const QString& cont
 
 Result<void> IndexDatabase::applyMigrations()
 {
-    QMutexLocker lock(&m_mutex);
+    QMutexLocker lock(&m_writers);
     QSqlDatabase db = connectionForCurrentThread();
     if (!db.isOpen())
         return sqlError(db, QStringLiteral("No index connection for this thread"));
@@ -295,7 +302,7 @@ Result<void> IndexDatabase::applyMigrations()
 
 Result<qint64> IndexDatabase::upsertVolume(const VfsUri& root, const QString& label)
 {
-    QMutexLocker lock(&m_mutex);
+    QMutexLocker lock(&m_writers);
     if (!m_open)
         return VfsError::make(VfsError::IoError, QStringLiteral("Index is not open"));
 
@@ -324,7 +331,7 @@ Result<qint64> IndexDatabase::upsertVolume(const VfsUri& root, const QString& la
 
 Result<void> IndexDatabase::removeVolume(qint64 volumeId)
 {
-    QMutexLocker lock(&m_mutex);
+    QMutexLocker lock(&m_writers);
     if (!m_open)
         return Result<void>::failure(VfsError::IoError, QStringLiteral("Index is not open"));
 
@@ -347,7 +354,7 @@ Result<void> IndexDatabase::removeVolume(qint64 volumeId)
 
 Result<qint64> IndexDatabase::beginScan(qint64 volumeId)
 {
-    QMutexLocker lock(&m_mutex);
+    QMutexLocker lock(&m_writers);
     if (!m_open)
         return VfsError::make(VfsError::IoError, QStringLiteral("Index is not open"));
 
@@ -397,7 +404,9 @@ Result<qint64> IndexDatabase::beginScan(qint64 volumeId)
 
 Result<QHash<QString, qint64>> IndexDatabase::directoryTimes(qint64 volumeId) const
 {
-    QMutexLocker lock(&m_mutex);
+    // No lock. WAL gives this read its own snapshot, which is the whole
+    // reason it is turned on -- see ADR-0065. A locker added back here is
+    // a scan starving the window again.
     if (!m_open)
         return VfsError::make(VfsError::IoError, QStringLiteral("Index is not open"));
 
@@ -428,7 +437,7 @@ Result<QHash<QString, qint64>> IndexDatabase::directoryTimes(qint64 volumeId) co
 
 Result<qint64> IndexDatabase::carryForward(qint64 volumeId, qint64 generation, const QString& path)
 {
-    QMutexLocker lock(&m_mutex);
+    QMutexLocker lock(&m_writers);
     if (!m_open)
         return VfsError::make(VfsError::IoError, QStringLiteral("Index is not open"));
 
@@ -490,7 +499,7 @@ Result<qint64> IndexDatabase::carryForward(qint64 volumeId, qint64 generation, c
 Result<void> IndexDatabase::commitScan(
     qint64 volumeId, qint64 generation, const QDateTime& when, const ScanOptions& options)
 {
-    QMutexLocker lock(&m_mutex);
+    QMutexLocker lock(&m_writers);
     if (!m_open)
         return Result<void>::failure(VfsError::IoError, QStringLiteral("Index is not open"));
 
@@ -539,7 +548,7 @@ Result<void> IndexDatabase::commitScan(
 
 Result<void> IndexDatabase::abandonScan(qint64 volumeId, qint64 generation)
 {
-    QMutexLocker lock(&m_mutex);
+    QMutexLocker lock(&m_writers);
     if (!m_open)
         return Result<void>::failure(VfsError::IoError, QStringLiteral("Index is not open"));
 
@@ -562,7 +571,9 @@ Result<void> IndexDatabase::abandonScan(qint64 volumeId, qint64 generation)
 
 Result<QList<IndexVolume>> IndexDatabase::volumes() const
 {
-    QMutexLocker lock(&m_mutex);
+    // No lock. WAL gives this read its own snapshot, which is the whole
+    // reason it is turned on -- see ADR-0065. A locker added back here is
+    // a scan starving the window again.
     if (!m_open)
         return VfsError::make(VfsError::IoError, QStringLiteral("Index is not open"));
 
@@ -604,7 +615,7 @@ Result<void> IndexDatabase::insertBatch(qint64 volumeId, qint64 generation, cons
     if (files.isEmpty())
         return {};
 
-    QMutexLocker lock(&m_mutex);
+    QMutexLocker lock(&m_writers);
     if (!m_open)
         return Result<void>::failure(VfsError::IoError, QStringLiteral("Index is not open"));
 
@@ -662,7 +673,9 @@ Result<void> IndexDatabase::insertBatch(qint64 volumeId, qint64 generation, cons
 
 Result<QList<IndexSearchHit>> IndexDatabase::search(const SearchQuery& query) const
 {
-    QMutexLocker lock(&m_mutex);
+    // No lock. WAL gives this read its own snapshot, which is the whole
+    // reason it is turned on -- see ADR-0065. A locker added back here is
+    // a scan starving the window again.
     if (!m_open)
         return VfsError::make(VfsError::IoError, QStringLiteral("Index is not open"));
 
@@ -791,7 +804,9 @@ Result<QList<IndexSearchHit>> IndexDatabase::search(const SearchQuery& query) co
 
 Result<QStringList> IndexDatabase::factKeys(qint64 volumeId) const
 {
-    QMutexLocker lock(&m_mutex);
+    // No lock. WAL gives this read its own snapshot, which is the whole
+    // reason it is turned on -- see ADR-0065. A locker added back here is
+    // a scan starving the window again.
     if (!m_open)
         return VfsError::make(VfsError::IoError, QStringLiteral("Index is not open"));
 
@@ -822,7 +837,9 @@ Result<QStringList> IndexDatabase::factKeys(qint64 volumeId) const
 
 Result<qint64> IndexDatabase::fileCount(qint64 volumeId) const
 {
-    QMutexLocker lock(&m_mutex);
+    // No lock. WAL gives this read its own snapshot, which is the whole
+    // reason it is turned on -- see ADR-0065. A locker added back here is
+    // a scan starving the window again.
     if (!m_open)
         return VfsError::make(VfsError::IoError, QStringLiteral("Index is not open"));
 

@@ -9,6 +9,79 @@ wrong.
 
 ---
 
+## A read of the index no longer queues behind a scan
+
+**Asked for:** MOLE-269 — split the index's one lock the way
+[ADR-0065](docs/adr/0065-the-index-serialises-writers-and-lets-readers-through.md)
+decided.
+
+**The change is the ADR's classification, applied.** `IndexDatabase` opened its
+database in WAL mode *so that a scan could write while the interface read* and then
+put all sixteen public methods behind one `QMutex`, handing that concurrency back.
+Now there are two locks and readers take neither: `m_registry` guards the per-thread
+connection bookkeeping and is held for a hash lookup, `m_writers` serialises Mole's
+own ten writers exactly as before, and the six readers — `isOpen`, `directoryTimes`,
+`volumes`, `search`, `factKeys`, `fileCount` — run their SQL under nothing at all.
+`m_open` became `std::atomic<bool>` because a reader looks at it holding no lock.
+Writers stay serialised on purpose: letting them race turns a slow write into a
+`SQLITE_BUSY` that `commitScan()`'s whole-generation transaction has no caller
+written to handle.
+
+**Three tests were written before one of them was worth keeping**, and the two that
+were thrown away are the useful part of this record.
+
+The first followed the brief literally — reach scale, then assert a read returns
+while a writer is still working — with a writer doing 300 batches of 1,000 rows. It
+passed **20 times out of 20 against the fault**. The rows were built inside the
+writer's loop, so every iteration left a gap with the lock released, and a gap is
+all a waiter needs.
+
+The second closed that: rows built up front, 20,000 batches of 20, nothing between
+one acquisition and the next. That reproduced the fault — and only **2 times in 5**.
+The failures were total (1 read of 100 got through, the writer finishing all 20,000
+batches during it) and the passes were clean, which is the signature of barging:
+`QMutex` is not fair, and which thread wins is the scheduler's business.
+
+The third gave up on starvation and asserted the same property through blocking,
+which is not a race at all. One writer holds one long transaction — 50,000 rows in a
+single `insertBatch` — and one read is made *after* the writer is observably
+underway, sampling whether the write was still in flight the instant it returned.
+Both directions rest on orderings with thousandfold margins rather than on fairness:
+the writer acquires nanoseconds after signalling while the reader is still being
+spawned, and under one lock the read cannot return until the write ends, by which
+time `writeDone` is set. **20 of 20 pass with the split lock and 20 of 20 fail
+against the one lock.**
+
+There was a fourth mistake in there too, and it is why the second version's read
+loop was so tight: reading in a loop *barged the writer out of its own lock*. It was
+the writer that starved, `writeDone` never came, and every read counted — the test
+passed 20 of 20 against the fault for the opposite reason to the first one.
+
+**`make tsan` is clean on the index suite** — the point of the change is that two
+threads now touch the database at once, so this was not optional. The tier as a whole
+is not clean, and that is **not** this change: `tst_TaskListModel` fails 5 runs out
+of 5 both with the change and with it reverted. The race is real and it is ours —
+a pool thread logging from `Task.cpp:62` reads testlib's `QTest::currentTestFunc`
+while the main thread writes it moving to the next test function, so a task outliving
+its test function corrupts nothing but trips the sanitizer every time. It arrived with
+this session's task logging, not with the lock, and it is now **MOLE-273**. Worth
+noting how nearly it was missed: one run of the tier at `HEAD` came back green, and
+one run means nothing — five said otherwise.
+
+**The write-ahead log was measured rather than argued about**, because more overlap
+between readers and writers means more chances to defer a checkpoint. Over 2,000
+short transactions: 4,268 KiB with a writer alone, 4,268 KiB with one lock and a
+reader running flat out — a serialised read can never hold a snapshot across a commit
+— and 4,888 KiB with the split, 14.5% more, from 129,154 reads where the interface
+makes a handful. Small, real, and recorded in TODO.md with the remedy the ADR names:
+an explicit `wal_checkpoint(TRUNCATE)` at a quiet moment, not a return to one lock.
+
+**Still I/O on the thread that draws the window**, deliberately. After this each of
+the seven synchronous questions costs a query rather than a queue, which turns a
+freeze into a stutter and not into nothing. That is MOLE-264, and it is next.
+
+---
+
 ## Six labels in the search form were each on the wrong row
 
 **Asked for:** MOLE-270 — the criteria labels in the search form do not line up with
