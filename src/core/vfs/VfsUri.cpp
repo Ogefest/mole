@@ -83,6 +83,45 @@ namespace {
         return sensitivity == Qt::CaseSensitive ? text : text.toCaseFolded();
     }
 
+    /// The marker that separates a uri from the version it names.
+    ///
+    /// Spelled out rather than a bare '?' because a '?' is a legal character in
+    /// a POSIX filename -- the awkward-names suite has a `really?.txt` -- so the
+    /// marker has to be something a path cannot produce. That is what the
+    /// encoding below is for.
+    const QLatin1String kVersionMarker("?version=");
+
+    /// Percent-encodes the two characters that would otherwise make a uri
+    /// ambiguous, and nothing else.
+    ///
+    /// Only two, because a uri is read by people: an encoder that also took the
+    /// spaces and the accents would turn every path in every error message into
+    /// something nobody can check against their own filesystem. '?' has to go
+    /// because it is the marker; '%' has to go with it, or encoding would not be
+    /// reversible -- a file really called `a%3Fb` would come back as `a?b`.
+    QString percentEncode(const QString& text)
+    {
+        if (!text.contains(QLatin1Char('%')) && !text.contains(QLatin1Char('?')))
+            return text;
+        QString out = text;
+        out.replace(QLatin1String("%"), QLatin1String("%25"));
+        out.replace(QLatin1String("?"), QLatin1String("%3F"));
+        return out;
+    }
+
+    /// The other direction, and deliberately only the other direction: `%41` is
+    /// left as it is rather than decoded to `A`, because a file called `%41` is
+    /// an ordinary file and nothing here ever wrote that sequence.
+    QString percentDecode(const QString& text)
+    {
+        if (!text.contains(QLatin1Char('%')))
+            return text;
+        QString out = text;
+        out.replace(QLatin1String("%3F"), QLatin1String("?"), Qt::CaseInsensitive);
+        out.replace(QLatin1String("%25"), QLatin1String("%"), Qt::CaseInsensitive);
+        return out;
+    }
+
     /// '/' between segments, '\' where the platform writes one.
     QString withNativeSeparators(QString path, HostPlatform platform)
     {
@@ -107,13 +146,31 @@ VfsUri VfsUri::fromString(const QString& text)
         return {};
 
     const QString scheme = text.left(schemeEnd);
-    const QString rest = text.mid(schemeEnd + 3);
+    QString rest = text.mid(schemeEnd + 3);
+
+    // The marker, when there is one, is the last of its kind: the token after it
+    // is encoded and so carries no '?' of its own, and everything before it is a
+    // path whose own '?' characters were encoded on the way out. A string
+    // written before versions existed has no marker and is read exactly as it
+    // always was.
+    QString version;
+    if (const int marker = rest.lastIndexOf(kVersionMarker); marker >= 0) {
+        version = percentDecode(rest.mid(marker + kVersionMarker.size()));
+        rest.truncate(marker);
+    }
 
     const int pathStart = rest.indexOf(QLatin1Char('/'));
     if (pathStart < 0)
-        return VfsUri(scheme, rest, QStringLiteral("/"));
+        return VfsUri(scheme, rest, QStringLiteral("/")).withVersion(version);
 
-    return VfsUri(scheme, rest.left(pathStart), rest.mid(pathStart));
+    return VfsUri(scheme, rest.left(pathStart), percentDecode(rest.mid(pathStart))).withVersion(version);
+}
+
+VfsUri VfsUri::withVersion(const QString& version) const
+{
+    VfsUri out = *this;
+    out.m_version = version;
+    return out;
 }
 
 VfsUri VfsUri::fromLocalPath(const QString& nativePath, HostPlatform platform)
@@ -181,6 +238,9 @@ VfsUri VfsUri::child(const QString& name) const
     // "/share": both are roots and both keep their segment, or the child would
     // land on a different volume entirely.
     const QString base = m_path == QLatin1String("/") ? QString() : m_path;
+    // No version: what is inside an earlier state of a directory is a question
+    // for whoever hands out the versions, and inheriting one would name a
+    // version of a file that the drive never issued a version of.
     return VfsUri(m_scheme, m_authority, base + QLatin1Char('/') + name);
 }
 
@@ -225,7 +285,10 @@ QString VfsUri::toString() const
 {
     if (!isValid())
         return {};
-    return m_scheme + QLatin1String("://") + m_authority + m_path;
+    const QString base = m_scheme + QLatin1String("://") + m_authority + percentEncode(m_path);
+    if (m_version.isEmpty())
+        return base;
+    return base + kVersionMarker + percentEncode(m_version);
 }
 
 QString VfsUri::toLocalPath(HostPlatform platform) const
@@ -262,7 +325,10 @@ bool VfsUri::equals(const VfsUri& other) const
 
 bool VfsUri::equals(const VfsUri& other, Qt::CaseSensitivity sensitivity) const
 {
-    return m_scheme == other.m_scheme
+    // The version is compared as it was issued, whatever the volume does about
+    // case: it is the drive's own token rather than a name on it, and two
+    // spellings of one are two different versions until a drive says otherwise.
+    return m_scheme == other.m_scheme && m_version == other.m_version
         && foldedIf(m_authority, sensitivity) == foldedIf(other.m_authority, sensitivity)
         && foldedIf(m_path, sensitivity) == foldedIf(other.m_path, sensitivity);
 }
@@ -274,14 +340,16 @@ size_t VfsUri::hash(size_t seed) const
 
 size_t VfsUri::hash(size_t seed, Qt::CaseSensitivity sensitivity) const
 {
-    return qHashMulti(seed, m_scheme, foldedIf(m_authority, sensitivity), foldedIf(m_path, sensitivity));
+    return qHashMulti(
+        seed, m_scheme, foldedIf(m_authority, sensitivity), foldedIf(m_path, sensitivity), m_version);
 }
 
 QString VfsUri::canonicalKey() const
 {
     const Qt::CaseSensitivity sensitivity = caseSensitivityFor(m_scheme);
-    return m_scheme + QLatin1String("://") + foldedIf(m_authority, sensitivity)
-        + foldedIf(m_path, sensitivity);
+    const QString base = m_scheme + QLatin1String("://") + foldedIf(m_authority, sensitivity)
+        + percentEncode(foldedIf(m_path, sensitivity));
+    return m_version.isEmpty() ? base : base + kVersionMarker + percentEncode(m_version);
 }
 
 bool VfsUri::operator==(const VfsUri& other) const

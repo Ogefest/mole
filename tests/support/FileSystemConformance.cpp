@@ -1,6 +1,7 @@
 #include "FileSystemConformance.h"
 
 #include "core/vfs/PartialWrite.h"
+#include "core/vfs/VersionGuard.h"
 
 #include <QSet>
 #include <QTest>
@@ -242,6 +243,48 @@ void runFileSystemConformance(const ConformanceContext& context)
                     ? QStringLiteral("a drive offering no action must not answer invoke()")
                     : QStringLiteral("an id this drive never offered must not be performed")));
         QCOMPARE(unknown.error().code, VfsError::NotSupported);
+    }
+
+    // --- a uri that names an earlier version of a file --------------------
+    //
+    // Read-only, and refused by every drive that does not know what a version
+    // is. The refusal is the point of the case: a backend that ignored a token
+    // it did not recognise would answer with the *current* file while the window
+    // says it is showing an earlier one -- a silent wrong answer on the one
+    // screen whose entire purpose is to say which version you are looking at.
+    {
+        const VfsUri current = context.root.child(QStringLiteral("alpha.txt"));
+        const VfsUri versioned = current.withVersion(QStringLiteral("an-earlier-one"));
+
+        QVERIFY2(versioned.hasVersion(), "withVersion() must produce a uri that carries one");
+        QVERIFY2(!(versioned == current), "a version is part of what makes a uri that uri");
+        // Written down and read back: a bookmark and a restored session are both
+        // exactly this, and a uri that does not survive it is a dead bookmark.
+        QCOMPARE(VfsUri::fromString(versioned.toString()), versioned);
+        QCOMPARE(VfsUri::fromString(current.toString()), current);
+
+        if (!fs.understandsVersions()) {
+            // Reached through the guard, which is how every drive in Mole is
+            // reached: VfsManager puts one on each mount the way it puts the log
+            // wrapper on. A backend that implements versions is handed the uri
+            // unchanged and answers for itself.
+            const FileSystemPtr guarded = withVersionGuard(context.fileSystem);
+
+            const Result<FileEntry> stat = guarded->stat(versioned);
+            QVERIFY2(!stat.ok(), "a drive that does not do versions must refuse one, not answer");
+            QCOMPARE(stat.error().code, VfsError::NotSupported);
+
+            const Result<std::unique_ptr<QIODevice>> read = guarded->openRead(versioned);
+            QVERIFY2(!read.ok(), "and must not hand over the current file's bytes for one");
+            QCOMPARE(read.error().code, VfsError::NotSupported);
+
+            const Result<FileEntryList> listing = guarded->list(versioned, noCancel);
+            QVERIFY2(!listing.ok(), "nor list one");
+            QCOMPARE(listing.error().code, VfsError::NotSupported);
+
+            // And the same drive goes on answering about the file as it is.
+            QVERIFY2(guarded->stat(current).ok(), "the current file must still be reachable");
+        }
     }
 
     if (!context.expectsWriteSupport)

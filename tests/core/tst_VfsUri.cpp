@@ -2,6 +2,8 @@
 
 #include "core/vfs/VfsUri.h"
 
+#include <QSet>
+
 using namespace mole;
 
 Q_DECLARE_METATYPE(mole::HostPlatform)
@@ -38,6 +40,12 @@ private slots:
     void caseFoldingIsAnArgumentAndFoldsEverything();
     void caseSensitivityFollowsTheSchemeAndThePlatform();
     void aCanonicalKeyIsOneSpellingPerNode();
+
+    void aVersionIsPartOfTheUriAndSurvivesBeingWrittenDown();
+    void aVersionIsPartOfWhatMakesTwoUrisDifferent();
+    void aQuestionMarkInANameIsNotAVersion();
+    void aVersionBelongsToAFileAndNotToWhatIsAroundIt();
+    void aUriWrittenBeforeVersionsExistedStillReadsTheSame();
 
     void localPathRoundTrip();
     void nonLocalHasNoLocalPath();
@@ -367,6 +375,97 @@ void TestVfsUri::aCanonicalKeyIsOneSpellingPerNode()
     const VfsUri d = VfsUri::fromString(QStringLiteral("file:///home/user"));
     QVERIFY(c.equals(d));
     QCOMPARE(c.canonicalKey(), d.canonicalKey());
+}
+
+/// The whole point of putting it in the uri: a bookmark, a restored session and
+/// a file set are all a string, and an earlier version has to survive being one.
+void TestVfsUri::aVersionIsPartOfTheUriAndSurvivesBeingWrittenDown()
+{
+    const VfsUri current = VfsUri::fromString(QStringLiteral("s3://bucket/reports/q3.pdf"));
+    QVERIFY(!current.hasVersion());
+
+    const VfsUri earlier
+        = current.withVersion(QStringLiteral("3HL4kqtJlcpXroDTDmJ+rmSpXd3dIbrHY+MTRCxf3vjVBH40Nrjfkd"));
+    QVERIFY(earlier.hasVersion());
+    QCOMPARE(earlier.path(), current.path());
+    QCOMPARE(earlier.fileName(), QStringLiteral("q3.pdf"));
+    QCOMPARE(earlier.suffix(), QStringLiteral("pdf"));
+
+    QCOMPARE(VfsUri::fromString(earlier.toString()), earlier);
+    QCOMPARE(VfsUri::fromString(earlier.toString()).version(), earlier.version());
+    QCOMPARE(earlier.withoutVersion(), current);
+
+    // A token with the characters that would otherwise end the uri, because a
+    // drive's own identifier is opaque and nothing says it is tidy.
+    const VfsUri awkward = current.withVersion(QStringLiteral("100%?version=no"));
+    QCOMPARE(VfsUri::fromString(awkward.toString()), awkward);
+    QCOMPARE(VfsUri::fromString(awkward.toString()).version(), QStringLiteral("100%?version=no"));
+}
+
+void TestVfsUri::aVersionIsPartOfWhatMakesTwoUrisDifferent()
+{
+    const VfsUri current = VfsUri::fromString(QStringLiteral("mem:///notes.txt"));
+    const VfsUri earlier = current.withVersion(QStringLiteral("one"));
+    const VfsUri earlierStill = current.withVersion(QStringLiteral("two"));
+
+    QVERIFY(!(earlier == current));
+    QVERIFY(!(earlier == earlierStill));
+    QVERIFY(earlier == current.withVersion(QStringLiteral("one")));
+
+    // The hash has to agree with the comparison beside it, or a QHash loses an
+    // entry it is still holding -- and a map of open previews is one.
+    QSet<VfsUri> seen { current, earlier, earlierStill };
+    QCOMPARE(seen.size(), 3);
+    QVERIFY(seen.contains(current.withVersion(QStringLiteral("two"))));
+
+    QVERIFY(earlier.canonicalKey() != current.canonicalKey());
+}
+
+/// '?' is a legal character in a POSIX filename -- the awkward-names suite has a
+/// really?.txt -- so the marker cannot simply be one.
+void TestVfsUri::aQuestionMarkInANameIsNotAVersion()
+{
+    const VfsUri awkward = VfsUri::fromString(QStringLiteral("file:///home/ann/really?.txt"));
+    QCOMPARE(awkward.fileName(), QStringLiteral("really?.txt"));
+    QVERIFY(!awkward.hasVersion());
+    QCOMPARE(VfsUri::fromString(awkward.toString()), awkward);
+    QCOMPARE(VfsUri::fromString(awkward.toString()).fileName(), QStringLiteral("really?.txt"));
+
+    // Including the name somebody would have to have chosen on purpose.
+    const VfsUri worse = VfsUri::fromLocalPath(QStringLiteral("/home/ann/what?version=1.txt"));
+    QVERIFY(!worse.hasVersion());
+    QCOMPARE(VfsUri::fromString(worse.toString()), worse);
+    QCOMPARE(VfsUri::fromString(worse.toString()).fileName(), QStringLiteral("what?version=1.txt"));
+
+    // And a percent, which is what makes the encoding reversible at all.
+    const VfsUri percent = VfsUri::fromLocalPath(QStringLiteral("/home/ann/100%3F.txt"));
+    QCOMPARE(VfsUri::fromString(percent.toString()).fileName(), QStringLiteral("100%3F.txt"));
+}
+
+void TestVfsUri::aVersionBelongsToAFileAndNotToWhatIsAroundIt()
+{
+    const VfsUri earlier
+        = VfsUri::fromString(QStringLiteral("mem:///docs/notes.txt")).withVersion(QStringLiteral("one"));
+
+    // What is above a version of a file is the folder as it is now: a drive
+    // issues versions of files, and nothing issued one of the directory.
+    QVERIFY(!earlier.parent().hasVersion());
+    QCOMPARE(earlier.parent().toString(), QStringLiteral("mem:///docs"));
+    QVERIFY(!earlier.child(QStringLiteral("inner")).hasVersion());
+}
+
+/// Every uri ever written into a session, a bookmark, a set or the index was
+/// written before this existed, and all of them still have to open.
+void TestVfsUri::aUriWrittenBeforeVersionsExistedStillReadsTheSame()
+{
+    for (const QString& stored : { QStringLiteral("file:///home/ann/notes.txt"),
+             QStringLiteral("s3://bucket/reports/q3.pdf"), QStringLiteral("file://server/share/a"),
+             QStringLiteral("file:///C:/Users/ann"), QStringLiteral("mem:///") }) {
+        const VfsUri parsed = VfsUri::fromString(stored);
+        QVERIFY2(parsed.isValid(), qPrintable(stored));
+        QVERIFY2(!parsed.hasVersion(), qPrintable(stored));
+        QCOMPARE(parsed.toString(), stored);
+    }
 }
 
 void TestVfsUri::localPathRoundTrip()

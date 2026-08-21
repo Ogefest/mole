@@ -1,6 +1,7 @@
 #include "core/vfs/VfsManager.h"
 
 #include "core/diagnostics/LoggingFileSystem.h"
+#include "core/vfs/VersionGuard.h"
 
 #include <QMutexLocker>
 
@@ -82,7 +83,10 @@ QString VfsManager::addMount(Mount mount)
     // Every drive gets the same wrapper on the way in, whatever built it and
     // whichever overload it arrived through -- that is what makes the log the
     // same for local disk, for a plugin's backend, and for one written later.
-    mount.fileSystem = withLogging(std::move(mount.fileSystem), mount.displayName);
+    // Two wrappers, innermost first. The guard refuses a uri naming a version of
+    // a file to a drive that does not know what one is; the log sits outside it
+    // so a refusal is a line like any other call. See ADR-0077 and ADR-0064.
+    mount.fileSystem = withLogging(withVersionGuard(std::move(mount.fileSystem)), mount.displayName);
 
     QString id;
     {

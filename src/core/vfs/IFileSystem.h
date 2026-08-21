@@ -154,6 +154,19 @@ public:
     virtual Result<FileActionOutcome> invoke(
         const QString& id, const VfsUri& target, const CancelToken& cancel);
 
+    /// Whether this drive can read a uri that names an earlier state of a file.
+    ///
+    /// False by default, which is what makes refusing the default: a backend
+    /// says no by implementing nothing. The refusal itself is not each backend's
+    /// job -- see withVersionGuard(), which VfsManager puts on every mount.
+    ///
+    /// This is the whole risk of carrying a version in a uri. A backend that
+    /// ignored a token it did not recognise would answer with the *current* file
+    /// while the window says it is showing an earlier one, and a silent wrong
+    /// answer on a screen whose entire purpose is to say which version you are
+    /// looking at is the worst outcome available here. See ADR-0077.
+    virtual bool understandsVersions() const { return false; }
+
     /// What this drive turned out to be able to offer, and whether it has been
     /// asked yet.
     ///

@@ -117,6 +117,13 @@ between the two tiers and why the set of outcomes is closed, and
 [ADR-0076](docs/adr/0076-a-drive-is-asked-what-it-can-do-when-somebody-looks.md)
 for when a drive is asked.
 
+An earlier state of a file is addressed by an ordinary uri: `VfsUri` carries an
+opaque version token, written as `?version=<token>`, so every viewer, the diff
+and the transfer layer work on one with no change, and a bookmark or a restored
+session can point at it. A drive that does not understand a version refuses it —
+`withVersionGuard()` is on every mount, so no backend has to remember. See
+[ADR-0077](docs/adr/0077-a-uri-can-name-which-state-of-a-file-is-meant.md).
+
 ## Tabs
 
 `TabsModel` holds `(feature id, controller)` pairs. The shell renders whatever

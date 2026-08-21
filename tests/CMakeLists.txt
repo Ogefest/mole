@@ -166,6 +166,10 @@ mole_add_test(tst_FileActions       SOURCES core/tst_FileActions.cpp)
 # states its answer has: unasked, answered, and could not say.
 mole_add_test(tst_DriveProbe        SOURCES core/tst_DriveProbe.cpp)
 
+# A uri that names an earlier state of a file, and the guard that keeps a drive
+# which does not know what one is from answering with the current file.
+mole_add_test(tst_FileVersions      SOURCES core/tst_FileVersions.cpp)
+
 # The fault injector is a test tool, and one that miscounts bytes would make
 # every suite built on it green for the wrong reason.
 mole_add_test(tst_FaultyFileSystem  SOURCES support/tst_FaultyFileSystem.cpp)

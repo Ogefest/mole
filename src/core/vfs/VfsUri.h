@@ -36,7 +36,8 @@ public:
     VfsUri() = default;
     VfsUri(QString scheme, QString authority, QString path);
 
-    /// Parses "scheme://authority/path". Returns an invalid uri on garbage.
+    /// Parses "scheme://authority/path", and the "?version=<token>" a versioned
+    /// one carries. Returns an invalid uri on garbage.
     static VfsUri fromString(const QString& text);
 
     /// Wraps a native path (accepts both '\' and '/') as a file:// uri.
@@ -49,6 +50,25 @@ public:
     static VfsUri fromLocalPath(const QString& nativePath, HostPlatform platform = hostPlatform());
 
     bool isValid() const { return !m_scheme.isEmpty(); }
+
+    /// Which state of the file is meant, when it is not the current one.
+    ///
+    /// Opaque: a snapshot name on one drive, an object's version id on another,
+    /// and nothing above the backend that issued it ever reads it. Empty means
+    /// the file as it is now, which is what every uri in Mole meant until this
+    /// existed.
+    ///
+    /// It is part of the uri rather than something carried beside it because
+    /// that is what makes an earlier version **an ordinary readable uri**: F3,
+    /// F5, a diff and every viewer already work on one, and a bookmark or a
+    /// restored session is a string. See ADR-0077.
+    const QString& version() const { return m_version; }
+    bool hasVersion() const { return !m_version.isEmpty(); }
+
+    /// The same node, at `version`. An empty token gives the current file back.
+    VfsUri withVersion(const QString& version) const;
+    /// The same node as it is now.
+    VfsUri withoutVersion() const { return withVersion(QString()); }
     /// Whether there is anything above this. "/" for every scheme, and for a
     /// local uri also a drive root ("/C:") or a UNC share ("//server/share"),
     /// because on Windows there is nothing above either.
@@ -97,6 +117,13 @@ public:
     static Qt::CaseSensitivity caseSensitivityFor(
         const QString& scheme, HostPlatform platform = hostPlatform());
 
+    /// The uri as text, which is what everything that stores one keeps: a
+    /// bookmark, a restored session, a file set, a task's title.
+    ///
+    /// A version is written as `?version=<token>`, and `%` and `?` inside the
+    /// path are percent-encoded so that the marker cannot be confused with a
+    /// file whose name contains one. Reading it back with fromString() gives
+    /// exactly what was written.
     QString toString() const;
     /// Native path for file:// uris, empty string for anything else.
     ///
@@ -113,6 +140,7 @@ private:
     QString m_scheme;
     QString m_authority;
     QString m_path;
+    QString m_version;
 };
 
 size_t qHash(const VfsUri& uri, size_t seed = 0) noexcept;

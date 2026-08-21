@@ -17,6 +17,8 @@ add_library(mole_core STATIC
     vfs/IFileSystem.cpp
     vfs/PartialWrite.cpp
     vfs/IFileSystemFactory.h
+    vfs/VersionGuard.h
+    vfs/VersionGuard.cpp
     vfs/VfsManager.h
     vfs/VfsManager.cpp
     vfs/DirectoryWalker.h
