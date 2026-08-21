@@ -1,5 +1,9 @@
 #include "ui/Palette.h"
 
+#include <QLoggingCategory>
+
+#include <array>
+
 namespace mole {
 
 namespace {
@@ -13,20 +17,73 @@ namespace {
             && a.busy == b.busy;
     }
 
+    /// The shipped themes, in the order the `View` menu offers them. One entry per
+    /// theme and one table per entry -- adding a theme is a function and a line here,
+    /// and touches no view.
+    struct Shipped
+    {
+        const char* name;
+        Palette::Tokens (*tokens)();
+    };
+
+    const std::array<Shipped, 2> kThemes { {
+        { "Midnight", &Palette::midnight },
+        { "Slate", &Palette::slate },
+    } };
+
 } // namespace
 
 Palette::Palette(QObject* parent)
     : QObject(parent)
-    , m_tokens(midnight())
+    // Derived from the default's name rather than stated a second time: naming
+    // midnight() here and reordering the table later would leave a palette whose
+    // theme() and tokens disagreed, which nothing would notice.
+    , m_tokens(tokensFor(defaultTheme()))
+    , m_theme(defaultTheme())
 {
 }
 
-void Palette::setTokens(const Tokens& tokens)
+QStringList Palette::themeNames()
 {
-    if (sameTokens(m_tokens, tokens))
-        return;
-    m_tokens = tokens;
+    QStringList names;
+    names.reserve(static_cast<int>(kThemes.size()));
+    for (const Shipped& theme : kThemes)
+        names.append(QString::fromLatin1(theme.name));
+    return names;
+}
+
+QString Palette::defaultTheme()
+{
+    return QString::fromLatin1(kThemes.front().name);
+}
+
+Palette::Tokens Palette::tokensFor(const QString& name)
+{
+    for (const Shipped& theme : kThemes) {
+        if (name == QLatin1String(theme.name))
+            return theme.tokens();
+    }
+    return kThemes.front().tokens();
+}
+
+bool Palette::setTheme(const QString& name)
+{
+    const bool known = themeNames().contains(name);
+    // Said rather than swallowed. A preference naming a theme that is not there
+    // is either a file from a newer build or a typo somebody made by hand, and
+    // both are worth one line in the log; opening on nothing is not an option.
+    if (!known && !name.isEmpty())
+        qWarning("No theme called %s; opening on %s", qPrintable(name), qPrintable(defaultTheme()));
+
+    const QString settled = known ? name : defaultTheme();
+    const Tokens wanted = tokensFor(settled);
+    if (settled == m_theme && sameTokens(m_tokens, wanted))
+        return known;
+
+    m_theme = settled;
+    m_tokens = wanted;
     emit changed();
+    return known;
 }
 
 Palette::Tokens Palette::midnight()
@@ -50,6 +107,28 @@ Palette::Tokens Palette::midnight()
         QColor(QStringLiteral("#d9a441")), // warn
         QColor(QStringLiteral("#e5534b")), // bad
         QColor(QStringLiteral("#1e2a3a")), // busy
+    };
+}
+
+Palette::Tokens Palette::slate()
+{
+    return Tokens {
+        QColor(QStringLiteral("#232830")), // window
+        QColor(QStringLiteral("#2a3038")), // panel
+        QColor(QStringLiteral("#1e232a")), // pane
+        QColor(QStringLiteral("#383f4b")), // border
+        QColor(QStringLiteral("#303845")), // hover
+        QColor(QStringLiteral("#3a4657")), // selection
+        QColor(QStringLiteral("#dde4ed")), // text
+        QColor(QStringLiteral("#c0c9d5")), // textSecondary
+        QColor(QStringLiteral("#8c96a5")), // textMuted
+        QColor(QStringLiteral("#6c7583")), // textFaint
+        QColor(QStringLiteral("#7fbdd1")), // accent
+        QColor(QStringLiteral("#9fd0e0")), // link
+        QColor(QStringLiteral("#a0c18b")), // ok
+        QColor(QStringLiteral("#e1be7c")), // warn
+        QColor(QStringLiteral("#cd7d81")), // bad
+        QColor(QStringLiteral("#2b3a45")), // busy
     };
 }
 

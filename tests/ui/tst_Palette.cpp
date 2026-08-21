@@ -13,7 +13,7 @@
 
 using namespace mole;
 
-/// The palette, and the one mistake in it that leaves no other trace.
+/// The palette, the themes in it, and the one mistake that leaves no other trace.
 class TestPalette : public QObject
 {
     Q_OBJECT
@@ -21,9 +21,11 @@ class TestPalette : public QObject
 private slots:
     void aBindingFollowsTheTokenRatherThanItsStartupValue();
     void noTokenIsConstant();
-    void everyTokenMovesAndTheSixteenSaySoOnce();
-    void repaintingWithTheSameValuesSaysNothing();
+    void aThemeMovesEveryTokenAndSaysSoOnce();
+    void askingForTheThemeAlreadyInForceSaysNothing();
+    void aThemeNobodyShipsOpensOnTheDefault();
     void midnightIsWhatMoleAlreadyLookedLike();
+    void everyShippedThemeIsAWholePalette();
 };
 
 namespace {
@@ -56,40 +58,16 @@ const std::array<Token, 16> kTokens { {
     { "busy", &Palette::Tokens::busy },
 } };
 
-/// Sixteen values that share nothing with Midnight, so a token that failed to
-/// move can be named rather than merely counted.
-Palette::Tokens somethingElseEntirely()
-{
-    Palette::Tokens t;
-    t.window = QColor(QStringLiteral("#f2f3f5"));
-    t.panel = QColor(QStringLiteral("#ffffff"));
-    t.pane = QColor(QStringLiteral("#fdfdfd"));
-    t.border = QColor(QStringLiteral("#dfe3e8"));
-    t.hover = QColor(QStringLiteral("#eceff3"));
-    t.selection = QColor(QStringLiteral("#dbe7f8"));
-    t.text = QColor(QStringLiteral("#191c21"));
-    t.textSecondary = QColor(QStringLiteral("#414852"));
-    t.textMuted = QColor(QStringLiteral("#6a727d"));
-    t.textFaint = QColor(QStringLiteral("#949aa4"));
-    t.accent = QColor(QStringLiteral("#2f6feb"));
-    t.link = QColor(QStringLiteral("#1f5ed6"));
-    t.ok = QColor(QStringLiteral("#1f7a3d"));
-    t.warn = QColor(QStringLiteral("#96650a"));
-    t.bad = QColor(QStringLiteral("#c23a30"));
-    t.busy = QColor(QStringLiteral("#eaf1fc"));
-    return t;
-}
-
 } // namespace
 
 /// The trap the whole scheme turns on, and the only test that can catch it.
 ///
 /// Declare the token properties `CONSTANT` and QML evaluates each binding once:
-/// the window keeps whatever the palette held when it loaded, repainting it
+/// the window keeps whatever the palette held when it loaded, choosing a theme
 /// afterwards does nothing at all, and Qt says nothing about it -- no warning,
 /// nothing in the log, every value in the file correct. So this binds through the
-/// path a view actually uses, `App.colour.panel`, repaints the palette underneath
-/// it, and requires the binding to have moved.
+/// path a view actually uses, `App.colour.panel`, changes the theme underneath it,
+/// and requires the binding to have moved.
 void TestPalette::aBindingFollowsTheTokenRatherThanItsStartupValue()
 {
     AppController app;
@@ -107,8 +85,8 @@ void TestPalette::aBindingFollowsTheTokenRatherThanItsStartupValue()
 
     QCOMPARE(bound->property("seen").value<QColor>(), Palette::midnight().panel);
 
-    app.colour()->setTokens(somethingElseEntirely());
-    QCOMPARE(bound->property("seen").value<QColor>(), somethingElseEntirely().panel);
+    QVERIFY(app.colour()->setTheme(QStringLiteral("Slate")));
+    QCOMPARE(bound->property("seen").value<QColor>(), Palette::slate().panel);
 }
 
 /// The same claim stated against the meta-object, which is where it can be
@@ -129,35 +107,55 @@ void TestPalette::noTokenIsConstant()
     }
 }
 
-void TestPalette::everyTokenMovesAndTheSixteenSaySoOnce()
+void TestPalette::aThemeMovesEveryTokenAndSaysSoOnce()
 {
     Palette palette;
-    QSignalSpy changed(&palette, &Palette::changed);
+    QCOMPARE(palette.theme(), Palette::defaultTheme());
 
-    const Palette::Tokens after = somethingElseEntirely();
-    palette.setTokens(after);
+    QSignalSpy changed(&palette, &Palette::changed);
+    QVERIFY(palette.setTheme(QStringLiteral("Slate")));
+    QCOMPARE(palette.theme(), QStringLiteral("Slate"));
 
     // One signal for the sixteen, because they only ever move together. Sixteen
     // would be fifteen further passes over every binding in the window.
     QCOMPARE(changed.count(), 1);
 
-    // Named one at a time: "a token did not move" is not a lead.
+    // Named one at a time: "a token did not move" is not a lead. And a theme that
+    // repeated one of Midnight's values would leave that part of the window as it
+    // was, with nothing to say so.
+    const Palette::Tokens slate = Palette::slate();
+    const Palette::Tokens midnight = Palette::midnight();
     for (const Token& token : kTokens) {
         const QVariant read = palette.property(token.name);
         QVERIFY2(read.isValid(), token.name);
-        QVERIFY2(read.value<QColor>() == after.*(token.field),
+        QVERIFY2(read.value<QColor>() == slate.*(token.field),
             qPrintable(QStringLiteral("%1 is %2, expected %3")
                            .arg(QLatin1String(token.name), read.value<QColor>().name(),
-                               (after.*(token.field)).name())));
+                               (slate.*(token.field)).name())));
+        QVERIFY2((slate.*(token.field)) != (midnight.*(token.field)),
+            qPrintable(QStringLiteral("Slate's %1 is Midnight's, so choosing it leaves that alone")
+                           .arg(QLatin1String(token.name))));
     }
 }
 
-void TestPalette::repaintingWithTheSameValuesSaysNothing()
+void TestPalette::askingForTheThemeAlreadyInForceSaysNothing()
 {
     Palette palette;
     QSignalSpy changed(&palette, &Palette::changed);
-    palette.setTokens(Palette::midnight());
+    QVERIFY(palette.setTheme(Palette::defaultTheme()));
     QCOMPARE(changed.count(), 0);
+}
+
+/// A preferences file from a newer build, or a name somebody typed by hand.
+void TestPalette::aThemeNobodyShipsOpensOnTheDefault()
+{
+    Palette palette;
+    QVERIFY(palette.setTheme(QStringLiteral("Slate")));
+
+    QTest::ignoreMessage(QtWarningMsg, "No theme called Sunset; opening on Midnight");
+    QVERIFY2(!palette.setTheme(QStringLiteral("Sunset")), "an unknown name has to be reported");
+    QCOMPARE(palette.theme(), Palette::defaultTheme());
+    QCOMPARE(palette.panel(), Palette::midnight().panel);
 }
 
 /// What Mole looks like, written down a second time, so that changing it has to
@@ -181,6 +179,29 @@ void TestPalette::midnightIsWhatMoleAlreadyLookedLike()
     QCOMPARE(m.warn.name(), QStringLiteral("#d9a441"));
     QCOMPARE(m.bad.name(), QStringLiteral("#e5534b"));
     QCOMPARE(m.busy.name(), QStringLiteral("#1e2a3a"));
+}
+
+/// The shipped list, and the one property every theme has to have: sixteen
+/// colours, none of them left unset. A `Tokens` is a plain struct, so a theme
+/// that forgot a field would hand the window an invalid colour rather than fail
+/// to build.
+void TestPalette::everyShippedThemeIsAWholePalette()
+{
+    const QStringList names = Palette::themeNames();
+    QCOMPARE(names, QStringList({ QStringLiteral("Midnight"), QStringLiteral("Slate") }));
+    QCOMPARE(Palette::defaultTheme(), QStringLiteral("Midnight"));
+
+    for (const QString& name : names) {
+        const Palette::Tokens t = Palette::tokensFor(name);
+        for (const Token& token : kTokens) {
+            QVERIFY2((t.*(token.field)).isValid(),
+                qPrintable(QStringLiteral("%1's %2 is not a colour").arg(name, QLatin1String(token.name))));
+        }
+        // Both of these are dark, so text is lighter than the ground under it.
+        // MOLE-280 is where that stops being an assumption and becomes a polarity.
+        QVERIFY2(t.text.lightness() > t.pane.lightness(),
+            qPrintable(QStringLiteral("%1 paints text no lighter than the pane under it").arg(name)));
+    }
 }
 
 MOLE_TEST_MAIN(TestPalette)

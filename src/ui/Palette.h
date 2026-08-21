@@ -3,6 +3,7 @@
 #include <QColor>
 #include <QObject>
 #include <QString>
+#include <QStringList>
 
 namespace mole {
 
@@ -45,6 +46,9 @@ class Palette : public QObject
     Q_PROPERTY(QColor warn READ warn NOTIFY changed)
     Q_PROPERTY(QColor bad READ bad NOTIFY changed)
     Q_PROPERTY(QColor busy READ busy NOTIFY changed)
+    /// Which of the shipped themes is in force. Notifies through the same signal
+    /// as the tokens, because it only ever moves when they do.
+    Q_PROPERTY(QString theme READ theme NOTIFY changed)
 
 public:
     /// One theme's worth of values. Sixteen fields in the order the tokens are
@@ -89,12 +93,28 @@ public:
     QColor busy() const { return m_tokens.busy; }
 
     const Tokens& tokens() const { return m_tokens; }
-    /// Repaints every token at once and announces it once. Nothing happens when
-    /// the values are the ones already in force.
-    void setTokens(const Tokens& tokens);
+
+    QString theme() const { return m_theme; }
+    /// Repaints the whole window and announces it once. Nothing happens when the
+    /// theme asked for is the one already in force.
+    ///
+    /// Returns false when `name` is not one of `themeNames()`, having painted the
+    /// default instead: a preferences file naming a theme that no longer exists
+    /// has to open on something rather than on nothing.
+    bool setTheme(const QString& name);
+
+    /// The themes Mole ships, in the order they appear in the `View` menu.
+    static QStringList themeNames();
+    /// The default, and the one the guide's pictures are taken in.
+    static QString defaultTheme();
+    /// The default's values for a name that is not a theme.
+    static Tokens tokensFor(const QString& name);
 
     /// What Mole has looked like since it had a window.
     static Tokens midnight();
+    /// The same window one step cooler and softer. Sixteen different values and
+    /// nothing else: no polarity to reconsider, no control that stops working.
+    static Tokens slate();
 
 signals:
     /// One signal for all sixteen, because they only ever move together. QML
@@ -103,6 +123,7 @@ signals:
 
 private:
     Tokens m_tokens;
+    QString m_theme;
 };
 
 } // namespace mole

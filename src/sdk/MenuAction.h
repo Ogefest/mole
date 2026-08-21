@@ -27,7 +27,11 @@ struct MenuAction
     /// examples that sound like both.
     enum class Section {
         File, ///< creating and closing things
-        View, ///< how the current tab looks
+        /// How what you are looking at looks. The current tab, mostly -- one pane
+        /// or two, hidden files, a filter -- and, since MOLE-279, the window's
+        /// theme, which is the one entry here that is not about a tab. See
+        /// ADR-0073 for why it is not a fifth heading.
+        View,
         /// Acts on the selection, or on the current folder when nothing is
         /// selected, and leaves you where you were. "Index this folder."
         Operations,

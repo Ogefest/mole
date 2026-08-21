@@ -8,6 +8,7 @@
 #include "support/TestSupport.h"
 #include "ui/AppController.h"
 #include "ui/FileLauncher.h"
+#include "ui/Palette.h"
 #include "ui/models/DriveListModel.h"
 #include "ui/models/TabsModel.h"
 #include "ui/models/TaskListModel.h"
@@ -17,6 +18,7 @@
 #include "core/index/IndexDatabase.h"
 #include "core/sets/FileSet.h"
 #include "core/sets/FileSetStore.h"
+#include "core/settings/Preferences.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/VfsManager.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
@@ -97,6 +99,9 @@ private slots:
     void viewMenuReflectsAndTogglesTheCurrentTab();
     void menuEntriesGreyOutWhenTheyDoNotApply();
     void viewMenuOffersFourExclusiveLayouts();
+    void theViewMenuPicksAThemeAndTicksTheOneInForce();
+    void theThemeChosenSurvivesARestart();
+    void aThemeNobodyShipsOpensOnMidnight();
     void manyTabsOpenAndCloseWithoutLeaking();
     void shutsDownCleanlyWithWorkInFlight();
     void aScanStartedWithoutADialogKeepsWhatHasNotChanged();
@@ -136,6 +141,10 @@ void TestAppIntegration::init()
     // restore tabs pointing at a temporary tree that no longer exists.
     QFile::remove(QString::fromLocal8Bit(qgetenv("MOLE_SESSION_PATH")));
     QFile::remove(QString::fromLocal8Bit(qgetenv("MOLE_BOOKMARKS_PATH")));
+    // And the preferences, for the same reason: a theme one test chose would be
+    // the theme the next one opens on, which is the sort of order dependency that
+    // only shows up when somebody runs a single case.
+    QFile::remove(QString::fromLocal8Bit(qgetenv("MOLE_PREFERENCES_PATH")));
 
     m_tree = std::make_unique<TempTree>();
     QVERIFY(m_tree->isValid());
@@ -1659,6 +1668,77 @@ void TestAppIntegration::menuEntriesGreyOutWhenTheyDoNotApply()
 
     // Close tab stays available regardless of what the tab is.
     QVERIFY(menuEntry(menu, QStringLiteral("mole.file.closeTab")).value(QStringLiteral("enabled")).toBool());
+}
+
+void TestAppIntegration::theViewMenuPicksAThemeAndTicksTheOneInForce()
+{
+    // One ticked at a time. They are alternatives, like the four layouts above,
+    // and unlike Show hidden files.
+    const auto ticked = [this]() -> QStringList {
+        const QVariantList menu = m_app->buildMenu();
+        QStringList on;
+        for (const QString& theme : Palette::themeNames()) {
+            const QVariantMap entry
+                = menuEntry(menu, QStringLiteral("mole.view.theme.%1").arg(theme.toLower()));
+            // Reported rather than asserted, so a theme with no entry at all shows
+            // up in the comparison instead of stopping the lambda halfway.
+            if (entry.isEmpty())
+                on.append(QStringLiteral("<no entry for %1>").arg(theme));
+            else if (entry.value(QStringLiteral("checked")).toBool())
+                on.append(theme);
+        }
+        return on;
+    };
+
+    QCOMPARE(ticked(), QStringList({ QStringLiteral("Midnight") }));
+
+    QVERIFY(m_app->triggerAction(QStringLiteral("mole.view.theme.slate")));
+    QCOMPARE(m_app->colour()->theme(), QStringLiteral("Slate"));
+    QCOMPARE(m_app->colour()->panel(), Palette::slate().panel);
+    QCOMPARE(ticked(), QStringList({ QStringLiteral("Slate") }));
+
+    QVERIFY(m_app->triggerAction(QStringLiteral("mole.view.theme.midnight")));
+    QCOMPARE(ticked(), QStringList({ QStringLiteral("Midnight") }));
+    QCOMPARE(m_app->colour()->panel(), Palette::midnight().panel);
+}
+
+/// The choice is a preference rather than part of the session, so it comes back
+/// whether or not there were tabs open to restore.
+void TestAppIntegration::theThemeChosenSurvivesARestart()
+{
+    QVERIFY(m_app->triggerAction(QStringLiteral("mole.view.theme.slate")));
+
+    // Read from the file by something that is not the application, so this is
+    // about what landed on disk rather than about what is still in memory.
+    {
+        const Preferences saved(Preferences::defaultPath());
+        QCOMPARE(saved.value(QStringLiteral("ui.theme")).toString(), QStringLiteral("Slate"));
+    }
+
+    m_app.reset();
+    m_app = std::make_unique<AppController>();
+    QString error;
+    QVERIFY2(m_app->initialise(builtIns(), &error), qPrintable(error));
+
+    QCOMPARE(m_app->colour()->theme(), QStringLiteral("Slate"));
+    QCOMPARE(m_app->colour()->window(), Palette::slate().window);
+}
+
+void TestAppIntegration::aThemeNobodyShipsOpensOnMidnight()
+{
+    {
+        Preferences file(Preferences::defaultPath());
+        file.setValue(QStringLiteral("ui.theme"), QStringLiteral("Sunset"));
+    }
+
+    m_app.reset();
+    m_app = std::make_unique<AppController>();
+    QString error;
+    QTest::ignoreMessage(QtWarningMsg, "No theme called Sunset; opening on Midnight");
+    QVERIFY2(m_app->initialise(builtIns(), &error), qPrintable(error));
+
+    QCOMPARE(m_app->colour()->theme(), QStringLiteral("Midnight"));
+    QCOMPARE(m_app->colour()->window(), Palette::midnight().window);
 }
 
 void TestAppIntegration::manyTabsOpenAndCloseWithoutLeaking()

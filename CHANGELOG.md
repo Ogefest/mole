@@ -13,6 +13,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-21 #MOLE-279 Mole ships two themes, Midnight and Slate, and the View menu picks between them; the choice is remembered
 2026-08-21 #MOLE-278 Colour comes from one palette rather than 372 values in 39 files: the automation tab and the terminal panel now use the same greys as the rest of the window, and the sidebar's capacity bar the same blue
 2026-08-21 #MOLE-274 Forgetting an index no longer freezes the window while a scan is writing, and a removal that fails says so instead of looking like one that worked
 2026-08-21 #MOLE-277 A tab opened from another no longer carries a "Back to" bar above it; closing it still returns you to the tab it came from

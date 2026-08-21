@@ -240,6 +240,12 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     m_preferences = new Preferences(Preferences::defaultPath(), this);
     m_sets->load();
 
+    // What the window is painted in, from the last time somebody chose. Applied
+    // here rather than in the constructor because that is where the preferences
+    // are, and before the engine loads a line of QML, so the first frame is
+    // already the right colour. An absent or unknown value opens on the default.
+    m_colour->setTheme(m_preferences->value(QStringLiteral("ui.theme"), Palette::defaultTheme()).toString());
+
     m_secrets = new SecretStore(SecretStore::defaultPath(), this);
     connect(m_secrets, &SecretStore::unlockedChanged, this, &AppController::credentialsChanged);
 
@@ -1519,6 +1525,29 @@ void AppController::registerShellActions()
         action.trigger = [this] { emit dialogRequested(QStringLiteral("mole.view.filter")); };
         m_actions->addAction(std::move(action));
     }
+    // How the *window* is painted, rather than how the current tab looks. That
+    // stretches ADR-0003's wording for `View` rather than contradicting it: this
+    // is still the section anybody would look in, and a fifth top-level heading
+    // is the thing ADR-0003 exists to prevent.
+    //
+    // Numbered from 100 because the numbers above already collide twice -- `Dual
+    // pane` and `Show hidden files` are both 20, `Grid of icons` and `Refresh`
+    // are both 30. Those two are not this group's to fix; adding a third would be.
+    int themeOrder = 100;
+    for (const QString& theme : Palette::themeNames()) {
+        MenuAction action;
+        action.id = QStringLiteral("mole.view.theme.%1").arg(theme.toLower());
+        action.section = MenuAction::Section::View;
+        action.title = theme;
+        action.sortOrder = themeOrder;
+        // Set apart from the entries about the tab, because they are about
+        // something else.
+        action.separatorBefore = themeOrder == 100;
+        action.checked = [this, theme] { return m_colour->theme() == theme; };
+        action.trigger = [this, theme] { setTheme(theme); };
+        m_actions->addAction(std::move(action));
+        themeOrder += 10;
+    }
     {
         MenuAction action;
         action.id = QStringLiteral("mole.view.refresh");
@@ -2506,6 +2535,15 @@ void AppController::refreshBookmarkActions()
         m_actions->addAction(std::move(action));
         order += 10;
     }
+}
+
+void AppController::setTheme(const QString& name)
+{
+    m_colour->setTheme(name);
+    // What the palette settled on rather than what was asked for, so picking a
+    // theme also repairs a preferences file that named one Mole does not have.
+    if (m_preferences)
+        m_preferences->setValue(QStringLiteral("ui.theme"), m_colour->theme());
 }
 
 QVariantList AppController::buildMenu() const

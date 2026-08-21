@@ -148,6 +148,10 @@ public:
 
     TabsModel* tabs() const { return m_tabs; }
     Palette* colour() const { return m_colour; }
+    /// Repaints the window and remembers the choice under `ui.theme`. The only
+    /// thing that writes that key: a theme picked from the menu and a theme read
+    /// at startup have to agree, and two writers is how they stop agreeing.
+    void setTheme(const QString& name);
     DriveListModel* drives() const { return m_drives; }
     TaskListModel* tasks() const { return m_taskModel; }
     TerminalController* terminal() const { return m_terminal; }
