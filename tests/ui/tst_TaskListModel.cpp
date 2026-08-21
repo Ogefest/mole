@@ -65,6 +65,8 @@ class TestTaskListModel : public QObject
     Q_OBJECT
 
 private slots:
+    void cleanup();
+
     void reportsWhatIsRunning();
     void saysNothingWhenIdle();
     void countsWhatHasFinished();
@@ -82,6 +84,28 @@ private:
         m_model = std::make_unique<TaskListModel>(m_tasks.get());
     }
 };
+
+void TestTaskListModel::cleanup()
+{
+    // This is the suite MOLE-273 was found in, and this is the whole fix for it.
+    // `build()` used to reassign the manager at the top of the *next* case, which
+    // destroys the old one -- but by then the harness has already written the
+    // name of the test function it is entering, and a task from the previous case
+    // still logging "started" from a pool thread reads that same global. Every
+    // assertion passed and ThreadSanitizer failed the run every time.
+    //
+    // The destructor cancels and joins, and HeldTask's loop watches
+    // isCancelRequested(), so nothing here waits on a task nobody released.
+    //
+    // And it goes first, before the model. The other order looks safer -- sever
+    // the connections, then stop the tasks -- and is the one that races: a task
+    // emitting from a pool thread into a receiver being destroyed on this one is
+    // what ThreadSanitizer caught in tst_DriveListModel. AppController's own
+    // shutdown has said so all along: the task manager, which joins its pool,
+    // has to go first.
+    m_tasks.reset();
+    m_model.reset();
+}
 
 void TestTaskListModel::reportsWhatIsRunning()
 {

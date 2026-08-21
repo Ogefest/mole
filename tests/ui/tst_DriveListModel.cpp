@@ -179,8 +179,15 @@ void TestDriveListModel::cleanup()
     // generous count: releasing permits nobody is waiting on costs nothing.
     if (m_gate)
         m_gate->release(64);
-    m_model.reset();
+    // And then the pool, *before* the model -- releasing a task is not the same
+    // as waiting for it, and this order is the whole of it. ~TaskManager cancels
+    // and joins; destroying the model first left QuerySpaceTask emitting
+    // spaceReady from a pool thread into a receiver being torn down on this one,
+    // which ThreadSanitizer reported as a data race on the task's own connection
+    // state in 4 runs of 20. AppController's shutdown says the same thing in as
+    // many words: the task manager has to go first. See MOLE-273.
     m_tasks.reset();
+    m_model.reset();
     m_vfs.reset();
     m_registry.reset();
     m_secrets.reset();

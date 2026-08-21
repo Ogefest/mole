@@ -126,6 +126,10 @@ if(BASH_PROGRAM)
                         SCRIPT scripts/tst_TestbedProvisioning.sh)
     mole_add_shell_test(tst_ShellScripts
                         SCRIPT scripts/tst_ShellScripts.sh)
+    # The same idea for the C++ suites: rules that can be held by reading them,
+    # so a new suite is covered by existing. See MOLE-273.
+    mole_add_shell_test(tst_TestSuiteRules
+                        SCRIPT scripts/tst_TestSuiteRules.sh)
     mole_add_shell_test(tst_MoleControl
                         SCRIPT scripts/tst_MoleControl.sh)
 else()

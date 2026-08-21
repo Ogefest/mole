@@ -92,10 +92,6 @@ private slots:
     void whatIsFoundIsReportedAndNotThrownAway();
     void theAgeThresholdHidesAnUploadThatMayStillBeRunning();
     void discardingSaysHowManyAndWhichOnesRefused();
-
-private:
-    std::unique_ptr<TaskManager> m_tasks;
-    void init() { m_tasks = std::make_unique<TaskManager>(); }
 };
 
 void TestSweepLeftovers::aDriveThatKeepsNothingBackSaysSoRatherThanFailing()

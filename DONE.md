@@ -9,6 +9,54 @@ wrong.
 
 ---
 
+## make tsan was red every run, and the second cause was the interesting one
+
+**Asked for:** MOLE-273 — a task logging from a pool thread races the test harness,
+which I opened while working MOLE-269 and could not fix there.
+
+**The first cause was the one in the brief.** `Task::execute()` logs "started" from a
+pool thread; in a test binary the Qt message handler *is* testlib's logger, which reads
+the global naming the test function currently running; and the main thread writes that
+same global on its way into the next one. `TaskManager`'s destructor cancels and joins the
+pool, so a suite that destroys its manager in `cleanup()` cannot be in that state — and
+three did not. `tst_TaskListModel` had no `cleanup()` at all: `build()` reassigned the
+manager at the top of the *following* case, by which time the harness had already moved
+on, which is exactly the window. `tst_DriveCheckTask` had none either.
+`tst_SweepLeftovers` turned out to declare a `TaskManager` it never uses, with an `init()`
+under plain `private:` rather than `private slots:` — so the harness never called it and
+nothing was ever constructed. That one was deleted rather than drained.
+
+**Held by reading rather than by remembering.** `tests/scripts/tst_TestSuiteRules.sh` is
+the companion to the existing `tst_ShellScripts.sh`: a suite owning a `TaskManager` must
+destroy it in `cleanup()`, checked over every suite at once, so a new one is covered by
+existing. It needed `cleanup-body.awk` to find the body by brace depth, because both
+shapes are in the tree — out of line as `void TestX::cleanup()` and inline in the class —
+and a checker that read indentation would have printed nothing for half of them and passed
+them all. Removing one reset makes it name the file.
+
+**Then twenty runs said 16, not 20**, and the remaining four were `tst_DriveListModel` —
+the suite the brief had flagged on one observation. It *does* destroy its manager in
+cleanup, so the static rule was satisfied and the tier was still red. What ThreadSanitizer
+reported was `QuerySpaceTask::spaceReady` being emitted from a pool thread while
+`~DriveListModel` ran on the main one: **the order of the two resets, not their presence.**
+Releasing a held task is not the same as waiting for it, and the model was destroyed first.
+
+The rule is one the application already knew. `AppController`'s shutdown says it in as
+many words — *running tasks may still be writing to the index, so the task manager (which
+joins its pool) has to go first* — and two test suites had it backwards. So did the
+`cleanup()` I had just written for `tst_TaskListModel`, with a comment confidently
+explaining why destroying the model first was safe. It is not, and tsan is what said so.
+
+**Not made a static rule, deliberately.** "The manager is reset first" is checkable, and
+five suites break it for good reasons — a gate has to be released before a join or the join
+hangs, and one suite owns the whole application harness. The coarse rule is held by the
+checker and the fine one by the tier, which is what the tier is for.
+
+**Twenty runs of twenty green**, against 16 of 20 after the first fix and 0 of 20 before
+any of it. The ticket asked for five.
+
+---
+
 ## A directory moved into itself on one drive went round the guard
 
 **Asked for:** MOLE-275 — moving a directory into its own subdirectory, when the source

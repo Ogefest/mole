@@ -22,6 +22,7 @@ private:
 
 private slots:
     void init();
+    void cleanup();
     void aReachableDriveSaysWhatItFound();
     void anEmptyRootIsStillReachable();
     void anUnreachableDriveCarriesTheReason();
@@ -33,6 +34,15 @@ void TestDriveCheckTask::init()
 {
     m_tasks = std::make_unique<TaskManager>();
     m_fs = std::make_shared<MemoryFileSystem>();
+}
+
+void TestDriveCheckTask::cleanup()
+{
+    // Destroyed here rather than left to the next init(): the destructor cancels
+    // and joins the pool, and by the next test function the harness has already
+    // moved on -- a task still logging then races it. See MOLE-273.
+    m_tasks.reset();
+    m_fs.reset();
 }
 
 void TestDriveCheckTask::aReachableDriveSaysWhatItFound()

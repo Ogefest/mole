@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-21 #MOLE-273 make tsan is green again, and a test suite that leaves a task running is now a failure somebody sees
 2026-08-21 #MOLE-275 Moving a directory into its own subdirectory on one drive is refused instead of silently relabelling the tree underneath itself
 2026-08-21 #MOLE-250 Opening a file from a remote drive stages it inside the scratch folder, and two servers holding the same path no longer overwrite each other
 2026-08-21 #MOLE-243 A copy or a rename says which name the drive will not accept, and which character is the problem, instead of failing part way through with a path
