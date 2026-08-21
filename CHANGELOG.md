@@ -13,6 +13,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-21 #MOLE-277 A tab opened from another no longer carries a "Back to" bar above it; closing it still returns you to the tab it came from
 2026-08-21 #MOLE-272 The search form's criteria scroll, so the size range and the index toggle are reachable instead of sitting under the task strip
 2026-08-21 #MOLE-273 make tsan is green again, and a test suite that leaves a task running is now a failure somebody sees
 2026-08-21 #MOLE-275 Moving a directory into its own subdirectory on one drive is refused instead of silently relabelling the tree underneath itself

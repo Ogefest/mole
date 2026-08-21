@@ -40,12 +40,6 @@ QVariant TabsModel::data(const QModelIndex& index, int role) const
         return QVariant::fromValue(static_cast<QObject*>(tab.controller));
     case BusyRole:
         return tab.controller && tab.controller->isBusy();
-    case OpenerTitleRole: {
-        const int opener = rowOfTabId(tab.openedFromId);
-        if (opener < 0)
-            return QString();
-        return m_tabs.at(opener).controller ? m_tabs.at(opener).controller->title() : QString();
-    }
     default:
         return {};
     }
@@ -61,7 +55,6 @@ QHash<int, QByteArray> TabsModel::roleNames() const
         { ViewSourceRole, "viewSource" },
         { ControllerRole, "controller" },
         { BusyRole, "busy" },
-        { OpenerTitleRole, "openerTitle" },
     };
 }
 
@@ -92,9 +85,6 @@ int TabsModel::openTab(const QString& featureId)
     connect(tab.controller, &FeatureController::titleChanged, this,
         [this, controller = tab.controller, id = tab.id] {
             emitRowChanged(controller, { TitleRole, Qt::DisplayRole });
-            // A tab that offers the way back to this one is showing this one's
-            // title, so renaming a tab renames every way back to it.
-            emitOpenerTitleChanged(id);
         });
     connect(tab.controller, &FeatureController::subtitleChanged, this,
         [this, controller = tab.controller] { emitRowChanged(controller, { SubtitleRole }); });
@@ -133,8 +123,6 @@ void TabsModel::closeTab(int index)
 
     emit countChanged();
     emit sessionDirty();
-    // Whatever was opened from it has nowhere to go back to now.
-    emitOpenerTitleChanged(tab.id);
 
     if (m_tabs.isEmpty()) {
         selectRow(-1);
@@ -235,13 +223,6 @@ int TabsModel::rowOpenedFromCurrent(const QString& featureId) const
     return -1;
 }
 
-int TabsModel::openerRow(int index) const
-{
-    if (index < 0 || index >= m_tabs.size())
-        return -1;
-    return rowOfTabId(m_tabs.at(index).openedFromId);
-}
-
 void TabsModel::emitRowChanged(const FeatureController* controller, const QList<int>& roles)
 {
     for (int row = 0; row < m_tabs.size(); ++row) {
@@ -250,18 +231,6 @@ void TabsModel::emitRowChanged(const FeatureController* controller, const QList<
             emit dataChanged(idx, idx, roles);
             return;
         }
-    }
-}
-
-void TabsModel::emitOpenerTitleChanged(int openerId)
-{
-    if (openerId < 0)
-        return;
-    for (int row = 0; row < m_tabs.size(); ++row) {
-        if (m_tabs.at(row).openedFromId != openerId)
-            continue;
-        const QModelIndex idx = index(row, 0);
-        emit dataChanged(idx, idx, { OpenerTitleRole });
     }
 }
 

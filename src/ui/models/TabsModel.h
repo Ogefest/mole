@@ -31,10 +31,6 @@ public:
         ViewSourceRole,
         ControllerRole,
         BusyRole,
-        /// The title of the tab this one was opened from, empty when it was
-        /// opened from nowhere or that tab has since closed. A tab that is a
-        /// detour from another says so, and offers the way back.
-        OpenerTitleRole,
     };
 
     explicit TabsModel(FeatureRegistry* registry, QObject* parent = nullptr);
@@ -76,11 +72,6 @@ public:
     /// from, so that closing it can hand the user back there.
     Q_INVOKABLE int rowOpenedFromCurrent(const QString& featureId) const;
 
-    /// The row of the tab `index` was opened from, or -1 when it was opened
-    /// from nowhere or that tab has since been closed. What the way back from a
-    /// detour points at.
-    Q_INVOKABLE int openerRow(int index) const;
-
     /// Asks every open tab what it wants remembered.
     Session captureSession() const;
     /// Re-creates the tabs. Entries whose feature is no longer registered --
@@ -111,9 +102,6 @@ private:
     };
 
     void emitRowChanged(const FeatureController* controller, const QList<int>& roles);
-    /// Tells every tab opened from `openerId` that its way back reads
-    /// differently now -- the tab was renamed, or it has gone.
-    void emitOpenerTitleChanged(int openerId);
     int rowOfTabId(int id) const;
     /// Selects a row and always notifies, even when the number is unchanged:
     /// after a removal the same index is a different tab.

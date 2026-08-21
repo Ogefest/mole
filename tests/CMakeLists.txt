@@ -379,11 +379,6 @@ mole_add_test(tst_Sidebar           SOURCES app/tst_Sidebar.cpp         LIBS mol
 # is state the walkthrough's narrative would have to step around.
 mole_add_test(tst_Dragging          SOURCES app/tst_Dragging.cpp         LIBS mole_qml_harness mole_builtin)
 
-# What a tab says about where it came from. Its own binary for the same reason
-# as the sidebar's: it opens and closes tabs, which is state a narrative test
-# would have to step around.
-mole_add_test(tst_TabStrip          SOURCES app/tst_TabStrip.cpp        LIBS mole_qml_harness mole_builtin)
-
 # The band above a listing. Its own binary for the same reason again: it builds
 # git repositories in the fixture and navigates between them, and it measures how
 # tall the listing is, which is a claim about a folder that is not a checkout.

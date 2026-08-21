@@ -575,57 +575,8 @@ ApplicationWindow {
                         required property url viewSource
                         required property var controller
                         required property string featureId
-                        required property string openerTitle
 
                         spacing: 0
-
-                        // Where this tab came from, and the way back to it.
-                        //
-                        // A folder opened from a search is a detour: the list of
-                        // results is the work, and this is one row of it looked
-                        // at more closely. Three folders further in, which tab
-                        // that list was in is a guess -- so the tab that was
-                        // opened says so, and one click undoes the detour.
-                        //
-                        // Only a browser: those are the tabs somebody navigates
-                        // away from until they no longer recognise where they
-                        // started.
-                        Rectangle {
-                            objectName: "backToOpener"
-                            Layout.fillWidth: true
-                            implicitHeight: visible ? backRow.implicitHeight + 8 : 0
-                            visible: tabBody.featureId === "mole.browser" && tabBody.openerTitle !== ""
-                            color: root.panelColor
-
-                            Rectangle {
-                                anchors.bottom: parent.bottom
-                                width: parent.width
-                                height: 1
-                                color: root.borderColor
-                            }
-
-                            RowLayout {
-                                id: backRow
-                                anchors.verticalCenter: parent.verticalCenter
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.leftMargin: 8
-                                spacing: 4
-
-                                ToolButton {
-                                    objectName: "backToOpenerButton"
-                                    text: qsTr("← Back to %1").arg(tabBody.openerTitle)
-                                    font.pixelSize: App.textSize
-                                    implicitHeight: App.minimumTarget
-                                    onClicked: {
-                                        const row = App.tabs.openerRow(tabBody.index)
-                                        if (row >= 0)
-                                            App.tabs.currentIndex = row
-                                    }
-                                }
-                                Item { Layout.fillWidth: true }
-                            }
-                        }
 
                         // What the shell talks to: this tab's loaded view.
                         property alias view: tabLoader.item
