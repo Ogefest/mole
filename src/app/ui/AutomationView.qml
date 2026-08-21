@@ -260,7 +260,7 @@ Item {
                 Label {
                     text: modelData.startedAt
                     color: view.mutedColor
-                    font.family: "monospace"
+                    font.family: App.monospaceFont
                 }
                 Label {
                     text: modelData.label

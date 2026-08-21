@@ -97,7 +97,11 @@ Menu {
                 text: modelData.shortcut
                 visible: modelData.shortcut.length > 0
                 color: "#6f7788"
-                font.family: "monospace"
+                // Asked, not named. "monospace" is a fontconfig alias: it
+                // resolves to a real family on Linux and to nothing on Windows
+                // or macOS, where the label falls back to the default
+                // proportional font and the shortcut column stops lining up.
+                font.family: App.monospaceFont
                 font.pixelSize: 11
             }
         }

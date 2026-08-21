@@ -62,6 +62,11 @@ endif()
 target_compile_definitions(mole_test_support
     PUBLIC MOLE_GUIDE_IMAGE_DIR="${CMAKE_SOURCE_DIR}/docs/guide/images")
 
+# Where the application's QML lives, so a test can hold a rule about it that is
+# cheaper to state than to enforce by review -- see tst_QmlConventions.
+target_compile_definitions(mole_test_support
+    PUBLIC MOLE_QML_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src/app/ui")
+
 # Tests that load the archive plugin need to know where it was built.
 target_compile_definitions(mole_test_support
     PUBLIC MOLE_TEST_PLUGIN_DIR="${CMAKE_BINARY_DIR}/plugins")
@@ -138,6 +143,7 @@ set_target_properties(compare-shots PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_
 # --- core: no GUI, no plugins -----------------------------------------------
 mole_add_test(tst_VfsUri            SOURCES core/tst_VfsUri.cpp)
 mole_add_test(tst_SystemVolumes     SOURCES core/tst_SystemVolumes.cpp)
+mole_add_test(tst_QmlConventions    SOURCES app/tst_QmlConventions.cpp)
 mole_add_test(tst_LocalFileSystem   SOURCES core/tst_LocalFileSystem.cpp)
 
 # What a process killed outright leaves behind. It starts a second copy of

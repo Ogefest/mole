@@ -903,7 +903,7 @@ ApplicationWindow {
                             Label {
                                 Layout.preferredWidth: 180
                                 text: modelData[0]
-                                font.family: "monospace"
+                                font.family: App.monospaceFont
                                 font.pixelSize: 12
                             }
                             Label {
