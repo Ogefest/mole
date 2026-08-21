@@ -16,9 +16,11 @@ Behaviour we know about and have decided to live with, conventions a change
 should follow, and gaps that are documented rather than scheduled. None of it is
 work waiting to be picked up, so none of it belongs in a queue.
 
-Finished work is recorded in [DONE.md](DONE.md), which keeps the long account of
-what was asked for and what the answer turned out to be — the part an issue
-tracker holds badly.
+Finished work is recorded in the commit that did it: what was asked for on the
+ticket, what the answer turned out to be — including where the first answer was
+wrong — in the commit message, a decision about shape in an ADR, and one line per
+user-visible change in [CHANGELOG.md](CHANGELOG.md). See
+[ADR-0071](docs/adr/0071-the-record-of-finished-work-is-the-commit.md).
 
 Everything in this repository is written in English — it is an open source
 project, and a contributor should never hit a wall of text they cannot read.

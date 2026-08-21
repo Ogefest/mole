@@ -4,7 +4,9 @@ New features and visible changes in Mole, newest first — **one line each**, in
 shape `YYYY-MM-DD #MOLE-nn what changed`. This file is the release notes: the
 block between two release markers is one version's, pulled out by a regular
 expression, so a line in another shape is a line nobody reads. The reasoning
-belongs in [docs/adr/](docs/adr/) and the long account in [DONE.md](DONE.md).
+belongs in the commit message — including where the first answer turned out to be
+wrong — and a decision about shape in [docs/adr/](docs/adr/). See
+[ADR-0071](docs/adr/0071-the-record-of-finished-work-is-the-commit.md).
 
 The prose entries below the dated ones are from before 2026-08-10 and belong to
 the first release; they stay as they are.

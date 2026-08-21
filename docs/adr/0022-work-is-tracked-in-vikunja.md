@@ -3,7 +3,9 @@
 - **Date:** 2026-08-10
 - **Status:** Accepted, and amended by
   [ADR-0023](0023-work-is-dispatched-by-epic.md) on how work is dispatched — the
-  queue is the order of the epics, not the order of `Ready`
+  queue is the order of the epics, not the order of `Ready`; and by
+  [ADR-0071](0071-the-record-of-finished-work-is-the-commit.md) on where the record
+  of finished work lives — `DONE.md` is deleted and the commit message carries it
 
 ## Context
 
@@ -85,6 +87,14 @@ is the repository itself — `README.md` for what works, `ARCHITECTURE.md` for h
 it is built, these ADRs for why, `CHANGELOG.md` and `DONE.md` for what happened —
 plus an Issues tab that still accepts a report. If that stops being enough, the
 answer is to publish a view of the board, not to move back.
+
+> **Amended 2026-08-21 (MOLE-276): `DONE.md` is no longer one of them.** It was
+> deleted, and what happened to a piece of work is now the commit that did it —
+> including where the first answer was wrong. The sentence above is left as it was
+> written, because it was true on 2026-08-10 and the point of these records is being
+> able to see that we changed our mind;
+> [ADR-0071](0071-the-record-of-finished-work-is-the-commit.md) is the change and
+> carries the reasoning. The decision *this* record makes is untouched.
 
 **Nothing closes a card by itself any more.** GitHub shut an issue when a commit
 said `Closes #12`; no such wiring exists here. A commit message still says
