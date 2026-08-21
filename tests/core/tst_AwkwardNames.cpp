@@ -3,6 +3,7 @@
 
 #include "core/tasks/TaskManager.h"
 #include "core/tasks/TransferTask.h"
+#include "core/vfs/NameRules.h"
 #include "core/vfs/backends/LocalFileSystem.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
@@ -39,6 +40,8 @@ private slots:
     void init();
     void cleanup();
 
+    void cleanupTestCase();
+
     void aNameSurvivesACopyWhateverIsInIt_data();
     void aNameSurvivesACopyWhateverIsInIt();
     void aNameSurvivesBeingMadeIntoAUriAndBack_data();
@@ -53,6 +56,15 @@ private slots:
 private:
     TransferTask* copyEverythingFromSource();
 
+    /// How many of the table's names were really put through a copy. Counted
+    /// because the interesting failure of a suite that skips per row is a table
+    /// that quietly stopped covering anything.
+    int m_exercised = 0;
+    /// What the disk under the fixture accepts. Read from the backend once and
+    /// kept, because cleanup() releases it before cleanupTestCase() runs -- and
+    /// because one source of truth is what makes the count below checkable.
+    NameRules m_diskRules = LocalFileSystem().nameRules();
+
     std::unique_ptr<TaskManager> m_tasks;
     std::shared_ptr<LocalFileSystem> m_disk;
     std::unique_ptr<TempTree> m_tree;
@@ -66,6 +78,22 @@ void TestAwkwardNames::init()
     QVERIFY(m_tree->isValid());
     QVERIFY(m_tree->makeDirs(QStringLiteral("source")));
     QVERIFY(m_tree->makeDirs(QStringLiteral("arrived")));
+}
+
+void TestAwkwardNames::cleanupTestCase()
+{
+    // Every name in the table, on a filesystem that holds them all. Without
+    // this, weakening a name -- or a rule set that started refusing one by
+    // mistake -- would trade real coverage for a green tick, and the run would
+    // look exactly the same.
+    static constexpr int kNamesInTheTable = 20;
+    static constexpr int kOnlyAPosixFilesystemHoldsThese = 6;
+
+    const int expected = checkName(QStringLiteral("really?.txt"), m_diskRules).isRejected()
+        ? kNamesInTheTable - kOnlyAPosixFilesystemHoldsThese
+        : kNamesInTheTable;
+
+    QCOMPARE(m_exercised, expected);
 }
 
 void TestAwkwardNames::cleanup()
@@ -91,34 +119,56 @@ TransferTask* TestAwkwardNames::copyEverythingFromSource()
 void TestAwkwardNames::aNameSurvivesACopyWhateverIsInIt_data()
 {
     QTest::addColumn<QString>("name");
+    /// False for a name only a POSIX filesystem will hold. Stated per row rather
+    /// than worked out, so that adding one is a decision, and checked against
+    /// the rules below so that stating it wrongly is caught.
+    QTest::addColumn<bool>("portable");
 
-    QTest::newRow("a space") << QStringLiteral("holiday photos.jpg");
-    QTest::newRow("double quotes") << QStringLiteral("say \"cheese\".jpg");
-    QTest::newRow("a single quote") << QStringLiteral("mole's notes.txt");
-    QTest::newRow("a backslash") << QStringLiteral("back\\slash.txt");
-    QTest::newRow("a tab") << QStringLiteral("two\tcolumns.tsv");
-    QTest::newRow("a newline") << QStringLiteral("first\nsecond.txt");
-    QTest::newRow("a hash") << QStringLiteral("draft #3.txt");
-    QTest::newRow("a question mark") << QStringLiteral("really?.txt");
-    QTest::newRow("an ampersand") << QStringLiteral("this & that.txt");
-    QTest::newRow("a percent") << QStringLiteral("100% done.txt");
-    QTest::newRow("a plus and an equals") << QStringLiteral("a+b=c.txt");
-    QTest::newRow("something that looks encoded") << QStringLiteral("already%20encoded%2Fname.txt");
-    QTest::newRow("emoji") << QStringLiteral("holiday \xF0\x9F\x8F\x96\xEF\xB8\x8F.jpg");
-    QTest::newRow("a right-to-left mark") << QStringLiteral("report\xE2\x80\xAB.txt");
-    QTest::newRow("combining characters") << QStringLiteral("cafe\xCC\x81.txt");
-    QTest::newRow("three dots") << QStringLiteral("...");
-    QTest::newRow("dot dot something") << QStringLiteral("..foo");
-    QTest::newRow("a leading dash") << QStringLiteral("-rf.txt");
-    QTest::newRow("a leading double dash") << QStringLiteral("--force.txt");
+    QTest::newRow("a space") << QStringLiteral("holiday photos.jpg") << true;
+    QTest::newRow("double quotes") << QStringLiteral("say \"cheese\".jpg") << false;
+    QTest::newRow("a single quote") << QStringLiteral("mole's notes.txt") << true;
+    QTest::newRow("a backslash") << QStringLiteral("back\\slash.txt") << false;
+    QTest::newRow("a tab") << QStringLiteral("two\tcolumns.tsv") << false;
+    QTest::newRow("a newline") << QStringLiteral("first\nsecond.txt") << false;
+    QTest::newRow("a hash") << QStringLiteral("draft #3.txt") << true;
+    QTest::newRow("a question mark") << QStringLiteral("really?.txt") << false;
+    QTest::newRow("an ampersand") << QStringLiteral("this & that.txt") << true;
+    QTest::newRow("a percent") << QStringLiteral("100% done.txt") << true;
+    QTest::newRow("a plus and an equals") << QStringLiteral("a+b=c.txt") << true;
+    QTest::newRow("something that looks encoded") << QStringLiteral("already%20encoded%2Fname.txt") << true;
+    QTest::newRow("emoji") << QStringLiteral("holiday \xF0\x9F\x8F\x96\xEF\xB8\x8F.jpg") << true;
+    QTest::newRow("a right-to-left mark") << QStringLiteral("report\xE2\x80\xAB.txt") << true;
+    QTest::newRow("combining characters") << QStringLiteral("cafe\xCC\x81.txt") << true;
+    QTest::newRow("three dots") << QStringLiteral("...") << false;
+    QTest::newRow("dot dot something") << QStringLiteral("..foo") << true;
+    QTest::newRow("a leading dash") << QStringLiteral("-rf.txt") << true;
+    QTest::newRow("a leading double dash") << QStringLiteral("--force.txt") << true;
     // 255 bytes is the limit on every filesystem this runs on; one more is a
     // different answer from the kernel rather than from us.
-    QTest::newRow("a 255-byte name") << QString(251, QLatin1Char('n')) + QStringLiteral(".txt");
+    QTest::newRow("a 255-byte name") << QString(251, QLatin1Char('n')) + QStringLiteral(".txt") << true;
 }
 
 void TestAwkwardNames::aNameSurvivesACopyWhateverIsInIt()
 {
     QFETCH(QString, name);
+    QFETCH(bool, portable);
+
+    // The group each name is in, checked rather than trusted. A row that claims
+    // to be portable and is not would go on being skipped on Windows for a
+    // reason nobody had noticed.
+    const bool windowsWouldHoldIt
+        = !checkName(name, NameRules::forPlatform(HostPlatform::Windows)).isRejected();
+    QCOMPARE(windowsWouldHoldIt, portable);
+
+    // Asked of the filesystem under the fixture, not of the platform. A
+    // FAT-formatted stick or a share on Linux is stricter than the disk it is
+    // plugged into, and the same code should handle it rather than a second
+    // guess.
+    if (const NameVerdict verdict = checkName(name, m_diskRules); verdict.isRejected()) {
+        QSKIP(
+            qPrintable(QStringLiteral("this filesystem will not hold \"%1\": %2").arg(name, verdict.reason)));
+    }
+    ++m_exercised;
 
     const QByteArray payload = QStringLiteral("belongs to %1").arg(name).toUtf8();
     if (!m_tree->writeFile(QStringLiteral("source/") + name, payload))
@@ -144,6 +194,13 @@ void TestAwkwardNames::aNameSurvivesBeingMadeIntoAUriAndBack_data()
 void TestAwkwardNames::aNameSurvivesBeingMadeIntoAUriAndBack()
 {
     QFETCH(QString, name);
+    QFETCH(bool, portable);
+    Q_UNUSED(portable)
+
+    // Deliberately not skipped for anybody. A uri is not a native path, so what
+    // a name does on the way through this layer is the same question on every
+    // system -- and a remote drive really does hand a Windows client a name the
+    // local disk would refuse.
 
     // Every remote backend builds a url out of a uri, and every one of them
     // parses one back. A name that changes on the way through is a file written
