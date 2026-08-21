@@ -6,6 +6,8 @@
 #include <QSet>
 #include <QStringList>
 
+#include <optional>
+
 namespace mole {
 
 /// Copies or moves entries between any two mounts.
@@ -91,6 +93,26 @@ private:
     /// than by which backend object was handed in.
     static bool isInsideOrEqual(
         const VfsUri& inner, const VfsUri& outer, Qt::CaseSensitivity sensitivity = Qt::CaseSensitive);
+
+    /// Why `source` may not be put where this request wants it, or nothing.
+    ///
+    /// Held in one place because there are two paths to a move and both need it:
+    /// the plan checks it per job, and the same-backend shortcut renames without
+    /// building a plan at all. It was in planJobs() alone, which is how a move
+    /// within one backend went straight past it -- reported as one item moved,
+    /// no failures, and the tree relabelled underneath itself. See ADR-0029 and
+    /// MOLE-275.
+    std::optional<VfsError> refusalFor(const VfsUri& source, bool sourceIsDirectory) const;
+
+    /// Whether the plan would accept every source as it stands.
+    ///
+    /// The same-backend move shortcut does not build a plan, and the plan is
+    /// where a transfer is refused -- so the shortcut is taken only when there is
+    /// nothing to refuse, and anything else falls to the ordinary path, which
+    /// reports it. One copy of each refusal rather than two that can drift, which
+    /// is exactly how a directory came to be renamed inside itself with no
+    /// failure and one item reported moved.
+    bool nothingToRefuse() const;
 
     /// Weighs every copied file on the destination and fails the ones that do
     /// not match what was sent. One listing per directory, not one stat per

@@ -48,6 +48,47 @@ bool TransferTask::isInsideOrEqual(const VfsUri& inner, const VfsUri& outer, Qt:
     return inner.isWithin(outer, sensitivity);
 }
 
+std::optional<VfsError> TransferTask::refusalFor(const VfsUri& source, bool sourceIsDirectory) const
+{
+    // A directory cannot be put inside itself. The copy is finite -- the plan is
+    // built before a byte moves, so the walk never meets what the copy is
+    // writing -- but a *move* then deletes the source, and the only copy of
+    // everything that was in it is now underneath it. See ADR-0029.
+    if (sourceIsDirectory
+        && isInsideOrEqual(
+            m_request.targetDirectory, source, m_request.targetFileSystem->pathCaseSensitivity())) {
+        return VfsError::make(VfsError::NotSupported,
+            QStringLiteral("%1 cannot be put inside itself: the destination is inside it")
+                .arg(source.path()));
+    }
+    return std::nullopt;
+}
+
+bool TransferTask::nothingToRefuse() const
+{
+    for (const VfsUri& source : m_request.sources) {
+        // The uri predicate first, because it is free and almost always false --
+        // it is what decides whether a stat is worth a round trip at all. Without
+        // this the fast path would pay a stat per source to answer a question
+        // about paths.
+        if (isInsideOrEqual(
+                m_request.targetDirectory, source, m_request.targetFileSystem->pathCaseSensitivity())) {
+            const Result<FileEntry> stat = m_request.sourceFileSystem->stat(source);
+            if (!stat.ok() || refusalFor(source, stat.value().isDir).has_value())
+                return false;
+        }
+
+        // And the name the destination would have to accept, which the shortcut
+        // never asked about either. See MOLE-243.
+        const QString arrivalName = (m_request.sources.size() == 1 && !m_request.targetName.isEmpty())
+            ? m_request.targetName
+            : source.fileName();
+        if (checkName(arrivalName, m_request.targetFileSystem->nameRules()).isRejected())
+            return false;
+    }
+    return true;
+}
+
 bool TransferTask::planJobs(QList<Job>& jobsOut)
 {
     int sourceIndex = -1;
@@ -89,17 +130,8 @@ bool TransferTask::planJobs(QList<Job>& jobsOut)
 
         const VfsUri target = m_request.targetDirectory.child(arrivalName);
 
-        // A directory cannot be put inside itself. The copy is finite -- the
-        // plan is built before a byte moves, so the walk never meets what the
-        // copy is writing -- but a *move* then deletes the source, and the only
-        // copy of everything that was in it is now underneath it. See ADR-0029.
-        if (stat.value().isDir
-            && isInsideOrEqual(
-                m_request.targetDirectory, source, m_request.targetFileSystem->pathCaseSensitivity())) {
-            recordFailure(source,
-                VfsError::make(VfsError::NotSupported,
-                    QStringLiteral("%1 cannot be put inside itself: the destination is inside it")
-                        .arg(source.path())));
+        if (const std::optional<VfsError> refusal = refusalFor(source, stat.value().isDir)) {
+            recordFailure(source, *refusal);
             continue;
         }
 
@@ -393,8 +425,15 @@ void TransferTask::run()
 
     // Moving inside one backend is a rename, which is instant and atomic --
     // never stream bytes when the filesystem can just relabel them.
+    //
+    // Only when there is nothing to refuse, though: this path does not build a
+    // plan and the plan is where a transfer is refused, so a directory being put
+    // inside itself used to be renamed underneath itself, reported as one item
+    // moved with no failures. Local disk was saved only by the kernel, which
+    // answers EINVAL; MemoryFileSystem, which is a scratch drive somebody can
+    // mount, relabelled the whole subtree. See MOLE-275 and ADR-0029.
     const bool sameBackend = m_request.sourceFileSystem == m_request.targetFileSystem;
-    if (m_request.mode == Mode::Move && sameBackend) {
+    if (m_request.mode == Mode::Move && sameBackend && nothingToRefuse()) {
         int index = 0;
         for (const VfsUri& source : std::as_const(m_request.sources)) {
             if (isCancelRequested())

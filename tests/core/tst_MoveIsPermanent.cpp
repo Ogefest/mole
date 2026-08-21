@@ -4,6 +4,7 @@
 
 #include "core/tasks/TaskManager.h"
 #include "core/tasks/TransferTask.h"
+#include "core/vfs/NameRules.h"
 #include "core/vfs/backends/LocalFileSystem.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
@@ -23,6 +24,44 @@ QByteArray payloadOf(int size)
         data[i] = static_cast<char>((i * 13 + (i >> 9)) & 0xff);
     return data;
 }
+
+/// A drive whose names are Windows' names. Used as *both* ends of a transfer, so
+/// the same-backend rename shortcut is taken while the arrival name is one the
+/// destination will not accept -- which the shortcut never used to ask about.
+class DriveWithWindowsNames final : public IFileSystem
+{
+public:
+    explicit DriveWithWindowsNames(FileSystemPtr inner)
+        : m_inner(std::move(inner))
+    {
+    }
+
+    QString scheme() const override { return m_inner->scheme(); }
+    VfsCapabilities capabilities() const override { return m_inner->capabilities(); }
+    NameRules nameRules() const override { return NameRules::forPlatform(HostPlatform::Windows); }
+    Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) override
+    {
+        return m_inner->list(dir, cancel);
+    }
+    Result<FileEntry> stat(const VfsUri& target) override { return m_inner->stat(target); }
+    Result<void> makeDirectory(const VfsUri& target) override { return m_inner->makeDirectory(target); }
+    Result<void> remove(const VfsUri& target, bool recursive) override
+    {
+        return m_inner->remove(target, recursive);
+    }
+    Result<void> rename(const VfsUri& from, const VfsUri& to) override { return m_inner->rename(from, to); }
+    Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override
+    {
+        return m_inner->openRead(target, expectedSize);
+    }
+    Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1) override
+    {
+        return m_inner->openWrite(target, expectedSize);
+    }
+
+private:
+    FileSystemPtr m_inner;
+};
 
 /// A drive that cannot rename, which is what a move across two devices looks
 /// like from above: the fast path is refused and the slow one has to take over.
@@ -95,8 +134,11 @@ private slots:
     void aBackendThatCannotRenameFallsBackToCopyingAndDeleting();
 
     void aDirectoryMovedIntoItsOwnSubdirectoryIsRefused();
+    void aDirectoryMovedIntoItsOwnSubdirectoryOnOneDriveIsRefused();
     void aDirectoryCopiedIntoItselfIsRefused();
     void aDirectoryMovedOntoItselfIsRefused();
+    void aDirectoryMovedOntoItselfOnOneDriveIsRefused();
+    void aRenameWithinOneBackendStillAsksWhetherTheNameWillBeAccepted();
     void aDestinationThatDiffersOnlyInCaseIsStillInsideTheSource();
     void onACaseSensitiveVolumeTheSamePairIsTwoPlaces();
 
@@ -379,6 +421,52 @@ void TestMoveIsPermanent::aDirectoryMovedIntoItsOwnSubdirectoryIsRefused()
     QVERIFY(m_memory->stat(VfsUri::fromString(QStringLiteral("mem:///work/inner/deep.txt"))).ok());
 }
 
+void TestMoveIsPermanent::aDirectoryMovedIntoItsOwnSubdirectoryOnOneDriveIsRefused()
+{
+    // The same fault, one backend for both ends -- and that difference is the
+    // whole of it. A move within one backend takes a shortcut in run(): a rename
+    // is instant and atomic, so streaming bytes when the filesystem can relabel
+    // them would be wasteful. The guard above lives in planJobs(), which that
+    // shortcut never reaches.
+    //
+    // The three cases either side of this one all wrap the target in a second
+    // backend, deliberately, because two mounts over one tree is a real
+    // situation. That also made sameBackend false every time, so the shortcut
+    // had never been put in front of the guard.
+    //
+    // Measured against MemoryFileSystem -- which is a scratch drive somebody can
+    // mount, not only a test fake -- it moved /work inside /work/inner and
+    // reported one item moved with no failures. What it left behind was
+    // /work/inner/work/notes.txt and /work/inner/work/inner/deep.txt: the whole
+    // subtree relabelled underneath itself, including the directory it was being
+    // put into. So nothing was at no path, and both original paths were empty --
+    // a silent nonsense move rather than a deletion on this backend, and a
+    // deletion on any backend whose rename copies and removes. Local disk is
+    // saved only by the kernel, which answers EINVAL. See MOLE-275, ADR-0029.
+    m_memory->addFile(QStringLiteral("/work/notes.txt"), QByteArray("keep me"));
+    m_memory->addFile(QStringLiteral("/work/inner/deep.txt"), QByteArray("me too"));
+
+    TransferTask* task = run(moveOf(m_memory, VfsUri::fromString(QStringLiteral("mem:///work")), m_memory,
+        VfsUri::fromString(QStringLiteral("mem:///work/inner"))));
+    QVERIFY(task != nullptr);
+    QCOMPARE(task->failedCount(), 1);
+    QVERIFY2(
+        task->failures().first().contains(QStringLiteral("inside")), qPrintable(task->failures().first()));
+    QVERIFY2(
+        task->copiedCount() == 0, "a refusal that also reports the item as moved is how this went unnoticed");
+
+    // Readable, not merely present: what was lost was the contents of the
+    // subdirectory the source was being put into.
+    const auto readable = [this](const char* path, const QByteArray& expected) {
+        Result<std::unique_ptr<QIODevice>> open
+            = m_memory->openRead(VfsUri::fromString(QString::fromLatin1(path)));
+        return open.ok() && open.value()->readAll() == expected;
+    };
+    QVERIFY2(readable("mem:///work/notes.txt", QByteArray("keep me")), "the source's own file");
+    QVERIFY2(readable("mem:///work/inner/deep.txt", QByteArray("me too")),
+        "the file under the destination, which is the one that disappeared");
+}
+
 void TestMoveIsPermanent::aDestinationThatDiffersOnlyInCaseIsStillInsideTheSource()
 {
     // The same directory-eating move as above, reached by typing the
@@ -457,6 +545,54 @@ void TestMoveIsPermanent::aDirectoryMovedOntoItselfIsRefused()
     QVERIFY(task != nullptr);
     QCOMPARE(task->failedCount(), 1);
     QVERIFY(m_memory->stat(VfsUri::fromString(QStringLiteral("mem:///work/inner/notes.txt"))).ok());
+}
+
+void TestMoveIsPermanent::aDirectoryMovedOntoItselfOnOneDriveIsRefused()
+{
+    // And the same for the degenerate case, which reaches the shortcut the same
+    // way: source and destination equal, one backend, so a rename of a directory
+    // onto its own path is what the guard is there to refuse.
+    m_memory->addFile(QStringLiteral("/work/inner/notes.txt"), QByteArray("keep me"));
+
+    TransferTask* task = run(moveOf(m_memory, VfsUri::fromString(QStringLiteral("mem:///work/inner")),
+        m_memory, VfsUri::fromString(QStringLiteral("mem:///work/inner"))));
+    QVERIFY(task != nullptr);
+    QCOMPARE(task->failedCount(), 1);
+    QCOMPARE(task->copiedCount(), 0);
+    Result<std::unique_ptr<QIODevice>> open
+        = m_memory->openRead(VfsUri::fromString(QStringLiteral("mem:///work/inner/notes.txt")));
+    QVERIFY(open.ok());
+    QCOMPARE(open.value()->readAll(), QByteArray("keep me"));
+}
+
+void TestMoveIsPermanent::aRenameWithinOneBackendStillAsksWhetherTheNameWillBeAccepted()
+{
+    // The other thing the shortcut skipped, and the reason the guard now sits in
+    // front of it rather than inside one of the two paths: the plan asks whether
+    // the destination will accept the arrival name (MOLE-243) and the shortcut
+    // renamed without asking. A trailing dot is the cheapest example -- Windows
+    // strips it silently, so a file written as "report." arrives as "report" and
+    // the next read misses it.
+    m_memory->addFile(QStringLiteral("/work/report"), QByteArray("keep me"));
+
+    // One object for both ends, so the shortcut is what would run.
+    auto strict = std::make_shared<DriveWithWindowsNames>(m_memory);
+    TransferTask::Request request = moveOf(strict, VfsUri::fromString(QStringLiteral("mem:///work/report")),
+        strict, VfsUri::fromString(QStringLiteral("mem:///elsewhere")));
+    request.targetName = QStringLiteral("report.");
+
+    TransferTask* task = run(request);
+    QVERIFY(task != nullptr);
+    QCOMPARE(task->failedCount(), 1);
+    QVERIFY2(task->copiedCount() == 0, "nothing moved under a name the destination would have changed");
+    QVERIFY2(
+        task->failures().first().contains(QStringLiteral("report")), qPrintable(task->failures().first()));
+
+    // And it is still where it was, under the name it had.
+    Result<std::unique_ptr<QIODevice>> open
+        = m_memory->openRead(VfsUri::fromString(QStringLiteral("mem:///work/report")));
+    QVERIFY(open.ok());
+    QCOMPARE(open.value()->readAll(), QByteArray("keep me"));
 }
 
 void TestMoveIsPermanent::movingASymlinkDoesNotFollowIt()

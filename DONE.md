@@ -9,6 +9,63 @@ wrong.
 
 ---
 
+## A directory moved into itself on one drive went round the guard
+
+**Asked for:** MOLE-275 — moving a directory into its own subdirectory, when the source
+and the target are the same backend object, goes past the guard that refuses it.
+
+**The diagnosis in the ticket was exactly right.** `TransferTask::run()` takes a shortcut
+when the mode is Move and the two backends are the same object — a rename is instant and
+atomic, so streaming bytes when the filesystem can relabel them would be wasteful — and
+the guard against putting a directory inside itself lived in `planJobs()`, which that path
+never reaches. The three existing self-move cases in `tst_MoveIsPermanent` all wrap the
+target in a second backend, deliberately, because two mounts over one tree is a real
+situation; that also made `sameBackend` false every time, so the shortcut had never been
+put in front of the guard.
+
+**One thing in the ticket is not right, and it is the severity.** The brief says
+`deep.txt` "is at no path afterwards … it is gone". Measured against
+`MemoryFileSystem` before fixing anything:
+
+```
+moved=1 failed=0
+  mem:///work/notes.txt                      GONE
+  mem:///work/inner/deep.txt                 GONE
+  mem:///work/inner/work/notes.txt           present
+  mem:///work/inner/work/inner/deep.txt      present
+```
+
+The whole subtree was relabelled underneath itself, including the directory it was being
+put into, so both original paths were empty and both files were reachable at a nested
+one. The ticket's own listing checked three paths and not the fourth, which is how the
+last line was missed. So on this backend it is a silent nonsense move rather than a
+deletion — and a deletion on any backend whose rename copies and removes, which is why it
+still deserved `data-integrity`. The run reporting **one item moved and no failures** is
+unchanged and is the part that made it invisible.
+
+**The fix is where the decision is, not in one of the paths after it.** `refusalFor()`
+holds the refusal once, and the shortcut is taken only when `nothingToRefuse()` — so
+anything the plan would refuse falls to the ordinary path, which reports it. One copy of
+each refusal instead of two that can drift, which is how this happened.
+
+That also closes the other omission the ticket flagged: the shortcut built an arrival name
+without asking whether the destination would accept it, which `planJobs()` has done since
+MOLE-243. `nothingToRefuse()` asks both questions, and `aRenameWithinOneBackendStillAsks…`
+covers it with one backend declaring Windows' name rules at both ends and a trailing dot
+as the arrival name.
+
+**Cost kept off the fast path.** The self-containment question needs to know whether the
+source is a directory, which needs a stat. The uri predicate is checked first, because it
+is free and almost always false — so an ordinary move of many files pays no stats at all,
+and only a move whose destination really is inside its source pays one.
+
+**Three cases added, each proved to bite** by reverting the guard: a directory into its own
+subdirectory and a directory onto itself, both with one backend at both ends, and the name
+one. The existing three keep their second backend, since two mounts over one tree is the
+case they are for.
+
+---
+
 ## The secrets file was protected by a call that does nothing on Windows
 
 **Asked for:** MOLE-251 — `SecretStore` sets `0600` on the credential file, and on
