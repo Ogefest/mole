@@ -2,6 +2,7 @@
 #include "support/TestSupport.h"
 
 #include "core/rename/RenamePlan.h"
+#include "core/vfs/backends/MemoryFileSystem.h"
 
 using namespace mole;
 using namespace mole::test;
@@ -67,6 +68,8 @@ private slots:
     void refusesAnEmptyName();
     void refusesAPathSeparator();
     void anUnchangedRowIsNotABlockedRow();
+    void aCaseOnlyRenameIsNotACollision();
+    void thePreviewAgreesWithTheBackendAboutCollisions();
 };
 
 // ------------------------------------------------------------------ rules
@@ -353,6 +356,85 @@ void TestRenamePlan::anUnchangedRowIsNotABlockedRow()
     QCOMPARE(plan.blockedCount(), 0);
     // Nothing to do is not the same as ready to go.
     QVERIFY(!plan.canApply());
+}
+
+void TestRenamePlan::aCaseOnlyRenameIsNotACollision()
+{
+    // report.txt -> Report.txt. On a volume that ignores case the file in the
+    // way is the file being renamed, and the preview used to mark the row clean
+    // while the backend refused every one of them -- two layers, two answers,
+    // and the user sees the optimistic one first.
+    QHash<QString, QStringList> existing;
+    existing.insert(QStringLiteral("file:///data"), { QStringLiteral("report.txt") });
+
+    const RenameRule rule = caseRule(RenameRule::CaseStyle::Title);
+    for (Qt::CaseSensitivity sensitivity : { Qt::CaseSensitive, Qt::CaseInsensitive }) {
+        const RenamePlan plan = RenamePlan::build(
+            urisIn(QStringLiteral("file:///data"), { "report.txt" }), { rule }, existing, sensitivity);
+
+        QCOMPARE(plan.entries().first().newName, QStringLiteral("Report.txt"));
+        QVERIFY2(!plan.entries().first().isBlocked(),
+            qPrintable(QStringLiteral("blocked with %1: %2")
+                           .arg(sensitivity == Qt::CaseSensitive ? "sensitive" : "insensitive",
+                               plan.entries().first().problem)));
+    }
+}
+
+void TestRenamePlan::thePreviewAgreesWithTheBackendAboutCollisions()
+{
+    // The claim is not "this rule is right", it is "this layer predicts what the
+    // layer below will do". So both are asked the same question and the answers
+    // are compared, which is a test that goes on meaning something when either
+    // side changes.
+    for (Qt::CaseSensitivity sensitivity : { Qt::CaseSensitive, Qt::CaseInsensitive }) {
+        auto fs = std::make_shared<MemoryFileSystem>();
+        fs->setCaseSensitivity(sensitivity);
+        fs->addFile(QStringLiteral("/data/report.txt"), QByteArray("one"));
+        fs->addFile(QStringLiteral("/data/NOTES.txt"), QByteArray("two"));
+
+        const QHash<QString, QStringList> existing { { QStringLiteral("mem:///data"),
+            { QStringLiteral("report.txt"), QStringLiteral("NOTES.txt") } } };
+
+        struct Case
+        {
+            const char* stem; ///< what "report" becomes; the rules leave the extension alone
+            const char* expected; ///< the whole name that should come out
+        };
+        // A case-only rename of itself; a rename onto another file spelled
+        // differently; and a rename onto a name nothing holds.
+        for (const Case& one : { Case { "Report", "Report.txt" }, Case { "notes", "notes.txt" },
+                 Case { "fresh", "fresh.txt" } }) {
+            RenameRule rule;
+            rule.kind = RenameRule::Kind::Replace;
+            rule.find = QStringLiteral("report");
+            rule.replaceWith = QString::fromLatin1(one.stem);
+
+            const RenamePlan plan = RenamePlan::build(
+                urisIn(QStringLiteral("mem:///data"), { "report.txt" }), { rule }, existing, sensitivity);
+
+            // Asserted, because a rule that quietly stopped changing the name
+            // would make every comparison below trivially true.
+            QCOMPARE(plan.entries().first().newName, QString::fromLatin1(one.expected));
+
+            const VfsUri from = VfsUri::fromString(QStringLiteral("mem:///data/report.txt"));
+            const VfsUri to = VfsUri::fromString(QStringLiteral("mem:///data/%1").arg(one.expected));
+            const Result<void> renamed = fs->rename(from, to);
+
+            QVERIFY2(plan.entries().first().isBlocked() == !renamed.ok(),
+                qPrintable(QStringLiteral("report.txt -> %1 (%2): the preview would %3, the backend %4")
+                               .arg(QString::fromLatin1(one.expected),
+                                   sensitivity == Qt::CaseSensitive ? "sensitive" : "insensitive",
+                                   plan.entries().first().isBlocked()
+                                       ? QStringLiteral("refuse it: ") + plan.entries().first().problem
+                                       : QStringLiteral("do it"),
+                                   renamed.ok() ? QStringLiteral("did it")
+                                                : QStringLiteral("refused it: ") + renamed.error().message)));
+
+            // Put it back, so each case is asked of the same directory.
+            if (renamed.ok())
+                QVERIFY(fs->rename(to, from).ok());
+        }
+    }
 }
 
 MOLE_TEST_MAIN(TestRenamePlan)

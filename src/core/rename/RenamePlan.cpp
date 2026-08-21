@@ -221,8 +221,15 @@ QString RenamePlan::apply(const QString& name, const QList<RenameRule>& rules, i
 }
 
 RenamePlan RenamePlan::build(const QList<VfsUri>& sources, const QList<RenameRule>& rules,
-    const QHash<QString, QStringList>& existingNames)
+    const QHash<QString, QStringList>& existingNames, Qt::CaseSensitivity sensitivity)
 {
+    // One spelling per name, so this layer calls a collision exactly what the
+    // backend underneath will call one. On a volume that ignores case, "a.txt"
+    // and "A.txt" are one name here as well as there.
+    const auto key = [sensitivity](const QString& name) {
+        return sensitivity == Qt::CaseSensitive ? name : name.toCaseFolded();
+    };
+
     RenamePlan plan;
 
     // Names claimed so far, per directory. Two files renamed to the same thing
@@ -252,22 +259,27 @@ RenamePlan RenamePlan::build(const QList<VfsUri>& sources, const QList<RenameRul
             // A separator would move the file rather than rename it, which is
             // not what anybody asked a rename tool to do.
             entry.problem = QStringLiteral("a name cannot contain a path separator");
-        } else if (entry.changed() && claimed.value(directory).contains(entry.newName)) {
+        } else if (entry.changed() && claimed.value(directory).contains(key(entry.newName))) {
             entry.problem = QStringLiteral("two files would get this name");
         } else if (entry.changed()) {
             const QStringList here = existingNames.value(directory);
             // A file renamed out of the way frees its own name, so only names
-            // that nothing in this batch is vacating count as taken.
-            const bool takenByOutsider = here.contains(entry.newName)
-                && !std::any_of(sources.begin(), sources.end(), [&](const VfsUri& other) {
-                       return other.parent().toString() == directory && other.fileName() == entry.newName;
-                   });
+            // that nothing in this batch is vacating count as taken. A rename
+            // that only changes case is the smallest case of that: the file in
+            // the way is the file being renamed.
+            const bool present = std::any_of(here.begin(), here.end(),
+                [&](const QString& name) { return key(name) == key(entry.newName); });
+            const bool takenByOutsider
+                = present && !std::any_of(sources.begin(), sources.end(), [&](const VfsUri& other) {
+                      return other.parent().toString() == directory
+                          && key(other.fileName()) == key(entry.newName);
+                  });
             if (takenByOutsider)
                 entry.problem = QStringLiteral("something with this name is already there");
         }
 
         if (!entry.isBlocked() && entry.changed())
-            claimed[directory].insert(entry.newName);
+            claimed[directory].insert(key(entry.newName));
 
         plan.m_entries.append(entry);
     }

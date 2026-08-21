@@ -18,6 +18,7 @@ private slots:
 
     void injectedFaultsSurface();
     void clearingFaultsRestoresAccess();
+    void conformanceOnACaseInsensitiveVolume();
     void renameMovesWholeSubtree();
     void listDelayIsInterruptibleByCancel();
 };
@@ -65,6 +66,30 @@ void TestMemoryFileSystem::clearingFaultsRestoresAccess()
 
     fs->clearFaults();
     QVERIFY(fs->list(VfsUri::fromString(QStringLiteral("mem:///a")), CancelToken()).ok());
+}
+
+void TestMemoryFileSystem::conformanceOnACaseInsensitiveVolume()
+{
+    // The same contract, held against a volume that does not distinguish case --
+    // an NTFS one, or an APFS one with the default settings. Nobody here has one,
+    // and every rule that only bites on such a volume would otherwise be checked
+    // on the days somebody does.
+    auto fs = std::make_shared<MemoryFileSystem>();
+    fs->setCaseSensitivity(Qt::CaseInsensitive);
+
+    ConformanceContext context;
+    context.fileSystem = fs;
+    context.root = VfsUri::fromString(QStringLiteral("mem:///"));
+    context.seedFile = [fs](const QString& path, const QByteArray& data) {
+        fs->addFile(QLatin1Char('/') + path, data);
+        return true;
+    };
+    context.seedDir = [fs](const QString& path) {
+        fs->addDirectory(QLatin1Char('/') + path);
+        return true;
+    };
+
+    runFileSystemConformance(context);
 }
 
 void TestMemoryFileSystem::renameMovesWholeSubtree()

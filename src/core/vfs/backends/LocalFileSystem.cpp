@@ -125,6 +125,30 @@ namespace {
         return e;
     }
 
+    /// Whether two names, both of which exist, are names of the same node.
+    ///
+    /// This is the question a rename guard actually wants. Asking whether the
+    /// destination name is taken gets "yes" for a rename of report.txt to
+    /// Report.txt on any volume that does not distinguish case -- the file in
+    /// the way is the file being renamed.
+    ///
+    /// A link is excluded rather than resolved, and that is the whole reason
+    /// this is not one call to canonicalFilePath(). A symbolic link and its
+    /// target share a canonical path, so renaming a link onto what it points at
+    /// would look like the same node and would replace the target with the link,
+    /// destroying the only copy of its contents.
+    bool namesTheSameNode(const QString& first, const QString& second)
+    {
+        const QFileInfo a(first);
+        const QFileInfo b(second);
+        if (a.isSymLink() || b.isSymLink())
+            return false;
+
+        const QString canonicalA = a.canonicalFilePath();
+        const QString canonicalB = b.canonicalFilePath();
+        return !canonicalA.isEmpty() && canonicalA == canonicalB;
+    }
+
     VfsError errorForPath(const QString& path)
     {
         const QFileInfo info(path);
@@ -306,7 +330,15 @@ Result<void> LocalFileSystem::rename(const VfsUri& from, const VfsUri& to)
     const QString dst = to.toLocalPath();
     if (src.isEmpty() || dst.isEmpty())
         return Result<void>::failure(VfsError::NotSupported, QStringLiteral("Not a local uri"));
-    if (QFileInfo::exists(dst))
+    // Something being there is only a collision when it is something else. On a
+    // case-insensitive volume -- every NTFS one, and an APFS one by default --
+    // renaming report.txt to Report.txt finds the file being renamed sitting in
+    // its own way, and there was no way to make it happen at all.
+    //
+    // The check itself cannot simply go: POSIX rename() overwrites the
+    // destination silently, and this is what stops a rename destroying a file
+    // nobody mentioned.
+    if (QFileInfo::exists(dst) && !namesTheSameNode(src, dst))
         return Result<void>::failure(VfsError::AlreadyExists, QStringLiteral("Already exists: %1").arg(dst));
     if (!QFile::rename(src, dst))
         return Result<void>::failure(

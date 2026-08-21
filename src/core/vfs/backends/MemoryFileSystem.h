@@ -41,9 +41,14 @@ public:
     /// scan is entirely about that difference.
     void setModified(const QString& path, const QDateTime& when);
 
-    /// Answers like a volume that does not distinguish case -- NTFS, or a
+    /// Behaves like a volume that does not distinguish case -- NTFS, or a
     /// default APFS one. This is how a rule that only bites on such a volume is
     /// held on any machine, without needing one.
+    ///
+    /// Case-preserving as well as case-insensitive, because that is what those
+    /// volumes are: a name is stored as it was written and found however it is
+    /// spelled. A fixture that folded names on the way in would pass a rename
+    /// this whole exercise is about and report the wrong name afterwards.
     void setCaseSensitivity(Qt::CaseSensitivity sensitivity) { m_caseSensitivity = sensitivity; }
 
     /// Makes every operation touching `path` fail with `error`. Pass
@@ -83,6 +88,10 @@ private:
     };
 
     static QString normalise(const QString& path);
+    /// The stored spelling of whatever is at `path`, or `path` when nothing is.
+    /// A no-op on a case-sensitive volume, which is the default. Callers must
+    /// hold m_mutex.
+    QString resolve(const QString& path) const;
     /// Moves a directory's own modification time, the way adding to or removing
     /// from a real one does. Callers must hold m_mutex.
     void touchParent(const QString& path);

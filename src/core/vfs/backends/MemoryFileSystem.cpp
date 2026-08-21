@@ -26,6 +26,19 @@ QString MemoryFileSystem::normalise(const QString& path)
     return VfsUri(QStringLiteral("mem"), QString(), path).path();
 }
 
+QString MemoryFileSystem::resolve(const QString& path) const
+{
+    if (m_caseSensitivity == Qt::CaseSensitive || m_nodes.contains(path))
+        return path;
+
+    const QString folded = path.toCaseFolded();
+    for (auto it = m_nodes.constBegin(); it != m_nodes.constEnd(); ++it) {
+        if (it.key().toCaseFolded() == folded)
+            return it.key();
+    }
+    return path;
+}
+
 VfsUri MemoryFileSystem::uriFor(const QString& path) const
 {
     return VfsUri(QStringLiteral("mem"), QString(), path);
@@ -123,7 +136,7 @@ Result<FileEntryList> MemoryFileSystem::list(const VfsUri& dir, const CancelToke
     QMutexLocker lock(&m_mutex);
     ++m_listCalls;
 
-    const QString path = dir.path();
+    const QString path = resolve(dir.path());
     if (Result<void> fault = faultFor(path); !fault.ok())
         return fault.error();
 
@@ -146,7 +159,7 @@ Result<FileEntryList> MemoryFileSystem::list(const VfsUri& dir, const CancelToke
 
         FileEntry entry;
         entry.name = candidate.mid(prefix.size());
-        entry.uri = uriFor(candidate);
+        entry.uri = VfsUri(dir.scheme(), dir.authority(), candidate);
         entry.isDir = it->isDir;
         entry.isHidden = entry.name.startsWith(QLatin1Char('.'));
         entry.isWritable = true;
@@ -162,7 +175,9 @@ Result<FileEntryList> MemoryFileSystem::list(const VfsUri& dir, const CancelToke
 Result<FileEntry> MemoryFileSystem::stat(const VfsUri& target)
 {
     QMutexLocker lock(&m_mutex);
-    const QString path = target.path();
+    // The stored spelling, not the one asked for: a case-insensitive volume
+    // finds the file however it is typed and then reports the name it holds.
+    const QString path = resolve(target.path());
     if (Result<void> fault = faultFor(path); !fault.ok())
         return fault.error();
 
@@ -170,9 +185,14 @@ Result<FileEntry> MemoryFileSystem::stat(const VfsUri& target)
     if (node == m_nodes.constEnd())
         return VfsError::make(VfsError::NotFound, QStringLiteral("No such file: %1").arg(path));
 
+    // Answered in the address space it was asked in. A drive mounted at
+    // mem://counted/ has to get mem://counted/... back, or nothing above can
+    // resolve what it is handed. Only the *spelling* of the path comes from the
+    // store, which is what a case-insensitive volume does.
+    const VfsUri stored(target.scheme(), target.authority(), path);
     FileEntry entry;
-    entry.name = target.fileName();
-    entry.uri = target;
+    entry.name = stored.fileName();
+    entry.uri = stored;
     entry.isDir = node->isDir;
     entry.isWritable = true;
     entry.size = node->isDir ? 0 : node->contents.size();
@@ -186,7 +206,7 @@ Result<void> MemoryFileSystem::makeDirectory(const VfsUri& target)
         QMutexLocker lock(&m_mutex);
         if (Result<void> fault = faultFor(target.path()); !fault.ok())
             return fault;
-        if (m_nodes.contains(target.path()))
+        if (m_nodes.contains(resolve(target.path())))
             return Result<void>::failure(
                 VfsError::AlreadyExists, QStringLiteral("Already exists: %1").arg(target.path()));
     }
@@ -197,7 +217,7 @@ Result<void> MemoryFileSystem::makeDirectory(const VfsUri& target)
 Result<void> MemoryFileSystem::remove(const VfsUri& target, bool recursive)
 {
     QMutexLocker lock(&m_mutex);
-    const QString path = target.path();
+    const QString path = resolve(target.path());
     if (Result<void> fault = faultFor(path); !fault.ok())
         return fault;
 
@@ -231,14 +251,19 @@ Result<void> MemoryFileSystem::remove(const VfsUri& target, bool recursive)
 Result<void> MemoryFileSystem::rename(const VfsUri& from, const VfsUri& to)
 {
     QMutexLocker lock(&m_mutex);
-    const QString src = from.path();
+    const QString src = resolve(from.path());
     const QString dst = to.path();
 
     if (Result<void> fault = faultFor(src); !fault.ok())
         return fault;
     if (!m_nodes.contains(src))
         return Result<void>::failure(VfsError::NotFound, QStringLiteral("No such file: %1").arg(src));
-    if (m_nodes.contains(dst))
+
+    // What is in the way, in the spelling it is stored under. It is only a
+    // collision when it is a different node: on a case-insensitive volume the
+    // file being renamed is the file the guard finds sitting in its own way.
+    const QString occupant = resolve(dst);
+    if (occupant != src && m_nodes.contains(occupant))
         return Result<void>::failure(VfsError::AlreadyExists, QStringLiteral("Already exists: %1").arg(dst));
 
     const QString prefix = src + QLatin1Char('/');

@@ -33,8 +33,15 @@ public:
     /// Applies `rules` to `sources` in order. `existingNames` is what is already
     /// in each directory, so a rename onto something that is there is caught
     /// here rather than by the filesystem halfway through.
+    /// `sensitivity` is what the destination volume does about case, and it has
+    /// to be the backend's answer rather than a guess: whatever the backend
+    /// decides is a collision is what this has to predict, or the preview says a
+    /// plan is fine that the filesystem will refuse -- and the whole point of the
+    /// bulk rename tool is that somebody can trust the preview before touching a
+    /// hundred files.
     static RenamePlan build(const QList<VfsUri>& sources, const QList<RenameRule>& rules,
-        const QHash<QString, QStringList>& existingNames = {});
+        const QHash<QString, QStringList>& existingNames = {},
+        Qt::CaseSensitivity sensitivity = Qt::CaseSensitive);
 
     const QList<Entry>& entries() const { return m_entries; }
     int changedCount() const;

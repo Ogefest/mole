@@ -323,6 +323,44 @@ void runFileSystemConformance(const ConformanceContext& context)
         QCOMPARE(clash.error().code, VfsError::AlreadyExists);
     }
 
+    // --- rename that only changes case -------------------------------------
+    //
+    // Every backend has to allow this, and the ones it is hard for are the
+    // volumes that do not distinguish case: there the file being renamed is the
+    // file the guard finds in the way, so "already exists" refused it and there
+    // was no way to make it happen at all.
+    //
+    // The assertion is the same on both kinds of volume, which is the point of
+    // it being here: one entry afterwards, under the new spelling.
+    {
+        const VfsUri from = context.root.child(QStringLiteral("beta-renamed.log"));
+        const VfsUri to = context.root.child(QStringLiteral("Beta-Renamed.log"));
+
+        Result<void> renamed = fs.rename(from, to);
+        QVERIFY2(renamed.ok(),
+            qPrintable(QStringLiteral("a rename that only changes case must succeed: %1")
+                           .arg(renamed.error().message)));
+
+        Result<FileEntryList> listing = fs.list(context.root, CancelToken());
+        QVERIFY2(listing.ok(), "listing after a case-only rename must succeed");
+
+        int matching = 0;
+        QStringList spellings;
+        for (const FileEntry& entry : listing.value()) {
+            if (entry.name.compare(QStringLiteral("beta-renamed.log"), Qt::CaseInsensitive) == 0) {
+                ++matching;
+                spellings.append(entry.name);
+            }
+        }
+        QVERIFY2(matching == 1,
+            qPrintable(QStringLiteral("one entry expected after a case-only rename, found: %1")
+                           .arg(spellings.join(QStringLiteral(", ")))));
+        QCOMPARE(spellings.first(), QStringLiteral("Beta-Renamed.log"));
+
+        // Back to the name the rest of the suite goes on using.
+        QVERIFY2(fs.rename(to, from).ok(), "renaming the case back must succeed too");
+    }
+
     // --- remove -----------------------------------------------------------
     {
         const VfsUri file = context.root.child(QStringLiteral("beta-renamed.log"));
