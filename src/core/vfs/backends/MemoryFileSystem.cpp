@@ -102,6 +102,22 @@ void MemoryFileSystem::setModified(const QString& path, const QDateTime& when)
         node->modified = when;
 }
 
+void MemoryFileSystem::markAsSymlink(const QString& path)
+{
+    QMutexLocker lock(&m_mutex);
+    const auto node = m_nodes.find(resolve(normalise(path)));
+    if (node != m_nodes.end())
+        node->isSymlink = true;
+}
+
+void MemoryFileSystem::markAsShortcut(const QString& path)
+{
+    QMutexLocker lock(&m_mutex);
+    const auto node = m_nodes.find(resolve(normalise(path)));
+    if (node != m_nodes.end())
+        node->isShortcut = true;
+}
+
 void MemoryFileSystem::setFault(const QString& path, VfsError::Code error)
 {
     QMutexLocker lock(&m_mutex);
@@ -161,6 +177,8 @@ Result<FileEntryList> MemoryFileSystem::list(const VfsUri& dir, const CancelToke
         entry.name = candidate.mid(prefix.size());
         entry.uri = VfsUri(dir.scheme(), dir.authority(), candidate);
         entry.isDir = it->isDir;
+        entry.isSymlink = it->isSymlink;
+        entry.isShortcut = it->isShortcut;
         entry.isHidden = entry.name.startsWith(QLatin1Char('.'));
         entry.isWritable = true;
         entry.size = it->isDir ? 0 : it->contents.size();
@@ -194,6 +212,8 @@ Result<FileEntry> MemoryFileSystem::stat(const VfsUri& target)
     entry.name = stored.fileName();
     entry.uri = stored;
     entry.isDir = node->isDir;
+    entry.isSymlink = node->isSymlink;
+    entry.isShortcut = node->isShortcut;
     entry.isWritable = true;
     entry.size = node->isDir ? 0 : node->contents.size();
     entry.modified = node->modified;

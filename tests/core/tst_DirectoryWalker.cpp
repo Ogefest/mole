@@ -80,6 +80,7 @@ private slots:
     void cancellationStopsTheWalk();
     void skipsHiddenWhenAsked();
     void emptyRootYieldsNothing();
+    void aShortcutIsWalkedAndASymbolicLinkIsNot();
     void aTreeThatChangesUnderTheWalkIsReportedAndTheWalkFinishes();
 
 private:
@@ -290,6 +291,62 @@ void TestDirectoryWalker::skipsHiddenWhenAsked()
                 .ok());
 
     QCOMPARE(seen, QStringList({ QStringLiteral("visible") }));
+}
+
+void TestDirectoryWalker::aShortcutIsWalkedAndASymbolicLinkIsNot()
+{
+    // On Windows QFileInfo::isSymLink() is true for an NTFS symbolic link, a
+    // junction, and a .lnk shortcut -- which is not a link at all but an
+    // ordinary file that happens to contain a target. So a folder of shortcuts
+    // was silently walked past by every sync plan and duplicate scan, which is
+    // what this walker's default does with a link it was not asked to follow.
+    //
+    // The fault is Windows-only and the rule is not, so it is held against a
+    // MemoryFileSystem carrying one of each and runs on any machine.
+    m_fs->addFile(QStringLiteral("/plain/here.txt"));
+    m_fs->addFile(QStringLiteral("/linked/there.txt"));
+    m_fs->addFile(QStringLiteral("/shortcut/also.txt"));
+    m_fs->markAsSymlink(QStringLiteral("/linked"));
+    m_fs->markAsShortcut(QStringLiteral("/shortcut"));
+
+    QStringList seen;
+    DirectoryWalker walker(m_fs); // followSymlinks off, as a sync plan and a duplicate scan have it
+    Result<void> result = walker.walk(m_root, CancelToken(), [&](const FileEntry& entry, int) {
+        seen.append(entry.uri.path());
+        return DirectoryWalker::Action::Continue;
+    });
+    QVERIFY2(result.ok(), qPrintable(result.error().message));
+    seen.sort();
+
+    // The link itself is reported and not descended into.
+    QVERIFY(seen.contains(QStringLiteral("/linked")));
+    QVERIFY2(!seen.contains(QStringLiteral("/linked/there.txt")), qPrintable(seen.join(u',')));
+
+    // The shortcut is not a link, so what is under it is walked like anything
+    // else. This is the assertion that fails today on the machine that has
+    // shortcuts.
+    QVERIFY(seen.contains(QStringLiteral("/shortcut")));
+    QVERIFY2(seen.contains(QStringLiteral("/shortcut/also.txt")), qPrintable(seen.join(u',')));
+
+    QVERIFY(seen.contains(QStringLiteral("/plain/here.txt")));
+
+    // And the two are told apart in the listing as well as by the walk, because
+    // marking a shortcut as a link in the interface is saying something untrue
+    // about it.
+    Result<FileEntryList> listed = m_fs->list(m_root, CancelToken());
+    QVERIFY(listed.ok());
+    for (const FileEntry& entry : listed.value()) {
+        if (entry.name == QLatin1String("linked")) {
+            QVERIFY(entry.isSymlink);
+            QVERIFY(!entry.isShortcut);
+        } else if (entry.name == QLatin1String("shortcut")) {
+            QVERIFY(!entry.isSymlink);
+            QVERIFY(entry.isShortcut);
+        } else {
+            QVERIFY(!entry.isSymlink);
+            QVERIFY(!entry.isShortcut);
+        }
+    }
 }
 
 void TestDirectoryWalker::emptyRootYieldsNothing()

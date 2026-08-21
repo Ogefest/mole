@@ -52,6 +52,15 @@ public:
     /// this whole exercise is about and report the wrong name afterwards.
     void setCaseSensitivity(Qt::CaseSensitivity sensitivity) { m_caseSensitivity = sensitivity; }
 
+    /// Marks an existing entry as a link, or as a Windows shortcut.
+    ///
+    /// The two are one thing to QFileInfo and must not be one thing here, or the
+    /// rule that tells them apart is only checkable on a machine that has .lnk
+    /// files. Neither changes what the entry contains: a shortcut really is an
+    /// ordinary file, and what a link points at is a question nothing asks yet.
+    void markAsSymlink(const QString& path);
+    void markAsShortcut(const QString& path);
+
     /// Refuses the names a real volume of that kind would refuse, so what a
     /// transfer and a rename preview do about one is held on any machine.
     void setNameRules(const NameRules& rules) { m_nameRules = rules; }
@@ -90,6 +99,10 @@ private:
         bool isDir = false;
         QByteArray contents;
         QDateTime modified;
+        // After the three above, because the fixture helpers build a Node with
+        // a braced list and these are set afterwards rather than at creation.
+        bool isSymlink = false;
+        bool isShortcut = false;
     };
 
     static QString normalise(const QString& path);

@@ -22,7 +22,18 @@ public:
     QString name;
     VfsUri uri;
     bool isDir = false;
+    /// A name that points at another node: a POSIX symbolic link, an NTFS
+    /// symbolic link, or a junction. A walker that was not asked to follow
+    /// links declines to descend into one.
     bool isSymlink = false;
+    /// A Windows .lnk, which is not a link at all but an ordinary file that
+    /// happens to contain a target.
+    ///
+    /// Separate from isSymlink because QFileInfo::isSymLink() answers true for
+    /// both, so a folder of shortcuts was silently skipped by every sync plan
+    /// and duplicate scan on the machine that has them. A shortcut is a file and
+    /// gets treated as one; what it points at is a question nothing asks yet.
+    bool isShortcut = false;
     bool isHidden = false;
     bool isReadable = true;
     bool isWritable = false;

@@ -92,7 +92,13 @@ namespace {
         e.name = info.fileName();
         e.uri = uri;
         e.isDir = info.isDir();
-        e.isSymlink = info.isSymLink();
+        // isSymLink() is true for three different things on Windows: an NTFS
+        // symbolic link, a junction, and a .lnk shortcut -- which is not a link
+        // at all. Qt separates the questions and this asks the one it means. A
+        // junction is close enough to a link to follow the same rule; a shortcut
+        // is a file.
+        e.isSymlink = info.isSymbolicLink() || info.isJunction();
+        e.isShortcut = info.isShortcut();
         e.isHidden = info.isHidden();
         e.isReadable = info.isReadable();
         e.isWritable = info.isWritable();
