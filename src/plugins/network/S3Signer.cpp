@@ -98,6 +98,12 @@ namespace {
             return false;
         };
 
+        // A presigned url signs the host and nothing else: the date and the
+        // payload hash travel in the query string instead, and whoever is given
+        // the url sends no headers of ours at all.
+        if (request.presigned)
+            return headers;
+
         if (!alreadyPresent("x-amz-date"))
             headers.append({ QByteArray("x-amz-date"), amzDate(request.timestamp) });
         if (!alreadyPresent("x-amz-content-sha256"))
@@ -248,6 +254,51 @@ QByteArray stringToSignFor(
     out.append('\n');
     out.append(sha256Hex(canonicalRequest));
     return out;
+}
+
+QString presignedUrl(const SignableRequest& request, const SigningIdentity& identity,
+    std::chrono::seconds expiry, bool useHttps)
+{
+    QByteArray host;
+    for (const auto& header : request.headers) {
+        if (header.first.toLower() == "host")
+            host = header.second;
+    }
+
+    SignableRequest signable = request;
+    signable.presigned = true;
+    signable.headers = { { QByteArray("host"), host } };
+    // Not hashed, and it cannot be: there is no body, and the recipient cannot
+    // send the header that would carry a hash of one.
+    signable.payloadSha256 = "UNSIGNED-PAYLOAD";
+
+    const QByteArray scope = dateStamp(signable.timestamp) + '/' + identity.region.toUtf8() + '/'
+        + identity.service.toUtf8() + "/aws4_request";
+
+    signable.queryParameters.append(
+        { QStringLiteral("X-Amz-Algorithm"), QStringLiteral("AWS4-HMAC-SHA256") });
+    signable.queryParameters.append({ QStringLiteral("X-Amz-Credential"),
+        identity.accessKeyId + QLatin1Char('/') + QString::fromUtf8(scope) });
+    signable.queryParameters.append(
+        { QStringLiteral("X-Amz-Date"), QString::fromUtf8(amzDate(signable.timestamp)) });
+    signable.queryParameters.append({ QStringLiteral("X-Amz-Expires"), QString::number(expiry.count()) });
+    signable.queryParameters.append({ QStringLiteral("X-Amz-SignedHeaders"), QStringLiteral("host") });
+
+    const QByteArray canonicalRequest = canonicalRequestFor(signable);
+    const QByteArray stringToSign = stringToSignFor(signable, identity, canonicalRequest);
+    const QByteArray signingKey = derivedSigningKey(identity, dateStamp(signable.timestamp));
+    const QByteArray signature = hmacSha256(signingKey, stringToSign).toHex();
+
+    // Built from the same canonical encoder that produced the signature, for the
+    // reason the request path already gives: any other encoder is how a url comes
+    // to be signed for one spelling and fetched under another.
+    QByteArray url = (useHttps ? "https://" : "http://") + host;
+    url += canonicalPathFor(signable);
+    url += '?' + canonicalQueryFor(signable);
+    // Last, and outside the canonical query, because it is a signature *of* that
+    // query and cannot be part of what it signs.
+    url += "&X-Amz-Signature=" + signature;
+    return QString::fromUtf8(url);
 }
 
 HeaderList signWithSigV4(const SignableRequest& request, const SigningIdentity& identity)

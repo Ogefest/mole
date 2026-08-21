@@ -7,6 +7,8 @@
 #include <QPair>
 #include <QString>
 
+#include <chrono>
+
 namespace mole::net {
 
 /// Also declared in CurlTransport.h. Repeating the alias is legal and keeps this
@@ -45,6 +47,14 @@ struct SignableRequest
     /// The instant the request is signed. Passed in rather than read from the
     /// clock so a signature is reproducible and therefore testable.
     QDateTime timestamp;
+    /// Whether the signature travels in the query string rather than in a header.
+    ///
+    /// It changes what is signed, which is why it is here rather than being a
+    /// second signer: whoever is handed a presigned url sends none of our
+    /// headers, so `x-amz-date` and `x-amz-content-sha256` must not be added to
+    /// the signed set -- a signature over a header the recipient will not send
+    /// is a signature that cannot be checked.
+    bool presigned = false;
 };
 
 /// Lowercase hex SHA-256 of `data`.
@@ -92,5 +102,18 @@ QByteArray canonicalPathFor(const SignableRequest& request);
 /// The query as it appears in the signature, and as it must appear in the url.
 /// Empty when there is no query.
 QByteArray canonicalQueryFor(const SignableRequest& request);
+
+/// A url that carries its own signature, good for `expiry` from the request's
+/// timestamp.
+///
+/// What it is for: handing one object to somebody who has no account, for a
+/// while. Anything that can fetch a url can use it, which is the whole point and
+/// also the whole risk -- it is a credential for that object until it expires,
+/// so it is shown to the person who asked for it and written down nowhere.
+///
+/// `request` supplies the method, the path, the host header and the timestamp.
+/// Everything else the signature needs is added here.
+QString presignedUrl(const SignableRequest& request, const SigningIdentity& identity,
+    std::chrono::seconds expiry, bool useHttps);
 
 } // namespace mole::net

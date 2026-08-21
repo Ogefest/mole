@@ -1,3 +1,4 @@
+#include "plugins/network/S3FileSystem.h"
 #include "plugins/network/S3Listing.h"
 #include "plugins/network/S3Signer.h"
 #include "support/MoleTestMain.h"
@@ -62,6 +63,9 @@ private slots:
     void anEncodedPathMatchesCurl();
     void theCanonicalRequestHasTheSpecifiedShape();
     void theAmzHeadersAreSignedEvenWhenTheCallerDidNotAddThem();
+    void aPresignedUrlMatchesTheDocumentedExample();
+    void aPresignedUrlSignsNothingTheRecipientCannotSend();
+    void aPresignedUrlIsSpecificToItsObjectItsLifetimeAndItsKey();
     void queryParametersAreSortedRegardlessOfOrder();
     void reservedCharactersAreEncodedAwsStyle();
     void slashesSurviveInAPathButNotInAQuery();
@@ -70,6 +74,10 @@ private slots:
     void anErrorDocumentIsNotMistakenForAListing();
     void anErrorMessageIsPulledOut();
     void bucketNamesAreRead();
+
+    void theLinkIsOfferedOnAnObjectAndNotOnAPrefix();
+    void aDriveWithNothingToSignWithOffersNoLink();
+    void theLinkIsForThatObjectAndSaysWhenItStopsWorking();
 };
 
 void TestS3Signer::theEmptyPayloadHashIsTheKnownConstant()
@@ -172,6 +180,79 @@ void TestS3Signer::theAmzHeadersAreSignedEvenWhenTheCallerDidNotAddThem()
     explicitly.headers.append(qMakePair(QByteArray("x-amz-date"), QByteArray("20260809T090117Z")));
     explicitly.headers.append(qMakePair(QByteArray("x-amz-content-sha256"), request.payloadSha256));
     QCOMPARE(canonicalRequestFor(explicitly), canonical);
+}
+
+/// AWS publishes this one worked example, credentials and all, and its answer.
+/// An independent check of the whole algorithm: a signature computed here that
+/// matches theirs cannot be self-consistently wrong.
+void TestS3Signer::aPresignedUrlMatchesTheDocumentedExample()
+{
+    SigningIdentity identity;
+    identity.accessKeyId = QStringLiteral("AKIAIOSFODNN7EXAMPLE");
+    identity.secretAccessKey = QStringLiteral("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY");
+    identity.region = QStringLiteral("us-east-1");
+    identity.service = QStringLiteral("s3");
+
+    SignableRequest request;
+    request.method = "GET";
+    request.path = QStringLiteral("/test.txt");
+    request.headers = { { "host", "examplebucket.s3.amazonaws.com" } };
+    request.timestamp = utcStamp(QStringLiteral("20130524T000000Z"));
+
+    const QString url = presignedUrl(request, identity, std::chrono::seconds(86400), true);
+
+    QCOMPARE(url,
+        QStringLiteral("https://examplebucket.s3.amazonaws.com/test.txt"
+                       "?X-Amz-Algorithm=AWS4-HMAC-SHA256"
+                       "&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20130524%2Fus-east-1%2Fs3%2F"
+                       "aws4_request"
+                       "&X-Amz-Date=20130524T000000Z"
+                       "&X-Amz-Expires=86400"
+                       "&X-Amz-SignedHeaders=host"
+                       "&X-Amz-Signature="
+                       "aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404"));
+}
+
+/// Whoever is handed one of these sends none of our headers, so signing over
+/// them would produce a url that cannot be checked by anybody but us.
+void TestS3Signer::aPresignedUrlSignsNothingTheRecipientCannotSend()
+{
+    SignableRequest request;
+    request.method = "GET";
+    request.path = QStringLiteral("/reports/q1.pdf");
+    request.headers = { { "host", "bucket.s3.example.com" }, { "range", "bytes=0-9" } };
+    request.timestamp = utcStamp(QStringLiteral("20260809T090117Z"));
+
+    const QString url = presignedUrl(request, exampleIdentity(), std::chrono::seconds(900), true);
+
+    QVERIFY2(url.contains(QStringLiteral("X-Amz-SignedHeaders=host")), qPrintable(url));
+    QVERIFY2(!url.contains(QStringLiteral("range")), qPrintable(url));
+    QVERIFY2(!url.contains(QStringLiteral("x-amz-content-sha256")), qPrintable(url));
+    // The signature is of the query, so it cannot be inside the query it signs.
+    QVERIFY2(url.lastIndexOf(QStringLiteral("&X-Amz-Signature=")) > url.indexOf(QStringLiteral("?")),
+        qPrintable(url));
+}
+
+void TestS3Signer::aPresignedUrlIsSpecificToItsObjectItsLifetimeAndItsKey()
+{
+    SignableRequest request;
+    request.method = "GET";
+    request.path = QStringLiteral("/reports/q1.pdf");
+    request.headers = { { "host", "bucket.s3.example.com" } };
+    request.timestamp = utcStamp(QStringLiteral("20260809T090117Z"));
+
+    const QString url = presignedUrl(request, exampleIdentity(), std::chrono::seconds(900), true);
+    QCOMPARE(presignedUrl(request, exampleIdentity(), std::chrono::seconds(900), true), url);
+
+    SignableRequest other = request;
+    other.path = QStringLiteral("/reports/q2.pdf");
+    QVERIFY(presignedUrl(other, exampleIdentity(), std::chrono::seconds(900), true) != url);
+
+    QVERIFY(presignedUrl(request, exampleIdentity(), std::chrono::seconds(901), true) != url);
+
+    SigningIdentity elsewhere = exampleIdentity();
+    elsewhere.secretAccessKey = QStringLiteral("a different secret entirely");
+    QVERIFY(presignedUrl(request, elsewhere, std::chrono::seconds(900), true) != url);
 }
 
 void TestS3Signer::queryParametersAreSortedRegardlessOfOrder()
@@ -289,6 +370,99 @@ void TestS3Signer::bucketNamesAreRead()
 
     QCOMPARE(
         parseBucketList(xml), QStringList({ QStringLiteral("svh-test1"), QStringLiteral("testbucket2312") }));
+}
+
+namespace {
+
+/// A drive built the way the application builds one, and pointed at nothing:
+/// making a link asks the far end nothing, so none of this needs a server.
+FileSystemPtr driveFor(const QString& keyId, const QString& secret)
+{
+    QVariantMap config { { QStringLiteral("accessKeyId"), keyId },
+        { QStringLiteral("secretAccessKey"), secret }, { QStringLiteral("bucket"), QStringLiteral("papers") },
+        { QStringLiteral("region"), QStringLiteral("us-east-1") },
+        { QStringLiteral("endpoint"), QStringLiteral("s3.example.com") },
+        { QStringLiteral("addressing"), QStringLiteral("path") } };
+
+    QString error;
+    return S3FileSystemFactory().create(config, &error);
+}
+
+FileEntry objectAt(const VfsUri& uri)
+{
+    FileEntry entry;
+    entry.name = uri.fileName();
+    entry.uri = uri;
+    return entry;
+}
+
+} // namespace
+
+/// A prefix is not an object: there is nothing to hand anybody a link to, and
+/// offering one there would be an entry that cannot work.
+void TestS3Signer::theLinkIsOfferedOnAnObjectAndNotOnAPrefix()
+{
+    FileSystemPtr drive = driveFor(QStringLiteral("AKIDEXAMPLE"), QStringLiteral("a secret"));
+    QVERIFY(drive);
+
+    const VfsUri object = VfsUri::fromString(QStringLiteral("s3://papers/reports/q1.pdf"));
+    const FileActionList offered = drive->actionsFor(object, objectAt(object));
+    QCOMPARE(offered.size(), 1);
+    QCOMPARE(offered.first().id, S3FileSystem::linkActionId());
+    QCOMPARE(offered.first().answers, FileActionKind::Text);
+
+    FileEntry folder = objectAt(VfsUri::fromString(QStringLiteral("s3://papers/reports")));
+    folder.isDir = true;
+    QVERIFY(drive->actionsFor(folder.uri, folder).isEmpty());
+
+    const VfsUri root = VfsUri::fromString(QStringLiteral("s3://papers/"));
+    QVERIFY(drive->actionsFor(root, objectAt(root)).isEmpty());
+}
+
+void TestS3Signer::aDriveWithNothingToSignWithOffersNoLink()
+{
+    // Built directly rather than through the factory, which insists on a key:
+    // what is being held here is that the backend refuses on its own rather than
+    // relying on nobody being able to configure one.
+    S3Settings settings;
+    settings.bucket = QStringLiteral("papers");
+    settings.endpoint = QStringLiteral("s3.example.com");
+    settings.pathStyleAddressing = true;
+    auto drive = std::make_shared<S3FileSystem>(QStringLiteral("s3"), settings);
+
+    const VfsUri object = VfsUri::fromString(QStringLiteral("s3://papers/reports/q1.pdf"));
+    QVERIFY2(drive->actionsFor(object, objectAt(object)).isEmpty(),
+        "a drive reading a public container has no key to sign a link with");
+    QCOMPARE(drive->invoke(S3FileSystem::linkActionId(), object, CancelToken()).error().code,
+        VfsError::AccessDenied);
+}
+
+void TestS3Signer::theLinkIsForThatObjectAndSaysWhenItStopsWorking()
+{
+    FileSystemPtr drive = driveFor(QStringLiteral("AKIDEXAMPLE"), QStringLiteral("a secret"));
+    QVERIFY(drive);
+
+    const VfsUri object = VfsUri::fromString(QStringLiteral("s3://papers/reports/q1 plan.pdf"));
+    const Result<FileActionOutcome> outcome
+        = drive->invoke(S3FileSystem::linkActionId(), object, CancelToken());
+    QVERIFY2(outcome.ok(), qPrintable(outcome.error().message));
+
+    QCOMPARE(outcome.value().kind, FileActionKind::Text);
+    const QString link = outcome.value().text;
+    QVERIFY2(link.startsWith(QStringLiteral("https://s3.example.com/papers/reports/q1%20plan.pdf?")),
+        qPrintable(link));
+    QVERIFY2(link.contains(QStringLiteral("X-Amz-Signature=")), qPrintable(link));
+    QVERIFY2(link.contains(QStringLiteral("X-Amz-Expires=900")), qPrintable(link));
+
+    // The lifetime travels with it. A link with no stated expiry is one somebody
+    // pastes somewhere and is surprised by later.
+    QVERIFY(outcome.value().validUntil.isValid());
+    const qint64 seconds = QDateTime::currentDateTime().secsTo(outcome.value().validUntil);
+    QVERIFY2(seconds > 800 && seconds <= 900, qPrintable(QString::number(seconds)));
+
+    // And nothing else on the drive answers to that id.
+    QCOMPARE(drive->invoke(QStringLiteral("org.mole.s3.nothing"), object, CancelToken()).error().code,
+        VfsError::NotSupported);
 }
 
 MOLE_TEST_MAIN(TestS3Signer)

@@ -84,6 +84,20 @@ public:
         std::chrono::seconds olderThan, const CancelToken& cancel) override;
     Result<void> discardLeftover(const DriveLeftover& leftover) override;
 
+    /// What this drive can do that another could not: hand out a link to one
+    /// object that works for a while without an account. Offered on an object
+    /// and not on a folder, and only where there is a key to sign with.
+    FileActionList actionsFor(const VfsUri& target, const FileEntry& entry) override;
+    Result<FileActionOutcome> invoke(
+        const QString& id, const VfsUri& target, const CancelToken& cancel) override;
+
+    /// The id of the action above. Namespaced like every other, and public so a
+    /// test can name it without spelling the string twice.
+    static QString linkActionId() { return QStringLiteral("org.mole.s3.link"); }
+    /// How long a link is good for. Long enough to send to somebody, short
+    /// enough that a link left in a chat window stops working.
+    static std::chrono::seconds linkLifetime() { return std::chrono::minutes(15); }
+
 private:
     /// One signed request, described before it is sent.
     struct Call
@@ -98,6 +112,9 @@ private:
     };
 
     net::Response send(const Call& call, const CancelToken& cancel, QIODevice* sink = nullptr);
+    /// The signable form of a GET for `key`, without sending anything: the host,
+    /// the path and the timestamp, which is everything a presigned url needs.
+    net::SignableRequest readRequestFor(const QString& key, const QDateTime& at) const;
 
     // ---- multipart upload ------------------------------------------------
     //

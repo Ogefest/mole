@@ -145,6 +145,73 @@ QString S3FileSystem::keyToPath(const QString& key) const
     return kSeparator + key;
 }
 
+net::SignableRequest S3FileSystem::readRequestFor(const QString& key, const QDateTime& at) const
+{
+    net::SignableRequest request;
+    request.method = "GET";
+    request.timestamp = at;
+
+    const QString host = m_settings.hostName();
+    QString path = QStringLiteral("/");
+    // usesPathStyle() rather than the raw setting, for the reason send() gives:
+    // the host and the path have to agree about where the bucket went.
+    if (m_settings.usesPathStyle())
+        path += m_settings.bucket + (key.isEmpty() ? QString() : kSeparator + key);
+    else
+        path += key;
+    request.path = path;
+    request.headers.append({ QByteArray("host"), host.toUtf8() });
+    return request;
+}
+
+FileActionList S3FileSystem::actionsFor(const VfsUri& target, const FileEntry& entry)
+{
+    // A folder is not an object here -- it is a prefix, and there is nothing to
+    // hand anybody a link to.
+    if (entry.isDir || keyFor(target).isEmpty())
+        return {};
+    // And nothing can be signed without a key to sign with. A drive reading a
+    // public bucket unauthenticated is one this cannot be offered on.
+    if (m_identity.accessKeyId.isEmpty() || m_identity.secretAccessKey.isEmpty())
+        return {};
+
+    // Compiled in rather than probed, and rightly: whether a link can be signed
+    // depends on having a key, not on what the drive was pointed at. The probe
+    // tier in ADR-0076 is for the other kind -- whether *this container* keeps
+    // earlier objects -- and answering it here would mark every row for a
+    // capability that has nothing to do with any particular one.
+    return { FileAction {
+        linkActionId(), QStringLiteral("Copy a temporary link"), true, FileActionKind::Text } };
+}
+
+Result<FileActionOutcome> S3FileSystem::invoke(
+    const QString& id, const VfsUri& target, const CancelToken& cancel)
+{
+    if (id != linkActionId())
+        return IFileSystem::invoke(id, target, cancel);
+
+    const QString key = keyFor(target);
+    if (key.isEmpty()) {
+        return VfsError::make(
+            VfsError::NotSupported, QStringLiteral("There is nothing here to make a link to"));
+    }
+    if (m_identity.accessKeyId.isEmpty() || m_identity.secretAccessKey.isEmpty()) {
+        return VfsError::make(
+            VfsError::AccessDenied, QStringLiteral("This drive has no key to sign a link with"));
+    }
+
+    // Signed here and sent nowhere: a presigned url is arithmetic over the key,
+    // the path and the clock, so making one asks the far end nothing and costs
+    // no round trip.
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    const QString url
+        = net::presignedUrl(readRequestFor(key, now), m_identity, linkLifetime(), m_settings.useHttps);
+
+    // The lifetime travels with the link. A link with no stated expiry is one
+    // somebody pastes somewhere and is surprised by later.
+    return FileActionOutcome::fromText(url, now.addSecs(linkLifetime().count()).toLocalTime());
+}
+
 net::Response S3FileSystem::send(const Call& call, const CancelToken& cancel, QIODevice* sink)
 {
     auto lease = m_pool->take();

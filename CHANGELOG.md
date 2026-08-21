@@ -13,6 +13,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-22 #MOLE-202 An object store can hand out a link to one object that works for fifteen minutes without an account, shown with its expiry and copied from the same place any drive's answer is
 2026-08-22 #MOLE-199 An earlier version of a file can be looked at in the preview without leaving it: the picker beside the file name moves between them, every viewer works on one because it is an ordinary file, and the screen always says which version is on
 2026-08-22 #MOLE-198 A listing marks the rows a drive has something for — one query for the whole folder rather than one per row, so a folder of five thousand files draws as fast as it did and the marks arrive after
 2026-08-22 #MOLE-197 What a drive can do to the file under the cursor appears under Operations, whatever drive it is: an answer that is text is shown with a way to copy it and when it stops working, and an answer that is a list of earlier versions is a list you open one from
