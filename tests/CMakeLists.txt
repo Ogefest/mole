@@ -8,6 +8,8 @@ add_library(mole_test_support STATIC
     support/FileSystemConformance.cpp
     support/FaultyFileSystem.h
     support/FaultyFileSystem.cpp
+    support/OfferingFileSystem.h
+    support/OfferingFileSystem.cpp
     support/FakePlugin.h
     support/MoleTestMain.h
     support/TestbedControl.h
@@ -173,6 +175,10 @@ mole_add_test(tst_FileVersions      SOURCES core/tst_FileVersions.cpp)
 # The fault injector is a test tool, and one that miscounts bytes would make
 # every suite built on it green for the wrong reason.
 mole_add_test(tst_FaultyFileSystem  SOURCES support/tst_FaultyFileSystem.cpp)
+
+# The drive that contributes actions. A fake that lies makes every suite built on
+# it green for the wrong reason, so it is held to the same contract as a backend.
+mole_add_test(tst_OfferingFileSystem SOURCES support/tst_OfferingFileSystem.cpp)
 mole_add_test(tst_VfsManager        SOURCES core/tst_VfsManager.cpp)
 mole_add_test(tst_DirectoryWalker   SOURCES core/tst_DirectoryWalker.cpp)
 mole_add_test(tst_TaskManager       SOURCES core/tst_TaskManager.cpp)
