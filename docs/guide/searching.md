@@ -7,8 +7,9 @@ searching, and matches appear as they are found rather than in one lump at the e
 
 ![The search box](images/12-search-box.png)
 
-There is one search. Everything below is a field on it, and none of it is compulsory: a
-name and `Enter` is the whole of the common case, exactly as it has always been.
+There is one search, and it is one box: a name and `Enter` is the whole of the common
+case, exactly as it has always been. Everything below is a field on it, none of it is
+compulsory, and all of it is behind **More**.
 
 A search answers four questions, and the rest of this page is those four in order.
 **Where** to look. **What you know about the file.** **What is in it.** And **what about
@@ -17,16 +18,19 @@ file manager.
 
 ## Where
 
-*Search in* offers three things:
+The tab says where it is aimed under the line, and usually that is already right: a search
+opened from a folder searches that folder and everything under it. Changing it is in
+**More**, where *Search in* offers three things:
 
 - **This folder** and everything under it, which is where the search opened.
 - **A path** you type.
 - **Everywhere indexed** — every volume that has ever been scanned, with a picker for one
   of them and how much is in it. `Ctrl+Shift+I` opens the search with this scope already
   set, because *find this across everything I have* is a different question from *search
-  here* rather than a different program.
+  here* rather than a different program. `everywhere:yes` on the line does the same thing
+  without opening anything.
 
-Under it, one sentence says what this scope can be asked:
+One sentence under the line says what this scope can be asked:
 
 | It says | It means |
 |---|---|
@@ -217,10 +221,15 @@ otherwise a slowdown with no explanation anywhere. Stopping leaves the index exa
 
 ## Typing the whole thing
 
-Above the form is a line, and the two are one query seen twice: typing here moves the
-fields, and changing a field rewrites this. Neither is the master — the line teaches the
-form's vocabulary to somebody who started with the mouse, and the form explains the line to
-somebody who started by typing.
+**A search tab is one box, and the keyboard is already in it.** Ctrl+F opens it and you
+type — the line takes the whole vocabulary, so the common case never needs anything else.
+Under it, the tab says where the search is aimed: the folder, or that it is every indexed
+volume and which one.
+
+Everything else is behind **More**, and the line and the form are one query seen twice:
+typing here moves the fields, and changing a field rewrites this. The line teaches the
+form's vocabulary to somebody who started with the mouse, and the form explains the line
+to somebody who started by typing.
 
 ```
 report ext:pdf size>10M modified:<30d
@@ -241,7 +250,12 @@ rather than an omission. A line nobody can read says what is wrong and does not 
 meant `ext`, because a typo that quietly searched names is how somebody spends ten minutes
 doubting their disk.
 
-The line can be left empty and the form used on its own.
+`everywhere:yes` is where the search is aimed, said the same way as everything else —
+so *every indexed volume* is a word rather than a control, and **More** still has the
+picker, the folder itself and which volume, for choosing rather than typing.
+
+The line can be left empty and the fields in **More** used on their own, which is the
+same query arriving from the other side.
 
 ## Narrowing what came back
 

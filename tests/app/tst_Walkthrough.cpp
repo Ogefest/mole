@@ -1800,9 +1800,14 @@ void TestWalkthrough::ctrlFIsASearchBoxYouCanTypeInto()
 
     // Typed into straight away. Having to click into the field is what the key is
     // supposed to save.
-    QQuickItem* field = m_harness->item(QStringLiteral("searchQueryField"));
+    //
+    // The box is the query line: the basic view is one box that takes a query, and
+    // Name contains moved behind More. Typing a bare word still ends with
+    // queryText() saying it, because a bare word is a name substring -- the same
+    // claim about a different box. See ADR-0067.
+    QQuickItem* field = m_harness->item(QStringLiteral("queryLineField"));
     QVERIFY(field);
-    QVERIFY2(field->hasActiveFocus(), "the query field has the keyboard as soon as the tab opens");
+    QVERIFY2(field->hasActiveFocus(), "the query line has the keyboard as soon as the tab opens");
 
     m_harness->type(QStringLiteral("report"));
     QCOMPARE(search->queryText(), QStringLiteral("report"));

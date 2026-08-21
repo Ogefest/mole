@@ -11,6 +11,8 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-21 #MOLE-271 The search line can be typed into: it was never connected to anything
+2026-08-21 #MOLE-271 A search tab is one box with the keyboard already in it, and everything else is behind More
 2026-08-21 #MOLE-264 The window no longer waits on the index: what is indexed is read in the background and answered from memory
 2026-08-21 #MOLE-269 A search, or the list of indexes, no longer waits for a running scan to stop writing
 2026-08-21 #MOLE-270 Search form: every criterion label sits beside the field it names

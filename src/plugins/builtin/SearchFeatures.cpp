@@ -108,6 +108,10 @@ void LiveSearchController::setEverywhere(bool everywhere)
     // The subtitle is where the tab says what it is aimed at, and "everywhere
     // indexed" is as much an answer to that as a path is.
     setSubtitle(m_everywhere ? QStringLiteral("Everywhere indexed") : m_rootUri);
+    // Scope is part of the query now, so choosing it in More has to appear on the
+    // line -- otherwise the two would be saying different things, which is the one
+    // thing this pair is built not to do. See ADR-0067.
+    rewriteQueryLine();
     emit scopeChanged();
     emit coverageChanged();
     emit stateChanged();
@@ -538,6 +542,11 @@ namespace {
             { QStringLiteral("hidden"), QStringLiteral("yes or no") },
             { QStringLiteral("depth"), QStringLiteral("0 for this folder alone") },
             { QStringLiteral("skip"), QStringLiteral("folders not to go into") },
+            // Scope is part of the query rather than a picker beside it. Not a
+            // bare `everywhere`, because a bare word is a name substring and
+            // giving one word a second meaning would make it the one word
+            // nobody can search for. See ADR-0067.
+            { QStringLiteral("everywhere"), QStringLiteral("yes to search every indexed volume") },
         };
         return words;
     }
@@ -580,7 +589,7 @@ QStringList LiveSearchController::queryValuesFor(const QString& key) const
         return knownTypeClasses();
     if (key == QLatin1String("kind"))
         return { QStringLiteral("file"), QStringLiteral("folder") };
-    if (key == QLatin1String("hidden"))
+    if (key == QLatin1String("hidden") || key == QLatin1String("everywhere"))
         return { QStringLiteral("yes"), QStringLiteral("no") };
     return {};
 }
@@ -623,6 +632,12 @@ void LiveSearchController::setQueryLine(const QString& text)
     m_nameMode = 0;
     m_excludeName = false;
     m_excludePath = false;
+    // Absent means this folder, the way an absent ext: means no extension filter.
+    // Anything else and the round trip would drift: the rewrite writes
+    // everywhere:yes when the scope is set, so the line and the fields keep
+    // saying the same thing. The volume is deliberately not reset -- it is not on
+    // the line, so the picker is what sets it. See ADR-0067.
+    bool everywhere = false;
 
     for (const QueryTerm& term : parsed.terms) {
         // A bare word is a name substring, which is what a bare word means
@@ -714,6 +729,10 @@ void LiveSearchController::setQueryLine(const QString& text)
             m_includeHidden = !value.startsWith(QLatin1Char('n'), Qt::CaseInsensitive);
         } else if (key == QLatin1String("depth")) {
             m_maxDepth = value.toInt();
+        } else if (key == QLatin1String("everywhere")) {
+            // Read the way hidden: is, so there is one rule for a yes/no value
+            // rather than two.
+            everywhere = !value.startsWith(QLatin1Char('n'), Qt::CaseInsensitive);
         } else if (key == QLatin1String("skip")) {
             m_excluded = value;
         } else {
@@ -725,6 +744,10 @@ void LiveSearchController::setQueryLine(const QString& text)
     m_pathText = paths.join(QLatin1Char(' '));
     m_contentText = content.join(QLatin1Char(' '));
     m_factCriteria = facts;
+    // Through the setter, so the subtitle and the coverage note follow it. The
+    // rewrite it asks for is suppressed while m_rewriting is set, which is what
+    // stops it overwriting what is being typed.
+    setEverywhere(everywhere);
     m_rewriting = false;
 
     setTitle(
@@ -782,6 +805,8 @@ void LiveSearchController::rewriteQueryLine()
     if (m_maxDepth >= 0)
         add(QStringLiteral("depth"), QString::number(m_maxDepth));
     add(QStringLiteral("skip"), m_excluded);
+    if (m_everywhere)
+        add(QStringLiteral("everywhere"), QStringLiteral("yes"));
     for (auto it = m_factCriteria.cbegin(); it != m_factCriteria.cend(); ++it)
         add(it.key(), it.value().toString());
 

@@ -39,6 +39,10 @@ private slots:
 
     void everyLabelIsOnTheSameRowAsItsField_data();
     void everyLabelIsOnTheSameRowAsItsField();
+    void theTabOpensWithTheKeyboardInTheLine();
+    void typingOnTheLineMovesTheFields();
+    void changingAFieldWritesTheLine();
+    void scopeIsSaidOnTheLineAsWellAsInTheForm();
 
 private:
     LiveSearchController* openSearch();
@@ -104,6 +108,86 @@ QPair<qreal, qreal> TestSearchForm::band(QQuickItem* item)
     return { top, top + item->height() };
 }
 
+void TestSearchForm::theTabOpensWithTheKeyboardInTheLine()
+{
+    LiveSearchController* search = openSearch();
+    QVERIFY(search);
+    m_harness->settle(6);
+
+    QQuickItem* line = shown(QStringLiteral("queryLineField"));
+    QVERIFY2(line, "the line is what the basic view is");
+    QVERIFY2(line->hasActiveFocus(),
+        "a tab opened with a key has the keyboard in the box it exists for -- and once the form moved "
+        "behind More, focusing a field in there would have put it nowhere at all");
+}
+
+void TestSearchForm::typingOnTheLineMovesTheFields()
+{
+    // Typed through the window rather than pushed in through setQueryLine(),
+    // because what was broken was exactly the part in between: the widget bound to
+    // `controller.queryLine` and assigned to it on every keystroke while no
+    // Q_PROPERTY of that name existed, so the read gave undefined and the write
+    // went nowhere. Every existing test of the line called the setter in C++ and
+    // so could not see it. See ADR-0067.
+    LiveSearchController* search = openSearch();
+    QVERIFY(search);
+    m_harness->settle(6);
+
+    QQuickItem* line = shown(QStringLiteral("queryLineField"));
+    QVERIFY(line);
+    QVERIFY(line->hasActiveFocus());
+
+    m_harness->type(QStringLiteral("report ext:pdf"));
+    QVERIFY(m_harness->until([search] { return search->extension() == QStringLiteral("pdf"); }));
+    QCOMPARE(search->queryText(), QStringLiteral("report"));
+    // And the line's own widget holds what was typed, which is the half of the
+    // round trip a controller assertion cannot see.
+    QCOMPARE(line->property("text").toString(), QStringLiteral("report ext:pdf"));
+}
+
+void TestSearchForm::changingAFieldWritesTheLine()
+{
+    LiveSearchController* search = openSearch();
+    QVERIFY(search);
+    m_harness->settle(6);
+
+    search->setExtension(QStringLiteral("png"));
+    m_harness->settle(4);
+
+    QQuickItem* line = shown(QStringLiteral("queryLineField"));
+    QVERIFY(line);
+    QVERIFY2(line->property("text").toString().contains(QStringLiteral("ext:png")),
+        qPrintable(QStringLiteral("the line does not say what the field says: %1")
+                       .arg(line->property("text").toString())));
+}
+
+void TestSearchForm::scopeIsSaidOnTheLineAsWellAsInTheForm()
+{
+    // Scope used to be reachable only from the picker in front of More. It is a
+    // word now, so both directions have to hold. See ADR-0067.
+    LiveSearchController* search = openSearch();
+    QVERIFY(search);
+    m_harness->settle(6);
+
+    QQuickItem* line = shown(QStringLiteral("queryLineField"));
+    QVERIFY(line);
+    m_harness->type(QStringLiteral("everywhere:yes"));
+    QVERIFY(m_harness->until([search] { return search->everywhere(); }));
+
+    // What the basic view says it is aimed at follows.
+    QQuickItem* scope = shown(QStringLiteral("searchScopeText"));
+    QVERIFY(scope);
+    QVERIFY2(scope->property("text").toString().contains(QStringLiteral("everywhere indexed")),
+        qPrintable(scope->property("text").toString()));
+
+    // And back: cleared from the picker's side, the line loses the word.
+    search->setEverywhere(false);
+    m_harness->settle(4);
+    QVERIFY2(!line->property("text").toString().contains(QStringLiteral("everywhere")),
+        qPrintable(QStringLiteral("the line still claims a scope the form has dropped: %1")
+                       .arg(line->property("text").toString())));
+}
+
 void TestSearchForm::everyLabelIsOnTheSameRowAsItsField_data()
 {
     QTest::addColumn<bool>("advanced");
@@ -143,12 +227,16 @@ void TestSearchForm::everyLabelIsOnTheSameRowAsItsField()
     // Label, and the field it names. Written out rather than derived: which field a
     // label belongs to is the one thing the layout cannot tell us, and it is exactly
     // what was wrong.
-    QList<QPair<QString, QString>> pairs {
-        { QStringLiteral("Search in"), QStringLiteral("searchScope") },
-        { QStringLiteral("Name contains"), QStringLiteral("searchQueryField") },
-        { QStringLiteral("Extension"), QStringLiteral("extensionField") },
-    };
+    //
+    // All of them are behind More since ADR-0067: the basic view has one box that
+    // takes a query, and the three that used to sit in front of it -- the scope
+    // picker, Name contains and Extension -- moved in here with the rest.
+    QList<QPair<QString, QString>> pairs;
     if (advanced) {
+        pairs.append({ QStringLiteral("Search in"),
+            everywhere ? QStringLiteral("searchVolume") : QStringLiteral("searchRootField") });
+        pairs.append({ QStringLiteral("Name contains"), QStringLiteral("searchQueryField") });
+        pairs.append({ QStringLiteral("Extension"), QStringLiteral("extensionField") });
         pairs.append({ QStringLiteral("Text inside"), QStringLiteral("contentField") });
         pairs.append({ QStringLiteral("Is a"), QStringLiteral("typeClasses") });
         pairs.append({ QStringLiteral("Changed"), QStringLiteral("modifiedFromField") });
@@ -189,6 +277,19 @@ void TestSearchForm::everyLabelIsOnTheSameRowAsItsField()
                              .arg(fieldTop)
                              .arg(fieldBottom));
         }
+    }
+
+    if (!advanced) {
+        // Nothing to pair up, and that is the assertion: the basic view holds the
+        // line, what it is aimed at, and no other box that takes a query.
+        QVERIFY(pairs.isEmpty());
+        QVERIFY2(shown(QStringLiteral("queryLineField")), "the line is the basic view");
+        QVERIFY2(shown(QStringLiteral("searchScopeText")), "and it says where it is aimed");
+        for (const char* hidden : { "searchQueryField", "extensionField", "nameMode", "searchScope" }) {
+            QVERIFY2(!shown(QString::fromLatin1(hidden)),
+                qPrintable(QStringLiteral("%1 is still in front of More").arg(QString::fromLatin1(hidden))));
+        }
+        return;
     }
 
     QVERIFY2(apart.isEmpty(),

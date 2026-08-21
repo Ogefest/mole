@@ -12,13 +12,18 @@ Item {
     // The tab is opened with a key, so the box it exists for has the keyboard from
     // the start -- reaching for the mouse to click into a search field is exactly
     // what Ctrl+F is supposed to save.
-    function focusActivePane() { queryField.forceActiveFocus() }
+    //
+    // That box is the line. It used to be the Name contains field, which had the
+    // id while the line had only an objectName -- and once the name field moved
+    // behind More, focusing it would have put the keyboard inside a hidden panel,
+    // which is to say nowhere. See ADR-0067.
+    function focusActivePane() { queryLine.forceActiveFocus() }
 
     /// F3, asked for by name by the window. A search tab has no pane for the
     /// window to resolve the key through; the results list is where its cursor
     /// is. See MOLE-204.
     function previewCurrentRow() { resultList.previewCurrentRow() }
-    Component.onCompleted: Qt.callLater(queryField.forceActiveFocus)
+    Component.onCompleted: Qt.callLater(queryLine.forceActiveFocus)
 
     ColumnLayout {
         anchors.fill: parent
@@ -34,6 +39,7 @@ Item {
             spacing: 2
 
             TextField {
+                id: queryLine
                 objectName: "queryLineField"
                 Layout.fillWidth: true
                 placeholderText: "report ext:pdf size>10M modified:<30d"
@@ -57,103 +63,53 @@ Item {
             }
         }
 
-        GridLayout {
+        // Where the search is aimed, said rather than asked. Choosing is in More,
+        // which keeps the picker, the editable root and the volume list -- the
+        // folder is usually already right by the time somebody gets here, because
+        // the tab was opened from it. See ADR-0067.
+        RowLayout {
             Layout.fillWidth: true
-            columns: 4
-            columnSpacing: 8
-            rowSpacing: 6
+            spacing: 6
 
-            // Where to search is a field, not a tab. Searching everything ever
-            // scanned used to be a separate window with its own form and its own
-            // idea of what a search was; it is a scope, and the difference
-            // between the two was only ever which engine could answer.
-            Label { text: "Search in"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
-            Picker {
-                objectName: "searchScope"
-                Layout.preferredWidth: 200
-                model: ["This folder", "Everywhere indexed"]
-                currentIndex: controller && controller.everywhere ? 1 : 0
-                font.pixelSize: App.secondaryTextSize
-                onActivated: if (controller) controller.everywhere = (currentIndex === 1)
-            }
-            TextField {
-                objectName: "searchRootField"
-                Layout.fillWidth: true
-                Layout.columnSpan: 2
-                visible: !(controller && controller.everywhere)
-                text: controller ? controller.rootUri : ""
-                selectByMouse: true
-                font.pixelSize: App.secondaryTextSize
-                onEditingFinished: if (controller) controller.rootUri = text
-            }
-            // In its place when the scope is everywhere: which of the scanned
-            // volumes, and how much each holds. The retired tab's one control.
-            Picker {
-                objectName: "searchVolume"
-                Layout.fillWidth: true
-                Layout.columnSpan: 2
-                visible: controller && controller.everywhere === true
-                model: controller ? controller.volumeLabels : []
-                currentIndex: controller ? controller.volumeIndex : 0
-                font.pixelSize: App.secondaryTextSize
-                onActivated: if (controller) controller.volumeIndex = currentIndex
-            }
-
-            // One sentence about what this scope can be asked. It is what makes
-            // a greyed field read as inapplicable rather than as broken.
-            Item { width: 1; height: 1 }
             Label {
-                objectName: "coverageNote"
-                Layout.columnSpan: 3
+                text: "Searching"
+                color: "#8b93a7"
+                font.pixelSize: App.secondaryTextSize
+            }
+            Label {
+                objectName: "searchScopeText"
                 Layout.fillWidth: true
-                text: controller ? controller.coverageNote : ""
-                color: "#6f7788"
-                font.pixelSize: App.smallTextSize
-                elide: Text.ElideRight
-            }
-
-            Label { text: "Name contains"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
-            TextField {
-                id: queryField
-                objectName: "searchQueryField"
-                Layout.fillWidth: true
-                // Two cells, so this row fills the grid. A GridLayout wraps at
-                // `columns`, and an item that will not fit in what is left of a row
-                // moves to the next one -- so a row one cell short does not leave a
-                // gap at the end, it pulls the next item up into it. With this at one
-                // cell the row came to three of four and "Extension" was dragged onto
-                // it, leaving its own field to start a row alone. Every row in both
-                // grids has to add up, and tst_SearchForm holds that by comparing
-                // each label's position against its field's. See MOLE-270.
-                Layout.columnSpan: 2
-                text: controller ? controller.queryText : ""
-                selectByMouse: true
+                text: {
+                    if (!controller)
+                        return ""
+                    if (!controller.everywhere)
+                        return controller.rootUri
+                    // Volume 0 is "All volumes", which adds nothing to the words
+                    // in front of it.
+                    var picked = controller.volumeIndex > 0
+                        ? controller.volumeLabels[controller.volumeIndex] : ""
+                    return picked.length > 0 ? "everywhere indexed \u2014 " + picked
+                                             : "everywhere indexed"
+                }
+                color: "#c8cede"
+                elide: Text.ElideMiddle
                 font.pixelSize: App.secondaryTextSize
-                onTextChanged: if (controller) controller.queryText = text
-                onAccepted: if (controller) controller.start()
-                // Down out of the box and into the results: once a search has
-                // answered, the answers are where the keyboard should be.
-                Keys.onDownPressed: resultList.takeFocus()
             }
+        }
 
-            Picker {
-                objectName: "nameMode"
-                Layout.preferredWidth: 120
-                model: ["contains", "matches", "expression"]
-                currentIndex: controller ? controller.nameMode : 0
-                font.pixelSize: App.secondaryTextSize
-                onActivated: if (controller) controller.nameMode = currentIndex
-            }
-
-            Label { text: "Extension"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
-            TextField {
-                objectName: "extensionField"
-                Layout.preferredWidth: 160
-                placeholderText: "jpg, jpeg, heic"
-                text: controller ? controller.extension : ""
-                font.pixelSize: App.secondaryTextSize
-                onTextChanged: if (controller) controller.extension = text
-            }
+        // One sentence about what this scope can be asked. It is what makes a
+        // greyed field read as inapplicable rather than as broken.
+        Label {
+            objectName: "coverageNote"
+            Layout.fillWidth: true
+            // Nothing to say is no row: in the grid it used to sit in, an empty
+            // label cost nothing, and in a column it leaves a hole above the
+            // Search button.
+            visible: text.length > 0
+            text: controller ? controller.coverageNote : ""
+            color: "#6f7788"
+            font.pixelSize: App.smallTextSize
+            elide: Text.ElideRight
         }
 
         RowLayout {
@@ -309,6 +265,89 @@ Item {
             columns: 6
             columnSpacing: 8
             rowSpacing: 6
+
+            // Where to search is a field, not a tab. Searching everything ever
+            // scanned used to be a separate window with its own form and its own
+            // idea of what a search was; it is a scope, and the difference
+            // between the two was only ever which engine could answer.
+            //
+            // Here rather than in front of More since ADR-0067: the basic view
+            // says where the search is aimed and this is where it is chosen.
+            // `everywhere:yes` on the line does the same thing.
+            Label { text: "Search in"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+            Picker {
+                objectName: "searchScope"
+                Layout.columnSpan: 2
+                Layout.preferredWidth: 200
+                model: ["This folder", "Everywhere indexed"]
+                currentIndex: controller && controller.everywhere ? 1 : 0
+                font.pixelSize: App.secondaryTextSize
+                onActivated: if (controller) controller.everywhere = (currentIndex === 1)
+            }
+            TextField {
+                objectName: "searchRootField"
+                Layout.fillWidth: true
+                Layout.columnSpan: 3
+                visible: !(controller && controller.everywhere)
+                text: controller ? controller.rootUri : ""
+                selectByMouse: true
+                font.pixelSize: App.secondaryTextSize
+                onEditingFinished: if (controller) controller.rootUri = text
+            }
+            // In its place when the scope is everywhere: which of the scanned
+            // volumes, and how much each holds. The retired tab's one control.
+            // Exactly one of the two is visible, which is what keeps this row at
+            // six cells however the scope is set -- a GridLayout skips an
+            // invisible item, so a row that could show neither would pull the
+            // next one up into it.
+            Picker {
+                objectName: "searchVolume"
+                Layout.fillWidth: true
+                Layout.columnSpan: 3
+                visible: controller && controller.everywhere === true
+                model: controller ? controller.volumeLabels : []
+                currentIndex: controller ? controller.volumeIndex : 0
+                font.pixelSize: App.secondaryTextSize
+                onActivated: if (controller) controller.volumeIndex = currentIndex
+            }
+
+            // The name, and what to make of it. Behind More since ADR-0067: the
+            // line above says all three of these and more, so the basic view has
+            // one box that takes a query rather than four.
+            Label { text: "Name contains"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+            TextField {
+                id: queryField
+                objectName: "searchQueryField"
+                Layout.fillWidth: true
+                Layout.columnSpan: 4
+                text: controller ? controller.queryText : ""
+                selectByMouse: true
+                font.pixelSize: App.secondaryTextSize
+                onTextChanged: if (controller) controller.queryText = text
+                onAccepted: if (controller) controller.start()
+                // Down out of the box and into the results: once a search has
+                // answered, the answers are where the keyboard should be.
+                Keys.onDownPressed: resultList.takeFocus()
+            }
+            Picker {
+                objectName: "nameMode"
+                Layout.preferredWidth: 120
+                model: ["contains", "matches", "expression"]
+                currentIndex: controller ? controller.nameMode : 0
+                font.pixelSize: App.secondaryTextSize
+                onActivated: if (controller) controller.nameMode = currentIndex
+            }
+
+            Label { text: "Extension"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+            TextField {
+                objectName: "extensionField"
+                Layout.columnSpan: 5
+                Layout.preferredWidth: 160
+                placeholderText: "jpg, jpeg, heic"
+                text: controller ? controller.extension : ""
+                font.pixelSize: App.secondaryTextSize
+                onTextChanged: if (controller) controller.extension = text
+            }
 
             // The other half of a search tool: the name is what you have
             // forgotten and the contents are what you remember. Last in the

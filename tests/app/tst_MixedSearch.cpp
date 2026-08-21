@@ -538,6 +538,27 @@ void TestMixedSearch::theLineAndTheFormAreOneQuerySeenTwice()
     QCOMPARE(search->extension(), QStringLiteral("md"));
     QCOMPARE(search->queryText(), QStringLiteral("report"));
     QVERIFY2(search->queryLineError().isEmpty(), qPrintable(search->queryLineError()));
+
+    // Scope is on the line too, since ADR-0067, and it has to survive the same
+    // trip. It is the one criterion where an absent term means something -- no
+    // `everywhere:` is "this folder" -- so the rewrite has to put it back or the
+    // form and the line would drift apart on a round trip that changed nothing.
+    QVERIFY(!search->everywhere());
+    search->setQueryLine(written + QStringLiteral(" everywhere:yes"));
+    QVERIFY2(search->everywhere(), qPrintable(search->queryLineError()));
+    QVERIFY2(search->queryLine().contains(QStringLiteral("everywhere:yes")), qPrintable(search->queryLine()));
+
+    search->setEverywhere(false);
+    QVERIFY2(!search->queryLine().contains(QStringLiteral("everywhere")), qPrintable(search->queryLine()));
+    // And what was on the line before is still there: turning the scope off is not
+    // an edit to the rest of the query.
+    QCOMPARE(search->extension(), QStringLiteral("md"));
+    QCOMPARE(search->queryText(), QStringLiteral("report"));
+
+    // Typed the other way round: everywhere:no is this folder, read the way
+    // hidden:no is.
+    search->setQueryLine(QStringLiteral("report everywhere:no"));
+    QVERIFY(!search->everywhere());
 }
 
 void TestMixedSearch::aLineNobodyCanReadSaysSoAndDoesNotRun()

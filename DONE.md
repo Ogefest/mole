@@ -9,6 +9,63 @@ wrong.
 
 ---
 
+## A search is one box, and the box turned out to be inert
+
+**Asked for:** MOLE-271 — the line above the form already takes the whole vocabulary,
+so the basic case can be one box and is not.
+
+**What was done**, per [ADR-0067](docs/adr/0067-a-search-is-one-box-and-scope-is-part-of-the-query.md):
+*Name contains*, its mode picker and *Extension* moved behind **More**; the keyboard
+starts in the line, from `focusActivePane()` and from the tab opening; and the basic view
+now says where the search is aimed instead of offering it as a choice. Scope became part
+of the vocabulary — `everywhere:yes`, read the way `hidden:no` is — so *Everywhere
+indexed* is reachable by typing, while **More** keeps the picker, the editable root and
+the volume list for choosing rather than typing. The basic `GridLayout` is gone
+altogether, which leaves one grid where there were two.
+
+**And then the thing worth writing down.** Moving the keyboard onto the line made the
+walkthrough fail on `queryText()` being empty after typing `report`. The line had focus —
+that was measured, not assumed — and the keystrokes reached the widget. What was missing
+was the property: **`SearchFeatures.h` declared no `Q_PROPERTY` for `queryLine`,
+`queryLineError` or `queryLineErrorAt` at all.** The widget bound `text` to
+`controller.queryLine` and assigned to it on every keystroke, and with no property behind
+the name the read gave `undefined` and the write went nowhere.
+
+So the query line has never worked. Not "worked and regressed" — the parser, the round
+trip, the typo suggestions and the error positions are all real and all tested, and every
+one of those tests calls `setQueryLine()` from C++. The one thing nobody tested was
+whether a person could type into it, and the answer was no. It is three lines to fix and
+it is the whole of what this ticket was about: making the line the box the tab opens with
+is only worth anything if the box works.
+
+**What now holds it** is `tst_SearchForm`, which types through the window rather than
+calling the setter: `typingOnTheLineMovesTheFields` types `report ext:pdf` and checks both
+the field and *the line widget's own text*, `changingAFieldWritesTheLine` goes the other
+way, and `scopeIsSaidOnTheLineAsWellAsInTheForm` does both directions for the new word.
+Removing the `Q_PROPERTY` again fails all three. `theTabOpensWithTheKeyboardInTheLine` is
+the fourth, because the focus and the wiring are separate faults that happened to be
+found together.
+
+**Where scope went, and why not the other two candidates.** The ticket offered three
+answers in the order they looked worth having, and the first is the one taken. A bare
+`everywhere` was rejected deliberately: a bare word is a name substring, and the rule that
+an unknown `key:` is *also* a name is what keeps a file called `notes:2026.txt` findable —
+so giving one bare word a second meaning would make `everywhere` the one word nobody can
+search for, silently. A checkbox beside the line keeps scope out of the vocabulary and adds
+a control to the view this was meant to empty; leaving the picker where it was keeps the
+two-item dropdown that reads as a second way of saying the folder.
+
+**One thing the pictures caught.** In a grid an empty label costs nothing; in a column it
+leaves a hole. The coverage note is `visible: text.length > 0` for that reason, and the
+guide's `12-search-box` shows the gap closed.
+
+**Four guide pictures** moved — `12-search-box`, `12b-search-results`, `12c-search-mixed`,
+`12d-search-content` — of 54, and `docs/guide/searching.md` says what the basic case is in
+*Where* and in *Typing the whole thing*: the line can still be left empty and the fields
+used on their own, but the two are no longer presented as equals.
+
+---
+
 ## The interface stopped reading the index on the thread that draws it
 
 **Asked for:** MOLE-264 — seven call sites ask `IndexDatabase` a question

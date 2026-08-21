@@ -41,6 +41,18 @@ class LiveSearchController final : public FeatureController
     Q_PROPERTY(QStringList volumeLabels READ volumeLabels NOTIFY volumesChanged)
     Q_PROPERTY(int volumeIndex READ volumeIndex WRITE setVolumeIndex NOTIFY volumeIndexChanged)
     Q_PROPERTY(QString queryText READ queryText WRITE setQueryText NOTIFY queryTextChanged)
+    /// The line, and what is wrong with it.
+    ///
+    /// Declared as properties late, which is the whole of a fault worth writing
+    /// down: the line's widget bound to `controller.queryLine` and assigned to it
+    /// on every keystroke, and with no Q_PROPERTY behind the name both did
+    /// nothing at all -- the read gave undefined and the write went nowhere. So
+    /// the box existed, was tested through setQueryLine() in C++, and could not
+    /// be typed into. Found by making it the box the tab opens with. See
+    /// ADR-0067.
+    Q_PROPERTY(QString queryLine READ queryLine WRITE setQueryLine NOTIFY queryLineChanged)
+    Q_PROPERTY(QString queryLineError READ queryLineError NOTIFY queryLineChanged)
+    Q_PROPERTY(int queryLineErrorAt READ queryLineErrorAt NOTIFY queryLineChanged)
     /// A comma-separated list, because a search for photographs means jpg and
     /// jpeg and heic and is one question.
     Q_PROPERTY(QString extension READ extension WRITE setExtension NOTIFY criteriaChanged)
