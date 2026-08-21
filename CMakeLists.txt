@@ -10,6 +10,19 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Found, never demanded. A preset file cannot ask a question -- every entry in
+# cacheVariables is an assertion -- so ccache in the base preset made a tool that
+# happened to be installed on one machine a requirement of the build, and nothing
+# configured at all on a machine without it. MSVC has never had it.
+#
+# This is the rule src/core/CMakeLists.txt states for every optional library, and
+# the build had one place that broke it.
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM)
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    message(STATUS "Compiler cache: ${CCACHE_PROGRAM}")
+endif()
+
 option(MOLE_BUILD_TESTS "Build unit tests" ON)
 option(MOLE_ENABLE_SANITIZERS "Enable ASan + UBSan" OFF)
 # Separate from the one above, because the two cannot be built together: address

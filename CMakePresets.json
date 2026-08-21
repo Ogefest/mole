@@ -12,7 +12,6 @@
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/${presetName}",
             "cacheVariables": {
-                "CMAKE_CXX_COMPILER_LAUNCHER": "ccache",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
             }
         },

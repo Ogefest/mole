@@ -136,6 +136,10 @@ Optional but recommended while developing:
 sudo apt install -y clang-format clang-tidy cppcheck valgrind
 ```
 
+`ccache` is optional too, and nothing asks for it: the build looks for it and uses
+it when it is there. It used to be named in the base preset, which made a machine
+without it fail to configure at all.
+
 `libarchive-dev` is optional: without it the archive plugin is skipped and the
 rest of the application builds normally. The same goes for `libcurl4-openssl-dev`
 and `libssl-dev`, without which the network plugin is skipped and there are no
@@ -193,6 +197,22 @@ Check a packaged build without a display:
 | `make format` | apply `.clang-format` across the tree |
 | `make tidy` | run `clang-tidy` over the compilation database |
 | `make help` | list all targets |
+
+#### Without `make`
+
+The `Makefile` is a thin wrapper over CMake presets, and it is GNU make with shell
+recipes — which is not the way in on Windows. Nothing needs porting, because the
+presets are the real build configuration and CMake drives them directly:
+
+```sh
+cmake --preset debug          # make build, first half
+cmake --build build/debug     # make build, second half
+ctest --test-dir build/debug --output-on-failure   # make test
+```
+
+`base` fixes the generator to Ninja, which exists on all three systems. On Windows
+that means running these from a developer command prompt, where the MSVC
+environment has already been set — Ninja finds no compiler otherwise.
 
 ## Keyboard
 
