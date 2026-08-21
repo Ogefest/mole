@@ -22,6 +22,8 @@ add_library(mole_core STATIC
     vfs/DirectoryWalker.cpp
     vfs/RemoteRegistry.h
     vfs/RemoteRegistry.cpp
+    vfs/NameRules.h
+    vfs/NameRules.cpp
     vfs/SystemVolumes.h
     vfs/SystemVolumes.cpp
     vfs/backends/LocalFileSystem.h

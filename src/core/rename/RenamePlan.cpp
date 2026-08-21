@@ -221,7 +221,7 @@ QString RenamePlan::apply(const QString& name, const QList<RenameRule>& rules, i
 }
 
 RenamePlan RenamePlan::build(const QList<VfsUri>& sources, const QList<RenameRule>& rules,
-    const QHash<QString, QStringList>& existingNames, Qt::CaseSensitivity sensitivity)
+    const QHash<QString, QStringList>& existingNames, Qt::CaseSensitivity sensitivity, const NameRules& names)
 {
     // One spelling per name, so this layer calls a collision exactly what the
     // backend underneath will call one. On a volume that ignores case, "a.txt"
@@ -259,6 +259,13 @@ RenamePlan RenamePlan::build(const QList<VfsUri>& sources, const QList<RenameRul
             // A separator would move the file rather than rename it, which is
             // not what anybody asked a rename tool to do.
             entry.problem = QStringLiteral("a name cannot contain a path separator");
+        } else if (const NameVerdict verdict = checkName(entry.newName, names); verdict.isRejected()) {
+            // Asked of the destination rather than assumed. The row is marked
+            // before anything moves, with the offending character named, rather
+            // than the run stopping part way through on an IoError that says
+            // only the path.
+            entry.problem = verdict.reason;
+            entry.suggestion = verdict.suggestion;
         } else if (entry.changed() && claimed.value(directory).contains(key(entry.newName))) {
             entry.problem = QStringLiteral("two files would get this name");
         } else if (entry.changed()) {

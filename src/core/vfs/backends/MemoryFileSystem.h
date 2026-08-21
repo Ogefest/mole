@@ -22,6 +22,7 @@ public:
     QString scheme() const override { return QStringLiteral("mem"); }
     VfsCapabilities capabilities() const override;
     Qt::CaseSensitivity pathCaseSensitivity() const override { return m_caseSensitivity; }
+    NameRules nameRules() const override { return m_nameRules; }
 
     Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) override;
     Result<FileEntry> stat(const VfsUri& target) override;
@@ -50,6 +51,10 @@ public:
     /// spelled. A fixture that folded names on the way in would pass a rename
     /// this whole exercise is about and report the wrong name afterwards.
     void setCaseSensitivity(Qt::CaseSensitivity sensitivity) { m_caseSensitivity = sensitivity; }
+
+    /// Refuses the names a real volume of that kind would refuse, so what a
+    /// transfer and a rename preview do about one is held on any machine.
+    void setNameRules(const NameRules& rules) { m_nameRules = rules; }
 
     /// Makes every operation touching `path` fail with `error`. Pass
     /// VfsError::None to clear. This is how the tests cover "the NAS went away
@@ -100,6 +105,7 @@ private:
 
     mutable QMutex m_mutex;
     Qt::CaseSensitivity m_caseSensitivity = Qt::CaseSensitive;
+    NameRules m_nameRules;
     QHash<QString, Node> m_nodes;
     QHash<QString, VfsError::Code> m_faults;
     int m_listDelayMs = 0;

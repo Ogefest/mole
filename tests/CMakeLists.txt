@@ -143,6 +143,7 @@ set_target_properties(compare-shots PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_
 # --- core: no GUI, no plugins -----------------------------------------------
 mole_add_test(tst_VfsUri            SOURCES core/tst_VfsUri.cpp)
 mole_add_test(tst_SystemVolumes     SOURCES core/tst_SystemVolumes.cpp)
+mole_add_test(tst_NameRules         SOURCES core/tst_NameRules.cpp)
 mole_add_test(tst_QmlConventions    SOURCES app/tst_QmlConventions.cpp)
 mole_add_test(tst_LocalFileSystem   SOURCES core/tst_LocalFileSystem.cpp)
 

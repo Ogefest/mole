@@ -82,8 +82,10 @@ private:
     /// What is already in each directory involved, so a rename onto an existing
     /// name is caught in the preview rather than by the filesystem.
     QHash<QString, QStringList> m_existing;
-    /// What the drive underneath does about case, read when the targets are set.
+    /// What the drive underneath does about case and about names, read when the
+    /// targets are set.
     Qt::CaseSensitivity m_caseSensitivity = Qt::CaseSensitive;
+    NameRules m_nameRules;
     QPointer<Task> m_task;
 };
 

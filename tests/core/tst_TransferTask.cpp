@@ -4,6 +4,7 @@
 
 #include "core/tasks/TaskManager.h"
 #include "core/tasks/TransferTask.h"
+#include "core/vfs/NameRules.h"
 #include "core/vfs/backends/LocalFileSystem.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
@@ -32,6 +33,8 @@ private slots:
     void conflictCanOverwrite();
     void mergesIntoAnExistingDirectory();
     void missingSourceIsRecordedNotFatal();
+    void aNameTheDestinationRefusesFailsOneFileAndNotTheRun();
+    void aRefusedNameInsideATreeIsOneFailureAndTheRestArrives();
     void readOnlyTargetFails();
     void aWriteThatFailsOnlyWhenClosedIsStillAFailure();
     void aReadThatStopsHalfWayIsNotAnEndOfFile();
@@ -364,6 +367,82 @@ void TestTransferTask::aWriteThatFailsOnlyWhenClosedIsStillAFailure()
 
     QCOMPARE(task->failedCount(), 1);
     QCOMPARE(task->copiedCount(), 0);
+}
+
+void TestTransferTask::aNameTheDestinationRefusesFailsOneFileAndNotTheRun()
+{
+    // The names that arrive off a remote drive. Every one of these is a
+    // perfectly legal name where it came from, and on Windows the copy used to
+    // stop part way through with an IoError carrying the path and no reason.
+    auto windows = std::make_shared<MemoryFileSystem>();
+    windows->setNameRules(NameRules::forPlatform(HostPlatform::Windows));
+    windows->addDirectory(QStringLiteral("/arrived"));
+
+    m_mem->addFile(QStringLiteral("/nas/really?.txt"), QByteArray("one"));
+    m_mem->addFile(QStringLiteral("/nas/a:b.txt"), QByteArray("two"));
+    m_mem->addFile(QStringLiteral("/nas/nul.txt"), QByteArray("three"));
+    m_mem->addFile(QStringLiteral("/nas/fine.txt"), QByteArray("four"));
+
+    TransferTask::Request request;
+    request.sourceFileSystem = m_mem;
+    request.targetFileSystem = windows;
+    request.sources = { VfsUri::fromString(QStringLiteral("mem:///nas/really?.txt")),
+        VfsUri::fromString(QStringLiteral("mem:///nas/a:b.txt")),
+        VfsUri::fromString(QStringLiteral("mem:///nas/nul.txt")),
+        VfsUri::fromString(QStringLiteral("mem:///nas/fine.txt")) };
+    request.targetDirectory = VfsUri::fromString(QStringLiteral("mem:///arrived"));
+
+    auto* task = new TransferTask(request);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task));
+
+    // Three refused, one copied, and the run finished.
+    QCOMPARE(task->failedCount(), 3);
+    QCOMPARE(task->copiedCount(), 1);
+    QVERIFY(windows->stat(VfsUri::fromString(QStringLiteral("mem:///arrived/fine.txt"))).ok());
+
+    // The reason names the character, and offers a name that would work --
+    // never applies it, because a file under a name nobody chose is harder to
+    // find later than one that did not arrive.
+    const QString failures = task->failures().join(QStringLiteral(" | "));
+    QVERIFY2(failures.contains(QLatin1Char('?')), qPrintable(failures));
+    QVERIFY2(failures.contains(QLatin1Char(':')), qPrintable(failures));
+    QVERIFY2(failures.contains(QStringLiteral("nul")), qPrintable(failures));
+    QVERIFY2(failures.contains(QStringLiteral("would be accepted")), qPrintable(failures));
+
+    // Nothing arrived under a sanitised name.
+    Result<FileEntryList> arrived
+        = windows->list(VfsUri::fromString(QStringLiteral("mem:///arrived")), CancelToken());
+    QVERIFY(arrived.ok());
+    QCOMPARE(arrived.value().size(), 1);
+}
+
+void TestTransferTask::aRefusedNameInsideATreeIsOneFailureAndTheRestArrives()
+{
+    // The case the ticket describes: a folder copied off a NAS, with the
+    // offending file somewhere inside it rather than at the top.
+    auto windows = std::make_shared<MemoryFileSystem>();
+    windows->setNameRules(NameRules::forPlatform(HostPlatform::Windows));
+    windows->addDirectory(QStringLiteral("/arrived"));
+
+    m_mem->addFile(QStringLiteral("/nas/photos/holiday.jpg"), QByteArray("keep"));
+    m_mem->addFile(QStringLiteral("/nas/photos/really?.jpg"), QByteArray("refused"));
+    m_mem->addFile(QStringLiteral("/nas/photos/more/later.jpg"), QByteArray("keep too"));
+
+    TransferTask::Request request;
+    request.sourceFileSystem = m_mem;
+    request.targetFileSystem = windows;
+    request.sources = { VfsUri::fromString(QStringLiteral("mem:///nas/photos")) };
+    request.targetDirectory = VfsUri::fromString(QStringLiteral("mem:///arrived"));
+
+    auto* task = new TransferTask(request);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(task->failedCount(), 1);
+    QVERIFY(windows->stat(VfsUri::fromString(QStringLiteral("mem:///arrived/photos/holiday.jpg"))).ok());
+    QVERIFY(windows->stat(VfsUri::fromString(QStringLiteral("mem:///arrived/photos/more/later.jpg"))).ok());
+    QVERIFY(!windows->stat(VfsUri::fromString(QStringLiteral("mem:///arrived/photos/really?.jpg"))).ok());
 }
 
 void TestTransferTask::readOnlyTargetFails()

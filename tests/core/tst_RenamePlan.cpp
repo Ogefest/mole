@@ -2,6 +2,7 @@
 #include "support/TestSupport.h"
 
 #include "core/rename/RenamePlan.h"
+#include "core/vfs/NameRules.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
 using namespace mole;
@@ -70,6 +71,7 @@ private slots:
     void anUnchangedRowIsNotABlockedRow();
     void aCaseOnlyRenameIsNotACollision();
     void thePreviewAgreesWithTheBackendAboutCollisions();
+    void aNameTheDestinationWillNotAcceptIsMarkedBeforeAnythingMoves();
 };
 
 // ------------------------------------------------------------------ rules
@@ -435,6 +437,33 @@ void TestRenamePlan::thePreviewAgreesWithTheBackendAboutCollisions()
                 QVERIFY(fs->rename(to, from).ok());
         }
     }
+}
+
+void TestRenamePlan::aNameTheDestinationWillNotAcceptIsMarkedBeforeAnythingMoves()
+{
+    // The bulk rename tool exists so somebody can trust the preview before
+    // touching a hundred files. Until now the only name it refused was one with
+    // a separator in it, so on Windows it would show a plan of clean rows that
+    // the filesystem was going to refuse one at a time.
+    const NameRules windows = NameRules::forPlatform(HostPlatform::Windows);
+
+    RenameRule rule = replace(QStringLiteral("scan"), QStringLiteral("a:b"));
+    const RenamePlan plan = RenamePlan::build(
+        urisIn(QStringLiteral("file:///data"), { "scan.png" }), { rule }, {}, Qt::CaseSensitive, windows);
+
+    const RenamePlan::Entry& entry = plan.entries().first();
+    QVERIFY(entry.isBlocked());
+    // The character is named, because "this name is invalid" tells somebody
+    // staring at a hundred rows nothing they can act on.
+    QVERIFY2(entry.problem.contains(QLatin1Char(':')), qPrintable(entry.problem));
+    // And a name that would work is offered rather than applied.
+    QCOMPARE(entry.suggestion, QStringLiteral("a_b.png"));
+
+    // The same plan against a drive that accepts the name is not blocked, so
+    // this is the destination's rule and not a new rule of the rename tool's.
+    const RenamePlan permissive = RenamePlan::build(urisIn(QStringLiteral("file:///data"), { "scan.png" }),
+        { rule }, {}, Qt::CaseSensitive, NameRules::forPlatform(HostPlatform::Posix));
+    QVERIFY(!permissive.entries().first().isBlocked());
 }
 
 MOLE_TEST_MAIN(TestRenamePlan)

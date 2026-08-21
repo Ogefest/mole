@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/vfs/FileEntry.h"
+#include "core/vfs/NameRules.h"
 #include "core/vfs/VfsTypes.h"
 #include "core/vfs/VfsUri.h"
 
@@ -49,6 +50,17 @@ public:
     /// Case-sensitive by default: it is what every protocol backend is, and it
     /// is the answer that refuses rather than assumes.
     virtual Qt::CaseSensitivity pathCaseSensitivity() const { return Qt::CaseSensitive; }
+
+    /// What this drive will accept in a name.
+    ///
+    /// The destination is what knows, so the destination is what answers. A FAT
+    /// stick on Linux is stricter than the disk it is plugged into; an NTFS
+    /// volume refuses a colon, a trailing dot and the MS-DOS device names; a
+    /// bucket refuses almost nothing.
+    ///
+    /// Permissive by default, which is what every protocol backend is, and what
+    /// this layer assumed silently before it could be asked.
+    virtual NameRules nameRules() const { return {}; }
 
     /// Directory listing. Must poll `cancel` on slow backends.
     virtual Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) = 0;

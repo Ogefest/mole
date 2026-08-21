@@ -61,9 +61,11 @@ void BulkRenameController::refreshDirectoryContents()
     for (const VfsUri& source : std::as_const(m_sources))
         directories.insert(source.parent().toString());
 
-    // Whatever the backend calls a collision is what the preview has to predict,
-    // so the answer comes from the drive rather than from the uri's scheme.
+    // Whatever the backend calls a collision, and whatever it will not accept in
+    // a name, is what the preview has to predict -- so both answers come from
+    // the drive rather than from the uri's scheme or from this machine.
     m_caseSensitivity = Qt::CaseSensitive;
+    m_nameRules = NameRules();
 
     for (const QString& directory : directories) {
         const VfsUri uri = VfsUri::fromString(directory);
@@ -72,6 +74,7 @@ void BulkRenameController::refreshDirectoryContents()
             continue;
         if (fs->pathCaseSensitivity() == Qt::CaseInsensitive)
             m_caseSensitivity = Qt::CaseInsensitive;
+        m_nameRules = fs->nameRules();
         if (Result<FileEntryList> listed = fs->list(uri, CancelToken()); listed.ok()) {
             QStringList names;
             for (const FileEntry& entry : listed.value())
@@ -139,7 +142,7 @@ QString BulkRenameController::summary() const
 
 void BulkRenameController::rebuildPreview()
 {
-    m_plan = RenamePlan::build(m_sources, m_rules, m_existing, m_caseSensitivity);
+    m_plan = RenamePlan::build(m_sources, m_rules, m_existing, m_caseSensitivity, m_nameRules);
     emit previewChanged();
 }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/rename/RenameRule.h"
+#include "core/vfs/NameRules.h"
 #include "core/vfs/VfsUri.h"
 
 #include <QList>
@@ -25,6 +26,10 @@ public:
         QString newName;
         /// Why this row cannot be renamed, or empty when it can.
         QString problem;
+        /// A name the destination would accept, when the problem is the name
+        /// itself. Offered, never applied: a file that arrives under a name
+        /// nobody chose is harder to find later than one that did not arrive.
+        QString suggestion;
 
         bool changed() const { return newName != originalName; }
         bool isBlocked() const { return !problem.isEmpty(); }
@@ -39,9 +44,13 @@ public:
     /// plan is fine that the filesystem will refuse -- and the whole point of the
     /// bulk rename tool is that somebody can trust the preview before touching a
     /// hundred files.
+    /// `names` is what the drive will accept in a name, and it is the other
+    /// thing the preview has to know: the bulk rename tool exists so somebody
+    /// can trust the preview before touching a hundred files, and a plan full of
+    /// clean rows that the filesystem will refuse is worse than no preview.
     static RenamePlan build(const QList<VfsUri>& sources, const QList<RenameRule>& rules,
         const QHash<QString, QStringList>& existingNames = {},
-        Qt::CaseSensitivity sensitivity = Qt::CaseSensitive);
+        Qt::CaseSensitivity sensitivity = Qt::CaseSensitive, const NameRules& names = {});
 
     const QList<Entry>& entries() const { return m_entries; }
     int changedCount() const;

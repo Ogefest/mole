@@ -191,6 +191,8 @@ public:
     {
         return m_inner ? m_inner->pathCaseSensitivity() : Qt::CaseSensitive;
     }
+    /// Also the volume's own, for the same reason.
+    NameRules nameRules() const override { return m_inner ? m_inner->nameRules() : NameRules(); }
     Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) override;
     Result<FileEntry> stat(const VfsUri& target) override;
     Result<void> makeDirectory(const VfsUri& target) override;

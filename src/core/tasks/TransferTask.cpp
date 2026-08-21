@@ -65,6 +65,28 @@ bool TransferTask::planJobs(QList<Job>& jobsOut)
         const QString arrivalName = (m_request.sources.size() == 1 && !m_request.targetName.isEmpty())
             ? m_request.targetName
             : source.fileName();
+
+        // Asked before a byte moves, and asked of the destination, because the
+        // destination is what knows. This is the code that names the output of
+        // extracting an archive and of downloading from a remote drive -- where
+        // "really?.txt" and "a:b.txt" are perfectly legal names -- so on Windows
+        // a folder copied off a NAS used to fail partway through with an IoError
+        // carrying a path and no reason, having already written everything
+        // before the offending file.
+        //
+        // One file's failure, not the run's, and not a silently sanitised name:
+        // a file that arrives under a name nobody chose is harder to find later
+        // than one that did not arrive.
+        if (const NameVerdict verdict = checkName(arrivalName, m_request.targetFileSystem->nameRules());
+            verdict.isRejected()) {
+            recordFailure(source,
+                VfsError::make(VfsError::IoError,
+                    verdict.suggestion.isEmpty() ? verdict.reason
+                                                 : QStringLiteral("%1 -- \"%2\" would be accepted")
+                                                       .arg(verdict.reason, verdict.suggestion)));
+            continue;
+        }
+
         const VfsUri target = m_request.targetDirectory.child(arrivalName);
 
         // A directory cannot be put inside itself. The copy is finite -- the
@@ -89,8 +111,25 @@ bool TransferTask::planJobs(QList<Job>& jobsOut)
         // The directory itself first, so its children have somewhere to land.
         jobsOut.append(Job { source, target, true, 0, sourceIndex });
 
+        const NameRules arrivalRules = m_request.targetFileSystem->nameRules();
+
         DirectoryWalker walker(m_request.sourceFileSystem);
         Result<void> walked = walker.walk(source, cancelToken(), [&](const FileEntry& entry, int) {
+            // Every child gets the same question as the top-level name, and for
+            // the same reason: the offending file is somewhere inside a tree
+            // copied off a drive with looser rules, and it is one file's failure
+            // rather than the run's.
+            if (const NameVerdict verdict = checkName(entry.name, arrivalRules); verdict.isRejected()) {
+                recordFailure(entry.uri,
+                    VfsError::make(VfsError::IoError,
+                        verdict.suggestion.isEmpty() ? verdict.reason
+                                                     : QStringLiteral("%1 -- \"%2\" would be accepted")
+                                                           .arg(verdict.reason, verdict.suggestion)));
+                // A directory nothing can be written into is a subtree that
+                // cannot arrive, and saying so once beats saying it per file.
+                return entry.isDir ? DirectoryWalker::Action::SkipSubtree : DirectoryWalker::Action::Continue;
+            }
+
             // Rebuild each child's path relative to the source root.
             const QString relative = entry.uri.path().mid(source.path().size());
             jobsOut.append(

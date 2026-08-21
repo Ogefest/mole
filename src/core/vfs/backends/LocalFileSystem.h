@@ -25,6 +25,11 @@ public:
         return VfsUri::caseSensitivityFor(QStringLiteral("file"));
     }
 
+    /// What the local filesystem accepts, which is the platform's answer. A
+    /// stricter volume mounted on it -- a FAT stick, a share -- is not asked,
+    /// because Qt has no portable way to ask one.
+    NameRules nameRules() const override { return NameRules::forPlatform(); }
+
     /// "rwxr-xr--" on a platform that has such a thing, and empty on one that
     /// does not.
     ///
