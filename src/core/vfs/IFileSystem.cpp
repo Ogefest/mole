@@ -58,6 +58,19 @@ Result<FileEntryList> IFileSystem::search(const VfsUri&, const QString&, const C
     return VfsError::make(VfsError::NotSupported, QStringLiteral("native search not supported"));
 }
 
+FileActionList IFileSystem::actionsFor(const VfsUri&, const FileEntry&)
+{
+    return {};
+}
+
+Result<FileActionOutcome> IFileSystem::invoke(const QString& id, const VfsUri&, const CancelToken&)
+{
+    // Named, because an id reaching a drive that never offered it is the shell
+    // and the drive disagreeing, and the id is the only thing that says where.
+    return VfsError::make(
+        VfsError::NotSupported, QStringLiteral("this drive offers no action called \"%1\"").arg(id));
+}
+
 Result<void> closeAndReport(QIODevice& device)
 {
     device.close();

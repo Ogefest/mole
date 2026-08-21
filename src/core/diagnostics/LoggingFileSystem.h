@@ -42,6 +42,13 @@ public:
     Result<FileEntryList> search(
         const VfsUri& root, const QString& pattern, const CancelToken& cancel) override;
 
+    /// The drive underneath decides what it can do, not the wrapper. A decorator
+    /// that answered for itself would leave every drive-contributed action
+    /// unreachable the moment the mount was wrapped -- which is every mount.
+    FileActionList actionsFor(const VfsUri& target, const FileEntry& entry) override;
+    Result<FileActionOutcome> invoke(
+        const QString& id, const VfsUri& target, const CancelToken& cancel) override;
+
 private:
     FileSystemPtr m_inner;
     QString m_name;

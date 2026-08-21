@@ -204,6 +204,12 @@ public:
     Result<AccessInfo> access(const VfsUri& target) override;
     Result<FileEntryList> search(
         const VfsUri& root, const QString& pattern, const CancelToken& cancel) override;
+    /// What the drive underneath offers, for the same reason as the two above:
+    /// a wrapper that answered for itself would take away everything a drive
+    /// contributes the moment a test injected a fault into it.
+    FileActionList actionsFor(const VfsUri& target, const FileEntry& entry) override;
+    Result<FileActionOutcome> invoke(
+        const QString& id, const VfsUri& target, const CancelToken& cancel) override;
 
     /// The declared faults and the state shared with the open streams. Public
     /// because the stream devices need it and they are an implementation

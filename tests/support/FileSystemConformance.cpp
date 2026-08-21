@@ -2,6 +2,7 @@
 
 #include "core/vfs/PartialWrite.h"
 
+#include <QSet>
 #include <QTest>
 
 #include <algorithm>
@@ -184,6 +185,63 @@ void runFileSystemConformance(const ConformanceContext& context)
         first.join();
         second.join();
         QCOMPARE(wrong.load(), 0);
+    }
+
+    // --- optional: what only this drive can do ---------------------------
+    //
+    // A drive may offer an action nothing else has -- earlier versions of a
+    // file, a link to an object -- and nothing above the backend knows what it
+    // is. Both directions are checked, because both go wrong: a drive that
+    // offers an action it will not then perform, and a drive that offers none
+    // but answers invoke() anyway, which is the one that would let a feature
+    // work by accident on the backend it was written against.
+    {
+        const VfsUri subject = context.root.child(QStringLiteral("alpha.txt"));
+        const Result<FileEntry> entry = fs.stat(subject);
+        QVERIFY2(entry.ok(), qPrintable(entry.error().message));
+
+        const QString neverOffered = QStringLiteral("org.mole.conformance.never-offered");
+        const FileActionList actions = fs.actionsFor(subject, entry.value());
+
+        QSet<QString> ids;
+        for (const FileAction& action : actions) {
+            QVERIFY2(!action.id.isEmpty(), "a contributed action must carry an id");
+            // Namespaced, because two drives loaded at once must not be able to
+            // collide, and an id outlives the session that produced it.
+            QVERIFY2(action.id.contains(QLatin1Char('.')),
+                qPrintable(QStringLiteral("an action id must be namespaced: %1").arg(action.id)));
+            QVERIFY2(!action.title.isEmpty(),
+                qPrintable(QStringLiteral("%1 has nothing to show in a menu").arg(action.id)));
+            QVERIFY2(
+                !ids.contains(action.id), qPrintable(QStringLiteral("%1 was offered twice").arg(action.id)));
+            ids.insert(action.id);
+
+            if (!action.enabled)
+                continue;
+
+            const Result<FileActionOutcome> outcome = fs.invoke(action.id, subject, noCancel);
+            QVERIFY2(outcome.ok(),
+                qPrintable(QStringLiteral("%1 was offered and then refused: %2")
+                               .arg(action.id, outcome.error().message)));
+            // The two kinds are the whole vocabulary the interface has. An
+            // outcome carrying neither is one nothing can be shown for, and a
+            // drive that returns one has said it did something it did not do.
+            QVERIFY2(outcome.value().isValid(),
+                qPrintable(QStringLiteral("%1 answered with neither text nor uris").arg(action.id)));
+            for (const VfsUri& alternate : outcome.value().uris) {
+                QVERIFY2(alternate.isValid(),
+                    qPrintable(QStringLiteral("%1 returned a uri nothing can open").arg(action.id)));
+            }
+        }
+
+        // Whether it offered anything or not: an id this drive did not hand out
+        // is refused, and refused in the one way a caller can branch on.
+        const Result<FileActionOutcome> unknown = fs.invoke(neverOffered, subject, noCancel);
+        QVERIFY2(!unknown.ok(),
+            qPrintable(actions.isEmpty()
+                    ? QStringLiteral("a drive offering no action must not answer invoke()")
+                    : QStringLiteral("an id this drive never offered must not be performed")));
+        QCOMPARE(unknown.error().code, VfsError::NotSupported);
     }
 
     if (!context.expectsWriteSupport)

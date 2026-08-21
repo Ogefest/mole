@@ -158,6 +158,10 @@ mole_add_test(tst_SweepLeftovers   SOURCES core/tst_SweepLeftovers.cpp)
 mole_add_test(tst_KilledOutright    SOURCES core/tst_KilledOutright.cpp LIBS Qt6::Sql)
 mole_add_test(tst_MemoryFileSystem  SOURCES core/tst_MemoryFileSystem.cpp)
 
+# What one drive can do and another cannot: the second tier of capability, the
+# closed set of two outcomes, and the wrapper every mount goes through.
+mole_add_test(tst_FileActions       SOURCES core/tst_FileActions.cpp)
+
 # The fault injector is a test tool, and one that miscounts bytes would make
 # every suite built on it green for the wrong reason.
 mole_add_test(tst_FaultyFileSystem  SOURCES support/tst_FaultyFileSystem.cpp)

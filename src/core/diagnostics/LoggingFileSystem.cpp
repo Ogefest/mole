@@ -125,6 +125,30 @@ Result<FileEntryList> LoggingFileSystem::search(
     return watch(m_name, "search", subject, [&] { return m_inner->search(root, pattern, cancel); });
 }
 
+FileActionList LoggingFileSystem::actionsFor(const VfsUri& target, const FileEntry& entry)
+{
+    if (!driveLog().isDebugEnabled())
+        return m_inner->actionsFor(target, entry);
+
+    QElapsedTimer clock;
+    clock.start();
+    FileActionList actions = m_inner->actionsFor(target, entry);
+    const qint64 elapsed = clock.elapsed();
+
+    // How many, like a listing, and for the same reason: a drive that asks the
+    // far end what it can offer is a drive that can be slow to answer nothing.
+    qCDebug(driveLog, "[%s] actions %s: %lld offered in %lld ms", qPrintable(m_name),
+        qPrintable(target.toString()), static_cast<long long>(actions.size()), elapsed);
+    return actions;
+}
+
+Result<FileActionOutcome> LoggingFileSystem::invoke(
+    const QString& id, const VfsUri& target, const CancelToken& cancel)
+{
+    const QString subject = id + QStringLiteral(" on ") + target.toString();
+    return watch(m_name, "action", subject, [&] { return m_inner->invoke(id, target, cancel); });
+}
+
 FileSystemPtr withLogging(FileSystemPtr fileSystem, const QString& name)
 {
     if (!fileSystem || std::dynamic_pointer_cast<LoggingFileSystem>(fileSystem))

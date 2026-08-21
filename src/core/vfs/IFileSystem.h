@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/vfs/FileAction.h"
 #include "core/vfs/FileEntry.h"
 #include "core/vfs/NameRules.h"
 #include "core/vfs/VfsTypes.h"
@@ -122,6 +123,35 @@ public:
     /// otherwise the search feature walks the tree with list() instead.
     virtual Result<FileEntryList> search(
         const VfsUri& root, const QString& pattern, const CancelToken& cancel);
+
+    // ---- What only this drive can do -------------------------------------
+    //
+    // The second tier, alongside VfsCapability rather than inside it. The enum
+    // above holds what the core has to understand by name; these two hold what
+    // only the user acts on, so nothing between here and the menu ever learns
+    // what a particular drive brought. See FileAction.h and ADR-0075.
+
+    /// What this drive can do to `target` that another drive could not.
+    ///
+    /// Empty by default, which is every backend in the tree: a drive that
+    /// contributes nothing is asked nothing further, and needs no edit to say
+    /// so. `entry` is what the listing already knows about the node -- whether
+    /// it is a directory, how big it is, what it is called -- so a drive can
+    /// rule an action out without a second round trip.
+    ///
+    /// Called on a worker thread like everything else here, so it may talk to
+    /// the drive. It is asked about one node the user is looking at; whether a
+    /// whole listing can be marked up is MOLE-198's question, not this one's.
+    virtual FileActionList actionsFor(const VfsUri& target, const FileEntry& entry);
+
+    /// Does one of them, and answers with one of exactly two kinds.
+    ///
+    /// `id` is one this drive handed out. An id it has never seen means the
+    /// shell and the drive disagree about what is on offer, and the answer to
+    /// that is NotSupported rather than the nearest thing the drive can think
+    /// of -- which is why the default here refuses everything.
+    virtual Result<FileActionOutcome> invoke(
+        const QString& id, const VfsUri& target, const CancelToken& cancel);
 
 protected:
     static Result<void> notSupported(const char* what);

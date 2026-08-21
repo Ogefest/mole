@@ -11,6 +11,7 @@ add_library(mole_core STATIC
     vfs/VfsUri.h
     vfs/VfsUri.cpp
     vfs/FileEntry.h
+    vfs/FileAction.h
     vfs/IFileSystem.h
     vfs/PartialWrite.h
     vfs/IFileSystem.cpp

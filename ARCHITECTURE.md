@@ -89,6 +89,24 @@ storage: `QStorageInfo` blocks on an unreachable NFS mount, and asking from the
 UI thread would freeze the window. It is marked background so a refresh every
 minute cannot bury the copies and scans the user actually started.
 
+### What only one drive can do
+
+Drives are not interchangeable, and two tiers of capability say so.
+`VfsCapability` holds what the *core* has to understand by name — a copy branches
+on `Write`, a preview on `RandomAccessRead` — so each member is an `if` somewhere
+above the backend.
+
+`IFileSystem::actionsFor()` holds the other kind: what only the *user* acts on.
+A drive returns a list of `FileAction`s for a node — an id, a title, whether it is
+enabled — and `invoke()` performs one. The answer is one of exactly two things:
+a piece of text, or a list of alternate uris for the same file. Nothing between
+the backend and the menu learns what the action was, which is what lets a drive
+written next year offer something nobody has thought of yet. Both default to
+offering nothing, so a backend that contributes none needs no code at all.
+
+See [ADR-0075](docs/adr/0075-a-drive-offers-what-only-it-can-do.md) for the split
+between the two tiers and why the set of outcomes is closed.
+
 ## Tabs
 
 `TabsModel` holds `(feature id, controller)` pairs. The shell renders whatever

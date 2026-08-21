@@ -13,6 +13,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-21 #MOLE-193 A drive can offer an action no other drive has, and answers with a piece of text or a list of alternate uris for the same file — nothing between the backend and the menu learns what the action was
 2026-08-21 #MOLE-281 The guide says how to choose a theme, which four there are, and that its pictures are all taken in Midnight
 2026-08-21 #MOLE-280 Two light themes, Paper and Workbench, and the controls, previews and code colours that follow a theme's polarity; the active view mode and every view's primary button are now legible rather than a drop shadow
 2026-08-21 #MOLE-279 Mole ships two themes, Midnight and Slate, and the View menu picks between them; the choice is remembered

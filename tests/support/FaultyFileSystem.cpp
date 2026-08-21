@@ -751,4 +751,21 @@ Result<FileEntryList> FaultyFileSystem::search(
     return m_inner->search(root, pattern, cancel);
 }
 
+FileActionList FaultyFileSystem::actionsFor(const VfsUri& target, const FileEntry& entry)
+{
+    // A revoked drive offers nothing rather than an error: there is nowhere in
+    // the answer to put one, and a drive that has gone away can do nothing.
+    if (m_policy->revoked.load())
+        return {};
+    return m_inner->actionsFor(target, entry);
+}
+
+Result<FileActionOutcome> FaultyFileSystem::invoke(
+    const QString& id, const VfsUri& target, const CancelToken& cancel)
+{
+    if (m_policy->revoked.load())
+        return revokedError();
+    return m_inner->invoke(id, target, cancel);
+}
+
 } // namespace mole::test
