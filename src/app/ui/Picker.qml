@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.Material
 
 // A ComboBox whose dropdown is as wide as the names in it.
 //
@@ -19,6 +20,12 @@ ComboBox {
     id: picker
 
     implicitContentWidthPolicy: ComboBox.WidestText
+
+    // The list drops onto the panel ground like every other popup. Said here
+    // because the window no longer hands a background down -- see ADR-0074 -- and
+    // without it the style falls back to Material's own grey, which is a colour
+    // nobody in this application chose.
+    Material.background: App.colour.panel
 
     /// The label of entry `index`, however the model spells one: a `textRole` out
     /// of an object, or the entry itself when it is already a string.

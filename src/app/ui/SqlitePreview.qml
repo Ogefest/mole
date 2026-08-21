@@ -69,7 +69,7 @@ Item {
             Layout.margins: 8
             visible: controller && controller.errorText.length > 0
             text: controller ? controller.errorText : ""
-            color: Material.color(Material.Red)
+            color: App.colour.bad
             wrapMode: Text.Wrap
             font.pixelSize: App.secondaryTextSize
         }

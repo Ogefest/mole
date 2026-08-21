@@ -43,7 +43,7 @@ Item {
         anchors.centerIn: parent
         visible: picture.status === Image.Error
         wrapMode: Text.Wrap
-        color: Material.color(Material.Red)
+        color: App.colour.bad
         text: "This image could not be decoded by the installed Qt image plugins."
     }
 
@@ -72,7 +72,7 @@ Item {
         anchors.centerIn: parent
         visible: controller && controller.errorText.length > 0
         text: controller ? controller.errorText : ""
-        color: Material.color(Material.Red)
+        color: App.colour.bad
         wrapMode: Text.Wrap
     }
 }

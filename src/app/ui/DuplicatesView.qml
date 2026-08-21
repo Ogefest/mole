@@ -81,10 +81,10 @@ Item {
                     implicitWidth: 18
                     implicitHeight: 18
                 }
-                Button {
+                ActionButton {
                     objectName: "scanButton"
                     text: controller && controller.scanning ? "Stop" : "Scan"
-                    highlighted: !controller || !controller.scanning
+                    filled: !controller || !controller.scanning
                     enabled: controller && controller.roots.length > 0
                     onClicked: controller.scanning ? controller.cancel() : controller.scan()
                 }
@@ -458,13 +458,12 @@ Item {
                         color: App.colour.textFaint
                         text: controller ? controller.strategyDescription : ""
                     }
-                    Button {
+                    ActionButton {
                         objectName: "duplicateEmptyStateScan"
                         Layout.alignment: Qt.AlignHCenter
                         Layout.topMargin: 4
                         visible: view.hasRoots
                         text: "Scan"
-                        highlighted: true
                         onClicked: controller.scan()
                     }
                 }
@@ -690,6 +689,9 @@ Item {
     }
 
     Dialog {
+        // A dialog sits on the panel ground, said here rather than inherited:
+        // the window no longer hands one down. See ADR-0074.
+        Material.background: App.colour.panel
         // Dimmed rather than washed out: Qt's Material dark theme dims with
         // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
         Overlay.modal: DimVeil {}

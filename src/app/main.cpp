@@ -101,7 +101,10 @@ void installDragHook(mole::AppController& controller, QQuickWindow* window)
     if (!source || !window)
         return;
 
-    const mole::Palette::Tokens colour = controller.colour()->tokens();
+    // The palette rather than a copy of its values: a theme chosen after startup
+    // has to reach the badge too, and a captured Tokens would have frozen it at
+    // whatever the window opened in.
+    mole::Palette* colour = controller.colour();
     source->setStartHook([window, colour](std::unique_ptr<QMimeData> mime, Qt::DropActions actions) {
         const int count = static_cast<int>(mime->urls().size());
         // Parented to the window, which is also what the receiving application
@@ -109,7 +112,7 @@ void installDragHook(mole::AppController& controller, QQuickWindow* window)
         auto* drag = new QDrag(window);
         drag->setMimeData(mime.release());
         if (count > 1)
-            drag->setPixmap(countBadge(count, colour));
+            drag->setPixmap(countBadge(count, colour->tokens()));
         // Blocks until the gesture ends, which is what QDrag is: the nested loop
         // is the drag.
         drag->exec(actions);

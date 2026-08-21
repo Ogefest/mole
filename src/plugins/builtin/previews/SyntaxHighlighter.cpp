@@ -6,16 +6,55 @@
 namespace mole {
 namespace {
 
-    // Tuned against the dark theme the shell uses.
-    constexpr QLatin1String kKeyColour("#7cc4ff");
-    constexpr QLatin1String kStringColour("#a5d6a7");
-    constexpr QLatin1String kNumberColour("#f5b76b");
-    constexpr QLatin1String kKeywordColour("#c792ea");
-    constexpr QLatin1String kBuiltinColour("#89ddff");
-    constexpr QLatin1String kTagColour("#7cc4ff");
-    constexpr QLatin1String kAttributeColour("#f5b76b");
-    constexpr QLatin1String kCommentColour("#6f7788");
-    constexpr QLatin1String kPreprocessorColour("#e5947b");
+    /// What a source file's own colours are, per polarity.
+    ///
+    /// These are a *document's* colours rather than the window's, so they are not
+    /// palette tokens: a theme has no business deciding what a keyword looks
+    /// like, and two themes of the same polarity should colour the same file the
+    /// same way. But they cannot ignore a theme either -- every value below was
+    /// picked against a dark ground, and `#a5d6a7` on white is about 1.7:1, at
+    /// which point a string literal stops being text. So there are two sets and
+    /// the polarity says which is in force. See ADR-0074.
+    struct Palette
+    {
+        QLatin1String key;
+        QLatin1String string;
+        QLatin1String number;
+        QLatin1String keyword;
+        QLatin1String builtin;
+        QLatin1String tag;
+        QLatin1String attribute;
+        QLatin1String comment;
+        QLatin1String preprocessor;
+    };
+
+    constexpr Palette kDark {
+        QLatin1String("#7cc4ff"), // key
+        QLatin1String("#a5d6a7"), // string
+        QLatin1String("#f5b76b"), // number
+        QLatin1String("#c792ea"), // keyword
+        QLatin1String("#89ddff"), // builtin
+        QLatin1String("#7cc4ff"), // tag
+        QLatin1String("#f5b76b"), // attribute
+        QLatin1String("#6f7788"), // comment
+        QLatin1String("#e5947b"), // preprocessor
+    };
+
+    /// The same nine jobs, in the same hues where a hue survives the flip, and
+    /// every one of them at 4.5:1 or better on either light theme's ground --
+    /// except the comment, which is quiet on purpose and holds 3:1. Asserted in
+    /// tst_Palette rather than believed.
+    constexpr Palette kLight {
+        QLatin1String("#0550ae"), // key
+        QLatin1String("#116329"), // string
+        QLatin1String("#8a4b00"), // number
+        QLatin1String("#6639ba"), // keyword
+        QLatin1String("#0b5d6b"), // builtin
+        QLatin1String("#0550ae"), // tag
+        QLatin1String("#8a4b00"), // attribute
+        QLatin1String("#57606a"), // comment
+        QLatin1String("#a13d1f"), // preprocessor
+    };
 
     /// States carried across lines. A block comment that opens on line 4000 and
     /// closes on line 4200 has to survive the 4199 lines in between.
@@ -439,16 +478,41 @@ namespace {
 SourceHighlighter::SourceHighlighter(QObject* parent)
     : QSyntaxHighlighter(parent)
 {
-    m_key.setForeground(QColor(kKeyColour));
-    m_string.setForeground(QColor(kStringColour));
-    m_number.setForeground(QColor(kNumberColour));
-    m_keyword.setForeground(QColor(kKeywordColour));
-    m_builtin.setForeground(QColor(kBuiltinColour));
-    m_tag.setForeground(QColor(kTagColour));
-    m_attribute.setForeground(QColor(kAttributeColour));
-    m_comment.setForeground(QColor(kCommentColour));
     m_comment.setFontItalic(true);
-    m_preprocessor.setForeground(QColor(kPreprocessorColour));
+    applyColours();
+}
+
+QStringList SourceHighlighter::coloursFor(bool light)
+{
+    const Palette& p = light ? kLight : kDark;
+    return { p.key, p.string, p.number, p.keyword, p.builtin, p.tag, p.attribute, p.comment, p.preprocessor };
+}
+
+void SourceHighlighter::setLightBackground(bool light)
+{
+    if (light == m_light)
+        return;
+    m_light = light;
+    applyColours();
+    // The document was formatted when it was loaded and nothing else will ask
+    // again. Without this, a file already open keeps the colours of the theme it
+    // was opened under -- which is the one thing about this that will be missed.
+    if (document())
+        rehighlight();
+}
+
+void SourceHighlighter::applyColours()
+{
+    const Palette& p = m_light ? kLight : kDark;
+    m_key.setForeground(QColor(p.key));
+    m_string.setForeground(QColor(p.string));
+    m_number.setForeground(QColor(p.number));
+    m_keyword.setForeground(QColor(p.keyword));
+    m_builtin.setForeground(QColor(p.builtin));
+    m_tag.setForeground(QColor(p.tag));
+    m_attribute.setForeground(QColor(p.attribute));
+    m_comment.setForeground(QColor(p.comment));
+    m_preprocessor.setForeground(QColor(p.preprocessor));
 }
 
 QString SourceHighlighter::languageForSuffix(const QString& suffix)

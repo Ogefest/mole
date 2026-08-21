@@ -85,6 +85,20 @@ public:
     void setLanguage(const QString& languageId);
     QString language() const { return m_languageId; }
 
+    /// Which of the two colour sets to use, and a re-highlight when it changes.
+    ///
+    /// A source file's colours are the document's rather than the window's, so
+    /// they are not palette tokens -- but they cannot ignore the window either.
+    /// Every value in the dark set was picked against `#151922`; `#a5d6a7` on
+    /// white is about 1.7:1, at which point a string literal stops being text.
+    /// See ADR-0074.
+    void setLightBackground(bool light);
+    bool hasLightBackground() const { return m_light; }
+
+    /// The nine, in the order they are documented, for the contrast test. It is
+    /// the test the string colour would have failed for years.
+    static QStringList coloursFor(bool light);
+
     /// Attaches to the document behind a QML TextArea. Passing nullptr detaches.
     void attachTo(QQuickTextDocument* document);
 
@@ -92,6 +106,7 @@ protected:
     void highlightBlock(const QString& text) override;
 
 private:
+    void applyColours();
     void highlightCode(const QString& text, const Rules& rules);
     void highlightMarkup(const QString& text);
     /// Colours a run of digits starting at `start`; returns where it ended.
@@ -102,6 +117,7 @@ private:
 
     QString m_languageId;
     const Rules* m_rules = nullptr;
+    bool m_light = false;
 
     QTextCharFormat m_key;
     QTextCharFormat m_string;

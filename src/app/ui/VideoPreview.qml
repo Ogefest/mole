@@ -91,7 +91,7 @@ Item {
         width: Math.min(parent.width - 40, 420)
         visible: controller && controller.errorText.length > 0
         text: controller ? controller.errorText : ""
-        color: Material.color(Material.Red)
+        color: App.colour.bad
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.Wrap
     }

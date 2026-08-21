@@ -39,6 +39,17 @@ Rectangle {
     // source file looks like. See ADR-0072.
     readonly property var palette: terminal ? terminal.ansiPalette : []
 
+    // What the screen is painted where the shell has said nothing. Index 0 of the
+    // table above rather than a value of its own: a terminal's default background
+    // *is* its colour zero, and the two drifting apart is how inverse video ends
+    // up on the wrong ground.
+    readonly property color screenBackground: colourFor(0, App.colour.panel)
+    // And what it writes with when the shell has not said. Colour seven, for the
+    // same reason: a terminal's default foreground is one of its own sixteen, and
+    // a palette token here would be a dark grey on a dark screen the moment the
+    // window went light.
+    readonly property color screenForeground: colourFor(7, App.colour.textSecondary)
+
     function colourFor(index, fallback) {
         if (index < 0)
             return fallback
@@ -132,11 +143,17 @@ Rectangle {
             }
         }
 
-        Item {
+        // The screen keeps its own dark ground on either polarity, and the panel
+        // around it follows the palette. A terminal is dark inside a light
+        // application everywhere else, its sixteen colours are the terminal's own
+        // data rather than the window's paint, and a shell that prints a colour
+        // has no way of knowing what it will land on. See ADR-0074.
+        Rectangle {
             id: grid
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
+            color: panel.screenBackground
 
             onWidthChanged: panel.updateSize()
             onHeightChanged: panel.updateSize()
@@ -147,7 +164,10 @@ Rectangle {
                 width: parent.width - 40
                 visible: terminal && terminal.errorText.length > 0
                 text: terminal ? terminal.errorText : ""
-                color: App.colour.warn
+                // Drawn on the terminal's screen, so in the terminal's own
+                // colours: a palette token would be picked against the window's
+                // ground rather than against this one.
+                color: panel.colourFor(3, App.colour.warn)
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.Wrap
                 font.pixelSize: 12
@@ -214,7 +234,7 @@ Rectangle {
                                     height: metrics.height
                                     width: spanText.implicitWidth
                                     color: modelData.inverse
-                                           ? panel.colourFor(modelData.foreground, App.colour.textSecondary)
+                                           ? panel.colourFor(modelData.foreground, panel.screenForeground)
                                            : panel.colourFor(modelData.background, "transparent")
 
                                     Text {
@@ -224,8 +244,8 @@ Rectangle {
                                         font.pixelSize: 12
                                         font.bold: modelData.bold
                                         color: modelData.inverse
-                                               ? panel.colourFor(modelData.background, App.colour.panel)
-                                               : panel.colourFor(modelData.foreground, App.colour.textSecondary)
+                                               ? panel.colourFor(modelData.background, panel.screenBackground)
+                                               : panel.colourFor(modelData.foreground, panel.screenForeground)
                                     }
                                 }
                             }
@@ -241,7 +261,9 @@ Rectangle {
                     y: 2 + (terminal ? terminal.cursorRow : 0) * metrics.height
                     width: metrics.advanceWidth
                     height: metrics.height
-                    color: Material.accent
+                    // Colour twelve, bright blue: on the screen, so from the
+                    // screen's own sixteen rather than from the window's accent.
+                    color: panel.colourFor(12, App.colour.accent)
                     opacity: 0.55
                 }
             }

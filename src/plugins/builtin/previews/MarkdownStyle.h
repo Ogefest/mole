@@ -39,11 +39,18 @@ public:
         int bodyPixelSize = 15;
         QString monospaceFamily = QStringLiteral("monospace");
         /// The slab behind code, the colour of quoted text and of table rules.
-        /// Defaults match the application's dark palette; the view can pass its
-        /// own, because the palette belongs to the view.
+        ///
+        /// **These three are the window's paint rather than the document's**, and
+        /// the view passes them from the palette -- `hover`, `textMuted` and
+        /// `border` -- because it is the view that knows what the window is
+        /// painted in. They were stated here as dark values until MOLE-280, which
+        /// made a light theme possible and turned the code slab into a dark
+        /// rectangle in the middle of a white page. The defaults are what Midnight
+        /// passes, so a caller that sets nothing still gets a readable page. See
+        /// ADR-0074.
         QColor codeBackground = QColor(QStringLiteral("#232a36"));
-        QColor mutedText = QColor(QStringLiteral("#9aa3b5"));
-        QColor rule = QColor(QStringLiteral("#39414f"));
+        QColor mutedText = QColor(QStringLiteral("#8b93a7"));
+        QColor rule = QColor(QStringLiteral("#2a3140"));
     };
 
     explicit MarkdownStyle(QObject* parent = nullptr);

@@ -132,7 +132,11 @@ DialogButtonBox {
 
         contentItem: Label {
             text: acceptButton.text
-            color: acceptButton.enabled ? App.colour.text : App.colour.textMuted
+            // `window` rather than `text`: the acting colour is a light blue on
+            // the dark themes and a dark one on the light themes, so the label
+            // has to come from the far side of the polarity either way. Near-white
+            // on Midnight's accent is 2.2:1. See ADR-0074.
+            color: acceptButton.enabled ? App.colour.window : App.colour.textMuted
             font: acceptButton.font
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
@@ -145,7 +149,7 @@ DialogButtonBox {
                    ? App.colour.border
                    : acceptButton.down ? Qt.darker(box.actingColour, 1.3) : box.actingColour
             border.width: acceptButton.activeFocus ? 2 : 0
-            border.color: App.colour.text
+            border.color: App.colour.window
         }
     }
 }

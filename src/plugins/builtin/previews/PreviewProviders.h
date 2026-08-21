@@ -142,6 +142,19 @@ public:
     Q_INVOKABLE void attachDocument(
         QQuickTextDocument* document, int bodyPixelSize, const QString& monospaceFamily);
 
+    /// What the view knows about the window that a document has to follow.
+    ///
+    /// Two different things, and they are one call because they arrive together
+    /// and each one costs a pass over the document. `light` picks the source
+    /// colour set, which is the document's own vocabulary and not the palette's;
+    /// the three colours are the window's paint appearing inside a rendered page
+    /// -- the slab behind a code fence, a quotation, a table rule -- and the view
+    /// passes them because the view is what knows the palette. Called again when
+    /// the theme changes, so a file already open re-colours rather than keeping
+    /// the theme it was opened under. See ADR-0074.
+    Q_INVOKABLE void setDocumentStyle(
+        bool light, const QColor& codeBackground, const QColor& mutedText, const QColor& rule);
+
 signals:
     void textChanged();
     void windowChanged();
@@ -163,6 +176,7 @@ private:
     MarkdownStyle* m_markdownStyle = nullptr;
     QPointer<QQuickTextDocument> m_document;
     QString m_language;
+    bool m_light = false;
     bool m_markdown = false;
     bool m_isHtml = false;
     bool m_renderHtml = false;

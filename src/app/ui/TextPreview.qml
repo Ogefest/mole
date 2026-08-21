@@ -34,6 +34,23 @@ Item {
     function attachDocument() {
         if (controller && controller.attachDocument)
             controller.attachDocument(area.textDocument, view.bodyPixelSize, App.monospaceFont)
+        applyDocumentStyle()
+    }
+
+    // What the window knows that a document has to follow: which way up the theme
+    // is, and the three places the window's own paint shows through a rendered
+    // page -- the slab behind a code fence, a quotation, a table rule. Sent from
+    // here because the palette belongs to the view, and sent again when the theme
+    // changes, or a file already open would keep the colours it was opened under.
+    function applyDocumentStyle() {
+        if (controller && controller.setDocumentStyle)
+            controller.setDocumentStyle(App.colour.light, App.colour.hover,
+                                        App.colour.textMuted, App.colour.border)
+    }
+
+    Connections {
+        target: App.colour
+        function onChanged() { view.applyDocumentStyle() }
     }
 
     onControllerChanged: Qt.callLater(attachDocument)
@@ -88,7 +105,7 @@ Item {
                 Layout.fillWidth: true
                 visible: controller && controller.errorText.length > 0
                 text: controller ? controller.errorText : ""
-                color: Material.color(Material.Red)
+                color: App.colour.bad
                 wrapMode: Text.Wrap
                 font.pixelSize: App.secondaryTextSize
             }

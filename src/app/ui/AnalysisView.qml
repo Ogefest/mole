@@ -223,10 +223,9 @@ Item {
                         wrapMode: Text.Wrap
                         horizontalAlignment: Text.AlignHCenter
                     }
-                    Button {
+                    ActionButton {
                         Layout.alignment: Qt.AlignHCenter
                         text: "Scan now"
-                        highlighted: true
                         focusPolicy: Qt.NoFocus
                         onClicked: controller.refreshAll()
                     }
@@ -318,7 +317,7 @@ Item {
                         Layout.rightMargin: 10
                         visible: target && target.hasReport && target.headline.partial
                         wrapMode: Text.Wrap
-                        color: Material.color(Material.Amber)
+                        color: App.colour.warn
                         font.pixelSize: 12
                         text: target
                               ? "Incomplete: " + target.headline.unreadable
@@ -342,8 +341,8 @@ Item {
                                 font.pixelSize: 16
                                 font.bold: true
                                 color: target && target.hasDiff
-                                       ? (target.diffHeadline.grew ? Material.color(Material.Amber)
-                                                                   : Material.color(Material.Green))
+                                       ? (target.diffHeadline.grew ? App.colour.warn
+                                                                   : App.colour.ok)
                                        : App.colour.textMuted
                             }
                             Label {
@@ -367,8 +366,8 @@ Item {
                                 label: modelData.extension
                                 valueText: (modelData.grew ? "+" : "−") + modelData.bytesDeltaText
                                 fraction: modelData.peakShare
-                                barColor: modelData.grew ? Material.color(Material.Amber)
-                                                         : Material.color(Material.Green)
+                                barColor: modelData.grew ? App.colour.warn
+                                                         : App.colour.ok
                                 note: modelData.isNew ? "new" : (modelData.isGone ? "gone" : "")
                             }
                         }

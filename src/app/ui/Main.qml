@@ -55,15 +55,27 @@ ApplicationWindow {
     onYChanged: if (geometryWatcher.armed) geometryWatcher.restart()
     onVisibilityChanged: if (geometryWatcher.armed) geometryWatcher.restart()
 
-    // What a Material control draws for itself -- a text field's underline, a
-    // combo box's popup, a ripple -- comes from these three rather than from a
-    // token, so they are bound to tokens instead of stated twice. `theme` stays
-    // Dark: it is a polarity rather than a colour, and it becomes a question the
-    // moment there is a light palette to answer it with.
-    Material.theme: Material.Dark
+    // What a Material control draws for itself -- a text field's underline and
+    // placeholder, a combo box's popup, a dialog's ground, a ripple, a disabled
+    // label's opacity -- comes from these four rather than from a token, so they
+    // are bound to tokens instead of stated twice.
+    //
+    // `theme` is the polarity rather than a colour, and it is the one line that
+    // decides everything a control draws without being told. Left on Dark under a
+    // light palette the window is white and half the controls in it are not. See
+    // ADR-0074.
+    Material.theme: App.colour.light ? Material.Light : Material.Dark
     Material.primary: App.colour.panel
     Material.accent: App.colour.accent
-    Material.background: App.colour.window
+    // The window's own ground, not `Material.background`.
+    //
+    // Setting the latter here looked equivalent and was not: it propagates to
+    // every control in the window, and Material asks the *inherited* background
+    // for a highlighted button's fill. So the active layout button was painted in
+    // the window's colour with white text on it -- invisible the moment the window
+    // went light, and a dark pill that looked deliberate before that. A control
+    // that wants the palette's ground still asks for it by name. See ADR-0074.
+    color: App.colour.window
 
     // The shell knows nothing about what a tab does. It asks the registry what
     // exists, and loads whatever QML each feature points at.
@@ -484,6 +496,32 @@ ApplicationWindow {
         anchors.fill: parent
         orientation: Qt.Horizontal
 
+        // The divider, spelled out rather than left to the style. Material's own
+        // takes its colour from `Material.background`, which the window no longer
+        // sets, so it would have come out in Material's grey instead of the
+        // window's -- the same shape and the same two states, from the palette.
+        // The grip inside it stays Material's: it is the affordance the style
+        // draws on every SplitView rather than a colour anybody chose, and it
+        // follows the polarity on its own. See ADR-0074.
+        handle: Rectangle {
+            implicitWidth: 6
+            implicitHeight: 6
+            color: SplitHandle.pressed
+                   ? App.colour.window
+                   : Qt.lighter(App.colour.window, SplitHandle.hovered ? 1.2 : 1.1)
+
+            Rectangle {
+                color: Material.secondaryTextColor
+                width: parent.SplitHandle.pressed ? 3 : 1
+                height: parent.SplitHandle.pressed ? 3 : 8
+                radius: width
+                x: (parent.width - width) / 2
+                y: (parent.height - height) / 2
+
+                Behavior on height { NumberAnimation { duration: 100 } }
+            }
+        }
+
         Sidebar {
             onFocusWanted: root.focusCurrentTab()
             SplitView.preferredWidth: 240
@@ -705,6 +743,9 @@ ApplicationWindow {
     }
 
     Dialog {
+        // A dialog sits on the panel ground, said here rather than inherited:
+        // the window no longer hands one down. See ADR-0074.
+        Material.background: App.colour.panel
         // Dimmed rather than washed out: Qt's Material dark theme dims with
         // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
         Overlay.modal: DimVeil {}
@@ -766,7 +807,7 @@ ApplicationWindow {
                     required property string modelData
                     Layout.fillWidth: true
                     wrapMode: Text.Wrap
-                    color: Material.color(Material.Red)
+                    color: App.colour.bad
                     text: modelData
                 }
             }
@@ -774,6 +815,9 @@ ApplicationWindow {
     }
 
     Dialog {
+        // A dialog sits on the panel ground, said here rather than inherited:
+        // the window no longer hands one down. See ADR-0074.
+        Material.background: App.colour.panel
         // Dimmed rather than washed out: Qt's Material dark theme dims with
         // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
         Overlay.modal: DimVeil {}

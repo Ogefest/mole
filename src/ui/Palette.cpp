@@ -24,11 +24,15 @@ namespace {
     {
         const char* name;
         Palette::Tokens (*tokens)();
+        /// Stated, not derived. See the note on Palette::light.
+        bool light;
     };
 
-    const std::array<Shipped, 2> kThemes { {
-        { "Midnight", &Palette::midnight },
-        { "Slate", &Palette::slate },
+    const std::array<Shipped, 4> kThemes { {
+        { "Midnight", &Palette::midnight, false },
+        { "Slate", &Palette::slate, false },
+        { "Paper", &Palette::paper, true },
+        { "Workbench", &Palette::workbench, true },
     } };
 
 } // namespace
@@ -40,6 +44,7 @@ Palette::Palette(QObject* parent)
     // theme() and tokens disagreed, which nothing would notice.
     , m_tokens(tokensFor(defaultTheme()))
     , m_theme(defaultTheme())
+    , m_light(isLightTheme(defaultTheme()))
 {
 }
 
@@ -66,6 +71,15 @@ Palette::Tokens Palette::tokensFor(const QString& name)
     return kThemes.front().tokens();
 }
 
+bool Palette::isLightTheme(const QString& name)
+{
+    for (const Shipped& theme : kThemes) {
+        if (name == QLatin1String(theme.name))
+            return theme.light;
+    }
+    return kThemes.front().light;
+}
+
 bool Palette::setTheme(const QString& name)
 {
     const bool known = themeNames().contains(name);
@@ -82,6 +96,7 @@ bool Palette::setTheme(const QString& name)
 
     m_theme = settled;
     m_tokens = wanted;
+    m_light = isLightTheme(settled);
     emit changed();
     return known;
 }
@@ -121,7 +136,7 @@ Palette::Tokens Palette::slate()
         QColor(QStringLiteral("#3a4657")), // selection
         QColor(QStringLiteral("#dde4ed")), // text
         QColor(QStringLiteral("#c0c9d5")), // textSecondary
-        QColor(QStringLiteral("#8c96a5")), // textMuted
+        QColor(QStringLiteral("#97a2b2")), // textMuted
         QColor(QStringLiteral("#6c7583")), // textFaint
         QColor(QStringLiteral("#7fbdd1")), // accent
         QColor(QStringLiteral("#9fd0e0")), // link
@@ -129,6 +144,55 @@ Palette::Tokens Palette::slate()
         QColor(QStringLiteral("#e1be7c")), // warn
         QColor(QStringLiteral("#cd7d81")), // bad
         QColor(QStringLiteral("#2b3a45")), // busy
+    };
+}
+
+Palette::Tokens Palette::paper()
+{
+    // Flat: panel and pane are both white and the shell behind them is a shade
+    // off it, so the window reads as one sheet with things drawn on it.
+    return Tokens {
+        QColor(QStringLiteral("#f2f3f5")), // window
+        QColor(QStringLiteral("#ffffff")), // panel
+        QColor(QStringLiteral("#ffffff")), // pane
+        QColor(QStringLiteral("#dfe3e8")), // border
+        QColor(QStringLiteral("#eceff3")), // hover
+        QColor(QStringLiteral("#dbe7f8")), // selection
+        QColor(QStringLiteral("#191c21")), // text
+        QColor(QStringLiteral("#414852")), // textSecondary
+        QColor(QStringLiteral("#666d78")), // textMuted
+        QColor(QStringLiteral("#949aa4")), // textFaint
+        QColor(QStringLiteral("#2f6feb")), // accent
+        QColor(QStringLiteral("#1f5ed6")), // link
+        QColor(QStringLiteral("#1f7a3d")), // ok
+        QColor(QStringLiteral("#96650a")), // warn
+        QColor(QStringLiteral("#c23a30")), // bad
+        QColor(QStringLiteral("#eaf1fc")), // busy
+    };
+}
+
+Palette::Tokens Palette::workbench()
+{
+    // The other answer to the same polarity: the chrome is a visible grey and
+    // pure white is kept for the listing, so a pane reads as a pane without
+    // relying on the focus ring to say where it is.
+    return Tokens {
+        QColor(QStringLiteral("#e6e9ec")), // window
+        QColor(QStringLiteral("#f2f4f6")), // panel
+        QColor(QStringLiteral("#ffffff")), // pane
+        QColor(QStringLiteral("#c8ced6")), // border
+        QColor(QStringLiteral("#dde2e8")), // hover
+        QColor(QStringLiteral("#cde6ea")), // selection
+        QColor(QStringLiteral("#10151a")), // text
+        QColor(QStringLiteral("#39414b")), // textSecondary
+        QColor(QStringLiteral("#5e6873")), // textMuted
+        QColor(QStringLiteral("#8d97a3")), // textFaint
+        QColor(QStringLiteral("#0f6c80")), // accent
+        QColor(QStringLiteral("#0b5a6b")), // link
+        QColor(QStringLiteral("#2c7a3f")), // ok
+        QColor(QStringLiteral("#9a6508")), // warn
+        QColor(QStringLiteral("#b6362c")), // bad
+        QColor(QStringLiteral("#dff0f3")), // busy
     };
 }
 

@@ -40,6 +40,7 @@ set(MOLE_QML_FILES
     ui/CompressDialog.qml
     ui/TargetList.qml
     ui/ConfirmButtons.qml
+    ui/ActionButton.qml
     ui/DimVeil.qml
     ui/Sidebar.qml
     ui/UnlockDialog.qml

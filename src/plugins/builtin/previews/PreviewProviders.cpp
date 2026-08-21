@@ -259,6 +259,26 @@ void TextPreviewController::attachDocument(
     applyViewers();
 }
 
+void TextPreviewController::setDocumentStyle(
+    bool light, const QColor& codeBackground, const QColor& mutedText, const QColor& rule)
+{
+    m_light = light;
+
+    MarkdownStyle::Metrics metrics = m_markdownStyle->metrics();
+    if (codeBackground.isValid())
+        metrics.codeBackground = codeBackground;
+    if (mutedText.isValid())
+        metrics.mutedText = mutedText;
+    if (rule.isValid())
+        metrics.rule = rule;
+    // setMetrics restyles whatever document is attached, so a page already open
+    // follows the theme rather than waiting for the next file.
+    m_markdownStyle->setMetrics(metrics);
+
+    // And the same for a source file, which the highlighter re-lays itself.
+    m_highlighter->setLightBackground(light);
+}
+
 void TextPreviewController::updateDisplayText()
 {
     m_displayText = isRenderedHtml() ? withoutExternalReferences(m_text) : m_text;

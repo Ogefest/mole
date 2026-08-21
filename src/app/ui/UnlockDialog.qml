@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.Material
 import QtQuick.Layouts
 
 // Asking for the passphrase that opens the credential store.
@@ -14,6 +15,9 @@ import QtQuick.Layouts
 // be asked for in a modal; the reason behind that stands and is why the other
 // half was kept. See docs/adr/0031-a-locked-drive-is-connected-when-it-is-opened.md.
 Dialog {
+    // A dialog sits on the panel ground, said here rather than inherited:
+    // the window no longer hands one down. See ADR-0074.
+    Material.background: App.colour.panel
     // Dimmed rather than washed out: Qt's Material dark theme dims with
     // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
     Overlay.modal: DimVeil {}

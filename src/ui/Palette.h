@@ -49,6 +49,16 @@ class Palette : public QObject
     /// Which of the shipped themes is in force. Notifies through the same signal
     /// as the tokens, because it only ever moves when they do.
     Q_PROPERTY(QString theme READ theme NOTIFY changed)
+    /// Whether the current theme is a light one.
+    ///
+    /// Stated per theme rather than worked out from the tokens. Sixteen colours
+    /// cannot be interrogated for a polarity reliably, and guessing from the
+    /// luminance of `window` is the kind of cleverness that holds for the four
+    /// themes it was written against and fails on the fifth. What reads this is
+    /// everything that is *not* a token: `Material.theme`, and the two document
+    /// colour sets that have to follow a polarity without following a palette.
+    /// See ADR-0074.
+    Q_PROPERTY(bool light READ isLight NOTIFY changed)
 
 public:
     /// One theme's worth of values. Sixteen fields in the order the tokens are
@@ -95,6 +105,7 @@ public:
     const Tokens& tokens() const { return m_tokens; }
 
     QString theme() const { return m_theme; }
+    bool isLight() const { return m_light; }
     /// Repaints the whole window and announces it once. Nothing happens when the
     /// theme asked for is the one already in force.
     ///
@@ -109,12 +120,19 @@ public:
     static QString defaultTheme();
     /// The default's values for a name that is not a theme.
     static Tokens tokensFor(const QString& name);
+    /// False for a name that is not a theme, the default being a dark one.
+    static bool isLightTheme(const QString& name);
 
     /// What Mole has looked like since it had a window.
     static Tokens midnight();
     /// The same window one step cooler and softer. Sixteen different values and
     /// nothing else: no polarity to reconsider, no control that stops working.
     static Tokens slate();
+    /// Flat and light: panel and pane both white, the shell a shade off it.
+    static Tokens paper();
+    /// Light, with the chrome in a visible grey and pure white kept for the
+    /// listing, so a pane reads as a pane without relying on the focus ring.
+    static Tokens workbench();
 
 signals:
     /// One signal for all sixteen, because they only ever move together. QML
@@ -124,6 +142,7 @@ signals:
 private:
     Tokens m_tokens;
     QString m_theme;
+    bool m_light = false;
 };
 
 } // namespace mole

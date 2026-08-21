@@ -10,6 +10,9 @@ import QtQuick.Layouts
 // itself, so a new provider appears with a correct form and nothing in this file
 // changes. That is the whole reason drives are a plugin seam.
 Dialog {
+    // A dialog sits on the panel ground, said here rather than inherited:
+    // the window no longer hands one down. See ADR-0074.
+    Material.background: App.colour.panel
     // Dimmed rather than washed out: Qt's Material dark theme dims with
     // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
     Overlay.modal: DimVeil {}
@@ -628,10 +631,9 @@ Dialog {
                             dialog.startNew()
                         }
                     }
-                    Button {
+                    ActionButton {
                         objectName: "saveDriveButton"
                         text: "Save"
-                        highlighted: true
                         enabled: nameField.text.trim().length > 0 && dialog.factory.length > 0
                         onClicked: {
                             saveError.text = ""

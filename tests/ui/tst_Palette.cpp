@@ -1,3 +1,4 @@
+#include "plugins/builtin/previews/SyntaxHighlighter.h"
 #include "support/MoleTestMain.h"
 #include "ui/AppController.h"
 #include "ui/Palette.h"
@@ -10,6 +11,8 @@
 #include <QTest>
 
 #include <array>
+#include <cmath>
+#include <utility>
 
 using namespace mole;
 
@@ -26,6 +29,7 @@ private slots:
     void aThemeNobodyShipsOpensOnTheDefault();
     void midnightIsWhatMoleAlreadyLookedLike();
     void everyShippedThemeIsAWholePalette();
+    void everyThemeMeetsAStatedContrastFloor();
 };
 
 namespace {
@@ -57,6 +61,22 @@ const std::array<Token, 16> kTokens { {
     { "bad", &Palette::Tokens::bad },
     { "busy", &Palette::Tokens::busy },
 } };
+
+/// WCAG 2.1's relative luminance and contrast ratio, which is the only widely
+/// agreed answer to "can this be read". Eight lines rather than a dependency.
+double luminance(const QColor& c)
+{
+    const auto channel
+        = [](double v) { return v <= 0.03928 ? v / 12.92 : std::pow((v + 0.055) / 1.055, 2.4); };
+    return 0.2126 * channel(c.redF()) + 0.7152 * channel(c.greenF()) + 0.0722 * channel(c.blueF());
+}
+
+double contrast(const QColor& a, const QColor& b)
+{
+    const double la = luminance(a);
+    const double lb = luminance(b);
+    return (std::max(la, lb) + 0.05) / (std::min(la, lb) + 0.05);
+}
 
 } // namespace
 
@@ -188,20 +208,139 @@ void TestPalette::midnightIsWhatMoleAlreadyLookedLike()
 void TestPalette::everyShippedThemeIsAWholePalette()
 {
     const QStringList names = Palette::themeNames();
-    QCOMPARE(names, QStringList({ QStringLiteral("Midnight"), QStringLiteral("Slate") }));
+    QCOMPARE(names,
+        QStringList({ QStringLiteral("Midnight"), QStringLiteral("Slate"), QStringLiteral("Paper"),
+            QStringLiteral("Workbench") }));
     QCOMPARE(Palette::defaultTheme(), QStringLiteral("Midnight"));
 
+    int lightThemes = 0;
     for (const QString& name : names) {
         const Palette::Tokens t = Palette::tokensFor(name);
         for (const Token& token : kTokens) {
             QVERIFY2((t.*(token.field)).isValid(),
                 qPrintable(QStringLiteral("%1's %2 is not a colour").arg(name, QLatin1String(token.name))));
         }
-        // Both of these are dark, so text is lighter than the ground under it.
-        // MOLE-280 is where that stops being an assumption and becomes a polarity.
-        QVERIFY2(t.text.lightness() > t.pane.lightness(),
-            qPrintable(QStringLiteral("%1 paints text no lighter than the pane under it").arg(name)));
+        // The polarity is stated per theme, so what is worth checking is that the
+        // values agree with what was stated: text on the far side of the ground
+        // from it, either way up. A theme that said light and painted dark would
+        // take `Material.theme` and both document colour sets with it.
+        const bool light = Palette::isLightTheme(name);
+        lightThemes += light ? 1 : 0;
+        QVERIFY2(light == (t.text.lightness() < t.pane.lightness()),
+            qPrintable(QStringLiteral("%1 says %2 and paints the other way")
+                           .arg(name, light ? QStringLiteral("light") : QStringLiteral("dark"))));
     }
+
+    // Two of each, because a chooser with three dark entries and one light one is
+    // not what was decided.
+    QCOMPARE(lightThemes, 2);
+}
+
+/// The test the source highlighter's nine colours would have failed for years.
+///
+/// `kStringColour` was `#a5d6a7`, a pastel green picked against `#151922`. On white
+/// it is about 1.7:1, at which point a string literal stops being text -- and
+/// nothing in the tree would have said so, because a colour that is wrong is still
+/// a colour. So this is a table of the pairs that actually meet on screen, with a
+/// floor per pair and the reason for the floor beside it, run over every theme.
+/// Anything added after these four is held to the same numbers.
+void TestPalette::everyThemeMeetsAStatedContrastFloor()
+{
+    struct Pair
+    {
+        const char* foreground;
+        QColor Palette::Tokens::*fg;
+        const char* background;
+        QColor Palette::Tokens::*bg;
+        double floor;
+        const char* why;
+    };
+
+    // 4.5 is WCAG AA for text at this size. 3.0 is AA for large text and for a
+    // graphic that only has to be *seen*. Where a floor is lower than 4.5 the
+    // reason is in the row.
+    static const Pair kPairs[] = {
+        { "text", &Palette::Tokens::text, "pane", &Palette::Tokens::pane, 4.5, "a file name" },
+        { "text", &Palette::Tokens::text, "panel", &Palette::Tokens::panel, 4.5, "a dialog's prose" },
+        { "text", &Palette::Tokens::text, "hover", &Palette::Tokens::hover, 4.5, "a row under the pointer" },
+        { "text", &Palette::Tokens::text, "selection", &Palette::Tokens::selection, 4.5,
+            "the row Enter would act on" },
+        { "textSecondary", &Palette::Tokens::textSecondary, "pane", &Palette::Tokens::pane, 4.5,
+            "a size, a date" },
+        { "textSecondary", &Palette::Tokens::textSecondary, "panel", &Palette::Tokens::panel, 4.5,
+            "a column header" },
+        { "textMuted", &Palette::Tokens::textMuted, "panel", &Palette::Tokens::panel, 4.5,
+            "a label, a count -- quiet, still meant to be read" },
+        { "textMuted", &Palette::Tokens::textMuted, "pane", &Palette::Tokens::pane, 4.5, "a keyboard hint" },
+        { "textMuted", &Palette::Tokens::textMuted, "window", &Palette::Tokens::window, 4.5,
+            "the toolbar's hints" },
+        { "textMuted", &Palette::Tokens::textMuted, "busy", &Palette::Tokens::busy, 4.5,
+            "the task strip while it is working" },
+        // The floor, and the only place in the palette that is allowed to be hard
+        // to read: a placeholder and a disabled control. WCAG exempts both. The
+        // floor is here so it cannot disappear altogether.
+        { "textFaint", &Palette::Tokens::textFaint, "panel", &Palette::Tokens::panel, 2.5, "a placeholder" },
+        { "textFaint", &Palette::Tokens::textFaint, "pane", &Palette::Tokens::pane, 2.5, "a disabled row" },
+        // Graphic rather than text: a focus ring, the active pane's border, a
+        // four-pixel capacity bar.
+        { "accent", &Palette::Tokens::accent, "window", &Palette::Tokens::window, 3.0, "a focus ring" },
+        { "accent", &Palette::Tokens::accent, "panel", &Palette::Tokens::panel, 3.0, "the active tab" },
+        { "accent", &Palette::Tokens::accent, "pane", &Palette::Tokens::pane, 3.0,
+            "the active pane's border" },
+        { "link", &Palette::Tokens::link, "panel", &Palette::Tokens::panel, 3.0, "a badge" },
+        { "link", &Palette::Tokens::link, "pane", &Palette::Tokens::pane, 3.0, "something to follow" },
+        // A semantic colour carries words as well as marks, so it is nearer text
+        // than graphic -- but never alone. ADR-0010: the letter or the word is the
+        // signal and the colour agrees with it. Hence 4.0 rather than 4.5.
+        { "ok", &Palette::Tokens::ok, "panel", &Palette::Tokens::panel, 4.0, "a drive that is fine" },
+        { "warn", &Palette::Tokens::warn, "panel", &Palette::Tokens::panel, 4.0, "a drive nearly full" },
+        { "bad", &Palette::Tokens::bad, "panel", &Palette::Tokens::panel, 4.0, "a failure" },
+        { "ok", &Palette::Tokens::ok, "pane", &Palette::Tokens::pane, 4.0, "an added file" },
+        { "warn", &Palette::Tokens::warn, "pane", &Palette::Tokens::pane, 4.0, "a modified file" },
+        { "bad", &Palette::Tokens::bad, "pane", &Palette::Tokens::pane, 4.0, "a conflicted file" },
+        // A hairline only has to be seen at all. Below this it is not there.
+        { "border", &Palette::Tokens::border, "panel", &Palette::Tokens::panel, 1.15, "a hairline" },
+        { "border", &Palette::Tokens::border, "pane", &Palette::Tokens::pane, 1.15, "a pane's edge" },
+    };
+
+    // A source file's colours sit on whatever the text area is painted in, which
+    // is the window's ground. The comment is the one that is quiet on purpose --
+    // a comment is the thing in a source file you are meant to be able to skip.
+    static const char* kCodeNames[]
+        = { "key", "string", "number", "keyword", "builtin", "tag", "attribute", "comment", "preprocessor" };
+    constexpr int kCommentIndex = 7;
+
+    QStringList failures;
+    for (const QString& name : Palette::themeNames()) {
+        const Palette::Tokens t = Palette::tokensFor(name);
+        for (const Pair& pair : kPairs) {
+            const double ratio = contrast(t.*(pair.fg), t.*(pair.bg));
+            if (ratio + 0.005 >= pair.floor)
+                continue;
+            failures.append(QStringLiteral("%1: %2 on %3 is %4:1, floor %5 (%6)")
+                                .arg(name, QLatin1String(pair.foreground), QLatin1String(pair.background),
+                                    QString::number(ratio, 'f', 2), QString::number(pair.floor, 'f', 2),
+                                    QLatin1String(pair.why)));
+        }
+
+        const QStringList code = SourceHighlighter::coloursFor(Palette::isLightTheme(name));
+        QCOMPARE(code.size(), 9);
+        for (int i = 0; i < code.size(); ++i) {
+            const double floor = i == kCommentIndex ? 3.0 : 4.5;
+            for (const auto& ground :
+                { std::make_pair("window", t.window), std::make_pair("pane", t.pane) }) {
+                const double ratio = contrast(QColor(code.at(i)), ground.second);
+                if (ratio + 0.005 >= floor)
+                    continue;
+                failures.append(
+                    QStringLiteral("%1: source %2 (%3) on %4 is %5:1, floor %6")
+                        .arg(name, QLatin1String(kCodeNames[i]), code.at(i), QLatin1String(ground.first),
+                            QString::number(ratio, 'f', 2), QString::number(floor, 'f', 1)));
+            }
+        }
+    }
+
+    QVERIFY2(failures.isEmpty(), qPrintable(QLatin1Char('\n') + failures.join(QLatin1Char('\n'))));
 }
 
 MOLE_TEST_MAIN(TestPalette)

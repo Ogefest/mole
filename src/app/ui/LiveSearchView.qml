@@ -57,7 +57,7 @@ Item {
                 Layout.fillWidth: true
                 visible: controller ? controller.queryLineError.length > 0 : false
                 text: controller ? controller.queryLineError : ""
-                color: Material.color(Material.Amber)
+                color: App.colour.warn
                 font.pixelSize: App.smallTextSize
                 wrapMode: Text.Wrap
             }
@@ -116,9 +116,9 @@ Item {
             Layout.fillWidth: true
             spacing: 8
 
-            Button {
+            ActionButton {
                 text: controller && controller.running ? "Stop" : "Search"
-                highlighted: true
+                filled: !controller || !controller.running
                 onClicked: {
                     if (!controller)
                         return
@@ -181,7 +181,7 @@ Item {
                 Label {
                     Layout.fillWidth: true
                     text: controller ? controller.blockedReason : ""
-                    color: Material.color(Material.Amber)
+                    color: App.colour.warn
                     font.pixelSize: App.secondaryTextSize
                     wrapMode: Text.Wrap
                 }
@@ -650,7 +650,7 @@ Item {
             Layout.fillWidth: true
             visible: controller ? controller.truncated : false
             text: "Result limit reached — this list is incomplete."
-            color: Material.color(Material.Amber)
+            color: App.colour.warn
             font.pixelSize: App.secondaryTextSize
         }
 
@@ -720,6 +720,9 @@ Item {
     }
 
     Dialog {
+        // A dialog sits on the panel ground, said here rather than inherited:
+        // the window no longer hands one down. See ADR-0074.
+        Material.background: App.colour.panel
         // Dimmed rather than washed out: Qt's Material dark theme dims with
         // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
         Overlay.modal: DimVeil {}

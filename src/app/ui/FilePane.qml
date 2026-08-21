@@ -590,7 +590,7 @@ FocusScope {
             Layout.fillWidth: true
             visible: paneController && paneController.errorText.length > 0
             text: paneController ? paneController.errorText : ""
-            color: Material.color(Material.Red)
+            color: App.colour.bad
             wrapMode: Text.Wrap
             font.pixelSize: App.secondaryTextSize
         }
@@ -1140,6 +1140,9 @@ FocusScope {
     // --- dialogs -------------------------------------------------------
 
     Dialog {
+        // A dialog sits on the panel ground, said here rather than inherited:
+        // the window no longer hands one down. See ADR-0074.
+        Material.background: App.colour.panel
         // Dimmed rather than washed out: Qt's Material dark theme dims with
         // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
         Overlay.modal: DimVeil {}
@@ -1166,6 +1169,9 @@ FocusScope {
     }
 
     Dialog {
+        // A dialog sits on the panel ground, said here rather than inherited:
+        // the window no longer hands one down. See ADR-0074.
+        Material.background: App.colour.panel
         // Dimmed rather than washed out: Qt's Material dark theme dims with
         // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
         Overlay.modal: DimVeil {}
@@ -1195,6 +1201,9 @@ FocusScope {
     }
 
     Dialog {
+        // A dialog sits on the panel ground, said here rather than inherited:
+        // the window no longer hands one down. See ADR-0074.
+        Material.background: App.colour.panel
         // Dimmed rather than washed out: Qt's Material dark theme dims with
         // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
         Overlay.modal: DimVeil {}

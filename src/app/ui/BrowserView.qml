@@ -91,38 +91,49 @@ Item {
                 anchors.rightMargin: 6
                 spacing: 6
 
-                // Mode is a two-way switch, not a hidden toggle: which layout
-                // you are in should be visible without trying it.
+                // Mode is a two-way switch, not a hidden toggle: which layout you
+                // are in should be visible without trying it.
+                //
+                // The current one is a filled pill in bold, drawn here rather than
+                // left to `Button { highlighted: true }`. Material paints a
+                // highlighted label white whatever the theme and fills it from the
+                // background the button inherited -- which is this toolbar, so on
+                // a dark window the pill was the same colour as the bar behind it
+                // and the only signal was the drop shadow, and on a light one it
+                // was white on white. Two channels rather than one, and both from
+                // the palette. See ADR-0074.
                 RowLayout {
                     spacing: 0
-                    Button {
-                        text: "▭  Single"
-                        flat: controller ? (controller.splitEnabled || controller.tilesEnabled) : true
-                        highlighted: controller
-                                     ? (!controller.splitEnabled && !controller.tilesEnabled) : false
+
+                    component ModeButton: Button {
+                        required property bool current
+                        flat: true
                         font.pixelSize: 12
+                        font.bold: current
+                        Material.background: current ? App.colour.selection : "transparent"
+                        Material.foreground: current ? App.colour.text : App.colour.textSecondary
+                    }
+
+                    ModeButton {
+                        text: "▭  Single"
+                        current: controller
+                                 ? (!controller.splitEnabled && !controller.tilesEnabled) : false
                         onClicked: { controller.viewMode = 0; view.focusActivePane() }
                     }
-                    Button {
+                    ModeButton {
                         text: "◫  Dual"
-                        flat: controller ? !controller.splitEnabled : true
-                        highlighted: controller ? controller.splitEnabled : false
-                        font.pixelSize: 12
+                        current: controller ? controller.splitEnabled : false
                         onClicked: { controller.viewMode = 1; view.focusActivePane() }
                     }
-                    Button {
+                    ModeButton {
                         text: "▦  Grid"
-                        flat: controller ? !controller.gridEnabled : true
-                        highlighted: controller ? controller.gridEnabled : false
-                        font.pixelSize: 12
+                        current: controller ? controller.gridEnabled : false
                         onClicked: { controller.viewMode = 2; view.focusActivePane() }
                     }
-                    Button {
+                    ModeButton {
                         objectName: "galleryButton"
                         text: "▤  Gallery"
-                        flat: controller ? !controller.galleryEnabled : true
-                        highlighted: controller ? controller.galleryEnabled : false
-                        font.pixelSize: 12
+                        current: controller ? controller.galleryEnabled : false
                         onClicked: { controller.viewMode = 3; view.focusActivePane() }
                     }
                 }
@@ -293,6 +304,28 @@ Item {
             Layout.fillHeight: true
             orientation: Qt.Horizontal
 
+            // The same divider as the one beside the sidebar, and here for the
+            // same reason: the style's own is painted from `Material.background`,
+            // which the window no longer hands down. See Main.qml and ADR-0074.
+            handle: Rectangle {
+                implicitWidth: 6
+                implicitHeight: 6
+                color: SplitHandle.pressed
+                       ? App.colour.window
+                       : Qt.lighter(App.colour.window, SplitHandle.hovered ? 1.2 : 1.1)
+
+                Rectangle {
+                    color: Material.secondaryTextColor
+                    width: parent.SplitHandle.pressed ? 3 : 1
+                    height: parent.SplitHandle.pressed ? 3 : 8
+                    radius: width
+                    x: (parent.width - width) / 2
+                    y: (parent.height - height) / 2
+
+                    Behavior on height { NumberAnimation { duration: 100 } }
+                }
+            }
+
             FilePane {
                 id: leftPane
                 SplitView.fillWidth: true
@@ -341,6 +374,9 @@ Item {
     // --- dialogs -------------------------------------------------------
 
     Dialog {
+        // A dialog sits on the panel ground, said here rather than inherited:
+        // the window no longer hands one down. See ADR-0074.
+        Material.background: App.colour.panel
         // Dimmed rather than washed out: Qt's Material dark theme dims with
         // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
         Overlay.modal: DimVeil {}
@@ -542,6 +578,9 @@ Item {
     }
 
     Dialog {
+        // A dialog sits on the panel ground, said here rather than inherited:
+        // the window no longer hands one down. See ADR-0074.
+        Material.background: App.colour.panel
         // Dimmed rather than washed out: Qt's Material dark theme dims with
         // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
         Overlay.modal: DimVeil {}
@@ -593,7 +632,7 @@ Item {
             id: errorLabel
             anchors.fill: parent
             wrapMode: Text.Wrap
-            color: Material.color(Material.Red)
+            color: App.colour.bad
         }
     }
 }

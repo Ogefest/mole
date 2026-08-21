@@ -47,10 +47,9 @@ Item {
                     implicitWidth: 18
                     implicitHeight: 18
                 }
-                Button {
+                ActionButton {
                     objectName: "previewButton"
                     text: "Preview"
-                    highlighted: true
                     enabled: controller && controller.ready && !controller.running
                     onClicked: controller.preview()
                     ToolTip.visible: hovered
@@ -335,6 +334,9 @@ Item {
     }
 
     Dialog {
+        // A dialog sits on the panel ground, said here rather than inherited:
+        // the window no longer hands one down. See ADR-0074.
+        Material.background: App.colour.panel
         // Dimmed rather than washed out: Qt's Material dark theme dims with
         // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
         Overlay.modal: DimVeil {}

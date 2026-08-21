@@ -48,10 +48,9 @@ Item {
                     implicitHeight: 18
                 }
 
-                Button {
+                ActionButton {
                     objectName: "applyRenameButton"
                     text: "Apply"
-                    highlighted: true
                     enabled: controller ? controller.canApply : false
                     onClicked: controller.apply()
                     ToolTip.visible: hovered && controller && controller.blockedCount > 0

@@ -48,6 +48,7 @@
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextFrame>
+#include <QTextLayout>
 #include <QTextTable>
 
 using namespace mole;
@@ -229,6 +230,7 @@ private slots:
     void textWithNothingToColourOpensPlain_data();
     void textWithNothingToColourOpensPlain();
     void aHugeFileWithNoSuffixOpensOnItsFirstWindow();
+    void aFileAlreadyColouredFollowsTheThemesPolarity();
 
     // --- markdown typography ---
     void markdownHeadingsGetRoomAndScale();
@@ -1464,6 +1466,41 @@ void TestPreview::recognisesHighlightableLanguages()
     QFETCH(QString, suffix);
     QFETCH(bool, highlighted);
     QCOMPARE(SourceHighlighter::isSupported(suffix), highlighted);
+}
+
+/// The one that will be missed. A document is formatted when it is loaded and
+/// nothing asks again, so a source file open when the theme flips keeps the
+/// colours it was opened under -- pastel green on white, at about 1.7:1.
+void TestPreview::aFileAlreadyColouredFollowsTheThemesPolarity()
+{
+    QTextDocument document;
+    document.setPlainText(QStringLiteral("// a comment\nint x = 1;\n"));
+
+    SourceHighlighter highlighter;
+    highlighter.setDocument(&document);
+    highlighter.setLanguage(QStringLiteral("cpp"));
+
+    const auto commentColour = [&document]() -> QColor {
+        const QTextBlock block = document.findBlockByNumber(0);
+        const QList<QTextLayout::FormatRange> runs = block.layout()->formats();
+        return runs.isEmpty() ? QColor() : runs.constFirst().format.foreground().color();
+    };
+
+    // Index seven of the nine is the comment; the whole first line is one.
+    const QColor darkComment = QColor(SourceHighlighter::coloursFor(false).at(7));
+    const QColor lightComment = QColor(SourceHighlighter::coloursFor(true).at(7));
+    QVERIFY(darkComment != lightComment);
+
+    QVERIFY(commentColour().isValid());
+    QCOMPARE(commentColour(), darkComment);
+
+    highlighter.setLightBackground(true);
+    QCOMPARE(commentColour(), lightComment);
+
+    // And back, because a reader who tries a light theme and does not like it is
+    // the commonest way this gets exercised.
+    highlighter.setLightBackground(false);
+    QCOMPARE(commentColour(), darkComment);
 }
 
 void TestPreview::coloursFilesWhoseNameIsTheirType_data()
