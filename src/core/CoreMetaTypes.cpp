@@ -1,6 +1,7 @@
 #include "core/CoreMetaTypes.h"
 
 #include "core/duplicates/FindDuplicatesTask.h"
+#include "core/index/IndexSummary.h"
 #include "core/search/SearchQuery.h"
 #include "core/sync/SyncTask.h"
 #include "core/vcs/Repository.h"
@@ -34,6 +35,10 @@ void registerCoreMetaTypes()
     // the band above a listing.
     qRegisterMetaType<RepositoryHead>("mole::RepositoryHead");
     qRegisterMetaType<RepositoryStatus>("mole::RepositoryStatus");
+    // Crosses a thread boundary: what the interface knows about the index is
+    // read on a pool thread, because the thread that draws must not wait on a
+    // database. See ADR-0066.
+    qRegisterMetaType<IndexOverview>("mole::IndexOverview");
 }
 
 } // namespace mole

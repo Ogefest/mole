@@ -5,6 +5,7 @@ namespace mole {
 class VfsManager;
 class TaskManager;
 class IndexDatabase;
+class IndexSummary;
 class EventBus;
 class IPreviewLookup;
 class IMetadataLookup;
@@ -29,7 +30,10 @@ struct PluginServices
     VfsManager* vfs = nullptr;
     /// Submit background work here. Never block the calling thread yourself.
     TaskManager* tasks = nullptr;
-    /// The catalogue of previously scanned trees.
+    /// The catalogue of previously scanned trees. **Not for the thread that
+    /// draws the window** -- it is a database on a disk, and a query from a
+    /// property getter or a signal handler is a stall of unmeasured length. Use
+    /// `indexSummary` there; this is for tasks.
     IndexDatabase* index = nullptr;
     /// Publish and subscribe to application-wide events.
     EventBus* events = nullptr;
@@ -61,6 +65,16 @@ struct PluginServices
     /// plugin reads and writes it without the shell knowing what the keys mean.
     /// See docs/adr/0006-preview-options-and-preferences.md.
     Preferences* preferences = nullptr;
+    /// What the interface knows about the index, answered from memory and kept
+    /// up to date from the task layer. Ask this rather than `index` from
+    /// anything on the drawing thread, and check `isKnown()` before reading an
+    /// empty answer as "nothing is indexed". See
+    /// docs/adr/0066-the-interface-reads-the-index-from-a-snapshot.md.
+    ///
+    /// Appended rather than placed next to `index`, because this struct is a
+    /// plugin ABI surface: a field inserted in the middle moves every one after
+    /// it, which is what the note at the top of the file is about.
+    IndexSummary* indexSummary = nullptr;
 
     bool isValid() const { return vfs && tasks && index && events; }
 };

@@ -7,6 +7,7 @@
 #include "core/automation/ScheduleStore.h"
 #include "core/automation/Scheduler.h"
 #include "core/events/EventBus.h"
+#include "core/index/IndexSummary.h"
 #include "core/index/ScanTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/VfsManager.h"
@@ -55,8 +56,11 @@ IndexesController::IndexesController(PluginServices services, QObject* parent)
 {
     // A scan that finishes anywhere -- a search tab, the folder menu, the
     // nightly rule -- shows up here without the tab being reopened.
-    if (m_services.events) {
-        connect(m_services.events, &EventBus::indexUpdated, this, [this](qint64, qint64) { refresh(); });
+    // Followed through the snapshot and not through indexUpdated directly: the
+    // event is what starts the snapshot reading, so acting on it would rebuild
+    // from the answer that event was about to replace.
+    if (m_services.indexSummary) {
+        connect(m_services.indexSummary, &IndexSummary::changed, this, [this] { refresh(); });
     }
     // A scan that is running is otherwise invisible except as one line in the
     // task strip -- and a scheduled scan starting while somebody is working is a
@@ -214,10 +218,12 @@ bool IndexesController::stopScan(qint64 volumeId)
 void IndexesController::rebuild()
 {
     m_volumes.clear();
-    if (m_services.index) {
-        if (Result<QList<IndexVolume>> listed = m_services.index->volumes(); listed.ok())
-            m_volumes = listed.value();
-    }
+    // From the snapshot rather than the database: this is the thread that draws
+    // the window. The tab fills in a moment after it opens, which is the reason
+    // MOLE-264 said the choice is per call site -- a tab somebody deliberately
+    // opened can wait a task round trip. See ADR-0066.
+    if (m_services.indexSummary)
+        m_volumes = m_services.indexSummary->volumes();
 
     // Stalest first, because the row worth looking at is the one that has not
     // been scanned for longest. A volume that has never finished a scan has no

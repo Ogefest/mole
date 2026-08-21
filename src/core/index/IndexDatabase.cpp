@@ -135,8 +135,26 @@ void IndexDatabase::close()
     m_connections.clear();
 }
 
+void IndexDatabase::doNotReadFrom(QThread* thread)
+{
+    m_noReadsFrom = thread;
+}
+
+void IndexDatabase::checkNotOnTheDrawingThread(const char* what) const
+{
+    if (m_noReadsFrom.load() != QThread::currentThread())
+        return;
+    // Not qCWarning: this is a programming fault rather than an operational
+    // fact, and it should be visible without anybody turning a category on.
+    qWarning("Index read on the thread that draws the window: %s. Read IndexSummary "
+             "instead -- see ADR-0066.",
+        what);
+}
+
 bool IndexDatabase::isOpen() const
 {
+    // Not guarded: this reads an atomic and touches no database, so the
+    // interface is welcome to ask it as often as it likes.
     return m_open;
 }
 
@@ -404,6 +422,7 @@ Result<qint64> IndexDatabase::beginScan(qint64 volumeId)
 
 Result<QHash<QString, qint64>> IndexDatabase::directoryTimes(qint64 volumeId) const
 {
+    checkNotOnTheDrawingThread("directoryTimes()");
     // No lock. WAL gives this read its own snapshot, which is the whole
     // reason it is turned on -- see ADR-0065. A locker added back here is
     // a scan starving the window again.
@@ -571,6 +590,7 @@ Result<void> IndexDatabase::abandonScan(qint64 volumeId, qint64 generation)
 
 Result<QList<IndexVolume>> IndexDatabase::volumes() const
 {
+    checkNotOnTheDrawingThread("volumes()");
     // No lock. WAL gives this read its own snapshot, which is the whole
     // reason it is turned on -- see ADR-0065. A locker added back here is
     // a scan starving the window again.
@@ -673,6 +693,7 @@ Result<void> IndexDatabase::insertBatch(qint64 volumeId, qint64 generation, cons
 
 Result<QList<IndexSearchHit>> IndexDatabase::search(const SearchQuery& query) const
 {
+    checkNotOnTheDrawingThread("search()");
     // No lock. WAL gives this read its own snapshot, which is the whole
     // reason it is turned on -- see ADR-0065. A locker added back here is
     // a scan starving the window again.
@@ -804,6 +825,7 @@ Result<QList<IndexSearchHit>> IndexDatabase::search(const SearchQuery& query) co
 
 Result<QStringList> IndexDatabase::factKeys(qint64 volumeId) const
 {
+    checkNotOnTheDrawingThread("factKeys()");
     // No lock. WAL gives this read its own snapshot, which is the whole
     // reason it is turned on -- see ADR-0065. A locker added back here is
     // a scan starving the window again.
@@ -837,6 +859,7 @@ Result<QStringList> IndexDatabase::factKeys(qint64 volumeId) const
 
 Result<qint64> IndexDatabase::fileCount(qint64 volumeId) const
 {
+    checkNotOnTheDrawingThread("fileCount()");
     // No lock. WAL gives this read its own snapshot, which is the whole
     // reason it is turned on -- see ADR-0065. A locker added back here is
     // a scan starving the window again.

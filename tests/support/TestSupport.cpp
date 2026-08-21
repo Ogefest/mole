@@ -106,6 +106,22 @@ bool waitForTask(Task* task, int timeoutMs)
     return finished;
 }
 
+bool refreshIndexSummary(IndexSummary* summary, int timeoutMs)
+{
+    if (!summary)
+        return false;
+
+    // Waiting for the next `changed` is not enough: a read already in flight
+    // answers with the state from before this call, and the coalesced repeat is
+    // the one that carries what was just written. So wait for a read to land
+    // *and* for none to be in flight -- which is one read when the summary was
+    // idle and two when it was not.
+    const qint64 before = summary->reads();
+    summary->refresh();
+    return waitFor(
+        [summary, before] { return summary->reads() > before && !summary->isReading(); }, timeoutMs);
+}
+
 void drainEvents()
 {
     QCoreApplication::processEvents();

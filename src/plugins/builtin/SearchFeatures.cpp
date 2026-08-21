@@ -9,6 +9,7 @@
 #include "core/events/EventBus.h"
 #include "core/index/IndexDatabase.h"
 #include "core/index/IndexSearchTask.h"
+#include "core/index/IndexSummary.h"
 #include "core/index/ScanTask.h"
 #include "core/sets/FileSetStore.h"
 #include "core/tasks/TaskManager.h"
@@ -37,7 +38,11 @@ LiveSearchController::LiveSearchController(PluginServices services, QString root
     // user knowing there is a list to reload. Announced on the bus, so every
     // open search hears it rather than only the one that started the scan.
     if (m_services.events)
-        connect(m_services.events, &EventBus::indexUpdated, this, [this] { refreshVolumes(); });
+        // Not EventBus::indexUpdated: that is what starts the snapshot's own
+        // refresh, so re-reading on it would read the state from before the
+        // scan. The snapshot says when it has the new answer.
+        if (m_services.indexSummary)
+            connect(m_services.indexSummary, &IndexSummary::changed, this, [this] { refreshVolumes(); });
 
     refreshVolumes();
 }
@@ -123,14 +128,13 @@ void LiveSearchController::refreshVolumes()
     m_volumeLabels = { QStringLiteral("All volumes") };
     m_volumeIds = { -1 };
 
-    if (m_services.index) {
-        Result<QList<IndexVolume>> volumes = m_services.index->volumes();
-        if (volumes.ok()) {
-            for (const IndexVolume& volume : volumes.value()) {
-                m_volumeLabels.append(
-                    QStringLiteral("%1 (%2 entries)").arg(volume.label).arg(volume.fileCount));
-                m_volumeIds.append(volume.id);
-            }
+    // From the snapshot: this is the interface thread, and everything below
+    // that reads a volume is a property getter QML may evaluate at any time.
+    // See ADR-0066.
+    if (m_services.indexSummary) {
+        for (const IndexVolume& volume : m_services.indexSummary->volumes()) {
+            m_volumeLabels.append(QStringLiteral("%1 (%2 entries)").arg(volume.label).arg(volume.fileCount));
+            m_volumeIds.append(volume.id);
         }
     }
 
@@ -290,11 +294,10 @@ void LiveSearchController::setSizeRange(const QString& minText, const QString& m
 
 std::optional<IndexVolume> LiveSearchController::coveringVolume() const
 {
-    if (!m_services.isValid() || !m_services.index || !m_services.index->isOpen())
-        return std::nullopt;
-
-    Result<QList<IndexVolume>> volumes = m_services.index->volumes();
-    if (!volumes.ok())
+    // isKnown() rather than isOpen(): an open index nobody has read yet must not
+    // answer "nothing covers this", because indexCoversRoot() and indexNote()
+    // below turn that into a claim about the folder. See ADR-0066.
+    if (!m_services.isValid() || !m_services.indexSummary || !m_services.indexSummary->isKnown())
         return std::nullopt;
 
     // The volume's root has to be a prefix of what is being searched: an index
@@ -302,7 +305,7 @@ std::optional<IndexVolume> LiveSearchController::coveringVolume() const
     // some rows are current and some are as old as the last scan is an answer
     // nobody can reason about. See ADR-0005.
     std::optional<IndexVolume> best;
-    for (const IndexVolume& volume : volumes.value()) {
+    for (const IndexVolume& volume : m_services.indexSummary->volumes()) {
         if (volume.fileCount <= 0 || !volume.lastScan.isValid())
             continue;
         if (!m_rootUri.startsWith(volume.rootUri))
@@ -329,15 +332,11 @@ QString LiveSearchController::indexNote() const
 
 QList<IndexVolume> LiveSearchController::volumesInsideRoot() const
 {
-    if (!m_services.isValid() || !m_services.index || !m_services.index->isOpen())
-        return {};
-
-    Result<QList<IndexVolume>> volumes = m_services.index->volumes();
-    if (!volumes.ok())
+    if (!m_services.isValid() || !m_services.indexSummary || !m_services.indexSummary->isKnown())
         return {};
 
     QList<IndexVolume> inside;
-    for (const IndexVolume& volume : volumes.value()) {
+    for (const IndexVolume& volume : m_services.indexSummary->volumes()) {
         if (volume.fileCount <= 0 || !volume.lastScan.isValid())
             continue;
         // Inside the folder, not around it: a volume that contains the search
@@ -797,26 +796,27 @@ void LiveSearchController::rewriteQueryLine()
 
 QStringList LiveSearchController::factKeys() const
 {
-    if (!m_services.isValid() || !m_services.index || !m_services.index->isOpen())
+    if (!m_services.isValid() || !m_services.indexSummary || !m_services.indexSummary->isKnown())
         return {};
+
+    // This is the getter that made a snapshot the only workable answer: it used
+    // to run two volumes() queries plus one factKeys() per volume in scope, and
+    // coverageNote() calls it again. QML evaluates both whenever anything they
+    // depend on changes. See ADR-0066.
+    if (m_everywhere) {
+        return m_services.indexSummary->factKeys(
+            m_volumeIndex > 0 && m_volumeIndex < m_volumeIds.size() ? m_volumeIds.at(m_volumeIndex) : -1);
+    }
 
     // Every volume that covers any of this folder, because a field is worth
     // offering when anything in scope can answer it.
     QList<IndexVolume> inScope = volumesInsideRoot();
     if (const std::optional<IndexVolume> whole = coveringVolume())
         inScope.append(*whole);
-    if (m_everywhere) {
-        const Result<QStringList> everywhere = m_services.index->factKeys(
-            m_volumeIndex > 0 && m_volumeIndex < m_volumeIds.size() ? m_volumeIds.at(m_volumeIndex) : -1);
-        return everywhere.ok() ? everywhere.value() : QStringList {};
-    }
 
     QStringList keys;
     for (const IndexVolume& volume : inScope) {
-        const Result<QStringList> mine = m_services.index->factKeys(volume.id);
-        if (!mine.ok())
-            continue;
-        for (const QString& key : mine.value()) {
+        for (const QString& key : m_services.indexSummary->factKeys(volume.id)) {
             if (!keys.contains(key))
                 keys.append(key);
         }

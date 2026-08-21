@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/index/IndexSummary.h"
 #include "core/tasks/Task.h"
 #include "core/vfs/IFileSystem.h"
 
@@ -71,6 +72,50 @@ bool waitFor(const std::function<bool()>& predicate, int timeoutMs = 5000);
 
 /// Drains everything currently queued, including deleteLater().
 void drainEvents();
+
+/// Refreshes the interface's snapshot of the index and waits for the answer.
+///
+/// The interface reads `IndexSummary` rather than the database -- ADR-0066 -- so
+/// a test that writes rows by hand has written them somewhere nothing is looking
+/// yet. In the application a finished scan posts `EventBus::indexUpdated` and the
+/// snapshot refreshes on it; a hand-made seed has no scan, so it asks here and
+/// waits for the read to come back from the pool thread.
+///
+/// Returns false if no answer arrives, so a test that forgets to check fails on
+/// its own assertion rather than on a mystery empty list.
+bool refreshIndexSummary(IndexSummary* summary, int timeoutMs = 5000);
+
+/// Reads the index directly from the test's own thread on purpose.
+///
+/// ADR-0066 has `AppController` name the thread that draws the window, and a read
+/// of the index from it warns -- because interface code must ask `IndexSummary`
+/// instead. A test asserting about *storage* rather than about the interface is
+/// the exception, and saying so here keeps the warning meaning what it says.
+///
+/// Only for suites that get their index through AppController; one that owns its
+/// own IndexDatabase was never guarded.
+class ReadingTheIndexOnPurpose
+{
+public:
+    explicit ReadingTheIndexOnPurpose(IndexDatabase* index)
+        : m_index(index)
+    {
+        if (m_index)
+            m_index->doNotReadFrom(nullptr);
+    }
+
+    ~ReadingTheIndexOnPurpose()
+    {
+        if (m_index)
+            m_index->doNotReadFrom(QThread::currentThread());
+    }
+
+    ReadingTheIndexOnPurpose(const ReadingTheIndexOnPurpose&) = delete;
+    ReadingTheIndexOnPurpose& operator=(const ReadingTheIndexOnPurpose&) = delete;
+
+private:
+    IndexDatabase* m_index = nullptr;
+};
 
 /// Points every application store at a throwaway directory.
 ///

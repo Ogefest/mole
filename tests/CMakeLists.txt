@@ -316,6 +316,11 @@ mole_add_test(tst_IndexScanJob      SOURCES plugins/tst_IndexScanJob.cpp LIBS mo
 # whether anything is keeping it fresh. Headless -- it drives the controller.
 mole_add_test(tst_IndexesTab        SOURCES app/tst_IndexesTab.cpp     LIBS mole_builtin)
 
+# The rule that the interface never reads the index on the thread that draws it,
+# which is enforced by IndexDatabase rather than remembered -- see ADR-0066.
+mole_add_test(tst_IndexOffTheDrawingThread SOURCES app/tst_IndexOffTheDrawingThread.cpp
+                                           LIBS mole_builtin)
+
 mole_add_test(tst_Automation        SOURCES app/tst_Automation.cpp      LIBS mole_builtin)
 mole_add_test(tst_FileSets          SOURCES app/tst_FileSets.cpp        LIBS mole_builtin)
 

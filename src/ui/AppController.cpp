@@ -22,6 +22,7 @@
 #include "core/credentials/SecretStore.h"
 #include "core/events/EventBus.h"
 #include "core/index/IndexDatabase.h"
+#include "core/index/IndexSummary.h"
 #include "core/index/ScanTask.h"
 #include "core/sets/FileSetStore.h"
 #ifdef MOLE_HAVE_ARCHIVE
@@ -49,6 +50,7 @@
 #include <QSortFilterProxyModel>
 #include <QStandardPaths>
 #include <QSysInfo>
+#include <QThread>
 #include <QTimer>
 #include <QWindow>
 
@@ -201,6 +203,8 @@ AppController::~AppController()
     // QObject child list would be a coin flip.
     delete m_taskManager;
     m_taskManager = nullptr;
+    if (m_index)
+        m_index->doNotReadFrom(nullptr);
     m_index.reset();
 }
 
@@ -259,6 +263,17 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     m_services.reports = m_reports.get();
     m_services.sets = m_sets;
     m_services.preferences = m_preferences;
+
+    // What the interface knows about the index, so that nothing on this thread
+    // has to ask the database -- see ADR-0066. Created after the task manager
+    // and the bus, because it needs both: one to read on, one to be told when
+    // the index has changed under it.
+    m_indexSummary = new IndexSummary(m_index.get(), m_taskManager, m_events, this);
+    m_services.indexSummary = m_indexSummary;
+    // From here on a read of the index from this thread is a fault and says so.
+    // Set after open(), which legitimately runs here.
+    m_index->doNotReadFrom(QThread::currentThread());
+    m_indexSummary->refresh();
 
     // The mount table is the source of truth; the bus just broadcasts it so
     // views do not have to know about VfsManager.
@@ -1199,22 +1214,39 @@ void AppController::recordStartup() const
             qPrintable(described.isEmpty() ? QStringLiteral("none") : described.join(QStringLiteral(" | "))));
     }
 
-    if (m_services.index) {
-        QStringList described;
-        if (Result<QList<IndexVolume>> listed = m_services.index->volumes(); listed.ok()) {
-            for (const IndexVolume& volume : listed.value()) {
-                described.append(QStringLiteral("%1 %2 files, scanned %3")
-                                     .arg(volume.label)
-                                     .arg(volume.fileCount)
-                                     .arg(volume.lastScan.isValid() ? volume.lastScan.toString(Qt::ISODate)
-                                                                    : QStringLiteral("never")));
-            }
+    // The indexes come from the snapshot, not the database -- the same reason the
+    // drives' space is left out six lines above, which named this fault while the
+    // block below it went on committing it. See ADR-0066.
+    //
+    // Which means the answer is not here yet: the snapshot is read on a pool
+    // thread and this runs during startup. So the line waits for the first
+    // answer instead of being dropped -- what the run started with is the whole
+    // point of the log, and "Indexes: none" would be a false version of it.
+    if (m_indexSummary) {
+        if (m_indexSummary->isKnown()) {
+            recordIndexes();
+        } else {
+            connect(
+                m_indexSummary, &IndexSummary::changed, this, [this] { recordIndexes(); },
+                Qt::SingleShotConnection);
         }
-        // Said either way. "Indexes: none" answers "why did my search find nothing",
-        // which an absent line does not.
-        qInfo("Indexes: %s",
-            qPrintable(described.isEmpty() ? QStringLiteral("none") : described.join(QStringLiteral(" | "))));
     }
+}
+
+void AppController::recordIndexes() const
+{
+    QStringList described;
+    for (const IndexVolume& volume : m_indexSummary->volumes()) {
+        described.append(QStringLiteral("%1 %2 files, scanned %3")
+                             .arg(volume.label)
+                             .arg(volume.fileCount)
+                             .arg(volume.lastScan.isValid() ? volume.lastScan.toString(Qt::ISODate)
+                                                            : QStringLiteral("never")));
+    }
+    // Said either way. "Indexes: none" answers "why did my search find nothing",
+    // which an absent line does not.
+    qInfo("Indexes: %s",
+        qPrintable(described.isEmpty() ? QStringLiteral("none") : described.join(QStringLiteral(" | "))));
 }
 
 void AppController::refreshOpenDrives()

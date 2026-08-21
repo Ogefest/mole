@@ -6,6 +6,7 @@
 #include "core/analysis/AnalysisStore.h"
 #include "core/events/EventBus.h"
 #include "core/index/IndexDatabase.h"
+#include "core/index/IndexSummary.h"
 #include "core/tasks/QueryAccessTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/tasks/TransferTask.h"
@@ -48,6 +49,15 @@ BrowserController::BrowserController(
     // has to show up here without the user navigating away and back.
     if (m_services.alerts) {
         connect(m_services.alerts, &AlertStore::rulesChanged, this, &BrowserController::refreshFolderFacts);
+    }
+
+    // The index tag arrives a moment after the listing, like the access tag
+    // below it: the first folder shown is drawn before the snapshot has read
+    // anything, so without this the tag would be missing until the next folder
+    // change.
+    if (m_services.indexSummary) {
+        connect(
+            m_services.indexSummary, &IndexSummary::changed, this, &BrowserController::refreshFolderFacts);
     }
 
     // React to the world changing underneath us instead of making the user
@@ -200,26 +210,30 @@ void BrowserController::refreshFolderFacts()
     // The index is asked about the volume this folder sits under, not about the
     // folder itself: scanning /data indexes /data/projects too, and claiming
     // otherwise would send the user to re-scan what is already there.
-    if (m_services.index) {
-        if (Result<QList<IndexVolume>> volumes = m_services.index->volumes(); volumes.ok()) {
-            const IndexVolume* best = nullptr;
-            for (const IndexVolume& volume : volumes.value()) {
-                if (here != volume.rootUri && !here.startsWith(volume.rootUri + QLatin1Char('/')))
-                    continue;
-                // The closest enclosing root wins: a scan of /data/projects is
-                // a better answer than a scan of /.
-                if (!best || volume.rootUri.size() > best->rootUri.size())
-                    best = &volume;
-            }
-            if (best) {
-                m_indexedFiles = best->fileCount;
-                const qint64 days
-                    = best->lastScan.isValid() ? best->lastScan.daysTo(QDateTime::currentDateTime()) : -1;
-                m_indexedText = days < 0 ? QStringLiteral("indexed")
-                    : days == 0          ? QStringLiteral("indexed today")
-                    : days == 1          ? QStringLiteral("indexed yesterday")
-                                         : QStringLiteral("indexed %1 days ago").arg(days);
-            }
+    //
+    // Asked of the snapshot and not the database, because this runs on every
+    // folder change and every alert edit, on the thread that draws the window.
+    // Until the snapshot has an answer there is no tag at all -- the one thing
+    // that must not happen is a folder that *is* indexed reading as one that is
+    // not, which is what an empty answer would say. See ADR-0066.
+    if (m_services.indexSummary && m_services.indexSummary->isKnown()) {
+        const IndexVolume* best = nullptr;
+        for (const IndexVolume& volume : m_services.indexSummary->volumes()) {
+            if (here != volume.rootUri && !here.startsWith(volume.rootUri + QLatin1Char('/')))
+                continue;
+            // The closest enclosing root wins: a scan of /data/projects is a
+            // better answer than a scan of /.
+            if (!best || volume.rootUri.size() > best->rootUri.size())
+                best = &volume;
+        }
+        if (best) {
+            m_indexedFiles = best->fileCount;
+            const qint64 days
+                = best->lastScan.isValid() ? best->lastScan.daysTo(QDateTime::currentDateTime()) : -1;
+            m_indexedText = days < 0 ? QStringLiteral("indexed")
+                : days == 0          ? QStringLiteral("indexed today")
+                : days == 1          ? QStringLiteral("indexed yesterday")
+                                     : QStringLiteral("indexed %1 days ago").arg(days);
         }
     }
 

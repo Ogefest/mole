@@ -156,7 +156,10 @@ bool TestMixedSearch::index(const QString& uri, const QString& label)
     if (!waitFor([this] { return m_app->tasks()->activeCount() == 0; }, 20000))
         return false;
     m_app->tabs()->closeTab(row);
-    return true;
+    // The scan being over is not the same as the form knowing about it: the
+    // interface reads a snapshot of the index, refreshed from a pool thread on
+    // the event a finished scan posts. See ADR-0066.
+    return refreshIndexSummary(m_app->services().indexSummary);
 }
 
 bool TestMixedSearch::indexWithMetadata(const QString& uri, const QString& label)
@@ -172,7 +175,10 @@ bool TestMixedSearch::indexWithMetadata(const QString& uri, const QString& label
     if (!waitFor([this] { return m_app->tasks()->activeCount() == 0; }, 20000))
         return false;
     m_app->tabs()->closeTab(row);
-    return true;
+    // The scan being over is not the same as the form knowing about it: the
+    // interface reads a snapshot of the index, refreshed from a pool thread on
+    // the event a finished scan posts. See ADR-0066.
+    return refreshIndexSummary(m_app->services().indexSummary);
 }
 
 QStringList TestMixedSearch::urisIn(const FileListModel* results) const
@@ -482,6 +488,8 @@ void TestMixedSearch::theFieldsOfferedFollowTheKeysInScope()
     QVERIFY(m_app->services()
                 .index->commitScan(volume.value(), scan.value(), QDateTime::currentDateTime(), ScanOptions {})
                 .ok());
+    // Written by hand, so nothing has told the snapshot the form reads.
+    QVERIFY(refreshIndexSummary(m_app->services().indexSummary));
 
     search->setRootUri(memUri(QStringLiteral("/elsewhere")));
     search->setRootUri(memUri(QStringLiteral("/tree")));

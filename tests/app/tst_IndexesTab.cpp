@@ -120,9 +120,16 @@ bool TestIndexesTab::seed(const QString& uri, const QString& label, const ScanOp
     if (!index->insertBatch(volume.value(), scan.value(), rows).ok())
         return false;
     // Dated a little back, so "scanned just now" is not what every row says.
-    return index
-        ->commitScan(volume.value(), scan.value(), QDateTime::currentDateTime().addSecs(-3 * 86400), options)
-        .ok();
+    if (!index
+             ->commitScan(
+                 volume.value(), scan.value(), QDateTime::currentDateTime().addSecs(-3 * 86400), options)
+             .ok())
+        return false;
+
+    // Rows written by hand are written somewhere nothing is looking: the tab
+    // reads the interface's snapshot, and in the application a finished scan is
+    // what tells it to read again. See ADR-0066.
+    return refreshIndexSummary(m_app->services().indexSummary);
 }
 
 QVariantMap TestIndexesTab::rowFor(IndexesController* tab, const QString& label) const
@@ -222,6 +229,8 @@ void TestIndexesTab::aVolumeIndexedBeforeTheOptionsWereRecordedSaysItCannotTell(
     // A volume with no finished scan behind it is what a row written by an older
     // version looks like from here: no recorded options at all.
     QVERIFY(index->upsertVolume(VfsUri::fromString(uri), QStringLiteral("older")).ok());
+    // Written by hand, so nothing has told the interface's snapshot to look.
+    QVERIFY(refreshIndexSummary(m_app->services().indexSummary));
 
     IndexesController* tab = openIndexes();
     QVERIFY(tab);
@@ -384,9 +393,14 @@ void TestIndexesTab::forgettingARowTakesTheIndexAndItsSchedule()
     // something.
     SearchQuery byName;
     byName.add(SearchPredicate::name(QStringLiteral("file-0.txt")));
+    // Storage, not the interface -- so the guard is stood down for the read.
+    ReadingTheIndexOnPurpose direct(m_app->services().index);
     QCOMPARE(m_app->services().index->search(byName).value().size(), 2);
 
     QVERIFY(tab->forget(id));
+    // Forgetting posts indexUpdated and the row goes when the snapshot has read
+    // again, which is a task round trip rather than the same stack frame.
+    QVERIFY(refreshIndexSummary(m_app->services().indexSummary));
 
     QCOMPARE(tab->volumeCount(), 1);
     QVERIFY(rowFor(tab, QStringLiteral("photos")).isEmpty());
@@ -432,6 +446,7 @@ void TestIndexesTab::aRunningScanShowsOnItsRowAndStoppingItChangesNothing()
     QCOMPARE(after.value(QStringLiteral("scannedAt")).toString(), scannedBefore);
     SearchQuery byName;
     byName.add(SearchPredicate::name(QStringLiteral("file-0.txt")));
+    ReadingTheIndexOnPurpose direct(m_app->services().index);
     QCOMPARE(m_app->services().index->search(byName).value().size(), 1);
 }
 

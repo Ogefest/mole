@@ -81,10 +81,15 @@ bool TestIndexesView::seed(const QString& label, int files)
     }
     if (!index->insertBatch(volume.value(), scan.value(), rows).ok())
         return false;
-    return index
-        ->commitScan(
-            volume.value(), scan.value(), QDateTime::currentDateTime().addSecs(-3 * 86400), ScanOptions {})
-        .ok();
+    if (!index
+             ->commitScan(volume.value(), scan.value(), QDateTime::currentDateTime().addSecs(-3 * 86400),
+                 ScanOptions {})
+             .ok())
+        return false;
+
+    // Rows written by hand are written somewhere nothing is looking: the tab
+    // reads the interface's snapshot of the index. See ADR-0066.
+    return refreshIndexSummary(m_harness->app()->services().indexSummary);
 }
 
 QQuickItem* TestIndexesView::itemShowing(QQuickItem* root, const QString& text)

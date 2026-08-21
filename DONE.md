@@ -9,6 +9,94 @@ wrong.
 
 ---
 
+## The interface stopped reading the index on the thread that draws it
+
+**Asked for:** MOLE-264 — seven call sites ask `IndexDatabase` a question
+synchronously from the thread that draws the window.
+
+**The count understated it in two ways, and both changed the answer.** Five of the
+seven are property getters, so they are not seven calls but seven per binding
+evaluation: `LiveSearchController::factKeys()` ran two `volumes()` queries plus one
+`factKeys()` per volume in scope, and `coverageNote()` called it again. A binding
+cannot await anything — it returns a value or it returns the wrong one — so *a task
+per call site was never available for most of them*, which is what settled the
+mechanism. And one of the seven, `refreshFolderFacts()`, is wired to
+`locationChanged` and to the alert store's `rulesChanged`, so it runs on every
+folder change. Reverting that one site during the fault injection below produced
+**four** index reads from a single folder change.
+
+**There was an eighth**, and it is the most useful thing here. `recordStartup()`
+lists the indexes in the session log — added by me two days ago for MOLE-263, six
+lines below a comment that leaves drive space out of the same log *because a
+synchronous read on the startup path is the shape of fault MOLE-264 is about*. The
+list of call sites in the ticket went out of date during the session that fixed it.
+That is the argument for the guard rather than for eight fixes.
+
+**The shape**, in [ADR-0066](docs/adr/0066-the-interface-reads-the-index-from-a-snapshot.md):
+a new host service, `IndexSummary`, holds the volume list and the fact keys per
+volume, refreshes by submitting a background task, and is triggered by
+`EventBus::indexUpdated` — which every finished scan and every removed volume
+already posted, and which `SearchFeatures` and `IndexesFeature` already listened to
+in order to re-read. So the invalidation channel is one that existed and was
+trusted; those two now follow the snapshot instead, because acting on the raw event
+would re-read the state the event was about to replace.
+
+**Three states, not two.** `isKnown()` is false until the first answer lands, and
+that is the failure this design is most exposed to: with two states, the interval
+before the first read says *nothing is indexed* — in the folder facts, in
+`indexCoversRoot()`, and in what the coverage note tells somebody their search will
+cover. That is worse than the freeze it replaces. A freeze is visibly the
+application's fault; "not indexed" is a confident false statement that sends
+somebody to re-scan a tree that is already there. So the browser shows no tag at
+all until there is something true to say, and there is a test that holds it.
+
+**The rule is enforced rather than remembered.** `IndexDatabase::doNotReadFrom()`
+names the drawing thread, and a read from it warns and says which method.
+`tst_IndexOffTheDrawingThread` walks each route a user takes — the Indexes tab, a
+folder change, the search form's volume list, its coverage, its offered fields, and
+the session log — and asserts the guard stayed quiet, so a ninth site fails without
+anybody remembering to extend a list. Putting one site back on the database fails
+three of those tests with a message naming the method and the route.
+
+**And the guard is itself tested**, because a guard that has stopped working says
+nothing about everything and every one of those assertions would pass vacuously.
+`theGuardItselfNoticesADirectRead` reads the index from the test's own thread and
+requires the complaint, then requires silence inside
+`ReadingTheIndexOnPurpose` — the scoped stand-down for suites asserting about
+storage rather than about the interface — then requires the complaint again
+afterwards.
+
+**Two things about the tests that were wrong first.** The wait helper
+`refreshIndexSummary()` originally waited for the next `changed()`, which is not the
+same as waiting for a read that *began* after the call: a read already in flight
+answers with the state from before it, and the coalesced repeat is the one carrying
+the change. It waits for a read to land *and* for none to be in flight. And
+`aFolderChangeWhileAScanRunsStillAnswers` ends by asserting the scan had not
+finished — otherwise it proves nothing — which makes the tree size a flakiness
+question rather than a taste one; it is 3,000 files for margin, and passed 10 runs
+out of 10 at that size.
+
+**What the ticket asked for that could not be met as written.** Its second
+done-when says a test that changes a folder during a scan "fails today". It does
+not: it was written before MOLE-269 landed, and once a read stops queueing behind a
+scan's writes, a folder change during one is quick again. The test is here because
+the property is worth holding, but the assertion that bites before this change is
+the guard, not the stall.
+
+**Four suites needed teaching that the answer arrives a moment later** —
+`tst_IndexesTab`, `tst_IndexesView`, `tst_MixedSearch`, `tst_AppIntegration` — each
+because it wrote rows by hand and expected the interface to know in the same stack
+frame. Two of them got *faster* for it, `tst_IndexesView` from 30.8 s to 1.9 s and
+`tst_MixedSearch` from 10.7 s to 0.5 s, because what they had been doing was
+sitting through timeouts waiting for something that was never coming.
+
+**Left open on purpose:** `IndexesController::forget()` still calls
+`removeVolume()` on the drawing thread, and writers are still serialised, so it can
+wait for a scan's transaction. The guard covers reads only for exactly that reason —
+turning it on for writers would warn on every run — and it is **MOLE-274**.
+
+---
+
 ## A read of the index no longer queues behind a scan
 
 **Asked for:** MOLE-269 — split the index's one lock the way

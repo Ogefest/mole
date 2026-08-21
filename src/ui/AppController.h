@@ -27,6 +27,7 @@ namespace mole {
 class VfsManager;
 class TaskManager;
 class IndexDatabase;
+class IndexSummary;
 class EventBus;
 class PreviewRegistry;
 class MetadataRegistry;
@@ -281,6 +282,10 @@ public:
     /// file people send to other people. A drive's display name is a name the
     /// user chose and is fine; its uri is not, so only the scheme is written.
     void recordStartup() const;
+    /// The session log's "Indexes:" line. Separate from recordStartup() because
+    /// it can only be written once the snapshot has read the index, which is a
+    /// task round trip after startup. See ADR-0066.
+    void recordIndexes() const;
 
     /// Opens a browser tab already pointing at `uri`.
     /// Opens a tab and, when the new tab has somewhere to start from, points
@@ -559,6 +564,8 @@ private:
     /// Not a QObject, and it must outlive every task that writes to it, so its
     /// lifetime is managed explicitly rather than by the QObject tree.
     std::unique_ptr<IndexDatabase> m_index;
+    /// What the interface knows about the index. Owned as a child.
+    IndexSummary* m_indexSummary = nullptr;
     EventBus* m_events = nullptr;
     FeatureRegistry* m_features = nullptr;
     PreviewRegistry* m_previews = nullptr;

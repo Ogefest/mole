@@ -210,6 +210,13 @@ void TestAppIntegration::theLogSaysWhatThisRunStartedWith()
 
     // The indexes, with the count -- so a search about to answer out of something a
     // week old is visible before anybody wonders why.
+    //
+    // This line arrives a moment after the others: what is in the index is read on
+    // a pool thread now, because the thread that draws the window must not wait on
+    // a database, and the line waits for the answer rather than being dropped. See
+    // ADR-0066.
+    QVERIFY2(waitFor([&log] { return log.contains(QStringLiteral("Indexes:")); }),
+        qPrintable(QStringLiteral("no index line arrived: %1").arg(log.joined())));
     QVERIFY2(log.contains(QStringLiteral("the scratch tree")),
         qPrintable(QStringLiteral("the index is not named: %1").arg(log.joined())));
     QVERIFY2(log.contains(QStringLiteral("files")),
@@ -533,7 +540,11 @@ void TestAppIntegration::searchAsksTheIndexWhenItCoversTheFolder()
     QVERIFY(search);
     search->setRootUri(m_tree->rootUri().toString());
 
-    QVERIFY2(search->indexCoversRoot(), "the folder that was just scanned is covered");
+    // A moment after the scan, not in the same stack frame: the form reads the
+    // interface's snapshot of the index, which refreshes on the event the finished
+    // scan posts. See ADR-0066.
+    QVERIFY2(waitFor([search] { return search->indexCoversRoot(); }),
+        "the folder that was just scanned is covered");
     QVERIFY2(search->indexNote().contains(QStringLiteral("indexed")),
         "and the form can say so, with how old it is");
 
@@ -558,7 +569,7 @@ void TestAppIntegration::turningTheIndexOffForcesAWalk()
     auto* search = qobject_cast<LiveSearchController*>(m_app->tabs()->controllerAt(row));
     QVERIFY(search);
     search->setRootUri(m_tree->rootUri().toString());
-    QVERIFY(search->indexCoversRoot());
+    QVERIFY(waitFor([search] { return search->indexCoversRoot(); }));
 
     // A file written after the scan: the index cannot know about it, which is
     // exactly the case the toggle exists for.
