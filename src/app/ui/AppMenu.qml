@@ -20,6 +20,22 @@ Menu {
 
     property var sections: []
 
+    // Its own ground rather than the style's.
+    //
+    // Material's menu background is a Rectangle under an ElevationEffect layer,
+    // and an offscreen grab composites no such layer -- so `make screenshots`
+    // photographed the entries floating over the listing with nothing behind
+    // them, which is the one thing a picture of a menu must not be. The command
+    // palette has drawn its own ground for exactly this reason since it existed.
+    // A hairline instead of a shadow, and both from the palette. See ADR-0074.
+    background: Rectangle {
+        implicitWidth: 220
+        color: App.colour.panel
+        border.color: App.colour.border
+        border.width: 1
+        radius: 2
+    }
+
     // Rebuilt on every open so tick boxes and greyed-out entries reflect the
     // tab that is actually in front of the user.
     function refresh() {
@@ -58,6 +74,10 @@ Menu {
     component ActionItem: MenuItem {
         required property var modelData
 
+        /// The action's own id, so a test can address one entry without a second
+        /// name to keep in step -- the same reason the submenus follow their
+        /// section titles.
+        objectName: modelData.id
         text: modelData.title
         enabled: modelData.enabled
         checkable: modelData.checkable
@@ -72,12 +92,18 @@ Menu {
         contentItem: RowLayout {
             spacing: 0
 
-            // Checkable entries get the style's own tick box drawn to the left
-            // of this contentItem, so only plain entries need a glyph here.
+            // One column, holding either a plugin's glyph or the style's own tick
+            // box. Room is kept for the tick box rather than the column being
+            // collapsed for a checkable entry: the box is drawn at the item's left
+            // padding whatever this contentItem does, so a zero-width column left
+            // it sitting on top of the first three letters of the title -- which
+            // nothing had noticed, because until MOLE-281 no picture in the guide
+            // had the menu open in it.
             Label {
-                Layout.preferredWidth: modelData.checkable ? 0 : 24
-                visible: !modelData.checkable
-                text: modelData.iconText ? modelData.iconText : ""
+                Layout.preferredWidth: 24
+                // Empty rather than hidden: a RowLayout gives an invisible item no
+                // width at all, which is how the column came to collapse.
+                text: modelData.checkable || !modelData.iconText ? "" : modelData.iconText
                 color: Material.accent
                 font.pixelSize: 12
             }
@@ -132,6 +158,15 @@ Menu {
         objectName: "menu" + sectionMenu.section
         width: appMenu.widthOf(sectionMenu)
         focus: true
+
+        // The same ground as the menu it hangs off, for the same reason.
+        background: Rectangle {
+            implicitWidth: 220
+            color: App.colour.panel
+            border.color: App.colour.border
+            border.width: 1
+            radius: 2
+        }
 
         // Leaving a submenu with Left or Escape closes it and leaves the menu it
         // came from without the keyboard: the arrows then did nothing, which is

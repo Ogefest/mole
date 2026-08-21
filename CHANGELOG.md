@@ -13,6 +13,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-21 #MOLE-281 The guide says how to choose a theme, which four there are, and that its pictures are all taken in Midnight
 2026-08-21 #MOLE-280 Two light themes, Paper and Workbench, and the controls, previews and code colours that follow a theme's polarity; the active view mode and every view's primary button are now legible rather than a drop shadow
 2026-08-21 #MOLE-279 Mole ships two themes, Midnight and Slate, and the View menu picks between them; the choice is remembered
 2026-08-21 #MOLE-278 Colour comes from one palette rather than 372 values in 39 files: the automation tab and the terminal panel now use the same greys as the rest of the window, and the sidebar's capacity bar the same blue

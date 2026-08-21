@@ -83,6 +83,33 @@ a few seconds of remaking tiles and nothing else. It has a ceiling and evicts wh
 not been looked at for longest, so it does not grow for ever. Editing a file gets a new
 tile, because a thumbnail is keyed on when the file was last changed.
 
+## How Mole looks
+
+![The View menu, with four themes in it](images/28-themes.png)
+
+Four themes, in the **`View`** menu, with a tick against the one in force. The command
+palette finds them too — `Ctrl+R`, then part of the name. The choice is remembered, so
+the window comes back the way you left it.
+
+| | |
+|---|---|
+| **Midnight** | dark and cool, and what Mole has always looked like |
+| **Slate** | dark, a step warmer and softer, with a quieter accent |
+| **Paper** | light and flat: panels and panes both white, the shell a shade off it |
+| **Workbench** | light, with the chrome in a visible grey and pure white kept for the listing |
+
+![The same window in Paper](images/28b-paper.png)
+
+Everything follows a theme, including the things that are not the window's own paint:
+source code and Markdown get a set of colours to suit a light page or a dark one, and a
+file already open is re-coloured rather than left as it was. **The terminal panel stays
+dark on all four**, because that is what a terminal looks like everywhere else and
+because the sixteen colours a shell prints with are the terminal's rather than the
+window's.
+
+**Every picture in this guide is taken in `Midnight`.** If you are reading on `Paper` and
+the screenshots do not match your window, that is the theme and not a fault.
+
 ## How big is that folder?
 
 ![Folder sizes](images/01b-folder-sizes.png)

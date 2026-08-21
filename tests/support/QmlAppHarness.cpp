@@ -586,7 +586,16 @@ QObject* QmlAppHarness::object(const QString& objectName) const
         }
         return nullptr;
     };
-    return search(m_window->contentItem());
+    if (QObject* found = search(m_window->contentItem()))
+        return found;
+
+    // And then the whole object tree from the root, which reaches what the visual
+    // walk above cannot: a submenu is a QObject child of the menu that declared
+    // it, two levels off the visual tree rather than one, so `menuView` was
+    // invisible here while `appMenu` was not.
+    if (QObject* root = m_engine ? m_engine->rootObjects().value(0) : nullptr)
+        return root->findChild<QObject*>(objectName);
+    return nullptr;
 }
 
 QString QmlAppHarness::focusChain() const

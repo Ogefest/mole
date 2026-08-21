@@ -20,6 +20,7 @@
 #include "support/TableFixtures.h"
 #include "support/TestSupport.h"
 #include "ui/AppController.h"
+#include "ui/Palette.h"
 #include "ui/models/BookmarkModel.h"
 #include "ui/models/BrowserPaneController.h"
 #include "ui/models/CommandPaletteModel.h"
@@ -134,6 +135,7 @@ private slots:
     void steppingOffAVideoLeavesNoPlayerBehind();
     void aVideoCanBeSilencedFromTheControls();
     void theHeaderAdvertisesTheCommandPalette();
+    void theViewMenuChoosesHowMoleLooks();
     void ctrlFIsASearchBoxYouCanTypeInto();
     void aPartlyIndexedFolderShowsWhereEachRowCameFrom();
     void aContentSearchSaysHowMuchItHasOpened();
@@ -4260,6 +4262,62 @@ void TestWalkthrough::everyFeatureAndPreviewHasAPictureInTheGuide()
         qPrintable(QStringLiteral("named a picture that is not in %1: %2\n"
                                   "Run `make guide-images`.")
                        .arg(images.path(), missing.join(QStringLiteral(", ")))));
+}
+
+/// The four themes in the View menu, and one light window.
+///
+/// Both pictures are of the state the assertions above them have just checked,
+/// which is the promise docs/guide/README.md makes about every picture in the
+/// guide. The second one costs one extra assertion and no second path through the
+/// application: the theme is chosen, the window is photographed, and it is put
+/// back -- so nothing after this sees anything but Midnight, which is what the
+/// other fifty-four pictures are of.
+void TestWalkthrough::theViewMenuChoosesHowMoleLooks()
+{
+    QCOMPARE(m_harness->app()->colour()->theme(), QStringLiteral("Midnight"));
+
+    m_harness->key(Qt::Key_F4);
+    QObject* menu = m_harness->object(QStringLiteral("appMenu"));
+    QVERIFY(menu);
+    QVERIFY2(m_harness->until([menu] { return menu->property("opened").toBool(); }), "F4 opens the menu");
+
+    // Down to the headings and along to View, then Right to open it -- the keys a
+    // reader would use, because the picture is of what they would see.
+    m_harness->key(Qt::Key_Down);
+    m_harness->key(Qt::Key_Down);
+    QObject* viewMenu = m_harness->object(QStringLiteral("menuView"));
+    QVERIFY(viewMenu);
+    m_harness->key(Qt::Key_Right);
+    QVERIFY2(m_harness->until([viewMenu] { return viewMenu->property("opened").toBool(); }),
+        "Right opens the highlighted heading");
+
+    // Four entries, all checkable, and a tick against exactly one.
+    QStringList ticked;
+    for (const QString& theme : { QStringLiteral("midnight"), QStringLiteral("slate"),
+             QStringLiteral("paper"), QStringLiteral("workbench") }) {
+        QQuickItem* entry = m_harness->item(QStringLiteral("mole.view.theme.%1").arg(theme));
+        QVERIFY2(entry, qPrintable(theme));
+        QVERIFY2(entry->property("checkable").toBool(), qPrintable(theme));
+        if (entry->property("checked").toBool())
+            ticked.append(theme);
+    }
+    QCOMPARE(ticked, QStringList({ QStringLiteral("midnight") }));
+
+    m_harness->screenshot(QStringLiteral("28-themes"));
+
+    m_harness->key(Qt::Key_Escape);
+    m_harness->key(Qt::Key_Escape);
+    QVERIFY(m_harness->until([menu] { return !menu->property("opened").toBool(); }));
+
+    // The one extra assertion, and the light window it buys.
+    QVERIFY(m_harness->app()->triggerAction(QStringLiteral("mole.view.theme.paper")));
+    QCOMPARE(m_harness->app()->colour()->theme(), QStringLiteral("Paper"));
+    QVERIFY2(m_harness->app()->colour()->isLight(), "Paper is a light theme and has to say so");
+    m_harness->screenshot(QStringLiteral("28b-paper"));
+
+    // Put back, so nothing after this is photographed in anything else.
+    QVERIFY(m_harness->app()->triggerAction(QStringLiteral("mole.view.theme.midnight")));
+    QCOMPARE(m_harness->app()->colour()->theme(), QStringLiteral("Midnight"));
 }
 
 void TestWalkthrough::emptyWindowExplainsItself()
