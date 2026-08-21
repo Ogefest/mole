@@ -9,6 +9,293 @@ wrong.
 
 ---
 
+## The secrets file was protected by a call that does nothing on Windows
+
+**Asked for:** MOLE-251 — `SecretStore` sets `0600` on the credential file, and on
+Windows that call succeeds while achieving nothing, so nothing reports a problem.
+
+**What was done:** the call is no longer made where it cannot work, rather than made
+and ignored. Qt maps its permission flags onto the read-only attribute on Windows and
+cannot express *only this account*, so the file keeps the ACL it inherits from the
+profile directory. The author settled the choice on 2026-08-20 — the encryption is the
+protection and the job is to say so — so there is no Win32 ACL code, and what protects
+the file at rest is now written on the class and in `README.md`, per platform.
+
+**Worth writing down:** the existing test asserted a mode and would therefore have
+failed on Windows for the absence of something that platform does not have. It states
+the contract for both now. That is the second time in this epic a test encoded one
+platform's spelling as if it were the rule — see MOLE-182, where the same shape of
+mistake was the fault itself rather than the test.
+
+## Whether videos worked at all was decided by a question only GStreamer answers
+
+**Asked for:** MOLE-245 — one probe gates video preview and video thumbnails, and its
+own comment says the codec list it reads is the half of `QMediaFormat` that GStreamer
+fills in.
+
+**What was done:** the two facts are separated. Whether Qt Multimedia is in the build
+is a build fact and the only one that hides the feature; what the backend says about
+codecs is a runtime one, and a backend that reports nothing is declining to answer
+rather than answering no. The honest response is to try and let the failure surface,
+which `reportPlaybackFailure()` already had the words for. The gate takes a probe, so
+the silent-backend case is fed in — there is no way to arrange one on this machine.
+
+**And then the thing worth writing down.** The ticket asks for the answer to appear in
+`mole --diagnostics`, and **there is no such flag**. The spellings are `--version` and
+`--plugins`, so asking for the name the code itself uses — the function is
+`runDiagnostics()` — started the application instead. On a machine with no display that
+is indistinguishable from a hang, which is exactly how it presented while this was being
+checked. It is a second spelling of `--plugins` now.
+
+## On Windows an SMB share is not a kind of drive, and neither is NFS
+
+**Asked for:** MOLE-246 — a factory whose library is missing is listed greyed out with
+a reason, and on Windows that reason would tell somebody to install libsmbclient for a
+share the local filesystem already reaches.
+
+**What was done:** a third answer, `isApplicable()`, and `driveKinds()` omits a factory
+that gives it. "A library you could install" and "this platform reaches it another way"
+are different facts and only the first belongs in the list. The boundary is deliberately
+narrow: SFTP, S3, FTP and WebDAV have no native Windows equivalent and are unchanged.
+
+**Worth knowing:** nothing overrode `isAvailable()` anywhere in the tree, so the
+greyed-out row the ticket describes was the mechanism's intent rather than behaviour
+anybody had seen. All three outcomes are asserted now with test factories.
+
+## Every Windows shortcut was reported as a symbolic link
+
+**Asked for:** MOLE-247 — `QFileInfo::isSymLink()` is true for a `.lnk`, so a folder of
+shortcuts is skipped by every sync plan and duplicate scan.
+
+**What was done:** `isSymbolicLink() || isJunction()` for the link question and
+`isShortcut()` for the other, with `FileEntry` carrying both. On Linux the two agree and
+nothing moved. `MemoryFileSystem` can now be told to carry one of each, so the rule is
+held on any machine — and watching it fail meant making the fake answer the way Windows
+does, at which point the shortcut's contents vanish from the walk.
+
+## The awkward-names suite was a list of names Windows will not create
+
+**Asked for:** MOLE-252 — the fixtures are names Windows refuses, so the suite fails
+before asserting anything.
+
+**What was done:** the table is in two groups, each row saying which it is in, and the
+skip decision asks the filesystem's rule set rather than the platform — so a FAT stick
+on Linux is handled by the same code. The group each row claims is checked against the
+rules rather than trusted, and the number of names really exercised is counted and
+asserted: 20 here, 14 under Windows rules.
+
+**Why the count is there:** a suite that skips per row fails silently by skipping
+everything, and the run looks identical either way. Verified by pointing the fixture at
+a Windows rule set: exactly the six POSIX-only names skip, each naming what is wrong.
+
+## A staged copy of a local file was the file itself
+
+**Asked for:** MOLE-250 — `scratchPathFor()` returns the original file's own path when
+given one with a drive letter, because `QDir::filePath()` hands back an absolute
+argument unchanged.
+
+**What was done:** the path is built from components, each through the destination's
+naming rules, and the invariant is asserted in the function as well as in the test — the
+result is inside the scratch directory, because the cost of being wrong is writing over
+somebody's file.
+
+**And then the thing worth writing down.** Most of the new cases *cannot* fail on Linux:
+`C:/Users/...` is only absolute on Windows, so the reported fault is invisible here.
+What did fail was a fault nobody had noticed — only `uri.path()` was used, so
+`/reports/2026.pdf` on two different servers was one staging path, and opening the
+second overwrote the first while it was still being read. The authority is part of the
+path now.
+
+## Nothing checked a name against what the destination would accept
+
+**Asked for:** MOLE-243 — between a name being chosen and a file being written, nothing
+asks whether the destination will take it.
+
+**What was done**, per [ADR-0070](docs/adr/0070-a-backend-says-what-a-name-may-be.md):
+`IFileSystem::nameRules()` and a pure `checkName()` over it. The rename preview marks
+the row before anything moves and the transfer fails one file rather than the run, each
+naming the character. A suggestion is offered and never applied — a file that arrives
+under a name nobody chose is harder to find later than one that did not arrive.
+
+**Two things the tests found.** The backslash belongs in the Windows set for a reason
+that is not obvious: it is not a bad character there but a separator, so
+`back\slash.txt` copied to Windows would not be a badly named file, it would be a file
+called `slash.txt` inside a directory called `back`. And **awkward is not the same
+question as refused** — a quote, a hash, a newline and an emoji are all legal on every
+platform Mole targets, and a test that assumed otherwise passed for the wrong reason
+until it was split in two.
+
+## Three QML files built a file: uri by hand
+
+**Asked for:** MOLE-249 — `"file://" + value` and `substring(7)`, in three places, none
+of which survives a drive letter.
+
+**What was done:** one conversion each way in C++, `pathTextFor()` and the new
+`uriForPathText()`, and the three literals are gone. The claim is greppable and is kept
+that way by `tst_QmlConventions`, which reads the shipped source so the rule holds for
+files nobody has written yet. Two small improvements fell out of having one
+implementation: a typed uri is normalised, and an empty path bar navigates nowhere
+rather than to `/`.
+
+## The menu asked for a font called "monospace"
+
+**Asked for:** MOLE-183 — a fontconfig alias that resolves to nothing off Linux.
+
+**What was done:** `App.monospaceFont`, the way every other view does it. The ticket
+says the menu is the only place that hard-codes it; it is not — `Main.qml` and
+`AutomationView.qml` do it too, so all three are fixed. Three lines are not worth a
+test and the claim behind them is, so `tst_QmlConventions` states it.
+
+## LocalFileSystem disagreed with itself about mode strings
+
+**Asked for:** MOLE-182 — `access()` guards the mode string on Windows and
+`entryFromInfo()`, eighty lines above it, does not.
+
+**What was done:** one question with one answer, `LocalFileSystem::modeString()`, asked
+by both. The `#ifdef` is gone rather than copied, with the platform as an argument so
+the Windows answer is assertable at all. It was not only cosmetic: `AlertEvaluator`
+reads an empty permission string as *this drive does not report permissions*, so a
+synthesised value would have an alert firing on a mode nobody ever set.
+
+**Worth writing down:** the test compares `list()` and `access()` against each other
+rather than against a spelling, which is the form that would have caught this on the day
+the guard was added to one of them.
+
+## The drive list was three mount prefixes, and they are one Linux convention
+
+**Asked for:** MOLE-241 — MOLE-181 said the Linux arm stays as it is; this is the part
+saying today's answer is already wrong on Linux.
+
+**What was done**, per [ADR-0069](docs/adr/0069-what-counts-as-a-drive.md): the
+allowlist stays and stops being the only gate. A mount carrying the user's home is
+always a drive, a memory-backed filesystem never is wherever it sits, and a mount on a
+real backing device outside the operating system's own directories counts. Both halves
+of that last rule matter — without the device test the whole ZFS dataset pile arrives,
+and without the system-directory test so does `/boot/efi`.
+
+**Measured rather than argued.** On the machine this was found on the list went from a
+ramdisk, the root and two `/mnt` entries, to the home dataset, the root, an ext4 disk
+and an NFS export — with twenty-six snap loopbacks, the dataset pile, the EFI partition
+and the ramdisk all out.
+
+**And the first answer was wrong twice.** The ancestor-mount test the ticket suggested
+is written up in the ADR as considered and rejected: read as *same device as an
+ancestor* it drops a Btrfs `@data` subvolume, read as *an ancestor is already listed* it
+rescues nothing, since `/` is an ancestor of everything. And making `isRoot` mean *the
+volume carrying home* — which is what the struct's comment had always claimed — put the
+home volume above the root and reordered the sidebar. An existing bookmark test caught
+it. The comment was what was wrong, not the code.
+
+## The sidebar had no drives on Windows and one wrong one on macOS
+
+**Asked for:** MOLE-181 — `enumerate()` returns nothing on Windows and a single row
+called "Root" on macOS.
+
+**What was done:** the allowlist got a platform, passed in rather than compiled in.
+Windows has nothing to filter — the allowlist was solving a problem it does not have.
+macOS keeps everything but the boot volume under `/Volumes/`, which was in no list, and
+the boot volume's own name now wins over the generic word. Linux is exactly what it was.
+`tst_SystemVolumes` is new and asks all three machines the same questions on whatever
+machine the suite runs on; nothing had tested either function before.
+
+## A rename that only changed case was refused
+
+**Asked for:** MOLE-242 — `report.txt` to `Report.txt` fails with *Already exists*, and
+on a case-insensitive volume the file in the way is the file being renamed.
+
+**What was done:** the guard asks which node is there rather than whether a name is
+taken, and `RenamePlan` folds the same way so the preview stops lying. The conformance
+suite gained the case and `MemoryFileSystem` can be told to behave like such a volume —
+case-preserving as well as case-insensitive, because that is what those volumes are.
+
+**The part worth keeping.** The ticket suggests comparing canonical paths, and doing
+exactly that would have introduced a data loss: **a symbolic link and its target share a
+canonical path**, so renaming a link onto what it points at would have looked like the
+same node and replaced the target with the link. A link is excluded rather than
+resolved.
+
+**And a test that passed for the wrong reason.** The agreement test between the two
+layers was written the obvious way and never produced the names it assumed — the replace
+rule works on the stem, not the whole name — so the expected name is asserted too. Also
+found here: `MemoryFileSystem` answered `stat()` and `list()` with uris of its own
+making, dropping the authority of the mount it was asked through, so a drive mounted at
+`mem://counted/` got `mem:///` back. That one broke five preview tests before it was
+understood.
+
+## A path differing only in case was a different path
+
+**Asked for:** MOLE-240 — `operator==` compares strings, so a destination typed with
+different capitalisation walks past the guard that stops a directory being put inside
+itself.
+
+**What was done:** case folding is an argument, because it is a property of the volume
+and not of the class. `equals()`, `isWithin()` and `hash()` take a sensitivity; the
+one-argument forms answer from the scheme and the platform, and a caller holding a
+backend asks the backend, which is what the transfer guard does.
+`AnalysisStore` hashes a canonical key now, so one directory reached two ways no longer
+grows two stores.
+
+**Worth writing down:** folding uses `toCaseFolded()` for both the comparison and the
+hash, so the two agree by construction. A hash that folds differently from the equality
+beside it is how a `QHash` loses an entry it is still holding, and the disagreement
+would only show on characters nobody thinks to test.
+
+**And what it turned up.** Writing the guard's test showed that `TransferTask` takes a
+rename shortcut when both ends are the same backend object, and **the self-move guard
+lives in the path that shortcut skips**. The existing tests all wrap the target in a
+second backend, so it had never been exercised. Probed afterwards against
+`MemoryFileSystem`: the move reports success and a file inside the subdirectory is gone
+from every path. Opened as MOLE-275 rather than folded in here.
+
+## A Windows path could not be held in a VfsUri
+
+**Asked for:** MOLE-180 — `fromLocalPath("C:\Users\ann")` round-trips to
+`\C:\Users\ann`, which names nothing, and every local operation goes through it.
+
+**What was done**, per
+[ADR-0068](docs/adr/0068-a-local-path-with-a-drive-letter-inside-a-uri.md): the drive
+letter is the first path component and the leading slash stays; a UNC share puts the
+server in the authority, which is what it is. A drive root and a share root are roots,
+so walking up stops there rather than producing `/`, which no backend could list. The
+tidier alternative — the drive in the authority — was rejected because `isWithin()` and
+`operator==` both compare authority and it would have given them a new meaning on a
+class every backend depends on.
+
+**The load-bearing part is that the platform is an argument.** An `#ifdef` cannot be
+tested: the suite runs on Linux, so the Windows arm of a compile-time switch is a branch
+no test has ever entered, which is precisely how a pure string function carried this.
+`HostPlatform` came out of this ticket and four others in the epic use it.
+
+**Two faults the new tests found, both fixed rather than written down as expectations.**
+The `isWithin()` shortcut on `other.isRoot()` said `C:\Users\ann` was inside `D:\` —
+only `/` contains everything. And `toLocalPath()` of a drive root gave `C:`, which on
+Windows means *the current directory on that drive*, whatever the process last set it
+to, rather than the root.
+
+## Nothing configured on Windows, because every preset demanded ccache
+
+**Asked for:** MOLE-179 — the base preset asserts `CMAKE_CXX_COMPILER_LAUNCHER=ccache`
+and MSVC has never had it.
+
+**What was done:** `find_program` in the top-level `CMakeLists.txt` and the entry
+removed from the preset, moving the decision out of the file that cannot ask questions
+into the one that can. `README.md` names the preset commands directly, since the
+`Makefile` is GNU make with shell recipes and is not the way in on Windows.
+
+**Worth writing down:** checking the no-ccache case honestly took a mount namespace with
+a non-executable file bound over `/usr/bin/ccache`. Stripping `PATH` is not enough —
+`find_program` searches `/usr/bin` whatever `PATH` says, which the first attempt at
+verifying this missed and reported a false pass.
+
+## The README claimed nothing in the codebase was Linux-specific
+
+**Asked for:** MOLE-178 — the claim was true in intent and had never met a compiler that
+would argue with it.
+
+**What was done:** `README.md` says what is known and points at `TODO.md`, which carries
+the standing position. The list is the tickets in the epic; a list kept in two places
+goes stale in one of them.
+
 ## A search is one box, and the box turned out to be inert
 
 **Asked for:** MOLE-271 — the line above the form already takes the whole vocabulary,
