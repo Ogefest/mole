@@ -161,6 +161,21 @@ it says so on the file rather than pretending the file is broken. Column types c
 the file's own schema, and only the row groups needed for what is on screen are read, so
 a file of millions of rows opens as fast as one of ten.
 
+## An earlier version of the file
+
+Where the drive keeps them, the picker beside the file name moves between the states
+of the file it has. It says **current** until you move it and says which version you
+are on afterwards, so what is on screen is never in doubt.
+
+Every viewer here works on one, because an earlier version is an ordinary file with
+an address of its own rather than a separate kind of thing — the text viewer, the
+table, the picture, all of them, read a page at a time exactly as they read the
+current file. Nothing is fetched until you open the picker.
+
+Nothing here writes: Mole shows what the drive holds and lets you copy it out. See
+[What one drive can do and another cannot](drives.md#what-one-drive-can-do-and-another-cannot)
+for which drives have this and why the one next to it may have nothing.
+
 ## Details
 
 The **Details** checkbox in the strip opens a drawer beside the viewer, with one fact a

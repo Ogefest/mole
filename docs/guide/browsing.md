@@ -138,6 +138,14 @@ A folder that has been analysed, or that something is watching, is marked as suc
 so the listing carries what is already known about a place rather than making you go
 and look.
 
+A row is also marked when the drive it is on has something to offer for that file
+that another drive could not — earlier versions of it, a link to it. What that is
+belongs to the drive and is in the menu under Operations; the row says only that
+there is something. See
+[What one drive can do and another cannot](drives.md#what-one-drive-can-do-and-another-cannot).
+Whether the mark can appear at all is asked of the drive once per folder, so a
+listing of five thousand files costs one question rather than five thousand.
+
 ## A folder that is a git checkout
 
 ![Git state in a pane](images/01e-git-state.png)

@@ -151,6 +151,60 @@ somebody else's server repeated for as long as the window is open, which is a
 good way to get an address rate-limited and a small bill on a metered bucket, for
 information nobody asked for.
 
+## What one drive can do and another cannot
+
+Drives are not interchangeable, and pretending they are throws away the only thing
+some of them have. A disk on a filesystem that keeps earlier states of a file knows
+what those states are; a container that keeps earlier objects under one key knows
+the same; an object store can hand out a link to one object that works for a while
+without an account. None of that is anything the other drives can do, and none of it
+is anything Mole would otherwise have anywhere to put.
+
+So a drive can offer things of its own. What it offers appears under **Operations**
+in the menu, alongside everything else that acts on the file in front of you, in the
+drive's own words. Mole does not know what any of it means: it shows what the drive
+listed, hands the choice straight back, and does one of two things with the answer.
+
+**What is on offer depends on what the drive was pointed at, not only on which kind
+of drive it is.** The same local drive has earlier versions on one filesystem and not
+on another; the same object store has them on one container and not on another. Mole
+finds out by asking the drive, once, the first time you open a folder on it — so a
+drive you never open is never asked, and opening one costs a single question that the
+listing does not wait for.
+
+### Reading an earlier version
+
+A row is marked when the drive has something for that file. Opening the file's
+earlier versions gives a list to choose from, and choosing one **opens it as an
+ordinary file** — which is the whole trick: every viewer in
+[Looking inside files](previews.md) works on it, because it is a file like any other
+and not a special screen. A large one is read a page at a time over the network, the
+same way the current one is.
+
+Inside the preview there is a picker beside the file name. It says **current** until
+you move it, and it says which version you are on afterwards — always, whether or not
+the drive has anything else to offer. A preview that showed you an earlier version
+while looking like the file itself would be worse than not having the feature.
+
+Copying one out is copying a file: the version you are looking at is what a copy,
+a drag or *Copy path* acts on.
+
+### Nothing here writes
+
+**Mole shows what a drive already holds, and takes a copy out of it.** It does not
+roll a file back, delete an earlier version, change how long they are kept, or turn
+the feature on. A filesystem that keeps snapshots has a tool for managing them and a
+container has a console; if that is what you want, that is where it lives. What Mole
+adds is being able to *look*, in the same window as everything else, without going
+and finding those tools first.
+
+### When a drive offers nothing
+
+Which is most drives on most machines, and it costs nothing at all. No mark on any
+row, no extra entries in the menu, no picker in the preview, and no question asked of
+the drive beyond the one that found out it had nothing to say. A plain disk on an
+ordinary filesystem browses exactly as it did before any of this existed.
+
 ## What is not here
 
 **Google Drive, Dropbox and OneDrive are not backends and are not planned as
