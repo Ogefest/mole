@@ -7,6 +7,7 @@
 #include "core/automation/ScheduleStore.h"
 #include "core/automation/Scheduler.h"
 #include "core/events/EventBus.h"
+#include "core/index/ForgetVolumeTask.h"
 #include "core/index/IndexSummary.h"
 #include "core/index/ScanTask.h"
 #include "core/tasks/TaskManager.h"
@@ -190,16 +191,38 @@ bool IndexesController::forget(qint64 volumeId)
     if (Task* running = scanOf(volume->rootUri))
         running->requestCancel();
 
-    if (!m_services.index->removeVolume(volumeId).ok())
+    if (!m_services.tasks)
         return false;
-    // The rule outliving the index it refreshes would rebuild it tonight, which
-    // is not what "forget this index" means.
-    if (m_services.scheduler && m_services.scheduler->store()) {
-        IndexScanJob::schedule(*m_services.scheduler->store(), volume->rootUri, 0, ScanOptions {}, QString());
-    }
-    rebuild();
-    if (m_services.events)
-        m_services.events->postIndexUpdated(-1, 0);
+
+    // Through the task layer, because writers are serialised and this one waits
+    // for whatever transaction a scan has open -- and because a DELETE over
+    // hundreds of thousands of rows is not instant on the thread that draws the
+    // window. The last index write that was still made here. See MOLE-274.
+    auto* task = new ForgetVolumeTask(m_services.index, volumeId, volume->label);
+    connect(task, &ForgetVolumeTask::removed, this,
+        [this, root = volume->rootUri, label = volume->label](bool ok, const QString& reason) {
+            if (!ok) {
+                // The row stays, and says why. Silently leaving an index that
+                // somebody asked to be rid of is the worse of the two.
+                if (m_services.events) {
+                    m_services.events->postNotification(EventBus::Severity::Warning,
+                        QStringLiteral("Could not forget the index of %1").arg(label), reason);
+                }
+                return;
+            }
+
+            // The rule outliving the index it refreshes would rebuild it tonight,
+            // which is not what "forget this index" means. After the removal, not
+            // before: a failed removal that had already dropped the schedule would
+            // leave an index nothing keeps fresh.
+            if (m_services.scheduler && m_services.scheduler->store()) {
+                IndexScanJob::schedule(*m_services.scheduler->store(), root, 0, ScanOptions {}, QString());
+            }
+            if (m_services.events)
+                m_services.events->postIndexUpdated(-1, 0);
+        });
+    m_services.tasks->submit(task);
+    // True means asked for, and the row goes when the snapshot has read again.
     return true;
 }
 

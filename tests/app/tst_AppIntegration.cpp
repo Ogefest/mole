@@ -181,9 +181,12 @@ void TestAppIntegration::startsWithBuiltinFeaturesAndDrives()
 /// to load. That is the case that function was written for. See MOLE-263.
 void TestAppIntegration::theLogSaysWhatThisRunStartedWith()
 {
-    // Something in the index, so the count is a count rather than "none".
-    const Result<qint64> volume
-        = m_app->services().index->upsertVolume(m_tree->rootUri(), QStringLiteral("the scratch tree"));
+    // Something in the index, so the count is a count rather than "none". Written
+    // from this thread on purpose, which is what the guard is stood down for.
+    const Result<qint64> volume = [this] {
+        UsingTheIndexOnPurpose direct(m_app->services().index);
+        return m_app->services().index->upsertVolume(m_tree->rootUri(), QStringLiteral("the scratch tree"));
+    }();
     QVERIFY2(volume.ok(), qPrintable(volume.error().message));
 
     // The block is written inside initialise(), so the capture has to be installed

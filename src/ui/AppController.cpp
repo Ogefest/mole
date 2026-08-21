@@ -204,7 +204,7 @@ AppController::~AppController()
     delete m_taskManager;
     m_taskManager = nullptr;
     if (m_index)
-        m_index->doNotReadFrom(nullptr);
+        m_index->doNotQueryFrom(nullptr);
     m_index.reset();
 }
 
@@ -272,7 +272,7 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     m_services.indexSummary = m_indexSummary;
     // From here on a read of the index from this thread is a fault and says so.
     // Set after open(), which legitimately runs here.
-    m_index->doNotReadFrom(QThread::currentThread());
+    m_index->doNotQueryFrom(QThread::currentThread());
     m_indexSummary->refresh();
 
     // The mount table is the source of truth; the bus just broadcasts it so

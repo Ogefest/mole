@@ -85,33 +85,37 @@ void drainEvents();
 /// its own assertion rather than on a mystery empty list.
 bool refreshIndexSummary(IndexSummary* summary, int timeoutMs = 5000);
 
-/// Reads the index directly from the test's own thread on purpose.
+/// Uses the index directly from the test's own thread on purpose.
 ///
-/// ADR-0066 has `AppController` name the thread that draws the window, and a read
-/// of the index from it warns -- because interface code must ask `IndexSummary`
-/// instead. A test asserting about *storage* rather than about the interface is
-/// the exception, and saying so here keeps the warning meaning what it says.
+/// ADR-0066 has `AppController` name the thread that draws the window, and a
+/// query from it warns -- because interface code reads `IndexSummary` instead, and
+/// asks for a write through a task. Since MOLE-274 that covers writes as well as
+/// reads, which is why this is no longer named after reading: a suite that seeds
+/// rows by hand is writing, deliberately, from the guarded thread.
+///
+/// A test asserting about *storage* rather than about the interface is the
+/// exception, and saying so here keeps the warning meaning what it says.
 ///
 /// Only for suites that get their index through AppController; one that owns its
 /// own IndexDatabase was never guarded.
-class ReadingTheIndexOnPurpose
+class UsingTheIndexOnPurpose
 {
 public:
-    explicit ReadingTheIndexOnPurpose(IndexDatabase* index)
+    explicit UsingTheIndexOnPurpose(IndexDatabase* index)
         : m_index(index)
     {
         if (m_index)
-            m_index->doNotReadFrom(nullptr);
+            m_index->doNotQueryFrom(nullptr);
     }
 
-    ~ReadingTheIndexOnPurpose()
+    ~UsingTheIndexOnPurpose()
     {
         if (m_index)
-            m_index->doNotReadFrom(QThread::currentThread());
+            m_index->doNotQueryFrom(QThread::currentThread());
     }
 
-    ReadingTheIndexOnPurpose(const ReadingTheIndexOnPurpose&) = delete;
-    ReadingTheIndexOnPurpose& operator=(const ReadingTheIndexOnPurpose&) = delete;
+    UsingTheIndexOnPurpose(const UsingTheIndexOnPurpose&) = delete;
+    UsingTheIndexOnPurpose& operator=(const UsingTheIndexOnPurpose&) = delete;
 
 private:
     IndexDatabase* m_index = nullptr;

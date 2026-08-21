@@ -63,6 +63,8 @@ bool TestIndexesView::seed(const QString& label, int files)
     IndexDatabase* index = m_harness->app()->services().index;
     if (!index)
         return false;
+    // Seeding is a write from the guarded thread, on purpose. See MOLE-274.
+    UsingTheIndexOnPurpose direct(index);
     const QString uri = m_harness->fixtureUri() + QLatin1Char('/') + label;
     const Result<qint64> volume = index->upsertVolume(VfsUri::fromString(uri), label);
     if (!volume.ok())

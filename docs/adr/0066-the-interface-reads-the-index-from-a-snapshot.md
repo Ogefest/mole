@@ -114,6 +114,12 @@ fixed the other seven.
   still serialised, so removing an index can wait for a scan's transaction. It is a
   separate ticket, and the guard covers reads only so that the suite stays green in the
   meantime; when that lands, the guard covers writes too.
+
+  **Amended 2026-08-21 (MOLE-274): it landed, and the guard covers writes.** Forgetting
+  an index goes through `ForgetVolumeTask`, which was the last index write the interface
+  made on its own thread, so `doNotReadFrom()` became `doNotQueryFrom()` and all seven
+  writers check it alongside the five reads. The three exceptions in the bullet below
+  are unchanged and are the only ones.
 - `open()`, `close()` and `applyMigrations()` are outside the guard by construction:
   they run on the thread that starts and stops the application, which is the same
   thread, and they are the two moments when that is correct.

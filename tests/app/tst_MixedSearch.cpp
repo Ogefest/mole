@@ -471,7 +471,9 @@ void TestMixedSearch::theFieldsOfferedFollowTheKeysInScope()
     QVERIFY2(search->factKeys().isEmpty(), "an unindexed folder offers no fields at all");
 
     // A fact nothing in this application has heard of, recorded by a scan: the
-    // field for it has to appear without anybody editing the form.
+    // field for it has to appear without anybody editing the form. Written from
+    // this thread on purpose, which is what the guard is stood down for.
+    UsingTheIndexOnPurpose direct(m_app->services().index);
     const Result<qint64> volume = m_app->services().index->upsertVolume(
         VfsUri::fromString(memUri(QStringLiteral("/tree"))), QStringLiteral("stub"));
     QVERIFY(volume.ok());

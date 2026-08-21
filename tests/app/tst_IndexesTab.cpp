@@ -100,6 +100,8 @@ bool TestIndexesTab::seed(const QString& uri, const QString& label, const ScanOp
     IndexDatabase* index = m_app->services().index;
     if (!index)
         return false;
+    // Seeding is a write from the guarded thread, on purpose. See MOLE-274.
+    UsingTheIndexOnPurpose direct(index);
 
     const Result<qint64> volume = index->upsertVolume(VfsUri::fromString(uri), label);
     if (!volume.ok())
@@ -394,7 +396,7 @@ void TestIndexesTab::forgettingARowTakesTheIndexAndItsSchedule()
     SearchQuery byName;
     byName.add(SearchPredicate::name(QStringLiteral("file-0.txt")));
     // Storage, not the interface -- so the guard is stood down for the read.
-    ReadingTheIndexOnPurpose direct(m_app->services().index);
+    UsingTheIndexOnPurpose direct(m_app->services().index);
     QCOMPARE(m_app->services().index->search(byName).value().size(), 2);
 
     QVERIFY(tab->forget(id));
@@ -446,7 +448,7 @@ void TestIndexesTab::aRunningScanShowsOnItsRowAndStoppingItChangesNothing()
     QCOMPARE(after.value(QStringLiteral("scannedAt")).toString(), scannedBefore);
     SearchQuery byName;
     byName.add(SearchPredicate::name(QStringLiteral("file-0.txt")));
-    ReadingTheIndexOnPurpose direct(m_app->services().index);
+    UsingTheIndexOnPurpose direct(m_app->services().index);
     QCOMPARE(m_app->services().index->search(byName).value().size(), 1);
 }
 

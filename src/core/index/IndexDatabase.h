@@ -132,21 +132,24 @@ public:
     void close();
     bool isOpen() const;
 
-    /// Names the thread that draws the window, so that a read arriving from it
+    /// Names the thread that draws the window, so that a query arriving from it
     /// says so instead of being noticed by somebody with a large index.
     ///
     /// The interface reads `IndexSummary` rather than this class -- see
-    /// docs/adr/0066-the-interface-reads-the-index-from-a-snapshot.md -- and a
-    /// direct read from the drawing thread is a fault whatever it costs on the
-    /// machine it was written on. It warns rather than refusing: the answer it
-    /// would give is correct, and turning a slow interface into a broken one is
-    /// not an improvement.
+    /// docs/adr/0066-the-interface-reads-the-index-from-a-snapshot.md -- and asks
+    /// for a write through a task, the way `ForgetVolumeTask` does. A query from
+    /// the drawing thread is a fault whatever it costs on the machine it was
+    /// written on. It warns rather than refusing: the answer it would give is
+    /// correct, and turning a slow interface into a broken one is not an
+    /// improvement.
     ///
-    /// The five reads that run SQL. `isOpen()` is not among them -- it reads an
-    /// atomic and touches no database. `open()`, `close()` and
-    /// `applyMigrations()` run on this same thread by design, and a write from it
-    /// is the same fault with its own ticket. Pass nullptr to stop guarding.
-    void doNotReadFrom(QThread* thread);
+    /// **Reads and writes both**, since MOLE-274 moved the last write off that
+    /// thread. `isOpen()` is not among them -- it reads an atomic and touches no
+    /// database -- and `open()`, `close()` and `applyMigrations()` are outside it
+    /// by construction, because they run on this very thread when the application
+    /// starts and stops, which are the two moments that is correct. Pass nullptr
+    /// to stop guarding.
+    void doNotQueryFrom(QThread* thread);
 
     // ---- volumes ---------------------------------------------------------
 
@@ -238,7 +241,7 @@ private:
     /// Opens (or reuses) this thread's connection. Takes m_registry itself, so
     /// callers hold nothing of ours -- which is what lets a reader call it.
     QSqlDatabase connectionForCurrentThread() const;
-    /// Warns when `what` is being read from the thread that draws the window.
+    /// Warns when `what` is being asked from the thread that draws the window.
     void checkNotOnTheDrawingThread(const char* what) const;
     Result<void> applyMigrations();
     static Result<void> sqlError(const QSqlDatabase& db, const QString& context);
@@ -253,9 +256,9 @@ private:
     mutable int m_nextConnection = 0;
     /// Atomic because a reader looks at it holding no lock.
     std::atomic<bool> m_open = false;
-    /// The thread reads must not come from, or nullptr. Atomic for the same
+    /// The thread queries must not come from, or nullptr. Atomic for the same
     /// reason: it is read by a reader holding nothing.
-    std::atomic<QThread*> m_noReadsFrom = nullptr;
+    std::atomic<QThread*> m_noQueriesFrom = nullptr;
 };
 
 } // namespace mole

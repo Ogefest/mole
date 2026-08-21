@@ -13,6 +13,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-21 #MOLE-274 Forgetting an index no longer freezes the window while a scan is writing, and a removal that fails says so instead of looking like one that worked
 2026-08-21 #MOLE-277 A tab opened from another no longer carries a "Back to" bar above it; closing it still returns you to the tab it came from
 2026-08-21 #MOLE-272 The search form's criteria scroll, so the size range and the index toggle are reachable instead of sitting under the task strip
 2026-08-21 #MOLE-273 make tsan is green again, and a test suite that leaves a task running is now a failure somebody sees

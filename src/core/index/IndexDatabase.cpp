@@ -135,19 +135,19 @@ void IndexDatabase::close()
     m_connections.clear();
 }
 
-void IndexDatabase::doNotReadFrom(QThread* thread)
+void IndexDatabase::doNotQueryFrom(QThread* thread)
 {
-    m_noReadsFrom = thread;
+    m_noQueriesFrom = thread;
 }
 
 void IndexDatabase::checkNotOnTheDrawingThread(const char* what) const
 {
-    if (m_noReadsFrom.load() != QThread::currentThread())
+    if (m_noQueriesFrom.load() != QThread::currentThread())
         return;
     // Not qCWarning: this is a programming fault rather than an operational
     // fact, and it should be visible without anybody turning a category on.
-    qWarning("Index read on the thread that draws the window: %s. Read IndexSummary "
-             "instead -- see ADR-0066.",
+    qWarning("Index query on the thread that draws the window: %s. Read IndexSummary, "
+             "or ask through a task -- see ADR-0066.",
         what);
 }
 
@@ -320,6 +320,7 @@ Result<void> IndexDatabase::applyMigrations()
 
 Result<qint64> IndexDatabase::upsertVolume(const VfsUri& root, const QString& label)
 {
+    checkNotOnTheDrawingThread("upsertVolume()");
     QMutexLocker lock(&m_writers);
     if (!m_open)
         return VfsError::make(VfsError::IoError, QStringLiteral("Index is not open"));
@@ -349,6 +350,7 @@ Result<qint64> IndexDatabase::upsertVolume(const VfsUri& root, const QString& la
 
 Result<void> IndexDatabase::removeVolume(qint64 volumeId)
 {
+    checkNotOnTheDrawingThread("removeVolume()");
     QMutexLocker lock(&m_writers);
     if (!m_open)
         return Result<void>::failure(VfsError::IoError, QStringLiteral("Index is not open"));
@@ -372,6 +374,7 @@ Result<void> IndexDatabase::removeVolume(qint64 volumeId)
 
 Result<qint64> IndexDatabase::beginScan(qint64 volumeId)
 {
+    checkNotOnTheDrawingThread("beginScan()");
     QMutexLocker lock(&m_writers);
     if (!m_open)
         return VfsError::make(VfsError::IoError, QStringLiteral("Index is not open"));
@@ -456,6 +459,7 @@ Result<QHash<QString, qint64>> IndexDatabase::directoryTimes(qint64 volumeId) co
 
 Result<qint64> IndexDatabase::carryForward(qint64 volumeId, qint64 generation, const QString& path)
 {
+    checkNotOnTheDrawingThread("carryForward()");
     QMutexLocker lock(&m_writers);
     if (!m_open)
         return VfsError::make(VfsError::IoError, QStringLiteral("Index is not open"));
@@ -518,6 +522,7 @@ Result<qint64> IndexDatabase::carryForward(qint64 volumeId, qint64 generation, c
 Result<void> IndexDatabase::commitScan(
     qint64 volumeId, qint64 generation, const QDateTime& when, const ScanOptions& options)
 {
+    checkNotOnTheDrawingThread("commitScan()");
     QMutexLocker lock(&m_writers);
     if (!m_open)
         return Result<void>::failure(VfsError::IoError, QStringLiteral("Index is not open"));
@@ -567,6 +572,7 @@ Result<void> IndexDatabase::commitScan(
 
 Result<void> IndexDatabase::abandonScan(qint64 volumeId, qint64 generation)
 {
+    checkNotOnTheDrawingThread("abandonScan()");
     QMutexLocker lock(&m_writers);
     if (!m_open)
         return Result<void>::failure(VfsError::IoError, QStringLiteral("Index is not open"));
@@ -632,6 +638,7 @@ Result<QList<IndexVolume>> IndexDatabase::volumes() const
 
 Result<void> IndexDatabase::insertBatch(qint64 volumeId, qint64 generation, const QList<IndexedFile>& files)
 {
+    checkNotOnTheDrawingThread("insertBatch()");
     if (files.isEmpty())
         return {};
 

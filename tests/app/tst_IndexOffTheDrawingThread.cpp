@@ -9,12 +9,15 @@
 
 #include "core/CoreMetaTypes.h"
 #include "core/automation/Scheduler.h"
+#include "core/events/EventBus.h"
 #include "core/index/IndexDatabase.h"
 #include "core/index/IndexSummary.h"
 
 #include <QFile>
 #include <QGuiApplication>
 #include <QTest>
+
+#include <atomic>
 
 using namespace mole;
 using namespace mole::test;
@@ -49,6 +52,8 @@ private slots:
     void nothingTheInterfaceDoesReadsTheIndexOnTheDrawingThread();
     void theSessionLogStillNamesTheIndexes();
     void aFolderChangeWhileAScanRunsStillAnswers();
+    void forgettingAnIndexDoesNotWaitForAScanToStopWriting();
+    void aRemovalThatFailsLeavesTheRowAndSaysSo();
     void anAnswerThatHasNotArrivedDoesNotSayTheFolderIsUnindexed();
 
 private:
@@ -67,7 +72,7 @@ private:
 
 /// What the guard says. Matching on this rather than on a whole line, because
 /// what matters is that a read happened here at all.
-static const QString kComplaint = QStringLiteral("Index read on the thread that draws the window");
+static const QString kComplaint = QStringLiteral("Index query on the thread that draws the window");
 
 void TestIndexOffTheDrawingThread::initTestCase()
 {
@@ -109,6 +114,10 @@ bool TestIndexOffTheDrawingThread::seed(const QString& label, int files)
     IndexDatabase* index = m_app->services().index;
     if (!index)
         return false;
+    // Writing from this thread is what the guard now complains about, and doing it
+    // here is deliberate: a test that states exactly what is in the index writes it
+    // rather than scanning for it. See MOLE-274.
+    UsingTheIndexOnPurpose direct(index);
 
     const QString uri = fixtureUri() + QLatin1Char('/') + label;
     const Result<qint64> volume = index->upsertVolume(VfsUri::fromString(uri), label);
@@ -179,7 +188,7 @@ void TestIndexOffTheDrawingThread::theGuardItselfNoticesADirectRead()
     {
         CapturedWarnings quiet;
         {
-            ReadingTheIndexOnPurpose direct(m_app->services().index);
+            UsingTheIndexOnPurpose direct(m_app->services().index);
             QVERIFY(m_app->services().index->volumes().ok());
         }
         QVERIFY2(!quiet.contains(kComplaint), qPrintable(quiet.joined()));
@@ -204,6 +213,9 @@ void TestIndexOffTheDrawingThread::nothingTheInterfaceDoesReadsTheIndexOnTheDraw
     QTest::newRow("the search form says whether the index covers this") << QStringLiteral("search coverage");
     QTest::newRow("the search form offers the fields the index can answer")
         << QStringLiteral("search fields");
+    // A write, and the last one the interface still made here. It belongs in this
+    // list because the guard covers writers too since MOLE-274.
+    QTest::newRow("forgetting an index") << QStringLiteral("forget");
 }
 
 void TestIndexOffTheDrawingThread::nothingTheInterfaceDoesReadsTheIndexOnTheDrawingThread()
@@ -253,6 +265,15 @@ void TestIndexOffTheDrawingThread::nothingTheInterfaceDoesReadsTheIndexOnTheDraw
         // coverageNote() calls factKeys() again, which is what made a per-call
         // task impossible and a snapshot the only answer.
         QVERIFY(!search->coverageNote().isEmpty());
+    } else if (route == QStringLiteral("forget")) {
+        IndexesController* tab = openIndexes();
+        QVERIFY(tab);
+        QCOMPARE(tab->volumeCount(), 1);
+        const qint64 id = tab->volumes().first().toMap().value(QStringLiteral("id")).toLongLong();
+        QVERIFY(tab->forget(id));
+        // The row goes when the removal has happened, not when it was asked for.
+        QVERIFY(
+            waitFor([this, tab] { return m_app->tasks()->activeCount() == 0 && tab->volumeCount() == 0; }));
     } else {
         QFAIL(qPrintable(QStringLiteral("unknown route %1").arg(route)));
     }
@@ -327,6 +348,119 @@ void TestIndexOffTheDrawingThread::aFolderChangeWhileAScanRunsStillAnswers()
     QVERIFY2(m_app->tasks()->activeCount() > 0,
         "the scan finished before the interface was asked anything, so this proved nothing");
     QVERIFY2(!warnings.contains(kComplaint), qPrintable(warnings.joined()));
+}
+
+void TestIndexOffTheDrawingThread::forgettingAnIndexDoesNotWaitForAScanToStopWriting()
+{
+    // The claim, and it is a condition rather than a clock: **forget() returns
+    // while a writer is still working.** Writers are serialised on purpose
+    // (ADR-0065), so a removeVolume() called on this thread waits for whatever
+    // transaction a scan has open -- and a DELETE over a large volume is not quick
+    // either. It was the last index write the interface still made here.
+    //
+    // Under the old code this blocks until the batch below is committed, by which
+    // time writeDone is set, so the assertion fails with a thousandfold margin
+    // rather than by a hair. See MOLE-274.
+    QVERIFY(seed(QStringLiteral("photos")));
+    QVERIFY(refreshIndexSummary(m_app->services().indexSummary));
+
+    IndexesController* tab = openIndexes();
+    QVERIFY(tab);
+    QCOMPARE(tab->volumeCount(), 1);
+    const qint64 id = tab->volumes().first().toMap().value(QStringLiteral("id")).toLongLong();
+
+    // A second volume with a long write in flight, so the writer lock is held by
+    // something that is not the volume being forgotten.
+    constexpr int kRows = 50000;
+    qint64 other = -1;
+    qint64 generation = -1;
+    {
+        UsingTheIndexOnPurpose direct(m_app->services().index);
+        const Result<qint64> made = m_app->services().index->upsertVolume(
+            VfsUri::fromString(fixtureUri() + QStringLiteral("/docs")), QStringLiteral("docs"));
+        QVERIFY(made.ok());
+        other = made.value();
+        const Result<qint64> scan = m_app->services().index->beginScan(other);
+        QVERIFY(scan.ok());
+        generation = scan.value();
+    }
+
+    QList<IndexedFile> rows;
+    rows.reserve(kRows);
+    for (int i = 0; i < kRows; ++i) {
+        IndexedFile row;
+        row.name = QStringLiteral("f%1.txt").arg(i);
+        row.parentPath = QStringLiteral("/docs");
+        row.path = row.parentPath + QLatin1Char('/') + row.name;
+        row.extension = QStringLiteral("txt");
+        rows.append(std::move(row));
+    }
+
+    std::atomic_bool writeStarted { false };
+    std::atomic_bool writeDone { false };
+    auto* writer = new ScriptedTask(QStringLiteral("a long write"), [&](ScriptedTask&) {
+        writeStarted = true;
+        m_app->services().index->insertBatch(other, generation, rows);
+        writeDone = true;
+    });
+    m_app->services().tasks->submit(writer);
+    QVERIFY(waitFor([&writeStarted] { return writeStarted.load(); }));
+
+    CapturedWarnings warnings;
+    QVERIFY(tab->forget(id));
+    const bool writerStillWorking = !writeDone.load();
+
+    QVERIFY(waitFor([&writeDone] { return writeDone.load(); }, 30000));
+    QVERIFY(waitFor([this] { return m_app->tasks()->activeCount() == 0; }, 30000));
+
+    QVERIFY2(writerStillWorking,
+        "forget() did not return until the write had finished -- it is waiting for the writer lock on "
+        "the thread that draws the window");
+    QVERIFY2(!warnings.contains(kComplaint), qPrintable(warnings.joined()));
+
+    // And it did happen: the row goes once the removal has landed, and the one
+    // that goes is the one that was asked for.
+    const auto labelsNow = [tab] {
+        QStringList out;
+        for (const QVariant& row : tab->volumes())
+            out.append(row.toMap().value(QStringLiteral("label")).toString());
+        out.sort();
+        return out;
+    };
+    QVERIFY2(waitFor([&labelsNow] { return labelsNow() == QStringList { QStringLiteral("docs") }; }),
+        qPrintable(QStringLiteral("the list settled on [%1], not on [docs]")
+                       .arg(labelsNow().join(QStringLiteral(", ")))));
+}
+
+void TestIndexOffTheDrawingThread::aRemovalThatFailsLeavesTheRowAndSaysSo()
+{
+    // A removal that cannot happen must not look like one that did. Closing the
+    // index is the cheapest way to make a write fail for certain -- open() and
+    // close() are outside the guard by construction, because they run on this
+    // thread when the application starts and stops.
+    QVERIFY(seed(QStringLiteral("photos")));
+    QVERIFY(refreshIndexSummary(m_app->services().indexSummary));
+
+    IndexesController* tab = openIndexes();
+    QVERIFY(tab);
+    QCOMPARE(tab->volumeCount(), 1);
+    const qint64 id = tab->volumes().first().toMap().value(QStringLiteral("id")).toLongLong();
+
+    QString said;
+    connect(m_app->services().events, &EventBus::notificationPosted, this,
+        [&said](EventBus::Severity, const QString& title, const QString& detail) {
+            said = title + QLatin1Char(' ') + detail;
+        });
+
+    m_app->services().index->close();
+    QVERIFY(tab->forget(id));
+    QVERIFY2(waitFor([&said] { return !said.isEmpty(); }),
+        "a removal that failed has to say so rather than fail silently");
+    QVERIFY2(said.contains(QStringLiteral("photos")), qPrintable(said));
+
+    // And the row is still there, because the index it names still is.
+    drainEvents();
+    QCOMPARE(tab->volumeCount(), 1);
 }
 
 void TestIndexOffTheDrawingThread::anAnswerThatHasNotArrivedDoesNotSayTheFolderIsUnindexed()
