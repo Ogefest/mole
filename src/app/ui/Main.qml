@@ -746,6 +746,9 @@ ApplicationWindow {
             }
 
             TaskStrip {
+                // Named so a test can ask where it starts: it is what the search
+                // form's criteria used to disappear behind. See MOLE-272.
+                objectName: "taskStrip"
                 Layout.fillWidth: true
                 panelColor: root.panelColor
                 mutedText: root.mutedText

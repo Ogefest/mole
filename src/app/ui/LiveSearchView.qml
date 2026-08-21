@@ -249,378 +249,400 @@ Item {
 
             ToolButton {
                 objectName: "advancedToggle"
-                text: (advanced.visible ? "▾  " : "▸  ") + "More"
+                text: (advancedArea.visible ? "▾  " : "▸  ") + "More"
                 font.pixelSize: App.secondaryTextSize
                 focusPolicy: Qt.NoFocus
-                onClicked: advanced.visible = !advanced.visible
+                onClicked: advancedArea.visible = !advancedArea.visible
             }
             Item { Layout.fillWidth: true }
         }
 
-        GridLayout {
-            id: advanced
-            objectName: "advancedCriteria"
-            Layout.fillWidth: true
+        // The criteria scroll rather than run off the bottom. There are eleven rows
+        // behind More now that the name fields joined them (ADR-0067), and in a
+        // 900-tall window the last of them sat *under the task strip*: measured,
+        // the grid reached y=880 and y=899 against a strip starting at 860, so the
+        // size range and the "Use the index" toggle could not be clicked at all.
+        // Nothing in this view scrolled. See MOLE-272.
+        //
+        // fillHeight is what lets it be squeezed rather than push the rows below it
+        // off the window, and clip is what keeps the overflow out of sight until it
+        // is scrolled to. maximumHeight earns its line separately and measurably:
+        // without it the panel stretches to its share even when it holds less --
+        // 551 px around 543 px of content with the scope set to everywhere -- and
+        // the eight pixels are taken from the results.
+        ScrollView {
+            id: advancedArea
+            objectName: "advancedArea"
             visible: false
-            columns: 6
-            columnSpacing: 8
-            rowSpacing: 6
+            clip: true
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.maximumHeight: advanced.implicitHeight
 
-            // Where to search is a field, not a tab. Searching everything ever
-            // scanned used to be a separate window with its own form and its own
-            // idea of what a search was; it is a scope, and the difference
-            // between the two was only ever which engine could answer.
-            //
-            // Here rather than in front of More since ADR-0067: the basic view
-            // says where the search is aimed and this is where it is chosen.
-            // `everywhere:yes` on the line does the same thing.
-            Label { text: "Search in"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
-            Picker {
-                objectName: "searchScope"
-                Layout.columnSpan: 2
-                Layout.preferredWidth: 200
-                model: ["This folder", "Everywhere indexed"]
-                currentIndex: controller && controller.everywhere ? 1 : 0
-                font.pixelSize: App.secondaryTextSize
-                onActivated: if (controller) controller.everywhere = (currentIndex === 1)
-            }
-            TextField {
-                objectName: "searchRootField"
-                Layout.fillWidth: true
-                Layout.columnSpan: 3
-                visible: !(controller && controller.everywhere)
-                text: controller ? controller.rootUri : ""
-                selectByMouse: true
-                font.pixelSize: App.secondaryTextSize
-                onEditingFinished: if (controller) controller.rootUri = text
-            }
-            // In its place when the scope is everywhere: which of the scanned
-            // volumes, and how much each holds. The retired tab's one control.
-            // Exactly one of the two is visible, which is what keeps this row at
-            // six cells however the scope is set -- a GridLayout skips an
-            // invisible item, so a row that could show neither would pull the
-            // next one up into it.
-            Picker {
-                objectName: "searchVolume"
-                Layout.fillWidth: true
-                Layout.columnSpan: 3
-                visible: controller && controller.everywhere === true
-                model: controller ? controller.volumeLabels : []
-                currentIndex: controller ? controller.volumeIndex : 0
-                font.pixelSize: App.secondaryTextSize
-                onActivated: if (controller) controller.volumeIndex = currentIndex
-            }
+            GridLayout {
+                id: advanced
+                objectName: "advancedCriteria"
+                width: advancedArea.availableWidth
+                columns: 6
+                columnSpacing: 8
+                rowSpacing: 6
 
-            // The name, and what to make of it. Behind More since ADR-0067: the
-            // line above says all three of these and more, so the basic view has
-            // one box that takes a query rather than four.
-            Label { text: "Name contains"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
-            TextField {
-                id: queryField
-                objectName: "searchQueryField"
-                Layout.fillWidth: true
-                Layout.columnSpan: 4
-                text: controller ? controller.queryText : ""
-                selectByMouse: true
-                font.pixelSize: App.secondaryTextSize
-                onTextChanged: if (controller) controller.queryText = text
-                onAccepted: if (controller) controller.start()
-                // Down out of the box and into the results: once a search has
-                // answered, the answers are where the keyboard should be.
-                Keys.onDownPressed: resultList.takeFocus()
-            }
-            Picker {
-                objectName: "nameMode"
-                Layout.preferredWidth: 120
-                model: ["contains", "matches", "expression"]
-                currentIndex: controller ? controller.nameMode : 0
-                font.pixelSize: App.secondaryTextSize
-                onActivated: if (controller) controller.nameMode = currentIndex
-            }
+                // Where to search is a field, not a tab. Searching everything ever
+                // scanned used to be a separate window with its own form and its own
+                // idea of what a search was; it is a scope, and the difference
+                // between the two was only ever which engine could answer.
+                //
+                // Here rather than in front of More since ADR-0067: the basic view
+                // says where the search is aimed and this is where it is chosen.
+                // `everywhere:yes` on the line does the same thing.
+                Label { text: "Search in"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+                Picker {
+                    objectName: "searchScope"
+                    Layout.columnSpan: 2
+                    Layout.preferredWidth: 200
+                    model: ["This folder", "Everywhere indexed"]
+                    currentIndex: controller && controller.everywhere ? 1 : 0
+                    font.pixelSize: App.secondaryTextSize
+                    onActivated: if (controller) controller.everywhere = (currentIndex === 1)
+                }
+                TextField {
+                    objectName: "searchRootField"
+                    Layout.fillWidth: true
+                    Layout.columnSpan: 3
+                    visible: !(controller && controller.everywhere)
+                    text: controller ? controller.rootUri : ""
+                    selectByMouse: true
+                    font.pixelSize: App.secondaryTextSize
+                    onEditingFinished: if (controller) controller.rootUri = text
+                }
+                // In its place when the scope is everywhere: which of the scanned
+                // volumes, and how much each holds. The retired tab's one control.
+                // Exactly one of the two is visible, which is what keeps this row at
+                // six cells however the scope is set -- a GridLayout skips an
+                // invisible item, so a row that could show neither would pull the
+                // next one up into it.
+                Picker {
+                    objectName: "searchVolume"
+                    Layout.fillWidth: true
+                    Layout.columnSpan: 3
+                    visible: controller && controller.everywhere === true
+                    model: controller ? controller.volumeLabels : []
+                    currentIndex: controller ? controller.volumeIndex : 0
+                    font.pixelSize: App.secondaryTextSize
+                    onActivated: if (controller) controller.volumeIndex = currentIndex
+                }
 
-            Label { text: "Extension"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
-            TextField {
-                objectName: "extensionField"
-                Layout.columnSpan: 5
-                Layout.preferredWidth: 160
-                placeholderText: "jpg, jpeg, heic"
-                text: controller ? controller.extension : ""
-                font.pixelSize: App.secondaryTextSize
-                onTextChanged: if (controller) controller.extension = text
-            }
+                // The name, and what to make of it. Behind More since ADR-0067: the
+                // line above says all three of these and more, so the basic view has
+                // one box that takes a query rather than four.
+                Label { text: "Name contains"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+                TextField {
+                    id: queryField
+                    objectName: "searchQueryField"
+                    Layout.fillWidth: true
+                    Layout.columnSpan: 4
+                    text: controller ? controller.queryText : ""
+                    selectByMouse: true
+                    font.pixelSize: App.secondaryTextSize
+                    onTextChanged: if (controller) controller.queryText = text
+                    onAccepted: if (controller) controller.start()
+                    // Down out of the box and into the results: once a search has
+                    // answered, the answers are where the keyboard should be.
+                    Keys.onDownPressed: resultList.takeFocus()
+                }
+                Picker {
+                    objectName: "nameMode"
+                    Layout.preferredWidth: 120
+                    model: ["contains", "matches", "expression"]
+                    currentIndex: controller ? controller.nameMode : 0
+                    font.pixelSize: App.secondaryTextSize
+                    onActivated: if (controller) controller.nameMode = currentIndex
+                }
 
-            // The other half of a search tool: the name is what you have
-            // forgotten and the contents are what you remember. Last in the
-            // form because it is last to be paid for.
-            Label { text: "Text inside"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
-            TextField {
-                objectName: "contentField"
-                Layout.columnSpan: 3
-                Layout.fillWidth: true
-                placeholderText: "words in the file itself"
-                text: controller ? controller.contentText : ""
-                font.pixelSize: App.secondaryTextSize
-                onTextEdited: if (controller) controller.contentText = text
-            }
-            CheckBox {
-                objectName: "contentRegexToggle"
-                text: "expression"
-                font.pixelSize: App.secondaryTextSize
-                checked: controller ? controller.contentRegex : false
-                onToggled: if (controller) controller.contentRegex = checked
-            }
-            CheckBox {
-                objectName: "searchBinaryToggle"
-                text: "binary too"
-                font.pixelSize: App.secondaryTextSize
-                checked: controller ? controller.searchBinary : false
-                onToggled: if (controller) controller.searchBinary = checked
-            }
+                Label { text: "Extension"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+                TextField {
+                    objectName: "extensionField"
+                    Layout.columnSpan: 5
+                    Layout.preferredWidth: 160
+                    placeholderText: "jpg, jpeg, heic"
+                    text: controller ? controller.extension : ""
+                    font.pixelSize: App.secondaryTextSize
+                    onTextChanged: if (controller) controller.extension = text
+                }
 
-            Label {
-                objectName: "contentCost"
-                Layout.columnSpan: 6
-                Layout.fillWidth: true
-                visible: controller ? controller.readsFileContents : false
-                text: "This one opens files, so narrow it with the criteria above first — "
-                      + "the contents are never indexed."
-                color: "#6f7788"
-                font.pixelSize: App.smallTextSize
-                wrapMode: Text.Wrap
-            }
+                // The other half of a search tool: the name is what you have
+                // forgotten and the contents are what you remember. Last in the
+                // form because it is last to be paid for.
+                Label { text: "Text inside"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+                TextField {
+                    objectName: "contentField"
+                    Layout.columnSpan: 3
+                    Layout.fillWidth: true
+                    placeholderText: "words in the file itself"
+                    text: controller ? controller.contentText : ""
+                    font.pixelSize: App.secondaryTextSize
+                    onTextEdited: if (controller) controller.contentText = text
+                }
+                CheckBox {
+                    objectName: "contentRegexToggle"
+                    text: "expression"
+                    font.pixelSize: App.secondaryTextSize
+                    checked: controller ? controller.contentRegex : false
+                    onToggled: if (controller) controller.contentRegex = checked
+                }
+                CheckBox {
+                    objectName: "searchBinaryToggle"
+                    text: "binary too"
+                    font.pixelSize: App.secondaryTextSize
+                    checked: controller ? controller.searchBinary : false
+                    onToggled: if (controller) controller.searchBinary = checked
+                }
 
-            // Always visible, greyed when the scope has nothing recorded. A
-            // missing field is a capability nobody ever discovers.
-            Label { text: "It says"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
-            ColumnLayout {
-                objectName: "factCriteria"
-                Layout.columnSpan: 5
-                Layout.fillWidth: true
-                spacing: 4
+                Label {
+                    objectName: "contentCost"
+                    Layout.columnSpan: 6
+                    Layout.fillWidth: true
+                    visible: controller ? controller.readsFileContents : false
+                    text: "This one opens files, so narrow it with the criteria above first — "
+                          + "the contents are never indexed."
+                    color: "#6f7788"
+                    font.pixelSize: App.smallTextSize
+                    wrapMode: Text.Wrap
+                }
 
-                Repeater {
-                    model: controller ? controller.factKeys : []
-                    delegate: RowLayout {
-                        required property string modelData
-                        spacing: 6
+                // Always visible, greyed when the scope has nothing recorded. A
+                // missing field is a capability nobody ever discovers.
+                Label { text: "It says"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+                ColumnLayout {
+                    objectName: "factCriteria"
+                    Layout.columnSpan: 5
+                    Layout.fillWidth: true
+                    spacing: 4
 
-                        Label {
-                            Layout.preferredWidth: 130
-                            text: modelData
-                            color: "#8b93a7"
-                            font.family: App.monospaceFont
-                            font.pixelSize: App.smallTextSize
+                    Repeater {
+                        model: controller ? controller.factKeys : []
+                        delegate: RowLayout {
+                            required property string modelData
+                            spacing: 6
+
+                            Label {
+                                Layout.preferredWidth: 130
+                                text: modelData
+                                color: "#8b93a7"
+                                font.family: App.monospaceFont
+                                font.pixelSize: App.smallTextSize
+                            }
+                            TextField {
+                                objectName: "factField_" + modelData
+                                Layout.preferredWidth: 220
+                                font.pixelSize: App.secondaryTextSize
+                                text: controller ? (controller.factCriteria[modelData] || "") : ""
+                                onTextEdited: {
+                                    if (!controller)
+                                        return
+                                    var all = Object.assign({}, controller.factCriteria)
+                                    all[modelData] = text
+                                    controller.factCriteria = all
+                                }
+                            }
                         }
-                        TextField {
-                            objectName: "factField_" + modelData
-                            Layout.preferredWidth: 220
+                    }
+
+                    Label {
+                        objectName: "noMetadataHere"
+                        Layout.fillWidth: true
+                        visible: controller ? !controller.metadataAvailable : true
+                        text: "Nothing here has been indexed for what the files say about themselves — "
+                              + "scan this folder with that on and a camera, an author or a duration "
+                              + "becomes something you can search for."
+                        color: "#6f7788"
+                        font.pixelSize: App.smallTextSize
+                        wrapMode: Text.Wrap
+                    }
+                }
+
+                Label { text: "Is a"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+                Flow {
+                    objectName: "typeClasses"
+                    // Five, so this row fills the grid's six -- see searchQueryField above.
+                    Layout.columnSpan: 5
+                    Layout.fillWidth: true
+                    spacing: 6
+
+                    Repeater {
+                        model: controller ? controller.allTypeClasses : []
+                        delegate: CheckBox {
+                            required property string modelData
+                            text: modelData
                             font.pixelSize: App.secondaryTextSize
-                            text: controller ? (controller.factCriteria[modelData] || "") : ""
-                            onTextEdited: {
+                            checked: controller && controller.typeClasses.indexOf(modelData) >= 0
+                            onToggled: {
                                 if (!controller)
                                     return
-                                var all = Object.assign({}, controller.factCriteria)
-                                all[modelData] = text
-                                controller.factCriteria = all
+                                var picked = controller.typeClasses.slice()
+                                const at = picked.indexOf(modelData)
+                                if (checked && at < 0)
+                                    picked.push(modelData)
+                                else if (!checked && at >= 0)
+                                    picked.splice(at, 1)
+                                controller.typeClasses = picked
                             }
                         }
                     }
                 }
 
-                Label {
-                    objectName: "noMetadataHere"
+                Label { text: "Changed"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+                TextField {
+                    objectName: "modifiedFromField"
+                    Layout.preferredWidth: 130
+                    placeholderText: "last 7 days"
+                    text: controller ? controller.modifiedFrom : ""
+                    font.pixelSize: App.secondaryTextSize
+                    onTextEdited: if (controller) controller.modifiedFrom = text
+                }
+                Label { text: "to"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+                TextField {
+                    objectName: "modifiedToField"
+                    Layout.preferredWidth: 130
+                    placeholderText: "today"
+                    text: controller ? controller.modifiedTo : ""
+                    font.pixelSize: App.secondaryTextSize
+                    onTextEdited: if (controller) controller.modifiedTo = text
+                }
+                Item { Layout.fillWidth: true; Layout.columnSpan: 2 }
+
+                Label { text: "Path has"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+                TextField {
+                    objectName: "pathField"
+                    Layout.columnSpan: 4
                     Layout.fillWidth: true
-                    visible: controller ? !controller.metadataAvailable : true
-                    text: "Nothing here has been indexed for what the files say about themselves — "
-                          + "scan this folder with that on and a camera, an author or a duration "
-                          + "becomes something you can search for."
+                    placeholderText: "invoices/2026"
+                    text: controller ? controller.pathText : ""
+                    font.pixelSize: App.secondaryTextSize
+                    onTextEdited: if (controller) controller.pathText = text
+                }
+                CheckBox {
+                    objectName: "excludePathToggle"
+                    text: "not"
+                    font.pixelSize: App.secondaryTextSize
+                    checked: controller ? controller.excludePath : false
+                    onToggled: if (controller) controller.excludePath = checked
+                }
+
+                Label { text: "Skip folders"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+                TextField {
+                    objectName: "excludedField"
+                    Layout.columnSpan: 5
+                    Layout.fillWidth: true
+                    placeholderText: "node_modules, .git, build"
+                    text: controller ? controller.excluded : ""
+                    font.pixelSize: App.secondaryTextSize
+                    onTextEdited: if (controller) controller.excluded = text
+                }
+
+                Label { text: "Shape"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+                RowLayout {
+                    Layout.columnSpan: 5
+                    Layout.fillWidth: true
+                    spacing: 8
+
+                    Picker {
+                        objectName: "kindMode"
+                        Layout.preferredWidth: 150
+                        model: ["files and folders", "files only", "folders only"]
+                        currentIndex: controller ? controller.kindMode : 0
+                        font.pixelSize: App.secondaryTextSize
+                        onActivated: if (controller) controller.kindMode = currentIndex
+                    }
+                    CheckBox {
+                        objectName: "wholeWordToggle"
+                        text: "whole words"
+                        font.pixelSize: App.secondaryTextSize
+                        checked: controller ? controller.wholeWord : false
+                        onToggled: if (controller) controller.wholeWord = checked
+                    }
+                    CheckBox {
+                        objectName: "emptyOnlyToggle"
+                        text: "empty only"
+                        font.pixelSize: App.secondaryTextSize
+                        checked: controller ? controller.emptyOnly : false
+                        onToggled: if (controller) controller.emptyOnly = checked
+                    }
+                    CheckBox {
+                        objectName: "hiddenToggle"
+                        text: "hidden files"
+                        font.pixelSize: App.secondaryTextSize
+                        checked: controller ? controller.includeHidden : true
+                        onToggled: if (controller) controller.includeHidden = checked
+                    }
+                    CheckBox {
+                        objectName: "thisFolderOnlyToggle"
+                        text: "this folder only"
+                        font.pixelSize: App.secondaryTextSize
+                        checked: controller ? controller.maxDepth === 0 : false
+                        onToggled: if (controller) controller.maxDepth = checked ? 0 : -1
+                    }
+                    Item { Layout.fillWidth: true }
+                }
+
+                Label { text: "Size from"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+                TextField {
+                    id: minSizeField
+                    objectName: "minSizeField"
+                    Layout.preferredWidth: 110
+                    placeholderText: "10M"
+                    font.pixelSize: App.secondaryTextSize
+                    onTextEdited: if (controller) controller.setSizeRange(minSizeField.text, maxSizeField.text)
+                }
+                Label { text: "to"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+                TextField {
+                    id: maxSizeField
+                    objectName: "maxSizeField"
+                    Layout.preferredWidth: 110
+                    placeholderText: "2G"
+                    font.pixelSize: App.secondaryTextSize
+                    onTextEdited: if (controller) controller.setSizeRange(minSizeField.text, maxSizeField.text)
+                }
+                Item { Layout.fillWidth: true; Layout.columnSpan: 2 }
+
+                // The index answers instantly and might be out of date, so the toggle
+                // sits with the criteria and says how old it is. See ADR-0005. It is
+                // about a folder: searching everywhere indexed is the index by
+                // definition, so there is nothing there to turn off.
+                CheckBox {
+                    objectName: "useIndexToggle"
+                    Layout.columnSpan: 2
+                    visible: !(controller && controller.everywhere)
+                    text: "Use the index"
+                    enabled: controller ? controller.indexCoversRoot : false
+                    checked: controller ? controller.useIndex : true
+                    font.pixelSize: App.secondaryTextSize
+                    onToggled: if (controller) controller.useIndex = checked
+                }
+                Label {
+                    objectName: "unpushedNote"
+                    Layout.columnSpan: 6
+                    Layout.fillWidth: true
+                    visible: controller ? controller.unpushedNote.length > 0 : false
+                    text: controller ? controller.unpushedNote : ""
                     color: "#6f7788"
                     font.pixelSize: App.smallTextSize
                     wrapMode: Text.Wrap
                 }
-            }
 
-            Label { text: "Is a"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
-            Flow {
-                objectName: "typeClasses"
-                // Five, so this row fills the grid's six -- see searchQueryField above.
-                Layout.columnSpan: 5
-                Layout.fillWidth: true
-                spacing: 6
-
-                Repeater {
-                    model: controller ? controller.allTypeClasses : []
-                    delegate: CheckBox {
-                        required property string modelData
-                        text: modelData
-                        font.pixelSize: App.secondaryTextSize
-                        checked: controller && controller.typeClasses.indexOf(modelData) >= 0
-                        onToggled: {
-                            if (!controller)
-                                return
-                            var picked = controller.typeClasses.slice()
-                            const at = picked.indexOf(modelData)
-                            if (checked && at < 0)
-                                picked.push(modelData)
-                            else if (!checked && at >= 0)
-                                picked.splice(at, 1)
-                            controller.typeClasses = picked
-                        }
-                    }
+                Label {
+                    objectName: "indexNote"
+                    Layout.columnSpan: controller && controller.everywhere ? 5 : 3
+                    Layout.fillWidth: true
+                    text: controller && controller.everywhere
+                          ? "Answered from what the last scan of each volume recorded."
+                          : (controller && controller.indexNote.length > 0
+                                ? controller.indexNote
+                                : "This folder is not indexed, so searching walks it.")
+                    color: "#6f7788"
+                    font.pixelSize: App.smallTextSize
+                    elide: Text.ElideRight
                 }
-            }
-
-            Label { text: "Changed"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
-            TextField {
-                objectName: "modifiedFromField"
-                Layout.preferredWidth: 130
-                placeholderText: "last 7 days"
-                text: controller ? controller.modifiedFrom : ""
-                font.pixelSize: App.secondaryTextSize
-                onTextEdited: if (controller) controller.modifiedFrom = text
-            }
-            Label { text: "to"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
-            TextField {
-                objectName: "modifiedToField"
-                Layout.preferredWidth: 130
-                placeholderText: "today"
-                text: controller ? controller.modifiedTo : ""
-                font.pixelSize: App.secondaryTextSize
-                onTextEdited: if (controller) controller.modifiedTo = text
-            }
-            Item { Layout.fillWidth: true; Layout.columnSpan: 2 }
-
-            Label { text: "Path has"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
-            TextField {
-                objectName: "pathField"
-                Layout.columnSpan: 4
-                Layout.fillWidth: true
-                placeholderText: "invoices/2026"
-                text: controller ? controller.pathText : ""
-                font.pixelSize: App.secondaryTextSize
-                onTextEdited: if (controller) controller.pathText = text
-            }
-            CheckBox {
-                objectName: "excludePathToggle"
-                text: "not"
-                font.pixelSize: App.secondaryTextSize
-                checked: controller ? controller.excludePath : false
-                onToggled: if (controller) controller.excludePath = checked
-            }
-
-            Label { text: "Skip folders"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
-            TextField {
-                objectName: "excludedField"
-                Layout.columnSpan: 5
-                Layout.fillWidth: true
-                placeholderText: "node_modules, .git, build"
-                text: controller ? controller.excluded : ""
-                font.pixelSize: App.secondaryTextSize
-                onTextEdited: if (controller) controller.excluded = text
-            }
-
-            Label { text: "Shape"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
-            RowLayout {
-                Layout.columnSpan: 5
-                Layout.fillWidth: true
-                spacing: 8
-
-                Picker {
-                    objectName: "kindMode"
-                    Layout.preferredWidth: 150
-                    model: ["files and folders", "files only", "folders only"]
-                    currentIndex: controller ? controller.kindMode : 0
-                    font.pixelSize: App.secondaryTextSize
-                    onActivated: if (controller) controller.kindMode = currentIndex
-                }
-                CheckBox {
-                    objectName: "wholeWordToggle"
-                    text: "whole words"
-                    font.pixelSize: App.secondaryTextSize
-                    checked: controller ? controller.wholeWord : false
-                    onToggled: if (controller) controller.wholeWord = checked
-                }
-                CheckBox {
-                    objectName: "emptyOnlyToggle"
-                    text: "empty only"
-                    font.pixelSize: App.secondaryTextSize
-                    checked: controller ? controller.emptyOnly : false
-                    onToggled: if (controller) controller.emptyOnly = checked
-                }
-                CheckBox {
-                    objectName: "hiddenToggle"
-                    text: "hidden files"
-                    font.pixelSize: App.secondaryTextSize
-                    checked: controller ? controller.includeHidden : true
-                    onToggled: if (controller) controller.includeHidden = checked
-                }
-                CheckBox {
-                    objectName: "thisFolderOnlyToggle"
-                    text: "this folder only"
-                    font.pixelSize: App.secondaryTextSize
-                    checked: controller ? controller.maxDepth === 0 : false
-                    onToggled: if (controller) controller.maxDepth = checked ? 0 : -1
-                }
-                Item { Layout.fillWidth: true }
-            }
-
-            Label { text: "Size from"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
-            TextField {
-                id: minSizeField
-                objectName: "minSizeField"
-                Layout.preferredWidth: 110
-                placeholderText: "10M"
-                font.pixelSize: App.secondaryTextSize
-                onTextEdited: if (controller) controller.setSizeRange(minSizeField.text, maxSizeField.text)
-            }
-            Label { text: "to"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
-            TextField {
-                id: maxSizeField
-                objectName: "maxSizeField"
-                Layout.preferredWidth: 110
-                placeholderText: "2G"
-                font.pixelSize: App.secondaryTextSize
-                onTextEdited: if (controller) controller.setSizeRange(minSizeField.text, maxSizeField.text)
-            }
-            Item { Layout.fillWidth: true; Layout.columnSpan: 2 }
-
-            // The index answers instantly and might be out of date, so the toggle
-            // sits with the criteria and says how old it is. See ADR-0005. It is
-            // about a folder: searching everywhere indexed is the index by
-            // definition, so there is nothing there to turn off.
-            CheckBox {
-                objectName: "useIndexToggle"
-                Layout.columnSpan: 2
-                visible: !(controller && controller.everywhere)
-                text: "Use the index"
-                enabled: controller ? controller.indexCoversRoot : false
-                checked: controller ? controller.useIndex : true
-                font.pixelSize: App.secondaryTextSize
-                onToggled: if (controller) controller.useIndex = checked
-            }
-            Label {
-                objectName: "unpushedNote"
-                Layout.columnSpan: 6
-                Layout.fillWidth: true
-                visible: controller ? controller.unpushedNote.length > 0 : false
-                text: controller ? controller.unpushedNote : ""
-                color: "#6f7788"
-                font.pixelSize: App.smallTextSize
-                wrapMode: Text.Wrap
-            }
-
-            Label {
-                objectName: "indexNote"
-                Layout.columnSpan: controller && controller.everywhere ? 5 : 3
-                Layout.fillWidth: true
-                text: controller && controller.everywhere
-                      ? "Answered from what the last scan of each volume recorded."
-                      : (controller && controller.indexNote.length > 0
-                            ? controller.indexNote
-                            : "This folder is not indexed, so searching walks it.")
-                color: "#6f7788"
-                font.pixelSize: App.smallTextSize
-                elide: Text.ElideRight
             }
         }
 

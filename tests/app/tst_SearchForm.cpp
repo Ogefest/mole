@@ -39,6 +39,8 @@ private slots:
 
     void everyLabelIsOnTheSameRowAsItsField_data();
     void everyLabelIsOnTheSameRowAsItsField();
+    void everyCriterionIsReachable_data();
+    void everyCriterionIsReachable();
     void theTabOpensWithTheKeyboardInTheLine();
     void typingOnTheLineMovesTheFields();
     void changingAFieldWritesTheLine();
@@ -106,6 +108,84 @@ QPair<qreal, qreal> TestSearchForm::band(QQuickItem* item)
 {
     const qreal top = item->mapToScene(QPointF(0, 0)).y();
     return { top, top + item->height() };
+}
+
+void TestSearchForm::everyCriterionIsReachable_data()
+{
+    QTest::addColumn<bool>("withContent");
+    QTest::addColumn<bool>("everywhere");
+
+    // The same three states the layout test covers with More open. Which rows are
+    // visible changes the panel's height, and its height is the whole question.
+    QTest::newRow("More open") << false << false;
+    QTest::newRow("More open, searching contents") << true << false;
+    QTest::newRow("More open, everywhere indexed") << false << true;
+}
+
+void TestSearchForm::everyCriterionIsReachable()
+{
+    QFETCH(bool, withContent);
+    QFETCH(bool, everywhere);
+
+    // There are eleven rows behind More since the name fields joined them, and in
+    // a 900-tall window the last of them used to sit *under the task strip*:
+    // measured, the grid reached y=880 and y=899 against a strip starting at 860.
+    // Nothing in this view scrolled, so the size range and the "Use the index"
+    // toggle could not be clicked at all. See MOLE-272.
+    LiveSearchController* search = openSearch();
+    QVERIFY(search);
+    search->setEverywhere(everywhere);
+    if (withContent)
+        search->setContentText(QStringLiteral("something"));
+    m_harness->settle(4);
+
+    QQuickItem* toggle = shown(QStringLiteral("advancedToggle"));
+    QVERIFY(toggle);
+    QVERIFY(m_harness->clickOn(toggle));
+    QVERIFY(m_harness->until([this] { return shown(QStringLiteral("minSizeField")) != nullptr; }));
+    m_harness->settle(4);
+
+    QQuickItem* grid = shown(QStringLiteral("advancedCriteria"));
+    QVERIFY(grid);
+    QQuickItem* strip = shown(QStringLiteral("taskStrip"));
+    QVERIFY2(strip, "the strip is what the criteria used to disappear behind");
+
+    // Measured on whatever holds the criteria, so taking the scroll area away
+    // fails this with the geometry rather than with a missing object name.
+    QQuickItem* area = shown(QStringLiteral("advancedArea"));
+    const auto [areaTop, areaBottom] = band(area ? area : grid);
+    const auto [stripTop, stripBottom] = band(strip);
+    QVERIFY2(areaBottom <= stripTop,
+        qPrintable(QStringLiteral("the criteria reach y=%1 and the task strip starts at y=%2, so %3 px of "
+                                  "them cannot be clicked")
+                       .arg(areaBottom)
+                       .arg(stripTop)
+                       .arg(areaBottom - stripTop)));
+
+    // And what does not fit is reachable rather than gone. Scrolled to the end,
+    // the last criterion has to be inside the viewport -- which is the claim, and
+    // is not the same as it having a position somewhere.
+    QVERIFY2(area,
+        "and they have to be in something that scrolls, or the panel is "
+        "only above the strip until somebody adds a criterion");
+    const qreal content = area->property("contentHeight").toReal();
+    if (content > area->height()) {
+        auto* flickable = area->property("contentItem").value<QQuickItem*>();
+        QVERIFY(flickable);
+        QVERIFY(flickable->setProperty("contentY", content - area->height()));
+        m_harness->settle(4);
+
+        QQuickItem* last = shown(QStringLiteral("minSizeField"));
+        QVERIFY(last);
+        const auto [lastTop, lastBottom] = band(last);
+        QVERIFY2(lastTop >= areaTop && lastBottom <= areaBottom + 1,
+            qPrintable(QStringLiteral("scrolled to the end, the size field is at %1..%2 and the panel is "
+                                      "%3..%4")
+                           .arg(lastTop)
+                           .arg(lastBottom)
+                           .arg(areaTop)
+                           .arg(areaBottom)));
+    }
 }
 
 void TestSearchForm::theTabOpensWithTheKeyboardInTheLine()
