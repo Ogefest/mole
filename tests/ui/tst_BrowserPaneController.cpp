@@ -90,6 +90,11 @@ private slots:
     void aBurstOfWritesIsOneWalkRatherThanOnePerFile();
     void aRefreshLeavesTheCursorAndTheTicksAlone();
 
+    void oneQueryMarksTheWholeFolderHoweverManyRowsItHas();
+    void aFolderOfFiveThousandIsStillOneQuery();
+    void aDriveWithNothingToOfferIsNotAskedAboutTheFolderAtAll();
+    void navigatingAwayAbandonsTheFolderQuery();
+
     void whatTheDriveCanDoFollowsTheCursor();
     void anActionAnsweringWithTextSaysWhenItStopsWorking();
     void anActionAnsweringWithUrisOffersThemToOpen();
@@ -120,6 +125,10 @@ private:
     BrowserPaneController* paneOnOfferingDrive();
     /// The row `name` sits at, or -1.
     static int rowOf(BrowserPaneController* pane, const QString& name);
+    /// Whether the row called `name` carries the drive's mark.
+    static bool hasDriveMark(BrowserPaneController* pane, const QString& name);
+    /// How many rows carry it.
+    static int markedRows(BrowserPaneController* pane);
     static QByteArray contentsOf(const QString& path);
     /// The git letter on the row called `name`, or an empty string when it carries
     /// none. Answers "<no such row>" rather than nothing when the row is absent, so
@@ -213,6 +222,24 @@ QString TestBrowserPaneController::mountLocal(const QString& path, bool writable
     mount.fileSystem = std::move(fs);
     m_vfs->addMount(mount);
     return mount.root.toString();
+}
+
+bool TestBrowserPaneController::hasDriveMark(BrowserPaneController* pane, const QString& name)
+{
+    const int row = rowOf(pane, name);
+    if (row < 0)
+        return false;
+    return pane->files()->data(pane->files()->index(row, 0), FileListModel::HasDriveActionRole).toBool();
+}
+
+int TestBrowserPaneController::markedRows(BrowserPaneController* pane)
+{
+    int marked = 0;
+    for (int row = 0; row < pane->files()->rowCount(); ++row) {
+        if (pane->files()->data(pane->files()->index(row, 0), FileListModel::HasDriveActionRole).toBool())
+            ++marked;
+    }
+    return marked;
 }
 
 int TestBrowserPaneController::probeTasksSoFar() const
@@ -1666,6 +1693,76 @@ void TestBrowserPaneController::aRefreshLeavesTheCursorAndTheTicksAlone()
     QCOMPARE(pane->files()->selectedUris(), ticked);
     RepositoryCache::shared().clear();
     RepositoryStatusCache::shared().clear();
+}
+
+/// One query for the folder, never one per row: a folder of five thousand files
+/// must not become five thousand lookups on the path that draws.
+void TestBrowserPaneController::oneQueryMarksTheWholeFolderHoweverManyRowsItHas()
+{
+    BrowserPaneController* pane = paneOnOfferingDrive();
+    QVERIFY(pane);
+
+    QVERIFY(waitFor([this] { return m_offering->folderQueryCallCount() == 1; }));
+    QVERIFY(waitFor([pane] { return markedRows(pane) == 1; }));
+
+    // report.txt has versions and a link; untouched.txt was told it has neither.
+    QVERIFY(hasDriveMark(pane, QStringLiteral("report.txt")));
+    QVERIFY(!hasDriveMark(pane, QStringLiteral("untouched.txt")));
+    QCOMPARE(m_offering->folderQueryCallCount(), 1);
+}
+
+void TestBrowserPaneController::aFolderOfFiveThousandIsStillOneQuery()
+{
+    BrowserPaneController* pane = paneOnOfferingDrive();
+    QVERIFY(pane);
+    QVERIFY(waitFor([this] { return m_offering->folderQueryCallCount() == 1; }));
+
+    for (int i = 0; i < 5000; ++i) {
+        const QString name = QStringLiteral("/deep/f%1.txt").arg(i);
+        m_offering->memory()->addFile(name, QByteArray("x"));
+        m_offering->setLinkable(name, i % 2 == 0);
+    }
+
+    const int before = m_offering->folderQueryCallCount();
+    pane->navigateTo(QStringLiteral("mem://offering/deep"));
+    QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() == 5000; }));
+    QVERIFY(waitFor([pane] { return markedRows(pane) == 2500; }));
+
+    // One. Not one per row, not one per screenful.
+    QCOMPARE(m_offering->folderQueryCallCount() - before, 1);
+}
+
+/// No task, no query, no work: a drive with nothing to offer browses exactly as
+/// it did before any of this existed.
+void TestBrowserPaneController::aDriveWithNothingToOfferIsNotAskedAboutTheFolderAtAll()
+{
+    BrowserPaneController* pane = paneOn(QStringLiteral("mem:///docs"));
+    QVERIFY(pane);
+    QVERIFY(waitFor([this] { return m_fs->offers().isKnown(); }));
+    drainEvents();
+
+    QCOMPARE(markedRows(pane), 0);
+    QVERIFY2(m_fs->offers().ids.isEmpty(), "the fixture drive offers nothing");
+}
+
+/// A result for a folder nobody is looking at any more is discarded, not drawn.
+void TestBrowserPaneController::navigatingAwayAbandonsTheFolderQuery()
+{
+    BrowserPaneController* pane = paneOnOfferingDrive();
+    QVERIFY(pane);
+    QVERIFY(waitFor([pane] { return markedRows(pane) == 1; }));
+
+    m_offering->memory()->addFile(QStringLiteral("/deep/slow.txt"), QByteArray("x"));
+    m_offering->setActionDelayMs(60000);
+
+    pane->navigateTo(QStringLiteral("mem://offering/deep"));
+    // Waited on the condition: the query has to be inside the drive before
+    // navigating away means anything.
+    QVERIFY(waitFor([this] { return m_offering->isWorking(); }));
+
+    pane->navigateTo(QStringLiteral("mem://offering/"));
+    QVERIFY2(waitFor([this] { return !m_offering->isWorking(); }),
+        "leaving the folder has to call the query off rather than wait it out");
 }
 
 /// The row under the cursor decides what is on offer, so moving the cursor to a

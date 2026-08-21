@@ -13,6 +13,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-22 #MOLE-198 A listing marks the rows a drive has something for — one query for the whole folder rather than one per row, so a folder of five thousand files draws as fast as it did and the marks arrive after
 2026-08-22 #MOLE-197 What a drive can do to the file under the cursor appears under Operations, whatever drive it is: an answer that is text is shown with a way to copy it and when it stops working, and an answer that is a list of earlier versions is a list you open one from
 2026-08-22 #MOLE-196 The test suite has a drive that contributes actions and keeps readable earlier versions of a file, so everything built on a drive's own actions is tested without a server or a particular filesystem
 2026-08-22 #MOLE-195 A uri can name which state of a file is meant, so an earlier version is an ordinary file that any viewer opens and any bookmark can point at — and a drive that does not keep earlier states refuses one instead of quietly showing the current file

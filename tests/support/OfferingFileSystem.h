@@ -71,6 +71,10 @@ public:
     /// How many times each was really asked.
     int actionsForCallCount() const;
     int invokeCallCount() const;
+    /// How many times the whole folder was asked about. The claim this fake
+    /// exists to let a test make is "one query per directory, whatever the
+    /// number of entries", and only counting proves it.
+    int folderQueryCallCount() const;
 
     // ---- IFileSystem ------------------------------------------------------
 
@@ -91,6 +95,7 @@ public:
     Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1) override;
 
     FileActionList actionsFor(const VfsUri& target, const FileEntry& entry) override;
+    Result<QStringList> entriesWithActions(const VfsUri& dir, const CancelToken& cancel) override;
     Result<FileActionOutcome> invoke(
         const QString& id, const VfsUri& target, const CancelToken& cancel) override;
 
@@ -114,6 +119,7 @@ private:
     int m_actionDelayMs = 0;
     mutable int m_actionsForCalls = 0;
     mutable int m_invokeCalls = 0;
+    mutable int m_folderQueries = 0;
     std::atomic_bool m_working { false };
 };
 

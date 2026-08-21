@@ -210,6 +210,7 @@ public:
     FileActionList actionsFor(const VfsUri& target, const FileEntry& entry) override;
     Result<FileActionOutcome> invoke(
         const QString& id, const VfsUri& target, const CancelToken& cancel) override;
+    Result<QStringList> entriesWithActions(const VfsUri& dir, const CancelToken& cancel) override;
     /// The drive underneath's, for the same reason.
     DriveOffers offers() const override { return m_inner ? m_inner->offers() : DriveOffers(); }
     void probe(const VfsUri& target, const CancelToken& cancel) override

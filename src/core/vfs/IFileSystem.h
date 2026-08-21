@@ -167,6 +167,20 @@ public:
     /// looking at is the worst outcome available here. See ADR-0077.
     virtual bool understandsVersions() const { return false; }
 
+    /// Which entries in `dir` this drive has an action for, by name.
+    ///
+    /// **One query for the folder, never one per row.** A folder of five
+    /// thousand files must not become five thousand lookups on the path that
+    /// draws -- and it need not, because both sources are naturally per
+    /// directory: a filesystem exposing snapshots as paths lists the same
+    /// relative path inside each snapshot, bounded by the number of snapshots,
+    /// and an object store answers with one paginated call over a prefix.
+    ///
+    /// Empty by default, like actionsFor(), so a drive with nothing to offer
+    /// does nothing. Called on a worker thread and must poll `cancel`: leaving
+    /// the folder abandons the question.
+    virtual Result<QStringList> entriesWithActions(const VfsUri& dir, const CancelToken& cancel);
+
     /// What this drive turned out to be able to offer, and whether it has been
     /// asked yet.
     ///

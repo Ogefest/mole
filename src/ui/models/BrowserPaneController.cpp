@@ -9,6 +9,7 @@
 #include "core/tasks/ListDirectoryTask.h"
 #include "core/tasks/ProbeDriveTask.h"
 #include "core/tasks/QueryFileActionsTask.h"
+#include "core/tasks/QueryFolderActionsTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/tasks/TransferTask.h"
 #include "core/vcs/ReadRepositoryTask.h"
@@ -294,6 +295,11 @@ void BrowserPaneController::annotateListing(const FileEntryList& entries)
                     flags |= state << FileListModel::GitStateShift;
             }
         }
+
+        // What the drive said about this folder, looked up by name in a set the
+        // one query filled. No work per row beyond the lookup itself.
+        if (!m_offeredHere.isEmpty() && m_offeredHere.contains(entry.name))
+            flags |= FileListModel::DriveActionPresent;
 
         // Only folders can have a report; testing files would hash five
         // thousand names to answer no five thousand times.
@@ -808,6 +814,11 @@ void BrowserPaneController::load(const VfsUri& uri, bool recordHistory)
     }
 
     m_current = uri;
+    // What the drive said about the folder being left says nothing about the one
+    // arriving, and a re-listing of this one has to ask again rather than draw
+    // what was true before it.
+    m_offeredHere.clear();
+    m_offeredHereFor = VfsUri();
     if (recordHistory) {
         // Navigating after going back truncates the forward history, the way
         // a browser does.
@@ -861,6 +872,7 @@ void BrowserPaneController::load(const VfsUri& uri, bool recordHistory)
             // The cursor was placed without going through setCurrentIndex(), so
             // what the drive can do to the row it landed on is asked for here.
             refreshDriveActions();
+            refreshFolderMarks();
         });
 
     connect(task, &Task::finished, this, [this, task] {
@@ -892,8 +904,14 @@ void BrowserPaneController::load(const VfsUri& uri, bool recordHistory)
     // drive so that navigating around one drive does not queue a task per step;
     // two panes opening at once may still both submit, and the drive answers the
     // first and nothing to the second. See ADR-0076.
-    if (drive->offers().state == DriveOffers::State::Unasked)
-        m_services.tasks->submit(new ProbeDriveTask(drive, uri));
+    if (drive->offers().state == DriveOffers::State::Unasked) {
+        auto* probe = new ProbeDriveTask(drive, uri);
+        // What the drive turned out to offer is what decides whether the folder
+        // is worth a query at all, and the answer arrives after the listing has
+        // already been asked for.
+        connect(probe, &Task::finished, this, [this] { refreshFolderMarks(); });
+        m_services.tasks->submit(probe);
+    }
 }
 
 QVariantList BrowserPaneController::driveActions() const
@@ -943,6 +961,48 @@ void BrowserPaneController::refreshDriveActions()
         m_driveActions = task->actions();
         m_driveActionsFor = task->target();
         emit driveActionsChanged();
+    });
+    m_services.tasks->submit(task);
+}
+
+void BrowserPaneController::refreshFolderMarks()
+{
+    // One query per folder, and this is where that is enforced: two things ask
+    // for the marks -- the listing landing, and the probe answering afterwards
+    // with what the drive turned out to offer -- and whichever is second must
+    // not ask again.
+    if (m_folderActionsPending) {
+        if (m_folderActionsPending->directory() == m_current)
+            return;
+        // A different folder: what was asked about the last one is no longer
+        // worth waiting for.
+        m_folderActionsPending->requestCancel();
+    }
+    if (m_offeredHereFor == m_current)
+        return;
+    if (!m_current.isValid() || !m_services.vfs || !m_services.tasks)
+        return;
+
+    FileSystemPtr fs = m_services.vfs->resolve(m_current);
+    // A drive that offers nothing is not asked at all: no task, no query, no
+    // work. Until the probe has answered there is nothing to ask about either --
+    // and when it answers, load() asks again. See ADR-0076.
+    if (!fs || fs->offers().ids.isEmpty())
+        return;
+
+    auto* task = new QueryFolderActionsTask(std::move(fs), m_current);
+    m_folderActionsPending = task;
+    connect(task, &Task::finished, this, [this, task] {
+        if (m_folderActionsPending != task)
+            return;
+        m_folderActionsPending.clear();
+        // An answer for a folder nobody is looking at any more is discarded
+        // rather than drawn.
+        if (task->directory() != m_current)
+            return;
+        m_offeredHere = QSet<QString>(task->names().begin(), task->names().end());
+        m_offeredHereFor = task->directory();
+        annotateListing(m_files->allEntries());
     });
     m_services.tasks->submit(task);
 }

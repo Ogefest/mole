@@ -65,6 +65,11 @@ FileActionList IFileSystem::actionsFor(const VfsUri&, const FileEntry&)
     return {};
 }
 
+Result<QStringList> IFileSystem::entriesWithActions(const VfsUri&, const CancelToken&)
+{
+    return QStringList();
+}
+
 Result<FileActionOutcome> IFileSystem::invoke(const QString& id, const VfsUri&, const CancelToken&)
 {
     // Named, because an id reaching a drive that never offered it is the shell

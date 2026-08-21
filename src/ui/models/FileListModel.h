@@ -64,6 +64,11 @@ public:
         /// The single letter that stands for it -- `M`, `A`, `??`. Empty when
         /// there is nothing to mark, which is what leaves the column out.
         GitMarkRole,
+        /// Whether the drive has something to offer for this row that another
+        /// drive could not -- earlier versions of it, a link to it. What it is
+        /// is the drive's business; a row only says there is something. Answered
+        /// by one query per folder, never one per row. See ADR-0075.
+        HasDriveActionRole,
     };
 
     /// Where a row came from.
@@ -86,11 +91,13 @@ public:
         ReportPresent = 1 << 0,
         AlertPresent = 1 << 1,
         AlertTriggered = 1 << 2,
+        /// The drive said it has something for this entry.
+        DriveActionPresent = 1 << 3,
         /// Where git's own states begin in the same word. The seven
         /// RepositoryFileState bits are carried up here shifted rather than
         /// re-listed, so "modified" has one definition in the code base and there
         /// is no table to keep in step with it.
-        GitStateShift = 3,
+        GitStateShift = 4,
     };
 
     explicit FileListModel(QObject* parent = nullptr);

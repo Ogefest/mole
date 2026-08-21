@@ -751,6 +751,13 @@ Result<FileEntryList> FaultyFileSystem::search(
     return m_inner->search(root, pattern, cancel);
 }
 
+Result<QStringList> FaultyFileSystem::entriesWithActions(const VfsUri& dir, const CancelToken& cancel)
+{
+    if (m_policy->revoked.load())
+        return revokedError();
+    return m_inner->entriesWithActions(dir, cancel);
+}
+
 FileActionList FaultyFileSystem::actionsFor(const VfsUri& target, const FileEntry& entry)
 {
     // A revoked drive offers nothing rather than an error: there is nowhere in

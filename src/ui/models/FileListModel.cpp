@@ -384,7 +384,8 @@ void FileListModel::setAnnotations(QHash<QString, int> annotations)
     m_annotations = std::move(annotations);
     if (rowCount() > 0) {
         emit dataChanged(index(0, 0), index(rowCount() - 1, 0),
-            { HasReportRole, HasAlertRole, AlertTriggeredRole, GitStateRole, GitMarkRole });
+            { HasReportRole, HasAlertRole, AlertTriggeredRole, GitStateRole, GitMarkRole,
+                HasDriveActionRole });
     }
 }
 
@@ -482,6 +483,8 @@ QVariant FileListModel::data(const QModelIndex& index, int role) const
         return (annotationFor(entry.uri.toString()) & AlertTriggered) != 0;
     case GitStateRole:
         return annotationFor(entry.uri.toString()) >> GitStateShift;
+    case HasDriveActionRole:
+        return (annotationFor(entry.uri.toString()) & DriveActionPresent) != 0;
     case GitMarkRole:
         return repositoryStateMark(annotationFor(entry.uri.toString()) >> GitStateShift);
     case SelectedRole:
@@ -511,6 +514,7 @@ QHash<int, QByteArray> FileListModel::roleNames() const
         { AlertTriggeredRole, "alertTriggered" },
         { GitStateRole, "gitState" },
         { GitMarkRole, "gitMark" },
+        { HasDriveActionRole, "hasDriveAction" },
         { ProvenanceRole, "provenance" },
         { IndexedAtRole, "indexedAt" },
         { MatchLineRole, "matchLine" },

@@ -150,6 +150,13 @@ Result<FileActionOutcome> VersionGuard::invoke(
     return m_inner->invoke(id, target, cancel);
 }
 
+Result<QStringList> VersionGuard::entriesWithActions(const VfsUri& dir, const CancelToken& cancel)
+{
+    if (!passes(dir))
+        return refusal(dir);
+    return m_inner->entriesWithActions(dir, cancel);
+}
+
 DriveOffers VersionGuard::offers() const
 {
     return m_inner->offers();

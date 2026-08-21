@@ -47,6 +47,7 @@ public:
     FileActionList actionsFor(const VfsUri& target, const FileEntry& entry) override;
     Result<FileActionOutcome> invoke(
         const QString& id, const VfsUri& target, const CancelToken& cancel) override;
+    Result<QStringList> entriesWithActions(const VfsUri& dir, const CancelToken& cancel) override;
     DriveOffers offers() const override;
     void probe(const VfsUri& target, const CancelToken& cancel) override;
 

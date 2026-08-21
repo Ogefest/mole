@@ -719,6 +719,7 @@ FocusScope {
                 required property bool hasAlert
                 required property bool alertTriggered
                 required property string gitMark
+                required property bool hasDriveAction
 
                 width: ListView.view.width
                 // From the scale, so raising the text size cannot crop a row.
@@ -847,6 +848,27 @@ FocusScope {
                             visible: gitMark.length > 0
                             width: visible ? 18 : 0
                             mark: gitMark
+                        }
+
+                        // The drive has something for this file that another
+                        // drive could not offer. What it is belongs to the drive
+                        // and is in the menu; the row says only that there is
+                        // something, which is why the mark says nothing about
+                        // versions or links. See ADR-0075.
+                        Rectangle {
+                            objectName: "driveActionMarker"
+                            visible: hasDriveAction
+                            width: 15
+                            height: 15
+                            radius: 2
+                            color: "transparent"
+                            border.color: Qt.alpha(App.colour.accent, 0.6)
+                            Label {
+                                anchors.centerIn: parent
+                                text: "+"
+                                color: App.colour.accent
+                                font.pixelSize: App.smallTextSize
+                            }
                         }
                     }
 

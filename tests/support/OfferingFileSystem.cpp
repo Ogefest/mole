@@ -205,6 +205,40 @@ Result<FileActionOutcome> OfferingFileSystem::invoke(
     return IFileSystem::invoke(id, target, cancel);
 }
 
+int OfferingFileSystem::folderQueryCallCount() const
+{
+    QMutexLocker lock(&m_mutex);
+    return m_folderQueries;
+}
+
+Result<QStringList> OfferingFileSystem::entriesWithActions(const VfsUri& dir, const CancelToken& cancel)
+{
+    {
+        QMutexLocker lock(&m_mutex);
+        ++m_folderQueries;
+    }
+    if (!waitOut(cancel))
+        return VfsError::make(VfsError::Cancelled, QStringLiteral("the folder query was cancelled"));
+
+    const Result<FileEntryList> listing = m_inner->list(dir, cancel);
+    if (!listing.ok())
+        return listing.error();
+
+    // One pass over what is already in hand, which is the shape both real
+    // sources have: a snapshot directory is listed once, and a container answers
+    // one paginated call over the prefix.
+    QMutexLocker lock(&m_mutex);
+    QStringList named;
+    for (const FileEntry& entry : listing.value()) {
+        if (entry.isDir)
+            continue;
+        const QString path = entry.uri.path();
+        if (!m_versions.value(path).isEmpty() || m_linkable.value(path, true))
+            named.append(entry.name);
+    }
+    return named;
+}
+
 Result<QStringList> OfferingFileSystem::askWhatIsOffered(const VfsUri&, const CancelToken& cancel)
 {
     if (!waitOut(cancel))

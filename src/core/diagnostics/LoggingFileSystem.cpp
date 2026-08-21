@@ -149,6 +149,12 @@ Result<FileActionOutcome> LoggingFileSystem::invoke(
     return watch(m_name, "action", subject, [&] { return m_inner->invoke(id, target, cancel); });
 }
 
+Result<QStringList> LoggingFileSystem::entriesWithActions(const VfsUri& dir, const CancelToken& cancel)
+{
+    return watch(
+        m_name, "offered in", dir.toString(), [&] { return m_inner->entriesWithActions(dir, cancel); });
+}
+
 DriveOffers LoggingFileSystem::offers() const
 {
     return m_inner->offers();

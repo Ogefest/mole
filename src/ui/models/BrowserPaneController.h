@@ -11,6 +11,7 @@
 #include <QHash>
 #include <QObject>
 #include <QPointer>
+#include <QSet>
 #include <QStringList>
 #include <QTimer>
 #include <QVariantList>
@@ -19,6 +20,7 @@ namespace mole {
 
 class ListDirectoryTask;
 class QueryFileActionsTask;
+class QueryFolderActionsTask;
 class ReadRepositoryTask;
 class ReadStatusTask;
 
@@ -193,6 +195,9 @@ private:
     /// Cheap to call: a drive that has nothing to offer answers with nothing,
     /// and an answer for a row the cursor has already left is dropped.
     void refreshDriveActions();
+    /// Asks the drive, once for the folder in view, which of its entries it has
+    /// something for. Nothing at all when the drive offers nothing.
+    void refreshFolderMarks();
     /// Notes where the cursor is before leaving `from` for `to`, so coming back
     /// -- or stepping up out of a folder -- lands where the user was rather
     /// than at the top of the list.
@@ -275,6 +280,12 @@ private:
     FileActionList m_driveActions;
     VfsUri m_driveActionsFor;
     QPointer<QueryFileActionsTask> m_driveActionsPending;
+    /// The names in this folder the drive said it has something for, and which
+    /// folder they belong to. One query for the folder; a row is marked by
+    /// looking its name up here.
+    QSet<QString> m_offeredHere;
+    VfsUri m_offeredHereFor;
+    QPointer<QueryFolderActionsTask> m_folderActionsPending;
     /// The git read in flight, so an answer about a folder somebody has already
     /// left cannot land in the band.
     QPointer<ReadRepositoryTask> m_repositoryPending;

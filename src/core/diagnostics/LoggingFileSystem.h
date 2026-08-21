@@ -51,6 +51,7 @@ public:
     /// Also the drive underneath's. What was discovered about a drive belongs to
     /// that drive, and a wrapper keeping an answer of its own would be a second
     /// drive that is asked separately and can disagree.
+    Result<QStringList> entriesWithActions(const VfsUri& dir, const CancelToken& cancel) override;
     DriveOffers offers() const override;
     void probe(const VfsUri& target, const CancelToken& cancel) override;
 
