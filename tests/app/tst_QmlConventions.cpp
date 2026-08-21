@@ -21,10 +21,14 @@ private slots:
     void nothingNamesAFontFamilyByHand();
     void nothingNamesAColourByHand();
     void nothingBuildsOrTakesApartAUriByHand();
+    void nothingInTheShellNamesADriveOrAFilesystem();
 
 private:
     /// path -> contents, for every .qml shipped with the application.
     QHash<QString, QString> m_sources;
+    /// The same for the shell's own source: src/ui and src/app, markup and C++
+    /// alike. A rule about what the interface may know is not a rule about QML.
+    QHash<QString, QString> m_shellSources;
 };
 
 void TestQmlConventions::initTestCase()
@@ -45,6 +49,24 @@ void TestQmlConventions::initTestCase()
         qPrintable(QStringLiteral("only %1 qml files found under %2")
                        .arg(m_sources.size())
                        .arg(QStringLiteral(MOLE_QML_SOURCE_DIR))));
+
+    for (const QString& layer : { QStringLiteral("ui"), QStringLiteral("app") }) {
+        const QString root = QStringLiteral(MOLE_SHELL_SOURCE_DIR) + QLatin1Char('/') + layer;
+        QDirIterator files(root, { QStringLiteral("*.qml"), QStringLiteral("*.cpp"), QStringLiteral("*.h") },
+            QDir::Files, QDirIterator::Subdirectories);
+        while (files.hasNext()) {
+            const QString path = files.next();
+            QFile file(path);
+            QVERIFY2(file.open(QIODevice::ReadOnly), qPrintable(path));
+            m_shellSources.insert(QDir(QStringLiteral(MOLE_SHELL_SOURCE_DIR)).relativeFilePath(path),
+                QString::fromUtf8(file.readAll()));
+        }
+    }
+
+    QVERIFY2(m_shellSources.size() > 40,
+        qPrintable(QStringLiteral("only %1 shell sources found under %2")
+                       .arg(m_shellSources.size())
+                       .arg(QStringLiteral(MOLE_SHELL_SOURCE_DIR))));
 }
 
 void TestQmlConventions::nothingNamesAFontFamilyByHand()
@@ -150,6 +172,51 @@ void TestQmlConventions::nothingBuildsOrTakesApartAUriByHand()
     QVERIFY2(offenders.isEmpty(),
         qPrintable(QStringLiteral("a uri is built or taken apart by hand:\n  %1")
                        .arg(offenders.join(QStringLiteral("\n  ")))));
+}
+
+/// The rule that keeps the shell a shell.
+///
+/// Everything a drive can do that another cannot arrives as an id, a title and
+/// one of two kinds of answer -- so nothing between the backend and the menu has
+/// any business naming a filesystem, a storage service or a feature of one. The
+/// moment it does, the extension point has stopped being one: the next drive
+/// with something to offer needs an edit here, and the one after that needs
+/// another. See ADR-0075.
+///
+/// Comments are stripped before matching. Explaining *why* a rule exists by
+/// naming the case it came from is what a comment is for, and half the files
+/// here do it.
+void TestQmlConventions::nothingInTheShellNamesADriveOrAFilesystem()
+{
+    static const char* names[] = { "zfs", "btrfs", "apfs", "ntfs", "sftp", "webdav", "smb", "nfs", "s3",
+        "ftp", "buckets?", "presign", "shadow copy" };
+
+    QStringList offenders;
+    for (const char* name : names) {
+        const QRegularExpression forbidden(QStringLiteral("\\b%1\\b").arg(QString::fromLatin1(name)),
+            QRegularExpression::CaseInsensitiveOption);
+        QVERIFY2(forbidden.isValid(), name);
+
+        for (auto it = m_shellSources.constBegin(); it != m_shellSources.constEnd(); ++it) {
+            const QStringList lines = it.value().split(QLatin1Char('\n'));
+            for (int i = 0; i < lines.size(); ++i) {
+                QString code = lines.at(i);
+                const int comment = code.indexOf(QLatin1String("//"));
+                if (comment >= 0)
+                    code.truncate(comment);
+                if (code.contains(forbidden)) {
+                    offenders.append(QStringLiteral("%1:%2 names %3")
+                                         .arg(it.key())
+                                         .arg(i + 1)
+                                         .arg(QString::fromLatin1(name)));
+                }
+            }
+        }
+    }
+
+    std::sort(offenders.begin(), offenders.end());
+    QVERIFY2(offenders.isEmpty(),
+        qPrintable(QStringLiteral("the shell names a drive: %1").arg(offenders.join(QStringLiteral(", ")))));
 }
 
 MOLE_TEST_MAIN(TestQmlConventions)

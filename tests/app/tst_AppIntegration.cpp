@@ -5,6 +5,7 @@
 #include "plugins/builtin/SearchFeatures.h"
 #include "support/FakePlugin.h"
 #include "support/MoleTestMain.h"
+#include "support/OfferingFileSystem.h"
 #include "support/TestSupport.h"
 #include "ui/AppController.h"
 #include "ui/FileLauncher.h"
@@ -98,6 +99,9 @@ private slots:
     void menuEntryOpensTheTab();
     void viewMenuReflectsAndTogglesTheCurrentTab();
     void menuEntriesGreyOutWhenTheyDoNotApply();
+    void theMenuOffersWhatTheDriveUnderTheCursorCanDo();
+    void aDriveThatOffersNothingLeavesTheMenuAsItWas();
+    void pickingOneHandsTheIdStraightBackToTheDrive();
     void viewMenuOffersFourExclusiveLayouts();
     void theViewMenuPicksAThemeAndTicksTheOneInForce();
     void theThemeChosenSurvivesARestart();
@@ -115,10 +119,16 @@ private:
     /// A finished search over the temp tree for `text`, and the row its tab sits
     /// at. Null when it never finished or found nothing.
     LiveSearchController* finishedSearchFor(const QString& text, int* rowOut);
+    /// The titles of the entries in one menu section, in order.
+    QStringList menuTitlesIn(const QString& section) const;
+    /// A browser pane on a drive that contributes actions, cursor on the file
+    /// that has both, and the drive already asked.
+    BrowserPaneController* paneOnOfferingDrive();
 
     PrivateProfile m_profile;
     std::unique_ptr<TempTree> m_tree;
     std::unique_ptr<AppController> m_app;
+    std::shared_ptr<OfferingFileSystem> m_offering;
 };
 
 void TestAppIntegration::initTestCase()
@@ -157,8 +167,50 @@ void TestAppIntegration::init()
     QVERIFY2(m_app->initialise(builtIns(), &error), qPrintable(error));
 }
 
+QStringList TestAppIntegration::menuTitlesIn(const QString& section) const
+{
+    QStringList titles;
+    for (const QVariant& entry : m_app->buildMenu()) {
+        const QVariantMap fields = entry.toMap();
+        if (fields.value(QStringLiteral("title")).toString() != section)
+            continue;
+        for (const QVariant& action : fields.value(QStringLiteral("actions")).toList())
+            titles.append(action.toMap().value(QStringLiteral("title")).toString());
+    }
+    return titles;
+}
+
+BrowserPaneController* TestAppIntegration::paneOnOfferingDrive()
+{
+    m_offering = std::make_shared<OfferingFileSystem>();
+    m_offering->memory()->addFile(QStringLiteral("/report.txt"), QByteArray("the third draft"));
+    m_offering->addVersion(QStringLiteral("/report.txt"), QStringLiteral("v1"), QByteArray("the first"));
+    m_offering->addVersion(QStringLiteral("/report.txt"), QStringLiteral("v2"), QByteArray("the second"));
+
+    Mount mount;
+    mount.id = QStringLiteral("offering");
+    mount.displayName = QStringLiteral("offering");
+    mount.root = VfsUri::fromString(QStringLiteral("mem://offering/"));
+    mount.fileSystem = m_offering;
+    if (m_app->services().vfs->addMount(mount).isEmpty())
+        return nullptr;
+
+    auto* browser = qobject_cast<BrowserController*>(m_app->tabs()->controllerAt(0));
+    if (!browser)
+        return nullptr;
+    BrowserPaneController* pane = browser->activePane();
+    pane->navigateTo(QStringLiteral("mem://offering/"));
+    if (!waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() == 1; }))
+        return nullptr;
+    pane->setCurrentIndex(0);
+    if (!waitFor([pane] { return !pane->driveActions().isEmpty(); }))
+        return nullptr;
+    return pane;
+}
+
 void TestAppIntegration::cleanup()
 {
+    m_offering.reset();
     m_app.reset();
     m_tree.reset();
 }
@@ -1602,6 +1654,54 @@ void TestAppIntegration::viewMenuReflectsAndTogglesTheCurrentTab()
     // Rebuilding the menu has to show the new state, not a cached one.
     dual = menuEntry(m_app->buildMenu(), QStringLiteral("mole.view.dualPane"));
     QVERIFY(dual.value(QStringLiteral("checked")).toBool());
+}
+
+/// The whole point of the slot: the shell shows what a drive contributed without
+/// knowing what any of it does. Nothing below names the drive, the action or
+/// what it is for -- the ids and the titles come from the backend.
+void TestAppIntegration::theMenuOffersWhatTheDriveUnderTheCursorCanDo()
+{
+    BrowserPaneController* pane = paneOnOfferingDrive();
+    QVERIFY(pane);
+
+    const QStringList operations = menuTitlesIn(QStringLiteral("Operations"));
+    QVERIFY2(operations.contains(QStringLiteral("Copy a temporary link")),
+        qPrintable(operations.join(QStringLiteral(" | "))));
+    QVERIFY2(operations.contains(QStringLiteral("Earlier versions")),
+        qPrintable(operations.join(QStringLiteral(" | "))));
+}
+
+void TestAppIntegration::aDriveThatOffersNothingLeavesTheMenuAsItWas()
+{
+    // The tab open at the start is on the temp tree, and a local disk
+    // contributes nothing.
+    auto* browser = qobject_cast<BrowserController*>(m_app->tabs()->controllerAt(0));
+    QVERIFY(browser);
+    BrowserPaneController* pane = browser->activePane();
+    QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() == 3; }));
+    pane->setCurrentIndex(0);
+    drainEvents();
+
+    const QStringList before = menuTitlesIn(QStringLiteral("Operations"));
+    QVERIFY(!before.isEmpty());
+    QCOMPARE(menuTitlesIn(QStringLiteral("Operations")), before);
+    QVERIFY(pane->driveActions().isEmpty());
+}
+
+void TestAppIntegration::pickingOneHandsTheIdStraightBackToTheDrive()
+{
+    BrowserPaneController* pane = paneOnOfferingDrive();
+    QVERIFY(pane);
+
+    QSignalSpy answered(pane, &BrowserPaneController::driveActionUris);
+    // The id in the menu is the drive's own, behind the shell's prefix. Nothing
+    // in between reads either half of it.
+    QVERIFY(m_app->triggerAction(QStringLiteral("mole.drive.") + OfferingFileSystem::versionsAction()));
+    QVERIFY(waitFor([&answered] { return answered.count() == 1; }));
+
+    const QVariantList choices = answered.first().at(1).toList();
+    QCOMPARE(choices.size(), 2);
+    QCOMPARE(choices.first().toMap().value(QStringLiteral("label")).toString(), QStringLiteral("v1"));
 }
 
 void TestAppIntegration::viewMenuOffersFourExclusiveLayouts()

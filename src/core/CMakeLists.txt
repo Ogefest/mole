@@ -82,6 +82,10 @@ add_library(mole_core STATIC
     tasks/DriveCheckTask.cpp
     tasks/ProbeDriveTask.h
     tasks/ProbeDriveTask.cpp
+    tasks/QueryFileActionsTask.h
+    tasks/QueryFileActionsTask.cpp
+    tasks/InvokeFileActionTask.h
+    tasks/InvokeFileActionTask.cpp
     tasks/SweepLeftoversTask.h
     tasks/SweepLeftoversTask.cpp
 

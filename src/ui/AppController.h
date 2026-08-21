@@ -448,7 +448,7 @@ public:
 
     /// Sections and entries for the menu, rebuilt on every call so tick boxes
     /// and greyed-out entries reflect the tab that is open right now.
-    Q_INVOKABLE QVariantList buildMenu() const;
+    Q_INVOKABLE QVariantList buildMenu();
     Q_INVOKABLE bool triggerAction(const QString& id);
     ActionRegistry* actions() const { return m_actions; }
 
@@ -537,6 +537,20 @@ signals:
     /// folder* dialog on `uri`, so the four questions a scan raises are asked
     /// once, in one place, however somebody arrived at it.
     void indexFolderRequested(const QString& uri, const QString& label);
+
+private slots:
+    /// Rebuilds the entries a drive contributes for the row under the cursor.
+    ///
+    /// Nothing here knows what any of them do: the ids and the titles come from
+    /// the drive, and picking one hands the id straight back to it.
+    void refreshDriveActions();
+    /// Follows the pane the keyboard is in, so what a drive offers reaches the
+    /// menu -- and the command palette, and a shortcut -- without the menu having
+    /// been opened first.
+    ///
+    /// A slot and a signal signature rather than a cast, like everything else the
+    /// shell asks of a tab: a tab kind that has no panes simply does not answer.
+    void watchActivePane();
 
 private:
     void mountDefaultDrives();

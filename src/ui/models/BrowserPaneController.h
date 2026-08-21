@@ -4,6 +4,7 @@
 #include "ui/models/FileListModel.h"
 #include "ui/models/RepositoryInfo.h"
 
+#include "core/vfs/FileAction.h"
 #include "core/vfs/VfsUri.h"
 
 #include <QFileSystemWatcher>
@@ -17,6 +18,7 @@
 namespace mole {
 
 class ListDirectoryTask;
+class QueryFileActionsTask;
 class ReadRepositoryTask;
 class ReadStatusTask;
 
@@ -47,6 +49,14 @@ class BrowserPaneController : public QObject
     Q_PROPERTY(int currentIndex READ currentIndex WRITE setCurrentIndex NOTIFY currentIndexChanged)
     Q_PROPERTY(QString currentName READ currentName NOTIFY currentIndexChanged)
     Q_PROPERTY(bool writable READ isWritable NOTIFY locationChanged)
+    /// What the drive says it can do to the row under the cursor, as
+    /// `[{ id, title, enabled }]`. Empty for every drive that contributes
+    /// nothing, which is all of them until one does.
+    ///
+    /// Kept rather than asked for on demand: asking is a call into storage, and
+    /// whatever reads this -- a menu being built, a row being drawn -- is on the
+    /// thread that draws. See ADR-0075.
+    Q_PROPERTY(QVariantList driveActions READ driveActions NOTIFY driveActionsChanged)
 
 public:
     BrowserPaneController(PluginServices services, QObject* parent = nullptr);
@@ -139,6 +149,15 @@ public:
 
     /// Enters the row if it is a directory. Returns false for files, letting
     /// the caller decide what "open" means for them.
+    QVariantList driveActions() const;
+    /// Does one of them, on a worker, and answers with one of the two signals
+    /// below. An id that is not on offer is ignored.
+    Q_INVOKABLE void invokeDriveAction(const QString& id);
+    /// Opens `uri` as an ordinary file, which is what an earlier version of one
+    /// is. Same route as activating a row, so a version opens in whatever a file
+    /// of that kind opens in.
+    Q_INVOKABLE void openUri(const QString& uri);
+
     Q_INVOKABLE bool activate(int row);
     Q_INVOKABLE void goUp();
     Q_INVOKABLE void goBack();
@@ -154,6 +173,13 @@ signals:
     void historyChanged();
     /// A non-directory row was activated.
     void fileActivated(const QString& uri);
+    void driveActionsChanged();
+    /// An action answered with something to read and copy. `validUntilText` is
+    /// empty when the answer does not go stale, which is most of them.
+    void driveActionText(const QString& title, const QString& text, const QString& validUntilText);
+    /// An action answered with other uris for the same file. Each choice is
+    /// `{ uri, label }`, and opening one is openUri().
+    void driveActionUris(const QString& title, const QVariantList& choices);
 
 private:
     /// The rows of a dropped payload this pane could actually take: the `file://`
@@ -163,6 +189,10 @@ private:
     QList<VfsUri> droppedRows(const QStringList& urls, int* alreadyHereOut = nullptr) const;
 
     void load(const VfsUri& uri, bool recordHistory);
+    /// Asks the drive what it can do to the row under the cursor, on a worker.
+    /// Cheap to call: a drive that has nothing to offer answers with nothing,
+    /// and an answer for a row the cursor has already left is dropped.
+    void refreshDriveActions();
     /// Notes where the cursor is before leaving `from` for `to`, so coming back
     /// -- or stepping up out of a folder -- lands where the user was rather
     /// than at the top of the list.
@@ -239,6 +269,12 @@ private:
     bool m_loading = false;
     QString m_errorText;
     QPointer<ListDirectoryTask> m_pending;
+    /// What the drive said about the row under the cursor, and which row that
+    /// was. The uri is what makes an answer arriving after the cursor moved on
+    /// something to drop rather than something to show.
+    FileActionList m_driveActions;
+    VfsUri m_driveActionsFor;
+    QPointer<QueryFileActionsTask> m_driveActionsPending;
     /// The git read in flight, so an answer about a folder somebody has already
     /// left cannot land in the band.
     QPointer<ReadRepositoryTask> m_repositoryPending;

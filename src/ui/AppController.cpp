@@ -411,6 +411,12 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     // front of you, so the two entries that act on where you are are rebuilt when
     // that changes. See MOLE-209.
     connect(m_tabs, &TabsModel::currentIndexChanged, this, &AppController::refreshBookmarkActions);
+    // What a drive offers belongs to the row the cursor is on, so the entries
+    // follow the pane rather than waiting for somebody to open the menu: a
+    // shortcut and the command palette reach an action by id, and an entry that
+    // exists only once the menu has been built is one neither can find.
+    connect(m_tabs, &TabsModel::currentIndexChanged, this, &AppController::watchActivePane);
+    connect(m_tabs, &TabsModel::rowsInserted, this, &AppController::watchActivePane);
 
     // Registered after the plugins so the "new tab" entries cover every
     // feature that exists, built-in or not.
@@ -2450,6 +2456,78 @@ QString AppController::currentSetId() const
     return controller->property("currentSetId").toString();
 }
 
+void AppController::watchActivePane()
+{
+    // The tab first, because the pane the keyboard is in changes inside a tab as
+    // well as between tabs. Asked by signature rather than by cast, so a tab kind
+    // the shell has never heard of simply does not answer.
+    if (QObject* tab = m_tabs ? m_tabs->currentController() : nullptr) {
+        if (tab->metaObject()->indexOfSignal("activePaneChanged()") >= 0) {
+            connect(tab, SIGNAL(activePaneChanged()), this, SLOT(watchActivePane()), Qt::UniqueConnection);
+        }
+    }
+
+    if (QObject* pane = currentTabProperty("activePane").value<QObject*>()) {
+        if (pane->metaObject()->indexOfSignal("driveActionsChanged()") >= 0) {
+            connect(
+                pane, SIGNAL(driveActionsChanged()), this, SLOT(refreshDriveActions()), Qt::UniqueConnection);
+        }
+    }
+
+    refreshDriveActions();
+}
+
+void AppController::refreshDriveActions()
+{
+    if (!m_actions)
+        return;
+
+    // Rebuilt wholesale, like the bookmarks and for the same reason: it is a
+    // handful of entries and correctness beats cleverness. What is on offer
+    // changes with every step of the cursor.
+    static const QString prefix = QStringLiteral("mole.drive.");
+    m_actions->removeActionsStartingWith(prefix);
+
+    QObject* pane = currentTabProperty("activePane").value<QObject*>();
+    if (!pane)
+        return;
+
+    // Read rather than asked for. The drive was asked on a worker when the
+    // cursor landed here; this is on the thread that draws, and a menu opening
+    // must never wait on storage.
+    const QVariantList offered = pane->property("driveActions").toList();
+
+    int order = 300;
+    for (const QVariant& entry : offered) {
+        const QVariantMap fields = entry.toMap();
+        const QString id = fields.value(QStringLiteral("id")).toString();
+        const QString title = fields.value(QStringLiteral("title")).toString();
+        if (id.isEmpty() || title.isEmpty())
+            continue;
+
+        MenuAction action;
+        action.id = prefix + id;
+        // Something done to the file in front of you, which leaves you where you
+        // were. See MenuAction::Section and docs/adr/0003-menu-sections.md -- a
+        // drive's action is not a different question from a plugin's.
+        action.section = MenuAction::Section::Operations;
+        // The drive's own words. Nothing here knows what the action does, and a
+        // title invented at this layer would be a guess shown as a label.
+        action.title = title;
+        action.sortOrder = order;
+        action.separatorBefore = order == 300;
+        order += 1;
+
+        const bool enabled = fields.value(QStringLiteral("enabled"), true).toBool();
+        action.enabled = [enabled] { return enabled; };
+        action.trigger = [this, id] {
+            if (QObject* active = currentTabProperty("activePane").value<QObject*>())
+                QMetaObject::invokeMethod(active, "invokeDriveAction", Q_ARG(QString, id));
+        };
+        m_actions->addAction(std::move(action));
+    }
+}
+
 void AppController::refreshBookmarkActions()
 {
     if (!m_actions || !m_bookmarks)
@@ -2546,8 +2624,13 @@ void AppController::setTheme(const QString& name)
         m_preferences->setValue(QStringLiteral("ui.theme"), m_colour->theme());
 }
 
-QVariantList AppController::buildMenu() const
+QVariantList AppController::buildMenu()
 {
+    // What a drive offers depends on the row the cursor is on, so the entries
+    // are rebuilt as the menu is opened rather than kept in step with the
+    // cursor. It is the same answer ActionRegistry gives about its predicates:
+    // a menu is opened rarely and read once.
+    refreshDriveActions();
     return m_actions ? m_actions->buildModel() : QVariantList {};
 }
 

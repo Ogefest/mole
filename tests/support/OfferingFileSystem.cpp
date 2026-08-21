@@ -183,6 +183,8 @@ Result<FileActionOutcome> OfferingFileSystem::invoke(
     }
     if (!waitOut(cancel))
         return VfsError::make(VfsError::Cancelled, QStringLiteral("the action was cancelled"));
+    if (m_actionFault != VfsError::None)
+        return VfsError::make(m_actionFault, QStringLiteral("the far end would not answer"));
 
     if (id == linkAction()) {
         return FileActionOutcome::fromText(QStringLiteral("https://example.invalid/") + target.fileName(),

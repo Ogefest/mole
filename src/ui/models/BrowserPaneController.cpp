@@ -5,8 +5,10 @@
 #include "core/alerts/AlertStore.h"
 #include "core/analysis/AnalysisStore.h"
 #include "core/events/EventBus.h"
+#include "core/tasks/InvokeFileActionTask.h"
 #include "core/tasks/ListDirectoryTask.h"
 #include "core/tasks/ProbeDriveTask.h"
+#include "core/tasks/QueryFileActionsTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/tasks/TransferTask.h"
 #include "core/vcs/ReadRepositoryTask.h"
@@ -351,6 +353,7 @@ void BrowserPaneController::setCurrentIndex(int index)
         return;
     m_currentIndex = clamped;
     emit currentIndexChanged();
+    refreshDriveActions();
 }
 
 QString BrowserPaneController::currentName() const
@@ -855,6 +858,9 @@ void BrowserPaneController::load(const VfsUri& uri, bool recordHistory)
             const int row = wanted.isEmpty() ? -1 : m_files->rowOfUri(wanted);
             m_currentIndex = row >= 0 ? row : (missing || m_files->rowCount() == 0 ? -1 : 0);
             emit currentIndexChanged();
+            // The cursor was placed without going through setCurrentIndex(), so
+            // what the drive can do to the row it landed on is asked for here.
+            refreshDriveActions();
         });
 
     connect(task, &Task::finished, this, [this, task] {
@@ -888,6 +894,120 @@ void BrowserPaneController::load(const VfsUri& uri, bool recordHistory)
     // first and nothing to the second. See ADR-0076.
     if (drive->offers().state == DriveOffers::State::Unasked)
         m_services.tasks->submit(new ProbeDriveTask(drive, uri));
+}
+
+QVariantList BrowserPaneController::driveActions() const
+{
+    QVariantList out;
+    for (const FileAction& action : m_driveActions) {
+        out.append(QVariantMap { { QStringLiteral("id"), action.id },
+            { QStringLiteral("title"), action.title }, { QStringLiteral("enabled"), action.enabled } });
+    }
+    return out;
+}
+
+void BrowserPaneController::refreshDriveActions()
+{
+    if (m_driveActionsPending)
+        m_driveActionsPending->requestCancel();
+
+    const QString uriText = m_files->uriAt(m_currentIndex);
+    const VfsUri target = VfsUri::fromString(uriText);
+    if (!target.isValid() || !m_services.vfs || !m_services.tasks) {
+        if (!m_driveActions.isEmpty()) {
+            m_driveActions.clear();
+            m_driveActionsFor = VfsUri();
+            emit driveActionsChanged();
+        }
+        return;
+    }
+    if (target == m_driveActionsFor)
+        return;
+
+    FileSystemPtr fs = m_services.vfs->resolve(target);
+    if (!fs)
+        return;
+
+    auto* task = new QueryFileActionsTask(std::move(fs), target);
+    m_driveActionsPending = task;
+    connect(task, &Task::finished, this, [this, task] {
+        if (m_driveActionsPending != task)
+            return;
+        m_driveActionsPending.clear();
+        // The cursor may have moved on while the drive was thinking. An answer
+        // about a row nobody is looking at any more is not an answer.
+        if (task->target().toString() != m_files->uriAt(m_currentIndex))
+            return;
+        if (m_driveActions.isEmpty() && task->actions().isEmpty())
+            return;
+        m_driveActions = task->actions();
+        m_driveActionsFor = task->target();
+        emit driveActionsChanged();
+    });
+    m_services.tasks->submit(task);
+}
+
+void BrowserPaneController::invokeDriveAction(const QString& id)
+{
+    const VfsUri target = VfsUri::fromString(m_files->uriAt(m_currentIndex));
+    if (!target.isValid() || !m_services.vfs || !m_services.tasks)
+        return;
+
+    // Only what the drive actually offered for this row, and only while it is
+    // still on offer: a stale menu entry must not reach the drive.
+    QString title;
+    for (const FileAction& action : m_driveActions) {
+        if (action.id == id && action.enabled && m_driveActionsFor == target)
+            title = action.title;
+    }
+    if (title.isEmpty())
+        return;
+
+    FileSystemPtr fs = m_services.vfs->resolve(target);
+    if (!fs)
+        return;
+
+    auto* task = new InvokeFileActionTask(std::move(fs), id, title, target);
+    connect(task, &Task::finished, this, [this, task] {
+        if (task->state() == Task::State::Cancelled)
+            return;
+        if (task->state() == Task::State::Failed) {
+            // Which action, in the drive's own words. "It did not work" tells
+            // somebody who picked one of three entries nothing they can act on.
+            emit operationFailed(QStringLiteral("%1: %2").arg(task->actionTitle(), task->error().message));
+            return;
+        }
+
+        const FileActionOutcome& outcome = task->outcome();
+        if (outcome.kind == FileActionOutcome::Kind::Text) {
+            const QString until = outcome.validUntil.isValid()
+                ? outcome.validUntil.toLocalTime().toString(QStringLiteral("d MMMM yyyy, HH:mm"))
+                : QString();
+            emit driveActionText(task->actionTitle(), outcome.text, until);
+            return;
+        }
+
+        QVariantList choices;
+        for (const VfsUri& uri : outcome.uris) {
+            // The drive's own token is the label: it is the only thing that tells
+            // one state of a file from another, and this layer must not invent a
+            // prettier one it cannot know is true.
+            choices.append(QVariantMap { { QStringLiteral("uri"), uri.toString() },
+                { QStringLiteral("label"), uri.hasVersion() ? uri.version() : uri.fileName() } });
+        }
+        emit driveActionUris(task->actionTitle(), choices);
+    });
+    m_services.tasks->submit(task);
+}
+
+void BrowserPaneController::openUri(const QString& uri)
+{
+    const VfsUri parsed = VfsUri::fromString(uri);
+    if (!parsed.isValid())
+        return;
+    // The same route a row takes, so an earlier version of a file opens in
+    // whatever a file of that kind opens in.
+    emit fileActivated(uri);
 }
 
 void BrowserPaneController::setLoading(bool loading)

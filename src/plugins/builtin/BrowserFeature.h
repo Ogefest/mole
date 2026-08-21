@@ -145,6 +145,12 @@ signals:
     void activePaneChanged();
     void fileActivated(const QString& uri);
     void operationFailed(const QString& message);
+    /// A drive-contributed action answered. Relayed from whichever pane ran it,
+    /// because the answer is shown by the tab rather than by a pane -- and the
+    /// tab does not know what the action was, only which of the two kinds of
+    /// answer came back. See ADR-0075.
+    void driveActionText(const QString& title, const QString& text, const QString& validUntilText);
+    void driveActionUris(const QString& title, const QVariantList& choices);
 
 private:
     void refreshLabels();

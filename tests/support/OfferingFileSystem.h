@@ -55,6 +55,11 @@ public:
     /// something to offer and some do not.
     void setLinkable(const QString& path, bool linkable);
 
+    /// Makes performing one fail the way a far end that has gone away does. What
+    /// the drive offers is unchanged: an action can be on offer and still not
+    /// work, which is the case somebody has to be told about.
+    void setActionFault(VfsError::Code error) { m_actionFault = error; }
+
     /// Makes asking the drive slow, and cancellable where there is a token to
     /// poll. The query that feeds the markers runs on a worker thread and has to
     /// honour its CancelToken like every other call into storage.
@@ -105,6 +110,7 @@ private:
     /// path -> (token -> contents), and the order tokens were added in.
     QHash<QString, QList<QPair<QString, QByteArray>>> m_versions;
     QHash<QString, bool> m_linkable;
+    VfsError::Code m_actionFault = VfsError::None;
     int m_actionDelayMs = 0;
     mutable int m_actionsForCalls = 0;
     mutable int m_invokeCalls = 0;

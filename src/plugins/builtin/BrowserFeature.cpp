@@ -30,6 +30,8 @@ BrowserController::BrowserController(
         connect(pane, &BrowserPaneController::locationChanged, this, &FeatureController::stateChanged);
         connect(pane, &BrowserPaneController::fileActivated, this, &BrowserController::fileActivated);
         connect(pane, &BrowserPaneController::operationFailed, this, &BrowserController::operationFailed);
+        connect(pane, &BrowserPaneController::driveActionText, this, &BrowserController::driveActionText);
+        connect(pane, &BrowserPaneController::driveActionUris, this, &BrowserController::driveActionUris);
 
         // Whether a transfer is possible depends on the mode, on what is
         // selected, and on whether the far side can be written to. All three

@@ -69,6 +69,11 @@ target_compile_definitions(mole_test_support
 target_compile_definitions(mole_test_support
     PUBLIC MOLE_QML_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src/app/ui")
 
+# And where the layers behind it live, so a rule about the shell covers the C++
+# as well as the markup -- see nothingInTheShellNamesADriveOrAFilesystem.
+target_compile_definitions(mole_test_support
+    PUBLIC MOLE_SHELL_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src")
+
 # Tests that load the archive plugin need to know where it was built.
 target_compile_definitions(mole_test_support
     PUBLIC MOLE_TEST_PLUGIN_DIR="${CMAKE_BINARY_DIR}/plugins")

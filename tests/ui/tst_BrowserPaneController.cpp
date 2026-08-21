@@ -1,6 +1,7 @@
 #include "support/FaultyFileSystem.h"
 #include "support/GitFixture.h"
 #include "support/MoleTestMain.h"
+#include "support/OfferingFileSystem.h"
 #include "support/TestSupport.h"
 #include "ui/models/BrowserPaneController.h"
 
@@ -89,6 +90,12 @@ private slots:
     void aBurstOfWritesIsOneWalkRatherThanOnePerFile();
     void aRefreshLeavesTheCursorAndTheTicksAlone();
 
+    void whatTheDriveCanDoFollowsTheCursor();
+    void anActionAnsweringWithTextSaysWhenItStopsWorking();
+    void anActionAnsweringWithUrisOffersThemToOpen();
+    void anActionThatFailsSaysWhichOne();
+    void anIdTheDriveNeverOfferedIsNotHandedToIt();
+
     void openingAFolderAsksTheDriveWhatItCanDo();
     void walkingAroundOneDriveAsksItOnce();
     void aDriveNobodyOpensIsNeverAsked();
@@ -108,6 +115,11 @@ private:
     QString mountLocal(const QString& path, bool writable = true);
     /// A pane pointed at `uri`, with the listing already loaded.
     BrowserPaneController* paneOn(const QString& uri);
+    /// A pane on a drive that contributes actions, with the cursor on the file
+    /// that has both a link and two earlier versions.
+    BrowserPaneController* paneOnOfferingDrive();
+    /// The row `name` sits at, or -1.
+    static int rowOf(BrowserPaneController* pane, const QString& name);
     static QByteArray contentsOf(const QString& path);
     /// The git letter on the row called `name`, or an empty string when it carries
     /// none. Answers "<no such row>" rather than nothing when the row is absent, so
@@ -117,6 +129,10 @@ private:
     /// it has finished -- the strip shows what has just run -- so "queued
     /// nothing" is a number that did not change rather than a number that is zero.
     int queuedSoFar() const { return static_cast<int>(m_tasks->tasks().size()); }
+    /// How many drive probes have been queued, by the title ProbeDriveTask gives
+    /// itself. Browsing queues a listing and an ask-what-this-drive-can-do for
+    /// every step, so a total is not an answer about probes.
+    int probeTasksSoFar() const;
 
     /// Owns every pane this test made, and is destroyed before the services are.
     ///
@@ -132,6 +148,7 @@ private:
     EventBus* m_events = nullptr;
     std::unique_ptr<IndexDatabase> m_index;
     std::shared_ptr<MemoryFileSystem> m_fs;
+    std::shared_ptr<OfferingFileSystem> m_offering;
     PluginServices m_services;
 };
 
@@ -171,6 +188,7 @@ void TestBrowserPaneController::cleanup()
     m_events = nullptr;
     m_index.reset();
     m_fs.reset();
+    m_offering.reset();
     m_dir.reset();
 }
 
@@ -195,6 +213,52 @@ QString TestBrowserPaneController::mountLocal(const QString& path, bool writable
     mount.fileSystem = std::move(fs);
     m_vfs->addMount(mount);
     return mount.root.toString();
+}
+
+int TestBrowserPaneController::probeTasksSoFar() const
+{
+    int probes = 0;
+    for (const Task* task : m_tasks->tasks()) {
+        if (task->title().startsWith(QStringLiteral("Asking what")))
+            ++probes;
+    }
+    return probes;
+}
+
+int TestBrowserPaneController::rowOf(BrowserPaneController* pane, const QString& name)
+{
+    for (int row = 0; row < pane->files()->rowCount(); ++row) {
+        if (pane->files()->nameAt(row) == name)
+            return row;
+    }
+    return -1;
+}
+
+BrowserPaneController* TestBrowserPaneController::paneOnOfferingDrive()
+{
+    m_offering = std::make_shared<OfferingFileSystem>();
+    m_offering->memory()->addFile(QStringLiteral("/report.txt"), QByteArray("the third draft"));
+    m_offering->memory()->addFile(QStringLiteral("/untouched.txt"), QByteArray("never edited"));
+    m_offering->addVersion(QStringLiteral("/report.txt"), QStringLiteral("v1"), QByteArray("the first"));
+    m_offering->addVersion(QStringLiteral("/report.txt"), QStringLiteral("v2"), QByteArray("the second"));
+    m_offering->setLinkable(QStringLiteral("/untouched.txt"), false);
+
+    Mount mount;
+    mount.id = QStringLiteral("offering");
+    mount.displayName = QStringLiteral("offering");
+    // Its own authority, because the fixture already has a scratch drive at
+    // mem:/// and two mounts on one root are one mount as far as resolve() is
+    // concerned.
+    mount.root = VfsUri::fromString(QStringLiteral("mem://offering/"));
+    mount.fileSystem = m_offering;
+    if (m_vfs->addMount(mount).isEmpty())
+        return nullptr;
+
+    BrowserPaneController* pane = paneOn(QStringLiteral("mem://offering/"));
+    if (!pane)
+        return nullptr;
+    pane->setCurrentIndex(rowOf(pane, QStringLiteral("report.txt")));
+    return pane;
 }
 
 BrowserPaneController* TestBrowserPaneController::paneOn(const QString& uri)
@@ -1604,6 +1668,98 @@ void TestBrowserPaneController::aRefreshLeavesTheCursorAndTheTicksAlone()
     RepositoryStatusCache::shared().clear();
 }
 
+/// The row under the cursor decides what is on offer, so moving the cursor to a
+/// file the drive has nothing for empties the list rather than leaving the last
+/// file's actions behind.
+void TestBrowserPaneController::whatTheDriveCanDoFollowsTheCursor()
+{
+    BrowserPaneController* pane = paneOnOfferingDrive();
+    QVERIFY(pane);
+
+    QVERIFY(waitFor([pane] { return pane->driveActions().size() == 2; }));
+    const QVariantList offered = pane->driveActions();
+    QCOMPARE(
+        offered.first().toMap().value(QStringLiteral("id")).toString(), OfferingFileSystem::linkAction());
+    QCOMPARE(
+        offered.last().toMap().value(QStringLiteral("title")).toString(), QStringLiteral("Earlier versions"));
+
+    pane->setCurrentIndex(rowOf(pane, QStringLiteral("untouched.txt")));
+    QVERIFY(waitFor([pane] { return pane->driveActions().isEmpty(); }));
+}
+
+void TestBrowserPaneController::anActionAnsweringWithTextSaysWhenItStopsWorking()
+{
+    BrowserPaneController* pane = paneOnOfferingDrive();
+    QVERIFY(pane);
+    QVERIFY(waitFor([pane] { return !pane->driveActions().isEmpty(); }));
+
+    QSignalSpy answered(pane, &BrowserPaneController::driveActionText);
+    pane->invokeDriveAction(OfferingFileSystem::linkAction());
+    QVERIFY(waitFor([&answered] { return answered.count() == 1; }));
+
+    // The drive's own title, so somebody who picked one of two entries knows
+    // which answered.
+    QCOMPARE(answered.first().at(0).toString(), QStringLiteral("Copy a temporary link"));
+    QVERIFY(answered.first().at(1).toString().contains(QStringLiteral("report.txt")));
+    QVERIFY2(!answered.first().at(2).toString().isEmpty(), "a link that expires has to say when");
+}
+
+/// Each entry opens as an ordinary file, which is what an earlier version of one
+/// is -- so it goes out the same way activating a row does.
+void TestBrowserPaneController::anActionAnsweringWithUrisOffersThemToOpen()
+{
+    BrowserPaneController* pane = paneOnOfferingDrive();
+    QVERIFY(pane);
+    QVERIFY(waitFor([pane] { return !pane->driveActions().isEmpty(); }));
+
+    QSignalSpy answered(pane, &BrowserPaneController::driveActionUris);
+    pane->invokeDriveAction(OfferingFileSystem::versionsAction());
+    QVERIFY(waitFor([&answered] { return answered.count() == 1; }));
+
+    const QVariantList choices = answered.first().at(1).toList();
+    QCOMPARE(choices.size(), 2);
+    // Labelled by the drive's own token: it is the only thing that tells one
+    // state of a file from another, and this layer must not invent a prettier
+    // one it cannot know is true.
+    QCOMPARE(choices.first().toMap().value(QStringLiteral("label")).toString(), QStringLiteral("v1"));
+
+    QSignalSpy opened(pane, &BrowserPaneController::fileActivated);
+    pane->openUri(choices.first().toMap().value(QStringLiteral("uri")).toString());
+    QCOMPARE(opened.count(), 1);
+    QCOMPARE(VfsUri::fromString(opened.first().at(0).toString()).version(), QStringLiteral("v1"));
+}
+
+void TestBrowserPaneController::anActionThatFailsSaysWhichOne()
+{
+    BrowserPaneController* pane = paneOnOfferingDrive();
+    QVERIFY(pane);
+    QVERIFY(waitFor([pane] { return !pane->driveActions().isEmpty(); }));
+
+    m_offering->setActionFault(VfsError::NetworkError);
+
+    QSignalSpy failed(pane, &BrowserPaneController::operationFailed);
+    pane->invokeDriveAction(OfferingFileSystem::linkAction());
+    QVERIFY(waitFor([&failed] { return failed.count() == 1; }));
+
+    const QString message = failed.first().at(0).toString();
+    QVERIFY2(message.contains(QStringLiteral("Copy a temporary link")), qPrintable(message));
+    QVERIFY2(message.contains(QStringLiteral("would not answer")), qPrintable(message));
+}
+
+/// A menu that has gone stale must not be able to reach the drive with an id it
+/// never offered for the row the cursor is actually on.
+void TestBrowserPaneController::anIdTheDriveNeverOfferedIsNotHandedToIt()
+{
+    BrowserPaneController* pane = paneOnOfferingDrive();
+    QVERIFY(pane);
+    QVERIFY(waitFor([pane] { return !pane->driveActions().isEmpty(); }));
+
+    const int before = m_offering->invokeCallCount();
+    pane->invokeDriveAction(QStringLiteral("org.mole.test.never-offered"));
+    drainEvents();
+    QCOMPARE(m_offering->invokeCallCount(), before);
+}
+
 /// A drive's extra capabilities depend on what it was pointed at, so they are
 /// discovered rather than compiled in -- and this is the moment they are needed
 /// and the moment the drive is already being called anyway. See ADR-0076.
@@ -1628,7 +1784,7 @@ void TestBrowserPaneController::walkingAroundOneDriveAsksItOnce()
     QVERIFY(pane);
     QVERIFY(waitFor([this] { return m_fs->offers().isKnown(); }));
 
-    const int afterFirst = queuedSoFar();
+    const int probesAfterFirst = probeTasksSoFar();
     for (const QString& folder :
         { QStringLiteral("mem:///docs/deep"), QStringLiteral("mem:///"), QStringLiteral("mem:///docs") }) {
         pane->navigateTo(folder);
@@ -1637,8 +1793,10 @@ void TestBrowserPaneController::walkingAroundOneDriveAsksItOnce()
 
     QCOMPARE(m_fs->probeCallCount(), 1);
     // And no task queued for it either: a drive that has already answered is not
-    // worth a job per navigation, which is what browsing is made of.
-    QCOMPARE(queuedSoFar() - afterFirst, 3);
+    // worth a job per navigation, which is what browsing is made of. Counted by
+    // title rather than by how many tasks there are in total, because a
+    // navigation queues other things as well.
+    QCOMPARE(probeTasksSoFar(), probesAfterFirst);
 }
 
 /// Open Mole with several drives configured and browse one: there is one probe

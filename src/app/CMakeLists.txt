@@ -38,6 +38,7 @@ set(MOLE_QML_FILES
     ui/AppMenu.qml
     ui/CommandPalette.qml
     ui/CompressDialog.qml
+    ui/DriveActionResult.qml
     ui/TargetList.qml
     ui/ConfirmButtons.qml
     ui/ActionButton.qml

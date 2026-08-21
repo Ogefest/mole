@@ -75,6 +75,24 @@ Item {
             errorLabel.text = message
             errorPopup.open()
         }
+        // One treatment per kind of answer, and the same one whichever drive
+        // produced it -- this view has no idea which did. See ADR-0075.
+        function onDriveActionText(title, text, validUntilText) {
+            driveActionResult.showText(title, text, validUntilText)
+        }
+        function onDriveActionUris(title, choices) {
+            driveActionResult.showChoices(title, choices)
+        }
+    }
+
+    DriveActionResult {
+        id: driveActionResult
+        // Opened through the pane that ran the action, so an earlier version of a
+        // file goes wherever a file of that kind goes.
+        openRequested: function(uri) {
+            if (controller && controller.activePane)
+                controller.activePane.openUri(uri)
+        }
     }
 
     ColumnLayout {
