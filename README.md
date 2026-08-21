@@ -392,8 +392,9 @@ image metadata and audio tags, which read a header rather than linking `exiv2` o
 drive, and neither library works that way. See
 [ADR-0034](docs/adr/0034-what-a-file-says-about-itself.md).
 
-Cross-platform: nothing in the codebase is Linux-specific, but Windows and
-macOS have not been built or tested yet.
+Cross-platform: Mole is written to be portable, but it has only ever been
+configured, built and run on Linux. The platform-specific pieces found so far are
+being worked through; see [TODO.md](TODO.md) for where that stands.
 
 ## Licence
 

@@ -286,6 +286,18 @@ project, and a contributor should never hit a wall of text they cannot read.
   added to `TransferTask`. Its copy loop has a worse version of the same fault
   and is tracked as MOLE-98.
 
+- **Mole has only ever been built and run on Linux.** It is written to be portable
+  and most of it is, but the claim that nothing in the codebase is Linux-specific
+  was never checked against a compiler that would argue with it, and it was wrong:
+  the build presets, the way a local path is spelled inside a `VfsUri`, what counts
+  as a drive, what a name is allowed to be, and what `QFileInfo` means by a link all
+  differ on Windows or macOS. The work of putting that right is an epic on the board
+  — *Windows and macOS, built and run* — and the tickets in it are the list. It is
+  deliberately not repeated here or in `README.md`: a list kept in two places goes
+  stale in one of them. What belongs here is the standing position, which is that
+  the gap is known and tracked rather than a surprise waiting for whoever tries a
+  Windows build first.
+
 Tracked as issues rather than kept here: the full-screen window geometry (#31),
 FTP staging (#34), WebDAV against a real server (#35), video preview (#37) and
 the terminal on Windows (#38).
