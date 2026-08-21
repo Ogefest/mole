@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-21 #MOLE-250 Opening a file from a remote drive stages it inside the scratch folder, and two servers holding the same path no longer overwrite each other
 2026-08-21 #MOLE-243 A copy or a rename says which name the drive will not accept, and which character is the problem, instead of failing part way through with a path
 2026-08-21 #MOLE-241 The drive list finds a disk wherever it is mounted, including a separate /home, and stops listing a ramdisk as a drive
 2026-08-21 #MOLE-181 The sidebar lists drives on Windows and macOS as well as Linux, with the name the disk carries rather than "Root"

@@ -2,6 +2,7 @@
 
 #include "core/tasks/ReadFileTask.h"
 #include "core/tasks/TaskManager.h"
+#include "core/vfs/NameRules.h"
 #include "core/vfs/VfsManager.h"
 
 #include <QDesktopServices>
@@ -27,6 +28,11 @@ void FileLauncher::setOpenHook(OpenHook hook)
     m_openHook = hook ? std::move(hook) : OpenHook();
 }
 
+QString FileLauncher::scratchDirectory() const
+{
+    return m_scratch && m_scratch->isValid() ? m_scratch->path() : QString();
+}
+
 QString FileLauncher::scratchPathFor(const VfsUri& uri)
 {
     if (!m_scratch)
@@ -34,12 +40,52 @@ QString FileLauncher::scratchPathFor(const VfsUri& uri)
     if (!m_scratch->isValid())
         return {};
 
-    // Keep the original name so the desktop picks the handler by extension,
-    // and keep the parent path as a subdirectory so two files called
-    // "readme.txt" from different folders do not collide.
-    QString relative = uri.path();
-    relative.remove(0, 1);
-    const QString target = QDir(m_scratch->path()).filePath(relative);
+    // Built from components rather than from a path string, and this is the
+    // whole of the fix. Taking the leading slash off uri.path() left
+    // "C:/Users/ann/notes.txt", which QFileInfo calls absolute on Windows -- so
+    // QDir::filePath() handed it straight back and the scratch directory was
+    // never involved. At best the staging copy went somewhere nobody expects; at
+    // worst a download from a remote drive was written over a local file.
+    //
+    // Keep the original name so the desktop picks the handler by extension, and
+    // keep the parent path as a subdirectory so two files called "readme.txt"
+    // from different folders do not collide. The authority joins them, because
+    // the same path on two servers is two files.
+    const NameRules rules = NameRules::forPlatform();
+
+    QStringList parts;
+    const auto append = [&](const QString& segment) {
+        const NameVerdict verdict = checkName(segment, rules);
+        if (!verdict.isRejected()) {
+            parts.append(segment);
+            return;
+        }
+        // A remote path may hold a character the local disk will not store, and
+        // this function used to paste remote segments into a local path with no
+        // check. Here a name nobody chose is the right answer rather than the
+        // wrong one: nobody reads the staging path, and the alternative is not
+        // opening the file at all.
+        if (!verdict.suggestion.isEmpty())
+            parts.append(verdict.suggestion);
+    };
+
+    if (!uri.authority().isEmpty())
+        append(uri.authority());
+    for (const QString& segment : uri.path().split(QLatin1Char('/'), Qt::SkipEmptyParts))
+        append(segment);
+    if (parts.isEmpty())
+        return {};
+
+    const QDir root(m_scratch->path());
+    const QString target = QDir::cleanPath(root.filePath(parts.join(QLatin1Char('/'))));
+
+    // Asserted rather than assumed, because the cost of being wrong here is
+    // writing over somebody's file. Nothing above should be able to produce a
+    // path outside the scratch directory; if it ever does, nothing is opened.
+    const QString inside = QDir::cleanPath(root.absolutePath()) + QLatin1Char('/');
+    if (!target.startsWith(inside))
+        return {};
+
     if (!QDir().mkpath(QFileInfo(target).absolutePath()))
         return {};
     return target;

@@ -32,6 +32,9 @@ private slots:
     void unmountedFileReportsFailure();
     void invalidUriReportsFailure();
     void refusedByDesktopReportsFailure();
+    void aStagedCopyIsAlwaysInsideTheScratchDirectory_data();
+    void aStagedCopyIsAlwaysInsideTheScratchDirectory();
+    void theSamePathOnTwoServersIsTwoStagedFiles();
 
 private:
     FileLauncher* makeLauncher();
@@ -139,6 +142,69 @@ void TestFileLauncher::extractedCopyKeepsItsNameAndContents()
     QFile file(extracted);
     QVERIFY(file.open(QIODevice::ReadOnly));
     QCOMPARE(file.readAll(), QByteArray("inside the drive"));
+}
+
+void TestFileLauncher::aStagedCopyIsAlwaysInsideTheScratchDirectory_data()
+{
+    QTest::addColumn<QString>("uri");
+    QTest::addColumn<QString>("suffix");
+
+    QTest::newRow("an ordinary remote path") << "mem:///docs/manual.txt" << "manual.txt";
+    // The one that broke it. Stripping the leading slash left "C:/Users/..."
+    // which QFileInfo calls absolute on Windows, so QDir::filePath() handed it
+    // back unchanged and the scratch directory was never involved.
+    QTest::newRow("a drive letter") << "file:///C:/Users/ann/notes.txt" << "notes.txt";
+    QTest::newRow("a unc authority") << "file://server/share/report.pdf" << "report.pdf";
+    // Normalised away before it ever reaches here, and asserted anyway: this is
+    // the segment that would climb out if one ever survived.
+    QTest::newRow("a dotdot segment") << "mem:///docs/../../../etc/passwd.txt" << "passwd.txt";
+    QTest::newRow("a name the local disk may refuse") << "sftp://nas/home/really?.txt" << "?.txt";
+    QTest::newRow("a colon in a name") << "sftp://nas/home/a:b.txt" << "b.txt";
+}
+
+void TestFileLauncher::aStagedCopyIsAlwaysInsideTheScratchDirectory()
+{
+    QFETCH(QString, uri);
+    QFETCH(QString, suffix);
+
+    FileLauncher* launcher = makeLauncher();
+    const QString staged = launcher->scratchPathFor(VfsUri::fromString(uri));
+    QVERIFY2(!staged.isEmpty(), qPrintable(uri));
+
+    const QString root = QDir::cleanPath(QDir(launcher->scratchDirectory()).absolutePath());
+    QVERIFY2(!root.isEmpty(), "there should be a scratch directory once something is staged");
+    QVERIFY2(QDir::cleanPath(staged).startsWith(root + QLatin1Char('/')),
+        qPrintable(QStringLiteral("%1 staged outside the scratch directory: %2 is not under %3")
+                       .arg(uri, staged, root)));
+
+    // The extension has to survive, since picking the handler by extension is
+    // the reason the name is kept at all.
+    QVERIFY2(staged.endsWith(suffix), qPrintable(QStringLiteral("%1 lost its name: %2").arg(uri, staged)));
+
+    // And the directory it needs really exists, so the copy has somewhere to go.
+    QVERIFY2(QFileInfo(staged).absoluteDir().exists(), qPrintable(staged));
+}
+
+void TestFileLauncher::theSamePathOnTwoServersIsTwoStagedFiles()
+{
+    // The reason the parent path is kept as a subdirectory at all is that two
+    // files called readme.txt from different folders must not collide. The same
+    // argument reaches one step further and the old construction did not: it
+    // used only uri.path(), so /reports/2026.pdf on two different servers was
+    // one staging path, and opening the second overwrote the first while it was
+    // still being read.
+    FileLauncher* launcher = makeLauncher();
+
+    const QString first
+        = launcher->scratchPathFor(VfsUri::fromString(QStringLiteral("sftp://alpha/reports/2026.pdf")));
+    const QString second
+        = launcher->scratchPathFor(VfsUri::fromString(QStringLiteral("sftp://beta/reports/2026.pdf")));
+
+    QVERIFY(!first.isEmpty());
+    QVERIFY(!second.isEmpty());
+    QVERIFY2(first != second, qPrintable(QStringLiteral("two servers, one staging path: %1").arg(first)));
+    QVERIFY(first.endsWith(QStringLiteral("2026.pdf")));
+    QVERIFY(second.endsWith(QStringLiteral("2026.pdf")));
 }
 
 void TestFileLauncher::unmountedFileReportsFailure()

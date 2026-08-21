@@ -38,9 +38,21 @@ signals:
     void opened(const QString& localPath);
     void failed(const QString& uri, const QString& reason);
 
+public:
+    /// Where a file from a drive with no local path is staged before being
+    /// handed to the desktop.
+    ///
+    /// Public so the invariant can be asserted directly: the result is inside
+    /// the scratch directory. That is worth having on every platform and not
+    /// only where it currently breaks, because the cost of being wrong is
+    /// writing over somebody's file.
+    QString scratchPathFor(const VfsUri& uri);
+    /// The scratch directory itself, once there is one. Empty before the first
+    /// staging.
+    QString scratchDirectory() const;
+
 private:
     void launch(const QString& localPath, const VfsUri& origin);
-    QString scratchPathFor(const VfsUri& uri);
 
     PluginServices m_services;
     OpenHook m_openHook;
