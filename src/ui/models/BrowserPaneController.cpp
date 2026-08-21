@@ -6,6 +6,7 @@
 #include "core/analysis/AnalysisStore.h"
 #include "core/events/EventBus.h"
 #include "core/tasks/ListDirectoryTask.h"
+#include "core/tasks/ProbeDriveTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/tasks/TransferTask.h"
 #include "core/vcs/ReadRepositoryTask.h"
@@ -822,6 +823,9 @@ void BrowserPaneController::load(const VfsUri& uri, bool recordHistory)
     setErrorText({});
     setLoading(true);
 
+    // Kept, because the listing takes ownership of its own reference and the
+    // drive is wanted again below.
+    FileSystemPtr drive = fs;
     auto* task = new ListDirectoryTask(std::move(fs), uri);
     m_pending = task;
 
@@ -870,6 +874,20 @@ void BrowserPaneController::load(const VfsUri& uri, bool recordHistory)
     });
 
     m_services.tasks->submit(task);
+
+    // What a drive can offer beyond a listing depends on what it was pointed at,
+    // so it is discovered rather than compiled in -- and this is the moment to
+    // discover it. Somebody is looking at a folder on the drive, which is the
+    // first time anybody needs the answer, and the drive is already being called
+    // for the listing. A drive nobody opens is never asked at all.
+    //
+    // Its own task, not a step inside the listing: a probe that never comes back
+    // must not be a folder that never opens. Guarded here as well as inside the
+    // drive so that navigating around one drive does not queue a task per step;
+    // two panes opening at once may still both submit, and the drive answers the
+    // first and nothing to the second. See ADR-0076.
+    if (drive->offers().state == DriveOffers::State::Unasked)
+        m_services.tasks->submit(new ProbeDriveTask(drive, uri));
 }
 
 void BrowserPaneController::setLoading(bool loading)

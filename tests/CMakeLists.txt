@@ -162,6 +162,10 @@ mole_add_test(tst_MemoryFileSystem  SOURCES core/tst_MemoryFileSystem.cpp)
 # closed set of two outcomes, and the wrapper every mount goes through.
 mole_add_test(tst_FileActions       SOURCES core/tst_FileActions.cpp)
 
+# When a drive is asked what it can do where it was pointed, and the three
+# states its answer has: unasked, answered, and could not say.
+mole_add_test(tst_DriveProbe        SOURCES core/tst_DriveProbe.cpp)
+
 # The fault injector is a test tool, and one that miscounts bytes would make
 # every suite built on it green for the wrong reason.
 mole_add_test(tst_FaultyFileSystem  SOURCES support/tst_FaultyFileSystem.cpp)

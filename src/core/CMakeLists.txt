@@ -78,6 +78,8 @@ add_library(mole_core STATIC
     tasks/FolderSizesTask.cpp
     tasks/DriveCheckTask.h
     tasks/DriveCheckTask.cpp
+    tasks/ProbeDriveTask.h
+    tasks/ProbeDriveTask.cpp
     tasks/SweepLeftoversTask.h
     tasks/SweepLeftoversTask.cpp
 

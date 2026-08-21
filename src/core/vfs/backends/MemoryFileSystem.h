@@ -5,6 +5,9 @@
 
 #include <QHash>
 #include <QMutex>
+#include <QStringList>
+
+#include <atomic>
 
 namespace mole {
 
@@ -93,6 +96,31 @@ public:
 
     int listCallCount() const;
 
+    // ---- what a probe of this drive finds --------------------------------
+    //
+    // A drive's extra capabilities are a property of what it was pointed at, so
+    // a fixture has to be able to be pointed at either kind of thing: a volume
+    // that keeps earlier states of a file and one that does not, a far end that
+    // answers and one that does not.
+
+    /// What a probe will answer. Ids, in the namespace FileAction::id uses.
+    void setOffers(const QStringList& ids) { m_offers = ids; }
+    /// Makes the probe fail the way an unreachable far end does. The drive must
+    /// go on working, and the listing that triggered the probe must not notice.
+    void setProbeFault(VfsError::Code error) { m_probeFault = error; }
+    /// Makes the probe slow, so "a probe that hangs leaves the listing alone" is
+    /// held by waiting for a condition rather than for a clock.
+    void setProbeDelayMs(int ms) { m_probeDelayMs = ms; }
+
+    /// How many times this drive was really asked. "At most once per drive per
+    /// session" is a claim, and counting is what checks it.
+    int probeCallCount() const;
+    /// Whether a probe is inside the drive right now. What a test waits for.
+    bool isProbing() const;
+
+protected:
+    Result<QStringList> askWhatIsOffered(const VfsUri& target, const CancelToken& cancel) override;
+
 private:
     struct Node
     {
@@ -126,6 +154,11 @@ private:
     qint64 m_throttleBytes = 0;
     int m_throttleDelayMs = 0;
     mutable int m_listCalls = 0;
+    QStringList m_offers;
+    VfsError::Code m_probeFault = VfsError::None;
+    int m_probeDelayMs = 0;
+    mutable int m_probeCalls = 0;
+    std::atomic_bool m_probing { false };
 };
 
 class MemoryFileSystemFactory final : public IFileSystemFactory

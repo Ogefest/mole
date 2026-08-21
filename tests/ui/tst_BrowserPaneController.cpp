@@ -89,6 +89,10 @@ private slots:
     void aBurstOfWritesIsOneWalkRatherThanOnePerFile();
     void aRefreshLeavesTheCursorAndTheTicksAlone();
 
+    void openingAFolderAsksTheDriveWhatItCanDo();
+    void walkingAroundOneDriveAsksItOnce();
+    void aDriveNobodyOpensIsNeverAsked();
+
     void goingUpLandsOnTheFolderJustLeft();
     void goingBackRestoresTheCursor();
     void aForgottenEntryFallsBackToTheFirstRow();
@@ -1598,6 +1602,67 @@ void TestBrowserPaneController::aRefreshLeavesTheCursorAndTheTicksAlone()
     QCOMPARE(pane->files()->selectedUris(), ticked);
     RepositoryCache::shared().clear();
     RepositoryStatusCache::shared().clear();
+}
+
+/// A drive's extra capabilities depend on what it was pointed at, so they are
+/// discovered rather than compiled in -- and this is the moment they are needed
+/// and the moment the drive is already being called anyway. See ADR-0076.
+void TestBrowserPaneController::openingAFolderAsksTheDriveWhatItCanDo()
+{
+    m_fs->setOffers({ QStringLiteral("org.mole.test.versions") });
+    QCOMPARE(m_fs->probeCallCount(), 0);
+
+    QVERIFY(paneOn(QStringLiteral("mem:///docs")));
+
+    // The probe is a task of its own and the listing does not wait for it, so
+    // what is waited on is the answer rather than the listing.
+    QVERIFY(waitFor([this] { return m_fs->offers().isKnown(); }));
+    QCOMPARE(m_fs->probeCallCount(), 1);
+    QVERIFY(m_fs->offers().has(QStringLiteral("org.mole.test.versions")));
+}
+
+void TestBrowserPaneController::walkingAroundOneDriveAsksItOnce()
+{
+    m_fs->setOffers({ QStringLiteral("org.mole.test.versions") });
+    BrowserPaneController* pane = paneOn(QStringLiteral("mem:///docs"));
+    QVERIFY(pane);
+    QVERIFY(waitFor([this] { return m_fs->offers().isKnown(); }));
+
+    const int afterFirst = queuedSoFar();
+    for (const QString& folder :
+        { QStringLiteral("mem:///docs/deep"), QStringLiteral("mem:///"), QStringLiteral("mem:///docs") }) {
+        pane->navigateTo(folder);
+        QVERIFY(waitFor([pane] { return !pane->isLoading(); }));
+    }
+
+    QCOMPARE(m_fs->probeCallCount(), 1);
+    // And no task queued for it either: a drive that has already answered is not
+    // worth a job per navigation, which is what browsing is made of.
+    QCOMPARE(queuedSoFar() - afterFirst, 3);
+}
+
+/// Open Mole with several drives configured and browse one: there is one probe
+/// rather than one per drive, and a drive nobody opens costs nothing, ever.
+void TestBrowserPaneController::aDriveNobodyOpensIsNeverAsked()
+{
+    auto other = std::make_shared<MemoryFileSystem>();
+    other->addFile(QStringLiteral("/elsewhere.txt"), QByteArray("x"));
+    other->setOffers({ QStringLiteral("org.mole.test.versions") });
+
+    Mount mount;
+    mount.id = QStringLiteral("other");
+    mount.displayName = QStringLiteral("other");
+    mount.root = VfsUri::fromString(QStringLiteral("other:///"));
+    mount.fileSystem = other;
+    QVERIFY(!m_vfs->addMount(mount).isEmpty());
+
+    m_fs->setOffers({ QStringLiteral("org.mole.test.versions") });
+    QVERIFY(paneOn(QStringLiteral("mem:///docs")));
+    QVERIFY(waitFor([this] { return m_fs->offers().isKnown(); }));
+
+    QCOMPARE(m_fs->probeCallCount(), 1);
+    QCOMPARE(other->probeCallCount(), 0);
+    QCOMPARE(other->offers().state, DriveOffers::State::Unasked);
 }
 
 void TestBrowserPaneController::goingUpLandsOnTheFolderJustLeft()

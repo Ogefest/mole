@@ -5,6 +5,7 @@
 #include <QDateTime>
 #include <QList>
 #include <QString>
+#include <QStringList>
 
 #include <utility>
 
@@ -92,6 +93,46 @@ struct FileActionOutcome
     /// Whether it carries what its kind promises. An outcome that does not is
     /// neither kind whatever it says it is, and there is nothing to show for it.
     bool isValid() const { return kind == Kind::Text ? !text.isEmpty() : !uris.isEmpty(); }
+};
+
+/// What a drive turned out to be able to offer where it was pointed, and whether
+/// it has been asked yet.
+///
+/// The class cannot answer this. The same local backend has earlier states of a
+/// file on one filesystem and not on another; the same object-store backend has
+/// them on one container and not on another. One class, two answers -- so the
+/// answer is discovered from the drive rather than compiled in, once, at the
+/// moment somebody first opens a folder on it. See ADR-0076.
+///
+/// **Three states and not two, because absent and not-yet-known are different
+/// and only one of them is a lie.** Before the answer arrives the drive has not
+/// said it cannot do the thing; it has said nothing. Anything drawing "no" out of
+/// that silence is telling the user something no drive ever said, and would then
+/// have to un-say it a moment later.
+struct DriveOffers
+{
+    enum class State {
+        /// Nobody has needed the answer yet, so nobody has asked. The state
+        /// every drive is in until a folder on it is opened.
+        Unasked,
+        /// The drive was asked and this is what it said, including when what it
+        /// said was nothing.
+        Answered,
+        /// The drive was asked and could not say -- the far end refused, the
+        /// call timed out. Absent, like an empty answer, but for a reason worth
+        /// telling apart from one.
+        Failed,
+    };
+
+    State state = State::Unasked;
+    /// The ids of the actions this drive can offer here at all, in the same
+    /// namespace FileAction::id uses. What actionsFor() then narrows to one node.
+    QStringList ids;
+
+    /// Whether the drive has answered. False while nothing has been asked *and*
+    /// when the asking failed: both mean there is nothing to show.
+    bool isKnown() const { return state == State::Answered; }
+    bool has(const QString& id) const { return state == State::Answered && ids.contains(id); }
 };
 
 } // namespace mole

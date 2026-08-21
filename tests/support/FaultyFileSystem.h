@@ -210,6 +210,13 @@ public:
     FileActionList actionsFor(const VfsUri& target, const FileEntry& entry) override;
     Result<FileActionOutcome> invoke(
         const QString& id, const VfsUri& target, const CancelToken& cancel) override;
+    /// The drive underneath's, for the same reason.
+    DriveOffers offers() const override { return m_inner ? m_inner->offers() : DriveOffers(); }
+    void probe(const VfsUri& target, const CancelToken& cancel) override
+    {
+        if (m_inner)
+            m_inner->probe(target, cancel);
+    }
 
     /// The declared faults and the state shared with the open streams. Public
     /// because the stream devices need it and they are an implementation

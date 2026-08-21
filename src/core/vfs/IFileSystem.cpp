@@ -1,5 +1,7 @@
 #include "core/vfs/IFileSystem.h"
 
+#include "core/diagnostics/Diagnostics.h"
+
 namespace mole {
 
 Result<void> IFileSystem::notSupported(const char* what)
@@ -69,6 +71,48 @@ Result<FileActionOutcome> IFileSystem::invoke(const QString& id, const VfsUri&, 
     // and the drive disagreeing, and the id is the only thing that says where.
     return VfsError::make(
         VfsError::NotSupported, QStringLiteral("this drive offers no action called \"%1\"").arg(id));
+}
+
+DriveOffers IFileSystem::offers() const
+{
+    QMutexLocker lock(&m_offersMutex);
+    return m_offers;
+}
+
+void IFileSystem::probe(const VfsUri& target, const CancelToken& cancel)
+{
+    {
+        QMutexLocker lock(&m_offersMutex);
+        // Asked once. A second caller does not wait for the first either: it has
+        // a listing of its own to get on with, and the answer it came for will
+        // be there the next time anything looks.
+        if (m_offers.state != DriveOffers::State::Unasked || m_probing)
+            return;
+        m_probing = true;
+    }
+
+    const Result<QStringList> answer = askWhatIsOffered(target, cancel);
+
+    QMutexLocker lock(&m_offersMutex);
+    m_probing = false;
+    if (cancel.isCancelled()) {
+        // Left Unasked rather than Failed: a probe that was called off never
+        // found anything out, and the next folder opened here should ask again.
+        return;
+    }
+    if (!answer.ok()) {
+        qCWarning(driveLog, "probe of %s failed: %s", qPrintable(target.toString()),
+            qPrintable(answer.error().message));
+        m_offers.state = DriveOffers::State::Failed;
+        return;
+    }
+    m_offers.state = DriveOffers::State::Answered;
+    m_offers.ids = answer.value();
+}
+
+Result<QStringList> IFileSystem::askWhatIsOffered(const VfsUri&, const CancelToken&)
+{
+    return QStringList();
 }
 
 Result<void> closeAndReport(QIODevice& device)

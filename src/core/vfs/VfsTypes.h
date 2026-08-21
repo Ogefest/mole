@@ -41,6 +41,16 @@ struct VfsError
 
 /// A backend advertises what it can actually do. The UI greys out actions
 /// instead of letting the user hit "not supported" at runtime.
+///
+/// **Every member here is something the core has to understand by name**: a copy
+/// branches on Write, a preview on RandomAccessRead, the sweep on
+/// ReportsLeftovers. That is why they are compiled in -- they are properties of
+/// the code, and the same class claims them wherever it is pointed.
+///
+/// Anything whose answer depends on **what the drive was pointed at** does not
+/// belong here, and nor does anything only the *user* acts on. Both of those are
+/// the second tier: DriveOffers in FileAction.h, discovered from the drive on
+/// first need. See ADR-0075 for the split and ADR-0076 for the discovery.
 enum class VfsCapability : quint32 {
     None = 0,
     Read = 1u << 0,

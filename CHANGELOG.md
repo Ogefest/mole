@@ -13,6 +13,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-22 #MOLE-194 What a drive can offer is discovered from the drive when a folder on it is first opened, rather than compiled into its class — a drive nobody opens is never asked, one that cannot say goes on working, and "not asked yet" no longer reads as "no"
 2026-08-21 #MOLE-193 A drive can offer an action no other drive has, and answers with a piece of text or a list of alternate uris for the same file — nothing between the backend and the menu learns what the action was
 2026-08-21 #MOLE-281 The guide says how to choose a theme, which four there are, and that its pictures are all taken in Midnight
 2026-08-21 #MOLE-280 Two light themes, Paper and Workbench, and the controls, previews and code colours that follow a theme's polarity; the active view mode and every view's primary button are now legible rather than a drop shadow

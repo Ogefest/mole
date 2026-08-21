@@ -104,8 +104,18 @@ the backend and the menu learns what the action was, which is what lets a drive
 written next year offer something nobody has thought of yet. Both default to
 offering nothing, so a backend that contributes none needs no code at all.
 
+What a drive can offer is not a property of its class, because it depends on what
+the drive was pointed at: the same local backend has earlier states of a file on
+one filesystem and not on another. So it is discovered rather than compiled in —
+`ProbeDriveTask` asks the drive once, when somebody first opens a folder on it,
+and `IFileSystem::offers()` reports what came back. A drive nobody opens is never
+asked. The answer has three states, because "nobody has asked yet" and "the drive
+says no" must not read the same.
+
 See [ADR-0075](docs/adr/0075-a-drive-offers-what-only-it-can-do.md) for the split
-between the two tiers and why the set of outcomes is closed.
+between the two tiers and why the set of outcomes is closed, and
+[ADR-0076](docs/adr/0076-a-drive-is-asked-what-it-can-do-when-somebody-looks.md)
+for when a drive is asked.
 
 ## Tabs
 

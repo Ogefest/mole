@@ -48,6 +48,11 @@ public:
     FileActionList actionsFor(const VfsUri& target, const FileEntry& entry) override;
     Result<FileActionOutcome> invoke(
         const QString& id, const VfsUri& target, const CancelToken& cancel) override;
+    /// Also the drive underneath's. What was discovered about a drive belongs to
+    /// that drive, and a wrapper keeping an answer of its own would be a second
+    /// drive that is asked separately and can disagree.
+    DriveOffers offers() const override;
+    void probe(const VfsUri& target, const CancelToken& cancel) override;
 
 private:
     FileSystemPtr m_inner;

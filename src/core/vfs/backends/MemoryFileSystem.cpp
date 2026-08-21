@@ -139,6 +139,42 @@ int MemoryFileSystem::listCallCount() const
     return m_listCalls;
 }
 
+int MemoryFileSystem::probeCallCount() const
+{
+    QMutexLocker lock(&m_mutex);
+    return m_probeCalls;
+}
+
+bool MemoryFileSystem::isProbing() const
+{
+    return m_probing.load();
+}
+
+Result<QStringList> MemoryFileSystem::askWhatIsOffered(const VfsUri&, const CancelToken& cancel)
+{
+    {
+        QMutexLocker lock(&m_mutex);
+        ++m_probeCalls;
+    }
+
+    m_probing.store(true);
+    if (m_probeDelayMs > 0) {
+        // Chunked like the listing delay, so a cancelled probe does not have to
+        // wait out the whole of it.
+        for (int slept = 0; slept < m_probeDelayMs && !cancel.isCancelled(); slept += 10)
+            QThread::msleep(10);
+    }
+    m_probing.store(false);
+
+    if (cancel.isCancelled())
+        return VfsError::make(VfsError::Cancelled, QStringLiteral("Probe cancelled"));
+    if (m_probeFault != VfsError::None)
+        return VfsError::make(m_probeFault, QStringLiteral("This drive cannot say what it offers"));
+
+    QMutexLocker lock(&m_mutex);
+    return m_offers;
+}
+
 Result<FileEntryList> MemoryFileSystem::list(const VfsUri& dir, const CancelToken& cancel)
 {
     if (m_listDelayMs > 0) {

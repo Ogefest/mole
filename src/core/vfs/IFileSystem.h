@@ -7,6 +7,7 @@
 #include "core/vfs/VfsUri.h"
 
 #include <QIODevice>
+#include <QMutex>
 #include <QString>
 
 #include <chrono>
@@ -153,8 +154,48 @@ public:
     virtual Result<FileActionOutcome> invoke(
         const QString& id, const VfsUri& target, const CancelToken& cancel);
 
+    /// What this drive turned out to be able to offer, and whether it has been
+    /// asked yet.
+    ///
+    /// Cheap, non-blocking and safe from any thread, including the one that
+    /// draws: it reports what has already been discovered and never asks the
+    /// drive. Unasked until something needs the answer -- see probe().
+    virtual DriveOffers offers() const;
+
+    /// Finds out, once, and remembers it for the life of this drive.
+    ///
+    /// Called from a worker thread when somebody first opens a folder here. The
+    /// second call and every one after it costs nothing, and a call made while
+    /// another thread is asking returns rather than asking again.
+    ///
+    /// Not at mount and not when a drive is configured: mounting must not get
+    /// slower or fail for a capability nobody has asked for yet, a local volume
+    /// is never configured at all -- SystemVolumes::enumerate() discovers it --
+    /// and an answer written down once goes stale silently, a recorded "no"
+    /// being the worst kind. ADR-0076 works through both.
+    ///
+    /// A probe that fails leaves the drive working and the offers absent. It is
+    /// never anybody's error: whoever opened the folder asked for a listing.
+    virtual void probe(const VfsUri& target, const CancelToken& cancel);
+
 protected:
     static Result<void> notSupported(const char* what);
+
+    /// What this drive can offer at `target`, asked of the drive itself.
+    ///
+    /// Empty by default, which is every backend that has nothing to discover, so
+    /// none of them needs to say so. Override it to ask the far end -- and take
+    /// as long as it takes: nothing waits on this, and the listing that
+    /// triggered it has already been answered.
+    virtual Result<QStringList> askWhatIsOffered(const VfsUri& target, const CancelToken& cancel);
+
+private:
+    /// Held on the instance, which is what "for the life of the mount" means:
+    /// VfsManager builds one backend per mount and lets go of it when the drive
+    /// goes away, so a drive that is unmounted and mounted again is asked again.
+    mutable QMutex m_offersMutex;
+    DriveOffers m_offers;
+    bool m_probing = false;
 };
 
 using FileSystemPtr = std::shared_ptr<IFileSystem>;

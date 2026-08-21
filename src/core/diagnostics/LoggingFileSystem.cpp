@@ -149,6 +149,34 @@ Result<FileActionOutcome> LoggingFileSystem::invoke(
     return watch(m_name, "action", subject, [&] { return m_inner->invoke(id, target, cancel); });
 }
 
+DriveOffers LoggingFileSystem::offers() const
+{
+    return m_inner->offers();
+}
+
+void LoggingFileSystem::probe(const VfsUri& target, const CancelToken& cancel)
+{
+    if (!driveLog().isDebugEnabled()) {
+        m_inner->probe(target, cancel);
+        return;
+    }
+
+    QElapsedTimer clock;
+    clock.start();
+    m_inner->probe(target, cancel);
+    const qint64 elapsed = clock.elapsed();
+
+    // What the drive says it can offer, and how long it took to find out. A
+    // probe that answers nothing and one that was never made look identical
+    // afterwards, and this is the only place that can tell them apart.
+    const DriveOffers found = m_inner->offers();
+    qCDebug(driveLog, "[%s] probe %s: %s in %lld ms", qPrintable(m_name), qPrintable(target.toString()),
+        qPrintable(found.isKnown() ? (found.ids.isEmpty() ? QStringLiteral("nothing offered")
+                                                          : found.ids.join(QStringLiteral(", ")))
+                                   : QStringLiteral("no answer")),
+        elapsed);
+}
+
 FileSystemPtr withLogging(FileSystemPtr fileSystem, const QString& name)
 {
     if (!fileSystem || std::dynamic_pointer_cast<LoggingFileSystem>(fileSystem))
