@@ -621,6 +621,14 @@ QVariantList AppController::driveKinds() const
         return out;
 
     for (IFileSystemFactory* factory : m_vfs->factories()) {
+        // A kind of drive this platform does not have is left out entirely
+        // rather than greyed out. The greyed-out row is for a library somebody
+        // could install; there is nothing to install for a Windows share on
+        // Windows, where \\server\share is served by the local filesystem, and
+        // a row saying otherwise sends people looking for a package.
+        if (!factory->isApplicable())
+            continue;
+
         // A factory whose library is missing says so instead of offering drives
         // that cannot connect. Listing it greyed out beats leaving a silent gap.
         const QVariantMap common { { QStringLiteral("factory"), factory->scheme() },

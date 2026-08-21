@@ -3,6 +3,7 @@
 #include "plugins/builtin/BrowserFeature.h"
 #include "plugins/builtin/BuiltinPlugin.h"
 #include "plugins/builtin/SearchFeatures.h"
+#include "support/FakePlugin.h"
 #include "support/MoleTestMain.h"
 #include "support/TestSupport.h"
 #include "ui/AppController.h"
@@ -48,6 +49,7 @@ private slots:
     void aTypedPathBecomesAUriAndComesBackReadable_data();
     void aTypedPathBecomesAUriAndComesBackReadable();
     void aRemoteLocationKeepsItsSchemeWhenRead();
+    void aDriveKindThisPlatformDoesNotHaveIsLeftOutRatherThanGreyedOut();
     void everyRegisteredFeatureCanOpenATab();
     void browserTabBrowsesTheRealFilesystem();
     void measuringFoldersFillsTheirSizesIntoTheListing();
@@ -315,6 +317,56 @@ void TestAppIntegration::aRemoteLocationKeepsItsSchemeWhenRead()
     // Text with a scheme that does not parse comes back as it was typed, so what
     // the user asked for is what the error names.
     QCOMPARE(m_app->uriForPathText(QStringLiteral("://nonsense")), QStringLiteral("://nonsense"));
+}
+
+void TestAppIntegration::aDriveKindThisPlatformDoesNotHaveIsLeftOutRatherThanGreyedOut()
+{
+    // Three answers, three outcomes. A factory whose library is missing is
+    // listed greyed out with a reason, because installing the library is
+    // something somebody can do. A kind of drive the platform does not have is
+    // left out entirely: on Windows a share is \\server\share, served by the
+    // local filesystem, and "install libsmbclient" is a true statement and the
+    // wrong thing to say.
+    //
+    // Asserted with test factories, so no real backend and no missing library is
+    // involved and this runs anywhere.
+    auto working = std::make_unique<FakeFileSystemFactory>(QStringLiteral("worksfine"));
+    auto missing = std::make_unique<FakeFileSystemFactory>(QStringLiteral("nolibrary"));
+    auto elsewhere = std::make_unique<FakeFileSystemFactory>(QStringLiteral("nothere"));
+
+    // A factory with nothing to configure is skipped by driveKinds() already, so
+    // each needs a field for its row to exist at all.
+    const QList<ConnectionField> oneField { ConnectionField { QStringLiteral("host"), QStringLiteral("Host"),
+        ConnectionField::Text, {}, true, {}, false, {}, {}, {}, {} } };
+    working->setConnectionFields(oneField);
+    missing->setConnectionFields(oneField);
+    elsewhere->setConnectionFields(oneField);
+
+    missing->setUnavailable(QStringLiteral("install libsomething"));
+    elsewhere->setNotApplicable();
+
+    m_app->services().vfs->registerFactory(std::move(working));
+    m_app->services().vfs->registerFactory(std::move(missing));
+    m_app->services().vfs->registerFactory(std::move(elsewhere));
+
+    QHash<QString, QVariantMap> rows;
+    for (const QVariant& kind : m_app->driveKinds()) {
+        const QVariantMap map = kind.toMap();
+        rows.insert(map.value(QStringLiteral("factory")).toString(), map);
+    }
+
+    QVERIFY(rows.contains(QStringLiteral("worksfine")));
+    QVERIFY(rows.value(QStringLiteral("worksfine")).value(QStringLiteral("available")).toBool());
+
+    // Present and greyed out, with the reason to show beside it.
+    QVERIFY(rows.contains(QStringLiteral("nolibrary")));
+    QVERIFY(!rows.value(QStringLiteral("nolibrary")).value(QStringLiteral("available")).toBool());
+    QCOMPARE(rows.value(QStringLiteral("nolibrary")).value(QStringLiteral("unavailableReason")).toString(),
+        QStringLiteral("install libsomething"));
+
+    // Absent altogether.
+    QVERIFY2(!rows.contains(QStringLiteral("nothere")),
+        "a drive kind this platform does not have must not be offered at all");
 }
 
 void TestAppIntegration::everyRegisteredFeatureCanOpenATab()

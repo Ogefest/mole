@@ -88,6 +88,19 @@ public:
     /// Why not, when it is not.
     virtual QString unavailableReason() const { return {}; }
 
+    /// Whether this kind of drive is a thing on this platform at all.
+    ///
+    /// The third answer, and it is a different question from the one above.
+    /// "A library you could install" belongs in the list, greyed out, with a
+    /// reason. "This platform reaches it another way" does not belong in the
+    /// list: on Windows a share is \\server\share, served by the local
+    /// filesystem, and telling somebody to install libsmbclient for it is a true
+    /// statement and the wrong thing to say.
+    ///
+    /// Deliberately narrow. SFTP, S3, FTP and WebDAV have no native Windows
+    /// equivalent, libcurl builds there, and they are applicable everywhere.
+    virtual bool isApplicable() const { return true; }
+
     /// Lowercased suffixes this backend can mount straight from a file, so
     /// activating one in the browser turns it into a drive. Archives use it
     /// today; an .iso or .sqlite backend would use it the same way, with no

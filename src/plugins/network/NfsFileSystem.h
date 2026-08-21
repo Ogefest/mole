@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/platform/HostPlatform.h"
 #include "core/vfs/IFileSystem.h"
 #include "core/vfs/IFileSystemFactory.h"
 
@@ -134,6 +135,9 @@ public:
     QString iconName() const override { return QStringLiteral("\U0001F5C4"); }
 
     QList<ConnectionField> connectionFields() const override;
+    /// Not a kind of drive on Windows either: an NFS export is reached through
+    /// the operating system's own client there, not through libnfs.
+    bool isApplicable() const override { return hostPlatform() != HostPlatform::Windows; }
     FileSystemPtr create(const QVariantMap& config, QString* errorOut) override;
 
     static NfsSettings settingsFrom(const QVariantMap& config);

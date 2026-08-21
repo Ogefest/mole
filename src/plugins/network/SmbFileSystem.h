@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/platform/HostPlatform.h"
 #include "core/vfs/IFileSystem.h"
 #include "core/vfs/IFileSystemFactory.h"
 
@@ -123,6 +124,10 @@ public:
     QString iconName() const override { return QStringLiteral("\U0001F5A5"); }
 
     QList<ConnectionField> connectionFields() const override;
+    /// Not a kind of drive on Windows, where a share is \\server\share and is
+    /// reached by the local filesystem. Offering it there -- greyed out or not --
+    /// would point somebody at a library they do not need.
+    bool isApplicable() const override { return hostPlatform() != HostPlatform::Windows; }
     FileSystemPtr create(const QVariantMap& config, QString* errorOut) override;
 
     static SmbSettings settingsFrom(const QVariantMap& config);

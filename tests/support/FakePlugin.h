@@ -268,13 +268,34 @@ public:
 
     QString scheme() const override { return m_scheme; }
     QString displayName() const override { return m_scheme; }
+    QList<ConnectionField> connectionFields() const override { return m_fields; }
     FileSystemPtr create(const QVariantMap&, QString*) override
     {
         return std::make_shared<MemoryFileSystem>();
     }
 
+    /// The three answers a factory can give about itself, so what the drive list
+    /// does with each is testable without a real backend or a missing library.
+    bool isAvailable() const override { return m_available; }
+    QString unavailableReason() const override { return m_unavailableReason; }
+    bool isApplicable() const override { return m_applicable; }
+
+    void setConnectionFields(QList<ConnectionField> fields) { m_fields = std::move(fields); }
+    void setUnavailable(QString reason)
+    {
+        m_available = false;
+        m_unavailableReason = std::move(reason);
+    }
+    /// Not a kind of drive on this platform at all -- what SMB and NFS are on
+    /// Windows, where a share is reached by the local filesystem.
+    void setNotApplicable() { m_applicable = false; }
+
 private:
     QString m_scheme;
+    QList<ConnectionField> m_fields;
+    bool m_available = true;
+    bool m_applicable = true;
+    QString m_unavailableReason;
 };
 
 /// Configurable plugin used to drive PluginManager through its edge cases.
