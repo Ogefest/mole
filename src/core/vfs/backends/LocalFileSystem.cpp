@@ -86,23 +86,6 @@ namespace {
         bool m_committed = false;
     };
 
-    /// "rwxr-xr--", the form everyone reads permissions in. Built from Qt's
-    /// owner/group/other flags rather than a raw octal number so a change is
-    /// legible in an alert without decoding anything.
-    QString permissionString(QFile::Permissions permissions)
-    {
-        static constexpr QFile::Permission kBits[9]
-            = { QFile::ReadOwner, QFile::WriteOwner, QFile::ExeOwner, QFile::ReadGroup, QFile::WriteGroup,
-                  QFile::ExeGroup, QFile::ReadOther, QFile::WriteOther, QFile::ExeOther };
-        static constexpr char kLetters[9] = { 'r', 'w', 'x', 'r', 'w', 'x', 'r', 'w', 'x' };
-
-        QString out;
-        out.reserve(9);
-        for (int i = 0; i < 9; ++i)
-            out.append(permissions.testFlag(kBits[i]) ? QLatin1Char(kLetters[i]) : QLatin1Char('-'));
-        return out;
-    }
-
     FileEntry entryFromInfo(const QFileInfo& info, const VfsUri& uri)
     {
         FileEntry e;
@@ -121,7 +104,7 @@ namespace {
         // either has to see the absence rather than a date that means nothing.
         e.created = info.birthTime();
         e.accessed = info.lastRead();
-        e.permissions = permissionString(info.permissions());
+        e.permissions = LocalFileSystem::modeString(info.permissions());
         return e;
     }
 
@@ -160,6 +143,32 @@ namespace {
     }
 
 } // namespace
+
+QString LocalFileSystem::modeString(QFile::Permissions permissions, HostPlatform platform)
+{
+    // Windows has no mode. QFileInfo::permissions() synthesises something from
+    // the ACL, and written out as nine characters it reads as fact -- so it is
+    // offered only where it means what it says. AlertEvaluator depends on this
+    // being empty rather than invented: it treats an empty string as "this drive
+    // does not report permissions" and skips the reading, and a synthesised
+    // value would have an alert rule firing on a mode nobody ever set.
+    if (platform == HostPlatform::Windows)
+        return {};
+
+    // "rwxr-xr--", the form everyone reads permissions in. Built from Qt's
+    // owner/group/other flags rather than a raw octal number so a change is
+    // legible in an alert without decoding anything.
+    static constexpr QFile::Permission kBits[9]
+        = { QFile::ReadOwner, QFile::WriteOwner, QFile::ExeOwner, QFile::ReadGroup, QFile::WriteGroup,
+              QFile::ExeGroup, QFile::ReadOther, QFile::WriteOther, QFile::ExeOther };
+    static constexpr char kLetters[9] = { 'r', 'w', 'x', 'r', 'w', 'x', 'r', 'w', 'x' };
+
+    QString out;
+    out.reserve(9);
+    for (int i = 0; i < 9; ++i)
+        out.append(permissions.testFlag(kBits[i]) ? QLatin1Char(kLetters[i]) : QLatin1Char('-'));
+    return out;
+}
 
 VfsCapabilities LocalFileSystem::capabilities() const
 {
@@ -219,15 +228,10 @@ Result<AccessInfo> LocalFileSystem::access(const VfsUri& target)
     out.owner = info.owner();
     out.group = info.group();
 
-    // The mode string is the platform's own form and stays platform-specific:
-    // on Windows QFileInfo::permissions() synthesises something from the ACL
-    // that would be misleading written out as nine characters, so it is only
-    // offered where it means what it says.
-#ifdef Q_OS_WIN
-    out.nativeText.clear();
-#else
-    out.nativeText = permissionString(info.permissions());
-#endif
+    // Whether there is a mode string at all is one question with one answer, and
+    // the listing asks the same one. It used to be guarded here and unguarded
+    // there, which is two answers about the same file.
+    out.nativeText = modeString(info.permissions());
 
     return out;
 }

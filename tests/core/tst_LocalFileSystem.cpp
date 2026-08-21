@@ -21,6 +21,8 @@ private slots:
     void reportsHiddenFiles();
     void listsRootWithoutCrashing();
     void factoryProducesUsableBackend();
+    void theListingAndTheDetailsAgreeAboutModeStrings();
+    void aPlatformWithoutModesReportsNoneRatherThanSynthesisingOne();
 };
 
 void TestLocalFileSystem::conformance()
@@ -71,6 +73,44 @@ void TestLocalFileSystem::factoryProducesUsableBackend()
     FileSystemPtr fs = factory.create({}, &error);
     QVERIFY2(fs != nullptr, qPrintable(error));
     QCOMPARE(fs->scheme(), QStringLiteral("file"));
+}
+
+void TestLocalFileSystem::theListingAndTheDetailsAgreeAboutModeStrings()
+{
+    // Compared against each other rather than against one platform's spelling,
+    // so this runs and means something on all three -- and would have caught the
+    // fault on the day the guard was added to one of them and not the other.
+    TempTree tree;
+    QVERIFY(tree.isValid());
+    QVERIFY(tree.writeFile(QStringLiteral("notes.txt"), QByteArray("hello")));
+
+    LocalFileSystem fs;
+    const VfsUri file = tree.rootUri().child(QStringLiteral("notes.txt"));
+
+    Result<FileEntryList> listed = fs.list(tree.rootUri(), CancelToken());
+    QVERIFY(listed.ok());
+    QCOMPARE(listed.value().size(), 1);
+
+    Result<AccessInfo> access = fs.access(file);
+    QVERIFY(access.ok());
+
+    QCOMPARE(listed.value().first().permissions.isEmpty(), access.value().nativeText.isEmpty());
+    QCOMPARE(listed.value().first().permissions, access.value().nativeText);
+}
+
+void TestLocalFileSystem::aPlatformWithoutModesReportsNoneRatherThanSynthesisingOne()
+{
+    const QFile::Permissions readable = QFile::ReadOwner | QFile::WriteOwner | QFile::ReadGroup;
+
+    // Windows has no mode. Qt synthesises one from the ACL, and nine characters
+    // of it read as fact -- so nothing is offered, and an alert rule about
+    // permissions has nothing to fire on rather than something invented.
+    QVERIFY(LocalFileSystem::modeString(readable, HostPlatform::Windows).isEmpty());
+
+    QCOMPARE(LocalFileSystem::modeString(readable, HostPlatform::Posix), QStringLiteral("rw-r-----"));
+    QCOMPARE(LocalFileSystem::modeString(readable, HostPlatform::MacOS), QStringLiteral("rw-r-----"));
+    QCOMPARE(
+        LocalFileSystem::modeString(QFile::Permissions(), HostPlatform::Posix), QStringLiteral("---------"));
 }
 
 MOLE_TEST_MAIN(TestLocalFileSystem)

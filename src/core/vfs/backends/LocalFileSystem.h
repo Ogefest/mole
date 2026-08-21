@@ -3,6 +3,8 @@
 #include "core/vfs/IFileSystem.h"
 #include "core/vfs/IFileSystemFactory.h"
 
+#include <QFile>
+
 namespace mole {
 
 /// The reference backend: plain local disk through QFileInfo/QDirIterator.
@@ -22,6 +24,20 @@ public:
     {
         return VfsUri::caseSensitivityFor(QStringLiteral("file"));
     }
+
+    /// "rwxr-xr--" on a platform that has such a thing, and empty on one that
+    /// does not.
+    ///
+    /// One answer, asked by both the listing and the details, because this class
+    /// used to hold two. access() guarded the question with an #ifdef and
+    /// entryFromInfo() eighty lines above it did not, so on Windows a file's
+    /// details drawer showed no mode and the listing it was opened from showed
+    /// rw-rw-rw- for the same file.
+    ///
+    /// Public and taking a platform so the question can be asked about a system
+    /// this build is not running on -- which is the only way the Windows answer
+    /// is ever checked.
+    static QString modeString(QFile::Permissions permissions, HostPlatform platform = hostPlatform());
 
     Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) override;
     Result<SpaceInfo> space(const VfsUri& target) override;
