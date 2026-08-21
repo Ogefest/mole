@@ -53,6 +53,20 @@ QString TerminalController::rowText(int index) const
     return m_screen.rowText(index);
 }
 
+QStringList TerminalController::ansiPalette()
+{
+    // The xterm sixteen: eight normal, eight bright. Terminals name a colour by
+    // index, so the mapping has to live somewhere, and these values are the ones
+    // the panel has always drawn with -- chosen to sit with the rest of the window
+    // so output looks the way its author intended.
+    return { QStringLiteral("#1b2029"), QStringLiteral("#e5534b"), QStringLiteral("#57ab5a"),
+        QStringLiteral("#d9a441"), QStringLiteral("#4c9aff"), QStringLiteral("#c792ea"),
+        QStringLiteral("#5bc8d6"), QStringLiteral("#c9d1e0"), QStringLiteral("#5c6472"),
+        QStringLiteral("#ff7b72"), QStringLiteral("#7ee787"), QStringLiteral("#f0c674"),
+        QStringLiteral("#7cc4ff"), QStringLiteral("#d2a8ff"), QStringLiteral("#86d9e8"),
+        QStringLiteral("#f0f6fc") };
+}
+
 QVariantList TerminalController::screenRows() const
 {
     QVariantList rows;

@@ -63,7 +63,7 @@ Item {
             Label {
                 Layout.fillWidth: true
                 wrapMode: Text.Wrap
-                color: "#8b93a7"
+                color: App.colour.textMuted
                 font.pixelSize: App.secondaryTextSize
                 text: "No installed viewer handles this file type. A plugin can add one."
             }

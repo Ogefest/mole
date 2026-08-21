@@ -209,8 +209,8 @@ FocusScope {
     Rectangle {
         id: frame
         anchors.fill: parent
-        color: "#151922"
-        border.color: pane.active ? Material.accent : "#2a3140"
+        color: App.colour.pane
+        border.color: pane.active ? Material.accent : App.colour.border
         border.width: 1
         opacity: pane.active ? 1.0 : 0.85
     }
@@ -412,7 +412,7 @@ FocusScope {
                                     anchors.verticalCenter: parent.verticalCenter
                                     visible: index > 0
                                     text: "  ›  "
-                                    color: "#4a5364"
+                                    color: App.colour.textFaint
                                     font.pixelSize: App.textSize
                                 }
 
@@ -422,13 +422,13 @@ FocusScope {
                                     width: crumbLabel.implicitWidth + 12
                                     radius: 3
                                     color: crumbMouse.containsMouse && !modelData.current
-                                           ? "#26303f" : "transparent"
+                                           ? App.colour.selection : "transparent"
 
                                     Label {
                                         id: crumbLabel
                                         anchors.centerIn: parent
                                         text: modelData.label
-                                        color: modelData.current ? "#e6ebf5" : "#9aa4b8"
+                                        color: modelData.current ? App.colour.text : App.colour.textMuted
                                         font.pixelSize: App.textSize
                                         font.bold: modelData.current
                                     }
@@ -509,7 +509,7 @@ FocusScope {
 
             Label {
                 text: "Filter"
-                color: "#8b93a7"
+                color: App.colour.textMuted
                 font.pixelSize: App.secondaryTextSize
             }
 
@@ -664,7 +664,7 @@ FocusScope {
                     horizontalAlignment: Text.AlignHCenter
                     wrapMode: Text.Wrap
                     text: "A folder with tens of thousands of files takes a moment. Nothing is stuck."
-                    color: "#6f7788"
+                    color: App.colour.textFaint
                     font.pixelSize: App.smallTextSize
                 }
                 Button {
@@ -743,7 +743,7 @@ FocusScope {
                     // No hover highlight. The cursor row is where Enter will
                     // act; a second highlight trailing the pointer made it
                     // ambiguous which of the two that was.
-                    color: highlighted ? "#2b3547" : "transparent"
+                    color: highlighted ? App.colour.selection : "transparent"
                 }
 
                 onClicked: {
@@ -796,7 +796,7 @@ FocusScope {
                         Layout.preferredWidth: 80
                         horizontalAlignment: Text.AlignRight
                         text: sizeText
-                        color: "#8b93a7"
+                        color: App.colour.textMuted
                         font.pixelSize: App.secondaryTextSize
                     }
 
@@ -811,11 +811,11 @@ FocusScope {
                             height: 15
                             radius: 2
                             color: "transparent"
-                            border.color: "#3f5f80"
+                            border.color: Qt.alpha(App.colour.link, 0.5)
                             Label {
                                 anchors.centerIn: parent
                                 text: "report"
-                                color: "#7cc4ff"
+                                color: App.colour.link
                                 font.pixelSize: App.smallTextSize
                             }
                         }
@@ -825,11 +825,12 @@ FocusScope {
                             height: 15
                             radius: 2
                             color: "transparent"
-                            border.color: alertTriggered ? "#e5534b" : "#4a5364"
+                            border.color: alertTriggered ? App.colour.bad
+                                                         : Qt.alpha(App.colour.textMuted, 0.5)
                             Label {
                                 anchors.centerIn: parent
                                 text: "alert"
-                                color: alertTriggered ? "#e5534b" : "#8b93a7"
+                                color: alertTriggered ? App.colour.bad : App.colour.textMuted
                                 font.pixelSize: App.smallTextSize
                             }
                         }
@@ -853,7 +854,7 @@ FocusScope {
                         Layout.preferredWidth: 130
                         horizontalAlignment: Text.AlignRight
                         text: modifiedText
-                        color: "#8b93a7"
+                        color: App.colour.textMuted
                         font.pixelSize: App.secondaryTextSize
                     }
                 }
@@ -899,7 +900,7 @@ FocusScope {
                     // No hover highlight. The cursor row is where Enter will
                     // act; a second highlight trailing the pointer made it
                     // ambiguous which of the two that was.
-                    color: highlighted ? "#2b3547" : "transparent"
+                    color: highlighted ? App.colour.selection : "transparent"
                     border.color: selected ? Material.accent : "transparent"
                     border.width: selected ? 1 : 0
                 }
@@ -945,8 +946,8 @@ FocusScope {
                             height: width
                             visible: isDir && pane.tileHeight >= 160
                             radius: 8
-                            color: "#232a36"
-                            border.color: "#2f3849"
+                            color: App.colour.hover
+                            border.color: App.colour.border
                             border.width: 1
                         }
 
@@ -1000,7 +1001,7 @@ FocusScope {
                         objectName: "tileCaption"
                         Layout.alignment: Qt.AlignHCenter
                         text: isDir ? "folder" : sizeText
-                        color: "#6f7788"
+                        color: App.colour.textFaint
                         font.pixelSize: App.smallTextSize
                     }
                 }
@@ -1022,14 +1023,14 @@ FocusScope {
                 }
                 color: paneController && paneController.files
                        && paneController.files.selectionCount > 0
-                       ? Material.accent : "#8b93a7"
+                       ? Material.accent : App.colour.textMuted
                 font.pixelSize: App.smallTextSize
             }
 
             Label {
                 visible: paneController && !paneController.writable
                 text: "read-only"
-                color: "#8b93a7"
+                color: App.colour.textMuted
                 font.pixelSize: App.smallTextSize
             }
 
@@ -1113,7 +1114,7 @@ FocusScope {
             anchors.bottom: parent.bottom
             anchors.bottomMargin: 34
             radius: 4
-            color: "#1b2029"
+            color: App.colour.panel
             border.color: Material.accent
             border.width: 1
             implicitWidth: dropHintText.implicitWidth + 24
@@ -1124,7 +1125,7 @@ FocusScope {
                 objectName: "dropHintText"
                 anchors.centerIn: parent
                 font.pixelSize: App.secondaryTextSize
-                color: "#e6ebf5"
+                color: App.colour.text
                 text: {
                     var count = dropTarget.plan.count || 0
                     var size = dropTarget.plan.sizeText || ""
@@ -1247,7 +1248,7 @@ FocusScope {
                 Layout.fillWidth: true
                 wrapMode: Text.Wrap
                 text: "A folder goes with everything inside it. This cannot be undone."
-                color: "#d9a441"
+                color: App.colour.warn
                 font.pixelSize: App.smallTextSize
             }
         }

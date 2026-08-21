@@ -96,14 +96,14 @@ Item {
             Label {
                 visible: controller && controller.languageName.length > 0
                 text: controller ? controller.languageName : ""
-                color: "#8b93a7"
+                color: App.colour.textMuted
                 font.pixelSize: App.smallTextSize
             }
 
             Label {
                 visible: view.showsMarkdown || view.showsPage
                 text: view.showsMarkdown ? "Markdown" : "Rendered page"
-                color: "#8b93a7"
+                color: App.colour.textMuted
                 font.pixelSize: App.smallTextSize
             }
 
@@ -115,7 +115,7 @@ Item {
                 objectName: "foldedNote"
                 visible: controller ? controller.longLinesFolded === true : false
                 text: "long lines folded, colouring off"
-                color: "#c8a04a"
+                color: App.colour.warn
                 font.pixelSize: App.smallTextSize
             }
 
@@ -124,7 +124,7 @@ Item {
             Label {
                 objectName: "positionLabel"
                 text: controller ? controller.positionText : ""
-                color: "#8b93a7"
+                color: App.colour.textMuted
                 font.pixelSize: App.smallTextSize
             }
         }
@@ -177,7 +177,7 @@ Item {
             objectName: "pagingStrip"
             Layout.fillWidth: true
             visible: controller && controller.paged
-            Material.background: "#1b2029"
+            Material.background: App.colour.panel
 
             RowLayout {
                 anchors.fill: parent
@@ -242,7 +242,7 @@ Item {
 
                 Label {
                     text: controller ? controller.sizeText : ""
-                    color: "#8b93a7"
+                    color: App.colour.textMuted
                     font.pixelSize: App.smallTextSize
                 }
             }

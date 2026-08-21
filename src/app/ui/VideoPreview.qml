@@ -130,7 +130,7 @@ Item {
         Label {
             objectName: "videoPositionText"
             text: view.clockText(player.position) + " / " + view.clockText(player.duration)
-            color: "#8b93a7"
+            color: App.colour.textMuted
             font.pixelSize: App.smallTextSize
         }
 

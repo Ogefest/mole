@@ -23,8 +23,8 @@ Rectangle {
 
     implicitHeight: Math.min(App.listRowHeight * maximumRows,
                              Math.max(App.listRowHeight, list.contentHeight + 2))
-    color: "#151922"
-    border.color: "#2a3140"
+    color: App.colour.pane
+    border.color: App.colour.border
     border.width: 1
     radius: 3
 
@@ -96,7 +96,7 @@ Rectangle {
                 Layout.rightMargin: 8
                 visible: text !== ""
                 text: modelData.detail !== undefined ? modelData.detail : ""
-                color: "#8b93a7"
+                color: App.colour.textMuted
                 font.pixelSize: App.smallTextSize
             }
         }

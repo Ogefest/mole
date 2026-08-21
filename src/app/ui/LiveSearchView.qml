@@ -73,7 +73,7 @@ Item {
 
             Label {
                 text: "Searching"
-                color: "#8b93a7"
+                color: App.colour.textMuted
                 font.pixelSize: App.secondaryTextSize
             }
             Label {
@@ -91,7 +91,7 @@ Item {
                     return picked.length > 0 ? "everywhere indexed \u2014 " + picked
                                              : "everywhere indexed"
                 }
-                color: "#c8cede"
+                color: App.colour.textSecondary
                 elide: Text.ElideMiddle
                 font.pixelSize: App.secondaryTextSize
             }
@@ -107,7 +107,7 @@ Item {
             // Search button.
             visible: text.length > 0
             text: controller ? controller.coverageNote : ""
-            color: "#6f7788"
+            color: App.colour.textFaint
             font.pixelSize: App.smallTextSize
             elide: Text.ElideRight
         }
@@ -154,7 +154,7 @@ Item {
             Label {
                 Layout.fillWidth: true
                 text: controller ? controller.statusText : ""
-                color: "#8b93a7"
+                color: App.colour.textMuted
                 elide: Text.ElideRight
                 font.pixelSize: App.secondaryTextSize
             }
@@ -167,8 +167,8 @@ Item {
             Layout.fillWidth: true
             visible: controller ? controller.blocked : false
             implicitHeight: blockedRow.implicitHeight + 12
-            color: "#231f16"
-            border.color: "#4a3f22"
+            color: Qt.alpha(App.colour.warn, 0.16)
+            border.color: App.colour.warn
             border.width: 1
             radius: 3
 
@@ -210,7 +210,7 @@ Item {
 
             Label {
                 text: "Narrow"
-                color: "#8b93a7"
+                color: App.colour.textMuted
                 font.pixelSize: App.secondaryTextSize
             }
             TextField {
@@ -234,7 +234,7 @@ Item {
                             ? controller.results.count + " results"
                             : controller.results.count + " of " + controller.results.totalCount)
                       : ""
-                color: "#6f7788"
+                color: App.colour.textFaint
                 font.pixelSize: App.smallTextSize
             }
 
@@ -295,7 +295,7 @@ Item {
                 // Here rather than in front of More since ADR-0067: the basic view
                 // says where the search is aimed and this is where it is chosen.
                 // `everywhere:yes` on the line does the same thing.
-                Label { text: "Search in"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+                Label { text: "Search in"; color: App.colour.textMuted; font.pixelSize: App.secondaryTextSize }
                 Picker {
                     objectName: "searchScope"
                     Layout.columnSpan: 2
@@ -335,7 +335,7 @@ Item {
                 // The name, and what to make of it. Behind More since ADR-0067: the
                 // line above says all three of these and more, so the basic view has
                 // one box that takes a query rather than four.
-                Label { text: "Name contains"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+                Label { text: "Name contains"; color: App.colour.textMuted; font.pixelSize: App.secondaryTextSize }
                 TextField {
                     id: queryField
                     objectName: "searchQueryField"
@@ -359,7 +359,7 @@ Item {
                     onActivated: if (controller) controller.nameMode = currentIndex
                 }
 
-                Label { text: "Extension"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+                Label { text: "Extension"; color: App.colour.textMuted; font.pixelSize: App.secondaryTextSize }
                 TextField {
                     objectName: "extensionField"
                     Layout.columnSpan: 5
@@ -373,7 +373,7 @@ Item {
                 // The other half of a search tool: the name is what you have
                 // forgotten and the contents are what you remember. Last in the
                 // form because it is last to be paid for.
-                Label { text: "Text inside"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+                Label { text: "Text inside"; color: App.colour.textMuted; font.pixelSize: App.secondaryTextSize }
                 TextField {
                     objectName: "contentField"
                     Layout.columnSpan: 3
@@ -405,14 +405,14 @@ Item {
                     visible: controller ? controller.readsFileContents : false
                     text: "This one opens files, so narrow it with the criteria above first — "
                           + "the contents are never indexed."
-                    color: "#6f7788"
+                    color: App.colour.textFaint
                     font.pixelSize: App.smallTextSize
                     wrapMode: Text.Wrap
                 }
 
                 // Always visible, greyed when the scope has nothing recorded. A
                 // missing field is a capability nobody ever discovers.
-                Label { text: "It says"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+                Label { text: "It says"; color: App.colour.textMuted; font.pixelSize: App.secondaryTextSize }
                 ColumnLayout {
                     objectName: "factCriteria"
                     Layout.columnSpan: 5
@@ -428,7 +428,7 @@ Item {
                             Label {
                                 Layout.preferredWidth: 130
                                 text: modelData
-                                color: "#8b93a7"
+                                color: App.colour.textMuted
                                 font.family: App.monospaceFont
                                 font.pixelSize: App.smallTextSize
                             }
@@ -455,13 +455,13 @@ Item {
                         text: "Nothing here has been indexed for what the files say about themselves — "
                               + "scan this folder with that on and a camera, an author or a duration "
                               + "becomes something you can search for."
-                        color: "#6f7788"
+                        color: App.colour.textFaint
                         font.pixelSize: App.smallTextSize
                         wrapMode: Text.Wrap
                     }
                 }
 
-                Label { text: "Is a"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+                Label { text: "Is a"; color: App.colour.textMuted; font.pixelSize: App.secondaryTextSize }
                 Flow {
                     objectName: "typeClasses"
                     // Five, so this row fills the grid's six -- see searchQueryField above.
@@ -491,7 +491,7 @@ Item {
                     }
                 }
 
-                Label { text: "Changed"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+                Label { text: "Changed"; color: App.colour.textMuted; font.pixelSize: App.secondaryTextSize }
                 TextField {
                     objectName: "modifiedFromField"
                     Layout.preferredWidth: 130
@@ -500,7 +500,7 @@ Item {
                     font.pixelSize: App.secondaryTextSize
                     onTextEdited: if (controller) controller.modifiedFrom = text
                 }
-                Label { text: "to"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+                Label { text: "to"; color: App.colour.textMuted; font.pixelSize: App.secondaryTextSize }
                 TextField {
                     objectName: "modifiedToField"
                     Layout.preferredWidth: 130
@@ -511,7 +511,7 @@ Item {
                 }
                 Item { Layout.fillWidth: true; Layout.columnSpan: 2 }
 
-                Label { text: "Path has"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+                Label { text: "Path has"; color: App.colour.textMuted; font.pixelSize: App.secondaryTextSize }
                 TextField {
                     objectName: "pathField"
                     Layout.columnSpan: 4
@@ -529,7 +529,7 @@ Item {
                     onToggled: if (controller) controller.excludePath = checked
                 }
 
-                Label { text: "Skip folders"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+                Label { text: "Skip folders"; color: App.colour.textMuted; font.pixelSize: App.secondaryTextSize }
                 TextField {
                     objectName: "excludedField"
                     Layout.columnSpan: 5
@@ -540,7 +540,7 @@ Item {
                     onTextEdited: if (controller) controller.excluded = text
                 }
 
-                Label { text: "Shape"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+                Label { text: "Shape"; color: App.colour.textMuted; font.pixelSize: App.secondaryTextSize }
                 RowLayout {
                     Layout.columnSpan: 5
                     Layout.fillWidth: true
@@ -585,7 +585,7 @@ Item {
                     Item { Layout.fillWidth: true }
                 }
 
-                Label { text: "Size from"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+                Label { text: "Size from"; color: App.colour.textMuted; font.pixelSize: App.secondaryTextSize }
                 TextField {
                     id: minSizeField
                     objectName: "minSizeField"
@@ -594,7 +594,7 @@ Item {
                     font.pixelSize: App.secondaryTextSize
                     onTextEdited: if (controller) controller.setSizeRange(minSizeField.text, maxSizeField.text)
                 }
-                Label { text: "to"; color: "#8b93a7"; font.pixelSize: App.secondaryTextSize }
+                Label { text: "to"; color: App.colour.textMuted; font.pixelSize: App.secondaryTextSize }
                 TextField {
                     id: maxSizeField
                     objectName: "maxSizeField"
@@ -625,7 +625,7 @@ Item {
                     Layout.fillWidth: true
                     visible: controller ? controller.unpushedNote.length > 0 : false
                     text: controller ? controller.unpushedNote : ""
-                    color: "#6f7788"
+                    color: App.colour.textFaint
                     font.pixelSize: App.smallTextSize
                     wrapMode: Text.Wrap
                 }
@@ -639,7 +639,7 @@ Item {
                           : (controller && controller.indexNote.length > 0
                                 ? controller.indexNote
                                 : "This folder is not indexed, so searching walks it.")
-                    color: "#6f7788"
+                    color: App.colour.textFaint
                     font.pixelSize: App.smallTextSize
                     elide: Text.ElideRight
                 }
@@ -685,7 +685,7 @@ Item {
                     text: controller && controller.statusText.length > 0
                           ? controller.statusText
                           : "Results appear as they are found."
-                    color: "#6f7788"
+                    color: App.colour.textFaint
                     font.pixelSize: App.smallTextSize
                 }
             }
@@ -772,7 +772,7 @@ Item {
                 Layout.fillWidth: true
                 wrapMode: Text.Wrap
                 text: "Walks the tree once in the background and records it, so searching it later never touches the disk."
-                color: "#8b93a7"
+                color: App.colour.textMuted
                 font.pixelSize: App.secondaryTextSize
             }
 
@@ -861,7 +861,7 @@ Item {
                 wrapMode: Text.Wrap
                 text: "A nightly run keeps what has not changed, so it costs a walk of what moved. "
                       + "It survives a restart and catches up on a night the machine was off."
-                color: "#6f7788"
+                color: App.colour.textFaint
                 font.pixelSize: App.smallTextSize
             }
 
@@ -878,7 +878,7 @@ Item {
                 text: "A zip's own listing is one read; a tar.gz is a pass over the whole file. "
                       + "On a drive that is not local, listing one means fetching it, so large ones "
                       + "are left alone. Archives inside archives are listed and not opened."
-                color: "#6f7788"
+                color: App.colour.textFaint
                 font.pixelSize: App.smallTextSize
             }
 
@@ -888,7 +888,7 @@ Item {
                 text: "Cameras, authors, durations — a few dozen bytes each, and one read per file. "
                       + "It makes the scan slower and lets you search for them afterwards. "
                       + "The contents themselves are never indexed."
-                color: "#6f7788"
+                color: App.colour.textFaint
                 font.pixelSize: App.smallTextSize
             }
         }

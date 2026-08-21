@@ -80,7 +80,7 @@ Dialog {
         Label {
             Layout.fillWidth: true
             text: "A folder goes in with everything inside it. The archive lands next to it."
-            color: "#8b93a7"
+            color: App.colour.textMuted
             font.pixelSize: App.smallTextSize
             wrapMode: Text.Wrap
         }
@@ -91,7 +91,7 @@ Dialog {
 
             Label {
                 text: "Name"
-                color: "#8b93a7"
+                color: App.colour.textMuted
                 font.pixelSize: App.secondaryTextSize
             }
             TextField {
@@ -110,7 +110,7 @@ Dialog {
 
             Label {
                 text: "Kind"
-                color: "#8b93a7"
+                color: App.colour.textMuted
                 font.pixelSize: App.secondaryTextSize
             }
             Picker {
@@ -170,7 +170,7 @@ Dialog {
             visible: removeSources.checked
             text: "The files above are deleted once the archive is written — and kept if "
                   + "any of them could not be read."
-            color: "#d9a441"
+            color: App.colour.warn
             font.pixelSize: App.smallTextSize
             wrapMode: Text.Wrap
         }
@@ -179,7 +179,7 @@ Dialog {
             Layout.fillWidth: true
             visible: App.formatTakesOneFileOnly(formatBox.currentText) && targets.model.length !== 1
             text: "A bare .xz holds one file and no folders. Use tar.xz for anything else."
-            color: "#e5534b"
+            color: App.colour.bad
             font.pixelSize: App.smallTextSize
             wrapMode: Text.Wrap
         }
@@ -189,7 +189,7 @@ Dialog {
             visible: !dialog.passwordPossible
             text: "Only zip can carry a password — a tar has no notion of one, and gzip "
                   + "and xz encrypt nothing."
-            color: "#d9a441"
+            color: App.colour.warn
             font.pixelSize: App.smallTextSize
             wrapMode: Text.Wrap
         }

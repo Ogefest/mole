@@ -256,6 +256,9 @@ mole_add_test(tst_DriveListModel       SOURCES ui/tst_DriveListModel.cpp       L
 mole_add_test(tst_TableModel           SOURCES ui/tst_TableModel.cpp           LIBS mole_ui)
 mole_add_test(tst_TaskListModel        SOURCES ui/tst_TaskListModel.cpp        LIBS mole_ui)
 mole_add_test(tst_TabsModel            SOURCES ui/tst_TabsModel.cpp            LIBS mole_ui)
+# Qt6::Quick because the one mistake worth testing for here is a QML binding that
+# never re-evaluates, and only a real engine can be asked whether it did.
+mole_add_test(tst_Palette              SOURCES ui/tst_Palette.cpp              LIBS mole_ui Qt6::Quick)
 mole_add_test(tst_BrowserPaneController SOURCES ui/tst_BrowserPaneController.cpp LIBS mole_ui)
 
 # The headless half of the thumbnails: the url that keys one, the thread it is

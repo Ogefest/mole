@@ -2,6 +2,7 @@
 
 #include "host/FeatureRegistry.h"
 #include "sdk/PluginApi.h"
+#include "ui/Palette.h"
 #include "ui/models/BookmarkModel.h"
 #include "ui/models/CommandPaletteModel.h"
 #include "ui/models/DriveListModel.h"
@@ -52,6 +53,10 @@ class AppController : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(mole::TabsModel* tabs READ tabs CONSTANT)
+    /// What the window is painted in. `CONSTANT` because the palette itself never
+    /// changes; the tokens inside it notify, which is what lets a theme repaint a
+    /// running window. See Palette.h and ADR-0072.
+    Q_PROPERTY(mole::Palette* colour READ colour CONSTANT)
     Q_PROPERTY(mole::DriveListModel* drives READ drives CONSTANT)
     Q_PROPERTY(mole::TaskListModel* tasks READ tasks CONSTANT)
     Q_PROPERTY(mole::FeatureRegistry* features READ features CONSTANT)
@@ -142,6 +147,7 @@ public:
     bool initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, QString* errorOut = nullptr);
 
     TabsModel* tabs() const { return m_tabs; }
+    Palette* colour() const { return m_colour; }
     DriveListModel* drives() const { return m_drives; }
     TaskListModel* tasks() const { return m_taskModel; }
     TerminalController* terminal() const { return m_terminal; }
@@ -614,6 +620,7 @@ private:
     bool m_restoring = false;
     const bool m_stillPictures = !qEnvironmentVariableIsEmpty("MOLE_STILL_PICTURES");
     TabsModel* m_tabs = nullptr;
+    Palette* m_colour = nullptr;
     /// Tells the drive list which locations the window has open, so a drive can
     /// say that somebody is on it. Called when a tab moves, opens or closes, and
     /// when the mount table changes -- never on a timer.

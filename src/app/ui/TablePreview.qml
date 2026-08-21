@@ -39,7 +39,7 @@ Item {
 
         ToolBar {
             Layout.fillWidth: true
-            Material.background: "#1b2029"
+            Material.background: App.colour.panel
 
             RowLayout {
                 anchors.fill: parent
@@ -49,7 +49,7 @@ Item {
 
                 Label {
                     text: "Separator"
-                    color: "#8b93a7"
+                    color: App.colour.textMuted
                     font.pixelSize: App.smallTextSize
                 }
                 Picker {
@@ -97,7 +97,7 @@ Item {
                 Label {
                     objectName: "tableSummary"
                     text: (controller && controller.summary) ? controller.summary : ""
-                    color: "#8b93a7"
+                    color: App.colour.textMuted
                     font.pixelSize: App.smallTextSize
                 }
 
@@ -172,7 +172,7 @@ Item {
                     wrapMode: Text.Wrap
                     text: "Rows appear as they are read, and the first ones are on their way. "
                           + "Nothing is stuck."
-                    color: "#6f7788"
+                    color: App.colour.textFaint
                     font.pixelSize: App.smallTextSize
                 }
             }

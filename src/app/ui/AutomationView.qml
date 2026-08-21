@@ -13,20 +13,14 @@ Item {
 
     property var controller: null
 
-    readonly property color panelColor: "#1b1d21"
-    readonly property color lineColor: "#2c2f36"
-    readonly property color mutedColor: "#8b919b"
-    readonly property color badColor: "#e5534b"
-    readonly property color goodColor: "#57ab5a"
-
     function colorForStatus(status) {
         if (status === "failed" || status === "skipped")
-            return view.badColor
+            return App.colour.bad
         if (status === "succeeded")
-            return view.goodColor
+            return App.colour.ok
         if (status === "running")
             return Material.accent
-        return view.mutedColor
+        return App.colour.textMuted
     }
 
     ColumnLayout {
@@ -48,14 +42,14 @@ Item {
                 objectName: "automationFailureBadge"
                 visible: view.controller && view.controller.failingCount > 0
                 radius: 4
-                color: "#3a1f1f"
-                border.color: view.badColor
+                color: Qt.alpha(App.colour.bad, 0.16)
+                border.color: App.colour.bad
                 implicitWidth: failureLabel.implicitWidth + 16
                 implicitHeight: failureLabel.implicitHeight + 8
                 Label {
                     id: failureLabel
                     anchors.centerIn: parent
-                    color: view.badColor
+                    color: App.colour.bad
                     text: {
                         if (!view.controller)
                             return ""
@@ -69,7 +63,7 @@ Item {
             Item { Layout.fillWidth: true }
 
             Label {
-                color: view.mutedColor
+                color: App.colour.textMuted
                 text: view.controller && view.controller.runningCount > 0
                       ? view.controller.runningCount + " running now" : ""
             }
@@ -78,7 +72,7 @@ Item {
         Label {
             Layout.fillWidth: true
             visible: !view.controller || view.controller.rules.length === 0
-            color: view.mutedColor
+            color: App.colour.textMuted
             wrapMode: Text.WordWrap
             text: "Nothing is scheduled yet.\n\n" +
                   "Open a folder report and choose how often it should be repeated. " +
@@ -102,9 +96,9 @@ Item {
                 width: ListView.view.width
                 implicitHeight: ruleBody.implicitHeight + 20
                 radius: 6
-                color: view.panelColor
+                color: App.colour.panel
                 border.width: 1
-                border.color: modelData.failing ? view.badColor : view.lineColor
+                border.color: modelData.failing ? App.colour.bad : App.colour.border
 
                 ColumnLayout {
                     id: ruleBody
@@ -180,7 +174,7 @@ Item {
 
                     Label {
                         Layout.fillWidth: true
-                        color: view.mutedColor
+                        color: App.colour.textMuted
                         elide: Text.ElideMiddle
                         text: modelData.target
                     }
@@ -189,11 +183,11 @@ Item {
                         Layout.fillWidth: true
                         spacing: 18
                         Label {
-                            color: view.mutedColor
+                            color: App.colour.textMuted
                             text: "Last run: " + modelData.lastRunText
                         }
                         Label {
-                            color: view.mutedColor
+                            color: App.colour.textMuted
                             text: "Next: " + modelData.nextDueText
                         }
                         Item { Layout.fillWidth: true }
@@ -204,7 +198,7 @@ Item {
                     Label {
                         Layout.fillWidth: true
                         visible: modelData.failing && modelData.message.length > 0
-                        color: view.badColor
+                        color: App.colour.bad
                         wrapMode: Text.WordWrap
                         text: modelData.message
                     }
@@ -215,7 +209,7 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             height: 1
-            color: view.lineColor
+            color: App.colour.border
             visible: view.controller && view.controller.rules.length > 0
         }
 
@@ -259,7 +253,7 @@ Item {
                 }
                 Label {
                     text: modelData.startedAt
-                    color: view.mutedColor
+                    color: App.colour.textMuted
                     font.family: App.monospaceFont
                 }
                 Label {
@@ -273,12 +267,12 @@ Item {
                 }
                 Label {
                     text: modelData.durationText
-                    color: view.mutedColor
+                    color: App.colour.textMuted
                 }
                 Label {
                     Layout.fillWidth: true
                     text: modelData.message
-                    color: modelData.failed ? view.badColor : view.mutedColor
+                    color: modelData.failed ? App.colour.bad : App.colour.textMuted
                     elide: Text.ElideRight
                 }
             }

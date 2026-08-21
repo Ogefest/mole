@@ -61,7 +61,11 @@ namespace mole {
 
 AppController::AppController(QObject* parent)
     : QObject(parent)
+    , m_colour(new Palette(this))
 {
+    // Built here rather than in initialise(), because every binding in the window
+    // reaches through it: a null palette during startup would leave the first
+    // frame painted in Qt's defaults.
 }
 
 bool AppController::restoreSession()

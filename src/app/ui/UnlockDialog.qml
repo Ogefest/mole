@@ -70,7 +70,7 @@ Dialog {
         Label {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
-            color: "#c8cedb"
+            color: App.colour.textSecondary
             font.pixelSize: App.secondaryTextSize
             text: App.credentialsExist
                   ? "Passwords are encrypted with a passphrase you choose. Enter it to "
@@ -96,7 +96,7 @@ Dialog {
             objectName: "unlockError"
             Layout.fillWidth: true
             visible: text.length > 0
-            color: "#e5534b"
+            color: App.colour.bad
             font.pixelSize: App.secondaryTextSize
             wrapMode: Text.WordWrap
         }

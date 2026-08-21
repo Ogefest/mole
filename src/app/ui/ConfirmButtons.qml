@@ -51,8 +51,7 @@ DialogButtonBox {
     /// from the keyboard at all.
     property string keyboardOn: (dismissOnly || destructive) ? "reject" : "accept"
 
-    readonly property color actingColour: destructive ? "#c0392b" : "#2d6cdf"
-    readonly property color focusRing: "#9db4ff"
+    readonly property color actingColour: destructive ? App.colour.bad : App.colour.accent
     readonly property bool holdsKeyboard: keyboardOn !== "none"
 
     // Three scopes deep, and every one of them has to be holding the keyboard for the
@@ -103,7 +102,7 @@ DialogButtonBox {
 
         contentItem: Label {
             text: rejectButton.text
-            color: "#c8cedb"
+            color: App.colour.textSecondary
             font: rejectButton.font
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
@@ -112,9 +111,9 @@ DialogButtonBox {
             implicitHeight: 36
             implicitWidth: 96
             radius: 4
-            color: rejectButton.down ? "#2a3140" : "transparent"
+            color: rejectButton.down ? App.colour.border : "transparent"
             border.width: rejectButton.activeFocus ? 2 : 1
-            border.color: rejectButton.activeFocus ? box.focusRing : "#3a4353"
+            border.color: rejectButton.activeFocus ? App.colour.accent : App.colour.border
         }
     }
 
@@ -133,7 +132,7 @@ DialogButtonBox {
 
         contentItem: Label {
             text: acceptButton.text
-            color: acceptButton.enabled ? "#ffffff" : "#8b93a7"
+            color: acceptButton.enabled ? App.colour.text : App.colour.textMuted
             font: acceptButton.font
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
@@ -143,10 +142,10 @@ DialogButtonBox {
             implicitWidth: 96
             radius: 4
             color: !acceptButton.enabled
-                   ? "#2a3140"
+                   ? App.colour.border
                    : acceptButton.down ? Qt.darker(box.actingColour, 1.3) : box.actingColour
             border.width: acceptButton.activeFocus ? 2 : 0
-            border.color: "#ffffff"
+            border.color: App.colour.text
         }
     }
 }

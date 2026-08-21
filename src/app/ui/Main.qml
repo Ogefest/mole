@@ -55,14 +55,15 @@ ApplicationWindow {
     onYChanged: if (geometryWatcher.armed) geometryWatcher.restart()
     onVisibilityChanged: if (geometryWatcher.armed) geometryWatcher.restart()
 
+    // What a Material control draws for itself -- a text field's underline, a
+    // combo box's popup, a ripple -- comes from these three rather than from a
+    // token, so they are bound to tokens instead of stated twice. `theme` stays
+    // Dark: it is a polarity rather than a colour, and it becomes a question the
+    // moment there is a light palette to answer it with.
     Material.theme: Material.Dark
-    Material.primary: "#1f2430"
-    Material.accent: "#4c9aff"
-    Material.background: "#151922"
-
-    readonly property color panelColor: "#1b2029"
-    readonly property color borderColor: "#2a3140"
-    readonly property color mutedText: "#8b93a7"
+    Material.primary: App.colour.panel
+    Material.accent: App.colour.accent
+    Material.background: App.colour.window
 
     // The shell knows nothing about what a tab does. It asks the registry what
     // exists, and loads whatever QML each feature points at.
@@ -289,7 +290,7 @@ ApplicationWindow {
     }
 
     header: ToolBar {
-        Material.background: root.panelColor
+        Material.background: App.colour.panel
         // Nothing in the toolbar is a keyboard destination; leaving these
         // focusable is how the keyboard ends up somewhere it can do nothing.
         focusPolicy: Qt.NoFocus
@@ -328,7 +329,7 @@ ApplicationWindow {
             Label {
                 visible: App.tasks.activeCount > 0
                 text: App.tasks.activeCount + " running"
-                color: root.mutedText
+                color: App.colour.textMuted
             }
 
             BusyIndicator {
@@ -352,8 +353,8 @@ ApplicationWindow {
             width: Math.min(420, Math.max(240, root.width * 0.3))
             height: App.minimumTarget
             radius: 4
-            color: barHover.containsMouse ? "#232a36" : root.panelColor
-            border.color: barHover.containsMouse ? "#3d4757" : root.borderColor
+            color: barHover.containsMouse ? App.colour.hover : App.colour.panel
+            border.color: App.colour.border
             border.width: 1
 
             RowLayout {
@@ -364,13 +365,13 @@ ApplicationWindow {
 
                 Label {
                     text: "⌕"
-                    color: root.mutedText
+                    color: App.colour.textMuted
                     font.pixelSize: App.textSize
                 }
                 Label {
                     Layout.fillWidth: true
                     text: "Search commands"
-                    color: root.mutedText
+                    color: App.colour.textMuted
                     font.pixelSize: App.secondaryTextSize
                     elide: Text.ElideRight
                 }
@@ -380,15 +381,15 @@ ApplicationWindow {
                     implicitWidth: shortcutLabel.implicitWidth + 10
                     implicitHeight: shortcutLabel.implicitHeight + 4
                     radius: 3
-                    color: "#232a36"
-                    border.color: root.borderColor
+                    color: App.colour.hover
+                    border.color: App.colour.border
                     border.width: 1
 
                     Label {
                         id: shortcutLabel
                         anchors.centerIn: parent
                         text: "Ctrl+R"
-                        color: root.mutedText
+                        color: App.colour.textMuted
                         font.family: App.monospaceFont
                         font.pixelSize: App.smallTextSize
                     }
@@ -487,9 +488,6 @@ ApplicationWindow {
             onFocusWanted: root.focusCurrentTab()
             SplitView.preferredWidth: 240
             SplitView.minimumWidth: 160
-            panelColor: root.panelColor
-            borderColor: root.borderColor
-            mutedText: root.mutedText
         }
 
         ColumnLayout {
@@ -499,7 +497,7 @@ ApplicationWindow {
             TabBar {
                 id: tabBar
                 Layout.fillWidth: true
-                Material.background: root.panelColor
+                Material.background: App.colour.panel
                 currentIndex: App.tabs.currentIndex
                 onCurrentIndexChanged: App.tabs.currentIndex = currentIndex
 
@@ -622,14 +620,14 @@ ApplicationWindow {
                     Layout.alignment: Qt.AlignHCenter
                     text: "No tabs open"
                     font.pixelSize: 18
-                    color: root.mutedText
+                    color: App.colour.textMuted
                 }
                 Label {
                     Layout.alignment: Qt.AlignHCenter
                     horizontalAlignment: Text.AlignHCenter
                     wrapMode: Text.Wrap
                     Layout.maximumWidth: 420
-                    color: "#6f7788"
+                    color: App.colour.textFaint
                     font.pixelSize: 12
                     text: "Every tab is one way of working with files: browsing, comparing two "
                         + "folders side by side, searching, or analysing what a folder is made of."
@@ -667,7 +665,7 @@ ApplicationWindow {
                     Layout.alignment: Qt.AlignHCenter
                     Layout.topMargin: 4
                     text: "Ctrl+T for a browser · F4 for the menu"
-                    color: "#5c6472"
+                    color: App.colour.textFaint
                     font.pixelSize: 11
                 }
 
@@ -680,7 +678,7 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 implicitHeight: 1
                 visible: App.terminal.visible
-                color: root.borderColor
+                color: App.colour.border
             }
 
             TerminalPanel {
@@ -693,7 +691,7 @@ ApplicationWindow {
             Rectangle {
                 Layout.fillWidth: true
                 implicitHeight: 1
-                color: root.borderColor
+                color: App.colour.border
             }
 
             TaskStrip {
@@ -701,8 +699,6 @@ ApplicationWindow {
                 // form's criteria used to disappear behind. See MOLE-272.
                 objectName: "taskStrip"
                 Layout.fillWidth: true
-                panelColor: root.panelColor
-                mutedText: root.mutedText
             }
         }
     }
@@ -742,14 +738,14 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.topMargin: 6
                 implicitHeight: 1
-                color: root.borderColor
+                color: App.colour.border
             }
 
             Label {
                 Layout.fillWidth: true
                 wrapMode: Text.Wrap
                 font.pixelSize: 11
-                color: root.mutedText
+                color: App.colour.textMuted
                 text: "Mole is free software under Apache-2.0.\n"
                     + "It uses the Qt framework under the LGPL-3.0, dynamically linked and "
                     + "unmodified, and libarchive under BSD-2-Clause.\n"
@@ -863,7 +859,7 @@ ApplicationWindow {
                             Label {
                                 Layout.fillWidth: true
                                 text: modelData[1]
-                                color: "#8b93a7"
+                                color: App.colour.textMuted
                                 font.pixelSize: 12
                                 wrapMode: Text.Wrap
                             }
@@ -914,7 +910,7 @@ ApplicationWindow {
         y: root.height - height - 80
         width: Math.min(600, root.width - 100)
         padding: 14
-        Material.background: root.panelColor
+        Material.background: App.colour.panel
 
         // A notification is something to read, not something to operate, and it
         // must not take the keyboard. With the default policy it closes on Escape,

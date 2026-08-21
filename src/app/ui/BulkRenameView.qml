@@ -12,11 +12,6 @@ Item {
     id: view
     property var controller: null
 
-    readonly property color panelColor: "#1b2029"
-    readonly property color lineColor: "#2a3140"
-    readonly property color mutedColor: "#8b93a7"
-    readonly property color badColor: "#e5534b"
-
     function focusActivePane() { body.forceActiveFocus() }
 
     FocusScope {
@@ -40,8 +35,8 @@ Item {
                 Label {
                     objectName: "renameSummary"
                     text: controller ? controller.summary : ""
-                    color: controller && controller.blockedCount > 0 ? view.badColor
-                                                                     : view.mutedColor
+                    color: controller && controller.blockedCount > 0 ? App.colour.bad
+                                                                     : App.colour.textMuted
                 }
 
                 Item { Layout.fillWidth: true }
@@ -68,7 +63,7 @@ Item {
             Label {
                 Layout.fillWidth: true
                 visible: !controller || controller.sourceCount === 0
-                color: view.mutedColor
+                color: App.colour.textMuted
                 wrapMode: Text.WordWrap
                 text: "Nothing to rename.\n\n" +
                       "Select files in a browser tab, or open a set, then open this from " +
@@ -115,7 +110,7 @@ Item {
                     Label {
                         Layout.fillWidth: true
                         visible: controller && controller.rules.length === 0
-                        color: view.mutedColor
+                        color: App.colour.textMuted
                         wrapMode: Text.WordWrap
                         font.pixelSize: App.smallTextSize
                         text: "Rules apply in order, each to the result of the last. Stripping "
@@ -136,9 +131,9 @@ Item {
                             width: ListView.view.width
                             implicitHeight: ruleBody.implicitHeight + 18
                             radius: 6
-                            color: view.panelColor
+                            color: App.colour.panel
                             border.width: 1
-                            border.color: view.lineColor
+                            border.color: App.colour.border
                             opacity: modelData.enabled ? 1.0 : 0.55
 
                             ColumnLayout {
@@ -153,7 +148,7 @@ Item {
 
                                     Label {
                                         text: (modelData.index + 1) + "."
-                                        color: view.mutedColor
+                                        color: App.colour.textMuted
                                         font.pixelSize: App.smallTextSize
                                     }
                                     Label {
@@ -407,7 +402,7 @@ Item {
                             required property var modelData
                             width: ListView.view.width
                             implicitHeight: modelData.blocked ? 40 : 24
-                            color: modelData.blocked ? "#2a1f1f" : "transparent"
+                            color: modelData.blocked ? Qt.alpha(App.colour.bad, 0.16) : "transparent"
 
                             ColumnLayout {
                                 anchors.fill: parent
@@ -425,11 +420,11 @@ Item {
                                         elide: Text.ElideMiddle
                                         font.family: App.monospaceFont
                                         font.pixelSize: App.smallTextSize
-                                        color: modelData.changed ? view.mutedColor : "#5c6472"
+                                        color: modelData.changed ? App.colour.textMuted : App.colour.textFaint
                                     }
                                     Label {
                                         text: modelData.changed ? "→" : "="
-                                        color: "#4a5364"
+                                        color: App.colour.textFaint
                                         font.pixelSize: App.smallTextSize
                                     }
                                     Label {
@@ -438,8 +433,8 @@ Item {
                                         elide: Text.ElideMiddle
                                         font.family: App.monospaceFont
                                         font.pixelSize: App.smallTextSize
-                                        color: modelData.blocked ? view.badColor
-                                             : modelData.changed ? "#a5d6a7" : "#5c6472"
+                                        color: modelData.blocked ? App.colour.bad
+                                             : modelData.changed ? App.colour.ok : App.colour.textFaint
                                     }
                                 }
 
@@ -447,7 +442,7 @@ Item {
                                     Layout.fillWidth: true
                                     visible: modelData.blocked
                                     text: modelData.problem
-                                    color: view.badColor
+                                    color: App.colour.bad
                                     font.pixelSize: App.smallTextSize
                                 }
                             }

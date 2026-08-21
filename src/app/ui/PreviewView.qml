@@ -33,7 +33,7 @@ Item {
 
             ToolBar {
                 Layout.fillWidth: true
-                Material.background: "#1b2029"
+                Material.background: App.colour.panel
 
                 RowLayout {
                     anchors.fill: parent
@@ -68,7 +68,7 @@ Item {
                         visible: controller && controller.siblingCount > 0
                         text: controller
                               ? controller.position + " of " + controller.siblingCount : ""
-                        color: "#8b93a7"
+                        color: App.colour.textMuted
                         font.pixelSize: App.secondaryTextSize
                     }
 
@@ -93,7 +93,7 @@ Item {
 
                             Label {
                                 text: modelData.title
-                                color: "#8b93a7"
+                                color: App.colour.textMuted
                                 font.pixelSize: App.smallTextSize
                             }
                             Picker {
@@ -141,7 +141,7 @@ Item {
                 handle: Rectangle {
                     implicitWidth: 5
                     color: SplitHandle.pressed ? Material.accent
-                                               : (SplitHandle.hovered ? "#39445a" : "#232a35")
+                                               : (SplitHandle.hovered ? App.colour.border : App.colour.hover)
                     // Written when the divider is let go rather than as it moves:
                     // a preference is a file on disk.
                     onPressedChanged: if (!SplitHandle.pressed && controller && drawer.visible)
@@ -206,7 +206,7 @@ Item {
                 visible: controller && controller.viewSource.toString().length === 0
                          && !controller.identifying
                 wrapMode: Text.Wrap
-                color: "#8b93a7"
+                color: App.colour.textMuted
                 text: controller && controller.currentUri.length > 0
                       ? "Nothing installed can show this file."
                       : "Nothing open. Press F3 on a file in the browser."
@@ -218,7 +218,7 @@ Item {
                 Layout.bottomMargin: 4
                 text: controller ? controller.folderPath : ""
                 elide: Text.ElideLeft
-                color: "#6f7788"
+                color: App.colour.textFaint
                 font.pixelSize: App.smallTextSize
             }
         }

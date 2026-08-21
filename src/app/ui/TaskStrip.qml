@@ -6,8 +6,6 @@ import QtQuick.Layouts
 Rectangle {
     id: strip
 
-    property color panelColor: "#1b2029"
-    property color mutedText: "#8b93a7"
     property bool expanded: false
 
     readonly property bool working: App.tasks.activeCount > 0
@@ -15,7 +13,7 @@ Rectangle {
     // Tinted while something is running. A count alone read as decoration; the
     // point of this strip is that work happening in the background should be
     // impossible to mistake for nothing happening.
-    color: working ? "#1e2a3a" : panelColor
+    color: working ? App.colour.busy : App.colour.panel
 
     // An accent rule along the top, for the same reason.
     Rectangle {
@@ -66,7 +64,7 @@ Rectangle {
                     return App.tasks.activeCount === 1
                            ? "1 running" : App.tasks.activeCount + " running"
                 }
-                color: strip.working ? "#e6ebf5" : strip.mutedText
+                color: strip.working ? App.colour.text : App.colour.textMuted
                 font.pixelSize: 12
                 font.bold: strip.working
             }
@@ -78,7 +76,7 @@ Rectangle {
                 visible: strip.working && !strip.expanded
                 Layout.maximumWidth: 320
                 text: App.tasks.activeTitle
-                color: "#c9d1e0"
+                color: App.colour.textSecondary
                 elide: Text.ElideMiddle
                 font.pixelSize: 12
             }
@@ -97,7 +95,7 @@ Rectangle {
                 visible: strip.working && !strip.expanded
                 Layout.maximumWidth: 200
                 text: App.tasks.activeStatus
-                color: strip.mutedText
+                color: App.colour.textMuted
                 elide: Text.ElideRight
                 font.pixelSize: 11
             }
@@ -108,7 +106,7 @@ Rectangle {
                 objectName: "activeTaskRate"
                 visible: strip.working && App.tasks.activeRateText.length > 0
                 text: App.tasks.activeRateText
-                color: "#7cc4ff"
+                color: App.colour.link
                 font.pixelSize: 11
                 font.family: App.monospaceFont
             }
@@ -117,7 +115,7 @@ Rectangle {
                 objectName: "activeTaskElapsed"
                 visible: strip.working && App.tasks.activeElapsedText.length > 0
                 text: App.tasks.activeElapsedText
-                color: strip.mutedText
+                color: App.colour.textMuted
                 font.pixelSize: 11
                 font.family: App.monospaceFont
             }
@@ -129,7 +127,7 @@ Rectangle {
                 objectName: "activeTaskTimeLeft"
                 visible: strip.working && App.tasks.activeTimeLeftText.length > 0
                 text: "· " + App.tasks.activeTimeLeftText + " left"
-                color: strip.mutedText
+                color: App.colour.textMuted
                 font.pixelSize: 11
                 font.family: App.monospaceFont
             }
@@ -187,7 +185,7 @@ Rectangle {
                 Label {
                     Layout.preferredWidth: 62
                     text: startedAtText
-                    color: strip.mutedText
+                    color: App.colour.textMuted
                     font.pixelSize: 11
                     font.family: App.monospaceFont
                 }
@@ -215,7 +213,7 @@ Rectangle {
                 Label {
                     Layout.preferredWidth: 56
                     text: elapsedText
-                    color: strip.mutedText
+                    color: App.colour.textMuted
                     font.pixelSize: 11
                     font.family: App.monospaceFont
                 }
@@ -223,7 +221,7 @@ Rectangle {
                 Label {
                     Layout.preferredWidth: 200
                     text: statusText.length > 0 ? statusText : stateText
-                    color: strip.mutedText
+                    color: App.colour.textMuted
                     elide: Text.ElideRight
                     font.pixelSize: 12
                 }
@@ -240,7 +238,7 @@ Rectangle {
                         delegate: Label {
                             required property var modelData
                             text: modelData.label + " " + modelData.text
-                            color: strip.mutedText
+                            color: App.colour.textMuted
                             font.pixelSize: 11
                         }
                     }

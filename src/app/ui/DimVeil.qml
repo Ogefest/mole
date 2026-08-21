@@ -20,7 +20,7 @@ import QtQuick
 /// it. The window behind stays recognisably itself and the popup is the lit thing
 /// on the screen, which is the whole job of a scrim.
 Rectangle {
-    color: "#52000000"
+    color: Qt.rgba(0, 0, 0, 0.32)
 
     Behavior on opacity {
         NumberAnimation { duration: 150 }

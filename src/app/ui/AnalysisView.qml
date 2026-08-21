@@ -43,7 +43,7 @@ Item {
             Layout.fillWidth: true
             implicitHeight: 16
             radius: 2
-            color: "#1f2530"
+            color: App.colour.hover
 
             Rectangle {
                 width: Math.max(2, parent.width * Math.max(0, Math.min(1, meter.fraction)))
@@ -57,7 +57,7 @@ Item {
             Layout.preferredWidth: 90
             horizontalAlignment: Text.AlignRight
             text: meter.valueText
-            color: "#8b93a7"
+            color: App.colour.textMuted
             font.pixelSize: 11
         }
 
@@ -66,7 +66,7 @@ Item {
             horizontalAlignment: Text.AlignRight
             visible: meter.note.length > 0
             text: meter.note
-            color: "#6f7788"
+            color: App.colour.textFaint
             font.pixelSize: 11
         }
     }
@@ -76,9 +76,9 @@ Item {
         property string heading: ""
         Layout.fillWidth: true
         implicitHeight: inner.implicitHeight + 34
-        color: "#1b2029"
+        color: App.colour.panel
         radius: 4
-        border.color: "#242c3a"
+        border.color: App.colour.border
 
         Label {
             x: 12
@@ -86,7 +86,7 @@ Item {
             text: parent.heading
             font.pixelSize: 11
             font.letterSpacing: 1
-            color: "#8b93a7"
+            color: App.colour.textMuted
         }
         ColumnLayout {
             id: inner
@@ -108,7 +108,7 @@ Item {
             // --- which folder, when several were selected -----------------
             ToolBar {
                 Layout.fillWidth: true
-                Material.background: "#1b2029"
+                Material.background: App.colour.panel
 
                 RowLayout {
                     anchors.fill: parent
@@ -219,7 +219,7 @@ Item {
                     Label {
                         Layout.fillWidth: true
                         text: "Rescan walks the folder and files the result, so the next run has something to compare against."
-                        color: "#8b93a7"
+                        color: App.colour.textMuted
                         wrapMode: Text.Wrap
                         horizontalAlignment: Text.AlignHCenter
                     }
@@ -257,7 +257,7 @@ Item {
                         BusyIndicator { running: true }
                         Label {
                             text: target ? target.statusText : ""
-                            color: "#8b93a7"
+                            color: App.colour.textMuted
                         }
                     }
 
@@ -287,9 +287,9 @@ Item {
                                 required property var modelData
                                 Layout.fillWidth: true
                                 implicitHeight: 58
-                                color: "#1b2029"
+                                color: App.colour.panel
                                 radius: 4
-                                border.color: "#242c3a"
+                                border.color: App.colour.border
 
                                 ColumnLayout {
                                     anchors.centerIn: parent
@@ -305,7 +305,7 @@ Item {
                                         Layout.alignment: Qt.AlignHCenter
                                         text: modelData.label
                                         font.pixelSize: 10
-                                        color: "#8b93a7"
+                                        color: App.colour.textMuted
                                     }
                                 }
                             }
@@ -344,7 +344,7 @@ Item {
                                 color: target && target.hasDiff
                                        ? (target.diffHeadline.grew ? Material.color(Material.Amber)
                                                                    : Material.color(Material.Green))
-                                       : "#8b93a7"
+                                       : App.colour.textMuted
                             }
                             Label {
                                 text: {
@@ -354,7 +354,7 @@ Item {
                                     return (d.filesDelta >= 0 ? "+" : "") + d.filesDelta + " files, "
                                          + (d.foldersDelta >= 0 ? "+" : "") + d.foldersDelta + " folders"
                                 }
-                                color: "#8b93a7"
+                                color: App.colour.textMuted
                                 font.pixelSize: 12
                             }
                         }
@@ -376,7 +376,7 @@ Item {
                         Label {
                             visible: target && target.hasDiff && target.diffRows.length === 0
                             text: "Nothing changed."
-                            color: "#6f7788"
+                            color: App.colour.textFaint
                             font.pixelSize: 12
                         }
                     }
@@ -429,7 +429,7 @@ Item {
                                         + (target.extensions.hiddenRows > 0
                                            ? ", " + target.extensions.hiddenRows + " hidden" : "")
                                       : ""
-                                color: "#8b93a7"
+                                color: App.colour.textMuted
                                 font.pixelSize: 11
                             }
                         }
@@ -441,7 +441,7 @@ Item {
                             Layout.topMargin: 6
                             implicitHeight: 14
                             radius: 2
-                            color: "#1f2530"
+                            color: App.colour.hover
                             clip: true
 
                             Row {
@@ -515,7 +515,7 @@ Item {
                                     label: modelData.label
                                     valueText: modelData.count.toLocaleString(Qt.locale(), 'f', 0)
                                     fraction: modelData.peakShare
-                                    barColor: "#6ea8fe"
+                                    barColor: App.colour.accent
                                 }
                             }
                         }
@@ -530,7 +530,7 @@ Item {
                                     label: modelData.label
                                     valueText: modelData.count.toLocaleString(Qt.locale(), 'f', 0)
                                     fraction: modelData.peakShare
-                                    barColor: "#c792ea"
+                                    barColor: App.colour.link
                                 }
                             }
                         }
@@ -559,7 +559,7 @@ Item {
                                 }
                                 Label {
                                     text: modelData.modifiedText
-                                    color: "#6f7788"
+                                    color: App.colour.textFaint
                                     font.pixelSize: 11
                                 }
                                 Label {

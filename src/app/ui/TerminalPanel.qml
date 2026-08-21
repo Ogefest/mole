@@ -11,9 +11,8 @@ Rectangle {
     id: panel
 
     property var terminal: null
-    readonly property color panelColor: "#12151b"
 
-    color: panelColor
+    color: App.colour.panel
 
     // Opened with a key, so there is no mouse involved and the panel has to take
     // the keyboard itself -- exactly the reason the menu does the same when F4
@@ -34,13 +33,11 @@ Rectangle {
         function onVisibleChanged() { Qt.callLater(panel.takeTheKeyboardIfShown) }
     }
 
-    // The xterm palette. Terminals refer to colours by index, so the mapping has
-    // to live somewhere, and matching what everything else uses means output
-    // looks the way its author intended.
-    readonly property var palette: [
-        "#1b2029", "#e5534b", "#57ab5a", "#d9a441", "#4c9aff", "#c792ea", "#5bc8d6", "#c9d1e0",
-        "#5c6472", "#ff7b72", "#7ee787", "#f0c674", "#7cc4ff", "#d2a8ff", "#86d9e8", "#f0f6fc"
-    ]
+    // The xterm palette, from the controller that parses the indices. Not from the
+    // window's palette: a theme decides what the panel is painted in, and has no
+    // more business deciding what `\033[31m` looks like than what a keyword in a
+    // source file looks like. See ADR-0072.
+    readonly property var palette: terminal ? terminal.ansiPalette : []
 
     function colourFor(index, fallback) {
         if (index < 0)
@@ -82,7 +79,7 @@ Rectangle {
 
         ToolBar {
             Layout.fillWidth: true
-            Material.background: "#1b2029"
+            Material.background: App.colour.panel
 
             RowLayout {
                 anchors.fill: parent
@@ -94,13 +91,13 @@ Rectangle {
                     text: "Terminal"
                     font.pixelSize: 11
                     font.bold: true
-                    color: "#8b93a7"
+                    color: App.colour.textMuted
                 }
                 Label {
                     Layout.fillWidth: true
                     text: terminal ? (terminal.title.length > 0 ? terminal.title
                                                                 : terminal.workingDirectory) : ""
-                    color: "#6f7788"
+                    color: App.colour.textFaint
                     font.pixelSize: 11
                     elide: Text.ElideMiddle
                 }
@@ -111,7 +108,7 @@ Rectangle {
                     id: basicModeTag
                     visible: terminal && !terminal.complete
                     text: "basic mode"
-                    color: "#d9a441"
+                    color: App.colour.warn
                     font.pixelSize: 10
 
                     MouseArea {
@@ -150,7 +147,7 @@ Rectangle {
                 width: parent.width - 40
                 visible: terminal && terminal.errorText.length > 0
                 text: terminal ? terminal.errorText : ""
-                color: "#d9a441"
+                color: App.colour.warn
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.Wrap
                 font.pixelSize: 12
@@ -217,7 +214,7 @@ Rectangle {
                                     height: metrics.height
                                     width: spanText.implicitWidth
                                     color: modelData.inverse
-                                           ? panel.colourFor(modelData.foreground, "#c9d1e0")
+                                           ? panel.colourFor(modelData.foreground, App.colour.textSecondary)
                                            : panel.colourFor(modelData.background, "transparent")
 
                                     Text {
@@ -227,8 +224,8 @@ Rectangle {
                                         font.pixelSize: 12
                                         font.bold: modelData.bold
                                         color: modelData.inverse
-                                               ? panel.colourFor(modelData.background, "#12151b")
-                                               : panel.colourFor(modelData.foreground, "#c9d1e0")
+                                               ? panel.colourFor(modelData.background, App.colour.panel)
+                                               : panel.colourFor(modelData.foreground, App.colour.textSecondary)
                                     }
                                 }
                             }

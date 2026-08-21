@@ -3,6 +3,8 @@
 add_library(mole_ui STATIC
     AppController.h
     AppController.cpp
+    Palette.h
+    Palette.cpp
     DragSource.h
     DragSource.cpp
     FileLauncher.h

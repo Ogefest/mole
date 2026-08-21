@@ -38,8 +38,8 @@ Popup {
     exit: Transition {}
 
     background: Rectangle {
-        color: "#1b2029"
-        border.color: "#2a3140"
+        color: App.colour.panel
+        border.color: App.colour.border
         border.width: 1
         radius: 4
     }
@@ -85,7 +85,7 @@ Popup {
         Rectangle {
             Layout.fillWidth: true
             implicitHeight: 1
-            color: "#2a3140"
+            color: App.colour.border
         }
 
         ListView {
@@ -137,14 +137,14 @@ Popup {
                     Label {
                         Layout.fillWidth: true
                         text: group
-                        color: "#6f7788"
+                        color: App.colour.textFaint
                         font.pixelSize: App.smallTextSize
                         elide: Text.ElideRight
                     }
                     Label {
                         visible: shortcut.length > 0
                         text: shortcut
-                        color: "#8b93a7"
+                        color: App.colour.textMuted
                         font.family: App.monospaceFont
                         font.pixelSize: App.smallTextSize
                     }
@@ -157,7 +157,7 @@ Popup {
                 anchors.centerIn: parent
                 visible: list.count === 0
                 text: "Nothing matches “" + field.text + "”"
-                color: "#6f7788"
+                color: App.colour.textFaint
                 font.pixelSize: App.secondaryTextSize
             }
         }

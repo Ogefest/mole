@@ -11,21 +11,14 @@ Item {
     id: view
     property var controller: null
 
-    readonly property color panelColor: "#1b2029"
-    readonly property color lineColor: "#2a3140"
-    readonly property color mutedColor: "#8b93a7"
-    readonly property color badColor: "#e5534b"
-    readonly property color warnColor: "#d9a441"
-    readonly property color goodColor: "#57ab5a"
-
     function colorForState(state) {
         if (state === "triggered")
-            return view.badColor
+            return App.colour.bad
         if (state === "failed")
-            return view.warnColor
+            return App.colour.warn
         if (state === "ok")
-            return view.goodColor
-        return view.mutedColor
+            return App.colour.ok
+        return App.colour.textMuted
     }
 
     ColumnLayout {
@@ -47,14 +40,14 @@ Item {
                 objectName: "alertBadge"
                 visible: controller && controller.triggeredCount > 0
                 radius: 4
-                color: "#3a1f1f"
-                border.color: view.badColor
+                color: Qt.alpha(App.colour.bad, 0.16)
+                border.color: App.colour.bad
                 implicitWidth: badgeLabel.implicitWidth + 16
                 implicitHeight: badgeLabel.implicitHeight + 8
                 Label {
                     id: badgeLabel
                     anchors.centerIn: parent
-                    color: view.badColor
+                    color: App.colour.bad
                     text: controller
                           ? (controller.triggeredCount === 1 ? "1 triggered"
                                                              : controller.triggeredCount + " triggered")
@@ -83,9 +76,9 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             radius: 6
-            color: view.panelColor
+            color: App.colour.panel
             border.width: 1
-            border.color: view.lineColor
+            border.color: App.colour.border
             implicitHeight: form.implicitHeight + 24
 
             GridLayout {
@@ -99,7 +92,7 @@ Item {
                 Label {
                     Layout.columnSpan: 4
                     text: "Watch something"
-                    color: view.mutedColor
+                    color: App.colour.textMuted
                     font.pixelSize: 11
                     font.letterSpacing: 1
                 }
@@ -193,7 +186,7 @@ Item {
         Label {
             Layout.fillWidth: true
             visible: !controller || controller.alerts.length === 0
-            color: view.mutedColor
+            color: App.colour.textMuted
             wrapMode: Text.WordWrap
             text: "Nothing is being watched yet.\n\n" +
                   "Point an alert at a folder and pick what matters: how big it is getting, " +
@@ -220,10 +213,10 @@ Item {
                 width: ListView.view.width
                 implicitHeight: alertBody.implicitHeight + 20
                 radius: 6
-                color: view.panelColor
+                color: App.colour.panel
                 border.width: 1
-                border.color: modelData.triggered ? view.badColor
-                            : modelData.failed ? view.warnColor : view.lineColor
+                border.color: modelData.triggered ? App.colour.bad
+                            : modelData.failed ? App.colour.warn : App.colour.border
 
                 ColumnLayout {
                     id: alertBody
@@ -273,7 +266,7 @@ Item {
 
                     Label {
                         Layout.fillWidth: true
-                        color: view.mutedColor
+                        color: App.colour.textMuted
                         font.pixelSize: 11
                         elide: Text.ElideMiddle
                         text: modelData.condition + "  ·  " + modelData.sourceText
@@ -282,7 +275,7 @@ Item {
 
                     Label {
                         Layout.fillWidth: true
-                        color: view.mutedColor
+                        color: App.colour.textMuted
                         font.pixelSize: 11
                         elide: Text.ElideMiddle
                         text: modelData.target
@@ -291,7 +284,7 @@ Item {
                     Label {
                         Layout.fillWidth: true
                         visible: modelData.message.length > 0
-                        color: modelData.triggered ? view.badColor : view.warnColor
+                        color: modelData.triggered ? App.colour.bad : App.colour.warn
                         wrapMode: Text.WordWrap
                         font.pixelSize: 11
                         text: modelData.message
@@ -303,7 +296,7 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             height: 1
-            color: view.lineColor
+            color: App.colour.border
             visible: controller && controller.history.length > 0
         }
 
@@ -345,7 +338,7 @@ Item {
                 }
                 Label {
                     text: modelData.at
-                    color: view.mutedColor
+                    color: App.colour.textMuted
                     font.family: App.monospaceFont
                     font.pixelSize: 11
                 }
@@ -363,7 +356,7 @@ Item {
                 Label {
                     Layout.fillWidth: true
                     text: modelData.message.length > 0 ? modelData.message : modelData.value
-                    color: modelData.bad ? view.badColor : view.mutedColor
+                    color: modelData.bad ? App.colour.bad : App.colour.textMuted
                     elide: Text.ElideRight
                     font.pixelSize: 11
                 }

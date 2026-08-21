@@ -12,12 +12,6 @@ Item {
     id: view
     property var controller: null
 
-    readonly property color panelColor: "#1b2029"
-    readonly property color lineColor: "#2a3140"
-    readonly property color mutedColor: "#8b93a7"
-    readonly property color warnColor: "#d9a441"
-    readonly property color badColor: "#e5534b"
-
     function focusActivePane() { body.forceActiveFocus() }
 
     FocusScope {
@@ -41,8 +35,8 @@ Item {
                 Label {
                     objectName: "syncSummary"
                     text: controller ? controller.planSummary : ""
-                    color: controller && controller.deleteCount > 0 ? view.warnColor
-                                                                    : view.mutedColor
+                    color: controller && controller.deleteCount > 0 ? App.colour.warn
+                                                                    : App.colour.textMuted
                 }
 
                 Item { Layout.fillWidth: true }
@@ -80,9 +74,9 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 radius: 6
-                color: view.panelColor
+                color: App.colour.panel
                 border.width: 1
-                border.color: view.lineColor
+                border.color: App.colour.border
                 implicitHeight: ends.implicitHeight + 22
 
                 GridLayout {
@@ -95,7 +89,7 @@ Item {
 
                     Label {
                         text: "From"
-                        color: view.mutedColor
+                        color: App.colour.textMuted
                         font.pixelSize: 12
                     }
                     TextField {
@@ -115,7 +109,7 @@ Item {
 
                     Label {
                         text: "To"
-                        color: view.mutedColor
+                        color: App.colour.textMuted
                         font.pixelSize: 12
                     }
                     TextField {
@@ -135,9 +129,9 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 radius: 6
-                color: view.panelColor
+                color: App.colour.panel
                 border.width: 1
-                border.color: view.lineColor
+                border.color: App.colour.border
                 implicitHeight: options.implicitHeight + 22
 
                 ColumnLayout {
@@ -171,7 +165,7 @@ Item {
 
                         Label {
                             text: "Changed when"
-                            color: view.mutedColor
+                            color: App.colour.textMuted
                             font.pixelSize: 12
                         }
                         Picker {
@@ -199,7 +193,7 @@ Item {
                     Label {
                         Layout.fillWidth: true
                         text: controller ? controller.modeDescription : ""
-                        color: "#6f7788"
+                        color: App.colour.textFaint
                         wrapMode: Text.WordWrap
                         font.pixelSize: 11
                     }
@@ -236,7 +230,7 @@ Item {
 
                         Label {
                             text: "Only"
-                            color: view.mutedColor
+                            color: App.colour.textMuted
                             font.pixelSize: 12
                         }
                         TextField {
@@ -248,7 +242,7 @@ Item {
                         }
                         Label {
                             text: "Except"
-                            color: view.mutedColor
+                            color: App.colour.textMuted
                             font.pixelSize: 12
                         }
                         TextField {
@@ -266,7 +260,7 @@ Item {
                 Layout.fillWidth: true
                 visible: controller && controller.errorText.length > 0
                 text: controller ? controller.errorText : ""
-                color: view.badColor
+                color: App.colour.bad
                 wrapMode: Text.WordWrap
                 font.pixelSize: 12
             }
@@ -275,7 +269,7 @@ Item {
                 Layout.fillWidth: true
                 visible: controller && controller.running && controller.progressText.length > 0
                 text: controller ? controller.progressText : ""
-                color: view.mutedColor
+                color: App.colour.textMuted
                 elide: Text.ElideMiddle
                 font.pixelSize: 11
             }
@@ -285,7 +279,7 @@ Item {
             Label {
                 Layout.fillWidth: true
                 visible: !controller || !controller.hasPlan
-                color: view.mutedColor
+                color: App.colour.textMuted
                 wrapMode: Text.WordWrap
                 text: "Preview first. It works out exactly what would happen — every copy, "
                       + "replacement and deletion, with a reason for each — and writes nothing. "
@@ -309,9 +303,9 @@ Item {
                         Layout.preferredWidth: 80
                         text: modelData.action
                         font.pixelSize: 11
-                        color: modelData.action === "delete" ? view.badColor
-                             : modelData.destructive ? view.warnColor
-                             : modelData.skipped ? "#5c6472" : "#57ab5a"
+                        color: modelData.action === "delete" ? App.colour.bad
+                             : modelData.destructive ? App.colour.warn
+                             : modelData.skipped ? App.colour.textFaint : App.colour.ok
                     }
                     Label {
                         Layout.fillWidth: true
@@ -319,19 +313,19 @@ Item {
                         font.family: App.monospaceFont
                         font.pixelSize: 11
                         elide: Text.ElideMiddle
-                        color: modelData.skipped ? "#5c6472" : "#d5dbe6"
+                        color: modelData.skipped ? App.colour.textFaint : App.colour.textSecondary
                     }
                     Label {
                         Layout.preferredWidth: 90
                         horizontalAlignment: Text.AlignRight
                         text: modelData.sizeText
-                        color: view.mutedColor
+                        color: App.colour.textMuted
                         font.pixelSize: 11
                     }
                     Label {
                         Layout.preferredWidth: 200
                         text: modelData.reason
-                        color: view.mutedColor
+                        color: App.colour.textMuted
                         font.pixelSize: 11
                         elide: Text.ElideRight
                     }
@@ -386,7 +380,7 @@ Item {
                 Layout.fillWidth: true
                 wrapMode: Text.Wrap
                 text: "This cannot be undone."
-                color: "#d9a441"
+                color: App.colour.warn
                 font.pixelSize: App.smallTextSize
             }
         }

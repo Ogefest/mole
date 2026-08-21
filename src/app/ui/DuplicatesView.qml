@@ -13,10 +13,6 @@ Item {
     id: view
     property var controller: null
 
-    readonly property color panelColor: "#1b2029"
-    readonly property color lineColor: "#2a3140"
-    readonly property color mutedColor: "#8b93a7"
-
     // Which of the four states the tab is in. Written once here rather than as
     // four conditions repeated down the file, because the one thing they have to
     // be is mutually exclusive: two of them true at once is how the tab ended up
@@ -74,7 +70,7 @@ Item {
                 Label {
                     objectName: "duplicateSummary"
                     text: controller ? controller.summary : ""
-                    color: view.mutedColor
+                    color: App.colour.textMuted
                 }
 
                 Item { Layout.fillWidth: true }
@@ -99,9 +95,9 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 radius: 6
-                color: view.panelColor
+                color: App.colour.panel
                 border.width: 1
-                border.color: view.lineColor
+                border.color: App.colour.border
                 implicitHeight: options.implicitHeight + 22
 
                 ColumnLayout {
@@ -119,7 +115,7 @@ Item {
                         Layout.fillWidth: true
                         visible: !view.hasRoots
                         text: "Open this from a folder to search it."
-                        color: view.mutedColor
+                        color: App.colour.textMuted
                         font.pixelSize: 11
                     }
 
@@ -134,13 +130,13 @@ Item {
 
                             Label {
                                 text: "▸"
-                                color: "#6f7788"
+                                color: App.colour.textFaint
                                 font.pixelSize: 11
                             }
                             Label {
                                 Layout.fillWidth: true
                                 text: view.readableRoot(modelData)
-                                color: "#c9d1d9"
+                                color: App.colour.textSecondary
                                 font.pixelSize: 11
                                 font.family: App.monospaceFont
                                 // From the left: what tells two folders apart is
@@ -156,7 +152,7 @@ Item {
 
                         Label {
                             text: "Match by"
-                            color: view.mutedColor
+                            color: App.colour.textMuted
                             font.pixelSize: 12
                         }
                         Picker {
@@ -180,7 +176,7 @@ Item {
 
                         Label {
                             text: "Ignore below"
-                            color: view.mutedColor
+                            color: App.colour.textMuted
                             font.pixelSize: 12
                         }
                         Picker {
@@ -218,7 +214,7 @@ Item {
                         objectName: "duplicateStrategyNote"
                         Layout.fillWidth: true
                         text: controller ? controller.strategyDescription : ""
-                        color: "#6f7788"
+                        color: App.colour.textFaint
                         wrapMode: Text.WordWrap
                         font.pixelSize: 11
                     }
@@ -245,7 +241,7 @@ Item {
                     objectName: "duplicateProgressText"
                     Layout.fillWidth: true
                     text: controller ? controller.progressText : ""
-                    color: view.mutedColor
+                    color: App.colour.textMuted
                     font.pixelSize: 12
                     elide: Text.ElideRight
                 }
@@ -254,7 +250,7 @@ Item {
                 // that is the answer.
                 Label {
                     text: "still searching"
-                    color: "#d9a441"
+                    color: App.colour.warn
                     font.pixelSize: 12
                 }
                 Button {
@@ -285,9 +281,9 @@ Item {
                 Layout.fillWidth: true
                 visible: controller && controller.groupCount > 0
                 radius: 6
-                color: view.panelColor
+                color: App.colour.panel
                 border.width: 1
-                border.color: view.lineColor
+                border.color: App.colour.border
                 implicitHeight: keeping.implicitHeight + 22
 
                 ColumnLayout {
@@ -302,7 +298,7 @@ Item {
 
                         Label {
                             text: "Keep"
-                            color: "#c9d1d9"
+                            color: App.colour.textSecondary
                             font.pixelSize: 13
                             font.bold: true
                         }
@@ -376,7 +372,7 @@ Item {
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                         font.pixelSize: 12
-                        color: controller && controller.selectedCount > 0 ? "#d9a441" : "#6f7788"
+                        color: controller && controller.selectedCount > 0 ? App.colour.warn : App.colour.textFaint
                         text: {
                             if (!controller)
                                 return ""
@@ -423,21 +419,21 @@ Item {
                         Layout.alignment: Qt.AlignHCenter
                         text: "⧉"
                         font.pixelSize: 44
-                        color: "#3a4152"
+                        color: App.colour.border
                     }
                     Label {
                         Layout.alignment: Qt.AlignHCenter
                         text: view.hasRoots ? "Nothing scanned yet" : "Nothing to search"
                         font.pixelSize: 16
                         font.bold: true
-                        color: "#c9d1d9"
+                        color: App.colour.textSecondary
                     }
                     Label {
                         Layout.fillWidth: true
                         horizontalAlignment: Text.AlignHCenter
                         wrapMode: Text.WordWrap
                         font.pixelSize: App.secondaryTextSize
-                        color: view.mutedColor
+                        color: App.colour.textMuted
                         text: {
                             if (!view.hasRoots)
                                 return "Open this tab from a folder and it will search that folder."
@@ -459,7 +455,7 @@ Item {
                         horizontalAlignment: Text.AlignHCenter
                         wrapMode: Text.WordWrap
                         font.pixelSize: App.secondaryTextSize
-                        color: "#6f7788"
+                        color: App.colour.textFaint
                         text: controller ? controller.strategyDescription : ""
                     }
                     Button {
@@ -496,7 +492,7 @@ Item {
                         text: "Searching"
                         font.pixelSize: 16
                         font.bold: true
-                        color: "#c9d1d9"
+                        color: App.colour.textSecondary
                     }
                     Label {
                         objectName: "duplicateScanningDetail"
@@ -504,7 +500,7 @@ Item {
                         horizontalAlignment: Text.AlignHCenter
                         wrapMode: Text.WordWrap
                         font.pixelSize: App.secondaryTextSize
-                        color: view.mutedColor
+                        color: App.colour.textMuted
                         // Which stage is running and over how much. "whole file:
                         // 87 of 412 files" is something somebody can decide to
                         // wait for; a spinner is not.
@@ -532,7 +528,7 @@ Item {
                         Layout.alignment: Qt.AlignHCenter
                         text: controller && controller.wasCancelled ? "⏹" : "✓"
                         font.pixelSize: 40
-                        color: "#3a4152"
+                        color: App.colour.border
                     }
                     // A scan that was stopped has not searched the tree, so the
                     // advice below would be answering a question nobody asked --
@@ -542,7 +538,7 @@ Item {
                         objectName: "duplicateNoMatchText"
                         Layout.fillWidth: true
                         horizontalAlignment: Text.AlignHCenter
-                        color: view.mutedColor
+                        color: App.colour.textMuted
                         wrapMode: Text.WordWrap
                         font.pixelSize: App.secondaryTextSize
                         text: controller && controller.wasCancelled
@@ -587,9 +583,9 @@ Item {
                     width: ListView.view.width
                     implicitHeight: groupBody.implicitHeight + 18
                     radius: 6
-                    color: view.panelColor
+                    color: App.colour.panel
                     border.width: 1
-                    border.color: view.lineColor
+                    border.color: App.colour.border
 
                     ColumnLayout {
                         id: groupBody
@@ -612,12 +608,12 @@ Item {
                                 objectName: "duplicateGroupUndecided"
                                 visible: !decided
                                 text: "not decided"
-                                color: "#6f7788"
+                                color: App.colour.textFaint
                                 font.pixelSize: 11
                             }
                             Label {
                                 text: reclaimableText + " could be freed"
-                                color: "#d9a441"
+                                color: App.colour.warn
                                 font.pixelSize: 11
                             }
                         }
@@ -647,7 +643,7 @@ Item {
                                     visible: decided
                                     text: modelData.selected ? "remove" : "keeping"
                                     horizontalAlignment: Text.AlignRight
-                                    color: modelData.selected ? "#e5534b" : "#5fb977"
+                                    color: modelData.selected ? App.colour.bad : App.colour.ok
                                     font.pixelSize: 11
                                 }
                                 Label {
@@ -656,18 +652,18 @@ Item {
                                     font.family: App.monospaceFont
                                     Layout.preferredWidth: 200
                                     elide: Text.ElideMiddle
-                                    color: modelData.selected ? "#d9a441" : "#d5dbe6"
+                                    color: modelData.selected ? App.colour.warn : App.colour.textSecondary
                                 }
                                 Label {
                                     Layout.fillWidth: true
                                     text: modelData.location
-                                    color: view.mutedColor
+                                    color: App.colour.textMuted
                                     font.pixelSize: 11
                                     elide: Text.ElideMiddle
                                 }
                                 Label {
                                     text: modelData.modifiedText
-                                    color: view.mutedColor
+                                    color: App.colour.textMuted
                                     font.pixelSize: 11
                                 }
                                 // The per-group override, in one click on the row
@@ -742,7 +738,7 @@ Item {
                 Layout.fillWidth: true
                 wrapMode: Text.Wrap
                 text: "This cannot be undone, and the copies you did not tick are left alone."
-                color: "#d9a441"
+                color: App.colour.warn
                 font.pixelSize: App.smallTextSize
             }
         }

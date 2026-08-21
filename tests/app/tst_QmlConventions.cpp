@@ -19,6 +19,7 @@ class TestQmlConventions : public QObject
 private slots:
     void initTestCase();
     void nothingNamesAFontFamilyByHand();
+    void nothingNamesAColourByHand();
     void nothingBuildsOrTakesApartAUriByHand();
 
 private:
@@ -69,6 +70,38 @@ void TestQmlConventions::nothingNamesAFontFamilyByHand()
     std::sort(offenders.begin(), offenders.end());
     QVERIFY2(offenders.isEmpty(),
         qPrintable(QStringLiteral("a font family is named by hand at %1 -- ask App.monospaceFont")
+                       .arg(offenders.join(QStringLiteral(", ")))));
+}
+
+void TestQmlConventions::nothingNamesAColourByHand()
+{
+    // There used to be 372 of these across 39 files, 75 distinct values between
+    // them, and three separate families of grey that nobody had chosen: they
+    // arrived one view at a time and the next view added a fourth. Changing what
+    // Mole looks like meant editing every file that had an opinion.
+    //
+    // `App.colour` is the sixteen tokens to name instead -- window, panel, pane,
+    // border, hover, selection, text, textSecondary, textMuted, textFaint, accent,
+    // link, ok, warn, bad, busy -- and a theme repaints all of them at once. See
+    // ADR-0072.
+    //
+    // A hex value is what this looks for, and only that. `"transparent"`, `"white"`
+    // for a sheet of paper in a document preview, and `Qt.rgba()` for a veil that
+    // darkens whatever is behind it are all still honest answers: none of them is
+    // a colour of the window's that somebody wrote down twice.
+    QStringList offenders;
+    for (auto it = m_sources.constBegin(); it != m_sources.constEnd(); ++it) {
+        const QStringList lines = it.value().split(QLatin1Char('\n'));
+        for (int i = 0; i < lines.size(); ++i) {
+            static const QRegularExpression literal(QStringLiteral("\"#[0-9a-fA-F]{6,8}\""));
+            if (lines.at(i).contains(literal))
+                offenders.append(QStringLiteral("%1:%2").arg(it.key()).arg(i + 1));
+        }
+    }
+
+    std::sort(offenders.begin(), offenders.end());
+    QVERIFY2(offenders.isEmpty(),
+        qPrintable(QStringLiteral("a colour is written out at %1 -- name a token on App.colour")
                        .arg(offenders.join(QStringLiteral(", ")))));
 }
 

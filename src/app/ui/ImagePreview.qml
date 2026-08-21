@@ -56,7 +56,7 @@ Item {
         Label {
             visible: picture.status === Image.Ready
             text: picture.implicitWidth + " × " + picture.implicitHeight
-            color: "#8b93a7"
+            color: App.colour.textMuted
             font.pixelSize: App.smallTextSize
         }
         Button {

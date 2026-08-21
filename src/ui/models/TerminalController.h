@@ -4,6 +4,7 @@
 #include "core/terminal/TerminalScreen.h"
 
 #include <QObject>
+#include <QStringList>
 #include <QVariantList>
 
 namespace mole {
@@ -33,6 +34,14 @@ class TerminalController : public QObject
     /// no change signal: QML would evaluate it once and never again, and the
     /// panel would stay blank while the shell talked to it.
     Q_PROPERTY(QVariantList screenRows READ screenRows NOTIFY screenChanged)
+    /// The sixteen colours a terminal refers to by index.
+    ///
+    /// Here rather than in the panel's QML because it is the terminal's own data
+    /// rather than the window's paint: a theme has no business deciding what
+    /// `\033[31m` looks like, any more than it decides what a keyword in a source
+    /// file looks like. It lives next to the escape parser that produces the
+    /// indices. See ADR-0072.
+    Q_PROPERTY(QStringList ansiPalette READ ansiPalette CONSTANT)
 
 public:
     explicit TerminalController(QObject* parent = nullptr);
@@ -58,6 +67,7 @@ public:
     /// than per character, because a row of eighty separate items would cost
     /// more to lay out than the whole panel is worth.
     QVariantList screenRows() const;
+    static QStringList ansiPalette();
     Q_INVOKABLE QVariantList rowSpans(int index) const;
     Q_INVOKABLE QString rowText(int index) const;
 

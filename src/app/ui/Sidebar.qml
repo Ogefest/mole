@@ -8,11 +8,7 @@ import QtQuick.Layouts
 Rectangle {
     id: sidebar
 
-    property color panelColor: "#1b2029"
-    property color borderColor: "#2a3140"
-    property color mutedText: "#8b93a7"
-
-    color: panelColor
+    color: App.colour.panel
 
     /// The keyboard should go back to whatever the window was showing. A signal
     /// rather than a reach, because the sidebar has no business knowing that a
@@ -41,20 +37,20 @@ Rectangle {
         // it is the green this sidebar used to paint for *connected*, put to a job
         // it can actually do.
         if (severity === "working")
-            return "#57ab5a"
+            return App.colour.ok
         if (severity === "broken")
-            return "#e5534b"
-        return sidebar.mutedText
+            return App.colour.bad
+        return App.colour.textMuted
     }
 
     // Amber from about three quarters, red from about nine tenths: the point
     // of the colour is to be noticed before the disk is actually full.
     function fillColor(fraction) {
         if (fraction >= 0.9)
-            return "#e5534b"
+            return App.colour.bad
         if (fraction >= 0.75)
-            return "#d9a441"
-        return "#4f8cc9"
+            return App.colour.warn
+        return App.colour.accent
     }
 
     // A row in either list.
@@ -173,7 +169,7 @@ Rectangle {
         // Flat, instant hover. The style's default fades in over ~200ms, which
         // reads as the list lagging behind the pointer.
         background: Rectangle {
-            color: row.hovered ? "#262d3a" : "transparent"
+            color: row.hovered ? App.colour.hover : "transparent"
         }
 
         contentItem: ColumnLayout {
@@ -270,7 +266,7 @@ Rectangle {
                     // From the scale, not a literal: the mark sits beside the name
                     // and has to keep sitting beside it when the scale changes.
                     font.pixelSize: App.secondaryTextSize
-                    color: row.dead ? sidebar.mutedText : Material.foreground
+                    color: row.dead ? App.colour.textMuted : Material.foreground
                     Layout.alignment: Qt.AlignVCenter
                 }
                 Label {
@@ -284,7 +280,7 @@ Rectangle {
                     // now, and the row should not read as though it were. A
                     // bookmark whose set has gone reads the same way, for the same
                     // reason: still listed, not somewhere to go.
-                    color: row.dead || (row.actionable && row.connectable) ? sidebar.mutedText
+                    color: row.dead || (row.actionable && row.connectable) ? App.colour.textMuted
                                                                           : Material.foreground
                 }
                 Label {
@@ -294,7 +290,7 @@ Rectangle {
                     // room for and nothing left to move.
                     visible: row.capacityKnown
                     text: row.capacityFree + " free"
-                    color: sidebar.mutedText
+                    color: App.colour.textMuted
                     font.pixelSize: App.smallTextSize
                 }
                 ToolButton {
@@ -352,7 +348,7 @@ Rectangle {
                 visible: row.capacityKnown
                 implicitHeight: 4
                 radius: 2
-                color: "#141922"
+                color: App.colour.window
 
                 Rectangle {
                     width: Math.max(2, parent.width
@@ -366,7 +362,7 @@ Rectangle {
             Label {
                 visible: row.capacityKnown
                 text: Math.round(row.capacityUsed * 100) + "% of " + row.capacityTotal
-                color: sidebar.mutedText
+                color: App.colour.textMuted
                 font.pixelSize: App.smallTextSize
             }
         }
@@ -381,7 +377,7 @@ Rectangle {
             text: "DRIVES"
             font.pixelSize: App.smallTextSize
             font.letterSpacing: 1
-            color: sidebar.mutedText
+            color: App.colour.textMuted
         }
 
         // No band here any more. It asked for the passphrase at startup, for
@@ -461,7 +457,7 @@ Rectangle {
             Layout.fillWidth: true
             Layout.topMargin: 6
             implicitHeight: 1
-            color: sidebar.borderColor
+            color: App.colour.border
         }
 
         RowLayout {
@@ -471,7 +467,7 @@ Rectangle {
                 text: "BOOKMARKS"
                 font.pixelSize: App.smallTextSize
                 font.letterSpacing: 1
-                color: sidebar.mutedText
+                color: App.colour.textMuted
             }
             ToolButton {
                 objectName: "addBookmarkButton"
@@ -515,7 +511,7 @@ Rectangle {
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.Wrap
                 text: "No bookmarks yet.\nCtrl+D adds the folder you are in."
-                color: "#5c6472"
+                color: App.colour.textFaint
                 font.pixelSize: App.smallTextSize
             }
         }

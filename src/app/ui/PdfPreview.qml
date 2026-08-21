@@ -76,7 +76,7 @@ Item {
                 objectName: "pdfTitle"
                 visible: controller && controller.errorText.length === 0
                 text: controller ? controller.title : ""
-                color: "#8b93a7"
+                color: App.colour.textMuted
                 font.pixelSize: App.smallTextSize
                 elide: Text.ElideMiddle
             }
@@ -86,7 +86,7 @@ Item {
             Label {
                 objectName: "pdfPosition"
                 text: controller ? controller.positionText : ""
-                color: "#8b93a7"
+                color: App.colour.textMuted
                 font.pixelSize: App.smallTextSize
             }
         }
@@ -121,8 +121,8 @@ Item {
                     anchors.centerIn: parent
                     width: page.width
                     height: page.height
-                    color: "#ffffff" // a page is white, whatever the window is
-                    border.color: "#2a3140"
+                    color: "white" // a page is white, whatever the window is
+                    border.color: App.colour.border
                     border.width: 1
                 }
 
@@ -143,7 +143,7 @@ Item {
                     anchors.horizontalCenter: parent.horizontalCenter
                     anchors.bottom: parent.bottom
                     text: index + 1
-                    color: "#6f7788"
+                    color: App.colour.textFaint
                     font.pixelSize: App.smallTextSize
                 }
             }

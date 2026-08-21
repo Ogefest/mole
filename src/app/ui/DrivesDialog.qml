@@ -66,9 +66,6 @@ Dialog {
     // button here is the way out. It holds the keyboard all the same.
     footer: ConfirmButtons { dismissOnly: true }
 
-    readonly property color mutedColor: "#8b93a7"
-    readonly property color lineColor: "#2a3140"
-
     /// What the add button does. Kept apart from the plain reset below: the
     /// dialog already opens in the blank state, so resetting on its own changes
     /// nothing on screen -- which is exactly what pressing add used to look
@@ -192,8 +189,8 @@ Dialog {
             Layout.fillWidth: true
             visible: App.credentialsAvailable && !App.credentialsUnlocked
             radius: 4
-            color: "#2a2418"
-            border.color: "#d9a441"
+            color: Qt.alpha(App.colour.warn, 0.16)
+            border.color: App.colour.warn
             implicitHeight: lockedRow.implicitHeight + 18
 
             RowLayout {
@@ -205,7 +202,7 @@ Dialog {
                 Label {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
-                    color: "#e8c07d"
+                    color: App.colour.warn
                     font.pixelSize: App.smallTextSize
                     text: App.credentialsExist
                           ? "The credential store is shut, so a drive with a password cannot connect yet."
@@ -230,8 +227,9 @@ Dialog {
             Layout.fillWidth: true
             visible: dialog.checkMessage.length > 0
             radius: 4
-            color: dialog.checkOk ? "#18241a" : "#2a1a1a"
-            border.color: dialog.checkOk ? "#57ab5a" : "#e5534b"
+            color: dialog.checkOk ? Qt.alpha(App.colour.ok, 0.16)
+                                  : Qt.alpha(App.colour.bad, 0.16)
+            border.color: dialog.checkOk ? App.colour.ok : App.colour.bad
             // Sized from an inner layout rather than straight from the wrapped
             // label. Taking the height from a label whose own height depends on
             // its width closes a binding loop, and Qt answers a loop by
@@ -248,7 +246,7 @@ Dialog {
                     objectName: "driveCheckResult"
                     Layout.fillWidth: true
                     text: (dialog.checkOk ? "✓  " : "✕  ") + dialog.checkMessage
-                    color: dialog.checkOk ? "#8ddc93" : "#f0a0a0"
+                    color: dialog.checkOk ? App.colour.ok : App.colour.bad
                     font.pixelSize: 11
                     wrapMode: Text.WordWrap
                 }
@@ -321,8 +319,8 @@ Dialog {
                         width: ListView.view.width
                         implicitHeight: 40
                         radius: 4
-                        color: configuredId === dialog.editingId ? "#26303f"
-                             : driveMouse.containsMouse ? "#20262f" : "transparent"
+                        color: configuredId === dialog.editingId ? App.colour.selection
+                             : driveMouse.containsMouse ? App.colour.hover : "transparent"
 
                         MouseArea {
                             id: driveMouse
@@ -348,10 +346,10 @@ Dialog {
                                 }
                                 Label {
                                     text: stateText
-                                    color: stateSeverity === "good" ? "#57ab5a"
-                                         : stateSeverity === "attention" ? "#d9a441"
-                                         : stateSeverity === "broken" ? "#e5534b"
-                                         : dialog.mutedColor
+                                    color: stateSeverity === "good" ? App.colour.ok
+                                         : stateSeverity === "attention" ? App.colour.warn
+                                         : stateSeverity === "broken" ? App.colour.bad
+                                         : App.colour.textMuted
                                     font.pixelSize: 10
                                 }
                             }
@@ -425,7 +423,7 @@ Dialog {
                     Layout.fillWidth: true
                     Label {
                         text: "Kind"
-                        color: dialog.mutedColor
+                        color: App.colour.textMuted
                         font.pixelSize: 12
                     }
                     Picker {
@@ -459,7 +457,7 @@ Dialog {
                 Label {
                     Layout.fillWidth: true
                     visible: text.length > 0
-                    color: dialog.mutedColor
+                    color: App.colour.textMuted
                     wrapMode: Text.WordWrap
                     font.pixelSize: 11
                     text: {
@@ -482,7 +480,7 @@ Dialog {
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                     wrapMode: Text.WordWrap
-                    color: dialog.mutedColor
+                    color: App.colour.textMuted
                     font.pixelSize: 12
                     text: "Choose a kind above to add a drive.\nPick one from the list or start typing its name."
                 }
@@ -496,7 +494,7 @@ Dialog {
 
                     Label {
                         text: "Name"
-                        color: dialog.mutedColor
+                        color: App.colour.textMuted
                         font.pixelSize: 12
                     }
                     TextField {
@@ -509,7 +507,7 @@ Dialog {
 
                     Label {
                         text: "Folder"
-                        color: dialog.mutedColor
+                        color: App.colour.textMuted
                         font.pixelSize: 12
                     }
                     TextField {
@@ -565,12 +563,12 @@ Dialog {
                                 text: modelData.label
                                       + (modelData.required ? " *" : "")
                                 font.pixelSize: 11
-                                color: modelData.required ? "#d5dbe6" : dialog.mutedColor
+                                color: modelData.required ? App.colour.textSecondary : App.colour.textMuted
                             }
                             Label {
                                 visible: modelData.secret
                                 text: "encrypted"
-                                color: "#57ab5a"
+                                color: App.colour.ok
                                 font.pixelSize: 9
                             }
                             Item { Layout.fillWidth: true }
@@ -593,7 +591,7 @@ Dialog {
                             Layout.fillWidth: true
                             visible: modelData.help.length > 0
                             text: modelData.help
-                            color: "#6f7788"
+                            color: App.colour.textFaint
                             font.pixelSize: 10
                             wrapMode: Text.WordWrap
                         }
@@ -615,7 +613,7 @@ Dialog {
 
                     Label {
                         id: saveError
-                        color: "#e5534b"
+                        color: App.colour.bad
                         font.pixelSize: 11
                         elide: Text.ElideRight
                         Layout.maximumWidth: 300

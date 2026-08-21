@@ -52,8 +52,8 @@ Rectangle {
             App.previewFile(resultsModel.uriAt(list.currentIndex))
     }
 
-    color: "#151922"
-    border.color: "#2a3140"
+    color: App.colour.pane
+    border.color: App.colour.border
     border.width: 1
 
     // What can be done with what was found. Beside the results rather than beside
@@ -163,7 +163,8 @@ Rectangle {
             }
 
             background: Rectangle {
-                color: parent.highlighted ? "#232a36" : (hovered ? "#1d232e" : "transparent")
+                color: parent.highlighted ? App.colour.selection
+                     : (hovered ? App.colour.hover : "transparent")
             }
 
             RowLayout {
@@ -180,7 +181,7 @@ Rectangle {
                     objectName: "containerBadge"
                     visible: containerName.length > 0
                     text: "\u{1F5DC} " + containerName
-                    color: "#8b93a7"
+                    color: App.colour.textMuted
                     font.pixelSize: App.smallTextSize
                 }
 
@@ -193,7 +194,7 @@ Rectangle {
                     objectName: "rememberedMarker"
                     visible: provenance === 1
                     text: "\u25CB" // an open circle: seen once, not just now
-                    color: "#8b93a7"
+                    color: App.colour.textMuted
                     font.pixelSize: App.smallTextSize
                     ToolTip.visible: hovered.hovered
                     ToolTip.text: indexedAt && !isNaN(indexedAt.getTime())
@@ -221,7 +222,7 @@ Rectangle {
                         visible: matchLine.length > 0
                         text: matchLineNumber + ":  " + matchLine
                         elide: Text.ElideRight
-                        color: "#8b93a7"
+                        color: App.colour.textMuted
                         font.family: App.monospaceFont
                         font.pixelSize: App.smallTextSize
                     }
@@ -230,7 +231,7 @@ Rectangle {
                         visible: matchLine.length === 0
                         text: parentUri
                         elide: Text.ElideLeft
-                        color: "#6f7788"
+                        color: App.colour.textFaint
                         font.pixelSize: App.smallTextSize
                     }
                 }
@@ -239,7 +240,7 @@ Rectangle {
                     Layout.preferredWidth: 80
                     horizontalAlignment: Text.AlignRight
                     text: sizeText
-                    color: "#8b93a7"
+                    color: App.colour.textMuted
                     font.pixelSize: App.secondaryTextSize
                 }
             }
@@ -250,6 +251,6 @@ Rectangle {
         anchors.centerIn: parent
         visible: !results.resultsModel || results.resultsModel.count === 0
         text: "No results yet"
-        color: "#6f7788"
+        color: App.colour.textFaint
     }
 }

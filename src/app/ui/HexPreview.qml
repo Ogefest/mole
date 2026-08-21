@@ -114,7 +114,7 @@ Item {
                 objectName: "hexSelection"
                 visible: controller && controller.selectionSummary.length > 0
                 text: controller ? controller.selectionSummary : ""
-                color: "#8b93a7"
+                color: App.colour.textMuted
                 font.pixelSize: App.smallTextSize
             }
 
@@ -124,7 +124,7 @@ Item {
             Label {
                 visible: controller && controller.selectionSummary.length > 0
                 text: "Ctrl+C hex · Ctrl+Shift+C text"
-                color: "#6f7788"
+                color: App.colour.textFaint
                 font.pixelSize: App.smallTextSize
             }
 
@@ -133,7 +133,7 @@ Item {
             Label {
                 objectName: "hexPositionLabel"
                 text: controller ? controller.positionText : ""
-                color: "#8b93a7"
+                color: App.colour.textMuted
                 font.pixelSize: App.smallTextSize
             }
         }
@@ -145,7 +145,7 @@ Item {
             Layout.margins: 12
             visible: controller ? controller.emptyFile === true : false
             text: "This file is empty — there are no bytes to show."
-            color: "#8b93a7"
+            color: App.colour.textMuted
             font.pixelSize: App.secondaryTextSize
         }
 
@@ -195,7 +195,7 @@ Item {
 
                     Label {
                         text: modelData.offset
-                        color: "#6f7788"
+                        color: App.colour.textFaint
                         font.family: App.monospaceFont
                         font.pixelSize: App.monospaceSize
                     }
@@ -215,7 +215,7 @@ Item {
                         Label {
                             id: hexText
                             text: modelData.hex
-                            color: "#d7dae0"
+                            color: App.colour.textSecondary
                             font.family: App.monospaceFont
                             font.pixelSize: App.monospaceSize
                         }
@@ -236,7 +236,7 @@ Item {
                         Label {
                             id: asciiText
                             text: modelData.text
-                            color: "#9aa4b8"
+                            color: App.colour.textMuted
                             font.family: App.monospaceFont
                             font.pixelSize: App.monospaceSize
                         }
@@ -302,7 +302,7 @@ Item {
             objectName: "hexPagingStrip"
             Layout.fillWidth: true
             visible: controller && controller.paged
-            Material.background: "#1b2029"
+            Material.background: App.colour.panel
 
             RowLayout {
                 anchors.fill: parent
@@ -365,7 +365,7 @@ Item {
 
                 Label {
                     text: controller ? controller.sizeText : ""
-                    color: "#8b93a7"
+                    color: App.colour.textMuted
                     font.pixelSize: App.smallTextSize
                 }
             }

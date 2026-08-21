@@ -20,12 +20,12 @@ Label {
     font.pixelSize: App.smallTextSize
     font.bold: true
     color: switch (mark) {
-           case "U": return "#e5534b"   // conflicted
-           case "D": return "#e5534b"   // deleted
-           case "A": return "#5fb977"   // added
-           case "R": return "#7cc4ff"   // renamed
-           case "M": return "#d9a441"   // modified
-           case "??": return "#8b93a7"  // untracked
-           default: return "#6f7788"    // something inside
+           case "U": return App.colour.bad         // conflicted
+           case "D": return App.colour.bad         // deleted
+           case "A": return App.colour.ok          // added
+           case "R": return App.colour.link        // renamed
+           case "M": return App.colour.warn        // modified
+           case "??": return App.colour.textMuted  // untracked
+           default: return App.colour.textFaint    // something inside
            }
 }

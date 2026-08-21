@@ -12,10 +12,6 @@ Item {
     id: view
     property var controller: null
 
-    readonly property color panelColor: "#1b2029"
-    readonly property color lineColor: "#2a3140"
-    readonly property color mutedColor: "#8b93a7"
-
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 16
@@ -33,7 +29,7 @@ Item {
 
             Label {
                 visible: controller && controller.folderCount > 0
-                color: view.mutedColor
+                color: App.colour.textMuted
                 text: controller
                       ? controller.folderCount + " folders · " + controller.reportCount
                         + " runs · " + controller.totalSizeText + " reported"
@@ -56,7 +52,7 @@ Item {
         Label {
             Layout.fillWidth: true
             visible: !controller || controller.folderCount === 0
-            color: view.mutedColor
+            color: App.colour.textMuted
             wrapMode: Text.WordWrap
             text: "No reports have been saved yet.\n\n" +
                   "Analyse a folder — Tools ▸ Analyse folder, or Ctrl+Shift+A — and the run is " +
@@ -78,9 +74,9 @@ Item {
                 Layout.preferredWidth: Math.max(280, view.width * 0.34)
                 Layout.fillHeight: true
                 radius: 6
-                color: view.panelColor
+                color: App.colour.panel
                 border.width: 1
-                border.color: view.lineColor
+                border.color: App.colour.border
 
                 ListView {
                     objectName: "reportFolderList"
@@ -95,8 +91,8 @@ Item {
                         width: ListView.view.width
                         implicitHeight: folderBody.implicitHeight + 12
                         radius: 4
-                        color: modelData.selected ? "#26303f"
-                             : folderMouse.containsMouse ? "#20262f" : "transparent"
+                        color: modelData.selected ? App.colour.selection
+                             : folderMouse.containsMouse ? App.colour.hover : "transparent"
 
                         MouseArea {
                             id: folderMouse
@@ -124,21 +120,21 @@ Item {
                                 Label {
                                     text: modelData.runCount === 1
                                           ? "1 run" : modelData.runCount + " runs"
-                                    color: view.mutedColor
+                                    color: App.colour.textMuted
                                     font.pixelSize: 10
                                 }
                             }
                             Label {
                                 Layout.fillWidth: true
                                 text: modelData.rootUri
-                                color: view.mutedColor
+                                color: App.colour.textMuted
                                 font.pixelSize: 10
                                 elide: Text.ElideMiddle
                             }
                             Label {
                                 text: modelData.sizeText + " · " + modelData.fileCountText
                                       + " files · " + modelData.latestText
-                                color: view.mutedColor
+                                color: App.colour.textMuted
                                 font.pixelSize: 10
                             }
                         }
@@ -158,7 +154,7 @@ Item {
                     Label {
                         Layout.fillWidth: true
                         text: controller ? controller.selectedRoot : ""
-                        color: view.mutedColor
+                        color: App.colour.textMuted
                         font.pixelSize: 11
                         elide: Text.ElideMiddle
                     }
@@ -190,7 +186,7 @@ Item {
                         width: ListView.view.width
                         implicitHeight: 30
                         radius: 3
-                        color: runMouse.containsMouse ? "#20262f" : "transparent"
+                        color: runMouse.containsMouse ? App.colour.hover : "transparent"
 
                         MouseArea {
                             id: runMouse
@@ -208,7 +204,7 @@ Item {
                                 text: modelData.takenAt
                                 font.family: App.monospaceFont
                                 font.pixelSize: 11
-                                color: "#c9d1e0"
+                                color: App.colour.textSecondary
                             }
                             Label {
                                 text: modelData.sizeText
@@ -217,14 +213,14 @@ Item {
                             }
                             Label {
                                 text: modelData.fileCountText + " files"
-                                color: view.mutedColor
+                                color: App.colour.textMuted
                                 font.pixelSize: 11
                                 Layout.preferredWidth: 110
                             }
                             Label {
                                 text: modelData.changeText
-                                color: modelData.changeText.length === 0 ? view.mutedColor
-                                     : modelData.grew ? "#d9a441" : "#57ab5a"
+                                color: modelData.changeText.length === 0 ? App.colour.textMuted
+                                     : modelData.grew ? App.colour.warn : App.colour.ok
                                 font.pixelSize: 11
                             }
 
@@ -232,7 +228,7 @@ Item {
 
                             Label {
                                 text: modelData.whenText
-                                color: view.mutedColor
+                                color: App.colour.textMuted
                                 font.pixelSize: 10
                             }
                             ToolButton {

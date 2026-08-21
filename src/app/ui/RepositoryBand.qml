@@ -31,8 +31,8 @@ Rectangle {
     visible: info !== null && info.present
     implicitHeight: visible ? contents.implicitHeight + 10 : 0
     Layout.fillWidth: true
-    color: "#1b2029"
-    border.color: "#2a3140"
+    color: App.colour.panel
+    border.color: App.colour.border
     border.width: 1
     radius: 3
 
@@ -47,7 +47,7 @@ Rectangle {
         // the mark anybody with a checkout already reads without thinking.
         Label {
             text: "⎇"
-            color: "#6f7788"
+            color: App.colour.textFaint
             font.pixelSize: App.textSize
         }
 
@@ -59,7 +59,7 @@ Rectangle {
             // Amber while git is part-way through something, because that is a
             // state somebody has to come back out of. Never the only signal: the
             // label says "rebasing" in words -- see ADR-0010.
-            color: band.info && band.info.stateText.length > 0 ? "#d9a441" : "#7cc4ff"
+            color: band.info && band.info.stateText.length > 0 ? App.colour.warn : App.colour.link
             font.pixelSize: App.secondaryTextSize
             font.bold: true
         }
@@ -83,7 +83,7 @@ Rectangle {
 
             visible: text.length > 0
             text: band.info ? band.info.changesText : ""
-            color: band.info && band.info.changedCount > 0 ? "#c9d1d9" : "#6f7788"
+            color: band.info && band.info.changedCount > 0 ? App.colour.textSecondary : App.colour.textFaint
             font.pixelSize: App.secondaryTextSize
             // Underlined while the pointer is on it, so it reads as something to
             // press before it is pressed. Not underlined always: the band is a strip
@@ -110,7 +110,7 @@ Rectangle {
             objectName: "repositoryTracking"
             visible: text.length > 0
             text: band.info ? band.info.trackingText : ""
-            color: "#d9a441"
+            color: App.colour.warn
             font.pixelSize: App.secondaryTextSize
         }
 
@@ -121,7 +121,7 @@ Rectangle {
             objectName: "repositoryCommitId"
             visible: band.info ? band.info.hasCommit : false
             text: band.info ? band.info.shortId : ""
-            color: "#6f7788"
+            color: App.colour.textFaint
             font.pixelSize: App.secondaryTextSize
         }
 
@@ -130,7 +130,7 @@ Rectangle {
             Layout.fillWidth: true
             text: band.info && band.info.hasCommit ? band.info.commitSubject : ""
             elide: Text.ElideRight
-            color: "#8b93a7"
+            color: App.colour.textMuted
             font.pixelSize: App.secondaryTextSize
         }
 
@@ -138,7 +138,7 @@ Rectangle {
             objectName: "repositoryCommitAge"
             visible: band.info ? band.info.hasCommit : false
             text: band.info ? band.info.commitAge : ""
-            color: "#6f7788"
+            color: App.colour.textFaint
             font.pixelSize: App.secondaryTextSize
         }
     }
@@ -166,7 +166,7 @@ Rectangle {
         // because a popup as tall as the window hides the listing it is about.
         implicitHeight: Math.min(pathList.contentHeight + 2 * padding, 320)
         padding: 6
-        Material.background: "#1b2029"
+        Material.background: App.colour.panel
 
         // Anything that navigates has taken the reader out of this folder, so the
         // list has nothing left to be about.
@@ -220,7 +220,7 @@ Rectangle {
                         // one row in this list that behaves differently when it is
                         // activated. The letter `D` says it too.
                         font.strikeout: modelData.deleted
-                        color: modelData.deleted ? "#8b93a7" : "#c9d1d9"
+                        color: modelData.deleted ? App.colour.textMuted : App.colour.textSecondary
                         font.pixelSize: App.secondaryTextSize
                     }
                 }

@@ -96,7 +96,7 @@ Menu {
                 Layout.leftMargin: 24
                 text: modelData.shortcut
                 visible: modelData.shortcut.length > 0
-                color: "#6f7788"
+                color: App.colour.textFaint
                 // Asked, not named. "monospace" is a fontconfig alias: it
                 // resolves to a real family on Linux and to nothing on Windows
                 // or macOS, where the label falls back to the default
@@ -114,7 +114,7 @@ Menu {
             height: 1
             z: 1
             visible: modelData.separatorBefore
-            color: "#2a3140"
+            color: App.colour.border
         }
     }
 

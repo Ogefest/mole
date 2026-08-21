@@ -19,7 +19,7 @@ Item {
 
         ToolBar {
             Layout.fillWidth: true
-            Material.background: "#1b2029"
+            Material.background: App.colour.panel
 
             RowLayout {
                 anchors.fill: parent
@@ -30,7 +30,7 @@ Item {
                 Label {
                     objectName: "parquetSummary"
                     text: (controller && controller.summary) ? controller.summary : ""
-                    color: "#8b93a7"
+                    color: App.colour.textMuted
                     font.pixelSize: App.smallTextSize
                     elide: Text.ElideRight
                     Layout.maximumWidth: 520
@@ -84,7 +84,7 @@ Item {
             visible: view.table && view.table.filter.length > 0
             text: "Filtering scans the file from the start; a very large one is only searched " +
                   "part of the way through."
-            color: "#8b93a7"
+            color: App.colour.textMuted
             wrapMode: Text.Wrap
             font.pixelSize: 10
         }

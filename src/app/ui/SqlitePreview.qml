@@ -19,7 +19,7 @@ Item {
 
         ToolBar {
             Layout.fillWidth: true
-            Material.background: "#1b2029"
+            Material.background: App.colour.panel
 
             RowLayout {
                 anchors.fill: parent
@@ -30,7 +30,7 @@ Item {
                 Label {
                     objectName: "sqliteSummary"
                     text: (controller && controller.summary) ? controller.summary : ""
-                    color: "#8b93a7"
+                    color: App.colour.textMuted
                     font.pixelSize: App.smallTextSize
                 }
 
@@ -85,7 +85,7 @@ Item {
                 Layout.preferredWidth: 190
                 Layout.fillHeight: true
                 visible: controller && controller.tables.length > 0
-                color: "#1b2029"
+                color: App.colour.panel
 
                 ListView {
                     objectName: "sqliteTableList"
@@ -100,8 +100,8 @@ Item {
                         width: ListView.view.width
                         implicitHeight: 26
                         radius: 3
-                        color: modelData.current ? "#26303f"
-                             : tableMouse.containsMouse ? "#20262f" : "transparent"
+                        color: modelData.current ? App.colour.selection
+                             : tableMouse.containsMouse ? App.colour.hover : "transparent"
 
                         MouseArea {
                             id: tableMouse
@@ -122,11 +122,11 @@ Item {
                                 elide: Text.ElideMiddle
                                 font.pixelSize: App.secondaryTextSize
                                 font.bold: modelData.current
-                                color: "#d5dbe6"
+                                color: App.colour.textSecondary
                             }
                             Label {
                                 text: modelData.rowsText
-                                color: "#6f7788"
+                                color: App.colour.textFaint
                                 font.pixelSize: 10
                             }
                         }

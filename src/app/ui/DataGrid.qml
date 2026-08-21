@@ -162,9 +162,9 @@ Item {
                         required property int index
                         width: grid.columnPixels(index)
                         height: 26
-                        color: "#20262f"
+                        color: App.colour.hover
                         border.width: 1
-                        border.color: "#2a3140"
+                        border.color: App.colour.border
 
                         Label {
                             anchors.fill: parent
@@ -175,7 +175,7 @@ Item {
                             elide: Text.ElideRight
                             font.pixelSize: App.smallTextSize
                             font.bold: true
-                            color: "#c9d1e0"
+                            color: App.colour.textSecondary
                         }
                     }
                 }
@@ -205,8 +205,8 @@ Item {
 
                 implicitWidth: 100
                 implicitHeight: 22
-                color: grid.isSelected(row, column) ? "#2f4a6b"
-                     : (row % 2 === 0 ? "#161a21" : "#1b2029")
+                color: grid.isSelected(row, column) ? App.colour.selection
+                     : (row % 2 === 0 ? App.colour.pane : App.colour.panel)
                 border.width: grid.cursorRow === row && grid.cursorColumn === column ? 1 : 0
                 border.color: Material.accent
 
@@ -221,7 +221,7 @@ Item {
                     font.pixelSize: App.secondaryTextSize
                     // A null reads differently from an empty string, because the
                     // difference is usually what the reader is looking for.
-                    color: cell === "NULL" ? "#6f7788" : "#d5dbe6"
+                    color: cell === "NULL" ? App.colour.textFaint : App.colour.textSecondary
                     font.italic: cell === "NULL"
                 }
 
@@ -254,7 +254,7 @@ Item {
             objectName: "gridPager"
             Layout.fillWidth: true
             visible: grid.table ? grid.table.pageCount > 1 : false
-            Material.background: "#1b2029"
+            Material.background: App.colour.panel
 
             RowLayout {
                 anchors.fill: parent
@@ -311,7 +311,7 @@ Item {
                     objectName: "gridPageNumber"
                     Layout.leftMargin: 6
                     text: grid.table ? "Page " + (grid.table.page + 1) + " of " + grid.table.pageCount : ""
-                    color: "#8b93a7"
+                    color: App.colour.textMuted
                     font.pixelSize: App.smallTextSize
                 }
 
@@ -323,7 +323,7 @@ Item {
                 // on its own and the total is added when it turns up.
                 Label {
                     objectName: "gridPageRange"
-                    color: "#8b93a7"
+                    color: App.colour.textMuted
                     font.pixelSize: App.smallTextSize
                     elide: Text.ElideRight
                     text: {
@@ -345,7 +345,7 @@ Item {
         ToolBar {
             Layout.fillWidth: true
             visible: grid.hasSelection
-            Material.background: "#1b2029"
+            Material.background: App.colour.panel
 
             RowLayout {
                 anchors.fill: parent
@@ -354,7 +354,7 @@ Item {
 
                 Label {
                     Layout.fillWidth: true
-                    color: "#8b93a7"
+                    color: App.colour.textMuted
                     font.pixelSize: App.smallTextSize
                     elide: Text.ElideRight
                     text: {

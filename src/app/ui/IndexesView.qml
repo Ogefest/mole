@@ -17,11 +17,6 @@ Item {
     id: view
     property var controller: null
 
-    readonly property color panelColor: "#1b2029"
-    readonly property color lineColor: "#2a3140"
-    readonly property color mutedColor: "#8b93a7"
-    readonly property color warnColor: "#d8a657"
-
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 16
@@ -40,7 +35,7 @@ Item {
             Label {
                 objectName: "indexesSummary"
                 visible: controller && controller.volumeCount > 0
-                color: view.mutedColor
+                color: App.colour.textMuted
                 text: controller
                       ? controller.volumeCount + (controller.volumeCount === 1 ? " index · " : " indexes · ")
                         + controller.totalEntriesText + " entries · "
@@ -66,7 +61,7 @@ Item {
         Label {
             Layout.fillWidth: true
             visible: !controller || controller.volumeCount === 0
-            color: view.mutedColor
+            color: App.colour.textMuted
             wrapMode: Text.WordWrap
             text: "Nothing is indexed yet.\n\n" +
                   "Index a folder — Tools ▸ Index this folder, or the button in a search tab — and " +
@@ -81,9 +76,9 @@ Item {
             Layout.fillHeight: true
             visible: controller && controller.volumeCount > 0
             radius: 6
-            color: view.panelColor
+            color: App.colour.panel
             border.width: 1
-            border.color: view.lineColor
+            border.color: App.colour.border
 
             ListView {
                 objectName: "indexList"
@@ -98,7 +93,7 @@ Item {
                     width: ListView.view.width
                     implicitHeight: rowBody.implicitHeight + 14
                     radius: 4
-                    color: rowMouse.containsMouse ? "#20262f" : "transparent"
+                    color: rowMouse.containsMouse ? App.colour.hover : "transparent"
 
                     MouseArea {
                         id: rowMouse
@@ -127,7 +122,7 @@ Item {
                             }
                             Label {
                                 text: modelData.entryCountText + " entries"
-                                color: view.mutedColor
+                                color: App.colour.textMuted
                                 font.pixelSize: 10
                             }
                             Item { Layout.fillWidth: true }
@@ -138,7 +133,7 @@ Item {
                                 text: modelData.scheduled
                                       ? modelData.scheduleText + " · next " + modelData.nextDueText
                                       : modelData.scheduleText
-                                color: modelData.scheduled ? view.mutedColor : view.warnColor
+                                color: modelData.scheduled ? App.colour.textMuted : App.colour.warn
                                 font.pixelSize: 11
                             }
                         }
@@ -146,7 +141,7 @@ Item {
                         Label {
                             Layout.fillWidth: true
                             text: modelData.rootUri
-                            color: view.mutedColor
+                            color: App.colour.textMuted
                             font.pixelSize: 10
                             elide: Text.ElideMiddle
                         }
@@ -154,7 +149,7 @@ Item {
                         Label {
                             Layout.fillWidth: true
                             text: modelData.scannedText + " · " + modelData.kindText
-                            color: modelData.kindKnown ? view.mutedColor : view.warnColor
+                            color: modelData.kindKnown ? App.colour.textMuted : App.colour.warn
                             font.pixelSize: 11
                             wrapMode: Text.WordWrap
                         }
@@ -175,7 +170,7 @@ Item {
                                 text: modelData.progressText.length > 0
                                       ? "Scanning — " + modelData.progressText
                                       : "Scanning…"
-                                color: view.mutedColor
+                                color: App.colour.textMuted
                                 font.pixelSize: 11
                                 elide: Text.ElideRight
                             }
@@ -264,7 +259,7 @@ Item {
 
             Label {
                 Layout.fillWidth: true
-                color: view.mutedColor
+                color: App.colour.textMuted
                 font.pixelSize: 11
                 wrapMode: Text.WordWrap
                 text: "An index is only as fresh as its last scan. Put one on a clock and it keeps " +

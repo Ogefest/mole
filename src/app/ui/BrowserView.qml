@@ -83,7 +83,7 @@ Item {
 
         ToolBar {
             Layout.fillWidth: true
-            Material.background: "#1b2029"
+            Material.background: App.colour.panel
 
             RowLayout {
                 anchors.fill: parent
@@ -192,7 +192,7 @@ Item {
                     // report one does anything, and it says so.
                     component Tag: Rectangle {
                         property string label: ""
-                        property color tint: "#8b93a7"
+                        property color tint: App.colour.textMuted
                         property bool clickable: false
                         /// Exposed, because the MouseArea's id is not in scope
                         /// where the component is used -- a tooltip written
@@ -203,7 +203,7 @@ Item {
                         radius: 3
                         implicitWidth: tagText.implicitWidth + 14
                         implicitHeight: 20
-                        color: mouse.containsMouse && clickable ? "#232a36" : "transparent"
+                        color: mouse.containsMouse && clickable ? App.colour.hover : "transparent"
                         border.width: 1
                         border.color: tint
 
@@ -229,7 +229,7 @@ Item {
                         objectName: "reportTag"
                         visible: controller ? controller.hasReport : false
                         clickable: true
-                        tint: "#7cc4ff"
+                        tint: App.colour.link
                         label: "report · " + (controller ? controller.reportAgeText : "")
                         // The saved report, not a fresh scan: the point of a
                         // history is not to walk the tree again to look at it.
@@ -241,7 +241,7 @@ Item {
                     Tag {
                         objectName: "alertTag"
                         visible: controller ? controller.alertCount > 0 : false
-                        tint: controller && controller.triggeredAlertCount > 0 ? "#e5534b" : "#8b93a7"
+                        tint: controller && controller.triggeredAlertCount > 0 ? App.colour.bad : App.colour.textMuted
                         label: {
                             if (!controller)
                                 return ""
@@ -254,7 +254,7 @@ Item {
                     Tag {
                         objectName: "accessTag"
                         visible: controller ? controller.accessKnown : false
-                        tint: controller && controller.readOnlyHere ? "#d9a441" : "#8b93a7"
+                        tint: controller && controller.readOnlyHere ? App.colour.warn : App.colour.textMuted
                         label: controller ? controller.accessText : ""
                         ToolTip.visible: hovered
                         ToolTip.text: controller && controller.accessDetail.length > 0
@@ -264,14 +264,14 @@ Item {
                     Tag {
                         objectName: "indexTag"
                         visible: controller ? controller.indexed : false
-                        tint: "#57ab5a"
+                        tint: App.colour.ok
                         label: controller ? controller.indexedText : ""
                     }
 
                     Tag {
                         objectName: "notIndexedTag"
                         visible: controller ? !controller.indexed : false
-                        tint: "#5c6472"
+                        tint: App.colour.textFaint
                         label: "not indexed"
                         ToolTip.visible: hovered
                         ToolTip.text: "Tools ▸ Index this folder makes it searchable instantly"
@@ -282,7 +282,7 @@ Item {
 
                 Label {
                     text: "F2 rename · F7 folder · F8 delete · Ins select · Tab switch"
-                    color: "#6f7788"
+                    color: App.colour.textFaint
                     font.pixelSize: 11
                 }
             }
@@ -459,7 +459,7 @@ Item {
                          && (transferDialog.plan.singleName || "").length > 0
                 Label {
                     text: "Name"
-                    color: "#8b93a7"
+                    color: App.colour.textMuted
                     font.pixelSize: 12
                 }
                 TextField {
@@ -483,8 +483,8 @@ Item {
                 Layout.fillWidth: true
                 visible: (transferDialog.plan.collisions || []).length > 0
                 radius: 4
-                color: "#3a2a1f"
-                border.color: "#d9a441"
+                color: Qt.alpha(App.colour.warn, 0.16)
+                border.color: App.colour.warn
                 implicitHeight: collisionText.implicitHeight + 16
 
                 Label {
@@ -492,7 +492,7 @@ Item {
                     anchors.fill: parent
                     anchors.margins: 8
                     wrapMode: Text.Wrap
-                    color: "#e8c07d"
+                    color: App.colour.warn
                     font.pixelSize: 11
                     text: {
                         const names = transferDialog.plan.collisions || []
@@ -512,7 +512,7 @@ Item {
                 Layout.fillWidth: true
                 Label {
                     text: "If it already exists"
-                    color: "#8b93a7"
+                    color: App.colour.textMuted
                     font.pixelSize: 12
                 }
                 Picker {
@@ -534,7 +534,7 @@ Item {
                 Layout.fillWidth: true
                 visible: conflictBox.currentValue === "overwrite"
                 wrapMode: Text.Wrap
-                color: "#e5534b"
+                color: App.colour.bad
                 font.pixelSize: 11
                 text: "Overwriting replaces the file at the destination. There is no undo."
             }
@@ -581,7 +581,7 @@ Item {
         y: view.height - height - 40
         width: Math.min(560, view.width - 60)
         padding: 12
-        Material.background: "#1b2029"
+        Material.background: App.colour.panel
 
         Timer {
             running: errorPopup.opened

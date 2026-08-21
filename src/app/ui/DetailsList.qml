@@ -38,7 +38,7 @@ Item {
 
             Label {
                 text: "Details"
-                color: "#8b93a7"
+                color: App.colour.textMuted
                 font.pixelSize: App.smallTextSize
             }
             BusyIndicator {
@@ -84,7 +84,7 @@ Item {
                         width: parent.width - 20
                         x: 10
                         height: 1
-                        color: "#2a3240"
+                        color: App.colour.border
                     }
 
                     Row {
@@ -98,7 +98,7 @@ Item {
                         Label {
                             width: list.labelWidth
                             text: modelData.label
-                            color: "#6f7788"
+                            color: App.colour.textFaint
                             font.pixelSize: App.smallTextSize
                             wrapMode: Text.Wrap
                         }
@@ -113,7 +113,7 @@ Item {
                             readOnly: true
                             selectByMouse: true
                             wrapMode: TextEdit.Wrap
-                            color: "#d7dae0"
+                            color: App.colour.textSecondary
                             selectionColor: Material.accent
                             font.pixelSize: App.smallTextSize
                         }

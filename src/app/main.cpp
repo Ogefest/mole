@@ -65,7 +65,7 @@ int runDiagnostics(mole::AppController& controller, bool listPlugins)
 /// A cursor with nothing attached to it says nothing about how much is going, and
 /// the difference between dragging one file and dragging forty is exactly what
 /// somebody wants confirmed before they let go over another window.
-QPixmap countBadge(int count)
+QPixmap countBadge(int count, const mole::Palette::Tokens& colour)
 {
     const QString text = QStringLiteral("%1 items").arg(count);
     QFont font;
@@ -78,11 +78,14 @@ QPixmap countBadge(int count)
     badge.fill(Qt::transparent);
     QPainter painter(&badge);
     painter.setRenderHint(QPainter::Antialiasing);
-    painter.setBrush(QColor(0x2b, 0x35, 0x47));
-    painter.setPen(QColor(0x4a, 0x53, 0x64));
+    // From the palette rather than stated here: the badge is a piece of this
+    // window that happens to be painted with QPainter instead of by the scene
+    // graph, and it has no business having colours of its own. See ADR-0072.
+    painter.setBrush(colour.selection);
+    painter.setPen(colour.border);
     painter.drawRoundedRect(QRectF(0.5, 0.5, width - 1, height - 1), 3, 3);
     painter.setFont(font);
-    painter.setPen(QColor(0xe6, 0xeb, 0xf5));
+    painter.setPen(colour.text);
     painter.drawText(QRect(0, 0, width, height), Qt::AlignCenter, text);
     return badge;
 }
@@ -98,14 +101,15 @@ void installDragHook(mole::AppController& controller, QQuickWindow* window)
     if (!source || !window)
         return;
 
-    source->setStartHook([window](std::unique_ptr<QMimeData> mime, Qt::DropActions actions) {
+    const mole::Palette::Tokens colour = controller.colour()->tokens();
+    source->setStartHook([window, colour](std::unique_ptr<QMimeData> mime, Qt::DropActions actions) {
         const int count = static_cast<int>(mime->urls().size());
         // Parented to the window, which is also what the receiving application
         // is told the drag came from.
         auto* drag = new QDrag(window);
         drag->setMimeData(mime.release());
         if (count > 1)
-            drag->setPixmap(countBadge(count));
+            drag->setPixmap(countBadge(count, colour));
         // Blocks until the gesture ends, which is what QDrag is: the nested loop
         // is the drag.
         drag->exec(actions);

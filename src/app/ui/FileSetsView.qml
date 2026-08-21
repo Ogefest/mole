@@ -13,10 +13,6 @@ Item {
     objectName: "setsView"
     property var controller: null
 
-    readonly property color panelColor: "#1b2029"
-    readonly property color lineColor: "#2a3140"
-    readonly property color mutedColor: "#8b93a7"
-
     function focusActivePane() { body.forceActiveFocus() }
 
     // ---- the cursor over the members ---------------------------------------
@@ -123,7 +119,7 @@ Item {
                 Label {
                     objectName: "setSummary"
                     text: controller ? controller.summary : ""
-                    color: view.mutedColor
+                    color: App.colour.textMuted
                 }
 
                 Item { Layout.fillWidth: true }
@@ -148,7 +144,7 @@ Item {
             Label {
                 Layout.fillWidth: true
                 visible: !controller || controller.sets.length === 0
-                color: view.mutedColor
+                color: App.colour.textMuted
                 wrapMode: Text.WordWrap
                 text: "No sets yet.\n\n" +
                       "A set is a list of files you build by hand — from anywhere, across any " +
@@ -203,9 +199,9 @@ Item {
                     Layout.preferredWidth: 240
                     Layout.fillHeight: true
                     radius: 6
-                    color: view.panelColor
+                    color: App.colour.panel
                     border.width: 1
-                    border.color: view.lineColor
+                    border.color: App.colour.border
 
                     ListView {
                         objectName: "setList"
@@ -220,8 +216,8 @@ Item {
                             width: ListView.view.width
                             implicitHeight: 34
                             radius: 4
-                            color: modelData.current ? "#26303f"
-                                 : setMouse.containsMouse ? "#20262f" : "transparent"
+                            color: modelData.current ? App.colour.selection
+                                 : setMouse.containsMouse ? App.colour.hover : "transparent"
 
                             MouseArea {
                                 id: setMouse
@@ -250,7 +246,7 @@ Item {
                                         text: modelData.count + " items"
                                               + (modelData.driveCount > 1
                                                  ? " · " + modelData.driveCount + " drives" : "")
-                                        color: view.mutedColor
+                                        color: App.colour.textMuted
                                         font.pixelSize: 10
                                     }
                                 }
@@ -276,7 +272,7 @@ Item {
                     Label {
                         Layout.fillWidth: true
                         visible: controller && controller.memberCount === 0
-                        color: view.mutedColor
+                        color: App.colour.textMuted
                         wrapMode: Text.WordWrap
                         text: "This set is empty. Select files in a browser tab and use " +
                               "Tools ▸ Add to set."
@@ -303,8 +299,8 @@ Item {
                             required property int index
                             width: ListView.view.width
                             implicitHeight: 30
-                            color: memberRow.index === view.cursorRow ? "#26303f"
-                                 : memberMouse.containsMouse ? "#20262f" : "transparent"
+                            color: memberRow.index === view.cursorRow ? App.colour.selection
+                                 : memberMouse.containsMouse ? App.colour.hover : "transparent"
 
                             MouseArea {
                                 id: memberMouse
@@ -331,27 +327,27 @@ Item {
 
                                 Label {
                                     text: modelData.missing ? "✕" : (modelData.checked ? "✓" : "·")
-                                    color: modelData.missing ? "#e5534b"
-                                         : modelData.checked ? "#57ab5a" : "#4a5364"
+                                    color: modelData.missing ? App.colour.bad
+                                         : modelData.checked ? App.colour.ok : App.colour.textFaint
                                     font.pixelSize: 11
                                 }
                                 Label {
                                     text: modelData.name
                                     font.pixelSize: 12
-                                    color: modelData.missing ? "#e5534b" : "#d5dbe6"
+                                    color: modelData.missing ? App.colour.bad : App.colour.textSecondary
                                     Layout.preferredWidth: 220
                                     elide: Text.ElideMiddle
                                 }
                                 Label {
                                     Layout.fillWidth: true
                                     text: modelData.location
-                                    color: view.mutedColor
+                                    color: App.colour.textMuted
                                     font.pixelSize: 11
                                     elide: Text.ElideMiddle
                                 }
                                 Label {
                                     text: modelData.sizeText
-                                    color: view.mutedColor
+                                    color: App.colour.textMuted
                                     font.pixelSize: 11
                                 }
                                 ToolButton {
