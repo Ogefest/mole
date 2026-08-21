@@ -36,8 +36,21 @@ namespace {
             QStringLiteral("rpc_pipefs"),
             QStringLiteral("selinuxfs"),
             QStringLiteral("squashfs"),
+            // macOS has its own bookkeeping mounts, and they are not storage
+            // either. Harmless on Linux, which has no filesystem by these names.
+            QStringLiteral("devfs"),
+            QStringLiteral("map"),
         };
         return types;
+    }
+
+    /// "C:/" -> "C:". What a Windows user calls the drive when it has no label.
+    QString driveLetterOf(const QString& rootPath)
+    {
+        QString trimmed = rootPath;
+        while (trimmed.endsWith(QLatin1Char('/')) || trimmed.endsWith(QLatin1Char('\\')))
+            trimmed.chop(1);
+        return trimmed;
     }
 
 } // namespace
@@ -64,7 +77,7 @@ bool SystemVolumes::isNetworkFileSystem(const QString& fileSystemType)
 }
 
 bool SystemVolumes::isInteresting(
-    const QString& rootPath, const QString& fileSystemType, const QString& device)
+    const QString& rootPath, const QString& fileSystemType, const QString& device, HostPlatform platform)
 {
     if (rootPath.isEmpty())
         return false;
@@ -72,9 +85,17 @@ bool SystemVolumes::isInteresting(
         return false;
 
     // Every installed snap is a read-only loopback mount. Dozens of them, none
-    // of them anything a person calls a drive.
+    // of them anything a person calls a drive. Matches nothing off Linux.
     if (device.startsWith(QLatin1String("/dev/loop")))
         return false;
+
+    // On Windows there is nothing to filter. QStorageInfo reports C:/, D:/ and
+    // so on, every one of them a drive, and nothing there mounts a filesystem
+    // per package directory -- which is the problem the allowlist below exists
+    // to solve and Windows does not have. The old rule dropped every drive on
+    // the machine, because none of them is "/" and none begins with /media/.
+    if (platform == HostPlatform::Windows)
+        return true;
 
     if (rootPath == QLatin1String("/"))
         return true;
@@ -90,8 +111,16 @@ bool SystemVolumes::isInteresting(
     // and /boot/grub are all separate filesystems. They are real mounts and
     // utterly uninteresting, and no blocklist keeps up with them. An allowlist
     // of mount roots does.
-    for (const QLatin1String prefix :
-        { QLatin1String("/media/"), QLatin1String("/run/media/"), QLatin1String("/mnt/") }) {
+    //
+    // The conventions differ by system, which is the whole of this fault: all
+    // three of the Linux ones are Linux ones, and on macOS everything that is
+    // not the boot volume is under /Volumes/ -- so an external disk or a mounted
+    // image never appeared at all.
+    const QList<QLatin1String> prefixes = platform == HostPlatform::MacOS
+        ? QList<QLatin1String> { QLatin1String("/Volumes/") }
+        : QList<QLatin1String> { QLatin1String("/media/"), QLatin1String("/run/media/"),
+              QLatin1String("/mnt/") };
+    for (const QLatin1String prefix : prefixes) {
         if (rootPath.startsWith(prefix) && rootPath.size() > prefix.size())
             return true;
     }
@@ -99,8 +128,22 @@ bool SystemVolumes::isInteresting(
     return false;
 }
 
-QString SystemVolumes::displayName(const QString& rootPath, const QString& volumeName, const QString& device)
+QString SystemVolumes::displayName(
+    const QString& rootPath, const QString& volumeName, const QString& device, HostPlatform platform)
 {
+    if (platform == HostPlatform::Windows) {
+        // The label the disk carries, and the drive letter when it has none.
+        // Never "Root": there is no such thing on Windows, and calling C: that
+        // would be one row wrong on every machine.
+        return volumeName.isEmpty() ? driveLetterOf(rootPath) : volumeName;
+    }
+
+    // The disk's own name wins over the generic one. On macOS the boot volume
+    // is "/" and is called something -- "Macintosh HD" -- so answering "Root"
+    // there threw away the only name the user recognises.
+    if (platform == HostPlatform::MacOS && !volumeName.isEmpty())
+        return volumeName;
+
     if (rootPath == QLatin1String("/"))
         return QStringLiteral("Root");
 

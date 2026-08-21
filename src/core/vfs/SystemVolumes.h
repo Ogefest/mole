@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/platform/HostPlatform.h"
+
 #include <QList>
 #include <QString>
 
@@ -33,12 +35,21 @@ public:
 
     /// Whether a mount point is worth showing. Exposed so the rule itself can
     /// be tested without needing a machine that has such a mount.
-    static bool isInteresting(const QString& rootPath, const QString& fileSystemType, const QString& device);
+    ///
+    /// `platform` is an argument rather than an `#ifdef` for the same reason it
+    /// is one in VfsUri: the suite runs on Linux, so a compile-time switch puts
+    /// the Windows and macOS answers in branches no test has ever entered --
+    /// which is how this came to return nothing at all on Windows and one row
+    /// called "Root" on macOS. See ADR-0068.
+    static bool isInteresting(const QString& rootPath, const QString& fileSystemType, const QString& device,
+        HostPlatform platform = hostPlatform());
 
     static bool isNetworkFileSystem(const QString& fileSystemType);
 
-    /// "Root", "Data (sdb1)", "usb-stick" -- never an empty string.
-    static QString displayName(const QString& rootPath, const QString& volumeName, const QString& device);
+    /// "Root", "Data (sdb1)", "usb-stick", "C:" -- never an empty string, and
+    /// never "Root" for something that is not the system's own root.
+    static QString displayName(const QString& rootPath, const QString& volumeName, const QString& device,
+        HostPlatform platform = hostPlatform());
 };
 
 } // namespace mole

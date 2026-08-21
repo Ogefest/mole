@@ -137,6 +137,7 @@ set_target_properties(compare-shots PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_
 
 # --- core: no GUI, no plugins -----------------------------------------------
 mole_add_test(tst_VfsUri            SOURCES core/tst_VfsUri.cpp)
+mole_add_test(tst_SystemVolumes     SOURCES core/tst_SystemVolumes.cpp)
 mole_add_test(tst_LocalFileSystem   SOURCES core/tst_LocalFileSystem.cpp)
 
 # What a process killed outright leaves behind. It starts a second copy of
