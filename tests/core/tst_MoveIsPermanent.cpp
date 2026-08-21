@@ -97,6 +97,8 @@ private slots:
     void aDirectoryMovedIntoItsOwnSubdirectoryIsRefused();
     void aDirectoryCopiedIntoItselfIsRefused();
     void aDirectoryMovedOntoItselfIsRefused();
+    void aDestinationThatDiffersOnlyInCaseIsStillInsideTheSource();
+    void onACaseSensitiveVolumeTheSamePairIsTwoPlaces();
 
     void movingASymlinkDoesNotFollowIt();
 
@@ -375,6 +377,51 @@ void TestMoveIsPermanent::aDirectoryMovedIntoItsOwnSubdirectoryIsRefused()
     // Everything is exactly where it was.
     QVERIFY(m_memory->stat(VfsUri::fromString(QStringLiteral("mem:///work/notes.txt"))).ok());
     QVERIFY(m_memory->stat(VfsUri::fromString(QStringLiteral("mem:///work/inner/deep.txt"))).ok());
+}
+
+void TestMoveIsPermanent::aDestinationThatDiffersOnlyInCaseIsStillInsideTheSource()
+{
+    // The same directory-eating move as above, reached by typing the
+    // destination with a different capitalisation. On an NTFS volume, and on a
+    // default APFS one, /work and /WORK are one directory -- so comparing the
+    // two spellings exactly let the destination walk straight past the guard,
+    // and the move then deleted the source with the only copy of everything
+    // underneath it.
+    //
+    // The volume is what knows, so the guard asks the destination backend
+    // rather than the uri's scheme. Here that is a MemoryFileSystem told to
+    // answer the way such a volume does, which is why this needs no real one.
+    m_memory->setCaseSensitivity(Qt::CaseInsensitive);
+    m_memory->addFile(QStringLiteral("/work/notes.txt"), QByteArray("keep me"));
+    m_memory->addFile(QStringLiteral("/work/inner/deep.txt"), QByteArray("me too"));
+
+    // Two mounts over the same tree, as in the test above: one drive would take
+    // the rename shortcut and never reach the plan the guard lives in.
+    auto second = std::make_shared<FaultyFileSystem>(m_memory);
+    TransferTask* task = run(moveOf(m_memory, VfsUri::fromString(QStringLiteral("mem:///work")), second,
+        VfsUri::fromString(QStringLiteral("mem:///WORK/inner"))));
+    QVERIFY(task != nullptr);
+    QCOMPARE(task->failedCount(), 1);
+    QVERIFY2(
+        task->failures().first().contains(QStringLiteral("inside")), qPrintable(task->failures().first()));
+
+    QVERIFY(m_memory->stat(VfsUri::fromString(QStringLiteral("mem:///work/notes.txt"))).ok());
+    QVERIFY(m_memory->stat(VfsUri::fromString(QStringLiteral("mem:///work/inner/deep.txt"))).ok());
+}
+
+void TestMoveIsPermanent::onACaseSensitiveVolumeTheSamePairIsTwoPlaces()
+{
+    // The other half, and it matters as much: /work and /WORK really are two
+    // directories on ext4 and in a bucket, so the guard must not start refusing
+    // a move it has always allowed.
+    m_memory->addFile(QStringLiteral("/work/notes.txt"), QByteArray("keep me"));
+
+    auto second = std::make_shared<FaultyFileSystem>(m_memory);
+    TransferTask* task = run(moveOf(m_memory, VfsUri::fromString(QStringLiteral("mem:///work")), second,
+        VfsUri::fromString(QStringLiteral("mem:///WORK/inner"))));
+    QVERIFY(task != nullptr);
+    QVERIFY2(task->failures().isEmpty(), qPrintable(task->failures().join(QStringLiteral("; "))));
+    QVERIFY(m_memory->stat(VfsUri::fromString(QStringLiteral("mem:///WORK/inner/work/notes.txt"))).ok());
 }
 
 void TestMoveIsPermanent::aDirectoryCopiedIntoItselfIsRefused()

@@ -21,6 +21,7 @@ public:
 
     QString scheme() const override { return QStringLiteral("mem"); }
     VfsCapabilities capabilities() const override;
+    Qt::CaseSensitivity pathCaseSensitivity() const override { return m_caseSensitivity; }
 
     Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) override;
     Result<FileEntry> stat(const VfsUri& target) override;
@@ -39,6 +40,11 @@ public:
     /// nothing can tell apart from one changed a moment ago, and an incremental
     /// scan is entirely about that difference.
     void setModified(const QString& path, const QDateTime& when);
+
+    /// Answers like a volume that does not distinguish case -- NTFS, or a
+    /// default APFS one. This is how a rule that only bites on such a volume is
+    /// held on any machine, without needing one.
+    void setCaseSensitivity(Qt::CaseSensitivity sensitivity) { m_caseSensitivity = sensitivity; }
 
     /// Makes every operation touching `path` fail with `error`. Pass
     /// VfsError::None to clear. This is how the tests cover "the NAS went away
@@ -84,6 +90,7 @@ private:
     Result<void> faultFor(const QString& path) const;
 
     mutable QMutex m_mutex;
+    Qt::CaseSensitivity m_caseSensitivity = Qt::CaseSensitive;
     QHash<QString, Node> m_nodes;
     QHash<QString, VfsError::Code> m_faults;
     int m_listDelayMs = 0;

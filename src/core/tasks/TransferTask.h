@@ -89,7 +89,8 @@ private:
 
     /// True when `inner` is `outer` or sits underneath it, judged by uri rather
     /// than by which backend object was handed in.
-    static bool isInsideOrEqual(const VfsUri& inner, const VfsUri& outer);
+    static bool isInsideOrEqual(
+        const VfsUri& inner, const VfsUri& outer, Qt::CaseSensitivity sensitivity = Qt::CaseSensitive);
 
     /// Weighs every copied file on the destination and fails the ones that do
     /// not match what was sent. One listing per directory, not one stat per

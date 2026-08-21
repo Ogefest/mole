@@ -184,6 +184,13 @@ public:
 
     QString scheme() const override;
     VfsCapabilities capabilities() const override;
+    /// The volume underneath decides this, not the wrapper. A decorator that
+    /// answered for itself would quietly turn a case-insensitive volume back
+    /// into a case-sensitive one at exactly the guards that care.
+    Qt::CaseSensitivity pathCaseSensitivity() const override
+    {
+        return m_inner ? m_inner->pathCaseSensitivity() : Qt::CaseSensitive;
+    }
     Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) override;
     Result<FileEntry> stat(const VfsUri& target) override;
     Result<void> makeDirectory(const VfsUri& target) override;

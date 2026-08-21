@@ -13,6 +13,16 @@ public:
     QString scheme() const override { return QStringLiteral("file"); }
     VfsCapabilities capabilities() const override;
 
+    /// What the platform does, which is what the volume usually does: NTFS and a
+    /// default APFS volume fold case, ext4 does not. A volume that disagrees with
+    /// its platform -- a case-sensitive APFS one, a FAT stick on Linux -- is not
+    /// asked, because Qt has no portable way to ask it and guessing wrong in the
+    /// permissive direction is what loses a file.
+    Qt::CaseSensitivity pathCaseSensitivity() const override
+    {
+        return VfsUri::caseSensitivityFor(QStringLiteral("file"));
+    }
+
     Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) override;
     Result<SpaceInfo> space(const VfsUri& target) override;
     Result<AccessInfo> access(const VfsUri& target) override;

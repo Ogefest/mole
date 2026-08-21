@@ -71,6 +71,18 @@ namespace {
         return QLatin1Char('/') + out.join(QLatin1Char('/'));
     }
 
+    /// One spelling of a string for a volume that does not distinguish case.
+    ///
+    /// Folded rather than compared with Qt::CaseInsensitive, and used for both
+    /// the comparison and the hash, so the two agree by construction. A hash
+    /// that folds differently from the equality beside it is how a QHash loses
+    /// an entry it is still holding, and the disagreement would only show on
+    /// characters nobody thinks to test.
+    QString foldedIf(const QString& text, Qt::CaseSensitivity sensitivity)
+    {
+        return sensitivity == Qt::CaseSensitive ? text : text.toCaseFolded();
+    }
+
     /// '/' between segments, '\' where the platform writes one.
     QString withNativeSeparators(QString path, HostPlatform platform)
     {
@@ -180,16 +192,33 @@ VfsUri VfsUri::parent() const
     return VfsUri(m_scheme, m_authority, slash <= 0 ? QStringLiteral("/") : m_path.left(slash));
 }
 
+Qt::CaseSensitivity VfsUri::caseSensitivityFor(const QString& scheme, HostPlatform platform)
+{
+    if (scheme != QLatin1String("file"))
+        return Qt::CaseSensitive;
+    return platform == HostPlatform::Posix ? Qt::CaseSensitive : Qt::CaseInsensitive;
+}
+
 bool VfsUri::isWithin(const VfsUri& other) const
 {
-    if (m_scheme != other.m_scheme || m_authority != other.m_authority)
+    return isWithin(other, caseSensitivityFor(m_scheme));
+}
+
+bool VfsUri::isWithin(const VfsUri& other, Qt::CaseSensitivity sensitivity) const
+{
+    if (m_scheme != other.m_scheme
+        || foldedIf(m_authority, sensitivity) != foldedIf(other.m_authority, sensitivity))
         return false;
+
+    const QString mine = foldedIf(m_path, sensitivity);
+    const QString theirs = foldedIf(other.m_path, sensitivity);
+
     // "/" contains everything on this scheme and authority. A drive root and a
     // share root are roots too, but they contain only themselves and what is
     // under them -- C:\ is not above D:\, and asking isRoot() here said it was.
-    if (other.m_path == QLatin1String("/") || m_path == other.m_path)
+    if (theirs == QLatin1String("/") || mine == theirs)
         return true;
-    return m_path.startsWith(other.m_path + QLatin1Char('/'));
+    return mine.startsWith(theirs + QLatin1Char('/'));
 }
 
 QString VfsUri::toString() const
@@ -226,14 +255,43 @@ QString VfsUri::toLocalPath(HostPlatform platform) const
     return withNativeSeparators(native.size() == 2 ? native + QLatin1Char('/') : native, platform);
 }
 
+bool VfsUri::equals(const VfsUri& other) const
+{
+    return equals(other, caseSensitivityFor(m_scheme));
+}
+
+bool VfsUri::equals(const VfsUri& other, Qt::CaseSensitivity sensitivity) const
+{
+    return m_scheme == other.m_scheme
+        && foldedIf(m_authority, sensitivity) == foldedIf(other.m_authority, sensitivity)
+        && foldedIf(m_path, sensitivity) == foldedIf(other.m_path, sensitivity);
+}
+
+size_t VfsUri::hash(size_t seed) const
+{
+    return hash(seed, caseSensitivityFor(m_scheme));
+}
+
+size_t VfsUri::hash(size_t seed, Qt::CaseSensitivity sensitivity) const
+{
+    return qHashMulti(seed, m_scheme, foldedIf(m_authority, sensitivity), foldedIf(m_path, sensitivity));
+}
+
+QString VfsUri::canonicalKey() const
+{
+    const Qt::CaseSensitivity sensitivity = caseSensitivityFor(m_scheme);
+    return m_scheme + QLatin1String("://") + foldedIf(m_authority, sensitivity)
+        + foldedIf(m_path, sensitivity);
+}
+
 bool VfsUri::operator==(const VfsUri& other) const
 {
-    return m_scheme == other.m_scheme && m_authority == other.m_authority && m_path == other.m_path;
+    return equals(other);
 }
 
 size_t qHash(const VfsUri& uri, size_t seed) noexcept
 {
-    return qHashMulti(seed, uri.scheme(), uri.authority(), uri.path());
+    return uri.hash(seed);
 }
 
 } // namespace mole

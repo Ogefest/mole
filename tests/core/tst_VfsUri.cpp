@@ -35,6 +35,10 @@ private slots:
     void nativeSpellingIsThePlatformsOwn();
     void aShareHasNoPosixNativePath();
 
+    void caseFoldingIsAnArgumentAndFoldsEverything();
+    void caseSensitivityFollowsTheSchemeAndThePlatform();
+    void aCanonicalKeyIsOneSpellingPerNode();
+
     void localPathRoundTrip();
     void nonLocalHasNoLocalPath();
     void equalityAndHashing();
@@ -296,6 +300,73 @@ void TestVfsUri::aShareHasNoPosixNativePath()
     const VfsUri share = VfsUri::fromString(QStringLiteral("file://server/share/a.txt"));
     QVERIFY(share.toLocalPath(HostPlatform::Posix).isEmpty());
     QVERIFY(share.toLocalPath(HostPlatform::MacOS).isEmpty());
+}
+
+void TestVfsUri::caseFoldingIsAnArgumentAndFoldsEverything()
+{
+    const VfsUri upper = VfsUri::fromString(QStringLiteral("file:///C:/Users/Ann"));
+    const VfsUri lower = VfsUri::fromString(QStringLiteral("file:///c:/users/ann"));
+
+    // With folding on -- an NTFS volume, or a default APFS one -- these are one
+    // directory, and every guard that asks "are these the same node" has to say
+    // so. Asserted on every platform, because the sensitivity is an argument.
+    QVERIFY(upper.equals(lower, Qt::CaseInsensitive));
+    QVERIFY(lower.equals(upper, Qt::CaseInsensitive));
+    QCOMPARE(upper.hash(0, Qt::CaseInsensitive), lower.hash(0, Qt::CaseInsensitive));
+
+    // Containment has to fold the same way, or equality and containment
+    // disagree about the same pair.
+    const VfsUri deep = VfsUri::fromString(QStringLiteral("file:///C:/USERS/ann/notes.txt"));
+    QVERIFY(deep.isWithin(lower, Qt::CaseInsensitive));
+    QVERIFY(!deep.isWithin(lower, Qt::CaseSensitive));
+
+    // With it off, none of it holds -- which is an ext4 disk, and an S3 bucket
+    // wherever it is mounted.
+    QVERIFY(!upper.equals(lower, Qt::CaseSensitive));
+    QVERIFY(upper.hash(0, Qt::CaseSensitive) != lower.hash(0, Qt::CaseSensitive));
+
+    // A different name is still a different name, folding or not.
+    const VfsUri other = VfsUri::fromString(QStringLiteral("file:///C:/Users/Bob"));
+    QVERIFY(!upper.equals(other, Qt::CaseInsensitive));
+    QVERIFY(!other.isWithin(lower, Qt::CaseInsensitive));
+
+    // The authority folds too: two spellings of one server are one server.
+    QVERIFY(VfsUri::fromString(QStringLiteral("file://SERVER/Share/a"))
+                .equals(VfsUri::fromString(QStringLiteral("file://server/share/a")), Qt::CaseInsensitive));
+}
+
+void TestVfsUri::caseSensitivityFollowsTheSchemeAndThePlatform()
+{
+    const QString local = QStringLiteral("file");
+
+    QCOMPARE(VfsUri::caseSensitivityFor(local, HostPlatform::Posix), Qt::CaseSensitive);
+    QCOMPARE(VfsUri::caseSensitivityFor(local, HostPlatform::Windows), Qt::CaseInsensitive);
+    QCOMPARE(VfsUri::caseSensitivityFor(local, HostPlatform::MacOS), Qt::CaseInsensitive);
+
+    // A bucket is case-sensitive wherever the client happens to be running, and
+    // so is an SFTP server. Folding those because the machine folds would make
+    // two real objects into one.
+    for (const QString& remote :
+        { QStringLiteral("s3"), QStringLiteral("sftp"), QStringLiteral("webdav"), QStringLiteral("mem") }) {
+        QCOMPARE(VfsUri::caseSensitivityFor(remote, HostPlatform::Windows), Qt::CaseSensitive);
+        QCOMPARE(VfsUri::caseSensitivityFor(remote, HostPlatform::Posix), Qt::CaseSensitive);
+    }
+}
+
+void TestVfsUri::aCanonicalKeyIsOneSpellingPerNode()
+{
+    // Anything that keys by the text of a uri -- the analysis store hashes one
+    // to name its folder -- has to agree with equals(), or one folder reached
+    // two ways grows two stores that never agree.
+    const VfsUri a = VfsUri::fromString(QStringLiteral("s3://bucket/Reports"));
+    const VfsUri b = VfsUri::fromString(QStringLiteral("s3://bucket/reports"));
+    QVERIFY(!a.equals(b));
+    QVERIFY(a.canonicalKey() != b.canonicalKey());
+
+    const VfsUri c = VfsUri::fromString(QStringLiteral("file:///home/./user/"));
+    const VfsUri d = VfsUri::fromString(QStringLiteral("file:///home/user"));
+    QVERIFY(c.equals(d));
+    QCOMPARE(c.canonicalKey(), d.canonicalKey());
 }
 
 void TestVfsUri::localPathRoundTrip()

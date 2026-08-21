@@ -1,5 +1,7 @@
 #include "core/analysis/AnalysisStore.h"
 
+#include "core/vfs/VfsUri.h"
+
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
@@ -32,8 +34,14 @@ QString AnalysisStore::folderNameFor(const QString& rootUri)
     // A hash rather than the path: uris contain slashes and colons, can be
     // longer than a filename may be, and two different drives can hold the
     // same path. A readable prefix keeps the directory browsable by hand.
+    //
+    // Hashed from the canonical spelling, not the text as typed. On a volume
+    // that does not distinguish case, one folder reached two ways is one folder,
+    // and hashing the spelling grew it two stores that never agreed.
+    const VfsUri parsed = VfsUri::fromString(rootUri);
+    const QString key = parsed.isValid() ? parsed.canonicalKey() : rootUri;
     const QByteArray digest
-        = QCryptographicHash::hash(rootUri.toUtf8(), QCryptographicHash::Sha1).toHex().left(12);
+        = QCryptographicHash::hash(key.toUtf8(), QCryptographicHash::Sha1).toHex().left(12);
 
     QString readable = rootUri;
     readable.remove(QRegularExpression(QStringLiteral("^[a-z]+://")));

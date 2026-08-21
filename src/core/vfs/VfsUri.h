@@ -5,6 +5,7 @@
 #include <QHashFunctions>
 #include <QMetaType>
 #include <QString>
+#include <Qt>
 
 namespace mole {
 
@@ -67,6 +68,34 @@ public:
 
     /// True when this uri is `other` or lives underneath it.
     bool isWithin(const VfsUri& other) const;
+    bool isWithin(const VfsUri& other, Qt::CaseSensitivity sensitivity) const;
+
+    /// Whether two spellings name the same node.
+    ///
+    /// Case folding is a property of the volume, not of this class: S3 is
+    /// case-sensitive, SFTP usually is, an NTFS volume is not, and an APFS one
+    /// can be either. So it is an argument, and the one-argument form asks
+    /// caseSensitivityFor() for the answer that fits this uri's scheme on this
+    /// platform. A caller that knows better -- one holding the backend, which is
+    /// the only thing that really knows -- passes it in.
+    bool equals(const VfsUri& other) const;
+    bool equals(const VfsUri& other, Qt::CaseSensitivity sensitivity) const;
+
+    /// Hashes to match equals() at the same sensitivity. Folding one and not the
+    /// other is what makes a QHash lose an entry it is holding.
+    size_t hash(size_t seed) const;
+    size_t hash(size_t seed, Qt::CaseSensitivity sensitivity) const;
+
+    /// One spelling per node, for anything that keys by the text of a uri rather
+    /// than by the value. Two uris that are equal() have the same key.
+    QString canonicalKey() const;
+
+    /// What a scheme's paths do about case on this platform, in the absence of a
+    /// backend to ask. A local path follows the platform -- NTFS and a default
+    /// APFS volume fold, ext4 does not -- and every remote scheme is
+    /// case-sensitive, because the protocols are, wherever the client runs.
+    static Qt::CaseSensitivity caseSensitivityFor(
+        const QString& scheme, HostPlatform platform = hostPlatform());
 
     QString toString() const;
     /// Native path for file:// uris, empty string for anything else.

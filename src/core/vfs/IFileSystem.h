@@ -37,6 +37,19 @@ public:
     /// What this backend actually supports. Callers must check before acting.
     virtual VfsCapabilities capabilities() const = 0;
 
+    /// Whether two spellings that differ only in case are two nodes here.
+    ///
+    /// The volume is the only thing that really knows. S3 is case-sensitive and
+    /// so is an ext4 disk; an NTFS volume is not, and an APFS one can be either.
+    /// VfsUri can guess from the scheme and the platform, and a caller holding a
+    /// backend should ask the backend instead -- which is what the guard against
+    /// moving a directory into itself does, since getting that wrong deletes the
+    /// only copy of everything underneath it.
+    ///
+    /// Case-sensitive by default: it is what every protocol backend is, and it
+    /// is the answer that refuses rather than assumes.
+    virtual Qt::CaseSensitivity pathCaseSensitivity() const { return Qt::CaseSensitive; }
+
     /// Directory listing. Must poll `cancel` on slow backends.
     virtual Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) = 0;
 

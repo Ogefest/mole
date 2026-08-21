@@ -34,19 +34,18 @@ void TransferTask::recordFailure(const VfsUri& uri, const VfsError& error)
     m_failures.append(QStringLiteral("%1: %2").arg(uri.fileName(), error.message));
 }
 
-bool TransferTask::isInsideOrEqual(const VfsUri& inner, const VfsUri& outer)
+bool TransferTask::isInsideOrEqual(const VfsUri& inner, const VfsUri& outer, Qt::CaseSensitivity sensitivity)
 {
     // By uri rather than by backend pointer, deliberately. Two mounts of the
     // same drive are two objects -- a bookmarked folder and the disk it lives on
     // are both mounted -- and nothing above here knows they are the same place.
     // The uri is what does know.
-    if (inner.scheme() != outer.scheme() || inner.authority() != outer.authority())
-        return false;
-    if (inner.path() == outer.path())
-        return true;
-    const QString prefix
-        = outer.path().endsWith(QLatin1Char('/')) ? outer.path() : outer.path() + QLatin1Char('/');
-    return inner.path().startsWith(prefix);
+    //
+    // The sensitivity comes from the destination backend, not from the uri's
+    // scheme, because the volume is the only thing that really knows. On an NTFS
+    // or a default APFS volume, comparing the two spellings exactly let a
+    // different capitalisation walk straight through the guard below.
+    return inner.isWithin(outer, sensitivity);
 }
 
 bool TransferTask::planJobs(QList<Job>& jobsOut)
@@ -72,7 +71,9 @@ bool TransferTask::planJobs(QList<Job>& jobsOut)
         // plan is built before a byte moves, so the walk never meets what the
         // copy is writing -- but a *move* then deletes the source, and the only
         // copy of everything that was in it is now underneath it. See ADR-0029.
-        if (stat.value().isDir && isInsideOrEqual(m_request.targetDirectory, source)) {
+        if (stat.value().isDir
+            && isInsideOrEqual(
+                m_request.targetDirectory, source, m_request.targetFileSystem->pathCaseSensitivity())) {
             recordFailure(source,
                 VfsError::make(VfsError::NotSupported,
                     QStringLiteral("%1 cannot be put inside itself: the destination is inside it")
