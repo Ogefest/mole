@@ -11,6 +11,7 @@
 #include "plugins/builtin/previews/VideoPreview.h"
 #include "support/FakePlugin.h"
 #include "support/FaultyFileSystem.h"
+#include "support/OfferingFileSystem.h"
 #include "support/TableFixtures.h"
 #include "support/TestSupport.h"
 #include "support/ZipFixtures.h"
@@ -279,8 +280,21 @@ private slots:
     void aVideoThatCannotBeDecodedSaysSoWhereEveryViewerSaysIt();
     void theSoundIsOneSettingForEveryVideo();
 
+    // ---- looking at an earlier state of the file --------------------------
+    void aPreviewShowsTheFileAsItIsAndSaysSo();
+    void aDriveWithNothingOlderOffersNoChoiceAtAll();
+    void theVersionsAreNotFetchedUntilSomebodyAsksForThem();
+    void movingToAnEarlierVersionShowsThatVersionsContents();
+    void theScreenSaysWhichVersionIsOnThroughout();
+    void everyViewerWorksOnAnEarlierVersion();
+    void goingBackToTheCurrentFileWorks();
+    void anEarlierVersionIsReadInPartsLikeAnyOtherFile();
+
 private:
     IPreviewProvider* providerFor(const QString& relativePath) const;
+    /// A preview on a drive that keeps earlier states of its files, showing
+    /// `name`, with what else there is already known.
+    PreviewTabController* previewOnOfferingDrive(const QString& name);
     PreviewTabController* openPreview(const QString& relativePath);
     /// Registers the backend that can open an archive, or answers false where
     /// this build has none -- which is itself one of the cases under test.
@@ -296,6 +310,7 @@ private:
     PrivateProfile m_profile;
     std::unique_ptr<TempTree> m_tree;
     std::unique_ptr<AppController> m_app;
+    std::shared_ptr<OfferingFileSystem> m_offering;
 };
 
 void TestPreview::initTestCase()
@@ -365,6 +380,40 @@ int TestPreview::internalMounts() const
             ++internal;
     }
     return internal;
+}
+
+PreviewTabController* TestPreview::previewOnOfferingDrive(const QString& name)
+{
+    m_offering = std::make_shared<OfferingFileSystem>();
+    const QString path = QLatin1Char('/') + name;
+    m_offering->memory()->addFile(path, QByteArray("the third draft"));
+    m_offering->addVersion(path, QStringLiteral("v1"), QByteArray("the first draft"));
+    m_offering->addVersion(path, QStringLiteral("v2"), QByteArray("the second draft"));
+    // A file this drive has nothing at all for, which is what most files are.
+    m_offering->memory()->addFile(QStringLiteral("/plain.txt"), QByteArray("nothing older than this"));
+    m_offering->setLinkable(QStringLiteral("/plain.txt"), false);
+    // And one whose earlier state is far too big to fetch to show a page of.
+    m_offering->memory()->addFile(QStringLiteral("/big.txt"), QByteArray("small now"));
+    m_offering->addVersion(
+        QStringLiteral("/big.txt"), QStringLiteral("v1"), QByteArray(4 * 1024 * 1024, 'x'));
+
+    Mount mount;
+    mount.id = QStringLiteral("offering");
+    mount.displayName = QStringLiteral("offering");
+    mount.root = VfsUri::fromString(QStringLiteral("mem://offering/"));
+    mount.fileSystem = m_offering;
+    if (m_app->services().vfs->addMount(mount).isEmpty())
+        return nullptr;
+
+    m_app->previewFile(QStringLiteral("mem://offering/") + name);
+    auto* preview = qobject_cast<PreviewTabController*>(m_app->tabs()->currentController());
+    if (!preview)
+        return nullptr;
+    waitFor([preview] { return preview->viewer() != nullptr || !preview->isIdentifying(); });
+    // What else there is of this file is asked for on a worker, so the chooser
+    // knows whether there is anything to choose before anybody opens it.
+    waitFor([preview] { return preview->hasOtherVersions(); });
+    return preview;
 }
 
 IPreviewProvider* TestPreview::providerFor(const QString& relativePath) const
@@ -2698,6 +2747,172 @@ void TestPreview::theSoundIsOneSettingForEveryVideo()
     auto* last = qobject_cast<VideoPreviewController*>(openPreview(QStringLiteral("second.mp4"))->viewer());
     QVERIFY(last);
     QVERIFY(!last->isMuted());
+}
+
+// ------------------------------------------- an earlier state of the file
+
+/// Where a preview starts, and it says so. The label is not conditional on there
+/// being anything else to show: a preview showing an earlier version while
+/// looking like the file itself is the one failure this subject has to avoid.
+void TestPreview::aPreviewShowsTheFileAsItIsAndSaysSo()
+{
+    PreviewTabController* preview = previewOnOfferingDrive(QStringLiteral("report.txt"));
+    QVERIFY(preview);
+
+    QVERIFY(preview->showingVersion().isEmpty());
+    auto* text = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY(text);
+    QVERIFY(waitFor([text] { return text->text().contains(QStringLiteral("third")); }));
+}
+
+void TestPreview::aDriveWithNothingOlderOffersNoChoiceAtAll()
+{
+    PreviewTabController* preview = previewOnOfferingDrive(QStringLiteral("report.txt"));
+    QVERIFY(preview);
+
+    preview->open(QStringLiteral("mem://offering/plain.txt"));
+    waitFor([preview] { return preview->viewer() != nullptr || !preview->isIdentifying(); });
+    drainEvents();
+    QVERIFY2(!preview->hasOtherVersions(), "a file with nothing older must offer no chooser");
+    QVERIFY(preview->otherVersions().isEmpty());
+}
+
+/// Knowing there is something else costs one listing call; fetching the list is
+/// a call into storage, and opening a preview must not make one nobody asked for.
+void TestPreview::theVersionsAreNotFetchedUntilSomebodyAsksForThem()
+{
+    PreviewTabController* preview = previewOnOfferingDrive(QStringLiteral("report.txt"));
+    QVERIFY(preview);
+
+    QVERIFY(preview->hasOtherVersions());
+    QCOMPARE(m_offering->invokeCallCount(), 0);
+    QVERIFY(preview->otherVersions().isEmpty());
+
+    preview->requestVersions();
+    QVERIFY(waitFor([preview] { return preview->otherVersions().size() == 2; }));
+    QCOMPARE(m_offering->invokeCallCount(), 1);
+
+    // Asking twice does not ask the drive twice.
+    preview->requestVersions();
+    drainEvents();
+    QCOMPARE(m_offering->invokeCallCount(), 1);
+}
+
+void TestPreview::movingToAnEarlierVersionShowsThatVersionsContents()
+{
+    PreviewTabController* preview = previewOnOfferingDrive(QStringLiteral("report.txt"));
+    QVERIFY(preview);
+    preview->requestVersions();
+    QVERIFY(waitFor([preview] { return preview->otherVersions().size() == 2; }));
+
+    const QString first = preview->otherVersions().first().toMap().value(QStringLiteral("uri")).toString();
+    preview->showVersion(first);
+    waitFor([preview] { return preview->viewer() != nullptr || !preview->isIdentifying(); });
+
+    auto* text = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY2(text, "an earlier version is an ordinary file and reaches the same viewer");
+    QVERIFY(waitFor([text] { return text->text().contains(QStringLiteral("first")); }));
+    QVERIFY2(!text->text().contains(QStringLiteral("third")),
+        "the current file's contents shown as an earlier version is the failure this avoids");
+}
+
+void TestPreview::theScreenSaysWhichVersionIsOnThroughout()
+{
+    PreviewTabController* preview = previewOnOfferingDrive(QStringLiteral("report.txt"));
+    QVERIFY(preview);
+    QCOMPARE(preview->showingVersion(), QString());
+
+    preview->requestVersions();
+    QVERIFY(waitFor([preview] { return preview->otherVersions().size() == 2; }));
+
+    const QVariantList versions = preview->otherVersions();
+    for (const QVariant& entry : versions) {
+        const QVariantMap version = entry.toMap();
+        preview->showVersion(version.value(QStringLiteral("uri")).toString());
+        QCOMPARE(preview->showingVersion(), version.value(QStringLiteral("label")).toString());
+    }
+}
+
+/// The tab goes on being about the file it is about, so there is a way back and
+/// the arrows still step through the folder.
+void TestPreview::goingBackToTheCurrentFileWorks()
+{
+    PreviewTabController* preview = previewOnOfferingDrive(QStringLiteral("report.txt"));
+    QVERIFY(preview);
+    preview->requestVersions();
+    QVERIFY(waitFor([preview] { return preview->otherVersions().size() == 2; }));
+
+    const QString earlier = preview->otherVersions().first().toMap().value(QStringLiteral("uri")).toString();
+    preview->showVersion(earlier);
+    QCOMPARE(preview->showingVersion(), QStringLiteral("v1"));
+    QCOMPARE(preview->currentUri(), QStringLiteral("mem://offering/report.txt"));
+
+    preview->showVersion(QString());
+    waitFor([preview] { return preview->viewer() != nullptr || !preview->isIdentifying(); });
+    QVERIFY(preview->showingVersion().isEmpty());
+
+    auto* text = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY(text);
+    QVERIFY(waitFor([text] { return text->text().contains(QStringLiteral("third")); }));
+}
+
+/// Every viewer works on one, because it is a uri and nothing below the preview
+/// learns anything new. A table is the one worth saying it about: it reads with
+/// its own parser through the same drive.
+void TestPreview::everyViewerWorksOnAnEarlierVersion()
+{
+    m_offering = std::make_shared<OfferingFileSystem>();
+    m_offering->memory()->addFile(QStringLiteral("/prices.csv"), QByteArray("name,price\nnow,3\n"));
+    m_offering->addVersion(
+        QStringLiteral("/prices.csv"), QStringLiteral("v1"), QByteArray("name,price\nthen,1\n"));
+
+    Mount mount;
+    mount.id = QStringLiteral("offering");
+    mount.displayName = QStringLiteral("offering");
+    mount.root = VfsUri::fromString(QStringLiteral("mem://offering/"));
+    mount.fileSystem = m_offering;
+    QVERIFY(!m_app->services().vfs->addMount(mount).isEmpty());
+
+    m_app->previewFile(QStringLiteral("mem://offering/prices.csv"));
+    auto* preview = qobject_cast<PreviewTabController*>(m_app->tabs()->currentController());
+    QVERIFY(preview);
+    waitFor([preview] { return preview->viewer() != nullptr || !preview->isIdentifying(); });
+    const QString viewerNow = preview->viewerName();
+
+    QVERIFY(waitFor([preview] { return preview->hasOtherVersions(); }));
+    preview->requestVersions();
+    QVERIFY(waitFor([preview] { return preview->otherVersions().size() == 1; }));
+
+    preview->showVersion(preview->otherVersions().first().toMap().value(QStringLiteral("uri")).toString());
+    waitFor([preview] { return preview->viewer() != nullptr || !preview->isIdentifying(); });
+
+    QCOMPARE(preview->viewerName(), viewerNow);
+    QVERIFY2(preview->viewer(), "the same viewer has to build for an earlier version");
+}
+
+/// A remote drive must not download a whole earlier version to show the first
+/// page of it, any more than it does for the current one.
+void TestPreview::anEarlierVersionIsReadInPartsLikeAnyOtherFile()
+{
+    PreviewTabController* preview = previewOnOfferingDrive(QStringLiteral("report.txt"));
+    QVERIFY(preview);
+
+    preview->open(QStringLiteral("mem://offering/big.txt"));
+    waitFor([preview] { return preview->viewer() != nullptr || !preview->isIdentifying(); });
+    QVERIFY(waitFor([preview] { return preview->hasOtherVersions(); }));
+    preview->requestVersions();
+    QVERIFY(waitFor([preview] { return preview->otherVersions().size() == 1; }));
+
+    preview->showVersion(preview->otherVersions().first().toMap().value(QStringLiteral("uri")).toString());
+    waitFor([preview] { return preview->viewer() != nullptr || !preview->isIdentifying(); });
+
+    auto* text = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY(text);
+    QVERIFY(waitFor([text] { return text->fileSize() > 0; }));
+    QCOMPARE(text->fileSize(), qint64(4 * 1024 * 1024));
+    QVERIFY2(text->isPaged(), "four megabytes must be shown a window at a time");
+    QVERIFY2(
+        text->windowBytes() < text->fileSize(), "a page of an earlier version must not cost the whole of it");
 }
 
 int main(int argc, char** argv)

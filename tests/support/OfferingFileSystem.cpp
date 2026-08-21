@@ -166,11 +166,13 @@ FileActionList OfferingFileSystem::actionsFor(const VfsUri& target, const FileEn
     {
         QMutexLocker lock(&m_mutex);
         if (m_linkable.value(target.path(), true)) {
-            actions.append(FileAction { linkAction(), QStringLiteral("Copy a temporary link"), true });
+            actions.append(FileAction {
+                linkAction(), QStringLiteral("Copy a temporary link"), true, FileActionKind::Text });
         }
     }
     if (!versionsOf(target.path()).isEmpty())
-        actions.append(FileAction { versionsAction(), QStringLiteral("Earlier versions"), true });
+        actions.append(
+            FileAction { versionsAction(), QStringLiteral("Earlier versions"), true, FileActionKind::Uris });
     return actions;
 }
 

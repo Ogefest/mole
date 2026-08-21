@@ -15,6 +15,8 @@ namespace mole {
 class ListDirectoryTask;
 class ReadRangeTask;
 class ReadMetadataTask;
+class QueryFileActionsTask;
+class Task;
 
 /// A tab that shows one file at a time.
 ///
@@ -60,6 +62,22 @@ class PreviewTabController final : public FeatureController
     /// How wide the drawer is, remembered across restarts. A choice about the
     /// person's screen, like whether it is open at all.
     Q_PROPERTY(int detailsWidth READ detailsWidth NOTIFY detailsChanged)
+    /// Which state of the file is on screen: empty for the file as it is, and
+    /// the drive's own token for anything else.
+    ///
+    /// **Always shown.** A preview showing an earlier version while looking like
+    /// the file itself is the one failure this whole subject has to avoid.
+    Q_PROPERTY(QString showingVersion READ showingVersion NOTIFY currentChanged)
+    /// Whether this drive has other states of this file to offer. Known from
+    /// what it listed for the file, without any of them being fetched.
+    Q_PROPERTY(bool hasOtherVersions READ hasOtherVersions NOTIFY versionsChanged)
+    /// The other states, as `[{ uri, label }]`, once they have been asked for.
+    /// Empty until then: asking is a call into storage and a preview opening
+    /// must not make one nobody wanted.
+    Q_PROPERTY(QVariantList otherVersions READ otherVersions NOTIFY versionsChanged)
+    Q_PROPERTY(bool versionsLoading READ isVersionsLoading NOTIFY versionsChanged)
+    /// Why the drive could not say, when it could not. Empty otherwise.
+    Q_PROPERTY(QString versionsError READ versionsError NOTIFY versionsChanged)
     Q_PROPERTY(int position READ position NOTIFY currentChanged)
     Q_PROPERTY(int siblingCount READ siblingCount NOTIFY currentChanged)
     Q_PROPERTY(bool canGoNext READ canGoNext NOTIFY currentChanged)
@@ -114,6 +132,20 @@ public:
     Q_INVOKABLE void requestDetails();
 
     /// Shows `uri` and loads its folder in the background so the arrows work.
+    QString showingVersion() const { return m_showing.uri.version(); }
+    bool hasOtherVersions() const { return !m_versionsAction.isEmpty(); }
+    QVariantList otherVersions() const { return m_otherVersions; }
+    bool isVersionsLoading() const { return !m_versionsPending.isNull(); }
+    QString versionsError() const { return m_versionsError; }
+
+    /// Asks the drive for the other states of the file being shown, on a worker.
+    /// Called when somebody opens the chooser, never on the way in.
+    Q_INVOKABLE void requestVersions();
+    /// Shows `uri` in place, keeping the file this preview is about and the
+    /// neighbours the arrows step through. An empty uri goes back to the file as
+    /// it is.
+    Q_INVOKABLE void showVersion(const QString& uri);
+
     Q_INVOKABLE void open(const QString& uri);
     Q_INVOKABLE void next();
     Q_INVOKABLE void previous();
@@ -127,9 +159,20 @@ public:
 signals:
     void currentChanged();
     void detailsChanged();
+    void versionsChanged();
 
 private:
+    /// Shows `entry` as the file this preview is about: the arrows step from it,
+    /// the session records it, and any version on screen is dropped.
     void showEntry(const FileEntry& entry);
+    /// Puts `entry` in the viewer. What is on screen and nothing else -- which
+    /// is what lets a version be shown without the tab stopping being about the
+    /// file it is about.
+    void showContents(const FileEntry& entry);
+    /// Asks the drive what it can do to the file now on screen, so the chooser
+    /// knows whether there is anything to choose. One call, and no version is
+    /// fetched by it.
+    void lookForVersions();
     /// The one member of a file compressed on its own, or an invalid entry.
     ///
     /// A `.gz` that is not a tarball is a wrapper around exactly one file, and
@@ -192,6 +235,15 @@ private:
     QPointer<ListDirectoryTask> m_listing;
     QPointer<ReadRangeTask> m_sniff;
     QPointer<ReadMetadataTask> m_details;
+    /// The id of the action this drive offers that answers with other uris for
+    /// the file, or empty when it offers none. Taken from what the drive listed
+    /// rather than from performing anything: performing one has effects.
+    QString m_versionsAction;
+    QVariantList m_otherVersions;
+    QString m_versionsTitle;
+    QString m_versionsError;
+    QPointer<Task> m_versionsPending;
+    QPointer<QueryFileActionsTask> m_versionsLookup;
 
     /// The head the content pass read, kept so opening the panel costs no
     /// further read for a file that was identified from its bytes.

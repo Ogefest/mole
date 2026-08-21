@@ -229,6 +229,13 @@ void runFileSystemConformance(const ConformanceContext& context)
             // drive that returns one has said it did something it did not do.
             QVERIFY2(outcome.value().isValid(),
                 qPrintable(QStringLiteral("%1 answered with neither text nor uris").arg(action.id)));
+            // What it said it would answer with. A caller that only wants one of
+            // the two kinds -- the preview wants uris and has no use for a link
+            // -- picks by this rather than by performing every action to find
+            // out, and performing one has effects.
+            QVERIFY2(outcome.value().kind == action.answers,
+                qPrintable(
+                    QStringLiteral("%1 did not answer with the kind it said it would").arg(action.id)));
             for (const VfsUri& alternate : outcome.value().uris) {
                 QVERIFY2(alternate.isValid(),
                     qPrintable(QStringLiteral("%1 returned a uri nothing can open").arg(action.id)));

@@ -72,6 +72,67 @@ Item {
                         font.pixelSize: App.secondaryTextSize
                     }
 
+                    // Which state of the file is on screen, said whether or not
+                    // the drive has anything else to offer. A preview showing an
+                    // earlier version while looking like the file itself is the
+                    // one failure this subject has to avoid, so the label is not
+                    // conditional on there being a choice.
+                    Label {
+                        objectName: "versionLabel"
+                        text: controller && controller.showingVersion.length > 0
+                              ? controller.showingVersion : "current"
+                        color: controller && controller.showingVersion.length > 0
+                               ? App.colour.accent : App.colour.textMuted
+                        font.pixelSize: App.secondaryTextSize
+                        font.bold: controller && controller.showingVersion.length > 0
+                    }
+
+                    // Only when the drive has other states of this file, and the
+                    // list itself is not fetched until this is opened: asking is
+                    // a call into storage and opening a preview must not make one
+                    // nobody wanted.
+                    Picker {
+                        objectName: "versionPicker"
+                        visible: controller ? controller.hasOtherVersions : false
+                        font.pixelSize: App.secondaryTextSize
+                        focusPolicy: Qt.NoFocus
+                        textRole: "label"
+
+                        readonly property var entries: {
+                            var rows = [{ "uri": "", "label": "current" }]
+                            if (controller) {
+                                var others = controller.otherVersions
+                                for (var i = 0; i < others.length; ++i)
+                                    rows.push(others[i])
+                            }
+                            return rows
+                        }
+
+                        model: entries
+                        currentIndex: {
+                            if (!controller || controller.showingVersion.length === 0)
+                                return 0
+                            for (var i = 1; i < entries.length; ++i) {
+                                if (entries[i].label === controller.showingVersion)
+                                    return i
+                            }
+                            return 0
+                        }
+
+                        onPressedChanged: if (pressed && controller) controller.requestVersions()
+                        onActivated: if (controller) controller.showVersion(entries[currentIndex].uri)
+                    }
+
+                    Label {
+                        objectName: "versionsError"
+                        visible: controller && controller.versionsError.length > 0
+                        text: controller ? controller.versionsError : ""
+                        color: App.colour.bad
+                        font.pixelSize: App.smallTextSize
+                        elide: Text.ElideRight
+                        Layout.maximumWidth: 220
+                    }
+
                     ToolSeparator {}
 
                     Label {

@@ -27,6 +27,16 @@ namespace mole {
 /// places it without knowing what it does."
 ///
 /// See docs/adr/0075-a-drive-offers-what-only-it-can-do.md.
+/// The two kinds of answer an action can give. Declared before FileAction so an
+/// action can say which of them it will give without being performed.
+enum class FileActionKind {
+    /// Something to read and copy: a link, a checksum, a container's policy.
+    Text,
+    /// Other uris for the same file -- earlier versions of it, mostly. Each one
+    /// opens as an ordinary file, because that is what it is.
+    Uris,
+};
+
 struct FileAction
 {
     /// Stable and namespaced, e.g. "org.example.objects.link". Stable because it
@@ -38,6 +48,14 @@ struct FileAction
     /// False greys the entry out rather than hiding it, so a list of what a drive
     /// can do does not change shape as you move down a folder.
     bool enabled = true;
+    /// Which kind of answer this will give, said before it is performed.
+    ///
+    /// Not a third outcome and not a hint: it is the same closed pair, declared
+    /// rather than discovered. Something that only wants one of the two -- the
+    /// preview, which wants other uris for the file it is showing and has no use
+    /// for a link -- would otherwise have to perform every action to find out,
+    /// and performing one has effects: a container signs a link when asked.
+    FileActionKind answers = FileActionKind::Text;
 };
 
 using FileActionList = QList<FileAction>;
@@ -55,13 +73,9 @@ using FileActionList = QList<FileAction>;
 /// action is always invoked as a task and only the answer varies.
 struct FileActionOutcome
 {
-    enum class Kind {
-        /// Something to read and copy: a link, a checksum, a container's policy.
-        Text,
-        /// Other uris for the same file -- earlier versions of it, mostly. Each
-        /// one opens as an ordinary file, because that is what it is.
-        Uris,
-    };
+    /// The same pair FileAction::answers names, spelled here as well so a caller
+    /// holding an outcome does not have to reach for the other type.
+    using Kind = FileActionKind;
 
     Kind kind = Kind::Text;
     /// Set when kind is Text.

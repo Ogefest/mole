@@ -5,7 +5,9 @@
 
 #include "core/data/FileType.h"
 #include "core/settings/Preferences.h"
+#include "core/tasks/InvokeFileActionTask.h"
 #include "core/tasks/ListDirectoryTask.h"
+#include "core/tasks/QueryFileActionsTask.h"
 #include "core/tasks/ReadRangeTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/VfsManager.h"
@@ -99,7 +101,22 @@ void PreviewTabController::open(const QString& uri)
 void PreviewTabController::showEntry(const FileEntry& entry)
 {
     m_current = entry;
+    // A new file is a new question about what else there is of it, and nothing
+    // is known until the drive is asked.
+    m_versionsAction.clear();
+    m_otherVersions.clear();
+    if (m_versionsPending)
+        m_versionsPending->requestCancel();
+    if (m_versionsLookup)
+        m_versionsLookup->requestCancel();
+    emit versionsChanged();
 
+    showContents(entry);
+    lookForVersions();
+}
+
+void PreviewTabController::showContents(const FileEntry& entry)
+{
     // The old viewer goes before the new one arrives, so a heavy one does not
     // sit in memory while the next file loads.
     if (m_viewer) {
@@ -148,6 +165,113 @@ void PreviewTabController::showEntry(const FileEntry& entry)
     }
 
     installViewer(provider);
+}
+
+void PreviewTabController::lookForVersions()
+{
+    if (!m_services.isValid() || !m_current.uri.isValid())
+        return;
+
+    FileSystemPtr fs = m_services.vfs->resolve(m_current.uri);
+    if (!fs)
+        return;
+
+    // What the drive lists, not what it does: nothing is fetched here, and a
+    // drive that offers nothing costs one virtual call that answers with an
+    // empty list.
+    auto* task = new QueryFileActionsTask(std::move(fs), m_current.uri);
+    m_versionsLookup = task;
+    connect(task, &Task::finished, this, [this, task] {
+        if (m_versionsLookup != task)
+            return;
+        m_versionsLookup.clear();
+        if (task->target() != m_current.uri)
+            return;
+
+        for (const FileAction& action : task->actions()) {
+            // The one that answers with other uris for this file. A link would
+            // be no use here, and asking it would sign one nobody wanted.
+            if (action.enabled && action.answers == FileActionKind::Uris) {
+                m_versionsAction = action.id;
+                m_versionsTitle = action.title;
+                break;
+            }
+        }
+        emit versionsChanged();
+    });
+    m_services.tasks->submit(task);
+}
+
+void PreviewTabController::requestVersions()
+{
+    if (m_versionsAction.isEmpty() || m_versionsPending || !m_otherVersions.isEmpty())
+        return;
+    if (!m_services.isValid())
+        return;
+
+    FileSystemPtr fs = m_services.vfs->resolve(m_current.uri);
+    if (!fs)
+        return;
+
+    auto* task = new InvokeFileActionTask(std::move(fs), m_versionsAction, m_versionsTitle, m_current.uri);
+    m_versionsPending = task;
+    m_versionsError.clear();
+    emit versionsChanged();
+
+    connect(task, &Task::finished, this, [this, task] {
+        if (m_versionsPending != task)
+            return;
+        m_versionsPending.clear();
+
+        if (task->state() == Task::State::Failed) {
+            // Said where somebody is looking, and it says which action: an empty
+            // chooser that explains nothing is worse than no chooser.
+            m_versionsError = QStringLiteral("%1: %2").arg(task->actionTitle(), task->error().message);
+            emit versionsChanged();
+            return;
+        }
+
+        QVariantList found;
+        for (const VfsUri& uri : task->outcome().uris) {
+            found.append(QVariantMap { { QStringLiteral("uri"), uri.toString() },
+                { QStringLiteral("label"), uri.hasVersion() ? uri.version() : uri.fileName() } });
+        }
+        m_otherVersions = found;
+        emit versionsChanged();
+    });
+    m_services.tasks->submit(task);
+}
+
+void PreviewTabController::showVersion(const QString& uri)
+{
+    if (!m_current.uri.isValid())
+        return;
+
+    // Empty means the file as it is, which is where a preview starts and where
+    // this is the way back to.
+    const VfsUri target = uri.isEmpty() ? m_current.uri : VfsUri::fromString(uri);
+    if (!target.isValid() || target.withoutVersion() != m_current.uri.withoutVersion())
+        return;
+    if (target == m_showing.uri)
+        return;
+
+    FileEntry entry;
+    // stat() on this thread, for the reason open() gives about itself: it is one
+    // call about one file that the drive has just listed for us.
+    if (FileSystemPtr fs = m_services.vfs ? m_services.vfs->resolve(target) : nullptr) {
+        if (const Result<FileEntry> stat = fs->stat(target); stat.ok())
+            entry = stat.value();
+    }
+    if (!entry.uri.isValid()) {
+        entry.name = m_current.name;
+        entry.uri = target;
+    }
+
+    // Contents only. The tab goes on being about the file it is about, so the
+    // arrows still step through the folder and the session still records the
+    // file rather than a state of it that may not be there next time.
+    showContents(entry);
+    emit currentChanged();
 }
 
 void PreviewTabController::identifyThenShow()
