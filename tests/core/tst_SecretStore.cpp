@@ -2,6 +2,7 @@
 #include "support/TestSupport.h"
 
 #include "core/credentials/SecretStore.h"
+#include "core/platform/HostPlatform.h"
 
 #include <QFile>
 #include <QSignalSpy>
@@ -163,6 +164,17 @@ void TestSecretStore::theFileIsReadableOnlyByItsOwner()
     SecretStore store(path());
     QVERIFY(store.create(QStringLiteral("phrase")));
     QVERIFY(store.setSecret(QStringLiteral("k"), QStringLiteral("v")));
+
+    if (hostPlatform() == HostPlatform::Windows) {
+        // Nothing is claimed here, and that is the documented position rather
+        // than an omission. Qt maps its permission flags onto the read-only
+        // attribute on Windows and cannot express "only this account", so a mode
+        // is not set at all -- the file keeps the ACL it inherits from the user's
+        // profile directory, and the encryption is what protects it. Asserting a
+        // mode here would be asserting something the platform does not have.
+        QVERIFY(store.exists());
+        return;
+    }
 
     const QFile::Permissions permissions = QFile::permissions(path());
     // Encrypted or not, there is no reason to hand the ciphertext to every

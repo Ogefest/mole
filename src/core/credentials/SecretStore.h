@@ -29,6 +29,27 @@ namespace mole {
 /// contents, so tampering is detected rather than silently decrypting to
 /// rubbish -- and the header is authenticated too, or an attacker could weaken
 /// the derivation parameters and have the file accept the result.
+///
+/// WHAT PROTECTS THE FILE AT REST, PER PLATFORM
+/// --------------------------------------------
+/// The encryption is the protection everywhere. What differs is what else there
+/// is, and it is written down here because a security property that varies by
+/// platform and is documented on none is the part that turns into a surprise.
+///
+///   Unix     0600 as well, set when the file is written. The ciphertext is not
+///            handed to every process on the machine.
+///   Windows  Whatever ACL the file inherits from the user's profile directory,
+///            which on an ordinary installation is already account-scoped. No
+///            mode is set: Qt maps its permission flags onto the read-only
+///            attribute there and cannot express "only this account", so the
+///            call would have done nothing and returned success.
+///
+/// Setting a real ACL on Windows was considered and deliberately not done. The
+/// lock that matters is a passphrase-derived AES-256-GCM blob, the profile
+/// directory is already account-scoped, and platform code that could only be
+/// tested on a machine nobody has buys very little over saying plainly what is
+/// there. LocalFileSystem handles the same Qt limitation the same way, clearing
+/// the permission string on Windows rather than showing something synthesised.
 class SecretStore : public QObject
 {
     Q_OBJECT

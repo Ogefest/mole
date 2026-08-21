@@ -106,7 +106,9 @@ being added on top of it.
 - **Credentials encrypted and portable.** Passwords live in an AES-256-GCM store
   keyed by a passphrase you choose, never in the settings file. It is not tied to
   this machine: back up the configuration and the same passphrase opens it on a
-  fresh install.
+  fresh install. The encryption is what protects the file at rest on every
+  platform; on Unix it is `0600` as well, and on Windows it is whatever ACL the
+  file inherits from your profile directory, which Qt cannot narrow further.
 - **A plugin API** with a loadable-shared-library path, used by the shipped
   archive and network plugins.
 

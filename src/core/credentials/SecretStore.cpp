@@ -1,5 +1,7 @@
 #include "core/credentials/SecretStore.h"
 
+#include "core/platform/HostPlatform.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -430,9 +432,19 @@ bool SecretStore::writeTo(const QString& path, const QByteArray& key, QString* e
     if (!file.commit())
         return fail(QStringLiteral("Could not commit the credential store"));
 
-    // Readable only by its owner. The contents are encrypted, but there is no
-    // reason to hand the ciphertext to every process on the machine either.
-    QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner);
+    // Readable only by its owner, where that means something. The contents are
+    // encrypted, but there is no reason to hand the ciphertext to every process
+    // on the machine either.
+    //
+    // Not called on Windows, because it does nothing there and returns success.
+    // Qt maps its permission flags onto the read-only attribute and cannot
+    // express "only this account", so the file keeps whatever ACL it inherited
+    // from its directory -- and code that reads as though the file were
+    // mode-protected everywhere is how a security property that differs by
+    // platform turns into a surprise. What protects it there is the encryption,
+    // plus the profile directory's own ACL; see the note on the class.
+    if (hostPlatform() != HostPlatform::Windows)
+        QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner);
     return true;
 #else
     Q_UNUSED(path)
