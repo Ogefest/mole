@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-21 #MOLE-180 Local paths with a drive letter and Windows shares are handled correctly, so a Windows build can reach the local disk
 2026-08-21 #MOLE-271 The search line can be typed into: it was never connected to anything
 2026-08-21 #MOLE-271 A search tab is one box with the keyboard already in it, and everything else is behind More
 2026-08-21 #MOLE-264 The window no longer waits on the index: what is indexed is read in the background and answered from memory

@@ -5,6 +5,8 @@ add_library(mole_core STATIC
     CoreMetaTypes.h
     CoreMetaTypes.cpp
 
+    platform/HostPlatform.h
+
     vfs/VfsTypes.h
     vfs/VfsUri.h
     vfs/VfsUri.cpp

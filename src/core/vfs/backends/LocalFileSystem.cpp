@@ -149,10 +149,10 @@ Result<SpaceInfo> LocalFileSystem::space(const VfsUri& target)
     // QStorageInfo hits the filesystem, which is why this is behind the task
     // layer: on a hung network mount the call blocks, and blocking here would
     // freeze the window if anyone were tempted to ask from the UI thread.
-    const QStorageInfo storage(target.path());
+    const QStorageInfo storage(target.toLocalPath());
     if (!storage.isValid() || !storage.isReady()) {
         return VfsError::make(
-            VfsError::NotFound, QStringLiteral("No volume is mounted at %1").arg(target.path()));
+            VfsError::NotFound, QStringLiteral("No volume is mounted at %1").arg(target.toLocalPath()));
     }
 
     const qint64 total = storage.bytesTotal();
@@ -170,9 +170,10 @@ Result<SpaceInfo> LocalFileSystem::space(const VfsUri& target)
 
 Result<AccessInfo> LocalFileSystem::access(const VfsUri& target)
 {
-    const QFileInfo info(target.path());
+    const QString path = target.toLocalPath();
+    const QFileInfo info(path);
     if (!info.exists())
-        return errorForPath(target.path());
+        return errorForPath(path);
 
     const auto answer = [](bool yes) { return yes ? AccessInfo::Answer::Yes : AccessInfo::Answer::No; };
 

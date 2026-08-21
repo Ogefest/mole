@@ -4,6 +4,8 @@
 
 using namespace mole;
 
+Q_DECLARE_METATYPE(mole::HostPlatform)
+
 class TestVfsUri : public QObject
 {
     Q_OBJECT
@@ -22,6 +24,17 @@ private slots:
     void suffix_data();
     void suffix();
     void isWithin();
+
+    void aDriveLetterSurvivesTheUriLayer();
+    void walkingUpStopsAtTheDriveRoot();
+    void aUncShareSurvivesTheUriLayer();
+    void walkingUpStopsAtTheShare();
+    void dotDotCannotClimbOutOfAVolume();
+    void aColonInANameIsNotADrive();
+    void nativeSpellingIsThePlatformsOwn_data();
+    void nativeSpellingIsThePlatformsOwn();
+    void aShareHasNoPosixNativePath();
+
     void localPathRoundTrip();
     void nonLocalHasNoLocalPath();
     void equalityAndHashing();
@@ -148,6 +161,141 @@ void TestVfsUri::isWithin()
     QVERIFY(!VfsUri::fromString(QStringLiteral("sftp://h/home/user")).isWithin(root));
     QVERIFY(VfsUri::fromString(QStringLiteral("file:///anything"))
                 .isWithin(VfsUri::fromString(QStringLiteral("file:///"))));
+}
+
+/// Everything below is the uri half, which has no platform in it: it is string
+/// handling, so it is asserted on every machine the suite runs on. The native
+/// half comes after, and takes the platform as an argument for the same reason.
+
+void TestVfsUri::aDriveLetterSurvivesTheUriLayer()
+{
+    const VfsUri uri = VfsUri::fromString(QStringLiteral("file:///C:/Users/ann/notes.TXT"));
+
+    QCOMPARE(uri.scheme(), QStringLiteral("file"));
+    QVERIFY(uri.authority().isEmpty());
+    QCOMPARE(uri.path(), QStringLiteral("/C:/Users/ann/notes.TXT"));
+    QCOMPARE(uri.toString(), QStringLiteral("file:///C:/Users/ann/notes.TXT"));
+    QCOMPARE(uri.fileName(), QStringLiteral("notes.TXT"));
+    QCOMPARE(uri.suffix(), QStringLiteral("txt"));
+
+    const VfsUri driveRoot = VfsUri::fromString(QStringLiteral("file:///C:"));
+    QVERIFY(uri.isWithin(driveRoot));
+    QVERIFY(!uri.isWithin(VfsUri::fromString(QStringLiteral("file:///D:"))));
+
+    // A child of the drive root keeps the drive. Losing it here would put every
+    // listing of C:\ onto a volume nobody asked for.
+    QCOMPARE(driveRoot.child(QStringLiteral("Users")).toString(), QStringLiteral("file:///C:/Users"));
+}
+
+void TestVfsUri::walkingUpStopsAtTheDriveRoot()
+{
+    VfsUri uri = VfsUri::fromString(QStringLiteral("file:///C:/Users/ann"));
+
+    QCOMPARE(uri.parent().toString(), QStringLiteral("file:///C:/Users"));
+    uri = uri.parent().parent();
+    QCOMPARE(uri.toString(), QStringLiteral("file:///C:"));
+
+    // And there it stops. "/" is not a place on Windows and no backend can list
+    // it, so producing one would be worse than staying put.
+    QVERIFY(uri.isRoot());
+    QCOMPARE(uri.parent(), uri);
+    QVERIFY(uri.fileName().isEmpty());
+}
+
+void TestVfsUri::aUncShareSurvivesTheUriLayer()
+{
+    const VfsUri uri = VfsUri::fromString(QStringLiteral("file://server/share/dir/report.pdf"));
+
+    QCOMPARE(uri.authority(), QStringLiteral("server"));
+    QCOMPARE(uri.path(), QStringLiteral("/share/dir/report.pdf"));
+    QCOMPARE(uri.toString(), QStringLiteral("file://server/share/dir/report.pdf"));
+    QCOMPARE(uri.fileName(), QStringLiteral("report.pdf"));
+    QCOMPARE(uri.suffix(), QStringLiteral("pdf"));
+
+    // Two servers are two places however alike the paths look.
+    QVERIFY(!uri.isWithin(VfsUri::fromString(QStringLiteral("file://other/share"))));
+    QVERIFY(uri.isWithin(VfsUri::fromString(QStringLiteral("file://server/share"))));
+}
+
+void TestVfsUri::walkingUpStopsAtTheShare()
+{
+    VfsUri uri = VfsUri::fromString(QStringLiteral("file://server/share/dir"));
+
+    uri = uri.parent();
+    QCOMPARE(uri.toString(), QStringLiteral("file://server/share"));
+    QVERIFY(uri.isRoot());
+    QCOMPARE(uri.parent(), uri);
+
+    QCOMPARE(uri.child(QStringLiteral("dir")).toString(), QStringLiteral("file://server/share/dir"));
+}
+
+void TestVfsUri::dotDotCannotClimbOutOfAVolume()
+{
+    // POSIX clamps at "/" and always has. A drive and a share clamp at
+    // themselves, because there is nothing above either to arrive at.
+    QCOMPARE(VfsUri::fromString(QStringLiteral("file:///C:/Users/../..")).toString(),
+        QStringLiteral("file:///C:"));
+    QCOMPARE(VfsUri::fromString(QStringLiteral("file://server/share/dir/../..")).toString(),
+        QStringLiteral("file://server/share"));
+    QCOMPARE(VfsUri::fromString(QStringLiteral("file:///home/../..")).toString(), QStringLiteral("file:///"));
+}
+
+void TestVfsUri::aColonInANameIsNotADrive()
+{
+    // "notes:" is a legal name on Linux and a directory somebody may really
+    // have. Reading it as a drive would leave it with no name and nothing above
+    // it, so the test is a letter and a colon rather than "ends with a colon".
+    const VfsUri uri = VfsUri::fromString(QStringLiteral("file:///notes:"));
+    QVERIFY(!uri.isRoot());
+    QCOMPARE(uri.fileName(), QStringLiteral("notes:"));
+    QCOMPARE(uri.parent().toString(), QStringLiteral("file:///"));
+
+    // Nor is a colon anywhere but the first segment.
+    const VfsUri deeper = VfsUri::fromString(QStringLiteral("file:///home/C:/x"));
+    QCOMPARE(deeper.parent().parent().toString(), QStringLiteral("file:///home"));
+}
+
+void TestVfsUri::nativeSpellingIsThePlatformsOwn_data()
+{
+    QTest::addColumn<HostPlatform>("platform");
+    QTest::addColumn<QString>("native");
+    QTest::addColumn<QString>("uri");
+
+    QTest::newRow("posix path") << HostPlatform::Posix << "/home/user/notes.txt"
+                                << "file:///home/user/notes.txt";
+    QTest::newRow("macos path") << HostPlatform::MacOS << "/Volumes/Backup/notes.txt"
+                                << "file:///Volumes/Backup/notes.txt";
+    QTest::newRow("windows drive") << HostPlatform::Windows << "C:\\Users\\ann\\notes.txt"
+                                   << "file:///C:/Users/ann/notes.txt";
+    QTest::newRow("windows share") << HostPlatform::Windows << "\\\\server\\share\\a.txt"
+                                   << "file://server/share/a.txt";
+    QTest::newRow("windows drive root") << HostPlatform::Windows << "C:\\" << "file:///C:";
+    // A backslash is an ordinary character in a name here, and turning one into
+    // a separator made "back\slash.txt" into a file in a directory nobody has.
+    QTest::newRow("a backslash is part of the name")
+        << HostPlatform::Posix << "/home/back\\slash.txt" << "file:///home/back\\slash.txt";
+}
+
+void TestVfsUri::nativeSpellingIsThePlatformsOwn()
+{
+    QFETCH(HostPlatform, platform);
+    QFETCH(QString, native);
+    QFETCH(QString, uri);
+
+    // Both directions, on any machine, because the platform is an argument
+    // rather than an #ifdef. The Windows rows are the ones that have never been
+    // asserted anywhere.
+    QCOMPARE(VfsUri::fromLocalPath(native, platform).toString(), uri);
+    QCOMPARE(VfsUri::fromString(uri).toLocalPath(platform), native);
+}
+
+void TestVfsUri::aShareHasNoPosixNativePath()
+{
+    // Handing back "/share/a.txt" would name a local directory that has nothing
+    // to do with the server.
+    const VfsUri share = VfsUri::fromString(QStringLiteral("file://server/share/a.txt"));
+    QVERIFY(share.toLocalPath(HostPlatform::Posix).isEmpty());
+    QVERIFY(share.toLocalPath(HostPlatform::MacOS).isEmpty());
 }
 
 void TestVfsUri::localPathRoundTrip()
