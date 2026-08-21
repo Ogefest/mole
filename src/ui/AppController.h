@@ -236,6 +236,22 @@ public:
     /// folder in a bucket. The uri says where it is.
     Q_INVOKABLE QString pathTextFor(const QString& uri) const;
 
+    /// The other direction: what somebody typed, as a uri.
+    ///
+    /// A bare path means the local disk and anything with a scheme is passed
+    /// through, which is what three QML files each used to work out for
+    /// themselves with `"file://" + value`. That expression is right on Linux
+    /// and wrong everywhere else -- typing C:\Users\me into the path bar
+    /// yields file://C:\Users\me, whose authority is "C:" and whose path is a
+    /// run of backslashes -- and it has to agree with pathTextFor(), which is
+    /// hard to arrange in three copies written in a language that does not have
+    /// the type.
+    ///
+    /// Empty in, empty out. Text with a scheme that does not parse comes back as
+    /// it was typed, so the caller reports what the user asked for rather than
+    /// an empty string.
+    Q_INVOKABLE QString uriForPathText(const QString& text) const;
+
     /// Copies the folder currently open in the active pane. Returns what was
     /// copied, or an empty string when there was nothing to copy.
     Q_INVOKABLE QString copyCurrentFolderPath();

@@ -2,6 +2,7 @@
 
 #include <QDirIterator>
 #include <QFile>
+#include <QRegularExpression>
 #include <QTest>
 
 /// Rules about the QML that are cheaper to state than to enforce by review.
@@ -18,6 +19,7 @@ class TestQmlConventions : public QObject
 private slots:
     void initTestCase();
     void nothingNamesAFontFamilyByHand();
+    void nothingBuildsOrTakesApartAUriByHand();
 
 private:
     /// path -> contents, for every .qml shipped with the application.
@@ -68,6 +70,53 @@ void TestQmlConventions::nothingNamesAFontFamilyByHand()
     QVERIFY2(offenders.isEmpty(),
         qPrintable(QStringLiteral("a font family is named by hand at %1 -- ask App.monospaceFont")
                        .arg(offenders.join(QStringLiteral(", ")))));
+}
+
+void TestQmlConventions::nothingBuildsOrTakesApartAUriByHand()
+{
+    // Three files used to do this, slightly differently each, and none of the
+    // three survived a path with a drive letter in it. "file://" + value turns
+    // C:\Users\me into a uri whose authority is "C:" and whose path is a run of
+    // backslashes; substring(7) turns file:///C:/x into /C:/x.
+    //
+    // All three worked on Linux, which is why they were there and why a review
+    // would not have caught the fourth. App.uriForPathText() and
+    // App.pathTextFor() are the pair to ask, and being C++ they follow the uri
+    // type instead of having to be found and fixed again.
+    struct Forbidden
+    {
+        const char* pattern;
+        const char* insteadUse;
+    };
+    static const Forbidden rules[] = {
+        { "\"file://\"\\s*\\+", "App.uriForPathText()" },
+        { "substring\\(7\\)", "App.pathTextFor()" },
+        { "indexOf\\(\"://\"\\)", "App.uriForPathText()" },
+        { "startsWith\\(\"file://\"\\)", "App.pathTextFor()" },
+    };
+
+    QStringList offenders;
+    for (const Forbidden& rule : rules) {
+        const QRegularExpression forbidden(QString::fromLatin1(rule.pattern));
+        QVERIFY2(forbidden.isValid(), rule.pattern);
+
+        for (auto it = m_sources.constBegin(); it != m_sources.constEnd(); ++it) {
+            const QStringList lines = it.value().split(QLatin1Char('\n'));
+            for (int i = 0; i < lines.size(); ++i) {
+                if (!lines.at(i).contains(forbidden))
+                    continue;
+                offenders.append(QStringLiteral("%1:%2 -- use %3")
+                                     .arg(it.key())
+                                     .arg(i + 1)
+                                     .arg(QString::fromLatin1(rule.insteadUse)));
+            }
+        }
+    }
+
+    std::sort(offenders.begin(), offenders.end());
+    QVERIFY2(offenders.isEmpty(),
+        qPrintable(QStringLiteral("a uri is built or taken apart by hand:\n  %1")
+                       .arg(offenders.join(QStringLiteral("\n  ")))));
 }
 
 MOLE_TEST_MAIN(TestQmlConventions)

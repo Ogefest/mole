@@ -1935,6 +1935,25 @@ QString AppController::pathTextFor(const QString& uri) const
     return local.isEmpty() ? parsed.toString() : local;
 }
 
+QString AppController::uriForPathText(const QString& text) const
+{
+    const QString trimmed = text.trimmed();
+    if (trimmed.isEmpty())
+        return {};
+
+    // Anything with a scheme is a uri already, so remote drives stay reachable
+    // by typing. Normalised through VfsUri so ".." and a trailing slash mean the
+    // same thing however the location was reached -- and handed back untouched
+    // when it does not parse, because the caller's error is more use to somebody
+    // than an empty field.
+    if (trimmed.contains(QLatin1String("://"))) {
+        const VfsUri parsed = VfsUri::fromString(trimmed);
+        return parsed.isValid() ? parsed.toString() : trimmed;
+    }
+
+    return VfsUri::fromLocalPath(trimmed).toString();
+}
+
 QString AppController::copyCurrentFolderPath()
 {
     return copyPathAndSay(currentLocation(), QStringLiteral("Folder path copied"));

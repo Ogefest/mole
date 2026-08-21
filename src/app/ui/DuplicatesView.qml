@@ -32,8 +32,12 @@ Item {
     // A root as somebody reads it. The scheme stays on anything that is not the
     // local disk, because on two drives it is the only thing telling the two
     // apart -- and it comes off file:// paths, where it is noise.
+    //
+    // Asked rather than sliced. The hardcoded 7 turned file:///C:/x into /C:/x,
+    // and would have gone on being subtly wrong whatever spelling a drive letter
+    // ended up with.
     function readableRoot(uri) {
-        return uri.startsWith("file://") ? uri.substring(7) : uri
+        return App.pathTextFor(uri)
     }
 
     // What the chosen strategy is called, for a sentence about it rather than a

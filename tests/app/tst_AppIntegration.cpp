@@ -45,6 +45,9 @@ private slots:
     void theLogSaysWhatThisRunStartedWith();
     void aDriveThatArrivesLaterSaysSoToo();
     void opensABrowserTabByDefault();
+    void aTypedPathBecomesAUriAndComesBackReadable_data();
+    void aTypedPathBecomesAUriAndComesBackReadable();
+    void aRemoteLocationKeepsItsSchemeWhenRead();
     void everyRegisteredFeatureCanOpenATab();
     void browserTabBrowsesTheRealFilesystem();
     void measuringFoldersFillsTheirSizesIntoTheListing();
@@ -256,6 +259,62 @@ void TestAppIntegration::opensABrowserTabByDefault()
     QCOMPARE(m_app->tabs()->currentIndex(), 0);
     QCOMPARE(
         m_app->tabs()->index(0, 0).data(TabsModel::FeatureIdRole).toString(), QStringLiteral("mole.browser"));
+}
+
+void TestAppIntegration::aTypedPathBecomesAUriAndComesBackReadable_data()
+{
+    QTest::addColumn<QString>("typed");
+    QTest::addColumn<QString>("uri");
+
+    QTest::newRow("a bare posix path") << "/home/ann/photos" << "file:///home/ann/photos";
+    QTest::newRow("a uri is passed through") << "sftp://nas/volume1" << "sftp://nas/volume1";
+    QTest::newRow("and normalised on the way") << "sftp://nas/volume1/../photos/" << "sftp://nas/photos";
+    QTest::newRow("surrounding space") << "  /home/ann  " << "file:///home/ann";
+    QTest::newRow("a bucket") << "s3://reports/2026" << "s3://reports/2026";
+
+    // A drive letter and a share, which is what this pair exists for. Typed as
+    // uris they are platform-independent, so they belong here; the native
+    // spellings are asserted in tst_VfsUri, where the platform is an argument
+    // and the Windows answer can be checked on a Linux machine.
+    QTest::newRow("a drive letter") << "file:///C:/Users/ann" << "file:///C:/Users/ann";
+    QTest::newRow("a unc share") << "file://server/share/reports" << "file://server/share/reports";
+}
+
+void TestAppIntegration::aTypedPathBecomesAUriAndComesBackReadable()
+{
+    QFETCH(QString, typed);
+    QFETCH(QString, uri);
+
+    // The pair that replaced three copies of `"file://" + value` in QML, each
+    // written slightly differently and none of which survived a drive letter.
+    QCOMPARE(m_app->uriForPathText(typed), uri);
+
+    // Whatever comes back is something a person can read, and typing it in
+    // again means the same place. That round trip is the invariant; whether a
+    // native path exists at all depends on the drive and the platform -- a share
+    // has one on Windows and none here -- and pathTextFor() answers with the uri
+    // when there is none, rather than a path part that would read as local.
+    const QString readable = m_app->pathTextFor(uri);
+    QVERIFY(!readable.isEmpty());
+    QCOMPARE(m_app->uriForPathText(readable), uri);
+}
+
+void TestAppIntegration::aRemoteLocationKeepsItsSchemeWhenRead()
+{
+    // The scheme comes off a local path, where it is noise, and stays on
+    // anything else -- on two drives it is the only thing telling them apart, and
+    // "/reports/2026" pasted into a terminal names a directory that does not
+    // exist rather than a folder in a bucket.
+    QCOMPARE(m_app->pathTextFor(QStringLiteral("file:///home/ann")), QStringLiteral("/home/ann"));
+    QCOMPARE(m_app->pathTextFor(QStringLiteral("s3://reports/2026")), QStringLiteral("s3://reports/2026"));
+
+    // Nothing in, nothing out -- an empty path bar is not a navigation to "/".
+    QVERIFY(m_app->uriForPathText(QString()).isEmpty());
+    QVERIFY(m_app->uriForPathText(QStringLiteral("   ")).isEmpty());
+
+    // Text with a scheme that does not parse comes back as it was typed, so what
+    // the user asked for is what the error names.
+    QCOMPARE(m_app->uriForPathText(QStringLiteral("://nonsense")), QStringLiteral("://nonsense"));
 }
 
 void TestAppIntegration::everyRegisteredFeatureCanOpenATab()

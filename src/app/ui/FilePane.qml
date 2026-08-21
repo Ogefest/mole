@@ -477,9 +477,12 @@ FocusScope {
                             return
                         // Typed paths are a convenience; anything with a scheme
                         // is passed through so remote drives stay reachable.
-                        var value = text.trim()
-                        if (value.indexOf("://") < 0)
-                            value = "file://" + value
+                        // Worked out in C++, where the uri type lives: a bare
+                        // path is not always as simple as prefixing a scheme,
+                        // and a drive letter is the case that proves it.
+                        var value = App.uriForPathText(text)
+                        if (value.length === 0)
+                            return
                         paneController.navigateTo(value)
                         pane.takeFocus()
                     }

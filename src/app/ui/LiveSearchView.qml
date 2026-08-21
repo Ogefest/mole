@@ -729,10 +729,7 @@ Item {
         // folder is already on gets no answer for "/home/you/photos" if only
         // the accept handler knows it means "file:///home/you/photos".
         function scanUri() {
-            var uri = scanPath.text.trim()
-            if (uri.length === 0)
-                return ""
-            return uri.indexOf("://") < 0 ? "file://" + uri : uri
+            return App.uriForPathText(scanPath.text)
         }
 
         onAccepted: {
