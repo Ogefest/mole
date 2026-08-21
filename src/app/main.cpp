@@ -2,6 +2,7 @@
 #include "app/SessionLog.h"
 #include "host/PluginManager.h"
 #include "plugins/builtin/BuiltinPlugin.h"
+#include "plugins/builtin/previews/VideoPreview.h"
 #include "ui/AppController.h"
 #include "ui/DragSource.h"
 
@@ -39,6 +40,15 @@ int runDiagnostics(mole::AppController& controller, bool listPlugins)
 
     out << "loaded plugins:" << Qt::endl;
     for (const QString& line : controller.pluginSummary())
+        out << "  " << line << Qt::endl;
+
+    // The media stack, because the first question anybody will ask about a
+    // build that shows no video is which of two things happened: no multimedia
+    // module at all, or a backend that is there and reported no codecs. Those
+    // used to be indistinguishable from outside, and the second looked like a
+    // decision rather than a missing feature.
+    out << "media:" << Qt::endl;
+    for (const QString& line : mole::VideoPreviewProvider::diagnosticLines())
         out << "  " << line << Qt::endl;
 
     const QStringList problems = controller.pluginErrors();
@@ -147,9 +157,15 @@ int main(int argc, char* argv[])
     }
 
     const QStringList arguments = app.arguments();
-    if (arguments.contains(QStringLiteral("--version")) || arguments.contains(QStringLiteral("--plugins"))) {
-        return runDiagnostics(controller, arguments.contains(QStringLiteral("--plugins")));
-    }
+    // --diagnostics is a second spelling of --plugins, and it is the one this is
+    // called by everywhere except on the command line: the function is
+    // runDiagnostics(), and asking for it by that name used to start the
+    // application instead, which on a machine with no display looks exactly like
+    // a hang.
+    const bool listPlugins = arguments.contains(QStringLiteral("--plugins"))
+        || arguments.contains(QStringLiteral("--diagnostics"));
+    if (listPlugins || arguments.contains(QStringLiteral("--version")))
+        return runDiagnostics(controller, listPlugins);
 
     QQmlApplicationEngine engine;
     // Exposed as a context property rather than a registered singleton so the

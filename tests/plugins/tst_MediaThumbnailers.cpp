@@ -1,4 +1,5 @@
 #include "host/ThumbnailRegistry.h"
+#include "plugins/builtin/previews/VideoPreview.h"
 #include "plugins/builtin/thumbnails/PdfThumbnailer.h"
 #include "plugins/builtin/thumbnails/VideoThumbnailer.h"
 #include "support/TestSupport.h"
@@ -41,6 +42,8 @@ private slots:
     void aVideoOnADriveThatIsNotLocalIsNotClaimed();
     void aVideoIsClaimedOnlyByABuildThatCanDecodeOne();
     void bothAreAbsentFromABuildWithoutTheirDependency();
+    void anEmptyCodecListIsNotTheSameAsNoMultimedia();
+    void theDiagnosticsSayWhichOfTheTwoHappened();
     void neitherRunsOnTheGuiThreadAndBothStopWhenTold();
 
 private:
@@ -454,6 +457,56 @@ void TestMediaThumbnailers::neitherRunsOnTheGuiThreadAndBothStopWhenTold()
 // A QGuiApplication rather than the usual guiless main: a QVideoSink reaches the
 // platform layer, and a video decoded under a QCoreApplication crashes inside
 // gstreamer rather than answering.
+void TestMediaThumbnailers::anEmptyCodecListIsNotTheSameAsNoMultimedia()
+{
+    using Probe = VideoPreviewProvider::Probe;
+
+    // No multimedia module: a real answer, and the only one that hides the
+    // feature. There is nothing to try.
+    Probe absent;
+    absent.moduleBuiltIn = false;
+    QVERIFY(!VideoPreviewProvider::videoIsWorthTrying(absent));
+
+    // A module that is there and lists what it can decode: obviously yes.
+    Probe speaking;
+    speaking.moduleBuiltIn = true;
+    speaking.decodableVideoCodecs = { QStringLiteral("H264"), QStringLiteral("VP8") };
+    QVERIFY(VideoPreviewProvider::videoIsWorthTrying(speaking));
+
+    // The case this exists for. A module that is present and reports nothing is
+    // declining to say, not saying no -- QMediaFormat's codec list is the half
+    // the GStreamer backend fills in, and another backend need not. Treating it
+    // as no made videos stop existing in the application, with no error, no log
+    // line and nothing greyed out, which looks like a decision rather than a
+    // missing feature, so nobody investigates.
+    //
+    // Fed in rather than waited for: there is no way to arrange a silent backend
+    // on the machine this suite runs on.
+    Probe silent;
+    silent.moduleBuiltIn = true;
+    QVERIFY2(VideoPreviewProvider::videoIsWorthTrying(silent),
+        "a backend that reports no codecs is declining to answer, not answering no");
+}
+
+void TestMediaThumbnailers::theDiagnosticsSayWhichOfTheTwoHappened()
+{
+    // The first question anybody will ask about a build that shows no video, and
+    // it used to be unanswerable without a debugger.
+    const QStringList lines = VideoPreviewProvider::diagnosticLines();
+    QVERIFY(!lines.isEmpty());
+
+    const QString all = lines.join(QLatin1Char('\n'));
+    QVERIFY2(all.contains(QStringLiteral("multimedia module")), qPrintable(all));
+
+    if (!VideoPreviewProvider::probe().moduleBuiltIn) {
+        QVERIFY2(all.contains(QStringLiteral("not in this build")), qPrintable(all));
+        return;
+    }
+
+    QVERIFY2(all.contains(QStringLiteral("media backend")), qPrintable(all));
+    QVERIFY2(all.contains(QStringLiteral("video codecs it reports")), qPrintable(all));
+}
+
 int main(int argc, char** argv)
 {
     QGuiApplication app(argc, argv);

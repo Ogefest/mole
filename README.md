@@ -177,7 +177,8 @@ them. Ship the whole `dist/` folder; the entry point is `dist/mole`.
 Check a packaged build without a display:
 
 ```sh
-./dist/mole --plugins    # prints the search path and what loaded
+./dist/mole --plugins    # prints the search path, what loaded, and the media stack
+./dist/mole --diagnostics  # the same thing, under the name the code calls it
 ```
 
 ### Make targets

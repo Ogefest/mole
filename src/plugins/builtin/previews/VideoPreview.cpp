@@ -103,16 +103,58 @@ VideoPreviewProvider::VideoPreviewProvider(PluginServices services)
 {
 }
 
+const VideoPreviewProvider::Probe& VideoPreviewProvider::probe()
+{
+    static const Probe probe = [] {
+        Probe out;
+        out.requestedBackend = qEnvironmentVariable("QT_MEDIA_BACKEND");
+#ifdef MOLE_HAVE_MULTIMEDIA
+        out.moduleBuiltIn = true;
+        const QList<QMediaFormat::VideoCodec> codecs
+            = QMediaFormat().supportedVideoCodecs(QMediaFormat::Decode);
+        for (QMediaFormat::VideoCodec codec : codecs)
+            out.decodableVideoCodecs.append(QMediaFormat::videoCodecName(codec));
+#endif
+        return out;
+    }();
+    return probe;
+}
+
+bool VideoPreviewProvider::videoIsWorthTrying(const Probe& probe)
+{
+    // Deliberately not "and it listed a codec". An empty list from a backend
+    // that is present and working is indistinguishable here from no multimedia
+    // at all, and treating the two the same made videos stop existing in the
+    // application with nothing said about it.
+    return probe.moduleBuiltIn;
+}
+
+QStringList VideoPreviewProvider::diagnosticLines()
+{
+    const Probe& current = probe();
+
+    QStringList out;
+    out.append(
+        QStringLiteral("multimedia module: %1")
+            .arg(current.moduleBuiltIn ? QStringLiteral("built in") : QStringLiteral("not in this build")));
+    if (!current.moduleBuiltIn)
+        return out;
+
+    out.append(QStringLiteral("media backend: %1")
+                   .arg(current.requestedBackend.isEmpty()
+                           ? QStringLiteral("the platform default (QT_MEDIA_BACKEND is not set)")
+                           : current.requestedBackend));
+    out.append(QStringLiteral("video codecs it reports: %1")
+                   .arg(current.decodableVideoCodecs.isEmpty()
+                           ? QStringLiteral("none -- the backend did not say, so videos are tried anyway "
+                                            "and a failure is reported per file")
+                           : current.decodableVideoCodecs.join(QStringLiteral(", "))));
+    return out;
+}
+
 bool VideoPreviewProvider::isAvailable()
 {
-#ifdef MOLE_HAVE_MULTIMEDIA
-    // The codec list is the half of QMediaFormat the GStreamer backend fills in,
-    // and an empty one is a build that can decode no video at all.
-    static const bool any = !QMediaFormat().supportedVideoCodecs(QMediaFormat::Decode).isEmpty();
-    return any;
-#else
-    return false;
-#endif
+    return videoIsWorthTrying(probe());
 }
 
 QStringList VideoPreviewProvider::videoSuffixes()

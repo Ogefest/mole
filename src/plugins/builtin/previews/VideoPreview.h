@@ -97,14 +97,52 @@ public:
     QUrl viewSource() const override;
     PreviewController* createController(QObject* parent) override;
 
-    /// True when this build can decode any video at all.
+    /// What the media stack is and what it says it can do.
     ///
-    /// Asked of Qt, which answers this one accurately:
-    /// `QMediaFormat::supportedVideoCodecs(Decode)` is what the backend really
-    /// found -- H264, H265, VP8, Theora and so on, one entry per decoder
-    /// installed. An empty list is a build with no video decoders, and then
-    /// claiming a `.mp4` would open a black frame instead of showing the file's
-    /// details.
+    /// Two facts that used to be one. Whether Qt Multimedia is in this build at
+    /// all is a build fact; what its backend answers about codecs is a runtime
+    /// one, and an empty codec list from a backend that is present and working
+    /// is not the same thing as no multimedia.
+    struct Probe
+    {
+        /// Whether the build has Qt Multimedia in it. False means there is no
+        /// media stack, full stop.
+        bool moduleBuiltIn = false;
+        /// What QMediaFormat says it can decode. GStreamer fills this in; other
+        /// backends may not, and an empty list from one of those is the backend
+        /// declining to say rather than an answer.
+        QStringList decodableVideoCodecs;
+        /// QT_MEDIA_BACKEND, when it is set. Qt 6.4 has no API that names the
+        /// backend actually in use, so this is the honest half of the question:
+        /// what it was asked to be, or empty for the platform default.
+        QString requestedBackend;
+    };
+
+    /// Asks the media stack. Cached, because building it costs 710 ms and five
+    /// threads -- see videoSuffixes() below.
+    static const Probe& probe();
+
+    /// Whether a video is worth trying to show, given a probe.
+    ///
+    /// Pure, and separate from probe() so that the interesting case can be fed
+    /// in rather than waited for: there is no way to arrange a backend that
+    /// reports no codecs on the machine the suite runs on.
+    ///
+    /// Only "there is no multimedia module" hides the feature. A module that is
+    /// present and reports nothing is declining to answer, and the honest
+    /// response is to try and let the failure surface where it happens --
+    /// VideoPreviewController::reportPlaybackFailure() has the right words for a
+    /// build that cannot decode a file. The alternative is what this replaced:
+    /// video silently not existing, with no error, no log line and nothing
+    /// greyed out, which looks like a decision rather than a missing feature, so
+    /// nobody investigates.
+    static bool videoIsWorthTrying(const Probe& probe);
+
+    /// One line each, for `mole --diagnostics`. The first question anybody will
+    /// ask about a Windows build is which of the two cases above happened.
+    static QStringList diagnosticLines();
+
+    /// True when this build might be able to decode a video.
     static bool isAvailable();
 
     /// The suffixes a video file goes by, from the system's own MIME database.
