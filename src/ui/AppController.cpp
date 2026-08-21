@@ -543,12 +543,21 @@ void AppController::mountDefaultDrives()
 
     // Home first: it is where the user actually keeps things, whatever the
     // partition layout underneath happens to be.
-    mountLocal(QStringLiteral("Home"), QDir::homePath());
+    const QString home = QDir::homePath();
+    mountLocal(QStringLiteral("Home"), home);
 
     // Then whatever the operating system has mounted -- the real disks, USB
     // sticks and network shares, not the sixty pseudo filesystems next to them.
-    for (const SystemVolume& volume : SystemVolumes::enumerate())
+    for (const SystemVolume& volume : SystemVolumes::enumerate()) {
+        // The volume carrying home is in that list now, and it was not before:
+        // on a machine where /home is its own dataset it is a real disk holding
+        // everything the user owns. It is the same place as the row above, so it
+        // gets one row, under the name people look for rather than the name the
+        // dataset happens to have.
+        if (volume.rootPath == home)
+            continue;
         mountLocal(volume.name, volume.rootPath);
+    }
 }
 
 bool AppController::credentialsAvailable() const

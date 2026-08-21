@@ -44,6 +44,33 @@ namespace {
         return types;
     }
 
+    /// Where the operating system keeps itself, rather than where anybody keeps
+    /// their files.
+    ///
+    /// Short, fixed and shallow on purpose. This is not the blocklist the
+    /// allowlist comment below rejects: that one would have to keep up with a
+    /// separate dataset per installed package, and this is nine directories the
+    /// Filesystem Hierarchy Standard has named for thirty years. It exists so
+    /// that admitting a mount on a real disk does not also admit /boot/efi.
+    bool isSystemDirectory(const QString& rootPath)
+    {
+        for (const QLatin1String prefix : { QLatin1String("/boot"), QLatin1String("/etc"),
+                 QLatin1String("/usr"), QLatin1String("/var"), QLatin1String("/opt"), QLatin1String("/srv"),
+                 QLatin1String("/run"), QLatin1String("/tmp"), QLatin1String("/snap") }) {
+            if (rootPath == prefix || rootPath.startsWith(prefix + QLatin1Char('/')))
+                return true;
+        }
+        return false;
+    }
+
+    /// A node under /dev is a disk, a partition or a device-mapper target. A
+    /// dataset name like "rpool/ROOT/ubuntu" is not, which is exactly the
+    /// distinction that keeps the ZFS pile out without naming any of it.
+    bool isRealBackingDevice(const QString& device)
+    {
+        return device.startsWith(QLatin1String("/dev/"));
+    }
+
     /// "C:/" -> "C:". What a Windows user calls the drive when it has no label.
     QString driveLetterOf(const QString& rootPath)
     {
@@ -76,12 +103,19 @@ bool SystemVolumes::isNetworkFileSystem(const QString& fileSystemType)
     return network.contains(lower) || lower.startsWith(QLatin1String("fuse."));
 }
 
-bool SystemVolumes::isInteresting(
-    const QString& rootPath, const QString& fileSystemType, const QString& device, HostPlatform platform)
+bool SystemVolumes::isInteresting(const QString& rootPath, const QString& fileSystemType,
+    const QString& device, HostPlatform platform, const QString& homePath)
 {
     if (rootPath.isEmpty())
         return false;
     if (pseudoFileSystems().contains(fileSystemType.toLower()))
+        return false;
+
+    // A filesystem in RAM is not a drive wherever it is mounted. A ramdisk under
+    // /mnt/ was listed purely because of where it happened to be, while a real
+    // disk elsewhere was not listed at all -- the rule was asking where is this
+    // mounted when the question is is this somewhere I keep files.
+    if (isMemoryBacked(fileSystemType))
         return false;
 
     // Every installed snap is a read-only loopback mount. Dozens of them, none
@@ -102,6 +136,12 @@ bool SystemVolumes::isInteresting(
 
     // A network share is a drive wherever it is mounted.
     if (isNetworkFileSystem(fileSystemType))
+        return true;
+
+    // The volume holding everything the user owns is a drive whatever it is
+    // called. On a machine where /home is its own dataset, no mount prefix names
+    // it and it was the one volume missing from a list of drives.
+    if (carriesHome(rootPath, homePath))
         return true;
 
     // Otherwise: only the conventional places disks get mounted.
@@ -125,7 +165,37 @@ bool SystemVolumes::isInteresting(
             return true;
     }
 
-    return false;
+    // And the allowlist is a signal rather than the only gate, because it covers
+    // less than it looks like it does: /storage, /data and /pool are where a
+    // great many people mount a second disk, and a Flatpak or Snap sandbox sees
+    // the host's mounts somewhere else again. A mount on a real disk that is not
+    // part of the operating system is a place somebody keeps files.
+    //
+    // Both halves of that are load-bearing. Without the device test the whole
+    // ZFS dataset pile arrives -- /var/lib/dpkg and /var/games are real mounts
+    // and utterly uninteresting -- and without the system-directory test so does
+    // /boot/efi, which sits on a real partition.
+    return isRealBackingDevice(device) && !isSystemDirectory(rootPath);
+}
+
+bool SystemVolumes::isMemoryBacked(const QString& fileSystemType)
+{
+    static const QSet<QString> inRam {
+        QStringLiteral("tmpfs"),
+        QStringLiteral("ramfs"),
+        QStringLiteral("devtmpfs"),
+    };
+    return inRam.contains(fileSystemType.toLower());
+}
+
+bool SystemVolumes::carriesHome(const QString& mountRoot, const QString& homePath)
+{
+    if (mountRoot.isEmpty() || homePath.isEmpty())
+        return false;
+    if (mountRoot == homePath)
+        return true;
+    const QString prefix = mountRoot.endsWith(QLatin1Char('/')) ? mountRoot : mountRoot + QLatin1Char('/');
+    return homePath.startsWith(prefix);
 }
 
 QString SystemVolumes::displayName(
@@ -165,6 +235,8 @@ QList<SystemVolume> SystemVolumes::enumerate()
     QList<SystemVolume> out;
     QSet<QString> seenRoots;
 
+    const QString home = QDir::homePath();
+
     const QList<QStorageInfo> mounted = QStorageInfo::mountedVolumes();
     for (const QStorageInfo& storage : mounted) {
         if (!storage.isValid() || !storage.isReady())
@@ -174,7 +246,7 @@ QList<SystemVolume> SystemVolumes::enumerate()
         const QString type = QString::fromLatin1(storage.fileSystemType());
         const QString device = QString::fromLatin1(storage.device());
 
-        if (!isInteresting(rootPath, type, device))
+        if (!isInteresting(rootPath, type, device, hostPlatform(), home))
             continue;
         // Bind mounts and overlays can report the same root twice.
         if (seenRoots.contains(rootPath))
@@ -189,8 +261,21 @@ QList<SystemVolume> SystemVolumes::enumerate()
         volume.totalBytes = storage.bytesTotal();
         volume.freeBytes = storage.bytesAvailable();
         volume.isReadOnly = storage.isReadOnly();
-        volume.isRoot = rootPath == QLatin1String("/");
         out.append(volume);
+    }
+
+    // The system's own volume, which leads the list so it does not reshuffle
+    // itself every time something is plugged in.
+    //
+    // "/" everywhere it exists. On Windows nothing is "/", so the old test
+    // marked no volume at all and the order was left to the names -- there it is
+    // the drive the user's profile sits on. Deliberately not "the volume
+    // carrying home" in general: on a machine where /home is its own dataset
+    // that would put the home volume above the root and reorder a sidebar
+    // nobody asked to have reordered.
+    for (SystemVolume& volume : out) {
+        volume.isRoot = hostPlatform() == HostPlatform::Windows ? carriesHome(volume.rootPath, home)
+                                                                : volume.rootPath == QLatin1String("/");
     }
 
     // Root first, then alphabetically: the list should not reshuffle itself

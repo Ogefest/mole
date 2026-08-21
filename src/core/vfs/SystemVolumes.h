@@ -17,7 +17,8 @@ struct SystemVolume
     qint64 totalBytes = 0;
     qint64 freeBytes = 0;
     bool isReadOnly = false;
-    /// True for the volume the user's home directory lives on.
+    /// True for the system's own volume: "/" where there is one, and on Windows
+    /// the drive the user's profile sits on. It leads the list.
     bool isRoot = false;
 };
 
@@ -41,8 +42,24 @@ public:
     /// the Windows and macOS answers in branches no test has ever entered --
     /// which is how this came to return nothing at all on Windows and one row
     /// called "Root" on macOS. See ADR-0068.
+    /// `homePath` is where the user's own files are, and it is a parameter for
+    /// the same reason the platform is. The volume carrying it is always a
+    /// drive, whatever it is called: on a machine where /home is its own dataset
+    /// that volume holds everything the user owns, and no mount prefix names it.
+    /// Empty means "do not apply that rule", which is what a test wants when it
+    /// is asking about a different machine.
     static bool isInteresting(const QString& rootPath, const QString& fileSystemType, const QString& device,
-        HostPlatform platform = hostPlatform());
+        HostPlatform platform = hostPlatform(), const QString& homePath = {});
+
+    /// Whether `mountRoot` is the mount the user's home directory sits on or
+    /// under. "/" carries every home, so a caller holding the whole list should
+    /// prefer the longest match -- which is what enumerate() does.
+    static bool carriesHome(const QString& mountRoot, const QString& homePath);
+
+    /// A filesystem that lives in RAM. Not a drive wherever it is mounted: a
+    /// ramdisk under /mnt/ is not somewhere anybody keeps files, and it was
+    /// listed purely because of where it happened to be.
+    static bool isMemoryBacked(const QString& fileSystemType);
 
     static bool isNetworkFileSystem(const QString& fileSystemType);
 

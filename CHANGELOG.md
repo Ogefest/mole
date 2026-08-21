@@ -11,6 +11,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-21 #MOLE-241 The drive list finds a disk wherever it is mounted, including a separate /home, and stops listing a ramdisk as a drive
 2026-08-21 #MOLE-181 The sidebar lists drives on Windows and macOS as well as Linux, with the name the disk carries rather than "Root"
 2026-08-21 #MOLE-242 Renaming a file to a different capitalisation of its own name works, instead of being refused as one that would overwrite something
 2026-08-21 #MOLE-240 On a volume that ignores case, two spellings of one folder are one folder, so a move cannot be slipped past the guard that stops a directory being put inside itself

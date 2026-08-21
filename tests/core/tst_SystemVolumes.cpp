@@ -28,6 +28,10 @@ private slots:
     void aMacMachine_data();
     void aMacMachine();
 
+    void theMachineTheRuleWasWrongOn_data();
+    void theMachineTheRuleWasWrongOn();
+    void aDiskOutsideEveryConventionIsStillADisk_data();
+    void aDiskOutsideEveryConventionIsStillADisk();
     void networkSharesAreDrivesWhereverTheyAreMounted();
     void aNameIsNeverEmpty();
 };
@@ -52,7 +56,10 @@ void TestSystemVolumes::aLinuxMachine_data()
     QTest::newRow("efivars") << "/sys/firmware/efi/efivars" << "efivarfs" << "efivarfs" << false;
     QTest::newRow("a zfs dataset in the middle") << "/var/lib/dpkg" << "zfs" << "rpool/dpkg" << false;
     QTest::newRow("an empty root path") << "" << "ext4" << "/dev/sde1" << false;
-    QTest::newRow("the prefix itself is not a mount") << "/media/" << "ext4" << "/dev/sdf1" << false;
+    // The prefix has to have something under it. Asked with a dataset rather
+    // than a disk, so it is the prefix rule being tested and not the one below
+    // it that admits any real disk outside the operating system.
+    QTest::newRow("the prefix itself is not a mount under it") << "/media/" << "zfs" << "pool/media" << false;
 }
 
 void TestSystemVolumes::aLinuxMachine()
@@ -115,9 +122,11 @@ void TestSystemVolumes::aMacMachine_data()
     QTest::newRow("devfs") << "/dev" << "devfs" << "devfs" << false;
     QTest::newRow("an automount map") << "/System/Volumes/Data/home" << "map" << "map auto_home" << false;
     QTest::newRow("autofs") << "/net" << "autofs" << "map -hosts" << false;
-    // The Linux conventions mean nothing here, and admitting them would list
-    // things macOS keeps under /private.
-    QTest::newRow("a linux prefix means nothing here") << "/mnt/data" << "apfs" << "/dev/disk9s1" << false;
+    // The Linux conventions are not conventions here: a dataset mounted at
+    // /mnt/data on a Mac is admitted by nothing.
+    QTest::newRow("a linux prefix means nothing here") << "/mnt/data" << "zfs" << "pool/data" << false;
+    // A real disk is a real disk on any system, though, wherever it is mounted.
+    QTest::newRow("a real disk outside /Volumes") << "/mnt/data" << "apfs" << "/dev/disk9s1" << true;
 }
 
 void TestSystemVolumes::aMacMachine()
@@ -128,6 +137,95 @@ void TestSystemVolumes::aMacMachine()
     QFETCH(bool, expected);
 
     QCOMPARE(SystemVolumes::isInteresting(rootPath, type, device, HostPlatform::MacOS), expected);
+}
+
+/// The layout of a real Ubuntu-on-ZFS machine, which is where the old rule was
+/// found answering wrongly about the system it was written for. Three mount
+/// prefixes are one Linux convention out of several, and asking "where is this
+/// mounted" is not the same question as "is this somewhere I keep files".
+void TestSystemVolumes::theMachineTheRuleWasWrongOn_data()
+{
+    QTest::addColumn<QString>("rootPath");
+    QTest::addColumn<QString>("type");
+    QTest::addColumn<QString>("device");
+    QTest::addColumn<bool>("expected");
+
+    // A real disk holding everything the user owns, named by no convention at
+    // all. The old rule said no, and it was the worst answer on the list.
+    QTest::newRow("a separate /home dataset") << "/home/ann" << "zfs" << "pool/USERDATA/ann" << true;
+
+    // A ramdisk, listed by the old rule purely because of where it sits.
+    QTest::newRow("a ramdisk under /mnt") << "/mnt/ramdisk" << "tmpfs" << "tmpfs" << false;
+    QTest::newRow("a ramdisk anywhere else") << "/scratch" << "tmpfs" << "tmpfs" << false;
+
+    // Right before and right after.
+    QTest::newRow("a disk under /mnt") << "/mnt/SG4T" << "ext4" << "/dev/sda" << true;
+    QTest::newRow("an nfs export under /mnt") << "/mnt/nas" << "nfs4" << "server:/export" << true;
+    QTest::newRow("udisks2 removable media") << "/run/media/ann/STICK" << "vfat" << "/dev/sdc1" << true;
+    QTest::newRow("the root") << "/" << "zfs" << "pool/ROOT/ubuntu" << true;
+
+    // The pile the allowlist comment is about: separate filesystems, real
+    // mounts, utterly uninteresting, and no blocklist would keep up with them.
+    // They stay out because a dataset name is not a backing device.
+    for (const char* dataset : { "/var/lib/dpkg", "/var/games", "/usr/local", "/srv", "/var/log" }) {
+        QTest::newRow(dataset) << QString::fromLatin1(dataset) << "zfs"
+                               << QStringLiteral("pool/ROOT/ubuntu%1").arg(QString::fromLatin1(dataset))
+                               << false;
+    }
+
+    // Twenty-odd of these on an ordinary machine.
+    QTest::newRow("a snap loopback") << "/snap/firefox/8736" << "squashfs" << "/dev/loop8" << false;
+
+    // On a real partition, and not anybody's files. Without the
+    // system-directory test, admitting a mount on a real disk admits these two.
+    QTest::newRow("the efi partition") << "/boot/efi" << "vfat" << "/dev/nvme0n1p1" << false;
+    QTest::newRow("grub on the same partition") << "/boot/grub" << "vfat" << "/dev/nvme0n1p1" << false;
+    // The zfs keystore: a real device-mapper node, and still the operating
+    // system's own business rather than somewhere anybody keeps files.
+    QTest::newRow("the zfs keystore")
+        << "/run/keystore/rpool" << "ext4" << "/dev/mapper/keystore-rpool" << false;
+}
+
+void TestSystemVolumes::theMachineTheRuleWasWrongOn()
+{
+    QFETCH(QString, rootPath);
+    QFETCH(QString, type);
+    QFETCH(QString, device);
+    QFETCH(bool, expected);
+
+    QCOMPARE(SystemVolumes::isInteresting(
+                 rootPath, type, device, HostPlatform::Posix, QStringLiteral("/home/ann")),
+        expected);
+}
+
+void TestSystemVolumes::aDiskOutsideEveryConventionIsStillADisk_data()
+{
+    QTest::addColumn<QString>("rootPath");
+    QTest::addColumn<bool>("expected");
+
+    // Where a great many people actually mount a second disk, named by none of
+    // the three prefixes. The allowlist is a signal now rather than the only
+    // gate, so a real disk that is not part of the operating system counts.
+    QTest::newRow("/storage") << "/storage" << true;
+    QTest::newRow("/data") << "/data" << true;
+    QTest::newRow("/pool") << "/pool" << true;
+    QTest::newRow("/games") << "/games" << true;
+
+    // Still not, because these are the operating system.
+    QTest::newRow("/usr") << "/usr" << false;
+    QTest::newRow("/var/lib") << "/var/lib" << false;
+    QTest::newRow("/boot") << "/boot" << false;
+    QTest::newRow("/tmp") << "/tmp" << false;
+}
+
+void TestSystemVolumes::aDiskOutsideEveryConventionIsStillADisk()
+{
+    QFETCH(QString, rootPath);
+    QFETCH(bool, expected);
+
+    QCOMPARE(SystemVolumes::isInteresting(rootPath, QStringLiteral("ext4"), QStringLiteral("/dev/sdb1"),
+                 HostPlatform::Posix, QStringLiteral("/home/ann")),
+        expected);
 }
 
 void TestSystemVolumes::networkSharesAreDrivesWhereverTheyAreMounted()
