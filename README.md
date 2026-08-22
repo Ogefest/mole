@@ -376,6 +376,13 @@ afterwards, so it is safe to point at a bucket or share that holds real files.
 it works and how it connects. Use a throwaway account: these are test credentials
 in a shell history.
 
+One more of the same shape, and it is a path rather than an account.
+`MOLE_TEST_SNAPSHOT_PATH` points at a folder inside a filesystem that exposes its
+snapshots — set it and `tst_LocalSnapshots` checks that a real snapshot directory
+behaves like the ordinary directory the whole feature assumes it is. Everything
+else about earlier versions is held against a temporary tree in the same shape, so
+the suite is green on a machine that has never taken a snapshot.
+
 ### The scale tier
 
 `make test-heavy` is the same thing at a size that hurts: gigabytes each way,

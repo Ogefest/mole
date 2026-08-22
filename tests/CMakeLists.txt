@@ -158,6 +158,11 @@ mole_add_test(tst_NameRules         SOURCES core/tst_NameRules.cpp)
 mole_add_test(tst_QmlConventions    SOURCES app/tst_QmlConventions.cpp)
 mole_add_test(tst_LocalFileSystem   SOURCES core/tst_LocalFileSystem.cpp)
 
+# Earlier states of a file, where the filesystem already keeps them. The shape is
+# a temporary tree, so the discovery walk and the per-folder union are held on any
+# machine; the live case reads MOLE_TEST_SNAPSHOT_PATH and skips without it.
+mole_add_test(tst_LocalSnapshots    SOURCES core/tst_LocalSnapshots.cpp)
+
 # What a process killed outright leaves behind. It starts a second copy of
 # itself and sends it SIGKILL, which is the one failure that cannot be faked
 # from inside a process that intends to keep running.

@@ -6,6 +6,7 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QSet>
 #include <QStorageInfo>
 
 namespace mole {
@@ -138,6 +139,20 @@ namespace {
         return !canonicalA.isEmpty() && canonicalA == canonicalB;
     }
 
+    /// An earlier state of a file is a thing to read, and nothing else.
+    ///
+    /// The kernel refuses too -- a snapshot is mounted read-only -- but it
+    /// refuses with an I/O error, which reads as a fault rather than as an
+    /// answer. VersionGuard cannot say it either: it stands aside for a drive
+    /// that understands versions, and this one does.
+    Result<void> refuseWritingToAVersion(const VfsUri& target)
+    {
+        if (!target.hasVersion())
+            return {};
+        return Result<void>::failure(VfsError::NotSupported,
+            QStringLiteral("An earlier version of a file can be read and copied, not written"));
+    }
+
     VfsError errorForPath(const QString& path)
     {
         const QFileInfo info(path);
@@ -207,9 +222,76 @@ Result<SpaceInfo> LocalFileSystem::space(const VfsUri& target)
     return info;
 }
 
+QString LocalFileSystem::snapshotRootFor(const QString& localPath) const
+{
+    const auto exposesSnapshots = [](const QString& root) {
+        const QString directory
+            = (root.endsWith(QLatin1Char('/')) ? root : root + QLatin1Char('/')) + snapshotDirectory();
+        return QFileInfo(directory).isDir();
+    };
+
+    // Up from here, and the *nearest* ancestor wins: datasets nest, and on a
+    // machine whose root filesystem is one of these -- which the machine this was
+    // written on is -- every path has "/" above it. Answering with the outermost
+    // would index every relative path into the wrong snapshots.
+    //
+    // Walked every time rather than remembered. It is a handful of stat calls,
+    // and a remembered answer cannot be checked for being the nearest one without
+    // doing the walk that would have found it.
+    QString candidate = localPath;
+    while (!candidate.isEmpty()) {
+        if (exposesSnapshots(candidate))
+            return candidate;
+        if (candidate == QLatin1String("/"))
+            break;
+        const int slash = candidate.lastIndexOf(QLatin1Char('/'));
+        if (slash < 0)
+            break;
+        candidate = slash == 0 ? QStringLiteral("/") : candidate.left(slash);
+    }
+    return {};
+}
+
+QStringList LocalFileSystem::snapshotsUnder(const QString& root)
+{
+    const QString directory
+        = (root.endsWith(QLatin1Char('/')) ? root : root + QLatin1Char('/')) + snapshotDirectory();
+    QStringList names = QDir(directory).entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    return names;
+}
+
+QString LocalFileSystem::insideSnapshot(
+    const QString& root, const QString& snapshot, const QString& localPath)
+{
+    QString relative = localPath.mid(root.size());
+    while (relative.startsWith(QLatin1Char('/')))
+        relative.remove(0, 1);
+
+    QString out = (root.endsWith(QLatin1Char('/')) ? root : root + QLatin1Char('/')) + snapshotDirectory()
+        + QLatin1Char('/') + snapshot;
+    if (!relative.isEmpty())
+        out += QLatin1Char('/') + relative;
+    return out;
+}
+
+QString LocalFileSystem::localPathFor(const VfsUri& uri) const
+{
+    const QString path = uri.toLocalPath();
+    if (!uri.hasVersion() || path.isEmpty())
+        return path;
+
+    // Everything below works in '/' form, which QFile and QFileInfo accept on
+    // every platform -- and no platform that has a drive letter has these.
+    const QString slashed = QDir::fromNativeSeparators(path);
+    const QString root = snapshotRootFor(slashed);
+    if (root.isEmpty())
+        return {};
+    return insideSnapshot(root, uri.version(), slashed);
+}
+
 Result<AccessInfo> LocalFileSystem::access(const VfsUri& target)
 {
-    const QString path = target.toLocalPath();
+    const QString path = localPathFor(target);
     const QFileInfo info(path);
     if (!info.exists())
         return errorForPath(path);
@@ -244,7 +326,7 @@ Result<AccessInfo> LocalFileSystem::access(const VfsUri& target)
 
 Result<FileEntryList> LocalFileSystem::list(const VfsUri& dir, const CancelToken& cancel)
 {
-    const QString path = dir.toLocalPath();
+    const QString path = localPathFor(dir);
     if (path.isEmpty())
         return VfsError::make(VfsError::NotSupported, QStringLiteral("Not a local uri"));
 
@@ -263,7 +345,11 @@ Result<FileEntryList> LocalFileSystem::list(const VfsUri& dir, const CancelToken
 
         it.next();
         const QFileInfo info = it.fileInfo();
-        out.append(entryFromInfo(info, dir.child(info.fileName())));
+        // The version comes with the children. child() drops it on purpose --
+        // nothing hands out a version of a directory -- but inside a snapshot the
+        // whole tree is that state of it, and a row pointing at the current file
+        // would be the silent wrong answer this is all built to avoid.
+        out.append(entryFromInfo(info, dir.child(info.fileName()).withVersion(dir.version())));
     }
 
     return out;
@@ -271,7 +357,7 @@ Result<FileEntryList> LocalFileSystem::list(const VfsUri& dir, const CancelToken
 
 Result<FileEntry> LocalFileSystem::stat(const VfsUri& target)
 {
-    const QString path = target.toLocalPath();
+    const QString path = localPathFor(target);
     if (path.isEmpty())
         return VfsError::make(VfsError::NotSupported, QStringLiteral("Not a local uri"));
 
@@ -284,6 +370,8 @@ Result<FileEntry> LocalFileSystem::stat(const VfsUri& target)
 
 Result<void> LocalFileSystem::makeDirectory(const VfsUri& target)
 {
+    if (Result<void> older = refuseWritingToAVersion(target); !older.ok())
+        return older;
     const QString path = target.toLocalPath();
     if (path.isEmpty())
         return Result<void>::failure(VfsError::NotSupported, QStringLiteral("Not a local uri"));
@@ -296,6 +384,8 @@ Result<void> LocalFileSystem::makeDirectory(const VfsUri& target)
 
 Result<void> LocalFileSystem::remove(const VfsUri& target, bool recursive)
 {
+    if (Result<void> older = refuseWritingToAVersion(target); !older.ok())
+        return older;
     const QString path = target.toLocalPath();
     if (path.isEmpty())
         return Result<void>::failure(VfsError::NotSupported, QStringLiteral("Not a local uri"));
@@ -336,6 +426,10 @@ Result<void> LocalFileSystem::remove(const VfsUri& target, bool recursive)
 
 Result<void> LocalFileSystem::rename(const VfsUri& from, const VfsUri& to)
 {
+    if (Result<void> older = refuseWritingToAVersion(from); !older.ok())
+        return older;
+    if (Result<void> older = refuseWritingToAVersion(to); !older.ok())
+        return older;
     const QString src = from.toLocalPath();
     const QString dst = to.toLocalPath();
     if (src.isEmpty() || dst.isEmpty())
@@ -358,7 +452,7 @@ Result<void> LocalFileSystem::rename(const VfsUri& from, const VfsUri& to)
 
 Result<std::unique_ptr<QIODevice>> LocalFileSystem::openRead(const VfsUri& target, qint64)
 {
-    const QString path = target.toLocalPath();
+    const QString path = localPathFor(target);
     auto file = std::make_unique<QFile>(path);
     if (!file->open(QIODevice::ReadOnly))
         return errorForPath(path);
@@ -367,6 +461,9 @@ Result<std::unique_ptr<QIODevice>> LocalFileSystem::openRead(const VfsUri& targe
 
 Result<std::unique_ptr<QIODevice>> LocalFileSystem::openWrite(const VfsUri& target, qint64)
 {
+    if (Result<void> older = refuseWritingToAVersion(target); !older.ok())
+        return older.error();
+
     // Under a working name until it is finished, and renamed into place at the
     // end. See ADR-0021.
     //
@@ -383,6 +480,117 @@ Result<std::unique_ptr<QIODevice>> LocalFileSystem::openWrite(const VfsUri& targ
             QStringLiteral("Cannot write %1: %2").arg(target.toLocalPath(), file->errorString()));
     }
     return Result<std::unique_ptr<QIODevice>>(std::move(file));
+}
+
+Result<QStringList> LocalFileSystem::askWhatIsOffered(const VfsUri& target, const CancelToken&)
+{
+    const QString path = QDir::fromNativeSeparators(target.toLocalPath());
+    if (path.isEmpty())
+        return QStringList();
+
+    // Say nothing where there is nothing. A filesystem without snapshots, or a
+    // folder outside any dataset that exposes them, contributes no action at all
+    // -- which is most drives on most machines, and they pay a handful of stat
+    // calls once for the whole life of the mount.
+    const QString root = snapshotRootFor(path);
+    if (root.isEmpty())
+        return QStringList();
+
+    // And a root that is keeping none is a root with nothing to offer, which is
+    // not the same thing as not being one. A dataset with the directory and no
+    // snapshots in it is the ordinary state of a machine that has the feature
+    // switched on and has never used it.
+    if (snapshotsUnder(root).isEmpty())
+        return QStringList();
+    return QStringList { versionsActionId() };
+}
+
+FileActionList LocalFileSystem::actionsFor(const VfsUri& target, const FileEntry& entry)
+{
+    // What is on offer is about a file. A directory's earlier state is reached by
+    // opening an earlier state of a file inside it, which is the same journey.
+    if (entry.isDir || target.hasVersion())
+        return {};
+
+    const QString path = QDir::fromNativeSeparators(target.toLocalPath());
+    if (path.isEmpty())
+        return {};
+    const QString root = snapshotRootFor(path);
+    if (root.isEmpty())
+        return {};
+
+    // Offered only where there is something to offer, so the first snapshot that
+    // has this file settles it. A file that has been there a while is in the
+    // newest one and this is a single stat; a file that is in none of them costs
+    // one per snapshot, once, to answer no.
+    const QStringList snapshots = snapshotsUnder(root);
+    for (const QString& snapshot : snapshots) {
+        if (QFileInfo::exists(insideSnapshot(root, snapshot, path))) {
+            return { FileAction {
+                versionsActionId(), QStringLiteral("Earlier versions"), true, FileActionKind::Uris } };
+        }
+    }
+    return {};
+}
+
+Result<FileActionOutcome> LocalFileSystem::invoke(
+    const QString& id, const VfsUri& target, const CancelToken& cancel)
+{
+    if (id != versionsActionId())
+        return IFileSystem::invoke(id, target, cancel);
+
+    const QString path = QDir::fromNativeSeparators(target.toLocalPath());
+    const QString root = path.isEmpty() ? QString() : snapshotRootFor(path);
+    if (root.isEmpty()) {
+        return VfsError::make(
+            VfsError::NotSupported, QStringLiteral("Nothing here keeps earlier states of a file"));
+    }
+
+    QList<VfsUri> found;
+    for (const QString& snapshot : snapshotsUnder(root)) {
+        // Reaching into a snapshot can be slow the first time, because the
+        // filesystem may have work to do before it answers. Polled between
+        // snapshots rather than trusted to be quick.
+        if (cancel.isCancelled())
+            return VfsError::make(VfsError::Cancelled, QStringLiteral("Cancelled"));
+        if (QFileInfo::exists(insideSnapshot(root, snapshot, path)))
+            found.append(target.withVersion(snapshot));
+    }
+
+    if (found.isEmpty()) {
+        return VfsError::make(VfsError::NotFound,
+            QStringLiteral("No snapshot here keeps an earlier state of %1").arg(target.fileName()));
+    }
+    return FileActionOutcome::fromUris(found);
+}
+
+Result<QStringList> LocalFileSystem::entriesWithActions(const VfsUri& dir, const CancelToken& cancel)
+{
+    const QString path = QDir::fromNativeSeparators(dir.toLocalPath());
+    const QString root = path.isEmpty() ? QString() : snapshotRootFor(path);
+    if (root.isEmpty())
+        return QStringList();
+
+    // One pass per snapshot, not one per file. That is what makes the marks
+    // possible at all: a folder of five thousand files costs as many readdirs as
+    // there are snapshots, which is a number nobody has five thousand of.
+    QSet<QString> named;
+    for (const QString& snapshot : snapshotsUnder(root)) {
+        if (cancel.isCancelled())
+            return VfsError::make(VfsError::Cancelled, QStringLiteral("Cancelled"));
+
+        const QDir inside(insideSnapshot(root, snapshot, path));
+        if (!inside.exists())
+            continue;
+        const QStringList entries
+            = inside.entryList(QDir::Files | QDir::Hidden | QDir::NoDotAndDotDot, QDir::NoSort);
+        for (const QString& name : entries)
+            named.insert(name);
+    }
+
+    QStringList out(named.begin(), named.end());
+    out.sort();
+    return out;
 }
 
 FileSystemPtr LocalFileSystemFactory::create(const QVariantMap&, QString*)

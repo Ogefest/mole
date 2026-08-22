@@ -55,6 +55,57 @@ public:
 
     Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override;
     Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1) override;
+
+    // ---- earlier states of a file, where the filesystem keeps them ---------
+    //
+    // The cheapest source of earlier versions there will ever be: no library, no
+    // privileged call, no daemon. A dataset that exposes its snapshots hangs
+    // them under a fixed hidden directory at its own root, and an earlier state
+    // of a file is the same relative path inside one of them -- an ordinary path,
+    // readable with the readdir and stat this class already uses.
+    //
+    // ADR-0051 settled what Mole does with them: it lists and opens what the
+    // filesystem exposes and manages nothing. Nothing here creates, deletes or
+    // rolls back to a snapshot, and nothing reads a filesystem property through
+    // any library or command.
+
+    /// True, and it means it: a uri naming a version resolves into the snapshot
+    /// that carries it, so every read goes through the ordinary path.
+    bool understandsVersions() const override { return true; }
+
+    FileActionList actionsFor(const VfsUri& target, const FileEntry& entry) override;
+    Result<FileActionOutcome> invoke(
+        const QString& id, const VfsUri& target, const CancelToken& cancel) override;
+    Result<QStringList> entriesWithActions(const VfsUri& dir, const CancelToken& cancel) override;
+
+    /// The action this backend contributes. Public so a test can name it without
+    /// spelling the string twice.
+    static QString versionsActionId() { return QStringLiteral("org.mole.local.versions"); }
+
+    /// Where a dataset exposes its snapshots, relative to its own root.
+    ///
+    /// One convention, named. It is what makes discovery possible at all: the
+    /// question is *does this ancestor have that directory*. A subvolume snapshot
+    /// that can live anywhere has nothing to discover, so it is not this ticket
+    /// and not this constant -- a second convention is a second one of these, and
+    /// nothing above the backend changes when it arrives.
+    static QString snapshotDirectory() { return QStringLiteral(".zfs/snapshot"); }
+
+protected:
+    Result<QStringList> askWhatIsOffered(const VfsUri& target, const CancelToken& cancel) override;
+
+private:
+    /// The path to read for `uri`, which is the path itself unless the uri names
+    /// a version -- then it is that path inside the snapshot. Empty when the uri
+    /// is not local, or names a version of something under no snapshot root.
+    QString localPathFor(const VfsUri& uri) const;
+    /// The nearest ancestor of `localPath` that exposes snapshots, or empty.
+    /// `localPath` is in '/' form.
+    QString snapshotRootFor(const QString& localPath) const;
+    /// What is under a root's snapshot directory, newest name last. One readdir.
+    static QStringList snapshotsUnder(const QString& root);
+    /// `localPath` as it appears inside `snapshot`.
+    static QString insideSnapshot(const QString& root, const QString& snapshot, const QString& localPath);
 };
 
 class LocalFileSystemFactory final : public IFileSystemFactory
