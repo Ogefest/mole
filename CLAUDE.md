@@ -23,7 +23,7 @@ English is the working language of the project, without exception:
 - code, identifiers and comments
 - strings shown to the user, log messages and error text
 - commit messages and pull request descriptions
-- documentation, ADRs, the changelog, TODO and DONE
+- documentation, ADRs, the changelog and TODO
 
 This is an open source project — a contributor should never hit a wall of text
 they cannot read. Conversation with the author may happen in any language; what
@@ -79,24 +79,29 @@ always be empty, and a card appearing in it means one fell out.
 
 **The catch-all is a batch, and its name changes.** It fills, gets worked, closes when its
 last task lands, and planning creates the next one when the next small thing arrives. `Loose ends`
-was the first and closed on 2026-08-19; `Loose ends II` was made and closed the same day; the next
-is `Loose ends III`. **So never type the name from memory and never attach a task to a finished
-epic** — that is what happened to `Testing: phase 6 — automation`, whose card was closed while
+was the first and closed on 2026-08-19; `Loose ends II` was made and closed the same day;
+`Loose ends III` did twenty tasks and closed on 2026-08-21; `Loose ends IV` follows it. **So never
+type the name from memory and never attach a task to a finished epic** — that is what happened to `Testing: phase 6 — automation`, whose card was closed while
 `MOLE-29` stayed open, and the task was unreachable for eight days because the queue is the epics
 and a finished epic is never offered.
 
 **Much of the time no catch-all is open at all**, because one closes the moment its last task lands
 and the next is made only when something needs it. That is the normal state and not a fault. **As of
-the morning of 2026-08-20 `Loose ends III` is open** — planning made it for the two tasks you had
-correctly left unlabelled the night before, `MOLE-233` and `MOLE-235`. Never take that from this
-page, though: read the open titles, because a batch can close between one task and the next. When
+2026-08-22 `Loose ends V` is open**; `Loose ends IV` before it held the four tasks you opened while
+working the batch before *that*. Never take any of it from this page, though: read the open titles,
+because a batch can close between one task and the next — `Loose ends III` closed while its last four
+tasks were being promoted, and they were moved into `IV` rather than left under a finished card. When
 you open a small task and the open-epic list holds no catch-all, **leave the task with no `epic:`
 label and say so in the message you send.** Planning sees it in the `no epic` column, which is
 exactly what that column is for, and makes the next batch. An unlabelled task waiting an hour is
 recoverable; a task filed into a finished epic is invisible, and that is the failure above.
 
 **The catch-all is the last resort and not the default.** It was broken up on
-2026-08-18 after growing to eighteen open tasks over six unrelated subjects. A
+2026-08-18 after growing to eighteen open tasks over six unrelated subjects, and rotated on
+2026-08-21 for the other reason a batch goes wrong: `Loose ends III` kept producing a new task from
+nearly every one worked, so its card never converged. **A batch you keep adding to is worth saying
+out loud in the message you send**, because two tasks in one subject is an epic planning should make
+rather than a batch that grows. A
 fault found in a transfer belongs in the transfer epic, one found in a preview in
 the preview epic; reach for the catch-all only when no epic fits. The open titles are one
 call away, and reading them costs nothing — note `select(.done|not)`, which is what keeps a
@@ -239,8 +244,9 @@ The three files alongside it keep what a tracker holds badly:
   ```
 
   The day it landed, the ticket, and the shortest phrase that says what changed. No
-  design discussion, no internals, no restating the ADR — that is what `DONE.md` and
-  the ADRs are for. Write `#MOLE-22`, never `#22`: GitHub turns `#22` into a link to
+  design discussion, no internals, no restating the ADR — **that is what the commit
+  message and the ADRs are for**, and the commit message is where it goes when the
+  first answer turned out to be wrong. Write `#MOLE-22`, never `#22`: GitHub turns `#22` into a link to
   an issue that was deleted on 2026-08-10.
 
   **This file is the release notes.** `make release` will insert a marker line above
@@ -248,11 +254,21 @@ The three files alongside it keep what a tracker holds badly:
   pulled out by a regular expression — so a line that does not follow the shape is a
   line that will not reach anybody. Lines already in the file from before
   2026-08-10 are prose and stay that way; they belong to the first release.
-- [DONE.md](DONE.md) — the long account of what was asked for and what the answer
-  turned out to be, including the times the first answer was wrong.
 - [TODO.md](TODO.md) — context that is *not* a task: behaviour we have decided to
   live with, conventions to follow, gaps that are documented rather than
   scheduled.
+
+**There is no `DONE.md` any more, and do not start one.** It held a long account of
+every finished task, and at 6,872 lines it had become 43% of the repository's prose —
+a second telling of what the commit message already says, since a commit body here
+averages 37 lines and covers the diagnosis, the alternatives and the test. The record
+now lives in four places and none of them is a file that grows without bound: the
+**ticket** for what was asked, the **commit message** for what the answer turned out to
+be *including where the first answer was wrong*, an **ADR** for a decision about shape,
+and `CHANGELOG.md` for one line per user-visible change. `MOLE-276` deleted it on
+2026-08-21 and [ADR-0071](docs/adr/0071-the-record-of-finished-work-is-the-commit.md)
+records why. Old entries stay readable at any commit that had them —
+`git show <sha>:DONE.md`.
 
 ## Which task to take next
 
