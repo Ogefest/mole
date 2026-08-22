@@ -136,6 +136,19 @@ Item {
                 font.pixelSize: App.smallTextSize
             }
 
+            // Beside it and in the same colour, because it is the same kind of
+            // fact: what is on the screen is not what the file would normally be
+            // shown as, and the reader has to be told rather than left to wonder
+            // why the markup is showing. The strip's own Show control is how they
+            // ask for the page anyway.
+            Label {
+                objectName: "markdownDeclinedNote"
+                visible: controller ? controller.markdownDeclined === true : false
+                text: controller ? controller.markdownDeclinedNote : ""
+                color: App.colour.warn
+                font.pixelSize: App.smallTextSize
+            }
+
             Item { Layout.fillWidth: true }
 
             Label {

@@ -67,7 +67,19 @@ class TextPreviewController final : public PreviewController
     Q_PROPERTY(bool longLinesFolded READ longLinesFolded NOTIFY textChanged)
     /// Rendered rather than coloured. Markdown is meant to be read, not read
     /// as source -- if someone wants the source they can open it as text.
+    ///
+    /// False for a Markdown file being shown as source, whether because the
+    /// reader asked for that or because this window was declined: it says what
+    /// the view is doing, not what the file is.
     Q_PROPERTY(bool markdown READ isMarkdown NOTIFY textChanged)
+    /// True when this window is Markdown that would have been rendered and was
+    /// not, because rendering it would have taken the window for seconds. The
+    /// view has to say so: a reader looking at markup has to know the page was
+    /// declined rather than that the file is not one.
+    Q_PROPERTY(bool markdownDeclined READ markdownDeclined NOTIFY textChanged)
+    /// The same thing in a phrase, with the figure that decided it. Empty when
+    /// nothing was declined. Built here because the number is here.
+    Q_PROPERTY(QString markdownDeclinedNote READ markdownDeclinedNote NOTIFY textChanged)
     Q_PROPERTY(QString languageName READ languageName NOTIFY textChanged)
     /// Rendered as a page rather than shown as source. Only ever true for markup
     /// the viewer was asked to render -- see setViewerOption().
@@ -97,6 +109,27 @@ public:
     /// that a window of them lays out a block at a time.
     static constexpr qsizetype kFoldedLineChars = 4096;
 
+    /// The most table rows a window may hold and still be rendered as Markdown.
+    ///
+    /// Rows rather than bytes, and the difference is the whole of it: 235 kB of
+    /// prose Markdown parses, lays out and restyles in 122 ms altogether, while
+    /// a 238 kB file whose largest table is 2,182 rows takes 2,676 ms in
+    /// `QTextDocument::setMarkdown()` alone. A cap on size would refuse the first
+    /// file and admit the second. The import is quadratic in the rows of one
+    /// table -- doubling them quadruples the time -- so the ceiling has to be on
+    /// the rows.
+    ///
+    /// 400 is about 130 ms by interpolation, and 500 is 190 ms; the first figure
+    /// a reader would notice sits between them. See MOLE-283 for the
+    /// measurements and how to take them.
+    static constexpr qsizetype kMarkdownTableRows = 400;
+
+    /// How much of a file the viewer holds at once. 512 kB is roughly ten
+    /// thousand lines of code -- more than anyone reads in one screen, and small
+    /// enough that paging feels instant. Public alongside the two budgets above
+    /// because a test about what a window costs has to be able to build one.
+    static constexpr qint64 kWindowBytes = 512 * 1024;
+
     /// What the view shows: the source as read, or the page with everything that
     /// could reach off the disk taken out of it.
     QString text() const { return m_displayText; }
@@ -105,6 +138,11 @@ public:
     bool isHighlighted() const { return !m_language.isEmpty() && !m_longLinesFolded; }
     bool longLinesFolded() const { return m_longLinesFolded; }
     bool isMarkdown() const { return m_markdown; }
+    bool markdownDeclined() const { return m_markdownDeclined; }
+    QString markdownDeclinedNote() const;
+    /// The longest run of table rows in this window, whether it was over the
+    /// budget or not. Public for the test that holds the budget to a number.
+    qsizetype markdownTableRows() const { return m_markdownTableRows; }
     bool isRenderedHtml() const { return m_renderHtml && m_isHtml; }
     QString languageName() const;
 
@@ -167,19 +205,32 @@ private:
     /// Recomputes what the view shows from what was read.
     void updateDisplayText();
 
-    /// 512 kB is roughly ten thousand lines of code -- more than anyone reads
-    /// in one screen, and small enough that paging feels instant.
-    static constexpr qint64 kWindowBytes = 512 * 1024;
-
     PluginServices m_services;
     SourceHighlighter* m_highlighter = nullptr;
     MarkdownStyle* m_markdownStyle = nullptr;
     QPointer<QQuickTextDocument> m_document;
     QString m_language;
     bool m_light = false;
+    /// What the suffix says the file is, settled once per file in load().
+    bool m_markdownFile = false;
+    /// What the view is actually doing with this window. Derived, in
+    /// updateDisplayText(), from the file, the reader's answer and the cost.
     bool m_markdown = false;
+    /// This window would have been rendered and was not.
+    bool m_markdownDeclined = false;
+    /// What decided it, kept so the note can say the figure.
+    qsizetype m_markdownTableRows = 0;
     bool m_isHtml = false;
     bool m_renderHtml = false;
+    /// Which of the two the reader asked for, and whether they asked at all.
+    ///
+    /// The third state is the one that matters. `Rendered` is what a Markdown
+    /// file does by default, so a reader who has chosen it and a reader who has
+    /// chosen nothing would otherwise be the same person -- and they are not:
+    /// one has been told what a huge table costs and accepted it, the other has
+    /// not been asked. Only Unset lets the window decline.
+    enum class MarkdownMode { Unset, Source, Rendered };
+    MarkdownMode m_markdownMode = MarkdownMode::Unset;
     QString m_text;
     /// Derived from m_text and the chosen mode, computed once per change rather
     /// than on every read.
@@ -210,13 +261,18 @@ public:
     QUrl viewSource() const override;
     PreviewController* createController(QObject* parent) override;
 
-    /// HTML can be read as source or shown as a page, and which one is right
-    /// depends entirely on who is looking. Nothing else here has a choice to make.
+    /// Markup can be read as source or shown as what it describes, and which one
+    /// is right depends entirely on who is looking. Both kinds this viewer
+    /// renders get the choice, with opposite defaults -- see the definition.
     QList<ViewerOption> options(const FileEntry& entry) const override;
 
     static QStringList textSuffixes();
     /// Markup this viewer can render as a page rather than colour as source.
     static bool isRenderable(const QString& suffix);
+    /// Markdown, by suffix. Here rather than in the controller because the
+    /// provider has to answer the same question when it declares its options,
+    /// and two spellings of one list is how they come apart.
+    static bool isMarkdown(const QString& suffix);
 
 private:
     PluginServices m_services;

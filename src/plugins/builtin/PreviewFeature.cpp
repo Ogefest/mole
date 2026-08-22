@@ -402,13 +402,20 @@ void PreviewTabController::installViewer(IPreviewProvider* provider)
     m_viewerOptions.clear();
     const QList<ViewerOption> declared = provider->options(m_showing);
     for (const ViewerOption& option : declared) {
-        const QString chosen = rememberedChoice(option, m_showing);
-        if (controller)
-            controller->setViewerOption(option.key, chosen);
+        const std::optional<QString> stored = storedChoice(option, m_showing);
+        // Only an answer somebody gave is applied. The default is the viewer's
+        // own and it is already holding it, so pushing it in says nothing -- and
+        // saying nothing is what lets a viewer tell an unanswered question from
+        // one answered the same way the default would have been. See
+        // storedChoice() for the case that needs the difference.
+        if (controller && stored)
+            controller->setViewerOption(option.key, *stored);
 
-        m_viewerOptions.append(
-            QVariantMap { { QStringLiteral("key"), option.key }, { QStringLiteral("title"), option.title },
-                { QStringLiteral("choices"), option.choices }, { QStringLiteral("chosen"), chosen } });
+        // The strip shows the default where nothing is stored, because that is
+        // what the file is about to be shown as.
+        m_viewerOptions.append(QVariantMap { { QStringLiteral("key"), option.key },
+            { QStringLiteral("title"), option.title }, { QStringLiteral("choices"), option.choices },
+            { QStringLiteral("chosen"), stored.value_or(option.defaultChoice) } });
     }
 
     if (controller)
@@ -639,16 +646,21 @@ QString PreviewTabController::preferenceKey(const QString& optionKey, const File
     return QStringLiteral("preview.%1.%2.%3").arg(m_providerId, entry.uri.suffix().toLower(), optionKey);
 }
 
-QString PreviewTabController::rememberedChoice(const ViewerOption& option, const FileEntry& entry) const
+std::optional<QString> PreviewTabController::storedChoice(
+    const ViewerOption& option, const FileEntry& entry) const
 {
     if (!m_services.preferences)
-        return option.defaultChoice;
+        return std::nullopt;
 
-    const QString remembered
-        = m_services.preferences->value(preferenceKey(option.key, entry), option.defaultChoice).toString();
-    // A choice that is no longer offered falls back rather than being obeyed: the
-    // viewer's options can change between versions.
-    return option.choices.contains(remembered) ? remembered : option.defaultChoice;
+    const QVariant remembered = m_services.preferences->value(preferenceKey(option.key, entry));
+    if (!remembered.isValid())
+        return std::nullopt;
+
+    // A choice that is no longer offered is not obeyed, and it is not treated as
+    // an answer either: the viewer's options can change between versions, and a
+    // value nothing offers any more says nothing about what the reader wants.
+    const QString value = remembered.toString();
+    return option.choices.contains(value) ? std::optional<QString>(value) : std::nullopt;
 }
 
 void PreviewTabController::chooseViewerOption(const QString& key, const QString& value)

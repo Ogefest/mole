@@ -59,6 +59,17 @@ Rendered as a page rather than shown as source: headings with room around them, 
 with line spacing, code on a slab, and a capped measure with the gutters taking the
 surplus so the line length stays readable on a wide window.
 
+**Show** in the strip switches between the page and the markup, the same choice an HTML
+file gets and remembered the same way — the other way round by default, because Markdown
+is written to be read.
+
+One kind of Markdown file is shown as source without being asked: one with a very large
+table in it. Rendering a table is quadratic in its rows, so a generated report with a
+couple of thousand of them takes seconds inside a single step that cannot be interrupted
+once it has started — and the window would sit there for all of it. The header says the
+file is being shown as source and how big the table is, and **Show → Rendered** renders
+it anyway if that is what you came for.
+
 ## HTML, either way
 
 Sometimes you want the page and sometimes you want the source, so it is a choice rather

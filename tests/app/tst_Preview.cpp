@@ -250,6 +250,15 @@ private slots:
     void aWindowOfTheSameSizeWithLinesInItIsUntouched();
     void pagingOnFromAFoldedWindowGetsColouringBack();
 
+    // --- markdown the window cannot afford to render ---
+    void aMarkdownFileWithAHugeTableOpensAsSourceAndSaysWhy();
+    void aMarkdownFileUnderTheBudgetIsRenderedAsBefore();
+    void theBudgetIsTableRowsRatherThanTheSizeOfTheFile();
+    void askingForThePageRendersADeclinedFile();
+    void askingForTheSourceOfAnOrdinaryMarkdownFileIsObeyed();
+    void markdownOffersThePageByDefaultAndTheSourceOnRequest();
+    void pagingOnFromADeclinedWindowRendersAgain();
+
     // --- the tab ---
     void loadsTextContent();
     void parsesCsvWithADetectedSeparator();
@@ -2114,6 +2123,268 @@ void TestPreview::pagingOnFromAFoldedWindowGetsColouringBack()
     QVERIFY2(!viewer->longLinesFolded(), "this window has lines in it");
     QVERIFY2(viewer->isHighlighted(), "so the colouring comes back");
     QVERIFY(longestLine(viewer->text()) < TextPreviewController::kFoldedLineChars);
+}
+
+// ------------------------------ markdown the window cannot afford to render
+
+// A 238 kB generated report -- one row per record, a table 2,182 rows by 14
+// columns -- took the window for over three seconds and there was nothing to be
+// done about it once it had started: behind `textFormat: MarkdownText` the
+// TextArea owns the document, so QTextDocument::setMarkdown() runs inside the
+// item on the thread that draws and cannot be cancelled. The cost is the table
+// and not the size, and the import is quadratic in its rows.
+//
+// Every case here asserts the *decision* and never a duration. A timing
+// assertion on a build machine is a flake, and the numbers behind the budget are
+// in MOLE-283 along with the four lines that measure them.
+
+namespace {
+
+/// A Markdown file whose largest table has `rows` rows in it.
+///
+/// Generated rather than shipped: the whole variable is how many rows there are,
+/// and a fixture would have to be regenerated to move the budget. Some prose
+/// first, so the file is not only a table and the run being measured is a run
+/// inside something.
+QByteArray markdownWithTable(int rows, int columns = 4)
+{
+    QByteArray out = QByteArrayLiteral("# Freshness\n\nOne row per record, generated nightly.\n\n");
+
+    QByteArray header = QByteArrayLiteral("|");
+    QByteArray rule = QByteArrayLiteral("|");
+    for (int c = 0; c < columns; ++c) {
+        header += QByteArrayLiteral(" column ") + QByteArray::number(c) + QByteArrayLiteral(" |");
+        rule += QByteArrayLiteral("---|");
+    }
+    out += header + '\n' + rule + '\n';
+
+    for (int r = 0; r < rows; ++r) {
+        out += '|';
+        for (int c = 0; c < columns; ++c) {
+            out += QByteArrayLiteral(" record-") + QByteArray::number(r) + QByteArrayLiteral("-")
+                + QByteArray::number(c) + QByteArrayLiteral(" |");
+        }
+        out += '\n';
+    }
+    return out;
+}
+
+/// Markdown with no table anywhere in it, at least `bytes` long.
+QByteArray markdownProse(qsizetype bytes)
+{
+    QByteArray out = QByteArrayLiteral("# Notes\n\n");
+    for (int i = 0; out.size() < bytes; ++i) {
+        out += QByteArrayLiteral("## Section ") + QByteArray::number(i)
+            + QByteArrayLiteral("\n\nA paragraph of prose about the section above it, with "
+                                "`inline code` and a [link](https://example.invalid/) in it, long "
+                                "enough that the file gets somewhere.\n\n- A list item.\n- Another.\n\n");
+    }
+    return out;
+}
+
+} // namespace
+
+void TestPreview::aMarkdownFileWithAHugeTableOpensAsSourceAndSaysWhy()
+{
+    const int rows = static_cast<int>(TextPreviewController::kMarkdownTableRows) + 200;
+    QVERIFY(m_tree->writeFile(QStringLiteral("freshness.md"), markdownWithTable(rows)));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("freshness.md"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(waitFor([viewer] { return !viewer->text().isEmpty(); }, 5000));
+
+    QVERIFY2(viewer->markdownDeclined(), "a table this size takes the window for seconds");
+    QVERIFY2(!viewer->isMarkdown(), "so nothing hands it to the importer");
+
+    // The header row and the rule are rows of the run as well, which is right:
+    // they are blocks the importer builds like any other.
+    QCOMPARE(viewer->markdownTableRows(), static_cast<qsizetype>(rows) + 2);
+
+    // Source, and all of it: declining to render is not declining to show.
+    QVERIFY(viewer->text().contains(QStringLiteral("| record-0-0 |")));
+    QVERIFY(viewer->text().contains(QStringLiteral("# Freshness")));
+
+    // And said out loud, with the figure that decided it, because otherwise a
+    // reader is looking at markup with no idea why.
+    QVERIFY2(!viewer->markdownDeclinedNote().isEmpty(), "the reader has to be told");
+    QVERIFY2(viewer->markdownDeclinedNote().contains(QStringLiteral("source")),
+        qPrintable(viewer->markdownDeclinedNote()));
+}
+
+void TestPreview::aMarkdownFileUnderTheBudgetIsRenderedAsBefore()
+{
+    const int rows = static_cast<int>(TextPreviewController::kMarkdownTableRows) / 4;
+    QVERIFY(m_tree->writeFile(QStringLiteral("small.md"), markdownWithTable(rows)));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("small.md"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(waitFor([viewer] { return !viewer->text().isEmpty(); }, 5000));
+
+    QVERIFY(viewer->isMarkdown());
+    QVERIFY(!viewer->markdownDeclined());
+    QVERIFY(viewer->markdownDeclinedNote().isEmpty());
+}
+
+void TestPreview::theBudgetIsTableRowsRatherThanTheSizeOfTheFile()
+{
+    // The claim the whole design rests on: a file's size says nothing about what
+    // rendering it will cost. 235 kB of prose Markdown parses, lays out and
+    // restyles in 122 ms altogether; 238 kB whose largest table is 2,182 rows
+    // spends 2,676 ms in setMarkdown() alone. A cap on bytes would have refused
+    // the first of these and admitted the second.
+    const QByteArray prose = markdownProse(300 * 1024);
+    QVERIFY(prose.size() > 300 * 1024);
+    QVERIFY(m_tree->writeFile(QStringLiteral("long-prose.md"), prose));
+
+    PreviewTabController* big = openPreview(QStringLiteral("long-prose.md"));
+    QVERIFY(big);
+    auto* proseViewer = qobject_cast<TextPreviewController*>(big->viewer());
+    QVERIFY(proseViewer);
+    QVERIFY(waitFor([proseViewer] { return !proseViewer->text().isEmpty(); }, 5000));
+
+    QVERIFY2(proseViewer->isMarkdown(), "a large file with no table in it renders as it always did");
+    QVERIFY(!proseViewer->markdownDeclined());
+    QCOMPARE(proseViewer->markdownTableRows(), qsizetype(0));
+
+    // And the other half: a file a fifth of the size, declined.
+    const QByteArray tabular
+        = markdownWithTable(static_cast<int>(TextPreviewController::kMarkdownTableRows) + 1);
+    QVERIFY2(tabular.size() < prose.size() / 4, "the declined file is much the smaller of the two");
+    QVERIFY(m_tree->writeFile(QStringLiteral("smaller-table.md"), tabular));
+
+    PreviewTabController* small = openPreview(QStringLiteral("smaller-table.md"));
+    QVERIFY(small);
+    auto* tableViewer = qobject_cast<TextPreviewController*>(small->viewer());
+    QVERIFY(tableViewer);
+    QVERIFY(waitFor([tableViewer] { return !tableViewer->text().isEmpty(); }, 5000));
+
+    QVERIFY(tableViewer->markdownDeclined());
+}
+
+void TestPreview::askingForThePageRendersADeclinedFile()
+{
+    const int rows = static_cast<int>(TextPreviewController::kMarkdownTableRows) + 200;
+    QVERIFY(m_tree->writeFile(QStringLiteral("report.md"), markdownWithTable(rows)));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("report.md"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(waitFor([viewer] { return !viewer->text().isEmpty(); }, 5000));
+    QVERIFY(viewer->markdownDeclined());
+
+    // The strip shows Rendered, because that is what a Markdown file does -- the
+    // decline is about this file, not about what was chosen.
+    QCOMPARE(preview->viewerOptions().size(), 1);
+    QCOMPARE(preview->viewerOptions().first().toMap().value(QStringLiteral("chosen")).toString(),
+        QStringLiteral("Rendered"));
+
+    // Asked for anyway: somebody who wants the page of a huge report can have it
+    // and wait for it, which is the difference between a guard and a refusal.
+    preview->chooseViewerOption(QStringLiteral("mode"), QStringLiteral("Rendered"));
+    QVERIFY2(viewer->isMarkdown(), "asked for, so rendered");
+    QVERIFY(!viewer->markdownDeclined());
+    QVERIFY(viewer->markdownDeclinedNote().isEmpty());
+
+    // Remembered, so the next huge report opens rendered without being asked
+    // again. Per suffix, as every viewer choice is -- see ADR-0006.
+    QVERIFY(m_tree->writeFile(QStringLiteral("second.md"), markdownWithTable(rows)));
+    PreviewTabController* next = openPreview(QStringLiteral("second.md"));
+    QVERIFY(next);
+    auto* nextViewer = qobject_cast<TextPreviewController*>(next->viewer());
+    QVERIFY(nextViewer);
+    QVERIFY(waitFor([nextViewer] { return !nextViewer->text().isEmpty(); }, 5000));
+    QVERIFY2(nextViewer->isMarkdown(), "the answer was remembered, so it is not asked again");
+    QVERIFY(!nextViewer->markdownDeclined());
+}
+
+void TestPreview::askingForTheSourceOfAnOrdinaryMarkdownFileIsObeyed()
+{
+    // The other direction, and the reason the choice exists at all for a file
+    // nothing was ever going to decline: somebody reading a README as markup.
+    QVERIFY(m_tree->writeFile(QStringLiteral("readme.md"), QByteArray("# Title\n\nProse.\n")));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("readme.md"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(waitFor([viewer] { return !viewer->text().isEmpty(); }, 5000));
+    QVERIFY(viewer->isMarkdown());
+
+    preview->chooseViewerOption(QStringLiteral("mode"), QStringLiteral("Source"));
+    QVERIFY(!viewer->isMarkdown());
+    // Not the same state as a decline: nothing was declined, so nothing is said.
+    QVERIFY(!viewer->markdownDeclined());
+    QVERIFY(viewer->markdownDeclinedNote().isEmpty());
+    QVERIFY(viewer->text().contains(QStringLiteral("# Title")));
+
+    preview->chooseViewerOption(QStringLiteral("mode"), QStringLiteral("Rendered"));
+    QVERIFY(viewer->isMarkdown());
+}
+
+void TestPreview::markdownOffersThePageByDefaultAndTheSourceOnRequest()
+{
+    TextPreviewProvider provider(m_app->services());
+
+    FileEntry markdown;
+    markdown.name = QStringLiteral("guide.md");
+    markdown.uri = m_tree->rootUri().child(QStringLiteral("guide.md"));
+
+    const QList<ViewerOption> declared = provider.options(markdown);
+    QCOMPARE(declared.size(), 1);
+    QCOMPARE(declared.first().key, QStringLiteral("mode"));
+    QCOMPARE(declared.first().choices, QStringList({ QStringLiteral("Source"), QStringLiteral("Rendered") }));
+    // The reverse of the .html default, and for the same reason read the other
+    // way: Markdown is written to be read as prose, and a page of HTML in a file
+    // manager is usually worth reading as what it is.
+    QVERIFY2(
+        declared.first().defaultChoice == QStringLiteral("Rendered"), "a Markdown file is worth rendering");
+
+    for (const char* name : { "notes.md", "notes.markdown", "notes.mdown", "notes.mkd", "NOTES.MD" }) {
+        FileEntry entry;
+        entry.name = QLatin1String(name);
+        entry.uri = m_tree->rootUri().child(entry.name);
+        QVERIFY2(provider.options(entry).size() == 1, name);
+    }
+
+    // And nothing changes for the files that never had a choice to make.
+    FileEntry log;
+    log.name = QStringLiteral("notes.txt");
+    log.uri = m_tree->rootUri().child(QStringLiteral("notes.txt"));
+    QVERIFY(provider.options(log).isEmpty());
+}
+
+void TestPreview::pagingOnFromADeclinedWindowRendersAgain()
+{
+    // A property of the window and not of the file, like the fold: a report whose
+    // tables are all at the front is prose from the second window on, and there
+    // is nothing there to decline.
+    // Sized so the arithmetic is not doing the work: the table alone is more than
+    // one window, and the prose after it is more than one window, so the first
+    // window is nothing but table and the last is nothing but prose.
+    const QByteArray table = markdownWithTable(2500, 14);
+    QVERIFY2(table.size() > TextPreviewController::kWindowBytes, "the first window has to be all table");
+    QByteArray mixed = table;
+    mixed += markdownProse(TextPreviewController::kWindowBytes + 128 * 1024);
+    QVERIFY(m_tree->writeFile(QStringLiteral("mixed.md"), mixed));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("mixed.md"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(waitFor([viewer] { return !viewer->text().isEmpty(); }, 5000));
+
+    QVERIFY(viewer->markdownDeclined());
+    QVERIFY2(!viewer->isAtEnd(), "there is a window after this one");
+
+    viewer->lastWindow();
+    QVERIFY(waitFor([viewer] { return viewer->windowOffset() > 0; }, 5000));
+    QVERIFY2(!viewer->markdownDeclined(), "this window is prose");
+    QVERIFY2(viewer->isMarkdown(), "so it renders");
 }
 
 // -------------------------------------------------------------- the tab

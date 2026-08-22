@@ -10,6 +10,8 @@
 #include <QUrl>
 #include <QVariantList>
 
+#include <optional>
+
 namespace mole {
 
 class ListDirectoryTask;
@@ -226,10 +228,20 @@ private:
     /// The provider showing the current file, for the preference keys.
     QString m_providerId;
 
-    // The two halves of remembering a choice: where it is written, and what it
-    // says when nothing has been written yet.
+    // The two halves of remembering a choice: where it is written, and what was
+    // written there.
     QString preferenceKey(const QString& optionKey, const FileEntry& entry) const;
-    QString rememberedChoice(const ViewerOption& option, const FileEntry& entry) const;
+    /// What was chosen for this option last time, or nothing when nobody has.
+    ///
+    /// The absence is an answer of its own, which is why this is an optional
+    /// rather than the default filled in. A viewer is built already holding its
+    /// default, so there is nothing to tell it when nobody has chosen -- and a
+    /// viewer that can tell "nobody said" from "somebody said what the default
+    /// says" can let the file decide the rest. The text viewer needs exactly
+    /// that: a Markdown file whose largest table would take the window for
+    /// seconds opens as source, unless a reader has asked for the page. See
+    /// MOLE-283 and ADR-0006.
+    std::optional<QString> storedChoice(const ViewerOption& option, const FileEntry& entry) const;
     QUrl m_viewSource;
     QPointer<QObject> m_viewer;
     QPointer<ListDirectoryTask> m_listing;

@@ -13,6 +13,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-22 #MOLE-283 A Markdown file with a very large table opens as source instead of freezing the window, says why, and can still be rendered from the strip — where Markdown now offers Show: Rendered or Source like an HTML file does
 2026-08-22 #MOLE-282 A mounted drive is asked its own name rules, its own case folding and its own leftovers again, so a copy onto a stricter volume is checked before it starts, the guard against moving a folder into itself gets case right, and the sweep can find what an interrupted upload left behind
 2026-08-22 #MOLE-201 A container that keeps earlier objects lists them for a file, marks the rows that have them and reads one back — asked once per container, paginated properly, and silent on a container that does not
 2026-08-22 #MOLE-200 On a filesystem that keeps snapshots, a file's earlier states are listed, marked in the folder and opened like any other file — read-only, discovered from the paths that are already there, and costing nothing on a machine that has none

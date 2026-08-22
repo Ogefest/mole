@@ -250,13 +250,25 @@ project, and a contributor should never hit a wall of text they cannot read.
   and the same goes for the SQLite viewer, which opens read-only.
 - **A window with lines too long to lay out is folded, but only where a line break
   is what makes a block** — the plain text and source case, which is where the
-  minified exports, one-line logs and base64 blobs are. A Markdown file or an HTML
-  page with no line breaks in it and no markup to divide it either would still
-  reach the layout as one enormous block, and folding would not help: both parse
-  their own blocks out of the markup, and a newline inside a paragraph is turned
-  back into a space by both. Nobody has hit it — a minified `.md` is not a thing a
-  tool produces — and the answer if they do is to divide the block, not to insert
-  line breaks the renderer discards.
+  minified exports, one-line logs and base64 blobs are. Markup that reaches the
+  layout as too much work needs a different answer, because folding cannot help
+  it: Markdown and a rendered page parse their own blocks out of the markup, and a
+  newline inside a paragraph is turned back into a space by both.
+
+  One shape of that has been hit and is dealt with. MOLE-283 was a 238 kB
+  Markdown report whose largest table was 2,182 rows: plenty of line breaks, far
+  too much markup, and `QTextDocument::setMarkdown()` alone took 2,676 ms on the
+  thread that draws. The answer there is not to fold but to decline — the window
+  is measured for its longest run of table rows before it reaches the view, and
+  over the budget the file is shown as source with the reason said out loud and a
+  `Show: Rendered` in the strip for a reader who wants the page anyway.
+
+  What is still unhit is the other shape: a `.md` or an `.html` with **no line
+  breaks in it at all** and no markup to divide it either, which would reach the
+  layout as one enormous block that neither the fold nor a row count can see. A
+  minified `.md` is not a thing a tool produces, and the answer if somebody does
+  produce one is to divide the block, not to insert line breaks the renderer
+  discards.
 
 - A `.mole-partial` file, on a remote drive or a local disk, is the wreckage of a
   write that was killed before it finished — see [ADR-0020](docs/adr/0020-an-upload-in-progress-wears-a-different-name.md)

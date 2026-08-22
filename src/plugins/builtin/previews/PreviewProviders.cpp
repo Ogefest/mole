@@ -16,6 +16,8 @@
 #include <QStringDecoder>
 #include <QUrl>
 
+#include <algorithm>
+
 namespace mole {
 namespace {
 
@@ -46,6 +48,47 @@ namespace {
                 return true;
         }
         return false;
+    }
+
+    /// The longest run of consecutive lines that begin with a table's pipe.
+    ///
+    /// A GFM table row starts with `|`, and so does the `|---|` rule under the
+    /// header, so a run is the header, the rule and the body counted together.
+    /// Leading whitespace is skipped, because a table inside a list item is
+    /// indented, and nothing else about the line is looked at: this is a cost
+    /// estimate and not a parse. Qt's importer decides what a table is; the only
+    /// question here is roughly how many rows it is about to be handed.
+    ///
+    /// One pass and no allocation, which is the same trade hasOverlongLine()
+    /// makes beside it -- a scan of a quarter of a megabyte against an import
+    /// that can take seconds means the ordinary file pays almost nothing.
+    qsizetype longestTableRun(const QString& text)
+    {
+        qsizetype longest = 0;
+        qsizetype run = 0;
+        qsizetype i = 0;
+        while (i < text.size()) {
+            qsizetype end = i;
+            while (end < text.size() && !isLineBreak(text.at(end)))
+                ++end;
+
+            qsizetype first = i;
+            while (first < end && text.at(first).isSpace())
+                ++first;
+
+            if (first < end && text.at(first) == u'|')
+                longest = std::max(longest, ++run);
+            else
+                run = 0;
+
+            // A CRLF ends one line, not two.
+            i = end;
+            if (i < text.size() && text.at(i) == u'\r')
+                ++i;
+            if (i < text.size() && isLineBreak(text.at(i)))
+                ++i;
+        }
+        return longest;
     }
 
     /// Breaks every run longer than `limit` into pieces of `limit` characters.
@@ -209,15 +252,37 @@ void TextPreviewController::setViewerOption(const QString& key, const QString& v
         return;
 
     const bool render = value.compare(QLatin1String("Rendered"), Qt::CaseInsensitive) == 0;
-    if (render == m_renderHtml)
+    const MarkdownMode mode = render ? MarkdownMode::Rendered : MarkdownMode::Source;
+    if (render == m_renderHtml && mode == m_markdownMode)
         return;
+
+    // Both, unconditionally. This arrives before load(), so nothing here knows
+    // yet which kind of markup the file is -- and it does not need to: each
+    // member is read only for the kind it belongs to, since isRenderedHtml()
+    // requires a renderable suffix and the Markdown mode is only consulted for a
+    // Markdown file. One question was asked and one answer given; it lands in
+    // both places and one of them uses it.
     m_renderHtml = render;
+    m_markdownMode = mode;
 
     // The text already read is reused: switching between source and page is a
     // question about the same bytes, not a reason to go back to the drive.
     updateDisplayText();
     applyViewers();
     emit textChanged();
+}
+
+QString TextPreviewController::markdownDeclinedNote() const
+{
+    if (!m_markdownDeclined)
+        return {};
+
+    // The figure, because it is the answer to the only question a reader has
+    // here: why this file and not the last one. And "shown as source" rather
+    // than a word about tables or milliseconds -- what they need to know is what
+    // they are looking at.
+    return QStringLiteral("shown as source: a %1-row table would take seconds to render")
+        .arg(QLocale().toString(static_cast<qlonglong>(m_markdownTableRows)));
 }
 
 QString TextPreviewController::withoutExternalReferences(const QString& html)
@@ -281,6 +346,23 @@ void TextPreviewController::setDocumentStyle(
 
 void TextPreviewController::updateDisplayText()
 {
+    // Whether this window can be rendered as Markdown, decided before a
+    // character of it reaches the view -- which is the only place it can be
+    // decided. Behind `textFormat: MarkdownText` the TextArea owns the document,
+    // so setMarkdown() runs inside the item on the thread that draws, and once it
+    // has started nothing can cancel it or interrupt it. Whatever it costs, the
+    // window pays it in one go.
+    //
+    // Per window and not per file, like the fold: a report whose tables are all
+    // in the first window renders from the second one on.
+    const bool asked = m_markdownMode != MarkdownMode::Unset;
+    m_markdownTableRows
+        = m_markdownFile && m_markdownMode != MarkdownMode::Source ? longestTableRun(m_text) : 0;
+    // Only where nobody has answered. A reader who asked for the page gets it and
+    // waits for it knowingly; that is what the choice in the strip is for.
+    m_markdownDeclined = !asked && m_markdownTableRows > kMarkdownTableRows;
+    m_markdown = m_markdownFile && m_markdownMode != MarkdownMode::Source && !m_markdownDeclined;
+
     m_displayText = isRenderedHtml() ? withoutExternalReferences(m_text) : m_text;
 
     // A window with no line break in it reaches the text engine as one block of
@@ -293,6 +375,8 @@ void TextPreviewController::updateDisplayText()
     // source case. Markdown and a rendered page are parsed into blocks by their
     // own markup, and a newline inside a paragraph is folded back into a space
     // by both -- so a fold there would change what is shown and fix nothing.
+    // A Markdown file being shown as source is the plain text case again, and is
+    // folded like any other: nothing is parsing it any more.
     m_longLinesFolded = !m_markdown && !isRenderedHtml() && hasOverlongLine(m_displayText, kFoldedLineChars);
     if (m_longLinesFolded)
         m_displayText = withLongLinesFolded(m_displayText, kFoldedLineChars);
@@ -347,10 +431,15 @@ void TextPreviewController::load(const FileEntry& entry)
     const QString suffix = entry.uri.suffix().toLower();
 
     // Markdown is rendered, not coloured, so the highlighter stays off for it.
-    m_markdown = suffix == QLatin1String("md") || suffix == QLatin1String("markdown")
-        || suffix == QLatin1String("mdown") || suffix == QLatin1String("mkd");
+    // Rendering is settled per window in updateDisplayText(); this is only what
+    // the file is.
+    m_markdownFile = TextPreviewProvider::isMarkdown(suffix);
+    m_markdown = m_markdownFile && m_markdownMode != MarkdownMode::Source;
+    m_markdownDeclined = false;
+    m_markdownTableRows = 0;
     m_isHtml = TextPreviewProvider::isRenderable(suffix);
-    m_language = m_markdown ? QString() : SourceHighlighter::languageFor(entry.name, entry.mimeType, suffix);
+    m_language
+        = m_markdownFile ? QString() : SourceHighlighter::languageFor(entry.name, entry.mimeType, suffix);
     m_highlighter->setLanguage(m_language);
     // Stepping from a Markdown file to a source file, or back, changes which of
     // the two viewers the document needs.
@@ -468,18 +557,35 @@ bool TextPreviewProvider::isRenderable(const QString& suffix)
     return lower == QLatin1String("html") || lower == QLatin1String("htm") || lower == QLatin1String("xhtml");
 }
 
+bool TextPreviewProvider::isMarkdown(const QString& suffix)
+{
+    const QString lower = suffix.toLower();
+    return lower == QLatin1String("md") || lower == QLatin1String("markdown")
+        || lower == QLatin1String("mdown") || lower == QLatin1String("mkd");
+}
+
 QList<ViewerOption> TextPreviewProvider::options(const FileEntry& entry) const
 {
-    if (entry.isDir || !isRenderable(entry.uri.suffix()))
+    if (entry.isDir)
+        return {};
+    const QString suffix = entry.uri.suffix();
+    const bool markdown = isMarkdown(suffix);
+    if (!markdown && !isRenderable(suffix))
         return {};
 
     ViewerOption mode;
     mode.key = QStringLiteral("mode");
     mode.title = QStringLiteral("Show");
     mode.choices = { QStringLiteral("Source"), QStringLiteral("Rendered") };
-    // Source by default: a file manager showing a file should show what is in it,
-    // and someone who wants the page can say so once and be remembered.
-    mode.defaultChoice = QStringLiteral("Source");
+    // Opposite defaults, from the same question about who is looking. A file
+    // manager showing a `.html` should show what is in it, and somebody who
+    // wants the page can say so once and be remembered. A Markdown file is the
+    // other way round: it is written to be read as prose, and its source is the
+    // unusual thing to want.
+    //
+    // Markdown has the choice at all so that a reader can ask for the page of a
+    // report this viewer declined to render -- see kMarkdownTableRows.
+    mode.defaultChoice = markdown ? QStringLiteral("Rendered") : QStringLiteral("Source");
     return { mode };
 }
 
