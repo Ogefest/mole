@@ -50,6 +50,12 @@ class PreviewTabController final : public FeatureController
     /// one map per option with `key`, `title`, `choices` and `chosen`. Empty for
     /// most files. See docs/adr/0006-preview-options-and-preferences.md.
     Q_PROPERTY(QVariantList viewerOptions READ viewerOptions NOTIFY currentChanged)
+    /// Why the viewer showing this file is not the first one that claimed it, or
+    /// empty when it is. A viewer that reads a file and cannot show it steps down
+    /// the ladder, and the reader has to be told: a preview that quietly shows
+    /// the facts about a video looks like a preview that never tried to play it.
+    /// See docs/adr/0078-a-viewer-may-decline-a-file-it-has-read.md.
+    Q_PROPERTY(QString fallbackNote READ fallbackNote NOTIFY currentChanged)
     /// The details panel: whether it is open, what is in it, and whether the
     /// readers are still working. Filled from the metadata registry rather than
     /// by any viewer, so every viewer has it and none of them knows it exists --
@@ -97,6 +103,7 @@ public:
     /// shows; this is the stable id, for whoever needs to know exactly.
     QString providerId() const { return m_providerId; }
     QVariantList viewerOptions() const { return m_viewerOptions; }
+    QString fallbackNote() const { return m_fallbackNote; }
     /// Chooses one, remembers it for this file type, and shows the result now.
     Q_INVOKABLE void chooseViewerOption(const QString& key, const QString& value);
     QUrl viewSource() const { return m_viewSource; }
@@ -227,10 +234,18 @@ private:
     QVariantList m_viewerOptions;
     /// The provider showing the current file, for the preference keys.
     QString m_providerId;
+    /// Which provider is showing it, as the object, so a decline knows where in
+    /// the ladder to step down from. The id above cannot answer that: the ladder
+    /// is an order, not a set of names.
+    IPreviewProvider* m_provider = nullptr;
+    /// What to say about a viewer having given the file up. Cleared with the file.
+    QString m_fallbackNote;
 
     // The two halves of remembering a choice: where it is written, and what was
     // written there.
     QString preferenceKey(const QString& optionKey, const FileEntry& entry) const;
+    /// Hands the file to the next viewer below `declining`, and remembers why.
+    void stepDownFrom(IPreviewProvider* declining, const QString& reason);
     /// What was chosen for this option last time, or nothing when nobody has.
     ///
     /// The absence is an answer of its own, which is why this is an optional

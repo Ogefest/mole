@@ -141,6 +141,20 @@ Item {
                         font.pixelSize: App.smallTextSize
                     }
 
+                    // Next to the viewer's name, because it is the reason that
+                    // name is not the one that first claimed the file. The colour
+                    // of a caveat rather than of an error: nothing went wrong with
+                    // the file, and what is on screen is the honest second answer.
+                    Label {
+                        objectName: "fallbackNote"
+                        visible: controller && controller.fallbackNote.length > 0
+                        text: controller ? controller.fallbackNote : ""
+                        color: App.colour.warn
+                        font.pixelSize: App.smallTextSize
+                        elide: Text.ElideRight
+                        Layout.maximumWidth: 320
+                    }
+
                     // Whatever this viewer says can be chosen about how it shows
                     // this file. The strip renders these without knowing what any
                     // of them mean, the same way the menu renders entries from
@@ -252,6 +266,14 @@ Item {
                 target: controller
                 function onCurrentChanged() {
                     if (!viewerLoader.item)
+                        return
+                    // Not when the markup is about to be replaced as well. The
+                    // item still loaded belongs to the viewer being stepped away
+                    // from, and pushing the new controller into it binds
+                    // properties that markup does not have -- a video view asked
+                    // for `source` on the list of facts. The Loader is about to
+                    // build the right item, and onLoaded does it there.
+                    if (viewerLoader.source !== controller.viewSource)
                         return
                     viewerLoader.item.controller = controller.viewer
                     if (viewerLoader.item.hasOwnProperty("tab"))

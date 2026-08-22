@@ -432,6 +432,19 @@ public:
     QString source() const { return m_source; }
     void load(const FileEntry& entry) override;
 
+    /// What the view calls when the image element cannot decode the file.
+    ///
+    /// The same shape as the video viewer's refusal, and for the same reason:
+    /// which formats exist depends on the image plugins in this build, so
+    /// canPreview() can only ask Qt for the list of suffixes -- and a file with
+    /// one of those suffixes may still be truncated, misnamed, or a variant this
+    /// build's plugin does not handle. Nothing knows until the decode is
+    /// attempted, and by then this viewer is the one on screen.
+    ///
+    /// So it gives the file up and the tab steps down to the list of facts, which
+    /// is more than an empty frame with a sentence in it. See ADR-0078.
+    Q_INVOKABLE void reportDecodeFailure();
+
 signals:
     void sourceChanged();
 

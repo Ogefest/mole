@@ -37,6 +37,29 @@ IPreviewProvider* PreviewRegistry::providerFor(const FileEntry& entry) const
     return nullptr;
 }
 
+IPreviewProvider* PreviewRegistry::providerBelow(const FileEntry& entry, const IPreviewProvider* above) const
+{
+    if (entry.isDir)
+        return nullptr;
+
+    // Position in the sorted list rather than a comparison of priorities. Two
+    // providers can share a priority -- the database, Parquet and video viewers
+    // all sit at 60 -- and "below" has to mean one step, not a whole tier, or a
+    // decline would skip a viewer that might have shown the file.
+    bool passed = above == nullptr;
+    for (const auto& provider : m_providers) {
+        if (!passed) {
+            passed = provider.get() == above;
+            continue;
+        }
+        if (provider->canPreview(entry))
+            return provider.get();
+    }
+    // Nothing below it, or `above` is not one of ours -- in which case there is
+    // no position to step down from and refusing is the honest answer.
+    return nullptr;
+}
+
 IPreviewProvider* PreviewRegistry::provider(const QString& id) const
 {
     for (const auto& provider : m_providers) {

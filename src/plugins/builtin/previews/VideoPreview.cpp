@@ -89,11 +89,11 @@ void VideoPreviewController::setMuted(bool muted)
 
 void VideoPreviewController::reportPlaybackFailure(const QString& reason)
 {
-    setLoading(false);
-    setErrorText(reason.trimmed().isEmpty()
-            ? QStringLiteral("This build cannot decode this video. The details panel says what the "
-                             "file is.")
-            : reason);
+    // A refusal with nothing to say still says something: the reason travels into
+    // the strip, and an empty one there would leave the reader with a viewer that
+    // changed under them for no stated cause.
+    decline(
+        reason.trimmed().isEmpty() ? QStringLiteral("this build has no decoder for it") : reason.trimmed());
 }
 
 #endif // MOLE_HAVE_MULTIMEDIA

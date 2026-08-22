@@ -29,6 +29,55 @@ project, and a contributor should never hit a wall of text they cannot read.
 
 ## Notes
 
+- **The nine viewers, swept for what a file costs once it is on screen.** MOLE-284
+  asked each of them one question: can this viewer find out only after it has read
+  the bytes that showing them is more work than the window can afford, and if so
+  what does it do about it? [ADR-0078](docs/adr/0078-a-viewer-may-decline-a-file-it-has-read.md)
+  is the answer to the second half. This is the answer to the first, viewer by
+  viewer, so the next fault of this shape starts from what is already known rather
+  than from the beginning.
+
+  Five of the nine cannot go wrong, and the reason is worth keeping. The text
+  viewer's three modes are listed apart because they are three different costs:
+
+  - **Text, as source or plain text** — the window is 512 kB and a run too long to
+    lay out is folded (MOLE-112), so nothing unbounded reaches the layout.
+  - **Text, as Markdown** — was the fault that started this. Answered inside the
+    viewer by MOLE-283: the window's longest run of table rows is measured before
+    it reaches the view, and over the budget the file is shown as source with the
+    reason said out loud.
+  - **Text, as a rendered page** — the same window through the same document, and
+    **the cost is not the same**, which was worth measuring rather than assuming.
+    Qt's Markdown importer is quadratic in the rows of one table; its HTML parser is
+    not. The worst case a 512 kB window admits is a page that is nothing but table:
+    1,682 rows and 23,550 blocks, which is 130 ms in `setHtml()` and 350 ms for the
+    first layout on the baseline Qt 6.4.2. Noticeable, bounded, and only reached by
+    a reader who asked for the page.
+  - **Tables — a delimited file** — imported on a task in 1 MB chunks and
+    5,000-row batches, and the grid shows a fixed 5,000-row page
+    ([ADR-0045](docs/adr/0045-a-grid-shows-a-page-of-a-table-and-the-page-is-a-fixed-five-thousand-rows.md)).
+    Nothing is held whole.
+  - **Tables — SQLite** — opened read-only in place, row counts on a task, the same
+    page. A page's query does run on the thread that draws, and its offset is
+    bounded by the page, which is exactly what ADR-0045 exists for.
+  - **Bytes** — a fixed 64 kB window, 4,096 rows.
+  - **File information** — the bottom of the ladder. Its facts come from the
+    metadata readers, each on a task, and it accepts every file, so it has nowhere
+    to decline to and needs nowhere.
+
+  **Video is a different shape and has no answer available.** Decoding is the media
+  backend's and happens off the thread that draws, and a refusal now hands the file
+  back (ADR-0078). What nothing can catch is a *stall* — GStreamer sitting on a
+  stream rather than refusing it — because the viewer has no way to tell a slow
+  start from a stopped one, and a timeout would refuse a file that was about to
+  play. Left as it is: the window keeps answering throughout, which is the
+  requirement, and the only thing lost is the preview.
+
+  **Three of them can go wrong and are on the board**: MOLE-286 for a document page
+  rasterised on the thread that draws, MOLE-287 for a Parquet file written as one
+  row group being read whole in the same place, and MOLE-288 for what asking to see
+  a large image at full size does to the pane.
+
 - **The write-ahead log grows a little faster now that a read does not wait for a
   write, and nothing collects it explicitly.** Measured over 2,000 short
   transactions with a thread doing nothing but read: under the single lock the log

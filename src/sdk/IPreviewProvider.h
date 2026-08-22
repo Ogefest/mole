@@ -40,9 +40,32 @@ signals:
     void loadingChanged();
     void errorTextChanged();
 
+    /// This viewer has read the file and cannot show it. `reason` is one phrase
+    /// for a person, and the tab steps down the viewer ladder rather than each
+    /// viewer deciding for itself what happens next. Emitted by decline().
+    void declined(const QString& reason);
+
 protected:
     void setLoading(bool loading);
     void setErrorText(const QString& text);
+
+    /// Gives the file up, after reading it, with a reason a person can read.
+    ///
+    /// **The second admissibility question, and the only one that can see the
+    /// bytes.** canPreview() is a cheap test on the name, the suffix and the
+    /// size and must do no I/O -- so everything that decides what showing a file
+    /// will actually cost, or whether it can be shown at all, is invisible to
+    /// it. By the time the bytes are in hand the viewer is already the one on
+    /// screen, and until this existed its only options were an error in an empty
+    /// pane or a window that stops answering.
+    ///
+    /// A decline has a defined outcome rather than being each viewer's private
+    /// business: the next viewer down the ladder gets the file, and the strip
+    /// says which viewer gave up and why. See ADR-0078.
+    ///
+    /// Call it once. A viewer that has declined is about to be replaced, and
+    /// nothing it says afterwards will be shown.
+    void decline(const QString& reason);
 
 private:
     bool m_loading = false;
@@ -110,6 +133,15 @@ public:
 
     /// Best provider for `entry`, or nullptr when nothing can render it.
     virtual IPreviewProvider* providerFor(const FileEntry& entry) const = 0;
+
+    /// The next provider below `above` that accepts `entry`, or nullptr when
+    /// `above` is already the bottom of the ladder.
+    ///
+    /// What a decline steps on to. "Below" is the registry's own order -- the
+    /// one providerFor() searches -- so the ladder a decline walks down is the
+    /// same ladder the first choice was made from, and a plugin that inserts
+    /// itself into it is stepped through like anything else.
+    virtual IPreviewProvider* providerBelow(const FileEntry& entry, const IPreviewProvider* above) const = 0;
 };
 
 } // namespace mole

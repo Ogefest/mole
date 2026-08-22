@@ -23,6 +23,7 @@ public:
 
     /// Best provider for `entry`, or nullptr when nothing can render it.
     IPreviewProvider* providerFor(const FileEntry& entry) const override;
+    IPreviewProvider* providerBelow(const FileEntry& entry, const IPreviewProvider* above) const override;
     IPreviewProvider* provider(const QString& id) const;
     QList<IPreviewProvider*> providers() const;
 

@@ -39,12 +39,29 @@ Item {
         visible: running
     }
 
+    // A refusal is handed back rather than shown here. The suffixes this viewer
+    // claims are the ones Qt says it has plugins for, and a file with one of them
+    // can still be truncated or misnamed -- so the decode is where it is found
+    // out, and the answer is the list of facts about the file rather than a
+    // sentence in an empty frame. The strip says which viewer gave up and why.
+    Connections {
+        target: picture
+        function onStatusChanged() {
+            if (picture.status === Image.Error && controller && controller.reportDecodeFailure)
+                controller.reportDecodeFailure()
+        }
+    }
+
+    // Said here as well, the way every other viewer says it. In this application
+    // the pane is replaced before anybody reads it -- the tab has somewhere to
+    // step down to -- and a viewer that reported a refusal nowhere would be one
+    // that goes silent if it ever did not.
     Label {
         anchors.centerIn: parent
-        visible: picture.status === Image.Error
+        visible: controller && controller.errorText.length > 0
         wrapMode: Text.Wrap
         color: App.colour.bad
-        text: "This image could not be decoded by the installed Qt image plugins."
+        text: controller ? controller.errorText : ""
     }
 
     RowLayout {

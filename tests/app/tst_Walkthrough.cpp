@@ -131,7 +131,7 @@ private slots:
     void theCommandPaletteFindsAndRunsThings();
     void theWindowBehindAPopupIsNotWashedOut();
     void aVideoStartsPlayingOnItsOwnAndStopsOnTheButton();
-    void aVideoThatCannotBeDecodedSaysSoRatherThanShowingABlackFrame();
+    void aVideoThatCannotBeDecodedFallsBackToWhatIsKnownAboutIt();
     void steppingOffAVideoLeavesNoPlayerBehind();
     void aVideoCanBeSilencedFromTheControls();
     void theHeaderAdvertisesTheCommandPalette();
@@ -1555,38 +1555,43 @@ void TestWalkthrough::aVideoStartsPlayingOnItsOwnAndStopsOnTheButton()
 #endif
 }
 
-void TestWalkthrough::aVideoThatCannotBeDecodedSaysSoRatherThanShowingABlackFrame()
+void TestWalkthrough::aVideoThatCannotBeDecodedFallsBackToWhatIsKnownAboutIt()
 {
 #ifndef MOLE_TEST_HAVE_MULTIMEDIA
     QSKIP("this build has no Qt Multimedia");
 #else
-    // A container this build claims by name and cannot decode a frame of. The
-    // answer has to be words: a black frame reads as a broken file, and the file
-    // may be perfectly good on a machine with the codec.
+    // A container this build claims by name and cannot decode a frame of. A black
+    // frame reads as a broken file, and the file may be perfectly good on a
+    // machine with the codec -- so the viewer gives it up and the reader gets the
+    // facts, with the strip saying which viewer could not show it.
+    //
+    // tst_Preview drives the refusal by hand; what only the real application can
+    // prove is that the player really does refuse and that the view really does
+    // hand it back. See ADR-0078.
     QVERIFY(m_harness->writeFile(QStringLiteral("broken.mp4"), QByteArray(4096, '\x01')));
 
     PreviewTabController* preview = previewOf(QStringLiteral("broken.mp4"));
     QVERIFY(preview);
     QVERIFY(viewerOf(preview));
-    QCOMPARE(preview->viewerName(), QStringLiteral("Video"));
 
-    QQuickItem* said = nullptr;
-    QVERIFY2(m_harness->until([this, &said] {
-        for (QQuickItem* candidate : m_harness->items(QStringLiteral("videoErrorText"))) {
-            if (candidate->isVisible() && !candidate->property("text").toString().isEmpty()) {
-                said = candidate;
-                return true;
-            }
-        }
-        return false;
-    }),
-        "the viewer showed a frame nothing could fill and said nothing");
-    QVERIFY(said);
+    // Not asserted as a first state: the player refuses this file quickly enough
+    // that the fallback can have happened before the tab is even looked at, and a
+    // test that insisted on catching the video viewer on screen would be a race.
+    // What proves it had the file is the note, which names the viewer that gave up.
+    QVERIFY2(m_harness->until(
+                 [preview] { return preview->providerId() == QStringLiteral("mole.preview.fileinfo"); }),
+        "the player refused the file and the viewer kept it anyway");
+    m_harness->settle(6);
 
-    // The controls go with it: there is nothing to play.
-    QQuickItem* controls = m_harness->item(QStringLiteral("videoControls"));
-    QVERIFY(controls);
-    QVERIFY(!controls->isVisible());
+    // Said in the strip, next to the name of the viewer that ended up with it.
+    QVERIFY2(preview->fallbackNote().contains(QStringLiteral("Video")), qPrintable(preview->fallbackNote()));
+    QQuickItem* note = m_harness->item(QStringLiteral("fallbackNote"));
+    QVERIFY(note);
+    QVERIFY2(note->isVisible(), "the reader has to be told the viewer changed under them");
+    QCOMPARE(note->property("text").toString(), preview->fallbackNote());
+
+    // And what they have instead is the file's own facts rather than an empty pane.
+    QVERIFY(m_harness->item(QStringLiteral("fileInfoDetails")) != nullptr);
 #endif
 }
 

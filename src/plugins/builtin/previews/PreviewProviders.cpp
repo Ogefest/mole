@@ -991,6 +991,17 @@ void ImagePreviewController::load(const FileEntry& entry)
     m_copy->request(entry.uri);
 }
 
+void ImagePreviewController::reportDecodeFailure()
+{
+    // Only once there is something to have failed at. A QML Image reports Error
+    // for an empty source as well, which is what it has between the file being
+    // opened and the local copy arriving -- and a viewer that gave the file up in
+    // that gap would never show an image at all.
+    if (m_source.isEmpty())
+        return;
+    decline(QStringLiteral("this build's image plugins could not decode it"));
+}
+
 ImagePreviewProvider::ImagePreviewProvider(PluginServices services)
     : m_services(services)
 {

@@ -286,7 +286,11 @@ private slots:
     void aVideoIsClaimedByTheVideoViewer();
     void aSuffixNoFormatKnowsFallsThroughToTheInformationViewer();
     void aVideoOnADriveThatCannotBePlayedFromIsCopiedLocally();
-    void aVideoThatCannotBeDecodedSaysSoWhereEveryViewerSaysIt();
+    void aVideoThatCannotBeDecodedFallsBackToWhatIsKnownAboutIt();
+    void aRefusalWithNothingToSayStillSaysWhichViewerGaveUp();
+    void anImageThisBuildCannotDecodeFallsBackToTheFacts();
+    void aViewerWithNoSourceYetDoesNotGiveTheFileUp();
+    void aDeclineStepsOneRungDownRatherThanToTheBottom();
     void theSoundIsOneSettingForEveryVideo();
 
     // ---- looking at an earlier state of the file --------------------------
@@ -2940,32 +2944,143 @@ void TestPreview::aVideoOnADriveThatCannotBePlayedFromIsCopiedLocally()
     QVERIFY(QFile::exists(QUrl(source).toLocalFile()));
 }
 
-void TestPreview::aVideoThatCannotBeDecodedSaysSoWhereEveryViewerSaysIt()
+void TestPreview::aVideoThatCannotBeDecodedFallsBackToWhatIsKnownAboutIt()
 {
     if (!VideoPreviewProvider::isAvailable())
         QSKIP("this build has no video decoder");
 
     // A container this build can demux may still hold a stream it has no decoder
-    // for, and nothing can know before trying -- so the player's refusal reaches
-    // the tab through the same errorText every other viewer reports through, and
-    // the details panel still says what the file is. The view calls this when the
-    // player errors; tst_Walkthrough asserts the player really does.
+    // for, and nothing can know before trying -- so this viewer is the plain case
+    // for declining after reading. What it had before there was anywhere to step
+    // down to was a sentence in a black frame; what it has now is the list of
+    // facts, which has the duration and the codec in it. The view calls this when
+    // the player errors; tst_Walkthrough asserts the player really does.
     QVERIFY(m_tree->writeFile(QStringLiteral("broken.mp4"), QByteArray("not a container at all")));
     PreviewTabController* preview = openPreview(QStringLiteral("broken.mp4"));
     QVERIFY(preview);
     QCOMPARE(preview->viewerName(), QStringLiteral("Video"));
+    QVERIFY(preview->fallbackNote().isEmpty());
 
     QObject* viewer = preview->viewer();
     QVERIFY(viewer);
-    QVERIFY(viewer->property("errorText").toString().isEmpty());
-    QVERIFY(QMetaObject::invokeMethod(viewer, "reportPlaybackFailure",
-        Q_ARG(QString, QStringLiteral("Cannot decode: no h265 decoder installed"))));
-    QVERIFY2(viewer->property("errorText").toString().contains(QStringLiteral("no h265 decoder")),
-        qPrintable(viewer->property("errorText").toString()));
+    QVERIFY(QMetaObject::invokeMethod(
+        viewer, "reportPlaybackFailure", Q_ARG(QString, QStringLiteral("no h265 decoder installed"))));
 
-    // And a refusal with nothing to say still says something.
+    // Queued, because the refusal arrives from inside the player: the viewer that
+    // is about to be deleted is the one whose call is still running.
+    QVERIFY(waitFor(
+        [preview] { return preview->providerId() == QStringLiteral("mole.preview.fileinfo"); }, 5000));
+    QCOMPARE(preview->viewerName(), QStringLiteral("File information"));
+
+    // Which viewer gave up, and why. Both, because the reader is looking at a
+    // list of facts where they asked for a video and neither half explains that
+    // on its own.
+    QVERIFY2(preview->fallbackNote().contains(QStringLiteral("Video")), qPrintable(preview->fallbackNote()));
+    QVERIFY2(preview->fallbackNote().contains(QStringLiteral("no h265 decoder")),
+        qPrintable(preview->fallbackNote()));
+}
+
+void TestPreview::aRefusalWithNothingToSayStillSaysWhichViewerGaveUp()
+{
+    if (!VideoPreviewProvider::isAvailable())
+        QSKIP("this build has no video decoder");
+
+    // Qt's player does not always have an error string. A note that said only
+    // "could not show this file: " would be worse than none, and a note that said
+    // nothing at all would leave the viewer having changed under the reader for no
+    // stated cause.
+    QVERIFY(m_tree->writeFile(QStringLiteral("silent.mp4"), QByteArray("not a container at all")));
+    PreviewTabController* preview = openPreview(QStringLiteral("silent.mp4"));
+    QVERIFY(preview);
+
+    QObject* viewer = preview->viewer();
+    QVERIFY(viewer);
     QVERIFY(QMetaObject::invokeMethod(viewer, "reportPlaybackFailure", Q_ARG(QString, QString())));
-    QVERIFY(!viewer->property("errorText").toString().isEmpty());
+
+    QVERIFY(waitFor(
+        [preview] { return preview->providerId() == QStringLiteral("mole.preview.fileinfo"); }, 5000));
+    QVERIFY2(preview->fallbackNote().contains(QStringLiteral("Video")), qPrintable(preview->fallbackNote()));
+    QVERIFY2(!preview->fallbackNote().endsWith(QStringLiteral(": ")), qPrintable(preview->fallbackNote()));
+}
+
+void TestPreview::anImageThisBuildCannotDecodeFallsBackToTheFacts()
+{
+    // A `.png` that is not a PNG. The suffixes this viewer claims are the ones Qt
+    // says it has plugins for, so the name gets it this far and only the decode
+    // can tell -- the same shape as the video, from a different direction.
+    QVERIFY(m_tree->writeFile(QStringLiteral("not-really.png"), QByteArray("this is not a PNG at all")));
+    PreviewTabController* preview = openPreview(QStringLiteral("not-really.png"));
+    QVERIFY(preview);
+    QCOMPARE(preview->viewerName(), QStringLiteral("Image"));
+
+    QObject* viewer = preview->viewer();
+    QVERIFY(viewer);
+    // The local copy has to be in place first: an Image with no source reports
+    // Error too, and giving the file up in that gap would mean never showing one.
+    QVERIFY(waitFor([viewer] { return !viewer->property("source").toString().isEmpty(); }, 5000));
+    QVERIFY(QMetaObject::invokeMethod(viewer, "reportDecodeFailure"));
+
+    QVERIFY(waitFor(
+        [preview] { return preview->providerId() == QStringLiteral("mole.preview.fileinfo"); }, 5000));
+    QVERIFY2(preview->fallbackNote().contains(QStringLiteral("Image")), qPrintable(preview->fallbackNote()));
+}
+
+void TestPreview::aViewerWithNoSourceYetDoesNotGiveTheFileUp()
+{
+    // The gap above, held open on purpose: a QML Image reports Error for an empty
+    // source as well, which is what it has between the file being opened and the
+    // local copy arriving. A decline in that gap would take every image in the
+    // application down to the list of facts.
+    //
+    // The controller directly rather than through a tab, because a copy of a file
+    // on local disk arrives in the same turn -- there is no gap to catch there,
+    // and one on a remote drive would be a test about the network.
+    ImagePreviewController viewer(m_app->services());
+    QSignalSpy gaveUp(&viewer, &PreviewController::declined);
+
+    viewer.reportDecodeFailure();
+    QCOMPARE(gaveUp.count(), 0);
+    QVERIFY(viewer.errorText().isEmpty());
+}
+
+void TestPreview::aDeclineStepsOneRungDownRatherThanToTheBottom()
+{
+    // The ladder is the registry's own order, and "below" is one place in it
+    // rather than a whole tier: the database, Parquet and video viewers all sit
+    // at priority 60, and a decline that jumped to the next lower number would
+    // skip a viewer that might have shown the file.
+    //
+    // Asked of the registry directly, because building a file that three viewers
+    // in turn accept and refuse would be a fixture about nothing.
+    FileEntry text;
+    text.name = QStringLiteral("notes.txt");
+    text.uri = m_tree->rootUri().child(QStringLiteral("notes.txt"));
+    text.mimeType = QStringLiteral("text/plain");
+
+    IPreviewProvider* first = m_app->previews()->providerFor(text);
+    QVERIFY(first);
+    QCOMPARE(first->id(), QStringLiteral("mole.preview.text"));
+
+    // Hex claims only what the content pass could make nothing of, so a plain
+    // text file steps past it to the facts rather than to hexadecimal.
+    IPreviewProvider* second = m_app->previews()->providerBelow(text, first);
+    QVERIFY(second);
+    QCOMPARE(second->id(), QStringLiteral("mole.preview.fileinfo"));
+
+    // And the bottom of the ladder has nothing under it, which is what stops a
+    // decline walking for ever.
+    QVERIFY(m_app->previews()->providerBelow(text, second) == nullptr);
+
+    // A provider that is not on the ladder has no position to step down from.
+    TextPreviewProvider stranger(m_app->services());
+    QVERIFY(m_app->previews()->providerBelow(text, &stranger) == nullptr);
+
+    // A directory is not previewable at all, in either direction.
+    FileEntry folder;
+    folder.name = QStringLiteral("subfolder");
+    folder.uri = m_tree->rootUri().child(QStringLiteral("subfolder"));
+    folder.isDir = true;
+    QVERIFY(m_app->previews()->providerBelow(folder, nullptr) == nullptr);
 }
 
 void TestPreview::theSoundIsOneSettingForEveryVideo()

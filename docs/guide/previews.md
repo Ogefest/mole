@@ -131,6 +131,12 @@ camera is looked at rather than scrolled around. Whatever Qt on this machine can
 is claimed — png, jpeg, webp, and the rest of that list — and anything it cannot is left
 to the viewer of last resort below.
 
+A name only gets a file this far. A `.png` that is truncated, misnamed, or a variant this
+build's image plugins do not handle is found out at the decode, and then the file is
+handed on to the viewer below rather than left in an empty frame. The strip says which
+viewer could not show it, so a page of facts where you asked for a picture is explained
+rather than mysterious.
+
 ## Video
 
 A video starts playing as soon as it opens, with a pause button, a position and somewhere
@@ -146,9 +152,12 @@ and no playlist — this is for recognising a file, not for watching one.
 
 What can be played is what this machine's codecs can decode, and that is not knowable
 from the file's name: a container Mole opens may still hold a stream nothing installed
-can decode. When that happens the viewer says so in words, and the details panel still
-says what the file is. A build without Qt Multimedia has no video viewer at all and
-shows those facts instead.
+can decode. When that happens the video viewer gives the file up rather than showing a
+black frame, and what you get is what is known about it — the duration, the codecs, the
+dimensions — with a line in the strip saying the player could not play it and why. The
+file may be perfectly good on a machine with the codec, and that reads very differently
+from a broken file. A build without Qt Multimedia has no video viewer at all and shows
+those same facts from the start.
 
 *No picture here, and that is deliberate: the guide's pictures are all taken by the same
 offscreen run so that they are of the same window whatever machine took them, and that
@@ -228,6 +237,10 @@ touched, and everything the details panel can add — a video's duration and cod
 file's tags, a document's author. "Nothing happens" is never the answer, and this is the
 reason: something always claims the file, even when all it can say is what is known about
 it.
+
+It is also where a file lands when a viewer took it and then could not show it — an
+unplayable video, an image that would not decode. The strip names the viewer that gave up
+and why, so this page is the second answer rather than a puzzle.
 
 ![The bytes of a file](images/25-preview-hex.png)
 

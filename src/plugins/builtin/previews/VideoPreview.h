@@ -58,9 +58,15 @@ public:
     ///
     /// A container this build can demux may still hold a stream it has no decoder
     /// for, and there is no way to know before trying -- see
-    /// VideoPreviewProvider::videoSuffixes(). So the answer is to say what
-    /// happened, in the same place every other viewer says it, rather than to
-    /// leave a black frame that reads as a broken file.
+    /// VideoPreviewProvider::videoSuffixes(). This viewer is therefore the plain
+    /// case for declining after reading: it finds out only once it is the one on
+    /// screen, and what it has to offer then is a black frame.
+    ///
+    /// So it gives the file up. The tab steps down to the information viewer,
+    /// which has the duration, the codec and the dimensions from the metadata
+    /// readers, and the strip says the player could not play it and why. A
+    /// message in an empty frame was the answer before there was anywhere to step
+    /// down to. See ADR-0078.
     Q_INVOKABLE void reportPlaybackFailure(const QString& reason);
 
 signals:

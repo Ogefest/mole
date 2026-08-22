@@ -125,6 +125,9 @@ void PreviewTabController::showContents(const FileEntry& entry)
     }
     m_viewSource = QUrl();
     m_viewerName.clear();
+    // A note about the last file would read as a note about this one.
+    m_fallbackNote.clear();
+    m_provider = nullptr;
     // A file being stepped past takes its unfinished sniff with it, and the
     // readers for it: what they were about to say is about the last file.
     if (m_sniff) {
@@ -392,9 +395,22 @@ void PreviewTabController::installViewer(IPreviewProvider* provider)
     m_viewerName = provider->displayName();
     m_viewSource = provider->viewSource();
     m_providerId = provider->id();
+    m_provider = provider;
 
     auto* controller = provider->createController(this);
     m_viewer = controller;
+
+    // A viewer that reads the file and finds it cannot show it hands it back,
+    // and the tab decides what happens next rather than each viewer inventing an
+    // answer. Queued, because the decline usually arrives from inside the
+    // viewer's own read -- deleting it there would be deleting the object whose
+    // stack frame is still running. See ADR-0078.
+    if (controller) {
+        connect(
+            controller, &PreviewController::declined, this,
+            [this, provider](const QString& reason) { stepDownFrom(provider, reason); },
+            Qt::QueuedConnection);
+    }
 
     // What this viewer offers for this file, and what was chosen last time. Applied
     // before load(), so the file is read once and shown the way it was asked for
@@ -433,6 +449,48 @@ void PreviewTabController::installViewer(IPreviewProvider* provider)
         readDetails();
 
     setSubtitle(folderPath());
+    emit currentChanged();
+}
+
+void PreviewTabController::stepDownFrom(IPreviewProvider* declining, const QString& reason)
+{
+    // The file has moved on, or a second decline arrived from a viewer that has
+    // already been replaced. Either way this is about a file nobody is looking at.
+    if (!declining || m_provider != declining)
+        return;
+
+    IPreviewProvider* next
+        = m_services.previews ? m_services.previews->providerBelow(m_showing, declining) : nullptr;
+
+    const QString gaveUp = declining->displayName();
+    const QString said = reason.trimmed();
+
+    if (!next) {
+        // The bottom of the ladder, which in this build is the list of facts and
+        // accepts everything -- so getting here means somebody has registered a
+        // viewer below it, or removed it. The reason stays on screen either way:
+        // it is what the reader has instead of the file.
+        m_fallbackNote = said.isEmpty()
+            ? QStringLiteral("%1 could not show this file, and nothing else can").arg(gaveUp)
+            : QStringLiteral("%1 could not show this file: %2").arg(gaveUp, said);
+        emit currentChanged();
+        return;
+    }
+
+    // The old viewer goes before the new one arrives, as it does when the file
+    // changes: a media player that has a pipeline open must not keep it while its
+    // replacement loads.
+    if (m_viewer) {
+        m_viewer->deleteLater();
+        m_viewer.clear();
+    }
+
+    installViewer(next);
+
+    // Set after installViewer, which clears nothing but does emit -- and the note
+    // is about the step, so it has to outlive the install that carried it out.
+    m_fallbackNote = said.isEmpty() ? QStringLiteral("%1 could not show this file").arg(gaveUp)
+                                    : QStringLiteral("%1 could not show this file: %2").arg(gaveUp, said);
     emit currentChanged();
 }
 
