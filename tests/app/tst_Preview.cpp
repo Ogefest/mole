@@ -215,6 +215,14 @@ private slots:
     void aWindowADriveCannotSeekToReportsTheError();
 
     void tableOutranksTextForCsv();
+
+    // --- a file of json records ---
+    void recordsOutrankTextForJsonLines();
+    void aFileOfFlatRecordsOpensAsAGridOfItsKeys();
+    void aNestedValueArrivesAsCompactJsonInItsCell();
+    void anAbsentKeyIsAnEmptyCellAndANullIsNot();
+    void aFileWhoseRecordsAreNotObjectsShowsItsSourceAndSaysWhy();
+    void askingForTheSourceOfAFileOfRecordsIsObeyedAndSaysNothing();
     void directoriesGetNothing();
     void imageProviderOnlyClaimsWhatQtCanDecode();
     void pdfProviderClaimsPdfsOnlyWhenItCanRenderThem();
@@ -1267,6 +1275,219 @@ void TestPreview::tableOutranksTextForCsv()
     QVERIFY(text.canPreview(csv));
     QVERIFY(table.canPreview(csv));
     QVERIFY2(table.priority() > text.priority(), "the grid must win for a .csv");
+}
+
+// --------------------------------------------- a file of json records
+
+namespace {
+
+/// One JSON object per line, from lines of text.
+QByteArray jsonLines(const QStringList& records)
+{
+    QByteArray out;
+    for (const QString& record : records) {
+        out += record.toUtf8();
+        out += '\n';
+    }
+    return out;
+}
+
+} // namespace
+
+void TestPreview::recordsOutrankTextForJsonLines()
+{
+    // Both accept .jsonl -- the highlighter maps it on to the JSON rules, so the
+    // text viewer would show coloured source, one record per line. Priority is
+    // what takes it off there, exactly as it does for a .csv.
+    TextPreviewProvider text(m_app->services());
+    JsonLinesPreviewProvider records(m_app->services());
+
+    for (const char* name : { "events.jsonl", "events.ndjson", "EVENTS.JSONL" }) {
+        FileEntry entry;
+        entry.name = QLatin1String(name);
+        entry.uri = m_tree->rootUri().child(entry.name);
+        QVERIFY2(records.canPreview(entry), name);
+    }
+
+    // `.jsonl` is the one they both claim -- the highlighter maps it on to the
+    // JSON rules, so the text viewer would show coloured source one record to a
+    // line. Priority is what takes it off there, exactly as it does for a `.csv`.
+    FileEntry lines;
+    lines.name = QStringLiteral("events.jsonl");
+    lines.uri = m_tree->rootUri().child(lines.name);
+    QVERIFY(text.canPreview(lines));
+    QVERIFY2(records.priority() > text.priority(), "the grid must win for a file of records");
+
+    // `.ndjson` the text viewer never claimed, so before this viewer existed the
+    // same file went to the list of facts. Worth stating: the two suffixes were
+    // getting different answers for the same content.
+    FileEntry other;
+    other.name = QStringLiteral("events.ndjson");
+    other.uri = m_tree->rootUri().child(other.name);
+    QVERIFY(!text.canPreview(other));
+
+    // A .json file is one document rather than a stream of records and stays
+    // where it is. Whether an array of objects should open as a grid too is a
+    // second question and not this viewer's.
+    FileEntry document;
+    document.name = QStringLiteral("config.json");
+    document.uri = m_tree->rootUri().child(QStringLiteral("config.json"));
+    QVERIFY(!records.canPreview(document));
+
+    // And it offers the table by default, with the source as the other choice.
+    FileEntry entry;
+    entry.name = QStringLiteral("events.jsonl");
+    entry.uri = m_tree->rootUri().child(QStringLiteral("events.jsonl"));
+    const QList<ViewerOption> declared = records.options(entry);
+    QCOMPARE(declared.size(), 1);
+    QCOMPARE(declared.first().choices, QStringList({ QStringLiteral("Table"), QStringLiteral("Source") }));
+    QCOMPARE(declared.first().defaultChoice, QStringLiteral("Table"));
+}
+
+void TestPreview::aFileOfFlatRecordsOpensAsAGridOfItsKeys()
+{
+    QVERIFY(m_tree->writeFile(QStringLiteral("events.jsonl"),
+        jsonLines({ QStringLiteral(R"({"when":"09:12","what":"opened","ok":true})"),
+            QStringLiteral(R"({"when":"09:14","what":"closed","ok":false})"),
+            QStringLiteral(R"({"when":"09:20","what":"opened","ok":true})") })));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("events.jsonl"));
+    QVERIFY(preview);
+    QCOMPARE(preview->providerId(), QStringLiteral("mole.preview.jsonlines"));
+
+    auto* viewer = qobject_cast<JsonLinesPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(waitFor([viewer] { return viewer->table()->rowCount() == 3; }, 5000));
+    QVERIFY(!viewer->isShowingSource());
+
+    // The keys, in the order the file first uses them -- not sorted, because the
+    // order a record was written in is information about the file.
+    QCOMPARE(viewer->table()->headers(),
+        QStringList({ QStringLiteral("when"), QStringLiteral("what"), QStringLiteral("ok") }));
+
+    QCOMPARE(viewer->table()->cellAt(0, 0), QStringLiteral("09:12"));
+    QCOMPARE(viewer->table()->cellAt(0, 1), QStringLiteral("opened"));
+    QCOMPARE(viewer->table()->cellAt(0, 2), QStringLiteral("true"));
+    QCOMPARE(viewer->table()->cellAt(1, 2), QStringLiteral("false"));
+
+    // The filter is SQL over the whole file rather than over what has arrived,
+    // and it waits for the typing to stop -- hence QTRY rather than a compare.
+    viewer->table()->setFilter(QStringLiteral("closed"));
+    QTRY_COMPARE(viewer->table()->matchingRows(), 1);
+}
+
+void TestPreview::aNestedValueArrivesAsCompactJsonInItsCell()
+{
+    // The whole answer to a file with complicated structures in it: nesting never
+    // breaks the grid, it makes a cell with JSON in it -- and because the filter
+    // is a substring over every column, searching still finds what is inside one.
+    QVERIFY(m_tree->writeFile(QStringLiteral("nested.jsonl"),
+        jsonLines({ QStringLiteral(R"({"id":1,"user":{"name":"ada","tags":["a","b"]}})") })));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("nested.jsonl"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<JsonLinesPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(waitFor([viewer] { return viewer->table()->rowCount() == 1; }, 5000));
+
+    QCOMPARE(viewer->table()->cellAt(0, 0), QStringLiteral("1"));
+    // Compact: one line, no indentation. A pretty-printed object would be a cell
+    // with newlines in it, which is a row the grid cannot draw.
+    QCOMPARE(viewer->table()->cellAt(0, 1), QStringLiteral(R"({"name":"ada","tags":["a","b"]})"));
+
+    viewer->table()->setFilter(QStringLiteral("ada"));
+    QTRY_COMPARE(viewer->table()->matchingRows(), 1);
+}
+
+void TestPreview::anAbsentKeyIsAnEmptyCellAndANullIsNot()
+{
+    // The difference is worth keeping: a record that does not mention a field and
+    // one that says the field is empty are different facts about the data, and a
+    // grid that showed both as blank would lose one of them.
+    QVERIFY(m_tree->writeFile(QStringLiteral("sparse.jsonl"),
+        jsonLines({ QStringLiteral(R"({"id":1,"note":"first"})"), QStringLiteral(R"({"id":2,"note":null})"),
+            QStringLiteral(R"({"id":3})") })));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("sparse.jsonl"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<JsonLinesPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(waitFor([viewer] { return viewer->table()->rowCount() == 3; }, 5000));
+
+    QCOMPARE(viewer->table()->cellAt(0, 1), QStringLiteral("first"));
+    QCOMPARE(viewer->table()->cellAt(1, 1), QStringLiteral("null"));
+    QCOMPARE(viewer->table()->cellAt(2, 1), QString());
+}
+
+void TestPreview::aFileWhoseRecordsAreNotObjectsShowsItsSourceAndSaysWhy()
+{
+    // A file of arrays under a name that says records. There is no table to show,
+    // so the source is shown whatever the preference says -- and the preference is
+    // not written, because the reader did not ask for this.
+    QVERIFY(m_tree->writeFile(QStringLiteral("arrays.jsonl"),
+        jsonLines({ QStringLiteral("[1, 2, 3]"), QStringLiteral("[4, 5, 6]") })));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("arrays.jsonl"));
+    QVERIFY(preview);
+    QCOMPARE(preview->providerId(), QStringLiteral("mole.preview.jsonlines"));
+
+    auto* viewer = qobject_cast<JsonLinesPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(waitFor([viewer] { return viewer->isShowingSource(); }, 5000));
+
+    QVERIFY2(!viewer->sourceReason().isEmpty(), "the reader has to be told why");
+    QVERIFY(viewer->source() != nullptr);
+    // The strip still says Table, because that is what was chosen and nothing has
+    // changed it: the file decided this file, not the next one.
+    QCOMPARE(preview->viewerOptions().first().toMap().value(QStringLiteral("chosen")).toString(),
+        QStringLiteral("Table"));
+
+    // And the next file of records opens as a grid, which is the test that the
+    // preference really was left alone.
+    QVERIFY(m_tree->writeFile(QStringLiteral("after.jsonl"), jsonLines({ QStringLiteral(R"({"id":1})") })));
+    PreviewTabController* next = openPreview(QStringLiteral("after.jsonl"));
+    QVERIFY(next);
+    auto* nextViewer = qobject_cast<JsonLinesPreviewController*>(next->viewer());
+    QVERIFY(nextViewer);
+    QVERIFY(waitFor([nextViewer] { return nextViewer->table()->rowCount() == 1; }, 5000));
+    QVERIFY(!nextViewer->isShowingSource());
+}
+
+void TestPreview::askingForTheSourceOfAFileOfRecordsIsObeyedAndSaysNothing()
+{
+    QVERIFY(m_tree->writeFile(
+        QStringLiteral("readable.jsonl"), jsonLines({ QStringLiteral(R"({"id":1,"note":"first"})") })));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("readable.jsonl"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<JsonLinesPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(waitFor([viewer] { return viewer->table()->rowCount() == 1; }, 5000));
+
+    preview->chooseViewerOption(QStringLiteral("mode"), QStringLiteral("Source"));
+    QVERIFY(viewer->isShowingSource());
+    QVERIFY(viewer->source() != nullptr);
+    // Nothing to explain: the reader asked, and a sentence saying why would be
+    // telling them what they just did.
+    QVERIFY(viewer->sourceReason().isEmpty());
+
+    auto* text = qobject_cast<TextPreviewController*>(viewer->source());
+    QVERIFY(text);
+    QVERIFY(waitFor([text] { return text->text().contains(QStringLiteral("\"note\"")); }, 5000));
+
+    // Back again, because a choice that cannot be undone is a trap.
+    preview->chooseViewerOption(QStringLiteral("mode"), QStringLiteral("Table"));
+    QVERIFY(!viewer->isShowingSource());
+
+    // And remembered, so the next one opens the way this was left.
+    preview->chooseViewerOption(QStringLiteral("mode"), QStringLiteral("Source"));
+    QVERIFY(m_tree->writeFile(QStringLiteral("second.jsonl"), jsonLines({ QStringLiteral(R"({"id":2})") })));
+    PreviewTabController* next = openPreview(QStringLiteral("second.jsonl"));
+    QVERIFY(next);
+    auto* nextViewer = qobject_cast<JsonLinesPreviewController*>(next->viewer());
+    QVERIFY(nextViewer);
+    QVERIFY(nextViewer->isShowingSource());
+    QVERIFY2(nextViewer->sourceReason().isEmpty(), "the reader's own answer needs no explanation");
 }
 
 void TestPreview::directoriesGetNothing()

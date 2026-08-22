@@ -5,8 +5,11 @@
 #include "core/text/DelimitedStore.h"
 #include "core/text/DelimitedStreamParser.h"
 #include "core/text/ImportDelimitedTask.h"
+#include "core/text/ImportJsonLinesTask.h"
 #include "core/vfs/backends/LocalFileSystem.h"
 
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTemporaryDir>
 
 using namespace mole;
@@ -42,8 +45,17 @@ private slots:
     void widensTheTableToTheWidestRow();
     void detectsTheSeparator();
 
+    // ---- the same store, from a file of json records ----
+    void theColumnsAreTheKeysInTheOrderTheFileWritesThem();
+    void aKeyFirstSeenAfterTheSampleIsCountedAndHasNoColumn();
+    void aMalformedLineIsCountedAndTheImportFinishes();
+    void aFileWhoseRecordsAreNotObjectsSaysSoRatherThanFailing();
+    void everyKindOfJsonValueBecomesOneCell();
+    void theTextOrderScanIsNotFooledByWhatIsInsideAValue();
+
 private:
     ImportDelimitedTask* importFile(const QString& name, DelimitedStore* store, QChar separator = QChar());
+    ImportJsonLinesTask* importRecords(const QString& name, DelimitedStore* store);
 
     std::unique_ptr<QTemporaryDir> m_dir;
     std::unique_ptr<TempTree> m_tree;
@@ -236,6 +248,16 @@ ImportDelimitedTask* TestDelimitedStore::importFile(
     return task;
 }
 
+ImportJsonLinesTask* TestDelimitedStore::importRecords(const QString& name, DelimitedStore* store)
+{
+    auto fs = std::make_shared<LocalFileSystem>();
+    auto* task = new ImportJsonLinesTask(fs, m_tree->rootUri().child(name), store);
+    m_tasks->submit(task);
+    if (!waitFor([task] { return task->isFinished(); }, 30000))
+        return nullptr;
+    return task;
+}
+
 void TestDelimitedStore::importsAFileLargerThanOneChunk()
 {
     // Over a megabyte, so the reader takes several passes and the parser has
@@ -301,6 +323,195 @@ void TestDelimitedStore::detectsTheSeparator()
     QCOMPARE(task->separator(), QLatin1Char(';'));
     QCOMPARE(store.columnCount(), 3);
     QCOMPARE(store.rows(0, 1).first().at(1), QStringLiteral("1,50"));
+}
+
+// ------------------------------------------------- a file of json records
+//
+// The same store with a different parser in front of it. What is under test here
+// is the shape of the table -- which columns there are, and what happens to a
+// value that has no column and a line that is not a record -- because those are
+// the answers a reader is silently trusting when they read the grid.
+
+void TestDelimitedStore::theColumnsAreTheKeysInTheOrderTheFileWritesThem()
+{
+    // Not sorted. QJsonObject sorts its keys, so the file's own order is not
+    // recoverable from the parsed value -- and the order a record was written in
+    // is information about the file. Alphabetical here would be "id, when, what"
+    // reordered to "id, what, when", which is why this is a case of its own.
+    QVERIFY(m_tree->writeFile(QStringLiteral("events.jsonl"),
+        QByteArray("{\"when\":\"09:12\",\"what\":\"opened\",\"id\":1}\n"
+                   "{\"when\":\"09:14\",\"what\":\"closed\",\"id\":2}\n")));
+
+    DelimitedStore store(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
+    QVERIFY(store.open());
+
+    ImportJsonLinesTask* task = importRecords(QStringLiteral("events.jsonl"), &store);
+    QVERIFY(task);
+    QCOMPARE(task->state(), Task::State::Succeeded);
+    QVERIFY(task->looksLikeRecords());
+    QCOMPARE(store.headers(), QStringList({ "when", "what", "id" }));
+    QCOMPARE(store.totalRows(), 2);
+
+    // A record with no trailing newline is still a record: a file that does not
+    // end in one is ordinary, and dropping its last line would lose a row.
+    QVERIFY(m_tree->writeFile(QStringLiteral("one.jsonl"), QByteArray("{\"only\":\"record\",\"z\":1}")));
+    DelimitedStore single(QDir(m_dir->path()).filePath(QStringLiteral("s.sqlite")));
+    QVERIFY(single.open());
+    ImportJsonLinesTask* alone = importRecords(QStringLiteral("one.jsonl"), &single);
+    QVERIFY(alone);
+    QVERIFY(alone->looksLikeRecords());
+    QCOMPARE(single.headers(), QStringList({ "only", "z" }));
+    QCOMPARE(single.totalRows(), 1);
+}
+
+void TestDelimitedStore::aKeyFirstSeenAfterTheSampleIsCountedAndHasNoColumn()
+{
+    // The cost of settling the shape from the head of the file, which is the CSV
+    // importer's own rule. A JSON record is free to carry a key no earlier record
+    // had, so a key that turns up past the sample gets no column -- and the
+    // reader is told how many values that lost rather than left to notice.
+    QByteArray contents;
+    while (contents.size() <= ImportJsonLinesTask::kSampleBytes) {
+        contents += QStringLiteral("{\"id\":%1,\"name\":\"row\"}\n").arg(contents.size()).toUtf8();
+    }
+    const qint64 before = contents.count('\n');
+    // Two records past the sample, each with a key nothing before them had.
+    contents += QByteArray("{\"id\":1,\"name\":\"late\",\"extra\":\"unseen\"}\n");
+    contents += QByteArray("{\"id\":2,\"name\":\"late\",\"extra\":\"unseen\",\"other\":7}\n");
+
+    QVERIFY(m_tree->writeFile(QStringLiteral("late.jsonl"), contents));
+
+    DelimitedStore store(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
+    QVERIFY(store.open());
+
+    ImportJsonLinesTask* task = importRecords(QStringLiteral("late.jsonl"), &store);
+    QVERIFY(task);
+    QCOMPARE(task->state(), Task::State::Succeeded);
+
+    // The columns are the sample's, and the late keys are not among them.
+    QCOMPARE(store.headers(), QStringList({ "id", "name" }));
+    QCOMPARE(store.totalRows(), before + 2);
+
+    // Three values had nowhere to go: "extra" twice and "other" once.
+    QCOMPARE(task->keysWithoutAColumn(), 3);
+
+    // And the rows themselves are still there, with the columns they do have.
+    QCOMPARE(store.matchingRows(QStringLiteral("late")), 2);
+    QCOMPARE(store.matchingRows(QStringLiteral("unseen")), 0);
+}
+
+void TestDelimitedStore::aMalformedLineIsCountedAndTheImportFinishes()
+{
+    // Refusing the file outright would leave it unviewable, which is the same
+    // reasoning that pads a ragged CSV row rather than rejecting it. A blank line
+    // is skipped and not counted; a line that is not a record is counted.
+    QVERIFY(m_tree->writeFile(QStringLiteral("mixed.jsonl"),
+        QByteArray("{\"id\":1}\n"
+                   "\n"
+                   "{\"id\":2,   <- not json at all\n"
+                   "{\"id\":3}\n"
+                   "   \n"
+                   "[1,2,3]\n"
+                   "42\n"
+                   "{\"id\":4}\n")));
+
+    DelimitedStore store(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
+    QVERIFY(store.open());
+
+    ImportJsonLinesTask* task = importRecords(QStringLiteral("mixed.jsonl"), &store);
+    QVERIFY(task);
+    QCOMPARE(task->state(), Task::State::Succeeded);
+    // Records 1, 3 and 4. Record 2 is the broken one, and its line is skipped
+    // rather than taking the file down with it.
+    QCOMPARE(task->importedRows(), 3);
+    QCOMPARE(store.totalRows(), 3);
+    // Three lines were not records: the broken object, the array and the number.
+    // The two blank ones are not among them.
+    QCOMPARE(task->skippedLines(), 3);
+    QCOMPARE(store.matchingRows(QStringLiteral("4")), 1);
+}
+
+void TestDelimitedStore::aFileWhoseRecordsAreNotObjectsSaysSoRatherThanFailing()
+{
+    // A pretty-printed document under the wrong name, or a file of arrays. The
+    // read succeeded and the file is not a list of records, which is a different
+    // answer from an import that failed -- the viewer shows the source on it.
+    QVERIFY(m_tree->writeFile(QStringLiteral("arrays.jsonl"), QByteArray("[1,2]\n[3,4]\n")));
+
+    DelimitedStore store(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
+    QVERIFY(store.open());
+
+    ImportJsonLinesTask* task = importRecords(QStringLiteral("arrays.jsonl"), &store);
+    QVERIFY(task);
+    QCOMPARE(task->state(), Task::State::Succeeded);
+    QVERIFY(!task->looksLikeRecords());
+    QCOMPARE(task->importedRows(), 0);
+    // Nothing was imported, so the store answers nothing rather than throwing.
+    QCOMPARE(store.totalRows(), 0);
+    QVERIFY(store.headers().isEmpty());
+}
+
+void TestDelimitedStore::everyKindOfJsonValueBecomesOneCell()
+{
+    // Asked of the function rather than through a file, because this is the rule
+    // the grid rests on and there are six answers to check, not one.
+    const QJsonDocument parsed
+        = QJsonDocument::fromJson("{\"text\":\"a string\",\"yes\":true,\"no\":false,\"num\":1.5,\"big\":1e30,"
+                                  "\"nothing\":null,\"object\":{\"b\":2,\"a\":1},\"list\":[1,\"two\"]}");
+    QVERIFY(parsed.isObject());
+    const QJsonObject record = parsed.object();
+
+    const QStringList headers { QStringLiteral("text"), QStringLiteral("yes"), QStringLiteral("no"),
+        QStringLiteral("num"), QStringLiteral("big"), QStringLiteral("nothing"), QStringLiteral("object"),
+        QStringLiteral("list"), QStringLiteral("absent") };
+
+    qint64 unseen = 0;
+    const QStringList row = jsonRecordAsRow(record, headers, &unseen);
+    QCOMPARE(row.size(), headers.size());
+
+    // A string is itself: quotes are the encoding, not the value.
+    QCOMPARE(row.at(0), QStringLiteral("a string"));
+    QCOMPARE(row.at(1), QStringLiteral("true"));
+    QCOMPARE(row.at(2), QStringLiteral("false"));
+    QCOMPARE(row.at(3), QStringLiteral("1.5"));
+    // Through JSON rather than QString::number, so a large number reads back as
+    // a number and not as this layer's idea of how to print a double.
+    QVERIFY2(row.at(4).contains(QStringLiteral("e+30")) || row.at(4).contains(QStringLiteral("1e30")),
+        qPrintable(row.at(4)));
+    // The word, because empty is what an absent key gets and the two are
+    // different facts about the record.
+    QCOMPARE(row.at(5), QStringLiteral("null"));
+    // Compact and on one line, or the grid would have a row it cannot draw.
+    QCOMPARE(row.at(6), QStringLiteral("{\"a\":1,\"b\":2}"));
+    QCOMPARE(row.at(7), QStringLiteral("[1,\"two\"]"));
+    QCOMPARE(row.at(8), QString());
+    QCOMPARE(unseen, 0);
+
+    // And a record with more keys than columns says how many were left out.
+    unseen = 0;
+    jsonRecordAsRow(record, QStringList { QStringLiteral("text") }, &unseen);
+    QCOMPARE(unseen, record.size() - 1);
+}
+
+void TestDelimitedStore::theTextOrderScanIsNotFooledByWhatIsInsideAValue()
+{
+    // The scanner exists only to order keys the parser has already confirmed, so
+    // its worst case is a wrong order rather than a wrong column -- but the cases
+    // that would get it wrong are exactly the ones a real file has: a colon and a
+    // brace inside a string, an escaped quote, and a nested object with keys of
+    // its own.
+    const QByteArray line = "{\"url\":\"https://example.invalid/a:b\",\"said\":\"a \\\"quote\\\" and a {\","
+                            "\"inner\":{\"zzz\":1,\"aaa\":2},\"last\":[{\"nope\":1}]}";
+    const QJsonDocument parsed = QJsonDocument::fromJson(line);
+    QVERIFY2(parsed.isObject(), "the fixture itself has to be valid JSON");
+
+    QCOMPARE(jsonKeysInTextOrder(QString::fromUtf8(line), parsed.object()),
+        QStringList({ "url", "said", "inner", "last" }));
+
+    // A line the scanner cannot read at all still yields every key, just sorted:
+    // it loses order and never a column.
+    QCOMPARE(
+        jsonKeysInTextOrder(QString(), parsed.object()), QStringList({ "inner", "last", "said", "url" }));
 }
 
 MOLE_TEST_MAIN(TestDelimitedStore)

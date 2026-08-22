@@ -117,6 +117,10 @@ void BuiltinPlugin::registerExtensions(PluginRegistry& registry)
     registry.addPreviewProvider(std::make_unique<SqlitePreviewProvider>(services));
     registry.addPreviewProvider(std::make_unique<ParquetPreviewProvider>(services));
     registry.addPreviewProvider(std::make_unique<TablePreviewProvider>(services));
+    // A file of JSON records is a table written down one line at a time, so it
+    // gets the same priority: enough to take it off the text viewer, which maps
+    // `jsonl` on to the JSON colouring rules and shows it one record per line.
+    registry.addPreviewProvider(std::make_unique<JsonLinesPreviewProvider>(services));
     registry.addPreviewProvider(std::make_unique<ImagePreviewProvider>(services));
     registry.addPreviewProvider(std::make_unique<VideoPreviewProvider>(services));
     registry.addPreviewProvider(std::make_unique<TextPreviewProvider>(services));

@@ -12,6 +12,7 @@
 #include "core/tasks/ReadRangeTask.h"
 #include "core/text/DelimitedStore.h"
 #include "core/text/ImportDelimitedTask.h"
+#include "core/text/ImportJsonLinesTask.h"
 
 #include <QPointer>
 #include <QTemporaryDir>
@@ -665,6 +666,114 @@ public:
     bool canPreview(const FileEntry& entry) const override;
     QUrl viewSource() const override;
     PreviewController* createController(QObject* parent) override;
+
+private:
+    PluginServices m_services;
+};
+
+// ----------------------------------------------------------- json lines
+
+/// A file of JSON records as a grid.
+///
+/// Most of the JSONL anybody actually has is a flat list of records with the same
+/// keys, which is a table written down one line at a time -- and reading it one
+/// line at a time is the wrong way to read it. Everything a grid needs was already
+/// here: a scratch database so the whole file can be paged, filtered and counted
+/// rather than the part somebody happened to scroll to, and a grid to draw a page
+/// of it. This is a fourth viewer on the same pair.
+///
+/// **The fallback is a mode of this viewer rather than another viewer.** A file
+/// whose records are not JSON objects has no table to show, and what it wants is
+/// its source -- so this hosts a TextPreviewController and binds TextPreview.qml,
+/// the way FileInfoPreviewController does with the hex viewer. Stepping down the
+/// ladder ([ADR-0078](docs/adr/0078-a-viewer-may-decline-a-file-it-has-read.md))
+/// would land on the text viewer anyway and lose the choice on the way.
+class JsonLinesPreviewController final : public PreviewController
+{
+    Q_OBJECT
+    Q_PROPERTY(mole::TableModel* table READ table CONSTANT)
+    Q_PROPERTY(QString summary READ summary NOTIFY importProgress)
+    /// True while records are still arriving. The grid is usable throughout.
+    Q_PROPERTY(bool importing READ isImporting NOTIFY importProgress)
+    /// True when the source is being shown instead of the grid -- because the
+    /// reader asked for it, or because nothing in the head of the file was a JSON
+    /// object and there is no table to show.
+    Q_PROPERTY(bool showingSource READ isShowingSource NOTIFY importProgress)
+    /// Why the source is being shown when nobody asked for it. Empty otherwise,
+    /// including when the reader chose it: then there is nothing to explain.
+    Q_PROPERTY(QString sourceReason READ sourceReason NOTIFY importProgress)
+    /// The text viewer's own controller, for the view to bind TextPreview.qml to.
+    /// Null until the source is shown for the first time.
+    Q_PROPERTY(QObject* source READ source NOTIFY importProgress)
+
+public:
+    explicit JsonLinesPreviewController(PluginServices services, QObject* parent = nullptr);
+    ~JsonLinesPreviewController() override;
+
+    TableModel* table() const { return m_table; }
+    QString summary() const { return m_summary; }
+    bool isImporting() const { return m_importing; }
+    bool isShowingSource() const { return m_showSource || m_notRecords; }
+    QString sourceReason() const;
+    QObject* source() const;
+
+    /// Puts a block of cells on the clipboard, tab-separated, like every grid.
+    Q_INVOKABLE void copyBlock(int topRow, int leftColumn, int bottomRow, int rightColumn);
+
+    void load(const FileEntry& entry) override;
+    void setViewerOption(const QString& key, const QString& value) override;
+
+signals:
+    void importProgress();
+
+private:
+    void import();
+    void updateSummary();
+    /// Builds the text viewer if it is not there and points it at the file.
+    void showSource();
+
+    PluginServices m_services;
+    TableModel* m_table = nullptr;
+    FileEntry m_entry;
+    std::unique_ptr<QTemporaryDir> m_scratch;
+    std::unique_ptr<DelimitedStore> m_store;
+    QPointer<TextPreviewController> m_text;
+    bool m_importing = false;
+    /// What the reader asked for.
+    bool m_showSource = false;
+    /// What the file turned out to be. Separate from the answer above, because
+    /// this must never be written to the preference: that value is the reader's,
+    /// not the file's.
+    bool m_notRecords = false;
+    qint64 m_records = 0;
+    qint64 m_skippedLines = 0;
+    qint64 m_keysWithoutAColumn = 0;
+    QString m_summary;
+    QPointer<ImportJsonLinesTask> m_task;
+};
+
+class JsonLinesPreviewProvider final : public IPreviewProvider
+{
+public:
+    explicit JsonLinesPreviewProvider(PluginServices services);
+
+    QString id() const override { return QStringLiteral("mole.preview.jsonlines"); }
+    QString displayName() const override { return QStringLiteral("Records"); }
+    /// The table viewer's own, and for the same reason: it takes the file off the
+    /// text viewer at -100, which maps `jsonl` on to the JSON colouring rules.
+    int priority() const override { return 100; }
+    /// The suffix and nothing else, because the rule that this does no I/O holds.
+    /// A `.json` file is one document rather than a stream of records and stays
+    /// where it is.
+    bool canPreview(const FileEntry& entry) const override;
+    QUrl viewSource() const override;
+    PreviewController* createController(QObject* parent) override;
+
+    /// Table or the source, remembered per suffix like every other viewer's
+    /// choice. See docs/adr/0006-preview-options-and-preferences.md.
+    QList<ViewerOption> options(const FileEntry& entry) const override;
+
+    static bool isJsonLines(const QString& suffix);
 
 private:
     PluginServices m_services;

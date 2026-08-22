@@ -165,8 +165,8 @@ add_library(mole_core STATIC
     text/DelimitedStore.cpp
     text/ImportDelimitedTask.h
     text/ImportDelimitedTask.cpp
-    text/ImportDelimitedTask.h
-    text/ImportDelimitedTask.cpp
+    text/ImportJsonLinesTask.h
+    text/ImportJsonLinesTask.cpp
 
     vcs/Repository.h
     vcs/Repository.cpp

@@ -92,6 +92,19 @@ memory, so nothing is left out: the filter searches the whole file, not the part
 happened to load. The separator is detected and stays editable, because detection is a
 guess and you can see when it guessed wrong.
 
+A file of **JSON records** — `.jsonl` or `.ndjson`, one object per line — opens as the
+same grid. Most of the JSONL anybody has is a flat list of records with the same keys,
+which is a table written down one line at a time, and reading it one line at a time is
+the wrong way to read it. The columns are the keys, in the order the file first uses them,
+settled from the first 64 kB and then held: a key that turns up only further down gets no
+column, and the summary says how many values that left out rather than letting you find
+out by comparing the file with the screen. A nested object or list becomes its JSON,
+compact and on one line, in its own cell — so nesting never breaks the grid, and because
+the filter is a substring over every column it still finds what is inside one. A line that
+is not a record is counted and skipped rather than stopping the import, and a file whose
+records are not objects at all shows its source instead and says why. **Show: Source** on
+the strip is there for whoever wants the lines.
+
 The grid shows **five thousand rows at a time**, with the controls to move between pages
 under it — first, previous, next and last, which page you are on, and which rows of the
 whole table are on screen. `Ctrl+PgDn` and `Ctrl+PgUp` move a page, `Ctrl+Home` and

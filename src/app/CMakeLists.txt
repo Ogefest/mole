@@ -60,6 +60,7 @@ set(MOLE_QML_FILES
     ui/ImagePreview.qml
     ui/PdfPreview.qml
     ui/TablePreview.qml
+    ui/JsonLinesPreview.qml
     ui/FileInfoPreview.qml
     ui/AnalysisView.qml
     ui/AutomationView.qml

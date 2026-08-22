@@ -118,6 +118,7 @@ private slots:
     void aFileWithNoLineBreaksPreviewsRatherThanStoppingTheWindow();
     void rendersMarkdownAsAPage();
     void aSlowTableSaysSoAndThenFillsAsItReads();
+    void aFileOfJsonRecordsOpensAsAGridAndCanBeReadAsSource();
     void aPdfOpensAsPages();
     void htmlCanBeSwitchedBetweenSourceAndPage();
     void folderSizesLandInTheListing();
@@ -1006,6 +1007,61 @@ void TestWalkthrough::rendersMarkdownAsAPage()
         return again.isValid() && again.blockFormat().topMargin() > 0.0;
     }),
         "coming back to a Markdown file has to style it again");
+}
+
+void TestWalkthrough::aFileOfJsonRecordsOpensAsAGridAndCanBeReadAsSource()
+{
+    // The markup itself, which nothing else runs: tst_Preview drives the
+    // controller and never instantiates JsonLinesPreview.qml, so a typo in it
+    // would only ever show up in front of somebody. What is asserted is that the
+    // grid is there, that the summary is filled in, and that Source swaps the
+    // whole pane for the text viewer and back.
+    QVERIFY(m_harness->writeFile(QStringLiteral("documents/events.jsonl"),
+        QByteArray("{\"when\":\"09:12\",\"what\":\"opened\",\"who\":{\"id\":7}}\n"
+                   "{\"when\":\"09:14\",\"what\":\"closed\",\"who\":{\"id\":7}}\n")));
+
+    m_harness->app()->previewFile(m_harness->fixtureUri() + QStringLiteral("/documents/events.jsonl"));
+    auto* preview = qobject_cast<PreviewTabController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY(preview);
+    QCOMPARE(preview->providerId(), QStringLiteral("mole.preview.jsonlines"));
+
+    auto* viewer = qobject_cast<JsonLinesPreviewController*>(viewerOf(preview));
+    QVERIFY(viewer);
+    QVERIFY(m_harness->until([viewer] { return viewer->table()->rowCount() == 2; }));
+    m_harness->settle(8);
+
+    QQuickItem* grid = m_harness->item(QStringLiteral("recordsGrid"));
+    QVERIFY2(grid, "the grid the whole viewer is for");
+    QVERIFY(grid->isVisible());
+    QQuickItem* summary = m_harness->item(QStringLiteral("recordsSummary"));
+    QVERIFY(summary);
+    QVERIFY2(summary->property("text").toString().contains(QStringLiteral("records")),
+        qPrintable(summary->property("text").toString()));
+    QVERIFY(m_harness->item(QStringLiteral("recordsFilter")) != nullptr);
+
+    // The strip's own choice, rendered by the strip without knowing what it means.
+    QQuickItem* picker = m_harness->item(QStringLiteral("viewerOption_mode"));
+    QVERIFY(picker);
+    QCOMPARE(picker->property("currentText").toString(), QStringLiteral("Table"));
+
+    // Source is the text viewer hosted inside this one, so what has to appear is
+    // the text viewer's own body rather than a second grid.
+    preview->chooseViewerOption(QStringLiteral("mode"), QStringLiteral("Source"));
+    QVERIFY(m_harness->until([viewer] { return viewer->isShowingSource(); }));
+    QVERIFY2(m_harness->until([this] {
+        QQuickItem* text = m_harness->item(QStringLiteral("previewText"));
+        return text && text->property("text").toString().contains(QStringLiteral("\"what\""));
+    }),
+        "Source has to show the lines of the file");
+    m_harness->settle(6);
+
+    preview->chooseViewerOption(QStringLiteral("mode"), QStringLiteral("Table"));
+    QVERIFY(m_harness->until([viewer] { return !viewer->isShowingSource(); }));
+    QVERIFY2(m_harness->until([this] {
+        QQuickItem* again = m_harness->item(QStringLiteral("recordsGrid"));
+        return again && again->isVisible();
+    }),
+        "and back, because a choice that cannot be undone is a trap");
 }
 
 void TestWalkthrough::aSlowTableSaysSoAndThenFillsAsItReads()
@@ -4204,6 +4260,12 @@ void TestWalkthrough::everyFeatureAndPreviewHasAPictureInTheGuide()
         // grab under xcb has the frame in it. See MOLE-37.
         { QStringLiteral("mole.preview.video"),
             QStringLiteral("no frame is composited in an offscreen grab") },
+        // It is the CSV grid with a different importer behind it, and the guide
+        // says so in a paragraph under Tables. A picture would cost a walkthrough
+        // step and a file in the directory for nothing new to look at, which is
+        // the one thing a screenshot must not be.
+        { QStringLiteral("mole.preview.jsonlines"),
+            QStringLiteral("the same grid as the delimited one, described in prose beside it") },
     };
 
     // This run's own output when there is one, the committed guide otherwise. Both

@@ -1520,6 +1520,274 @@ PreviewController* TablePreviewProvider::createController(QObject* parent)
 
 // ------------------------------------------------------------- file info
 
+// -------------------------------------------------------------- json lines
+
+JsonLinesPreviewController::JsonLinesPreviewController(PluginServices services, QObject* parent)
+    : PreviewController(parent)
+    , m_services(services)
+    , m_table(new TableModel(this))
+{
+}
+
+JsonLinesPreviewController::~JsonLinesPreviewController()
+{
+    if (m_task)
+        m_task->requestCancel();
+    // The model must let go before the store it reads through goes away.
+    m_table->clear();
+}
+
+QObject* JsonLinesPreviewController::source() const
+{
+    return m_text.data();
+}
+
+QString JsonLinesPreviewController::sourceReason() const
+{
+    // Only when the file decided it. A reader who chose the source knows why the
+    // source is on screen, and a sentence explaining it would be noise.
+    if (!m_notRecords)
+        return {};
+    return QStringLiteral("shown as source: the records here are not JSON objects");
+}
+
+void JsonLinesPreviewController::copyBlock(int topRow, int leftColumn, int bottomRow, int rightColumn)
+{
+    if (QClipboard* clipboard = QGuiApplication::clipboard())
+        clipboard->setText(m_table->blockAsText(topRow, leftColumn, bottomRow, rightColumn));
+}
+
+void JsonLinesPreviewController::load(const FileEntry& entry)
+{
+    if (!m_services.isValid()) {
+        setErrorText(QStringLiteral("Application services are not available"));
+        return;
+    }
+
+    m_entry = entry;
+    // Per file: the last file being the wrong shape says nothing about this one.
+    m_notRecords = false;
+    m_records = 0;
+    m_skippedLines = 0;
+    m_keysWithoutAColumn = 0;
+
+    if (m_showSource) {
+        // Asked for before the file was read, so there is nothing to import. The
+        // grid is built if the reader changes their mind, and not before.
+        showSource();
+        updateSummary();
+        return;
+    }
+    import();
+}
+
+void JsonLinesPreviewController::setViewerOption(const QString& key, const QString& value)
+{
+    if (key != QLatin1String("mode"))
+        return;
+
+    const bool wantsSource = value.compare(QLatin1String("Source"), Qt::CaseInsensitive) == 0;
+    if (wantsSource == m_showSource)
+        return;
+    m_showSource = wantsSource;
+
+    // Arrives before load() when it was remembered, and from the strip when it is
+    // chosen, so both come through here -- and before load() there is no file yet,
+    // which is why this only ever acts on one that is already open.
+    if (m_entry.uri.isValid()) {
+        if (m_showSource)
+            showSource();
+        else if (!m_store)
+            import();
+    }
+    updateSummary();
+}
+
+void JsonLinesPreviewController::showSource()
+{
+    if (!m_text)
+        m_text = new TextPreviewController(m_services, this);
+    if (m_entry.uri.isValid())
+        m_text->load(m_entry);
+    emit importProgress();
+}
+
+void JsonLinesPreviewController::import()
+{
+    if (!m_services.isValid() || !m_entry.uri.isValid())
+        return;
+
+    if (m_task)
+        m_task->requestCancel();
+
+    FileSystemPtr fs = m_services.vfs->resolve(m_entry.uri);
+    if (!fs) {
+        setErrorText(QStringLiteral("No drive is mounted for this file"));
+        return;
+    }
+
+    // A fresh database per file, as the delimited viewer does: the columns are
+    // this file's keys, and reusing the last one would leave its shape behind.
+    m_table->clear();
+    m_store.reset();
+    m_scratch = std::make_unique<QTemporaryDir>();
+    if (!m_scratch->isValid()) {
+        setErrorText(QStringLiteral("Could not create a scratch database"));
+        return;
+    }
+
+    m_store
+        = std::make_unique<DelimitedStore>(QDir(m_scratch->path()).filePath(QStringLiteral("table.sqlite")));
+
+    QString error;
+    if (!m_store->open(&error)) {
+        setErrorText(error);
+        m_store.reset();
+        return;
+    }
+
+    // Attached before the import starts, so the grid shows the first records
+    // while the rest are still being read -- a model with no source reports no
+    // rows however many have arrived.
+    m_table->setSource(m_store.get());
+
+    setErrorText({});
+    setLoading(true);
+    m_importing = true;
+    m_records = 0;
+    emit importProgress();
+
+    auto* task = new ImportJsonLinesTask(std::move(fs), m_entry.uri, m_store.get());
+    m_task = task;
+
+    connect(task, &ImportJsonLinesTask::shapeSettled, this, [this, task] {
+        if (m_task != task)
+            return;
+        // The columns are known now, and the caption above a filling grid should
+        // say the real ones rather than nothing.
+        m_table->refresh();
+        updateSummary();
+    });
+
+    connect(task, &ImportJsonLinesTask::rowsImported, this, [this, task](qint64 rows) {
+        if (m_task != task)
+            return;
+        m_records = rows;
+        m_table->refresh();
+        updateSummary();
+        emit importProgress();
+    });
+
+    connect(task, &Task::finished, this, [this, task] {
+        if (m_task != task)
+            return;
+        m_task.clear();
+        setLoading(false);
+        m_importing = false;
+
+        if (task->state() == Task::State::Failed) {
+            setErrorText(task->error().message);
+            emit importProgress();
+            return;
+        }
+        if (task->state() != Task::State::Succeeded) {
+            emit importProgress();
+            return;
+        }
+
+        m_records = task->importedRows();
+        m_skippedLines = task->skippedLines();
+        m_keysWithoutAColumn = task->keysWithoutAColumn();
+
+        // A file that is not a list of records has no table to show, whatever the
+        // preference says -- and the preference is not touched, because the reader
+        // did not ask for this.
+        m_notRecords = !task->looksLikeRecords();
+        if (m_notRecords)
+            showSource();
+
+        m_table->refresh();
+        updateSummary();
+        emit importProgress();
+    });
+
+    m_services.tasks->submit(task);
+}
+
+void JsonLinesPreviewController::updateSummary()
+{
+    if (isShowingSource()) {
+        m_summary = sourceReason();
+        emit importProgress();
+        return;
+    }
+
+    const qint64 total = m_table->totalRows();
+    const qint64 matching = m_table->matchingRows();
+
+    const QLocale locale;
+    QString text
+        = QStringLiteral("%1 records × %2 columns").arg(locale.toString(total)).arg(m_table->columnCount());
+    if (matching != total)
+        text += QStringLiteral("  ·  %1 match the filter").arg(locale.toString(matching));
+    // Both counts are told rather than left to be noticed: a value that is not in
+    // the grid, and a line that is not a row, are things a reader would otherwise
+    // only find by comparing the file with the screen.
+    if (m_keysWithoutAColumn > 0) {
+        text += QStringLiteral("  ·  %1 value(s) under keys the head of the file did not have")
+                    .arg(locale.toString(m_keysWithoutAColumn));
+    }
+    if (m_skippedLines > 0)
+        text += QStringLiteral("  ·  %1 line(s) skipped").arg(locale.toString(m_skippedLines));
+    if (m_importing)
+        text += QStringLiteral("  ·  still reading");
+
+    m_summary = text;
+    emit importProgress();
+}
+
+JsonLinesPreviewProvider::JsonLinesPreviewProvider(PluginServices services)
+    : m_services(services)
+{
+}
+
+bool JsonLinesPreviewProvider::isJsonLines(const QString& suffix)
+{
+    const QString lower = suffix.toLower();
+    return lower == QLatin1String("jsonl") || lower == QLatin1String("ndjson");
+}
+
+bool JsonLinesPreviewProvider::canPreview(const FileEntry& entry) const
+{
+    return !entry.isDir && isJsonLines(entry.uri.suffix());
+}
+
+QList<ViewerOption> JsonLinesPreviewProvider::options(const FileEntry& entry) const
+{
+    if (entry.isDir)
+        return {};
+
+    ViewerOption mode;
+    mode.key = QStringLiteral("mode");
+    mode.title = QStringLiteral("Show");
+    mode.choices = { QStringLiteral("Table"), QStringLiteral("Source") };
+    // The table, because that is what the file is: a list of records with the
+    // same keys is a table written down one line at a time. Somebody who wants
+    // the lines can say so once and be remembered.
+    mode.defaultChoice = QStringLiteral("Table");
+    return { mode };
+}
+
+QUrl JsonLinesPreviewProvider::viewSource() const
+{
+    return qmlView("JsonLinesPreview.qml");
+}
+
+PreviewController* JsonLinesPreviewProvider::createController(QObject* parent)
+{
+    return new JsonLinesPreviewController(m_services, parent);
+}
+
 FileInfoPreviewController::FileInfoPreviewController(PluginServices services, QObject* parent)
     : PreviewController(parent)
     , m_services(services)
