@@ -286,6 +286,9 @@ private slots:
     void anErrorDocumentIsNotAnEmptyListOfLeftovers();
     void anUploadInterruptedByAKilledProcessCanBeFoundAndRemoved();
     void anUploadKilledOutrightIsFoundAndRemovedAfterwards();
+
+    void aContainerThatKeepsEarlierObjectsOffersThem();
+    void aContainerWithoutItContributesNothing();
 };
 
 void TestS3FileSystem::anEndpointIsDerivedFromTheRegionWhenNotGiven()
@@ -763,6 +766,130 @@ void TestS3FileSystem::anUploadKilledOutrightIsFoundAndRemovedAfterwards()
     const Result<QList<DriveLeftover>> after = fileSystem->leftovers(std::chrono::seconds(0), {});
     QVERIFY2(after.ok(), qPrintable(after.error().message));
     QCOMPARE(after.value().size(), 0);
+}
+
+/// A container that keeps earlier objects, all the way through: it says it
+/// keeps them, it lists what it has of one key, and reading one gives that one.
+///
+/// The container is a second one, provisioned with the feature switched on by
+/// scripts/testbed/services.sh. The one every other case here uses stays without
+/// it on purpose -- see the case below, which is what it is the control for.
+void TestS3FileSystem::aContainerThatKeepsEarlierObjectsOffersThem()
+{
+    Account account = accountFromEnvironment();
+    const QString versioned = QString::fromLocal8Bit(qgetenv("MOLE_TEST_S3_VERSIONED_BUCKET"));
+    if (!account.isConfigured() || versioned.isEmpty()) {
+        QSKIP("No versioned container in the environment; set MOLE_TEST_S3_VERSIONED_BUCKET to a "
+              "bucket with versioning switched on -- services.sh provisions one.");
+    }
+    account.bucket = versioned;
+
+    const RawS3 raw(account);
+    const QString prefix = QStringLiteral("mole-versions-%1").arg(QCoreApplication::applicationPid());
+    const QString key = prefix + QStringLiteral("/report.txt");
+
+    // Seeded through libcurl's own signer rather than through ours, like every
+    // other fixture here: a signing bug must not be able to break the fixture
+    // and the code under test in the same way.
+    QVERIFY(raw.put(key, QByteArray("the first draft")));
+    QVERIFY(raw.put(key, QByteArray("the second draft")));
+    QVERIFY(raw.put(key, QByteArray("the third draft")));
+
+    S3Settings settings = S3FileSystemFactory::settingsFrom(account.asConfig());
+    auto drive = std::make_shared<S3FileSystem>(QStringLiteral("s3"), settings);
+    const VfsUri object = VfsUri(QStringLiteral("s3"), QString(), QLatin1Char('/') + key);
+
+    // Asked once, and it is a fact about this container rather than about S3.
+    drive->probe(object.parent(), CancelToken());
+    QVERIFY2(drive->offers().isKnown(), "the container has to answer whether it keeps earlier objects");
+    QVERIFY2(drive->offers().has(S3FileSystem::versionsActionId()),
+        "a container with versioning switched on keeps earlier objects");
+
+    const Result<FileEntry> entry = drive->stat(object);
+    QVERIFY2(entry.ok(), qPrintable(entry.error().message));
+
+    QStringList offered;
+    for (const FileAction& action : drive->actionsFor(object, entry.value()))
+        offered.append(action.id);
+    QVERIFY2(offered.contains(S3FileSystem::versionsActionId()), qPrintable(offered.join(u',')));
+
+    const Result<FileActionOutcome> outcome
+        = drive->invoke(S3FileSystem::versionsActionId(), object, CancelToken());
+    QVERIFY2(outcome.ok(), qPrintable(outcome.error().message));
+    QCOMPARE(outcome.value().kind, FileActionKind::Uris);
+    // Two earlier states. The third put is the object as it is now, which is the
+    // file in front of you rather than a version of it.
+    QCOMPARE(outcome.value().uris.size(), 2);
+
+    // And each one reads back as itself.
+    QStringList contents;
+    for (const VfsUri& version : outcome.value().uris) {
+        QVERIFY(version.hasVersion());
+        const Result<std::unique_ptr<QIODevice>> read = drive->openRead(version);
+        QVERIFY2(read.ok(), qPrintable(read.error().message));
+        contents.append(QString::fromUtf8(read.value()->readAll()));
+    }
+    contents.sort();
+    QCOMPARE(
+        contents, QStringList({ QStringLiteral("the first draft"), QStringLiteral("the second draft") }));
+
+    // The whole folder in one paginated pass, which is what the marks in a
+    // listing are drawn from.
+    const Result<QStringList> named = drive->entriesWithActions(object.parent(), CancelToken());
+    QVERIFY2(named.ok(), qPrintable(named.error().message));
+    QCOMPARE(named.value(), QStringList { QStringLiteral("report.txt") });
+
+    // Removing an object in a container like this writes a record of the removal
+    // and keeps what was there, which is the point of it -- so the suite cannot
+    // tidy up after itself and does not pretend to. The container is told to let
+    // go of earlier states after a day when it is provisioned.
+    raw.removeTree(prefix + QStringLiteral("/"));
+}
+
+/// The control, and the reason the other container was not simply switched on.
+///
+/// A container without the feature has to contribute nothing and leave the
+/// listing exactly as it was -- asserted against one that really does not have
+/// it, rather than assumed from the code.
+void TestS3FileSystem::aContainerWithoutItContributesNothing()
+{
+    const Account account = accountFromEnvironment();
+    if (!account.isConfigured()) {
+        QSKIP("No S3 account in the environment; set MOLE_TEST_S3_KEY_ID, MOLE_TEST_S3_SECRET "
+              "and MOLE_TEST_S3_BUCKET to run this against a real bucket.");
+    }
+
+    const RawS3 raw(account);
+    const QString prefix = QStringLiteral("mole-unversioned-%1").arg(QCoreApplication::applicationPid());
+    const QString key = prefix + QStringLiteral("/report.txt");
+    QVERIFY(raw.put(key, QByteArray("the first draft")));
+    QVERIFY(raw.put(key, QByteArray("the second draft")));
+
+    S3Settings settings = S3FileSystemFactory::settingsFrom(account.asConfig());
+    auto drive = std::make_shared<S3FileSystem>(QStringLiteral("s3"), settings);
+    const VfsUri object = VfsUri(QStringLiteral("s3"), QString(), QLatin1Char('/') + key);
+
+    drive->probe(object.parent(), CancelToken());
+    QVERIFY2(drive->offers().isKnown(), "the container answered, and what it said was no");
+    QVERIFY2(!drive->offers().has(S3FileSystem::versionsActionId()),
+        "a container without versioning keeps nothing earlier and must not say it does");
+
+    const Result<FileEntry> entry = drive->stat(object);
+    QVERIFY2(entry.ok(), qPrintable(entry.error().message));
+    for (const FileAction& action : drive->actionsFor(object, entry.value()))
+        QVERIFY2(action.id != S3FileSystem::versionsActionId(), qPrintable(action.id));
+
+    // No marks, and no request made to find that out.
+    QVERIFY(drive->entriesWithActions(object.parent(), CancelToken()).value().isEmpty());
+
+    // And the listing is what it always was: one object, the second put having
+    // replaced the first rather than joined it.
+    const Result<FileEntryList> listing = drive->list(object.parent(), CancelToken());
+    QVERIFY2(listing.ok(), qPrintable(listing.error().message));
+    QCOMPARE(listing.value().size(), 1);
+    QCOMPARE(listing.value().first().name, QStringLiteral("report.txt"));
+
+    raw.removeTree(prefix + QStringLiteral("/"));
 }
 
 MOLE_TEST_MAIN(TestS3FileSystem)

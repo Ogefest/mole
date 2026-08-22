@@ -91,14 +91,34 @@ public:
     Result<FileActionOutcome> invoke(
         const QString& id, const VfsUri& target, const CancelToken& cancel) override;
 
+    Result<QStringList> entriesWithActions(const VfsUri& dir, const CancelToken& cancel) override;
+
+    /// True, and it means it: a uri naming a version is read with that version
+    /// id, so every read goes through the ordinary path.
+    bool understandsVersions() const override { return true; }
+
     /// The id of the action above. Namespaced like every other, and public so a
     /// test can name it without spelling the string twice.
     static QString linkActionId() { return QStringLiteral("org.mole.s3.link"); }
+    /// Earlier states of an object, where the container keeps them.
+    static QString versionsActionId() { return QStringLiteral("org.mole.s3.versions"); }
     /// How long a link is good for. Long enough to send to somebody, short
     /// enough that a link left in a chat window stops working.
     static std::chrono::seconds linkLifetime() { return std::chrono::minutes(15); }
 
+protected:
+    /// Whether *this container* keeps earlier objects. A per-container fact and
+    /// not a per-service one, asked once and held for the life of the mount --
+    /// and asked rather than recorded, because a stored "no" would go on being
+    /// wrong for ever after somebody switched it on. See ADR-0076.
+    Result<QStringList> askWhatIsOffered(const VfsUri& target, const CancelToken& cancel) override;
+
 private:
+    /// Every state of every key under `prefix`, in as many pages as it takes.
+    /// `delimited` stops at one level, the way a listing does.
+    Result<QList<net::S3Version>> versionsUnder(
+        const QString& prefix, bool delimited, const CancelToken& cancel);
+
     /// One signed request, described before it is sent.
     struct Call
     {

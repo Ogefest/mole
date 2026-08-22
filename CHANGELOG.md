@@ -13,6 +13,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-22 #MOLE-201 A container that keeps earlier objects lists them for a file, marks the rows that have them and reads one back — asked once per container, paginated properly, and silent on a container that does not
 2026-08-22 #MOLE-200 On a filesystem that keeps snapshots, a file's earlier states are listed, marked in the folder and opened like any other file — read-only, discovered from the paths that are already there, and costing nothing on a machine that has none
 2026-08-22 #MOLE-203 The guide says that drives differ and that this is the point: what a drive offers depends on what it was pointed at, how an earlier version is read and copied out, that nothing here writes, and that a drive with nothing to offer costs nothing
 2026-08-22 #MOLE-202 An object store can hand out a link to one object that works for fifteen minutes without an account, shown with its expiry and copied from the same place any drive's answer is

@@ -38,6 +38,12 @@ CONTROL_PORT="${MOLE_TESTBED_CONTROL_PORT:-2022}"
 S3_PORT="${MOLE_TESTBED_S3_PORT:-9000}"
 # A bucket to aim at. Invented, like every other name in this repository.
 S3_BUCKET="${MOLE_TESTBED_S3_BUCKET:-mole-testbed}"
+# And a second one that keeps earlier objects, because the suite needs both: one
+# container with the feature and one without. Switching it on for the first would
+# take away the control the "a container without it contributes nothing" case is
+# held against, and would change underneath every other S3 suite the container
+# they all already run on.
+S3_VERSIONED_BUCKET="${MOLE_TESTBED_S3_VERSIONED_BUCKET:-${S3_BUCKET}-versioned}"
 # The SMB share and the NFS export. Both live on the small disk, like WebDAV and
 # FTP, so "the destination filled up" stays a real condition for them too.
 SMB_SHARE="${MOLE_TESTBED_SMB_SHARE:-moledata}"
@@ -497,8 +503,47 @@ systemctl enable --now minio >/dev/null
 # the first time it runs.
 mkdir -p /var/lib/minio/$S3_BUCKET
 chown -R minio:minio /var/lib/minio
+
+# The second one, keeping earlier objects. This part cannot be a directory:
+# switching the feature on is a call to the service, so it needs the client and
+# it needs the service to be up, which is why it comes after the unit is started
+# rather than beside the mkdir above.
+#
+# Checked before it was written that this deployment can do it at all. It can:
+# MinIO keeps earlier objects on a single-drive server, which older releases of
+# it did not. If a future one refuses, the answer is to provision the store
+# differently here -- not to change what the backend expects.
+if [ ! -x /usr/local/bin/mc ]; then
+    curl -fsSL -o /usr/local/bin/mc https://dl.min.io/client/mc/release/linux-amd64/mc
+    chmod +x /usr/local/bin/mc
+fi
+# The credentials are read back out of the file they were just written into,
+# rather than repeated here: one place holds them, and they stay off the command
+# line of a process anybody on the machine can list.
+set -a
+. /etc/default/minio
+set +a
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    /usr/local/bin/mc alias set testbed "http://127.0.0.1:$S3_PORT" \
+        "\$MINIO_ROOT_USER" "\$MINIO_ROOT_PASSWORD" >/dev/null 2>&1 && break
+    sleep 1
+done
+/usr/local/bin/mc mb --ignore-existing testbed/$S3_VERSIONED_BUCKET >/dev/null
+/usr/local/bin/mc version enable testbed/$S3_VERSIONED_BUCKET >/dev/null
+/usr/local/bin/mc version info testbed/$S3_VERSIONED_BUCKET | grep -q enabled \
+    || { echo "this MinIO will not keep earlier objects" >&2; exit 1; }
+
+# A container that keeps every state of every object is a container that fills
+# up, and a suite cannot tidy after itself here: deleting an object in one of
+# these writes a record of the deletion and keeps what was there. So the store
+# is told to let go of them after a day, which is longer than any run and shorter
+# than anybody cares about. Same reasoning as the leftover sweep -- litter of our
+# own makes "the destination is full" a lie.
+/usr/local/bin/mc ilm rule add --noncurrent-expire-days 1 --expire-days 1 \
+    testbed/$S3_VERSIONED_BUCKET >/dev/null 2>&1 || true
+chown -R minio:minio /var/lib/minio
 REMOTE
-note "http://$ADDRESS:$S3_PORT, bucket $S3_BUCKET"
+note "http://$ADDRESS:$S3_PORT, buckets $S3_BUCKET and $S3_VERSIONED_BUCKET (versioned)"
 
 say "Ready"
 note "Check them with scripts/testbed/check-services.sh"

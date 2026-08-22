@@ -91,6 +91,99 @@ bool parseListObjectsV2(const QByteArray& xml, S3ListPage* page, QString* errorO
     return true;
 }
 
+bool parseListObjectVersions(const QByteArray& xml, S3VersionPage* page, QString* errorOut)
+{
+    const auto fail = [errorOut](const QString& message) {
+        if (errorOut)
+            *errorOut = message;
+        return false;
+    };
+
+    QXmlStreamReader reader(xml);
+    bool sawRoot = false;
+
+    while (!reader.atEnd()) {
+        reader.readNext();
+        if (!reader.isStartElement())
+            continue;
+
+        const QStringView name = reader.name();
+
+        if (!sawRoot) {
+            if (name == QLatin1String("Error"))
+                return fail(parseS3Error(xml));
+            if (name != QLatin1String("ListVersionsResult"))
+                return fail(QStringLiteral("The server did not answer with a list of versions"));
+            sawRoot = true;
+            continue;
+        }
+
+        // A Version and a DeleteMarker carry the same fields and mean different
+        // things, so they are read by the same loop and told apart by their tag.
+        if (name == QLatin1String("Version") || name == QLatin1String("DeleteMarker")) {
+            S3Version version;
+            version.deleteMarker = name == QLatin1String("DeleteMarker");
+            const QString closing
+                = version.deleteMarker ? QStringLiteral("DeleteMarker") : QStringLiteral("Version");
+            while (!reader.atEnd()) {
+                reader.readNext();
+                if (reader.isEndElement() && reader.name() == closing)
+                    break;
+                if (!reader.isStartElement())
+                    continue;
+                const QStringView field = reader.name();
+                if (field == QLatin1String("Key"))
+                    version.key = reader.readElementText();
+                else if (field == QLatin1String("VersionId"))
+                    version.versionId = reader.readElementText();
+                else if (field == QLatin1String("IsLatest"))
+                    version.latest = reader.readElementText().trimmed() == QLatin1String("true");
+                else if (field == QLatin1String("Size"))
+                    version.size = reader.readElementText().toLongLong();
+                else if (field == QLatin1String("LastModified"))
+                    version.modified = parseTimestamp(reader.readElementText());
+            }
+            // Both or neither. An entry with no id names a state nothing can
+            // read, and offering it would be offering something that fails.
+            if (!version.key.isEmpty() && !version.versionId.isEmpty())
+                page->versions.append(version);
+        } else if (name == QLatin1String("CommonPrefixes")) {
+            while (!reader.atEnd()) {
+                reader.readNext();
+                if (reader.isEndElement() && reader.name() == QLatin1String("CommonPrefixes"))
+                    break;
+                if (reader.isStartElement() && reader.name() == QLatin1String("Prefix"))
+                    page->commonPrefixes.append(reader.readElementText());
+            }
+        } else if (name == QLatin1String("NextKeyMarker")) {
+            page->nextKeyMarker = reader.readElementText();
+        } else if (name == QLatin1String("NextVersionIdMarker")) {
+            page->nextVersionIdMarker = reader.readElementText();
+        } else if (name == QLatin1String("IsTruncated")) {
+            page->truncated = reader.readElementText().trimmed() == QLatin1String("true");
+        }
+    }
+
+    if (reader.hasError())
+        return fail(QStringLiteral("The list of versions could not be read"));
+    return sawRoot;
+}
+
+bool parseVersioningEnabled(const QByteArray& xml)
+{
+    QXmlStreamReader reader(xml);
+    while (!reader.atEnd()) {
+        reader.readNext();
+        if (!reader.isStartElement())
+            continue;
+        // An empty VersioningConfiguration is what a container that has never
+        // had it switched on answers with, and it is a "no" like any other.
+        if (reader.name() == QLatin1String("Status"))
+            return reader.readElementText().trimmed() == QLatin1String("Enabled");
+    }
+    return false;
+}
+
 QString parseS3Error(const QByteArray& xml)
 {
     QXmlStreamReader reader(xml);

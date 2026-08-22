@@ -62,6 +62,11 @@ export MOLE_TEST_S3_ENDPOINT="http://$ADDRESS:$S3_PORT"
 export MOLE_TEST_S3_BUCKET="$S3_BUCKET" MOLE_TEST_S3_REGION="${MOLE_TEST_S3_REGION:-us-east-1}"
 export MOLE_TEST_S3_KEY_ID="$ACCOUNT" MOLE_TEST_S3_SECRET="$PASSWORD"
 export MOLE_TEST_S3_ADDRESSING=path
+# The container that keeps earlier objects, derived the way the rest are. The one
+# above goes on being the container *without* the feature, which is now
+# load-bearing rather than incidental: it is what "a container without it
+# contributes nothing" is held against.
+export MOLE_TEST_S3_VERSIONED_BUCKET="${MOLE_TESTBED_S3_VERSIONED_BUCKET:-${S3_BUCKET}-versioned}"
 
 # The testbed's certificate is honestly self-signed. TLS stays required; this
 # says who vouches for it, and nothing about whether the connection is

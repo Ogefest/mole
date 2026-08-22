@@ -3,6 +3,7 @@
 #include "plugins/network/TransferStreams.h"
 
 #include <QBuffer>
+#include <QSet>
 #include <QTemporaryFile>
 
 #include <algorithm>
@@ -145,6 +146,109 @@ QString S3FileSystem::keyToPath(const QString& key) const
     return kSeparator + key;
 }
 
+Result<QList<net::S3Version>> S3FileSystem::versionsUnder(
+    const QString& prefix, bool delimited, const CancelToken& cancel)
+{
+    QList<net::S3Version> found;
+    QString keyMarker;
+    QString versionMarker;
+
+    // Paged, and with two markers rather than one: several states of one key can
+    // straddle a page boundary, so the key alone cannot say where to carry on
+    // from. Stopping at the first page would report some of what a container is
+    // keeping and quietly drop the rest, which is a wrong answer rather than a
+    // slow one.
+    for (;;) {
+        if (cancel.isCancelled()) {
+            return Result<QList<net::S3Version>>::failure(VfsError::Cancelled, QStringLiteral("cancelled"));
+        }
+
+        Call call;
+        call.method = "GET";
+        call.query.append({ QStringLiteral("versions"), QString() });
+        if (!prefix.isEmpty())
+            call.query.append({ QStringLiteral("prefix"), prefix });
+        if (delimited)
+            call.query.append({ QStringLiteral("delimiter"), QString(kSeparator) });
+        if (!keyMarker.isEmpty())
+            call.query.append({ QStringLiteral("key-marker"), keyMarker });
+        if (!versionMarker.isEmpty())
+            call.query.append({ QStringLiteral("version-id-marker"), versionMarker });
+
+        const net::Response response = send(call, cancel);
+        const VfsError error = errorFor(response, QStringLiteral("Listing earlier objects"));
+        if (error.isError())
+            return Result<QList<net::S3Version>>(error);
+
+        net::S3VersionPage page;
+        QString problem;
+        if (!net::parseListObjectVersions(response.body, &page, &problem)) {
+            return Result<QList<net::S3Version>>::failure(
+                VfsError::IoError, QStringLiteral("Listing earlier objects: %1").arg(problem));
+        }
+
+        found.append(page.versions);
+        if (!page.truncated || (page.nextKeyMarker.isEmpty() && page.nextVersionIdMarker.isEmpty()))
+            break;
+        keyMarker = page.nextKeyMarker;
+        versionMarker = page.nextVersionIdMarker;
+    }
+    return Result<QList<net::S3Version>>(found);
+}
+
+Result<QStringList> S3FileSystem::askWhatIsOffered(const VfsUri&, const CancelToken& cancel)
+{
+    Call call;
+    call.method = "GET";
+    call.query.append({ QStringLiteral("versioning"), QString() });
+
+    const net::Response response = send(call, cancel);
+    if (errorFor(response, QStringLiteral("Asking what this container keeps")).isError()) {
+        // A container that will not say is not a container that said no. The
+        // probe records that the asking failed and the drive goes on working --
+        // see ADR-0076.
+        return VfsError::make(VfsError::NetworkError, QStringLiteral("The container would not say"));
+    }
+
+    if (!net::parseVersioningEnabled(response.body))
+        return QStringList();
+    return QStringList { versionsActionId() };
+}
+
+Result<QStringList> S3FileSystem::entriesWithActions(const VfsUri& dir, const CancelToken& cancel)
+{
+    if (!offers().has(versionsActionId()))
+        return QStringList();
+
+    // One paginated pass over the prefix, which is the shape the service already
+    // offers -- not one lookup per row. A folder of five thousand objects costs
+    // as many requests as it has pages.
+    const QString prefix = keyFor(dir);
+    const QString withSlash = prefix.isEmpty() || prefix.endsWith(kSeparator) ? prefix : prefix + kSeparator;
+
+    const Result<QList<net::S3Version>> versions = versionsUnder(withSlash, true, cancel);
+    if (!versions.ok())
+        return Result<QStringList>(versions.error());
+
+    QSet<QString> named;
+    for (const net::S3Version& version : versions.value()) {
+        // What is on offer is an earlier state to read. The object as it is now
+        // is not one, and the record of a deletion is not something to open.
+        if (version.latest || version.deleteMarker)
+            continue;
+        const QString relative = version.key.mid(withSlash.size());
+        // Objects in this folder, not under it. The delimiter already keeps the
+        // deeper ones out, and a service that ignores it must not put them in.
+        if (relative.isEmpty() || relative.contains(kSeparator))
+            continue;
+        named.insert(relative);
+    }
+
+    QStringList out(named.begin(), named.end());
+    out.sort();
+    return out;
+}
+
 net::SignableRequest S3FileSystem::readRequestFor(const QString& key, const QDateTime& at) const
 {
     net::SignableRequest request;
@@ -175,18 +279,55 @@ FileActionList S3FileSystem::actionsFor(const VfsUri& target, const FileEntry& e
     if (m_identity.accessKeyId.isEmpty() || m_identity.secretAccessKey.isEmpty())
         return {};
 
-    // Compiled in rather than probed, and rightly: whether a link can be signed
-    // depends on having a key, not on what the drive was pointed at. The probe
-    // tier in ADR-0076 is for the other kind -- whether *this container* keeps
-    // earlier objects -- and answering it here would mark every row for a
-    // capability that has nothing to do with any particular one.
-    return { FileAction {
+    // The link is compiled in rather than probed, and rightly: whether one can
+    // be signed depends on having a key, not on what the drive was pointed at.
+    // The probe tier in ADR-0076 is for the other one below -- whether *this
+    // container* keeps earlier objects.
+    FileActionList offered { FileAction {
         linkActionId(), QStringLiteral("Copy a temporary link"), true, FileActionKind::Text } };
+
+    // Offered on any object of a container that keeps earlier ones, without
+    // asking whether this particular object has any. Asking would be a request
+    // to the far end for every step of the cursor, and the precise answer is
+    // already made once per folder by entriesWithActions() -- which is what the
+    // marks in the listing are drawn from. Performing it on an object with
+    // nothing earlier says so.
+    if (offers().has(versionsActionId())) {
+        offered.append(FileAction {
+            versionsActionId(), QStringLiteral("Earlier versions"), true, FileActionKind::Uris });
+    }
+    return offered;
 }
 
 Result<FileActionOutcome> S3FileSystem::invoke(
     const QString& id, const VfsUri& target, const CancelToken& cancel)
 {
+    if (id == versionsActionId()) {
+        const QString versioned = keyFor(target);
+        if (versioned.isEmpty()) {
+            return VfsError::make(
+                VfsError::NotSupported, QStringLiteral("There is nothing here to have versions of"));
+        }
+
+        // The prefix is the key itself, so the answer is about this object --
+        // and about any whose key merely begins with it, which are filtered out.
+        const Result<QList<net::S3Version>> versions = versionsUnder(versioned, false, cancel);
+        if (!versions.ok())
+            return Result<FileActionOutcome>(versions.error());
+
+        QList<VfsUri> found;
+        for (const net::S3Version& version : versions.value()) {
+            if (version.key != versioned || version.latest || version.deleteMarker)
+                continue;
+            found.append(target.withVersion(version.versionId));
+        }
+        if (found.isEmpty()) {
+            return VfsError::make(VfsError::NotFound,
+                QStringLiteral("This container keeps nothing earlier for %1").arg(target.fileName()));
+        }
+        return FileActionOutcome::fromUris(found);
+    }
+
     if (id != linkActionId())
         return IFileSystem::invoke(id, target, cancel);
 
@@ -429,6 +570,8 @@ Result<FileEntry> S3FileSystem::stat(const VfsUri& target)
     Call head;
     head.method = "HEAD";
     head.key = key;
+    if (target.hasVersion())
+        head.query.append({ QStringLiteral("versionId"), target.version() });
     const net::Response response = send(head, CancelToken());
     if (response.code == CURLE_OK && response.httpOk()) {
         FileEntry entry;
@@ -635,6 +778,10 @@ Result<std::unique_ptr<QIODevice>> S3FileSystem::openRead(const VfsUri& target, 
 
     Call call;
     call.key = keyFor(target);
+    // The state the uri names, rather than the object as it is. One parameter,
+    // and the whole reason an earlier version is an ordinary readable uri.
+    if (target.hasVersion())
+        call.query.append({ QStringLiteral("versionId"), target.version() });
     const net::Response response = send(call, CancelToken(), scratch.get());
     const VfsError error = errorFor(response, QStringLiteral("Reading %1").arg(target.path()));
     if (error.isError())

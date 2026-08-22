@@ -74,4 +74,45 @@ struct S3UploadPage
 /// behind", which is the answer that would quietly keep somebody paying.
 bool parseListMultipartUploads(const QByteArray& xml, S3UploadPage* page, QString* errorOut);
 
+/// One earlier state of an object, as a versioned container reports it.
+struct S3Version
+{
+    QString key;
+    /// The container's own identifier for this state of the object. Opaque:
+    /// it goes back to the same container and nothing else reads it.
+    QString versionId;
+    /// Whether this is the object as it is now rather than an earlier state.
+    bool latest = false;
+    /// Whether this entry is the record of the object having been deleted. It
+    /// is not a state anybody can read, and it is not a version to offer.
+    bool deleteMarker = false;
+    qint64 size = 0;
+    QDateTime modified;
+};
+
+/// One page of a ListObjectVersions answer.
+///
+/// Paged with two markers rather than one, like the uploads listing above and
+/// for the same reason: several states of one key can straddle a page boundary,
+/// so the key alone cannot say where to carry on from.
+struct S3VersionPage
+{
+    QList<S3Version> versions;
+    /// Sub-"directories", as the delimiter found them, prefix and trailing
+    /// slash included -- the same shape ListObjectsV2 reports.
+    QStringList commonPrefixes;
+    QString nextKeyMarker;
+    QString nextVersionIdMarker;
+    bool truncated = false;
+};
+
+/// Parses a ListObjectVersions response. False and `errorOut` when the document
+/// is not one -- an error document must not read as "nothing earlier is kept",
+/// which is the answer that quietly hides what is there.
+bool parseListObjectVersions(const QByteArray& xml, S3VersionPage* page, QString* errorOut);
+
+/// Whether a GetBucketVersioning answer says the container keeps earlier
+/// objects. Anything else -- Suspended, absent, an error document -- is no.
+bool parseVersioningEnabled(const QByteArray& xml);
+
 } // namespace mole::net

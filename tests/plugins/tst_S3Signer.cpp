@@ -75,6 +75,11 @@ private slots:
     void anErrorMessageIsPulledOut();
     void bucketNamesAreRead();
 
+    void aVersionListingIsRead();
+    void aTruncatedVersionListingCarriesBothItsMarkers();
+    void anErrorDocumentIsNotAnEmptyVersionListing();
+    void aContainerSaysWhetherItKeepsEarlierObjects();
+
     void theLinkIsOfferedOnAnObjectAndNotOnAPrefix();
     void aDriveWithNothingToSignWithOffersNoLink();
     void theLinkIsForThatObjectAndSaysWhenItStopsWorking();
@@ -370,6 +375,116 @@ void TestS3Signer::bucketNamesAreRead()
 
     QCOMPARE(
         parseBucketList(xml), QStringList({ QStringLiteral("svh-test1"), QStringLiteral("testbucket2312") }));
+}
+
+void TestS3Signer::aVersionListingIsRead()
+{
+    const QByteArray xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<ListVersionsResult>
+  <Name>papers</Name>
+  <Prefix>reports/</Prefix>
+  <Delimiter>/</Delimiter>
+  <MaxKeys>1000</MaxKeys>
+  <IsTruncated>false</IsTruncated>
+  <Version>
+    <Key>reports/q1.pdf</Key>
+    <VersionId>3HL4kqtJvjVBH40Nrjfkd</VersionId>
+    <IsLatest>true</IsLatest>
+    <LastModified>2026-08-20T09:15:00.000Z</LastModified>
+    <Size>4096</Size>
+  </Version>
+  <Version>
+    <Key>reports/q1.pdf</Key>
+    <VersionId>QUpfdndhfd8438MNFDN93jd</VersionId>
+    <IsLatest>false</IsLatest>
+    <LastModified>2026-08-01T11:00:00.000Z</LastModified>
+    <Size>2048</Size>
+  </Version>
+  <DeleteMarker>
+    <Key>reports/gone.pdf</Key>
+    <VersionId>MarkerVersionId</VersionId>
+    <IsLatest>true</IsLatest>
+    <LastModified>2026-08-19T08:00:00.000Z</LastModified>
+  </DeleteMarker>
+  <CommonPrefixes><Prefix>reports/archive/</Prefix></CommonPrefixes>
+</ListVersionsResult>)";
+
+    S3VersionPage page;
+    QString error;
+    QVERIFY2(parseListObjectVersions(xml, &page, &error), qPrintable(error));
+
+    QCOMPARE(page.versions.size(), 3);
+    QVERIFY(!page.truncated);
+    QCOMPARE(page.commonPrefixes, QStringList { QStringLiteral("reports/archive/") });
+
+    QCOMPARE(page.versions.at(0).key, QStringLiteral("reports/q1.pdf"));
+    QVERIFY(page.versions.at(0).latest);
+    QCOMPARE(page.versions.at(0).size, qint64(4096));
+
+    // The one that is worth having: an earlier state, told apart from the object
+    // as it is by IsLatest and nothing else.
+    QVERIFY(!page.versions.at(1).latest);
+    QVERIFY(!page.versions.at(1).deleteMarker);
+    QCOMPARE(page.versions.at(1).versionId, QStringLiteral("QUpfdndhfd8438MNFDN93jd"));
+    QCOMPARE(
+        page.versions.at(1).modified.toUTC().toString(Qt::ISODate), QStringLiteral("2026-08-01T11:00:00Z"));
+
+    // A deletion is a record, not a state anybody can open. Read, and marked as
+    // what it is, so nothing offers it as something to look at.
+    QVERIFY(page.versions.at(2).deleteMarker);
+    QCOMPARE(page.versions.at(2).key, QStringLiteral("reports/gone.pdf"));
+}
+
+/// Two markers rather than one, because several states of a key can straddle a
+/// page boundary and the key alone cannot say where to carry on from.
+void TestS3Signer::aTruncatedVersionListingCarriesBothItsMarkers()
+{
+    const QByteArray xml = R"(<ListVersionsResult>
+  <IsTruncated>true</IsTruncated>
+  <NextKeyMarker>reports/q1.pdf</NextKeyMarker>
+  <NextVersionIdMarker>QUpfdndhfd8438MNFDN93jd</NextVersionIdMarker>
+  <Version>
+    <Key>reports/q1.pdf</Key><VersionId>one</VersionId><IsLatest>false</IsLatest><Size>1</Size>
+  </Version>
+</ListVersionsResult>)";
+
+    S3VersionPage page;
+    QString error;
+    QVERIFY2(parseListObjectVersions(xml, &page, &error), qPrintable(error));
+    QVERIFY(page.truncated);
+    QCOMPARE(page.nextKeyMarker, QStringLiteral("reports/q1.pdf"));
+    QCOMPARE(page.nextVersionIdMarker, QStringLiteral("QUpfdndhfd8438MNFDN93jd"));
+}
+
+/// An error document must not read as "nothing earlier is kept", which is the
+/// answer that quietly hides what is there.
+void TestS3Signer::anErrorDocumentIsNotAnEmptyVersionListing()
+{
+    const QByteArray xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<Error><Code>AccessDenied</Code><Message>Access Denied.</Message></Error>)";
+
+    S3VersionPage page;
+    QString error;
+    QVERIFY(!parseListObjectVersions(xml, &page, &error));
+    QVERIFY2(error.contains(QStringLiteral("Access Denied")), qPrintable(error));
+    QVERIFY(page.versions.isEmpty());
+}
+
+void TestS3Signer::aContainerSaysWhetherItKeepsEarlierObjects()
+{
+    QVERIFY(parseVersioningEnabled(
+        QByteArrayLiteral("<VersioningConfiguration><Status>Enabled</Status></VersioningConfiguration>")));
+
+    // Suspended is not enabled: what is already kept stays, and nothing new is,
+    // so offering it as a drive that keeps earlier objects would be a promise
+    // about the next edit that the container has stopped making.
+    QVERIFY(!parseVersioningEnabled(
+        QByteArrayLiteral("<VersioningConfiguration><Status>Suspended</Status></VersioningConfiguration>")));
+
+    // What a container that has never had it switched on answers with.
+    QVERIFY(!parseVersioningEnabled(QByteArrayLiteral("<VersioningConfiguration/>")));
+    QVERIFY(!parseVersioningEnabled(QByteArrayLiteral("<Error><Code>NoSuchBucket</Code></Error>")));
+    QVERIFY(!parseVersioningEnabled(QByteArray()));
 }
 
 namespace {

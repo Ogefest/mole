@@ -81,6 +81,7 @@ private slots:
     void aRedirectAnsweredToAPutDoesNotSendTheFileSomewhereElse();
     void aSlowDownFromS3IsReportedRatherThanLosingTheUploadInSilence();
     void anErrorDocumentInsideA200IsStillAFailure();
+    void anAnswerThatArrivesInPagesIsNotAShortAnswer();
 };
 
 /// The one that would delete a user's files.
@@ -333,6 +334,64 @@ void TestServersThatMisbehave::anErrorDocumentInsideA200IsStillAFailure()
             || written.error().message.contains(QStringLiteral("internal error")),
         qPrintable(QStringLiteral("what the server said has to reach the user, and this says: %1")
                        .arg(written.error().message)));
+}
+
+/// The same loss as the cut-off listing above, arrived at politely.
+///
+/// A container keeping many earlier states of one object answers in pages, and
+/// says so with two markers rather than one -- the key alone cannot say where to
+/// carry on from when several states of it straddle the boundary. A client that
+/// stops at the first page shows some of what is kept and silently drops the
+/// rest, which is a wrong answer rather than a slow one.
+void TestServersThatMisbehave::anAnswerThatArrivesInPagesIsNotAShortAnswer()
+{
+    QList<QByteArray> asked;
+    ScriptedHttpServer server([&asked](const ScriptedHttpServer::Request& request) {
+        asked.append(request.path);
+        ScriptedHttpServer::Reply reply;
+        reply.headers.append("Content-Type: application/xml");
+
+        if (request.path.contains("version-id-marker=")) {
+            reply.body = R"(<ListVersionsResult>
+  <IsTruncated>false</IsTruncated>
+  <Version><Key>reports/q1.pdf</Key><VersionId>third</VersionId>
+    <IsLatest>false</IsLatest><Size>3</Size></Version>
+</ListVersionsResult>)";
+            return reply;
+        }
+
+        reply.body = R"(<ListVersionsResult>
+  <IsTruncated>true</IsTruncated>
+  <NextKeyMarker>reports/q1.pdf</NextKeyMarker>
+  <NextVersionIdMarker>second</NextVersionIdMarker>
+  <Version><Key>reports/q1.pdf</Key><VersionId>latest</VersionId>
+    <IsLatest>true</IsLatest><Size>1</Size></Version>
+  <Version><Key>reports/q1.pdf</Key><VersionId>second</VersionId>
+    <IsLatest>false</IsLatest><Size>2</Size></Version>
+</ListVersionsResult>)";
+        return reply;
+    });
+    QVERIFY(server.start());
+
+    S3FileSystem drive(QStringLiteral("s3"), s3Against(server));
+    const VfsUri object = VfsUri::fromString(QStringLiteral("s3://bucket/reports/q1.pdf"));
+
+    const Result<FileActionOutcome> outcome
+        = drive.invoke(S3FileSystem::versionsActionId(), object, CancelToken());
+    QVERIFY2(outcome.ok(), qPrintable(outcome.error().message));
+
+    // Both pages, and the object as it is now left out of both: what is on offer
+    // is an earlier state, and the current one is the file you are looking at.
+    QStringList found;
+    for (const VfsUri& uri : outcome.value().uris)
+        found.append(uri.version());
+    QCOMPARE(found, QStringList({ QStringLiteral("second"), QStringLiteral("third") }));
+
+    QCOMPARE(asked.size(), 2);
+    // The second request carries both markers. One of them is not enough, and a
+    // server given only the key would start the page again from the top.
+    QVERIFY2(asked.at(1).contains("key-marker=reports%2Fq1.pdf"), asked.at(1).constData());
+    QVERIFY2(asked.at(1).contains("version-id-marker=second"), asked.at(1).constData());
 }
 
 MOLE_TEST_MAIN(TestServersThatMisbehave)
