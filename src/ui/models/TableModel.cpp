@@ -221,7 +221,16 @@ void TableModel::ensureLoaded(int row) const
     // The page's own start, plus where in the page this chunk begins. This is
     // the only place the two coordinate systems meet.
     const qint64 offset = firstRowOnPage() + static_cast<qint64>(chunk) * kChunkRows;
-    QList<QStringList> rows = m_source->rows(offset, kChunkRows, m_filter);
+    bool readable = true;
+    QList<QStringList> rows = m_source->rows(offset, kChunkRows, m_filter, &readable);
+    // A window that could not be read is not cached. The cache is only cleared
+    // when something else changes -- a refresh, a page move, a filter -- so a
+    // chunk stored from a failed read would leave that stripe of the grid blank
+    // until one of those happened to come along, which during an import is the
+    // next batch and may be seconds away. Asking again costs one query; the
+    // alternative is showing nothing and calling it the file's contents.
+    if (!readable)
+        return;
     m_chunks.insert(chunk, std::move(rows));
     m_chunkOrder.append(chunk);
 

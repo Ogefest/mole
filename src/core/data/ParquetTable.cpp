@@ -174,8 +174,11 @@ qint64 ParquetTable::matchingRows(const QString& filter) const
     return matches;
 }
 
-QList<QStringList> ParquetTable::rows(qint64 offset, int limit, const QString& filter) const
+QList<QStringList> ParquetTable::rows(qint64 offset, int limit, const QString& filter, bool* readable) const
 {
+    if (readable)
+        *readable = true;
+
     QList<QStringList> out;
     if (!d->reader || !d->schema || limit <= 0 || offset >= d->rowCount)
         return out;
@@ -200,15 +203,23 @@ QList<QStringList> ParquetTable::rows(qint64 offset, int limit, const QString& f
 
     for (int group = firstGroup; group < d->groupFirstRow.size() && produced < wanted; ++group) {
         std::shared_ptr<arrow::Table> table;
-        if (!d->reader->ReadRowGroup(group, &table).ok() || !table)
+        if (!d->reader->ReadRowGroup(group, &table).ok() || !table) {
+            // A group Arrow refused is a window that could not be read, not one
+            // that held nothing -- see ITableSource::rows().
+            if (readable)
+                *readable = false;
             break;
+        }
 
         const int64_t rowsHere = table->num_rows();
         // Columns arrive as chunked arrays; combining once per group keeps the
         // indexing below simple without copying the whole file.
         auto combined = table->CombineChunks(arrow::default_memory_pool());
-        if (!combined.ok())
+        if (!combined.ok()) {
+            if (readable)
+                *readable = false;
             break;
+        }
         table = combined.ValueUnsafe();
 
         for (int64_t row = skipped; row < rowsHere && produced < wanted; ++row) {
@@ -314,8 +325,10 @@ qint64 ParquetTable::matchingRows(const QString&) const
 {
     return 0;
 }
-QList<QStringList> ParquetTable::rows(qint64, int, const QString&) const
+QList<QStringList> ParquetTable::rows(qint64, int, const QString&, bool* readable) const
 {
+    if (readable)
+        *readable = true;
     return {};
 }
 QList<int> ParquetTable::columnWidths(int) const

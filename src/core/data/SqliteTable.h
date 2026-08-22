@@ -64,7 +64,8 @@ public:
     QStringList headers() const override { return m_headers; }
     qint64 totalRows() const override;
     qint64 matchingRows(const QString& filter) const override;
-    QList<QStringList> rows(qint64 offset, int limit, const QString& filter = {}) const override;
+    QList<QStringList> rows(
+        qint64 offset, int limit, const QString& filter = {}, bool* readable = nullptr) const override;
     QList<int> columnWidths(int sampleRows = 200) const override;
 
 private:

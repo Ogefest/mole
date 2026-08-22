@@ -8,9 +8,16 @@
 #include "core/text/ImportJsonLinesTask.h"
 #include "core/vfs/backends/LocalFileSystem.h"
 
+#include <QCoreApplication>
+#include <QEventLoop>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSqlDatabase>
+#include <QSqlError>
+#include <QSqlQuery>
 #include <QTemporaryDir>
+
+#include <thread>
 
 using namespace mole;
 using namespace mole::test;
@@ -52,6 +59,12 @@ private slots:
     void aFileWhoseRecordsAreNotObjectsSaysSoRatherThanFailing();
     void everyKindOfJsonValueBecomesOneCell();
     void theTextOrderScanIsNotFooledByWhatIsInsideAValue();
+
+    // ---- a reader and a writer on one file ----
+    void theTableIsReadThroughoutAnImportAndEveryReadIsAnswered();
+    void aReadIsAnsweredWhileAWriteIsStillInFlight();
+    void aReadThatFailedIsNotATableWithNothingInIt();
+    void everyConnectionCarriesTheSettingsAndNotOnlyTheOpenersOwn();
 
 private:
     ImportDelimitedTask* importFile(const QString& name, DelimitedStore* store, QChar separator = QChar());
@@ -512,6 +525,227 @@ void TestDelimitedStore::theTextOrderScanIsNotFooledByWhatIsInsideAValue()
     // it loses order and never a column.
     QCOMPARE(
         jsonKeysInTextOrder(QString(), parsed.object()), QStringList({ "inner", "last", "said", "url" }));
+}
+
+// ---------------------------------------- a reader and a writer on one file
+//
+// The grid is attached to the store before the import starts, deliberately, so
+// the first records are on screen while the rest are read. That makes the
+// interface a reader on a database an import is writing to from a pool thread,
+// and these three cases are what has to hold for that to be true. Before
+// MOLE-289 none of them did: the settings that let a reader and a writer share
+// a file were applied to the wrong connection, so the window froze behind the
+// importer and then read as an empty file.
+
+void TestDelimitedStore::theTableIsReadThroughoutAnImportAndEveryReadIsAnswered()
+{
+    // Two hundred thousand records, because the subject is a long import: the
+    // store commits every two thousand rows and the task reports every five
+    // thousand, so the reads below take a filling table forty times over.
+    constexpr qint64 kRecords = 200000;
+    constexpr int kWindow = 50;
+
+    QByteArray contents;
+    contents.reserve(kRecords * 40);
+    for (qint64 i = 0; i < kRecords; ++i)
+        contents += QStringLiteral("{\"id\":%1,\"name\":\"name %1\"}\n").arg(i).toUtf8();
+    QVERIFY(m_tree->writeFile(QStringLiteral("records.jsonl"), contents));
+
+    DelimitedStore store(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
+    QVERIFY(store.open());
+
+    // Not importRecords(), which waits for the task. Waiting is the one thing
+    // this case must not do: the store is read while the import writes to it,
+    // which is what attaching the grid before the import means.
+    auto fs = std::make_shared<LocalFileSystem>();
+    auto* task
+        = new ImportJsonLinesTask(fs, m_tree->rootUri().child(QStringLiteral("records.jsonl")), &store);
+
+    // The reads the interface makes, at the cadence it makes them. The preview
+    // controller refreshes the model on rowsImported, and a refresh is a count
+    // and a window -- so this is one of each per batch, on this thread, against
+    // a database a pool thread is writing to.
+    //
+    // Deliberately not a loop over the two of them. A reader always on the file
+    // starves the writer instead of racing it, which is the mistake the index's
+    // version of this test records: measured here, a CREATE TABLE that takes no
+    // time at all sat for a second waiting for a moment with no reader in it.
+    // And it would be measuring something the application never does.
+    qint64 unanswered = 0;
+    qint64 shortWindows = 0;
+    qint64 readsOfAPartlyImportedTable = 0;
+    QObject onThisThread;
+    connect(task, &ImportJsonLinesTask::rowsImported, &onThisThread, [&](qint64) {
+        bool readable = true;
+        const qint64 count = store.matchingRows({});
+        const QList<QStringList> window = store.rows(0, kWindow, {}, &readable);
+
+        if (count < 0 || !readable) {
+            ++unanswered;
+        } else if (window.size() < qMin<qint64>(kWindow, count)) {
+            // The count was taken first and rows only ever arrive, so a window
+            // shorter than the count allows for is a read that stopped early.
+            ++shortWindows;
+        } else if (count > 0 && count < kRecords) {
+            // The condition rather than a clock: a count between nothing and the
+            // whole file is proof this read was taken while the import was still
+            // running, whatever either thread happened to be scheduled to do.
+            ++readsOfAPartlyImportedTable;
+        }
+    });
+
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task, 60000));
+
+    QCOMPARE(unanswered, qint64(0));
+    QCOMPARE(shortWindows, qint64(0));
+    QVERIFY2(readsOfAPartlyImportedTable > 0,
+        "every read saw an empty table or a finished one, so nothing was read during the import "
+        "and this case asserts nothing");
+
+    // And the import that was read throughout is the whole file, rather than one
+    // cut short by a write that gave up partway.
+    QCOMPARE(task->state(), Task::State::Succeeded);
+    QCOMPARE(task->importedRows(), kRecords);
+    QCOMPARE(store.totalRows(), kRecords);
+}
+
+void TestDelimitedStore::aReadIsAnsweredWhileAWriteIsStillInFlight()
+{
+    // The freeze, made a fact rather than a race: the file is held exclusively
+    // and the read has to be answered anyway, from what is committed, rather
+    // than by waiting for a commit this test is not going to make until it has
+    // the answer.
+    //
+    // Exclusively, and not merely under a write transaction, because that is the
+    // moment the interface actually met. Under a rollback journal a writer takes
+    // the file only when it commits -- and the importer commits every two
+    // thousand rows, with synchronous writes, so those moments were most of the
+    // import. Held still here instead of raced for.
+    //
+    // What the fault did is worth naming, because it is not quite what the
+    // title says: Qt's SQLite driver sets a busy timeout of its own, so the read
+    // did not fail, it *stalled* -- five seconds of a window that has stopped
+    // answering -- and came back empty only after that. Which is why this case
+    // asserts the answer and not the time it took: in WAL the read takes its own
+    // snapshot and returns while the writer still holds the file, and without it
+    // the read cannot be answered at all until the writer lets go, so it gives
+    // up. One is a number, the other is a failure, and neither is a clock.
+    QVERIFY(m_tree->writeFile(QStringLiteral("two.csv"), QByteArray("a,b\n1,2\n3,4\n")));
+
+    const QString path = QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite"));
+    DelimitedStore store(path);
+    QVERIFY(store.open());
+    QVERIFY(importFile(QStringLiteral("two.csv"), &store, QLatin1Char(',')));
+
+    const QString side = QStringLiteral("mole-test-writer");
+    QSqlDatabase writer = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), side);
+    writer.setDatabaseName(path);
+    QVERIFY(writer.open());
+    QSqlQuery write(writer);
+
+    std::atomic_bool connected { false };
+    std::atomic_bool writeInFlight { false };
+    qint64 before = -2;
+    qint64 during = -2;
+
+    // The reader takes its connection before the writer holds anything, because
+    // a connection is made on first use and making one is itself a read of the
+    // file -- doing it under the lock would be measuring the wrong thing.
+    std::thread reader([&store, &connected, &writeInFlight, &before, &during] {
+        before = store.matchingRows({});
+        connected = true;
+        while (!writeInFlight.load())
+            std::this_thread::yield();
+        during = store.matchingRows({});
+    });
+
+    while (!connected.load())
+        std::this_thread::yield();
+
+    QVERIFY2(write.exec(QStringLiteral("BEGIN EXCLUSIVE")), qPrintable(write.lastError().text()));
+    QVERIFY2(write.exec(QStringLiteral("INSERT INTO rows_ (c0, c1) VALUES ('5', '6')")),
+        qPrintable(write.lastError().text()));
+    writeInFlight = true;
+
+    // Joined before the commit, so the write is in flight for the whole of the
+    // read: there is no ordering here to get lucky with.
+    reader.join();
+    QVERIFY2(write.exec(QStringLiteral("COMMIT")), qPrintable(write.lastError().text()));
+    writer.close();
+    QSqlDatabase::removeDatabase(side);
+
+    QCOMPARE(before, qint64(2));
+    // Two, and not three: the answer is the committed table, which is what a
+    // snapshot means. -1 here is the read having given up on a locked file.
+    QCOMPARE(during, qint64(2));
+    QCOMPARE(store.matchingRows({}), qint64(3));
+}
+
+void TestDelimitedStore::aReadThatFailedIsNotATableWithNothingInIt()
+{
+    QVERIFY(m_tree->writeFile(QStringLiteral("two.csv"), QByteArray("a,b\n1,2\n3,4\n")));
+
+    const QString path = QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite"));
+    DelimitedStore store(path);
+    QVERIFY(store.open());
+    QVERIFY(importFile(QStringLiteral("two.csv"), &store, QLatin1Char(',')));
+    QCOMPARE(store.matchingRows({}), qint64(2));
+
+    // The table taken out from under the store, on a connection of its own. Any
+    // failure would do and this one is a fact rather than a timing, but what the
+    // store meets is what it met when the importer held the file: a query that
+    // does not execute.
+    const QString side = QStringLiteral("mole-test-side");
+    {
+        QSqlDatabase other = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), side);
+        other.setDatabaseName(path);
+        QVERIFY(other.open());
+        QSqlQuery drop(other);
+        QVERIFY2(drop.exec(QStringLiteral("DROP TABLE rows_")), qPrintable(drop.lastError().text()));
+        other.close();
+    }
+    QSqlDatabase::removeDatabase(side);
+
+    // Not nought. Nought is a file with nothing in it; this one has two rows
+    // that cannot be read at the moment, and ADR-0030 settled which of those two
+    // answers to give. -1 is the one the model already shows as a blank.
+    QCOMPARE(store.matchingRows({}), qint64(-1));
+    QCOMPARE(store.totalRows(), qint64(-1));
+    // Asked again it still says not known, rather than having settled on the
+    // nought that made a file still importing read as an empty one.
+    QCOMPARE(store.totalRows(), qint64(-1));
+
+    bool readable = true;
+    const QList<QStringList> window = store.rows(0, 10, {}, &readable);
+    QVERIFY(window.isEmpty());
+    QVERIFY2(!readable, "an unreadable window came back as a window that held nothing");
+}
+
+void TestDelimitedStore::everyConnectionCarriesTheSettingsAndNotOnlyTheOpenersOwn()
+{
+    DelimitedStore store(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
+    QVERIFY(store.open());
+
+    QCOMPARE(store.pragmaValue(QStringLiteral("journal_mode")).toLower(), QStringLiteral("wal"));
+    QCOMPARE(store.pragmaValue(QStringLiteral("busy_timeout")).toInt(), 5000);
+
+    // The half that was wrong, and why this is a case of its own. A connection
+    // is keyed by the thread that asked for it, so pragmas run by open() land on
+    // whichever thread called open() -- the test's here, the one that draws in
+    // the application. The importer's connection is made on a pool thread, and
+    // it was getting SQLite's defaults: a journal per transaction, synchronous
+    // writes, and no busy timeout at all.
+    QString journal;
+    int timeout = -1;
+    std::thread elsewhere([&store, &journal, &timeout] {
+        journal = store.pragmaValue(QStringLiteral("journal_mode")).toLower();
+        timeout = store.pragmaValue(QStringLiteral("busy_timeout")).toInt();
+    });
+    elsewhere.join();
+
+    QCOMPARE(journal, QStringLiteral("wal"));
+    QCOMPARE(timeout, 5000);
 }
 
 MOLE_TEST_MAIN(TestDelimitedStore)

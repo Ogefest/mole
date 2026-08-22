@@ -11,6 +11,58 @@
 using namespace mole;
 using namespace mole::test;
 
+namespace {
+
+/// A table whose next window read can be told to fail.
+///
+/// A read the model makes while an import writes to the same file can fail on
+/// its own account -- a locked database, an I/O error -- and what the model does
+/// with that answer is the subject here, so the failure is arranged rather than
+/// raced for. See MOLE-289 and ADR-0030.
+class FlakyTable final : public ITableSource
+{
+public:
+    explicit FlakyTable(qint64 rows)
+        : m_rows(rows)
+    {
+    }
+
+    void failNextRead() { m_failNext = true; }
+    int reads() const { return m_reads; }
+
+    QStringList headers() const override { return { QStringLiteral("id") }; }
+    qint64 totalRows() const override { return m_rows; }
+    qint64 matchingRows(const QString&) const override { return m_rows; }
+
+    QList<QStringList> rows(
+        qint64 offset, int limit, const QString& = {}, bool* readable = nullptr) const override
+    {
+        ++m_reads;
+        if (m_failNext) {
+            m_failNext = false;
+            if (readable)
+                *readable = false;
+            return {};
+        }
+        if (readable)
+            *readable = true;
+
+        QList<QStringList> out;
+        for (qint64 row = offset; row < qMin<qint64>(offset + limit, m_rows); ++row)
+            out.append(QStringList { QString::number(row) });
+        return out;
+    }
+
+    QList<int> columnWidths(int) const override { return { 8 }; }
+
+private:
+    qint64 m_rows = 0;
+    mutable bool m_failNext = false;
+    mutable int m_reads = 0;
+};
+
+} // namespace
+
 /// The page the grid shows.
 ///
 /// A table used to be offered whole: rowCount() returned the matching count, so
@@ -30,6 +82,7 @@ private slots:
     void movingPastEitherEndChangesNothing();
     void aFilterPutsTheViewBackOnTheFirstPage();
     void aBlockAskedForPastTheEndOfThePageStopsAtIt();
+    void aWindowThatCouldNotBeReadIsNotKeptAsAnEmptyOne();
 
 private:
     /// A store of `rows` rows, which the model reads through like any other
@@ -203,6 +256,33 @@ void TestTableModel::aBlockAskedForPastTheEndOfThePageStopsAtIt()
     QCOMPARE(lines.size(), 2);
     QCOMPARE(lines.first(), QStringLiteral("4998"));
     QCOMPARE(lines.last(), QStringLiteral("4999"));
+}
+
+void TestTableModel::aWindowThatCouldNotBeReadIsNotKeptAsAnEmptyOne()
+{
+    FlakyTable source(2000);
+    TableModel model;
+    model.setSource(&source);
+    QCOMPARE(model.rowCount(), 2000);
+
+    // The read behind the first cell fails. A blank cell is the right answer to
+    // that: the model has nothing to show and does not invent a nothing.
+    source.failNextRead();
+    QVERIFY(!model.data(model.index(0, 0), TableModel::CellRole).isValid());
+
+    // What must not happen is that it is remembered. Nothing since has cleared
+    // the cache -- no refresh, no page move, no filter -- so an empty window
+    // kept from a failed read would leave this block of the grid blank until one
+    // of those came along, which during an import is the next batch and may be
+    // seconds off.
+    QCOMPARE(model.data(model.index(0, 0), TableModel::CellRole).toString(), QStringLiteral("0"));
+    QCOMPARE(model.data(model.index(499, 0), TableModel::CellRole).toString(), QStringLiteral("499"));
+
+    // And the retry is one read, not one per cell: a window that was read is
+    // still cached the way it always was.
+    const int reads = source.reads();
+    QCOMPARE(model.data(model.index(1, 0), TableModel::CellRole).toString(), QStringLiteral("1"));
+    QCOMPARE(source.reads(), reads);
 }
 
 MOLE_TEST_MAIN(TestTableModel)

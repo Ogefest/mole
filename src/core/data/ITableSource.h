@@ -42,7 +42,16 @@ public:
 
     /// A window of rows in table order. This is the only read path the model
     /// uses, so scrolling costs one query per screen rather than one per table.
-    virtual QList<QStringList> rows(qint64 offset, int limit, const QString& filter = {}) const = 0;
+    ///
+    /// `readable` is set false when the window could not be read at all, and a
+    /// caller with one must not treat the empty list it got back as a window
+    /// that happens to hold nothing. A source that cannot be read is not a
+    /// source that is empty -- ADR-0030 decided that for a sync plan, and the
+    /// same mistake here turns a grid still filling from an import into a table
+    /// that reads as empty.
+    virtual QList<QStringList> rows(
+        qint64 offset, int limit, const QString& filter = {}, bool* readable = nullptr) const
+        = 0;
 
     /// The longest value in each column over a sample, in characters, so the
     /// grid can size columns to their contents instead of to a default that

@@ -207,8 +207,11 @@ qint64 SqliteTable::matchingRows(const QString& filter) const
     return query.value(0).toLongLong();
 }
 
-QList<QStringList> SqliteTable::rows(qint64 offset, int limit, const QString& filter) const
+QList<QStringList> SqliteTable::rows(qint64 offset, int limit, const QString& filter, bool* readable) const
 {
+    if (readable)
+        *readable = true;
+
     QList<QStringList> out;
     if (!m_open || m_table.isEmpty() || limit <= 0)
         return out;
@@ -222,8 +225,13 @@ QList<QStringList> SqliteTable::rows(qint64 offset, int limit, const QString& fi
     query.bindValue(QStringLiteral(":limit"), limit);
     query.bindValue(QStringLiteral(":offset"), offset);
 
-    if (!query.exec())
+    // A window that could not be read is said so rather than answered as one
+    // that held nothing -- see ITableSource::rows() and ADR-0030.
+    if (!query.exec()) {
+        if (readable)
+            *readable = false;
         return out;
+    }
 
     out.reserve(limit);
     while (query.next()) {
