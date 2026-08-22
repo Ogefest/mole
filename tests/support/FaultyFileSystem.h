@@ -193,6 +193,9 @@ public:
     }
     /// Also the volume's own, for the same reason.
     NameRules nameRules() const override { return m_inner ? m_inner->nameRules() : NameRules(); }
+    /// And this one, or injecting a fault into a drive that reads earlier states
+    /// of a file would turn every version uri underneath it into a refusal.
+    bool understandsVersions() const override { return m_inner && m_inner->understandsVersions(); }
     Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) override;
     Result<FileEntry> stat(const VfsUri& target) override;
     Result<void> makeDirectory(const VfsUri& target) override;
@@ -202,6 +205,13 @@ public:
     Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1) override;
     Result<SpaceInfo> space(const VfsUri& target) override;
     Result<AccessInfo> access(const VfsUri& target) override;
+    /// The work the drive underneath is still holding, and the drive underneath
+    /// is the only thing that knows about it. There is no fault to inject here
+    /// yet; a wrapper that answered NotSupported would be one, and an
+    /// undeclared one.
+    Result<QList<DriveLeftover>> leftovers(
+        std::chrono::seconds olderThan, const CancelToken& cancel) override;
+    Result<void> discardLeftover(const DriveLeftover& leftover) override;
     Result<FileEntryList> search(
         const VfsUri& root, const QString& pattern, const CancelToken& cancel) override;
     /// What the drive underneath offers, for the same reason as the two above:

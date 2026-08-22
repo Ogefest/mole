@@ -54,6 +54,21 @@ VfsCapabilities LoggingFileSystem::capabilities() const
     return m_inner->capabilities();
 }
 
+// Nor do these three, and each one is an answer only the volume underneath can
+// give. Forwarded silently for the same reason as the two above.
+Qt::CaseSensitivity LoggingFileSystem::pathCaseSensitivity() const
+{
+    return m_inner->pathCaseSensitivity();
+}
+NameRules LoggingFileSystem::nameRules() const
+{
+    return m_inner->nameRules();
+}
+bool LoggingFileSystem::understandsVersions() const
+{
+    return m_inner->understandsVersions();
+}
+
 Result<FileEntryList> LoggingFileSystem::list(const VfsUri& dir, const CancelToken& cancel)
 {
     if (!driveLog().isDebugEnabled())
@@ -116,6 +131,37 @@ Result<SpaceInfo> LoggingFileSystem::space(const VfsUri& target)
 Result<AccessInfo> LoggingFileSystem::access(const VfsUri& target)
 {
     return watch(m_name, "access", target.toString(), [&] { return m_inner->access(target); });
+}
+
+Result<QList<DriveLeftover>> LoggingFileSystem::leftovers(
+    std::chrono::seconds olderThan, const CancelToken& cancel)
+{
+    if (!driveLog().isDebugEnabled())
+        return m_inner->leftovers(olderThan, cancel);
+
+    QElapsedTimer clock;
+    clock.start();
+    Result<QList<DriveLeftover>> result = m_inner->leftovers(olderThan, cancel);
+    const qint64 elapsed = clock.elapsed();
+
+    // How many, like a listing: the whole question a sweep answers is whether
+    // there is anything there, and "ok" alone does not say.
+    if (result.ok()) {
+        qCDebug(driveLog, "[%s] leftovers older than %lld s: %lld found in %lld ms", qPrintable(m_name),
+            static_cast<long long>(olderThan.count()), static_cast<long long>(result.value().size()),
+            elapsed);
+    } else {
+        qCDebug(driveLog, "[%s] leftovers older than %lld s: %s in %lld ms", qPrintable(m_name),
+            static_cast<long long>(olderThan.count()), qPrintable(result.error().message), elapsed);
+    }
+    return result;
+}
+
+Result<void> LoggingFileSystem::discardLeftover(const DriveLeftover& leftover)
+{
+    // The handle, not the path: it is what went to the drive, and a sweep that
+    // discarded the wrong thing is diagnosed from what was actually sent.
+    return watch(m_name, "discard", leftover.handle, [&] { return m_inner->discardLeftover(leftover); });
 }
 
 Result<FileEntryList> LoggingFileSystem::search(

@@ -30,6 +30,19 @@ public:
     QString scheme() const override;
     VfsCapabilities capabilities() const override;
 
+    /// The volume underneath answers all four of these, and a wrapper that let
+    /// IFileSystem's defaults answer instead is not observing a drive -- it is
+    /// replacing it with a plausible one. The defaults are deliberately the
+    /// permissive and the unsupported answer, so nothing fails loudly: a copy on
+    /// to a Windows volume goes back to failing one file at a time part way
+    /// through, the guard against moving a directory into its own subtree gets
+    /// case folding wrong on a volume that ignores case, and a drive still
+    /// advertising ReportsLeftovers through capabilities() below can never be
+    /// found to have any. See MOLE-282 and ADR-0070.
+    Qt::CaseSensitivity pathCaseSensitivity() const override;
+    NameRules nameRules() const override;
+    bool understandsVersions() const override;
+
     Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) override;
     Result<FileEntry> stat(const VfsUri& target) override;
     Result<void> makeDirectory(const VfsUri& target) override;
@@ -39,6 +52,9 @@ public:
     Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1) override;
     Result<SpaceInfo> space(const VfsUri& target) override;
     Result<AccessInfo> access(const VfsUri& target) override;
+    Result<QList<DriveLeftover>> leftovers(
+        std::chrono::seconds olderThan, const CancelToken& cancel) override;
+    Result<void> discardLeftover(const DriveLeftover& leftover) override;
     Result<FileEntryList> search(
         const VfsUri& root, const QString& pattern, const CancelToken& cancel) override;
 

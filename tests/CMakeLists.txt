@@ -74,6 +74,12 @@ target_compile_definitions(mole_test_support
 target_compile_definitions(mole_test_support
     PUBLIC MOLE_SHELL_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src")
 
+# And this directory, because a rule read from the source has to cover the fakes
+# as well: FaultyFileSystem wraps a drive the way the shipped wrappers do and is
+# held to the same forwarding -- see tst_WrappedDriveAnswers.
+target_compile_definitions(mole_test_support
+    PUBLIC MOLE_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+
 # Tests that load the archive plugin need to know where it was built.
 target_compile_definitions(mole_test_support
     PUBLIC MOLE_TEST_PLUGIN_DIR="${CMAKE_BINARY_DIR}/plugins")
@@ -190,6 +196,10 @@ mole_add_test(tst_FaultyFileSystem  SOURCES support/tst_FaultyFileSystem.cpp)
 # it green for the wrong reason, so it is held to the same contract as a backend.
 mole_add_test(tst_OfferingFileSystem SOURCES support/tst_OfferingFileSystem.cpp)
 mole_add_test(tst_VfsManager        SOURCES core/tst_VfsManager.cpp)
+
+# Every mount is behind two wrappers, and most of the suite holds a bare backend.
+# This is the one that asks a wrapped drive the questions instead.
+mole_add_test(tst_WrappedDriveAnswers SOURCES core/tst_WrappedDriveAnswers.cpp)
 mole_add_test(tst_DirectoryWalker   SOURCES core/tst_DirectoryWalker.cpp)
 mole_add_test(tst_TaskManager       SOURCES core/tst_TaskManager.cpp)
 mole_add_test(tst_DriveCheckTask    SOURCES core/tst_DriveCheckTask.cpp)

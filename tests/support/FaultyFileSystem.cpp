@@ -743,6 +743,21 @@ Result<AccessInfo> FaultyFileSystem::access(const VfsUri& target)
     return m_inner->access(target);
 }
 
+Result<QList<DriveLeftover>> FaultyFileSystem::leftovers(
+    std::chrono::seconds olderThan, const CancelToken& cancel)
+{
+    if (m_policy->revoked.load())
+        return revokedError();
+    return m_inner->leftovers(olderThan, cancel);
+}
+
+Result<void> FaultyFileSystem::discardLeftover(const DriveLeftover& leftover)
+{
+    if (m_policy->revoked.load())
+        return revokedError();
+    return m_inner->discardLeftover(leftover);
+}
+
 Result<FileEntryList> FaultyFileSystem::search(
     const VfsUri& root, const QString& pattern, const CancelToken& cancel)
 {
