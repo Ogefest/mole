@@ -1,9 +1,8 @@
 # Changelog
 
 New features and visible changes in Mole, newest first. **This file is the release
-notes**: a version's notes are the block between two release markers, pulled out by
-a regular expression, so a line written in another shape is a line nobody will
-read.
+notes**: a version's notes are the block below its own marker, pulled out by a
+regular expression, so a line written in another shape is a line nobody will read.
 
 Two shapes, and outside a fenced code block nothing else in this file may match
 either of them:
@@ -37,15 +36,15 @@ deleted on 2026-08-10, so a bare number in a published note is a dead link to
 something that no longer exists; `#MOLE-22` links to nothing and reads correctly as
 text. See [ADR-0022](docs/adr/0022-work-is-tracked-in-vikunja.md).
 
-A **marker** says that everything below it, down to the next marker, went out as
-that version:
+A **marker** says that everything below it — down to the next marker, or to the
+end of the file — went out as that version:
 
 ```
 ## 0.2.0 — released 2026-08-11
 ```
 
 Newest first, so cutting a release puts a marker in at the top and the entries it
-contains fall underneath it. The oldest marker's block runs to the end of the file.
+contains fall underneath it.
 
 **Every `##` line in this file is a release marker, and there are no other
 second-level headings** — not `## Unreleased`, not one over the prose below, not
@@ -53,13 +52,14 @@ one somebody adds in a year. Everything above the topmost marker is unreleased b
 definition, so a heading saying so would have to be moved on every cut, and any
 other heading is one a looser expression would one day read as a release.
 
-The bullets at the end, below the last entry, are prose from before this format.
-They belong to the first release whatever shape they are in and they stay as they
-are: recovering a date and a ticket for each one would be archaeology. Nothing is
-added to them, and nothing dated goes below them.
+The bullets at the end of the file are prose from before this format. They belong
+to the first release whatever shape they are in and they stay as they are:
+recovering a date and a ticket for each one would be archaeology. Nothing is added
+to them, and nothing dated goes below them.
 
-There is no release marker in the file yet, because nothing has been released.
-`make release` writes the first one.
+A marker is written by `make release` and by nothing else. The tag that goes with
+it is what publishes a release, so a second way to write one would be a second way
+to publish something that nothing gated.
 
 `tests/scripts/tst_Changelog.sh` holds every rule on this page, and it reads the
 two expressions out of the block above rather than keeping a copy of its own — so
