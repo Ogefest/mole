@@ -180,6 +180,10 @@ if(BASH_PROGRAM)
     # other one answers without a platform plugin. See MOLE-300.
     mole_add_shell_test(tst_StartCheck
                         SCRIPT scripts/tst_StartCheck.sh)
+    # The release notes, taken out of the changelog rather than written again. Both
+    # ends of the file and both ways a block can be empty. See MOLE-123.
+    mole_add_shell_test(tst_ChangelogBlock
+                        SCRIPT scripts/tst_ChangelogBlock.sh)
     if(NOT MOLE_CORE_ONLY)
         set_property(TEST tst_LicenceCheck APPEND PROPERTY
                      ENVIRONMENT "MOLE_BINARY=$<TARGET_FILE:mole>")

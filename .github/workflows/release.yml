@@ -287,27 +287,29 @@ jobs:
           echo "TARBALL=$name.tar.gz" >> "$GITHUB_ENV"
           echo "VERSION=$version" >> "$GITHUB_ENV"
 
-      # The release, with the tarball on it. `gh` is on the runner and
+      # The notes, which are not written here. They are this version's block in
+      # CHANGELOG.md, taken out by the expression that file's own header states --
+      # written by whoever landed the work rather than remembered at release time.
+      # Anything typed here instead would be a second list of the same facts and
+      # would disagree with the first inside two releases. An empty block stops the
+      # release: it means either the marker is in the wrong place or nobody wrote a
+      # line for anything that went in. See MOLE-123 and ADR-0080.
+      - name: The release notes, out of the changelog
+        run: |
+          scripts/changelog-block.sh "$VERSION" CHANGELOG.md > notes.md
+          echo "--- what will be published as the notes ---"
+          cat notes.md
+
+      # The release, with the artefacts on it. `gh` is on the runner and
       # authenticates with the job's own token, so there is no third-party action
       # in the path between a tag and a published artefact.
-      #
-      # The notes are a placeholder on purpose: they are the block for this version
-      # in CHANGELOG.md, and putting them here is MOLE-123. Anything written by
-      # hand in the meantime would be the second list that disagrees with the
-      # first, which ADR-0080 exists to prevent.
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
             --title "Mole $VERSION" \
-            --notes "The notes for this release are its block in [CHANGELOG.md](CHANGELOG.md). MOLE-123 puts them here.
-
-          The tarball needs no Qt on the target: unpack and run \`mole\`. It was built on Ubuntu 24.04 against Qt 6.4 with Parquet, PDF, video, archives, network drives (sftp, ftp, s3, webdav), Windows shares, NFS, the terminal panel, git state and the encrypted credential store.
-
-          The .deb and the .rpm carry what their own distribution can satisfy, which is not quite the same list: Arrow is in no Ubuntu archive, so the .deb has no Parquet grid, and Fedora packages it, so the .rpm does. MOLE-296 puts the table here.
-
-          **The AppImage runs on glibc 2.34 and upwards** — Ubuntu 22.04, Debian 12, RHEL 9, and anything newer. It is built on AlmaLinux 9 for that reason, and the one thing that costs is the Parquet grid: EPEL 9 ships Arrow without a CMake config for Parquet, so a Parquet file opens there as the list of facts. Everything else is in it." \
+            --notes-file notes.md \
             "$TARBALL" \
             build/packages/mole_*.deb \
             build/packages/mole-*.rpm \

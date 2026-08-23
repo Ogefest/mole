@@ -169,7 +169,7 @@ make packages    # a .deb, an .rpm and an AppImage, each for the family it insta
 | `.deb` | 3.6 MB | 10 MB | yes, from the archive | no Parquet grid | Debian and Ubuntu |
 | `.rpm` | 2.4 MB | 11 MB | yes, from the archive | — | Fedora and RHEL |
 | tarball (`make bundle`) | 79 MB | 208 MB | **no** | — | handing it to someone else |
-| AppImage | 74 MB | 211 MB | **no** | no Parquet grid | any distribution from 2021 onwards |
+| AppImage | 74 MB | 211 MB | **no** | no Parquet grid | any distribution from 2021 onwards — it **runs on glibc 2.34** and upwards |
 
 **Where those figures come from, because a size is not a property of the program.**
 Measured on 2026-08-23 from the artefacts the release workflow builds, against Qt
@@ -180,6 +180,13 @@ A build finds what a machine has, so yours will differ: leaving Arrow out takes 
 of megabytes off, and the two figures for `make optimised` and `make install` are
 large because neither strips debug information — the packages, the tarball and the
 AppImage all do.
+
+The AppImage's row carries the one promise that is not about size: **it runs on
+glibc 2.34** — Ubuntu 22.04, Debian 12, RHEL 9 and anything newer — because that is
+what it was built on, and an AppImage cannot carry the C library it links. Built on
+something newer it would refuse to start on everything older, with a `GLIBC_2.39 not
+found` that reads like a corrupt download. `TODO.md` records why that floor and not
+another, and the release checks both ends of it every time.
 
 **What it cannot do** is the column to read before choosing. Every artefact browses
 archives, opens the network drives, renders PDFs, plays video, shows git state and

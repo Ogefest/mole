@@ -58,6 +58,7 @@ die() {
 # because the next run starts from a tree nobody has looked at.
 mutating=0
 PATHS="CMakeLists.txt CHANGELOG.md docs/guide/images"
+SOURCE_SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/mole-release.XXXXXX")
 cleanup() {
     rm -rf "$SCRATCH"
@@ -201,12 +202,24 @@ entry_re=$(shape entry)
 # The header writes \d, the way the expression reads everywhere it is quoted;
 # grep and awk want [0-9]. The same one translation the test makes.
 marker_re=${marker_re//\\d/[0-9]}
+# And \. to [.], because awk takes the expression as a dynamic regex and treats a
+# backslash-dot as a plain dot -- which matches any character, so 0x1x0 would have
+# been a version. It warns about it, too, on every run.
+marker_re=${marker_re//\\./[.]}
 entry_re=${entry_re//\\d/[0-9]}
+entry_re=${entry_re//\\./[.]}
 
 marker="## $next — released $(date +%F)"
 printf '%s\n' "$marker" | grep -qE "$marker_re" \
     || die "the marker '$marker' is not the shape CHANGELOG.md states"
 say "marker: $marker"
+
+# The notes, before anything is written: they are this version's block in the
+# changelog, and a release whose block is empty or missing is one nobody can publish.
+# Checked here rather than discovered by the workflow after the tag is pushed, since
+# a tag is the one step that cannot be taken back.
+step "the release notes"
+say "the block for $next in CHANGELOG.md, which is what the release will carry"
 
 if [ -n "$DRY" ]; then
     step "what a real run would do next"
@@ -234,6 +247,16 @@ awk -v marker="$marker" -v entry="$entry_re" -v release="$marker_re" '
     || die "could not find an entry in CHANGELOG.md to put the marker above"
 cat "$SCRATCH/changelog" > CHANGELOG.md
 say "marker written above the newest entry"
+
+# And it has something under it. `make release` has just put the marker above the
+# newest entry, so an empty block here means nothing was written down for anything in
+# this release -- which the script says in those words rather than leaving a reader to
+# find an empty release page. See MOLE-123.
+# The changelog of the tree being released, named rather than defaulted: the script
+# next door falls back to its own repository's copy, which is the wrong file when
+# this is run anywhere else -- as its own test does.
+notes=$("$SOURCE_SCRIPTS/changelog-block.sh" "$next" "$PWD/CHANGELOG.md" 2>&1) || die "$notes"
+say "$(printf '%s\n' "$notes" | grep -c .) lines of notes for $next"
 
 # ------------------------------------------------------------ the version line
 

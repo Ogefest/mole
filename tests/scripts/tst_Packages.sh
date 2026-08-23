@@ -110,7 +110,11 @@ version=$(sed -n 's/.*floor is glibc \(2\.[0-9]*\).*/\1/p' scripts/package-appim
 # TODO.md said the wrong number, because the note explains the floor by naming other
 # distributions' versions too. If the wording here wants changing, change it in all
 # three places; that is the point of the case.
-for place in TODO.md .github/workflows/release.yml; do
+# TODO.md is where the reasoning is kept and README.md is what somebody choosing an
+# artefact reads. The release body used to say it too and no longer can: MOLE-123
+# made that body exactly the changelog block, which is a list of changes rather than
+# a description of what is attached.
+for place in TODO.md README.md; do
     grep -qF "runs on glibc $version" "$place" \
         || fail "$place does not promise 'runs on glibc $version'"
 done

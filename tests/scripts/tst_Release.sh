@@ -97,6 +97,25 @@ EOF
     printf '%s' "$repo"
 }
 
+# One entry at the top of the log, as landing a change would leave it, and committed
+# so the tree is clean for the next cut. Each release needs one: a marker with
+# nothing under it is an empty block and the gate refuses it -- either the marker is
+# misplaced or nobody wrote a line for anything that went in. See MOLE-123.
+add_entry() {
+    local repo="$1" text="$2"
+    # At the top of the log, which means above the first entry *or marker* -- the
+    # same place the release script puts a marker, and where landing a change leaves
+    # a line. Above the newest entry alone would put it inside the last release.
+    awk -v line="$text" '
+        /^```$/ { fence = !fence; print; next }
+        !placed && !fence && (/^2026-/ || /^## /) { print line; print ""; placed = 1 }
+        { print }
+    ' "$repo/CHANGELOG.md" > "$repo/CHANGELOG.next"
+    mv "$repo/CHANGELOG.next" "$repo/CHANGELOG.md"
+    git -C "$repo" add CHANGELOG.md
+    git -C "$repo" commit -q -m "Something landed"
+}
+
 # Runs the script in `repo` and keeps everything it said.
 #
 # Not called `cut`: that is a command, and a function named after one turns
@@ -245,20 +264,24 @@ entry_line=$(line_of "$repo/CHANGELOG.md" '^2026-08-23')
 begin "the next cut bumps the patch, and the overrides choose otherwise"
 # Sequential on purpose: each cut has to put its marker above the last one, which
 # is the case a fresh fixture cannot reach.
+add_entry "$repo" "2026-08-24 #MOLE-119 The thing the second release carries"
 cut_release "$repo"
 [ "$SCRIPT_STATUS" = 0 ] || fail "the second release did not go through"
 said "a patch bump, which is the default"
 [ "$( (cd "$repo" && make version) )" = "0.4.1" ] || fail "the patch was not bumped in CMakeLists.txt"
 [ "$(git -C "$repo" cat-file -t v0.4.1)" = tag ] || fail "v0.4.1 is not an annotated tag"
 
+add_entry "$repo" "2026-08-25 #MOLE-120 The thing the minor release carries"
 cut_release "$repo" MINOR=1
 [ "$SCRIPT_STATUS" = 0 ] || fail "MINOR=1 did not go through"
 [ "$( (cd "$repo" && make version) )" = "0.5.0" ] || fail "MINOR=1 did not cut 0.5.0"
 
+add_entry "$repo" "2026-08-26 #MOLE-121 The thing the major release carries"
 cut_release "$repo" MAJOR=1
 [ "$SCRIPT_STATUS" = 0 ] || fail "MAJOR=1 did not go through"
 [ "$( (cd "$repo" && make version) )" = "1.0.0" ] || fail "MAJOR=1 did not cut 1.0.0"
 
+add_entry "$repo" "2026-08-27 #MOLE-122 The thing the asked-for release carries"
 cut_release "$repo" VERSION=2.3.4
 [ "$SCRIPT_STATUS" = 0 ] || fail "VERSION= did not go through"
 [ "$( (cd "$repo" && make version) )" = "2.3.4" ] || fail "VERSION=2.3.4 did not cut 2.3.4"
