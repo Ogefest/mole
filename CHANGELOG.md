@@ -65,6 +65,7 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-08-24 #MOLE-310 Opening an archive to look inside it leaves the drive list alone: it is somewhere to walk around in until the last tab leaves it, and a bookmark or a restored session opens it again from the uri
 2026-08-23 #MOLE-304 A download, a preview or a dragged copy that has to be staged is refused when there is nowhere to stage it, instead of being written somewhere nobody would look for it — and `MOLE_STAGING_DIR` says where staging happens, for a machine whose temporary directory is small or on the wrong disk
 2026-08-23 #MOLE-309 A text preview numbers the lines of a file it holds whole, counting the file's own lines rather than the rows a long line was broken into for the layout, and shows no gutter at all for a file it can only show one window of
 2026-08-23 #MOLE-308 Typing in a text preview finds a word in what is on screen, or `/` for an empty bar: the count says which of how many, Enter and Shift+Enter step through them, and where a file is shown a window at a time the count says that is what it counted

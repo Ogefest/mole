@@ -102,6 +102,44 @@ QString VfsManager::addMount(Mount mount)
     return id;
 }
 
+QString VfsManager::remountFor(const VfsUri& uri)
+{
+    if (!uri.isValid())
+        return {};
+    // Already there is the ordinary case, and saying which is more useful than
+    // saying nothing: a caller that wanted a mount now has one either way.
+    for (const Mount& mount : m_mounts) {
+        if (mount.root.scheme() == uri.scheme() && mount.root.authority() == uri.authority())
+            return mount.id;
+    }
+
+    IFileSystemFactory* factory = factoryFor(uri.scheme());
+    if (!factory)
+        return {};
+
+    const VfsUri root(uri.scheme(), uri.authority(), QStringLiteral("/"));
+    const QVariantMap config = factory->configForRoot(root);
+    if (config.isEmpty())
+        return {};
+
+    QString error;
+    FileSystemPtr inside = factory->create(config, &error);
+    if (!inside)
+        return {};
+
+    Mount mount;
+    // Named after the file rather than the whole path: a breadcrumb and a title
+    // want "reports.zip", and the path is in the uri for anything that needs it.
+    mount.displayName = root.fileName().isEmpty() ? uri.fileName() : root.fileName();
+    mount.iconName = factory->iconName();
+    mount.root = root;
+    mount.fileSystem = std::move(inside);
+    // Rebuilt to be stood in, and it goes away again the same way the first one
+    // did -- see Mount::unlisted.
+    mount.unlisted = true;
+    return addMount(std::move(mount));
+}
+
 void VfsManager::removeMount(const QString& id)
 {
     bool removed = false;

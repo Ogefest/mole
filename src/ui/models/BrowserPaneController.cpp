@@ -348,6 +348,13 @@ void BrowserPaneController::navigateTo(const QString& uri)
         setErrorText(QStringLiteral("Not a valid location: %1").arg(uri));
         return;
     }
+    // Every way into a place goes through here -- a back step, a bookmark, a
+    // breadcrumb, a restored tab -- so this is where an archive whose mount went
+    // away while nobody was inside it comes back. A no-op for anything that still
+    // has a mount, and for every backend whose root cannot rebuild itself. See
+    // Mount::unlisted and MOLE-310.
+    if (m_services.vfs)
+        m_services.vfs->remountFor(target);
     load(target, true);
 }
 

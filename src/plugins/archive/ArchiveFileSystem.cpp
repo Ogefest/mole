@@ -586,6 +586,19 @@ VfsUri ArchiveFileSystemFactory::rootUriForFile(const QString& localPath) const
     return VfsUri(QStringLiteral("archive"), ArchiveFileSystem::authorityFor(localPath), QStringLiteral("/"));
 }
 
+QVariantMap ArchiveFileSystemFactory::configForRoot(const VfsUri& root) const
+{
+    // The authority *is* the path, percent-encoded, which is what makes an
+    // archive mount disposable: anything holding an `archive://` uri -- a
+    // bookmark, a back step, a session restored tomorrow -- carries everything
+    // needed to build the mount again. Where the file has gone, create() fails
+    // the ordinary way for a file that is not there.
+    if (root.scheme() != QLatin1String("archive"))
+        return {};
+    const QString path = ArchiveFileSystem::archivePathFromAuthority(root.authority());
+    return path.isEmpty() ? QVariantMap {} : configForFile(path);
+}
+
 QStringList ArchiveFileSystemFactory::supportedSuffixes()
 {
     // libarchive handles more than this; the list is what we advertise as

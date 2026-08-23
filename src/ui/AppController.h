@@ -643,6 +643,19 @@ private:
     /// say that somebody is on it. Called when a tab moves, opens or closes, and
     /// when the mount table changes -- never on a timer.
     void refreshOpenDrives();
+    /// Mounts an archive as somewhere to walk around in rather than as a drive.
+    /// See Mount::unlisted.
+    QString mountForBrowsing(IFileSystemFactory& factory, const QString& localPath, QString* errorOut);
+    /// Takes away the unlisted mounts nobody is inside any more.
+    void dropUnusedBrowsingMounts(const QList<VfsUri>& open);
+    /// The same, from the two signals that can change the answer.
+    void pruneBrowsingMounts();
+    /// Where every tab is standing, right now.
+    QList<VfsUri> openLocationsNow() const;
+    /// The unlisted mounts something has actually been inside, so one on its way
+    /// to being occupied is not taken away before it gets there. See
+    /// dropUnusedBrowsingMounts().
+    QSet<QString> m_enteredMounts;
 
     DriveListModel* m_drives = nullptr;
     QSortFilterProxyModel* m_configuredDrives = nullptr;

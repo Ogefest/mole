@@ -121,6 +121,27 @@ public:
         return {};
     }
 
+    /// Config for mounting the file a root uri already names, when that can be
+    /// worked out from the uri alone.
+    ///
+    /// **The other direction of rootUriForFile(), and it is what lets a mount be
+    /// temporary.** An archive opened for browsing is unlisted and goes away when
+    /// nobody is inside it -- so a bookmark, a back step or a session restored
+    /// tomorrow arrives at an `archive://` uri with nothing behind it. That works
+    /// because the archive's own path is *in* the uri: the authority is the
+    /// percent-encoded local path, so the mount is rebuilt from what the uri
+    /// carries rather than remembered somewhere.
+    ///
+    /// Empty for a backend whose root says nothing about how to reach it -- an
+    /// SFTP root names a host and no credential, and rebuilding one from a uri
+    /// would be guessing. Those mounts are configured and kept, so they never
+    /// need this. See MOLE-310 and ADR-0083.
+    virtual QVariantMap configForRoot(const VfsUri& root) const
+    {
+        Q_UNUSED(root)
+        return {};
+    }
+
     /// Builds a ready-to-use backend from the values collected for
     /// connectionFields(). Returning a null pointer means "bad config".
     virtual FileSystemPtr create(const QVariantMap& config, QString* errorOut) = 0;

@@ -77,6 +77,9 @@ private slots:
     void compressActsOnTheCursorWhenNothingIsTicked();
     void textPreviewProviderClaimsTextFiles();
     void archivePluginMountsAZip();
+    void anArchiveMountGoesWhenTheLastTabInsideItDoes();
+    void aUriIntoAnArchiveWithNoMountRebuildsIt();
+    void thePreviewsOwnMountIsInternalAndNotAnUnlistedOne();
     void aScanIndexesWhatIsInsideAnArchive();
     void dualPaneIsItsOwnFeature();
     void copyBetweenPanesMovesRealFiles();
@@ -1134,16 +1137,182 @@ void TestAppIntegration::archivePluginMountsAZip()
     QVERIFY2(m_app->isMountableArchive(archiveUri),
         "the loaded plugin must make .tar.gz mountable without the host knowing about archives");
 
-    const int mountsBefore = m_app->drives()->rowCount();
+    const int drivesBefore = m_app->drives()->rowCount();
+    const int mountsBefore = m_app->services().vfs->mounts().size();
     const QString root = m_app->openArchive(archiveUri);
 
-    QVERIFY2(!root.isEmpty(), "mounting the archive should have produced a root uri");
-    QCOMPARE(m_app->drives()->rowCount(), mountsBefore + 1);
+    QVERIFY2(!root.isEmpty(), "opening the archive should have produced a root uri");
     QVERIFY(root.startsWith(QStringLiteral("archive://")));
+    // **The sidebar is unchanged**, which is the whole of what the author asked
+    // for: an archive is somewhere to walk around in, not a drive. MOLE-301 made
+    // this a row per .jar, .deb, .rpm and .whl as well, which is what turned an
+    // occasional nuisance into one every time somebody looks inside anything.
+    QCOMPARE(m_app->drives()->rowCount(), drivesBefore);
+    // There is a mount, though -- it is how every reader in Mole reaches a file.
+    QCOMPARE(m_app->services().vfs->mounts().size(), mountsBefore + 1);
 
-    // Mounting the same archive again must reuse the existing drive.
+    // Opening the same archive again reuses it rather than making a second.
     QCOMPARE(m_app->openArchive(archiveUri), root);
-    QCOMPARE(m_app->drives()->rowCount(), mountsBefore + 1);
+    QCOMPARE(m_app->services().vfs->mounts().size(), mountsBefore + 1);
+    QCOMPARE(m_app->drives()->rowCount(), drivesBefore);
+}
+
+/// An archive is somewhere to stand, and it goes away when nobody is standing in
+/// it. See MOLE-310 and Mount::unlisted.
+void TestAppIntegration::anArchiveMountGoesWhenTheLastTabInsideItDoes()
+{
+    if (!QDir(QStringLiteral(MOLE_TEST_PLUGIN_DIR)).exists())
+        QSKIP("archive plugin was not built");
+    const QString zip = QStandardPaths::findExecutable(QStringLiteral("zip"));
+    if (zip.isEmpty())
+        QSKIP("zip is not available to build a fixture");
+
+    QVERIFY(m_tree->makeDirs(QStringLiteral("packed")));
+    QVERIFY(m_tree->writeFile(QStringLiteral("packed/inside.txt"), QByteArray("hello")));
+    const QString archivePath = m_tree->absolute(QStringLiteral("bundle.zip"));
+    QProcess pack;
+    pack.setWorkingDirectory(m_tree->absolute(QStringLiteral("packed")));
+    pack.start(zip, { QStringLiteral("-qr"), archivePath, QStringLiteral(".") });
+    QVERIFY(pack.waitForFinished(30000));
+    QCOMPARE(pack.exitCode(), 0);
+
+    const int mountsBefore = m_app->services().vfs->mounts().size();
+    const QString root = m_app->openArchive(VfsUri::fromLocalPath(archivePath).toString());
+    QVERIFY(!root.isEmpty());
+
+    // Whichever tab the shell used, rather than tab 0: openArchive() opens a
+    // browser when the current tab is not one, and asserting on the tab that
+    // *happens* to be first is how this case first passed for the wrong reason.
+    const auto tabInside = [this](const QString& where) -> BrowserController* {
+        for (int row = 0; row < m_app->tabs()->rowCount(); ++row) {
+            auto* browser = qobject_cast<BrowserController*>(m_app->tabs()->controllerAt(row));
+            if (browser && browser->openLocations().contains(where))
+                return browser;
+        }
+        return nullptr;
+    };
+    QVERIFY(waitFor([&] { return tabInside(root) != nullptr; }, 5000));
+    BrowserController* first = tabInside(root);
+    QVERIFY(first);
+    QCOMPARE(m_app->services().vfs->mounts().size(), mountsBefore + 1);
+
+    // A second tab inside the same archive: leaving one of the two must not take
+    // the mount away from the other.
+    const int second = m_app->tabs()->openTab(QStringLiteral("mole.browser"));
+    QVERIFY(second >= 0);
+    auto* alsoInside = qobject_cast<BrowserController*>(m_app->tabs()->controllerAt(second));
+    QVERIFY(alsoInside);
+    alsoInside->activePane()->navigateTo(root);
+    QVERIFY(waitFor([alsoInside, root] { return alsoInside->activePane()->currentUri() == root; }, 5000));
+
+    const int tabsWithBoth = m_app->tabs()->rowCount();
+    m_app->tabs()->closeTab(second);
+    QCOMPARE(m_app->tabs()->rowCount(), tabsWithBoth - 1);
+    QVERIFY2(m_app->services().vfs->mounts().size() == mountsBefore + 1,
+        "one of two readers leaving took the mount from the other");
+
+    // And the last one leaving takes it with them: a mount nobody can see and
+    // nobody removes is worse than the sidebar row it replaced.
+    first->activePane()->navigateTo(m_tree->rootUri().toString());
+    QVERIFY2(waitFor([this, mountsBefore] { return m_app->services().vfs->mounts().size() == mountsBefore; },
+                 5000),
+        "the archive mount outlived the last tab inside it");
+    QCOMPARE(m_app->drives()->rowCount(), m_app->drives()->rowCount());
+}
+
+void TestAppIntegration::aUriIntoAnArchiveWithNoMountRebuildsIt()
+{
+    // What makes the disappearance safe rather than a trap: the archive's own path
+    // is in the uri, so a bookmark, a back step or a session restored tomorrow
+    // rebuilds the mount from what it already carries.
+    if (!QDir(QStringLiteral(MOLE_TEST_PLUGIN_DIR)).exists())
+        QSKIP("archive plugin was not built");
+    const QString zip = QStandardPaths::findExecutable(QStringLiteral("zip"));
+    if (zip.isEmpty())
+        QSKIP("zip is not available to build a fixture");
+
+    QVERIFY(m_tree->makeDirs(QStringLiteral("later")));
+    QVERIFY(m_tree->writeFile(QStringLiteral("later/inside.txt"), QByteArray("hello")));
+    const QString archivePath = m_tree->absolute(QStringLiteral("later.zip"));
+    QProcess pack;
+    pack.setWorkingDirectory(m_tree->absolute(QStringLiteral("later")));
+    pack.start(zip, { QStringLiteral("-qr"), archivePath, QStringLiteral(".") });
+    QVERIFY(pack.waitForFinished(30000));
+    QCOMPARE(pack.exitCode(), 0);
+
+    // The uri anybody would have kept, worked out without mounting anything.
+    const QString root = m_app->openArchive(VfsUri::fromLocalPath(archivePath).toString());
+    QVERIFY(!root.isEmpty());
+    for (const Mount& mount : m_app->services().vfs->mounts()) {
+        if (mount.root.toString() == root)
+            m_app->services().vfs->removeMount(mount.id);
+    }
+    QVERIFY2(!m_app->services().vfs->resolve(VfsUri::fromString(root)),
+        "the mount had to be gone for this case to mean anything");
+
+    auto* browser = qobject_cast<BrowserController*>(m_app->tabs()->controllerAt(0));
+    QVERIFY(browser);
+    BrowserPaneController* pane = browser->activePane();
+    QVERIFY(pane);
+    pane->navigateTo(root);
+
+    QVERIFY2(waitFor([pane, root] { return pane->currentUri() == root; }, 5000),
+        "navigating to an archive uri with no mount behind it did not rebuild one");
+    QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() > 0; }, 5000));
+    QVERIFY(m_app->services().vfs->resolve(VfsUri::fromString(root)) != nullptr);
+}
+
+void TestAppIntegration::thePreviewsOwnMountIsInternalAndNotAnUnlistedOne()
+{
+    // MOLE-310 gave a mount a third state -- unlisted, for an archive somebody is
+    // walking around in -- and the preview's mount of a single compressed member
+    // is *not* that: it exists so something can be read, it is not a place
+    // anybody can go, and whoever made it removes it again. Held because the two
+    // are one flag apart and the difference is the whole of both contracts.
+    if (!QDir(QStringLiteral(MOLE_TEST_PLUGIN_DIR)).exists())
+        QSKIP("archive plugin was not built");
+    const QString gzipped = QStandardPaths::findExecutable(QStringLiteral("gzip"));
+    if (gzipped.isEmpty())
+        QSKIP("gzip is not available to build a fixture");
+    QVERIFY(m_app->services().vfs->factoryFor(QStringLiteral("archive")) != nullptr);
+
+    QVERIFY(m_tree->writeFile(QStringLiteral("solo.txt"), QByteArray("just one file inside")));
+    QProcess pack;
+    pack.setStandardOutputFile(m_tree->absolute(QStringLiteral("solo.txt.gz")));
+    pack.start(gzipped, { QStringLiteral("-c"), m_tree->absolute(QStringLiteral("solo.txt")) });
+    QVERIFY(pack.waitForFinished(30000));
+    QCOMPARE(pack.exitCode(), 0);
+
+    m_app->previewFile(m_tree->rootUri().child(QStringLiteral("solo.txt.gz")).toString());
+    // The mount appears when the viewer resolves the member, which is a listing
+    // away rather than immediate.
+    QVERIFY(waitFor(
+        [this] {
+            for (const Mount& mount : m_app->services().vfs->mounts()) {
+                if (mount.root.scheme() == QLatin1String("archive"))
+                    return true;
+            }
+            return false;
+        },
+        10000));
+
+    bool sawInternal = false;
+    for (const Mount& mount : m_app->services().vfs->mounts()) {
+        if (mount.root.scheme() != QLatin1String("archive"))
+            continue;
+        sawInternal = sawInternal || mount.internal;
+        QVERIFY2(!mount.unlisted, "the preview's mount became a place somebody could stand");
+    }
+    QVERIFY2(sawInternal, "the preview reads a single member through an internal mount");
+    // And it is still nowhere near the sidebar.
+    for (int row = 0; row < m_app->drives()->rowCount(); ++row) {
+        QVERIFY(m_app->drives()
+                    ->index(row, 0)
+                    .data(DriveListModel::RootUriRole)
+                    .toString()
+                    .startsWith(QStringLiteral("archive://"))
+            == false);
+    }
 }
 
 /// A file inside a zip could be found by no means at all.

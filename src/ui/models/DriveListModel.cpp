@@ -83,9 +83,10 @@ void DriveListModel::reload()
     QList<Row> rows;
     rows.reserve(mounts.size() + drives.size());
     for (const Mount& mount : mounts) {
-        // A mount that exists to be read is not a drive: it has no place in a
-        // list of places to go. See Mount::internal.
-        if (mount.internal)
+        // A mount that exists to be read is not a drive, and neither is an
+        // archive somebody is walking around in: neither has a place in a list of
+        // places to go. See Mount::internal and Mount::unlisted.
+        if (mount.internal || mount.unlisted)
             continue;
         if (!mountsByDriveId.contains(mount.id))
             rows.append(Row { mount, {} });

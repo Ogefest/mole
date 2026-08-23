@@ -67,6 +67,9 @@ public:
     QStringList mountableFileSuffixes() const override { return supportedSuffixes(); }
     QVariantMap configForFile(const QString& localPath) const override;
     VfsUri rootUriForFile(const QString& localPath) const override;
+    /// Rebuilds the config from a root uri, because the authority is the path.
+    /// See IFileSystemFactory::configForRoot().
+    QVariantMap configForRoot(const VfsUri& root) const override;
 
     /// Suffixes that should offer "open as drive" in the browser.
     static QStringList supportedSuffixes();

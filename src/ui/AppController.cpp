@@ -465,17 +465,21 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
         // in use. Nothing is polled and no drive is contacted -- see
         // DriveListModel::noteOpenLocations().
         refreshOpenDrives();
+        pruneBrowsingMounts();
     });
     // Opening and closing tabs changes the answer too, and neither goes through
     // a controller's own signal.
     connect(m_tabs, &TabsModel::countChanged, this, &AppController::refreshOpenDrives);
+    // A tab closing is how the last reader leaves an archive, which is the moment
+    // an unlisted mount has nobody left inside it.
+    connect(m_tabs, &TabsModel::countChanged, this, &AppController::pruneBrowsingMounts);
     connect(m_vfs, &VfsManager::mountsChanged, this, &AppController::refreshOpenDrives);
     // A drive that appears an hour later is the same fact arriving late, and a
     // report about "the drive was there a minute ago" needs it. Scheme only, never
     // the uri: an sftp root carries an account name and a log gets sent to people.
     connect(m_vfs, &VfsManager::mountAdded, this, [this](const QString& id) {
         const Mount mount = m_vfs->mount(id);
-        if (mount.isValid() && !mount.internal)
+        if (mount.isValid() && !mount.internal && !mount.unlisted)
             qInfo("Drive added: %s (%s)", qPrintable(mount.displayName), qPrintable(mount.root.scheme()));
     });
     connect(m_vfs, &VfsManager::mountRemoved, this,
@@ -1095,6 +1099,12 @@ int AppController::openSearchEverywhere()
 
 void AppController::openLocation(const QString& uri)
 {
+    // A uri into an archive whose mount has gone -- a bookmark, a back step, a
+    // session restored tomorrow. Rebuilt from the uri itself, which is what makes
+    // an unlisted mount's disappearance safe rather than a trap. A no-op for
+    // every other uri, and for one that still has its mount.
+    m_vfs->remountFor(VfsUri::fromString(uri));
+
     const int row = browserTabForCurrent();
     if (row < 0)
         return;
@@ -1282,6 +1292,72 @@ void AppController::recordIndexes() const
         qPrintable(described.isEmpty() ? QStringLiteral("none") : described.join(QStringLiteral(" | "))));
 }
 
+QString AppController::mountForBrowsing(
+    IFileSystemFactory& factory, const QString& localPath, QString* errorOut)
+{
+    FileSystemPtr inside = factory.create(factory.configForFile(localPath), errorOut);
+    if (!inside)
+        return {};
+
+    Mount mount;
+    mount.displayName = QFileInfo(localPath).fileName();
+    mount.iconName = factory.iconName();
+    mount.root = factory.rootUriForFile(localPath);
+    mount.fileSystem = std::move(inside);
+    // Somewhere to stand, and not a drive: see Mount::unlisted. Nobody asked for
+    // a sidebar row per zip they looked inside, and eleven more suffixes made it
+    // a row per package as well.
+    mount.unlisted = true;
+    return m_vfs->addMount(std::move(mount));
+}
+
+void AppController::dropUnusedBrowsingMounts(const QList<VfsUri>& open)
+{
+    // The other half of an unlisted mount, and the half that matters: a mount
+    // nobody can see and nobody removes is worse than the row it replaced --
+    // forty of them each holding a file handle and a cached central directory,
+    // with no way to eject one.
+    //
+    // **Removed when the last reader leaves, which is not the same as "nobody is
+    // inside it right now".** A mount is made *before* anything navigates into
+    // it, and navigation is queued -- so a mount that has never been occupied is
+    // one on its way to being occupied, and taking it away then is taking it away
+    // between the two halves of opening an archive. That is exactly what happened
+    // the first time this was written: openArchive() mounted, a tab appeared, the
+    // tab's first report arrived before it had moved, and the mount was gone by
+    // the time the navigation asked for it.
+    //
+    // So a mount has to have been stood in once before it can be left. Somebody
+    // is inside it when any tab's open location shares its scheme and authority,
+    // which covers a pane in a subfolder of the archive and a preview showing a
+    // member -- a tab holding it open just as much as a browser is.
+    QStringList gone;
+    for (const Mount& mount : m_vfs->mounts()) {
+        if (!mount.unlisted)
+            continue;
+        bool inUse = false;
+        for (const VfsUri& where : open) {
+            if (where.scheme() == mount.root.scheme() && where.authority() == mount.root.authority()) {
+                inUse = true;
+                break;
+            }
+        }
+        if (inUse) {
+            m_enteredMounts.insert(mount.id);
+            continue;
+        }
+        if (m_enteredMounts.contains(mount.id)) {
+            m_enteredMounts.remove(mount.id);
+            gone.append(mount.id);
+        }
+    }
+    // Collected first: removing a mount emits mountsChanged, and iterating the
+    // list while something reacts to it is how a walk over a container ends up
+    // reading a container that has moved.
+    for (const QString& id : gone)
+        m_vfs->removeMount(id);
+}
+
 void AppController::refreshOpenDrives()
 {
     if (!m_tabs || !m_drives)
@@ -1290,19 +1366,39 @@ void AppController::refreshOpenDrives()
     // Every tab, not only the visible one: the question is about the drive, not
     // about the window. A feature that is not anywhere -- a report, a rename --
     // answers with nothing and costs nothing.
+    m_drives->noteOpenLocations(openLocationsNow());
+}
+
+void AppController::pruneBrowsingMounts()
+{
+    if (!m_tabs)
+        return;
+    // **Not on mountsChanged**, which is the trigger refreshOpenDrives() uses.
+    // Adding a mount does not change who is standing inside anything -- and
+    // openArchive() adds one *before* navigating into it, so pruning on that
+    // signal took the mount away between the two statements. Where the answer can
+    // actually change is a tab moving and a tab appearing or going.
+    dropUnusedBrowsingMounts(openLocationsNow());
+}
+
+QList<VfsUri> AppController::openLocationsNow() const
+{
     QList<VfsUri> open;
+    if (!m_tabs)
+        return open;
+    // Every tab, not only the visible one, for the reason refreshOpenDrives()
+    // gives: the question is about the place, not about the window.
     for (int row = 0; row < m_tabs->rowCount(); ++row) {
         auto* controller = qobject_cast<FeatureController*>(m_tabs->controllerAt(row));
         if (!controller)
             continue;
-        const QStringList where = controller->openLocations();
-        for (const QString& uri : where) {
+        for (const QString& uri : controller->openLocations()) {
             const VfsUri parsed = VfsUri::fromString(uri);
             if (parsed.isValid())
                 open.append(parsed);
         }
     }
-    m_drives->noteOpenLocations(open);
+    return open;
 }
 
 bool AppController::isMountableArchive(const QString& uri) const
@@ -1354,8 +1450,7 @@ QString AppController::openArchive(const QString& archiveUri)
         }
 
         QString error;
-        const QString id = m_vfs->addMount(
-            factory->scheme(), QFileInfo(localPath).fileName(), factory->configForFile(localPath), &error);
+        const QString id = mountForBrowsing(*factory, localPath, &error);
         if (id.isEmpty()) {
             emit notification(static_cast<int>(EventBus::Severity::Error),
                 QStringLiteral("Cannot mount %1").arg(QFileInfo(localPath).fileName()), error);
