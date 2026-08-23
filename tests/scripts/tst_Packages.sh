@@ -76,6 +76,42 @@ else
     grep -q 'libqt6sql6-sqlite' CMakeLists.txt || fail "the .deb does not ask for the SQLite driver"
 fi
 
+begin "the bundle judges its libraries rather than resolving them"
+# Two rules from MOLE-302, and both are about a check being able to fail.
+#
+# A dependency is judged against the two places it may come from -- inside the
+# bundle, or named by is_excluded -- and not against whether it happens to resolve on
+# the machine doing the build. `ldd` searches the bundle and then the host, so a
+# library excluded by mistake that the build machine has resolves, reports found, and
+# passes, while the artefact goes out without it. MOLE-300 was caught only because
+# this workstation was also missing libxcb-cursor0.
+# Held by what it asks rather than by what it does not: the objects' own NEEDED
+# entries, and is_excluded for the ones the host is meant to supply. Reverting to
+# resolution would take both of those away. (`ldd` is still right one step earlier,
+# where the question really is whether a plugin can load on this machine.)
+grep -q "objdump -p" scripts/make-bundle.sh \
+    || fail "the completeness check does not read what the objects declare they need"
+# `[$]` and not a backslash: MOLE-233's rule refuses deferred expansion in any
+# script here, and this is a pattern to match with rather than a variable to expand.
+grep -qE 'is_excluded "[$]name"' scripts/make-bundle.sh \
+    || fail "the completeness check does not consult the exclusion list"
+
+# And nothing is excluded by resemblance. A name in that list is a judgement that
+# every target has that library; a pattern in the middle of a name is a judgement
+# about everything that will ever look like it, which is not a judgement anybody
+# made -- it is how libxcb-cursor came to be left out of an artefact that could not
+# start without it.
+: > "$SHELLTEST_TMP/resemblance"
+# Comments are skipped: the list explains itself by quoting the pattern it used to
+# end with, and a rule that read prose as code would fire on its own explanation.
+awk '/^is_excluded\(\)/,/^}/' scripts/make-bundle.sh | grep -v '^[[:space:]]*#' \
+    | grep -oE '\blib[A-Za-z0-9_+-]*\*[A-Za-z0-9_.+-]*' \
+    | grep -vE '\.so\*$|^libwayland\*$|^ld-linux\*$' > "$SHELLTEST_TMP/resemblance"
+if [ -s "$SHELLTEST_TMP/resemblance" ]; then
+    fail "a library is excluded by resemblance rather than by name"
+    sed 's/^/    /' "$SHELLTEST_TMP/resemblance"
+fi
+
 begin "the .rpm is built on the family it installs on"
 # Not a preference: rpmbuild records what the binaries link, and a Debian libcurl
 # carries symbol versions no RPM distribution provides, so an .rpm built here is

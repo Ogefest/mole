@@ -73,7 +73,19 @@ is_excluded() {
 
         # X extensions, on the same terms: they arrive with the client stack any
         # desktop already has, and each pairs with a server-side extension.
-        libXext.so* | libXrender.so* | libXi.so* | libXfixes.so* | libxcb-*.so*)
+        #
+        # **Named, not matched.** This group used to end in `libxcb-*.so*`, and that
+        # is how libxcb-cursor came to be excluded -- by resemblance to libraries it
+        # has nothing in common with. A name here is a judgement that every target
+        # has it; a pattern is a judgement about everything that will ever look like
+        # it, which is not a judgement anybody made. Anything not on this list is
+        # bundled if the build machine has it and fails the check below if it has
+        # not, so the next xcb library Qt requires is decided rather than assumed.
+        # See MOLE-302.
+        libXext.so* | libXrender.so* | libXi.so* | libXfixes.so* \
+            | libxcb-randr.so* | libxcb-render.so* | libxcb-shape.so* | libxcb-shm.so* \
+            | libxcb-sync.so* | libxcb-xfixes.so* | libxcb-xkb.so* | libxcb-glx.so* \
+            | libxcb-present.so* | libxcb-dri2.so* | libxcb-dri3.so* | libxcb-xinerama.so*)
             return 0 ;;
 
         # The C++ runtime. Left to the host because the host's is never older than
@@ -164,12 +176,24 @@ fi
 # silence, which is how the AppImage went out carrying a platform plugin it could
 # not load. A bundle that is missing something is not a bundle. See MOLE-300.
 echo "  checking the bundle is complete"
+# Every library every object asks for, judged against the two places it is allowed
+# to come from: inside the bundle, or named by is_excluded as the host's.
+#
+# **Not against whether it resolves.** `ldd` searches the bundle and then the host,
+# so a library excluded by mistake that the build machine happens to have resolves,
+# reports found, and passes -- while the artefact goes out without it. That is
+# MOLE-300 in general form: the fault there was caught only because this workstation
+# was also missing libxcb-cursor0, and had the build host had it the check would have
+# been green and the AppImage would still have aborted everywhere else. The soname is
+# what is asked about, which is what is_excluded already decides with. See MOLE-302.
 short=0
 while IFS= read -r -d '' object; do
     while read -r name; do
+        [[ -e "$LIBDIR/$name" ]] && continue     # in the bundle
+        is_excluded "$name" && continue          # deliberately the host's
         echo "  missing: $name, needed by ${object#"$DIST"/}"
         short=1
-    done < <(LD_LIBRARY_PATH="$LIBDIR" ldd "$object" 2>/dev/null | awk '/not found/{print $1}')
+    done < <(objdump -p "$object" 2>/dev/null | awk '/NEEDED/{print $2}')
 done < <(find "$DIST/usr/bin" "$LIBDIR" "$PLUGINDIR" "$QMLDIR" $MOLE_PLUGIN_DIRS -type f \
               \( -name '*.so*' -o -perm -u+x \) -print0 2>/dev/null)
 if [[ "$short" != 0 ]]; then
