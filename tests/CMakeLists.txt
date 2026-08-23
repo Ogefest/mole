@@ -184,6 +184,11 @@ if(BASH_PROGRAM)
     # ends of the file and both ways a block can be empty. See MOLE-123.
     mole_add_shell_test(tst_ChangelogBlock
                         SCRIPT scripts/tst_ChangelogBlock.sh)
+    # Every workflow, held to the two things all of them need -- it parses, and
+    # something starts it -- and the second family held to what makes its answer
+    # worth having: an account that is not root, and no locale. See MOLE-297.
+    mole_add_shell_test(tst_Workflows
+                        SCRIPT scripts/tst_Workflows.sh)
     if(NOT MOLE_CORE_ONLY)
         set_property(TEST tst_LicenceCheck APPEND PROPERTY
                      ENVIRONMENT "MOLE_BINARY=$<TARGET_FILE:mole>")
@@ -337,6 +342,14 @@ mole_add_test(tst_ActionRegistry    SOURCES host/tst_ActionRegistry.cpp LIBS mol
 
 # --- ui: models and controllers ---------------------------------------------
 mole_add_test(tst_FileListModel        SOURCES ui/tst_FileListModel.cpp        LIBS mole_ui)
+# Under no locale at all, which is where natural ordering broke.
+#
+# A C collator ignores numeric mode, so "file10" sorted before "file9" on any
+# machine whose environment says nothing about language -- and the case that
+# asserts natural ordering passed on every developer machine, because a desktop
+# session sets LANG. Pinned here rather than left to the environment, so the
+# check can fail for the reason it exists wherever it is run. See MOLE-297.
+set_tests_properties(tst_FileListModel PROPERTIES ENVIRONMENT_MODIFICATION "LC_ALL=set:C;LANG=set:C")
 mole_add_test(tst_DriveListModel       SOURCES ui/tst_DriveListModel.cpp       LIBS mole_ui)
 mole_add_test(tst_TableModel           SOURCES ui/tst_TableModel.cpp           LIBS mole_ui)
 mole_add_test(tst_TaskListModel        SOURCES ui/tst_TaskListModel.cpp        LIBS mole_ui)

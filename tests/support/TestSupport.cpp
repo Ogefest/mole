@@ -147,6 +147,18 @@ bool setModifiedTime(const QString& absolutePath, const QDateTime& when)
     return file.setFileTime(when, QFileDevice::FileModificationTime);
 }
 
+bool madeUnreadable(const QString& absolutePath)
+{
+    if (!QFile::setPermissions(absolutePath, {}))
+        return false;
+    QFile probe(absolutePath);
+    if (!probe.open(QIODevice::ReadOnly))
+        return true;
+    probe.close();
+    QFile::setPermissions(absolutePath, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    return false;
+}
+
 TempTree::TempTree() = default;
 
 bool TempTree::setModified(const QString& relativePath, const QDateTime& when)

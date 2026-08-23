@@ -318,7 +318,8 @@ void TestAwkwardNames::aFileNobodyMayReadIsReportedAndTheCountIsHonest()
     // arrived rather than what was attempted.
     QVERIFY(m_tree->writeFile(QStringLiteral("source/readable.txt"), QByteArray("fine")));
     QVERIFY(m_tree->writeFile(QStringLiteral("source/secret.txt"), QByteArray("not for you")));
-    QVERIFY(QFile::setPermissions(m_tree->absolute(QStringLiteral("source/secret.txt")), {}));
+    if (!madeUnreadable(m_tree->absolute(QStringLiteral("source/secret.txt"))))
+        QSKIP("this account can read a file with no permissions at all");
 
     TransferTask* task = copyEverythingFromSource();
     QVERIFY(task != nullptr);

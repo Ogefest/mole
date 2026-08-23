@@ -402,6 +402,13 @@ void TestStreamingUpload::aStagingFileThatCannotBeOpenedIsRefusedRatherThanLost(
     // where that fails. Opening has to say so: a stream that reports itself open
     // and then swallows every write is how an upload disappears without an
     // error anywhere.
+    //
+    // **What refuses is our own check, not Qt's.** QTemporaryFile is happy to put
+    // its file wherever a missing TMPDIR leaves it -- the filesystem root, on the
+    // Qt build this was found on -- which succeeds for any account that can write
+    // there. So open() looks at the staging directory itself, and this case fails
+    // the moment that look is removed, on root and on anybody else. See
+    // MOLE-297.
     const QByteArray previous = qgetenv("TMPDIR");
     qputenv("TMPDIR", "/proc/mole-has-no-temporary-directory-here");
 

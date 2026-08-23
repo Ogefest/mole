@@ -332,15 +332,11 @@ void TestSync::aFileThatCannotBeOpenedIsNotReportedAsDiffering()
     QVERIFY(m_tree->writeFile(QStringLiteral("dest/secret.bin"), other));
 
     const QString locked = m_tree->absolute(QStringLiteral("src/secret.bin"));
-    QVERIFY(QFile::setPermissions(locked, {}));
     // Root, or a filesystem that does not enforce permissions, can still open it,
-    // and then there is nothing here to prove.
-    QFile probe(locked);
-    if (probe.open(QIODevice::ReadOnly)) {
-        probe.close();
-        QFile::setPermissions(locked, QFile::ReadOwner | QFile::WriteOwner);
+    // and then there is nothing here to prove. This is where that guard was
+    // written; it is shared now, because three other cases needed it.
+    if (!madeUnreadable(locked))
         QSKIP("this account can read a file with no permissions at all");
-    }
 
     SyncOptions options;
     options.compare = SyncOptions::Compare::Contents;

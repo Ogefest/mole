@@ -15,10 +15,20 @@ namespace {
 
     /// Natural ordering, so "file10" sorts after "file9" the way a person
     /// expects rather than the way strcmp does.
+    ///
+    /// **In the reader's own locale, unless there is not one.** A process started
+    /// with nothing said about language gets `QLocale::C`, and a C collator
+    /// ignores numeric mode altogether -- so "file10" came before "file9" on
+    /// every machine whose environment says nothing, which is the ordinary state
+    /// of a container, a cron job and a service started at boot. Any real locale
+    /// engages ICU's numeric collation; English is what to fall back on, because
+    /// it is the language the rest of the interface is written in. Found by the
+    /// second-family job in MOLE-297, where nothing sets LANG.
     const QCollator& nameCollator()
     {
         static const QCollator collator = [] {
-            QCollator c;
+            QCollator c(QLocale().language() == QLocale::C ? QLocale(QLocale::English, QLocale::UnitedStates)
+                                                           : QLocale());
             c.setNumericMode(true);
             c.setCaseSensitivity(Qt::CaseInsensitive);
             return c;

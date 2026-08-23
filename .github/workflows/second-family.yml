@@ -1,0 +1,103 @@
+# A second distribution, on a clock, so an API that moved is found in the week it
+# lands rather than at a release.
+#
+# Everything else here is built against one Arrow, one Qt and one distribution, and
+# that cost two faults in one day -- both found by MOLE-121 building an .rpm in a
+# container rather than by anything that runs on its own. The static libraries were
+# not position-independent, which Fedora's linker refuses outright and Ubuntu's
+# accepted. And ParquetTable did not compile against any Arrow older than 21: this
+# machine can only ever have 25, since no Ubuntu archive carries Arrow at all, and
+# Fedora 40 has 15 -- so the Parquet grid had never compiled anywhere but the
+# author's workstation. See MOLE-297.
+#
+# **Fedora, because that is where both faults surfaced**, `scripts/package-rpm.sh`
+# already pulls it, and it packages an older Arrow than this project can otherwise
+# get, so a second Arrow is exercised for free.
+#
+# **This is not a build matrix and is not to grow into one.** One second family, on a
+# clock, is the cheapest thing that would have caught both of those on the day they
+# landed. A matrix is a different decision with a different cost.
+name: Second family
+
+on:
+  # Weekly rather than nightly: a container build with Arrow in it costs minutes and
+  # a few hundred megabytes, and the fault it catches waits harmlessly. What matters
+  # is the week, not the night.
+  schedule:
+    - cron: '17 5 * * 1'
+  # And on demand, so somebody who has just touched an optional-library path can ask
+  # for the answer instead of waiting for Monday.
+  workflow_dispatch:
+
+jobs:
+  fedora:
+    name: Configure, build and the fast tier on Fedora
+    runs-on: ubuntu-24.04
+    container: fedora:40
+
+    steps:
+      # Everything the build and the suite need, named here rather than in an image
+      # so what this was run against is readable in one place. git before checkout,
+      # because the action uses it when it is there.
+      #
+      # PyYAML is for the test that reads the release workflow, Xvfb and xwininfo
+      # for the one that starts an artefact, and a font because a suite that draws
+      # text needs one. `xorg-x11-utils` is what xwininfo is called on the
+      # distribution this was written on and does not exist here.
+      #
+      # shadow-utils and util-linux are for the account the suite runs as, below.
+      - name: Install what the build and the suite need
+        run: |
+          dnf install -y -q gcc-c++ cmake ninja-build pkgconf-pkg-config git \
+            shadow-utils util-linux \
+            python3-pyyaml dejavu-sans-fonts xorg-x11-server-Xvfb xwininfo \
+            qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qttools-devel qt6-qtsvg-devel \
+            qt6-qtmultimedia-devel qt6-qtpdf-devel libarchive-devel libcurl-devel \
+            openssl-devel libgit2-devel xxhash-devel libvterm-devel libsmbclient-devel \
+            libnfs-devel libarrow-devel parquet-libs-devel
+
+      - uses: actions/checkout@v4
+
+      # **The suite does not run as root, and that is not tidiness.** A container
+      # job is root, and root reads a file whose permissions have all been taken
+      # away -- so every case that makes a file unreadable and asserts the failure
+      # is recorded cannot fail for the reason it exists. Four did, on the first
+      # run of this job, and they failed misleadingly: "no failure was recorded"
+      # reads as a bug in the code under test rather than as "this account can
+      # read anything". Those cases now skip when they cannot arrange what they
+      # need (tests/support/TestSupport.h), and this account is what makes them
+      # run rather than skip. A skipped case here is a signal, not a pass.
+      #
+      # HOME is passed on every command below rather than left to runuser, which
+      # keeps the caller's -- and root's home is not writable by this account, so
+      # anything Qt puts in a standard location would fail for a reason nobody
+      # would enjoy diagnosing.
+      - name: An account that is not root
+        run: |
+          useradd --create-home builder
+          chown -R builder "$GITHUB_WORKSPACE"
+
+      # Named so a failure says which distribution and which step: whoever reads it
+      # is looking at a green tree on their own machine, and "the build failed" is
+      # not a thing they can act on.
+      - name: Configure on Fedora
+        run: |
+          runuser -u builder -- env HOME=/home/builder cmake --preset debug 2>&1 | tee configure.log
+          echo "--- what this distribution gave the build ---"
+          grep -E "Parquet|Terminal|Git state|Credential|Windows shares|NFS exports|Network drives" configure.log || true
+
+      - name: Build on Fedora
+        run: runuser -u builder -- env HOME=/home/builder cmake --build build/debug --parallel "$(nproc)"
+
+      # The fast tier only, and the reason is MOLE-119's: whatever runs this cannot
+      # reach the live test environment, so the live and heavy tiers are not here and
+      # adding one would be adding a tier that can never pass.
+      #
+      # Nothing about the language is set, deliberately: a container has no LANG,
+      # and that is a machine state worth building against rather than papering
+      # over. Natural ordering was wrong on exactly such a machine until MOLE-297,
+      # because a C collator ignores numeric mode.
+      - name: The fast tier on Fedora
+        run: |
+          runuser -u builder -- env HOME=/home/builder ctest --test-dir build/debug --output-on-failure \
+            --parallel "$(nproc)" --label-exclude heavy

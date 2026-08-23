@@ -9,7 +9,6 @@
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
-#include <QTemporaryFile>
 #include <QTest>
 
 #ifdef Q_OS_UNIX
@@ -83,7 +82,6 @@ private slots:
     void cleanup();
 
     void twentyFilesCopyWithSixDescriptorsToSpare();
-    void aStagingDirectoryThatIsNotThereIsReportedRatherThanIgnored();
 
 private:
     std::unique_ptr<TaskManager> m_tasks;
@@ -161,29 +159,24 @@ void TestRunningOut::twentyFilesCopyWithSixDescriptorsToSpare()
 #endif
 }
 
-void TestRunningOut::aStagingDirectoryThatIsNotThereIsReportedRatherThanIgnored()
-{
-    // Everything below the streaming threshold is staged in a temporary file,
-    // and so is every archive. A machine whose temporary directory has been
-    // removed, filled or made read-only is a machine where that fails -- and the
-    // failure has to be an error rather than a stream that reports itself open
-    // and swallows every write.
-    const QByteArray previous = qgetenv("TMPDIR");
-    qputenv("TMPDIR", "/proc/mole-has-no-temporary-directory-here");
-
-    QTemporaryFile scratch;
-    const bool opened = scratch.open();
-
-    if (previous.isEmpty())
-        qunsetenv("TMPDIR");
-    else
-        qputenv("TMPDIR", previous);
-
-    QVERIFY2(!opened, "a temporary file cannot be created in a directory that is not there");
-    // The staged write path is held to the same rule in tst_StreamingUpload,
-    // where a BufferedUpload with nowhere to stage refuses to open rather than
-    // accepting bytes it cannot keep.
-}
+// A staging directory that is not there used to be asserted here, and it was
+// asserting the wrong thing.
+//
+// What it did was set TMPDIR to a path that does not exist and require
+// QTemporaryFile to refuse -- a claim about Qt rather than about anything in this
+// repository, and a claim that is not true. On one Qt build QDir::tempPath()
+// answers with nothing at all for a missing TMPDIR, and the file is then created
+// in the filesystem root: it fails for an ordinary account only because that
+// account cannot write there, and it succeeds outright for root. So the case
+// passed on the machine it was written on for a reason that had nothing to do
+// with the rule it was defending, and failed the first time the tier ran in a
+// container. See MOLE-297.
+//
+// The rule itself is Mole's, and it is checked where Mole makes the promise:
+// BufferedUpload::open() looks at the staging directory before staging in it and
+// refuses when it is not there, which
+// tst_StreamingUpload::aStagingFileThatCannotBeOpenedIsRefusedRatherThanLost()
+// asserts. That check fails when the guard is removed, on any account.
 
 MOLE_TEST_MAIN(TestRunningOut)
 

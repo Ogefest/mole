@@ -65,6 +65,9 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-08-23 #MOLE-297 A listing sorts names naturally on a machine that names no language, where "file10" used to come before "file9" — a container, a cron job and a service started at boot are all in that state
+2026-08-23 #MOLE-297 `mole --version` answers on a machine with no display, where it used to print nothing at all: the build somebody most needs to identify is the build that will not start
+2026-08-23 #MOLE-297 A copy that has to be staged before it is sent is refused when there is no temporary directory to stage it in, instead of being written somewhere nobody would look for it
 2026-08-23 #MOLE-291 An import that cannot commit a batch says so rather than finishing as though it had worked, so a table missing two thousand rows is never presented as a whole one
 2026-08-23 #MOLE-287 A Parquet file written as one row group no longer holds the window while it is read whole: a window decodes a batch at a time and stops where the answer does, and the grid reads its rows, its filtered counts and its column widths on a task
 2026-08-23 #MOLE-286 A document with a heavy page no longer holds the window while it draws: a page is rasterised on a task, the strip says which one is being drawn, and stepping off a document abandons what it had outstanding

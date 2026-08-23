@@ -222,8 +222,8 @@ void TestCompressTask::anUnreadableFileIsRecordedRatherThanFatal()
     QVERIFY(m_tree->writeFile(QStringLiteral("mixed/locked.txt"), QByteArray("secret")));
 
     const QString locked = QDir(m_tree->path()).filePath(QStringLiteral("mixed/locked.txt"));
-    if (!QFile::setPermissions(locked, {}))
-        QSKIP("cannot make a file unreadable here");
+    if (!madeUnreadable(locked))
+        QSKIP("this account can read a file with no permissions at all");
 
     // The unreadable one named first, deliberately. The walker gives no order, so
     // packing the folder made this a coin toss -- and the bug it found only showed
@@ -486,8 +486,9 @@ void TestCompressTask::theOriginalsGoOnlyWhenAskedAndOnlyAfterTheArchiveIsWritte
 void TestCompressTask::theOriginalsAreKeptWhenAnythingCouldNotBeRead()
 {
     const QString unreadable = QDir(m_tree->path()).filePath(QStringLiteral("reports/q1.txt"));
+    if (!madeUnreadable(unreadable))
+        QSKIP("this account can read a file with no permissions at all");
     QFile locked(unreadable);
-    QVERIFY(locked.setPermissions(QFile::Permissions {}));
 
     CompressTask::Request request;
     request.sourceFileSystem = m_fs;

@@ -148,5 +148,28 @@ if [ -s "$SHELLTEST_TMP/unbuildable" ]; then
     sed 's/^/    /' "$SHELLTEST_TMP/unbuildable"
 fi
 
-done_testing
+begin "a shell test answers the same whether make or ctest started it"
+# `make test` exports MAKEFLAGS and MAKELEVEL to everything below it, so a `make`
+# run by a test was a recursive one: it prints "Entering directory" and "Leaving
+# directory" on stdout, and a test reading what make said got a directory line.
+# tst_Version and tst_Release both failed under `make test` and passed under a
+# bare `ctest` because of it -- an answer that depends on how the suite was
+# started is worse than either answer. The harness clears them; this is the check
+# that it still does. See MOLE-297.
+cat > "$SHELLTEST_TMP/probe.sh" <<'PROBE'
+. "$MOLE_SUPPORT_DIR/shelltest.sh"
+echo "level=[${MAKELEVEL:-}] flags=[${MAKEFLAGS:-}]"
+exit 0
+PROBE
+MOLE_SUPPORT_DIR="$MOLE_SOURCE_DIR/tests/support" MAKELEVEL=3 MAKEFLAGS=" -j9 --no-print-directory" \
+    bash "$SHELLTEST_TMP/probe.sh" > "$SHELLTEST_TMP/seen" 2>&1
+grep -q "level=\[\] flags=\[\]" "$SHELLTEST_TMP/seen" \
+    || { fail "a script under test sees make's own environment"; sed 's/^/    /' "$SHELLTEST_TMP/seen"; }
 
+# And the thing it protects, asked of the real target: what `make version` prints
+# is the version, whoever is calling it.
+said=$(make version 2>/dev/null | tail -1)
+[ "$said" = "$(sed -n 's/^ *VERSION \([0-9][0-9.]*\)$/\1/p' CMakeLists.txt)" ] \
+    || fail "make version said '$said', which is not the version"
+
+done_testing

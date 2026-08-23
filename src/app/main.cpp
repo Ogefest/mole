@@ -9,6 +9,7 @@
 #include "core/CoreMetaTypes.h"
 #include "core/diagnostics/Diagnostics.h"
 
+#include <QByteArray>
 #include <QDir>
 #include <QDrag>
 #include <QGuiApplication>
@@ -24,13 +25,19 @@
 
 namespace {
 
+/// What this binary is, in the one shape anything here prints it in.
+void printWhatThisIs(QTextStream& out)
+{
+    out << "Mole " << QStringLiteral(MOLE_VERSION) << Qt::endl;
+}
+
 /// Prints what the binary is and what it found, then exits. Handy when a
 /// packaged build misbehaves: it answers "did the plugin load?" without
 /// needing a display.
 int runDiagnostics(mole::AppController& controller, bool listPlugins)
 {
     QTextStream out(stdout);
-    out << "Mole " << QCoreApplication::applicationVersion() << Qt::endl;
+    printWhatThisIs(out);
     if (!listPlugins)
         return 0;
 
@@ -124,6 +131,27 @@ void installDragHook(mole::AppController& controller, QQuickWindow* window)
 
 int main(int argc, char* argv[])
 {
+    // --version is answered here, off the raw arguments, before anything at all
+    // is constructed.
+    //
+    // **The build somebody most needs to identify is the build that will not
+    // start.** This used to be handled alongside --plugins, after a
+    // QGuiApplication and the whole plugin host were up -- so on a machine with
+    // no display Qt aborted while initialising a platform plugin and the binary
+    // said nothing about itself at all. That is the one question that has to be
+    // answerable when everything else is broken, and a bug report begins with
+    // it. Found by the Fedora job in MOLE-297, where there is no X server.
+    //
+    // --plugins stays where it is, because what it reports is what the host
+    // loaded, and there is nothing to report before the host exists.
+    for (int i = 1; i < argc; ++i) {
+        if (qstrcmp(argv[i], "--version") == 0) {
+            QTextStream out(stdout);
+            printWhatThisIs(out);
+            return 0;
+        }
+    }
+
     QGuiApplication app(argc, argv);
     app.setOrganizationName(QStringLiteral("Mole"));
     app.setOrganizationDomain(QStringLiteral("io.github.ogefest"));
@@ -171,7 +199,8 @@ int main(int argc, char* argv[])
     // a hang.
     const bool listPlugins = arguments.contains(QStringLiteral("--plugins"))
         || arguments.contains(QStringLiteral("--diagnostics"));
-    if (listPlugins || arguments.contains(QStringLiteral("--version")))
+    // --version was answered before any of this was built, above.
+    if (listPlugins)
         return runDiagnostics(controller, listPlugins);
 
     QQmlApplicationEngine engine;

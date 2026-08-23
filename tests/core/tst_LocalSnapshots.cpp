@@ -193,8 +193,9 @@ void TestLocalSnapshots::aFileNoSnapshotKeptIsOfferedNothing()
 /// Most drives on most machines, and they must pay nothing for the feature
 /// existing.
 ///
-/// What is asserted here is what is true on any machine. The probe's own answer
-/// for an arbitrary folder is not: the machine this was written on has its root
+/// What is asserted here is what is true on any machine: nothing is offered, and
+/// the answer is an error. The probe's own answer for an arbitrary folder is not,
+/// and neither is which error: the machine this was written on has its root
 /// filesystem on one of these, so "/" is a root and every path on it has one
 /// above it. That is exactly why the nearest one has to win -- see below.
 void TestLocalSnapshots::aFolderOutsideAnyRootIsOfferedNothing()
@@ -204,8 +205,19 @@ void TestLocalSnapshots::aFolderOutsideAnyRootIsOfferedNothing()
     QVERIFY2(m_fs.actionsFor(notes, entryFor(notes)).isEmpty(),
         "no snapshot anywhere holds this path, so there is nothing to offer for it");
     QVERIFY(m_fs.entriesWithActions(uriFor(outside()), CancelToken()).value().isEmpty());
-    QCOMPARE(m_fs.invoke(LocalFileSystem::versionsActionId(), notes, CancelToken()).error().code,
-        VfsError::NotFound);
+
+    // An error, and nothing offered -- but which error is the host's answer
+    // rather than ours, and both of these are right. A machine whose root
+    // filesystem keeps snapshots has a root above every path, so this one has a
+    // root and no snapshot in it holds the file: NotFound. A machine with no
+    // such filesystem anywhere -- a container on overlayfs, which is where this
+    // came up -- has no root at all: NotSupported. Asserting one of them held
+    // the suite to the filesystem the test happened to be written on, and the
+    // Fedora job in MOLE-297 failed on exactly that.
+    const VfsError::Code code
+        = m_fs.invoke(LocalFileSystem::versionsActionId(), notes, CancelToken()).error().code;
+    QVERIFY2(code == VfsError::NotFound || code == VfsError::NotSupported,
+        qPrintable(QStringLiteral("asked for versions outside any root and got code %1").arg(code)));
 }
 
 /// A dataset with the directory and nothing in it is the ordinary state of a

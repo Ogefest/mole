@@ -158,6 +158,22 @@ private:
 /// scan ran.
 bool setModifiedTime(const QString& absolutePath, const QDateTime& when);
 
+/// Takes every permission off a file and answers whether that actually made it
+/// unreadable.
+///
+/// **Root reads a file with no permissions at all, and so does a filesystem that
+/// does not enforce them.** A check written as "make it unreadable, then assert
+/// the failure is recorded" therefore cannot fail for the reason it exists on
+/// such a machine -- it fails for a different one, reading as a bug in the code
+/// under test. Two suites failed exactly that way the first time the tier was
+/// run in a container, where the job is root; tst_Sync had already grown this
+/// guard by hand, which is why it is shared rather than copied a fourth time.
+///
+/// False means "this account can still read it", and the caller should skip: the
+/// permissions are put back before it returns, so the temporary tree can still
+/// be deleted.
+bool madeUnreadable(const QString& absolutePath);
+
 /// A temporary directory that cleans itself up, plus helpers to populate it.
 class TempTree
 {

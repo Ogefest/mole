@@ -30,6 +30,20 @@ set -uo pipefail
 MOLE_SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SHELLTEST_NAME="$(basename "${0%.sh}")"
 
+# Make's own environment, cleared, because several of these scripts run make.
+#
+# The suite is normally started by `make test`, which exports MAKEFLAGS and
+# MAKELEVEL to everything under it -- so a `make version` inside a test was a
+# *recursive* make, which prints "Entering directory" and "Leaving directory" on
+# stdout. A test reading the last line of that got the directory line instead of
+# the version, and the release gate's own scan of a tier's report read words out
+# of it. Both suites then failed under `make test` and passed under a bare
+# `ctest`, which is the worst possible arrangement: the answer depended on how the
+# suite was started.
+#
+# So a script under test sees what a person at a prompt sees. See MOLE-297.
+unset MAKEFLAGS MAKELEVEL MFLAGS
+
 # One tree per run, taken away afterwards however the run ends -- including the
 # stub `ssh`, which must never outlive the test that put it on PATH.
 SHELLTEST_TMP="$(mktemp -d "${TMPDIR:-/tmp}/$SHELLTEST_NAME.XXXXXX")"

@@ -1,6 +1,8 @@
 #include "plugins/network/TransferStreams.h"
 
+#include <QDir>
 #include <QElapsedTimer>
+#include <QFileInfo>
 
 #include <algorithm>
 #include <cstring>
@@ -25,6 +27,24 @@ bool BufferedUpload::open(OpenMode mode)
 {
     if (!(mode & QIODevice::WriteOnly)) {
         setErrorString(QStringLiteral("an upload stream can only be opened for writing"));
+        return false;
+    }
+    // Where it would be staged, before staging anything there.
+    //
+    // **A missing temporary directory has to be a refusal, and Qt does not make
+    // it one.** QDir::tempPath() hands back whatever TMPDIR says without asking
+    // whether it is there, and on some builds hands back nothing at all -- and
+    // QTemporaryFile then puts its file in the filesystem root, which succeeds
+    // for anybody who can write there. So an upload whose staging directory had
+    // been removed was accepted, staged somewhere nobody would look for it, and
+    // sent from there. Refusing is the whole point of this device: the bytes are
+    // acknowledged to the caller before they reach the server, so a stage that
+    // cannot be trusted must fail at open() rather than at send. Found by the
+    // second-family job in MOLE-297, where the suite runs as root.
+    const QString staging = QDir::tempPath();
+    if (staging.isEmpty() || !QFileInfo(staging).isDir()) {
+        setErrorString(QStringLiteral("there is no temporary directory to stage the upload in: %1")
+                           .arg(staging.isEmpty() ? QStringLiteral("nothing is set") : staging));
         return false;
     }
     if (!m_scratch.open()) {
