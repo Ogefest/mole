@@ -89,8 +89,54 @@ fi
 grep -q 'CURL_OPENSSL_4' scripts/package-rpm.sh \
     || fail "the script does not say why it uses a container"
 
-begin "both packaging targets exist and are declared"
-for target in packages deb rpm; do
+begin "the AppImage's floor is written where a downloader can find it"
+# What it was built on decides what it runs on, so the floor is a promise. A promise
+# that lives only in a script is one that moves the day somebody bumps a base image,
+# which is why this case reads the script's own base and holds the two places a
+# reader would look to it.
+floor=$(sed -n 's/^IMAGE="${MOLE_APPIMAGE_BASE:-\([^}]*\)}"$/\1/p' scripts/package-appimage.sh)
+[ -n "$floor" ] || fail "cannot tell what the AppImage is built on"
+# The glibc version that image carries, said in the script and repeated wherever the
+# promise is made. Read from the script rather than written here, for the same
+# reason.
+# The sentence that states it, not any mention of a glibc: the script explains the
+# fault by naming the version a *newer* build would demand, and picking that one up
+# would have this case checking the wrong number -- which it did, first time.
+version=$(sed -n 's/.*floor is glibc \(2\.[0-9]*\).*/\1/p' scripts/package-appimage.sh | head -1)
+[ -n "$version" ] || fail "the script does not say what its floor is"
+#
+# One phrase, and it has to be that phrase: "runs on glibc <floor>". Anything looser
+# passes on prose that merely mentions a version -- both of these first passed while
+# TODO.md said the wrong number, because the note explains the floor by naming other
+# distributions' versions too. If the wording here wants changing, change it in all
+# three places; that is the point of the case.
+for place in TODO.md .github/workflows/release.yml; do
+    grep -qF "runs on glibc $version" "$place" \
+        || fail "$place does not promise 'runs on glibc $version'"
+done
+grep -qiE "built on \*{0,2}${floor%%:*}" TODO.md \
+    || fail "TODO.md does not say it is built on ${floor%%:*}"
+# Pinned, because the tool that packs a release is part of the release. Asked of the
+# url alone: the script says the word "continuous" while explaining why it is not
+# using one.
+tool=$(sed -n 's/^TOOL_URL="\(.*\)"$/\1/p' scripts/package-appimage.sh)
+printf '%s\n' "$tool" | grep -q 'releases/download/[0-9]' \
+    || fail "appimagetool is not pinned to a release: $tool"
+printf '%s\n' "$tool" | grep -q 'continuous' \
+    && fail "appimagetool is taken from a continuous build"
+
+begin "the AppImage carries what the format needs"
+# An AppRun, and the desktop entry and icon at the top level -- a desktop that
+# integrates AppImages reads them from there, not from usr/share.
+for piece in 'AppRun' 'mole.desktop' 'mole.svg'; do
+    grep -qF "$piece" scripts/package-appimage.sh || fail "the AppDir has no $piece"
+done
+# And the licence check stays a hard failure, run against the artefact rather than
+# against this repository.
+grep -q 'licence-check.sh' scripts/package-appimage.sh || fail "the AppImage skips the licence check"
+
+begin "all three packaging targets exist and are declared"
+for target in packages deb rpm appimage; do
     grep -qE "^$target:" Makefile || fail "there is no target called $target"
     grep -qE "^\.PHONY:.*\b$target\b" Makefile || fail "$target is not in .PHONY"
 done

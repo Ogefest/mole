@@ -178,7 +178,7 @@ jobs:
       # versions no RPM distribution provides, and rpmbuild records them as
       # requirements -- so the only honest way to produce one is to build it where
       # it will be installed. See scripts/package-rpm.sh.
-      - name: The .deb and the .rpm
+      - name: The .deb, the .rpm and the AppImage
         run: make packages
 
       # And they install, on a clean system of each family, with nothing installed
@@ -206,6 +206,30 @@ jobs:
             test -f /usr/share/applications/mole.desktop
             dnf remove -y -q mole >/dev/null
             test ! -e /usr/bin/mole"
+
+      # The AppImage's promise, checked on both ends of it. What it was built on
+      # decides what it runs on -- it links glibc dynamically and cannot carry it --
+      # so the floor is a promise to whoever downloads it, and a promise nothing
+      # checks is a promise that quietly moves the day somebody bumps a base image.
+      # Ubuntu 22.04 is the oldest distribution the floor reaches; 24.04 is the
+      # newest thing here. Extracted rather than mounted, because a container has no
+      # FUSE, and with the GL runtime any desktop has -- the bundle deliberately
+      # leaves those to the host, since they belong to the graphics driver.
+      - name: The AppImage starts on the oldest distribution it promises, and the newest
+        run: |
+          version=$(make version)
+          for image in ubuntu:22.04 ubuntu:24.04; do
+            echo "--- $image ---"
+            docker run --rm -v "$PWD/build/packages:/pkg:ro" \
+              -e APPIMAGE_EXTRACT_AND_RUN=1 -e DEBIAN_FRONTEND=noninteractive "$image" bash -c "
+                set -e
+                apt-get update -qq >/dev/null
+                apt-get install -y -qq libglx0 libopengl0 libgl1 libegl1 >/dev/null
+                cp /pkg/mole-${version}-x86_64.AppImage /tmp/m && chmod +x /tmp/m
+                cd /tmp && QT_QPA_PLATFORM=offscreen HOME=/tmp ./m --version | tail -1" \
+              | tee /tmp/said
+            grep -qF "Mole ${version}" /tmp/said
+          done
 
       # Named after the version, which CMakeLists.txt is the only place holding --
       # see MOLE-117. Checked against the tag rather than trusted: they are written
@@ -242,7 +266,10 @@ jobs:
 
           The tarball needs no Qt on the target: unpack and run \`mole\`. It was built on Ubuntu 24.04 against Qt 6.4 with Parquet, PDF, video, archives, network drives (sftp, ftp, s3, webdav), Windows shares, NFS, the terminal panel, git state and the encrypted credential store.
 
-          The .deb and the .rpm carry what their own distribution can satisfy, which is not quite the same list: Arrow is in no Ubuntu archive, so the .deb has no Parquet grid, and Fedora packages it, so the .rpm does. MOLE-296 puts the table here." \
+          The .deb and the .rpm carry what their own distribution can satisfy, which is not quite the same list: Arrow is in no Ubuntu archive, so the .deb has no Parquet grid, and Fedora packages it, so the .rpm does. MOLE-296 puts the table here.
+
+          **The AppImage runs on glibc 2.34 and upwards** — Ubuntu 22.04, Debian 12, RHEL 9, and anything newer. It is built on AlmaLinux 9 for that reason, and what that distribution has not got the AppImage has not either: no Parquet grid, no terminal panel and no NFS drives." \
             "$TARBALL" \
             build/packages/mole_*.deb \
-            build/packages/mole-*.rpm
+            build/packages/mole-*.rpm \
+            build/packages/mole-*.AppImage

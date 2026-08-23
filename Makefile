@@ -14,7 +14,7 @@ DESTDIR ?=
 # a script can rewrite that line and everything follows.
 VERSION := $(shell sed -n 's/^ *VERSION \([0-9][0-9.]*\)$$/\1/p' CMakeLists.txt)
 
-.PHONY: all build configure optimised release run test packages deb rpm test-live test-heavy test-verbose tsan clean distclean format tidy help guide-images where-the-log-is \
+.PHONY: all build configure optimised release run test packages deb rpm appimage test-live test-heavy test-verbose tsan clean distclean format tidy help guide-images where-the-log-is \
         install uninstall bundle licence-check screenshots version
 
 all: build
@@ -203,7 +203,7 @@ PACKAGE_FLAGS := -DCMAKE_DISABLE_FIND_PACKAGE_Arrow=ON -DCMAKE_DISABLE_FIND_PACK
 ##           Both come from the install rules, through CPack, so the package and
 ##           `make install` cannot come apart. Skips one with a reason rather than
 ##           failing when the tool for it is not on the machine.
-packages: deb rpm
+packages: deb rpm appimage
 
 ## deb: the .deb, built here, from what this distribution's archive can satisfy
 deb:
@@ -218,6 +218,13 @@ deb:
 ##      versions no RPM distribution provides. See scripts/package-rpm.sh.
 rpm:
 	@scripts/package-rpm.sh $(PACKAGE_DIR) || true
+
+## appimage: the AppImage, built on the oldest distribution Mole runs on
+##           AlmaLinux 9, so glibc 2.34: what it is built on decides what it runs
+##           on, and that is a promise rather than a build detail. The figure is in
+##           TODO.md and in the release notes as well as in the script.
+appimage:
+	@scripts/package-appimage.sh $(PACKAGE_DIR) || true
 
 ## bundle: self-contained folder in dist/ that runs on machines without Qt
 bundle:

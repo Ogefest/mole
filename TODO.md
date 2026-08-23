@@ -29,6 +29,29 @@ project, and a contributor should never hit a wall of text they cannot read.
 
 ## Notes
 
+- **The AppImage runs on glibc 2.34 and upwards, and that is a promise rather than
+  a build detail.** It carries its own Qt and its own libraries but links glibc
+  dynamically and cannot carry that, so what it was built on decides what it runs
+  on: an AppImage built on the newest distribution refuses to start on anything
+  older, with a `GLIBC_2.39 not found` that reads to whoever downloaded it like a
+  corrupt file.
+
+  So it is built on **AlmaLinux 9**, chosen for what it reaches rather than for
+  itself: glibc 2.34 is older than Ubuntu 22.04's 2.35, Debian 12's 2.36 and Ubuntu
+  24.04's 2.39, so one artefact covers every distribution from 2021 onwards. It is
+  also the oldest image that can build Mole at all — Qt 6.4 is the baseline and
+  EPEL 9 has 6.6, while Ubuntu 22.04's own archive stops at 6.2. Measured rather
+  than assumed: it starts on 22.04, 24.04 and Fedora 40, and on Ubuntu 20.04
+  (glibc 2.31) it says `version GLIBC_2.34 not found`.
+
+  Lowering the floor means finding a Qt 6.4 for something older than AlmaLinux 9,
+  which is a piece of work rather than a setting. Raising it — building on
+  something newer because it is convenient — silently drops every user between the
+  two, which is why the figure is written here and in the release notes and not
+  only in `scripts/package-appimage.sh`. What that distribution has not got is part
+  of the same promise: no Arrow, so the AppImage has no Parquet grid, and no
+  libvterm or libnfs either.
+
 - **The nine viewers, swept for what a file costs once it is on screen.** MOLE-284
   asked each of them one question: can this viewer find out only after it has read
   the bytes that showing them is more work than the window can afford, and if so
