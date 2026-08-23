@@ -1141,14 +1141,16 @@ void TablePreviewController::reimport()
     // shape's columns behind.
     m_table->clear();
     m_store.reset();
-    m_scratch = std::make_unique<QTemporaryDir>();
-    if (!m_scratch->isValid()) {
+    // Held by the store rather than by this controller: the store is what has to
+    // outlive a reader moving on, and the file it writes to lives in here.
+    auto scratch = std::make_shared<QTemporaryDir>();
+    if (!scratch->isValid()) {
         setErrorText(QStringLiteral("Could not create a scratch database"));
         return;
     }
 
-    m_store
-        = std::make_unique<DelimitedStore>(QDir(m_scratch->path()).filePath(QStringLiteral("table.sqlite")));
+    m_store = std::make_shared<DelimitedStore>(
+        QDir(scratch->path()).filePath(QStringLiteral("table.sqlite")), scratch);
 
     QString error;
     if (!m_store->open(&error)) {
@@ -1170,7 +1172,7 @@ void TablePreviewController::reimport()
     m_importedRows = 0;
     emit importProgress();
 
-    auto* task = new ImportDelimitedTask(std::move(fs), m_entry.uri, m_store.get());
+    auto* task = new ImportDelimitedTask(std::move(fs), m_entry.uri, m_store);
     task->setSeparator(m_separator);
     task->setFirstRowIsHeader(m_firstRowIsHeader);
     m_task = task;
@@ -1630,14 +1632,16 @@ void JsonLinesPreviewController::import()
     // this file's keys, and reusing the last one would leave its shape behind.
     m_table->clear();
     m_store.reset();
-    m_scratch = std::make_unique<QTemporaryDir>();
-    if (!m_scratch->isValid()) {
+    // Held by the store rather than by this controller: the store is what has to
+    // outlive a reader moving on, and the file it writes to lives in here.
+    auto scratch = std::make_shared<QTemporaryDir>();
+    if (!scratch->isValid()) {
         setErrorText(QStringLiteral("Could not create a scratch database"));
         return;
     }
 
-    m_store
-        = std::make_unique<DelimitedStore>(QDir(m_scratch->path()).filePath(QStringLiteral("table.sqlite")));
+    m_store = std::make_shared<DelimitedStore>(
+        QDir(scratch->path()).filePath(QStringLiteral("table.sqlite")), scratch);
 
     QString error;
     if (!m_store->open(&error)) {
@@ -1657,7 +1661,7 @@ void JsonLinesPreviewController::import()
     m_records = 0;
     emit importProgress();
 
-    auto* task = new ImportJsonLinesTask(std::move(fs), m_entry.uri, m_store.get());
+    auto* task = new ImportJsonLinesTask(std::move(fs), m_entry.uri, m_store);
     m_task = task;
 
     connect(task, &ImportJsonLinesTask::shapeSettled, this, [this, task] {

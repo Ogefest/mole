@@ -65,10 +65,12 @@ private slots:
     void aReadIsAnsweredWhileAWriteIsStillInFlight();
     void aReadThatFailedIsNotATableWithNothingInIt();
     void everyConnectionCarriesTheSettingsAndNotOnlyTheOpenersOwn();
+    void noConnectionIsLeftBehindWhateverThreadTheStoreDiesOn();
 
 private:
-    ImportDelimitedTask* importFile(const QString& name, DelimitedStore* store, QChar separator = QChar());
-    ImportJsonLinesTask* importRecords(const QString& name, DelimitedStore* store);
+    ImportDelimitedTask* importFile(
+        const QString& name, const std::shared_ptr<DelimitedStore>& store, QChar separator = QChar());
+    ImportJsonLinesTask* importRecords(const QString& name, const std::shared_ptr<DelimitedStore>& store);
 
     std::unique_ptr<QTemporaryDir> m_dir;
     std::unique_ptr<TempTree> m_tree;
@@ -154,77 +156,77 @@ void TestDelimitedStore::returnsTheLastLineWithoutATrailingBreak()
 
 void TestDelimitedStore::countsAndPagesRows()
 {
-    DelimitedStore store(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
-    QVERIFY(store.open());
-    QVERIFY(store.beginImport({ "id", "name" }));
+    auto store = std::make_shared<DelimitedStore>(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
+    QVERIFY(store->open());
+    QVERIFY(store->beginImport({ "id", "name" }));
 
     QList<QStringList> rows;
     for (int i = 0; i < 10000; ++i)
         rows.append({ QString::number(i), QStringLiteral("name %1").arg(i) });
-    QVERIFY(store.addRows(rows));
-    QVERIFY(store.endImport());
+    QVERIFY(store->addRows(rows));
+    QVERIFY(store->endImport());
 
-    QCOMPARE(store.totalRows(), 10000);
+    QCOMPARE(store->totalRows(), 10000);
 
     // A window from the middle, which is all the model ever asks for.
-    const QList<QStringList> window = store.rows(5000, 3);
+    const QList<QStringList> window = store->rows(5000, 3);
     QCOMPARE(window.size(), 3);
     QCOMPARE(window.first().at(0), QStringLiteral("5000"));
     QCOMPARE(window.last().at(1), QStringLiteral("name 5002"));
 
     // Past the end is empty, not an error: a view can ask beyond the last row
     // while a filter is being applied.
-    QVERIFY(store.rows(20000, 10).isEmpty());
+    QVERIFY(store->rows(20000, 10).isEmpty());
 }
 
 void TestDelimitedStore::filtersAcrossEveryColumn()
 {
-    DelimitedStore store(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
-    QVERIFY(store.open());
-    QVERIFY(store.beginImport({ "city", "country" }));
-    QVERIFY(store.addRows(
+    auto store = std::make_shared<DelimitedStore>(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
+    QVERIFY(store->open());
+    QVERIFY(store->beginImport({ "city", "country" }));
+    QVERIFY(store->addRows(
         { { "Kraków", "Poland" }, { "Berlin", "Germany" }, { "Poznań", "Poland" }, { "Paris", "France" } }));
-    QVERIFY(store.endImport());
+    QVERIFY(store->endImport());
 
-    QCOMPARE(store.matchingRows(QStringLiteral("Poland")), 2);
-    QCOMPARE(store.matchingRows(QStringLiteral("Berlin")), 1);
+    QCOMPARE(store->matchingRows(QStringLiteral("Poland")), 2);
+    QCOMPARE(store->matchingRows(QStringLiteral("Berlin")), 1);
     // Case-insensitive, because nobody types a filter with the right case.
-    QCOMPARE(store.matchingRows(QStringLiteral("berlin")), 1);
-    QCOMPARE(store.matchingRows(QStringLiteral("nowhere")), 0);
+    QCOMPARE(store->matchingRows(QStringLiteral("berlin")), 1);
+    QCOMPARE(store->matchingRows(QStringLiteral("nowhere")), 0);
 
     // The whole file is searched, not the loaded part -- so a filtered window
     // starts at the first match wherever it is.
-    const QList<QStringList> matches = store.rows(0, 10, QStringLiteral("Poland"));
+    const QList<QStringList> matches = store->rows(0, 10, QStringLiteral("Poland"));
     QCOMPARE(matches.size(), 2);
     QCOMPARE(matches.first().at(0), QStringLiteral("Kraków"));
 }
 
 void TestDelimitedStore::filterTreatsWildcardsAsLiteralText()
 {
-    DelimitedStore store(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
-    QVERIFY(store.open());
-    QVERIFY(store.beginImport({ "pattern" }));
-    QVERIFY(store.addRows({ { "100%" }, { "1000" }, { "a_b" }, { "axb" } }));
-    QVERIFY(store.endImport());
+    auto store = std::make_shared<DelimitedStore>(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
+    QVERIFY(store->open());
+    QVERIFY(store->beginImport({ "pattern" }));
+    QVERIFY(store->addRows({ { "100%" }, { "1000" }, { "a_b" }, { "axb" } }));
+    QVERIFY(store->endImport());
 
     // A user typing "%" means a per cent sign, not "match everything". Leaving
     // LIKE's wildcards live would make the filter behave at random.
-    QCOMPARE(store.matchingRows(QStringLiteral("%")), 1);
-    QCOMPARE(store.matchingRows(QStringLiteral("_")), 1);
+    QCOMPARE(store->matchingRows(QStringLiteral("%")), 1);
+    QCOMPARE(store->matchingRows(QStringLiteral("_")), 1);
 }
 
 void TestDelimitedStore::padsRaggedRows()
 {
-    DelimitedStore store(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
-    QVERIFY(store.open());
-    QVERIFY(store.beginImport({ "a", "b", "c" }));
+    auto store = std::make_shared<DelimitedStore>(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
+    QVERIFY(store->open());
+    QVERIFY(store->beginImport({ "a", "b", "c" }));
 
     // Real exports are ragged. Refusing them would leave the file unviewable
     // for the sake of a rule nobody agreed to.
-    QVERIFY(store.addRows({ { "1" }, { "1", "2", "3", "4" } }));
-    QVERIFY(store.endImport());
+    QVERIFY(store->addRows({ { "1" }, { "1", "2", "3", "4" } }));
+    QVERIFY(store->endImport());
 
-    const QList<QStringList> rows = store.rows(0, 10);
+    const QList<QStringList> rows = store->rows(0, 10);
     QCOMPARE(rows.size(), 2);
     QCOMPARE(rows.at(0), QStringList({ "1", "", "" }));
     QCOMPARE(rows.at(1), QStringList({ "1", "2", "3" }));
@@ -232,13 +234,13 @@ void TestDelimitedStore::padsRaggedRows()
 
 void TestDelimitedStore::measuresColumnWidths()
 {
-    DelimitedStore store(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
-    QVERIFY(store.open());
-    QVERIFY(store.beginImport({ "id", "description" }));
-    QVERIFY(store.addRows({ { "1", "a rather long description" }, { "2", "short" } }));
-    QVERIFY(store.endImport());
+    auto store = std::make_shared<DelimitedStore>(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
+    QVERIFY(store->open());
+    QVERIFY(store->beginImport({ "id", "description" }));
+    QVERIFY(store->addRows({ { "1", "a rather long description" }, { "2", "short" } }));
+    QVERIFY(store->endImport());
 
-    const QList<int> widths = store.columnWidths();
+    const QList<int> widths = store->columnWidths();
     QCOMPARE(widths.size(), 2);
     // The header counts too: a one-character column under a longer title still
     // has to fit the title.
@@ -249,7 +251,7 @@ void TestDelimitedStore::measuresColumnWidths()
 // ---------------------------------------------------------------- import
 
 ImportDelimitedTask* TestDelimitedStore::importFile(
-    const QString& name, DelimitedStore* store, QChar separator)
+    const QString& name, const std::shared_ptr<DelimitedStore>& store, QChar separator)
 {
     auto fs = std::make_shared<LocalFileSystem>();
     auto* task = new ImportDelimitedTask(fs, m_tree->rootUri().child(name), store);
@@ -261,7 +263,8 @@ ImportDelimitedTask* TestDelimitedStore::importFile(
     return task;
 }
 
-ImportJsonLinesTask* TestDelimitedStore::importRecords(const QString& name, DelimitedStore* store)
+ImportJsonLinesTask* TestDelimitedStore::importRecords(
+    const QString& name, const std::shared_ptr<DelimitedStore>& store)
 {
     auto fs = std::make_shared<LocalFileSystem>();
     auto* task = new ImportJsonLinesTask(fs, m_tree->rootUri().child(name), store);
@@ -282,28 +285,28 @@ void TestDelimitedStore::importsAFileLargerThanOneChunk()
     QVERIFY(contents.size() > 1024 * 1024);
     QVERIFY(m_tree->writeFile(QStringLiteral("big.csv"), contents));
 
-    DelimitedStore store(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
-    QVERIFY(store.open());
+    auto store = std::make_shared<DelimitedStore>(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
+    QVERIFY(store->open());
 
-    ImportDelimitedTask* task = importFile(QStringLiteral("big.csv"), &store);
+    ImportDelimitedTask* task = importFile(QStringLiteral("big.csv"), store);
     QVERIFY(task);
     QCOMPARE(task->state(), Task::State::Succeeded);
     QCOMPARE(task->importedRows(), 60000);
 
-    QCOMPARE(store.headers(), QStringList({ "id", "name", "value" }));
-    QCOMPARE(store.totalRows(), 60000);
+    QCOMPARE(store->headers(), QStringList({ "id", "name", "value" }));
+    QCOMPARE(store->totalRows(), 60000);
 
     // Nothing was dropped at a chunk boundary: the last row is intact and so
     // is one from the middle.
-    const QList<QStringList> last = store.rows(59999, 1);
+    const QList<QStringList> last = store->rows(59999, 1);
     QCOMPARE(last.size(), 1);
     QCOMPARE(last.first(), QStringList({ "59999", "name 59999", "value 59999" }));
 
-    const QList<QStringList> middle = store.rows(30000, 1);
+    const QList<QStringList> middle = store->rows(30000, 1);
     QCOMPARE(middle.first().at(0), QStringLiteral("30000"));
 
     // And a filter reaches rows far past anything a capped parser would hold.
-    QCOMPARE(store.matchingRows(QStringLiteral("name 59999")), 1);
+    QCOMPARE(store->matchingRows(QStringLiteral("name 59999")), 1);
 }
 
 void TestDelimitedStore::widensTheTableToTheWidestRow()
@@ -312,12 +315,12 @@ void TestDelimitedStore::widensTheTableToTheWidestRow()
     // to it alone would silently drop the extra fields.
     QVERIFY(m_tree->writeFile(QStringLiteral("ragged.csv"), QByteArray("a,b\n1,2,3\n4,5,6\n")));
 
-    DelimitedStore store(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
-    QVERIFY(store.open());
-    QVERIFY(importFile(QStringLiteral("ragged.csv"), &store, QLatin1Char(',')));
+    auto store = std::make_shared<DelimitedStore>(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
+    QVERIFY(store->open());
+    QVERIFY(importFile(QStringLiteral("ragged.csv"), store, QLatin1Char(',')));
 
-    QCOMPARE(store.columnCount(), 3);
-    QCOMPARE(store.rows(0, 1).first(), QStringList({ "1", "2", "3" }));
+    QCOMPARE(store->columnCount(), 3);
+    QCOMPARE(store->rows(0, 1).first(), QStringList({ "1", "2", "3" }));
 }
 
 void TestDelimitedStore::detectsTheSeparator()
@@ -325,17 +328,17 @@ void TestDelimitedStore::detectsTheSeparator()
     QVERIFY(m_tree->writeFile(
         QStringLiteral("euro.csv"), QByteArray("name;price;qty\nwidget;1,50;3\nbolt;0,99;10\n")));
 
-    DelimitedStore store(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
-    QVERIFY(store.open());
+    auto store = std::make_shared<DelimitedStore>(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
+    QVERIFY(store->open());
 
-    ImportDelimitedTask* task = importFile(QStringLiteral("euro.csv"), &store);
+    ImportDelimitedTask* task = importFile(QStringLiteral("euro.csv"), store);
     QVERIFY(task);
 
     // The semicolon splits this file consistently; the comma inside "1,50"
     // does not. Counting occurrences would pick the wrong one.
     QCOMPARE(task->separator(), QLatin1Char(';'));
-    QCOMPARE(store.columnCount(), 3);
-    QCOMPARE(store.rows(0, 1).first().at(1), QStringLiteral("1,50"));
+    QCOMPARE(store->columnCount(), 3);
+    QCOMPARE(store->rows(0, 1).first().at(1), QStringLiteral("1,50"));
 }
 
 // ------------------------------------------------- a file of json records
@@ -355,26 +358,26 @@ void TestDelimitedStore::theColumnsAreTheKeysInTheOrderTheFileWritesThem()
         QByteArray("{\"when\":\"09:12\",\"what\":\"opened\",\"id\":1}\n"
                    "{\"when\":\"09:14\",\"what\":\"closed\",\"id\":2}\n")));
 
-    DelimitedStore store(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
-    QVERIFY(store.open());
+    auto store = std::make_shared<DelimitedStore>(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
+    QVERIFY(store->open());
 
-    ImportJsonLinesTask* task = importRecords(QStringLiteral("events.jsonl"), &store);
+    ImportJsonLinesTask* task = importRecords(QStringLiteral("events.jsonl"), store);
     QVERIFY(task);
     QCOMPARE(task->state(), Task::State::Succeeded);
     QVERIFY(task->looksLikeRecords());
-    QCOMPARE(store.headers(), QStringList({ "when", "what", "id" }));
-    QCOMPARE(store.totalRows(), 2);
+    QCOMPARE(store->headers(), QStringList({ "when", "what", "id" }));
+    QCOMPARE(store->totalRows(), 2);
 
     // A record with no trailing newline is still a record: a file that does not
     // end in one is ordinary, and dropping its last line would lose a row.
     QVERIFY(m_tree->writeFile(QStringLiteral("one.jsonl"), QByteArray("{\"only\":\"record\",\"z\":1}")));
-    DelimitedStore single(QDir(m_dir->path()).filePath(QStringLiteral("s.sqlite")));
-    QVERIFY(single.open());
-    ImportJsonLinesTask* alone = importRecords(QStringLiteral("one.jsonl"), &single);
+    auto single = std::make_shared<DelimitedStore>(QDir(m_dir->path()).filePath(QStringLiteral("s.sqlite")));
+    QVERIFY(single->open());
+    ImportJsonLinesTask* alone = importRecords(QStringLiteral("one.jsonl"), single);
     QVERIFY(alone);
     QVERIFY(alone->looksLikeRecords());
-    QCOMPARE(single.headers(), QStringList({ "only", "z" }));
-    QCOMPARE(single.totalRows(), 1);
+    QCOMPARE(single->headers(), QStringList({ "only", "z" }));
+    QCOMPARE(single->totalRows(), 1);
 }
 
 void TestDelimitedStore::aKeyFirstSeenAfterTheSampleIsCountedAndHasNoColumn()
@@ -394,23 +397,23 @@ void TestDelimitedStore::aKeyFirstSeenAfterTheSampleIsCountedAndHasNoColumn()
 
     QVERIFY(m_tree->writeFile(QStringLiteral("late.jsonl"), contents));
 
-    DelimitedStore store(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
-    QVERIFY(store.open());
+    auto store = std::make_shared<DelimitedStore>(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
+    QVERIFY(store->open());
 
-    ImportJsonLinesTask* task = importRecords(QStringLiteral("late.jsonl"), &store);
+    ImportJsonLinesTask* task = importRecords(QStringLiteral("late.jsonl"), store);
     QVERIFY(task);
     QCOMPARE(task->state(), Task::State::Succeeded);
 
     // The columns are the sample's, and the late keys are not among them.
-    QCOMPARE(store.headers(), QStringList({ "id", "name" }));
-    QCOMPARE(store.totalRows(), before + 2);
+    QCOMPARE(store->headers(), QStringList({ "id", "name" }));
+    QCOMPARE(store->totalRows(), before + 2);
 
     // Three values had nowhere to go: "extra" twice and "other" once.
     QCOMPARE(task->keysWithoutAColumn(), 3);
 
     // And the rows themselves are still there, with the columns they do have.
-    QCOMPARE(store.matchingRows(QStringLiteral("late")), 2);
-    QCOMPARE(store.matchingRows(QStringLiteral("unseen")), 0);
+    QCOMPARE(store->matchingRows(QStringLiteral("late")), 2);
+    QCOMPARE(store->matchingRows(QStringLiteral("unseen")), 0);
 }
 
 void TestDelimitedStore::aMalformedLineIsCountedAndTheImportFinishes()
@@ -428,20 +431,20 @@ void TestDelimitedStore::aMalformedLineIsCountedAndTheImportFinishes()
                    "42\n"
                    "{\"id\":4}\n")));
 
-    DelimitedStore store(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
-    QVERIFY(store.open());
+    auto store = std::make_shared<DelimitedStore>(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
+    QVERIFY(store->open());
 
-    ImportJsonLinesTask* task = importRecords(QStringLiteral("mixed.jsonl"), &store);
+    ImportJsonLinesTask* task = importRecords(QStringLiteral("mixed.jsonl"), store);
     QVERIFY(task);
     QCOMPARE(task->state(), Task::State::Succeeded);
     // Records 1, 3 and 4. Record 2 is the broken one, and its line is skipped
     // rather than taking the file down with it.
     QCOMPARE(task->importedRows(), 3);
-    QCOMPARE(store.totalRows(), 3);
+    QCOMPARE(store->totalRows(), 3);
     // Three lines were not records: the broken object, the array and the number.
     // The two blank ones are not among them.
     QCOMPARE(task->skippedLines(), 3);
-    QCOMPARE(store.matchingRows(QStringLiteral("4")), 1);
+    QCOMPARE(store->matchingRows(QStringLiteral("4")), 1);
 }
 
 void TestDelimitedStore::aFileWhoseRecordsAreNotObjectsSaysSoRatherThanFailing()
@@ -451,17 +454,17 @@ void TestDelimitedStore::aFileWhoseRecordsAreNotObjectsSaysSoRatherThanFailing()
     // answer from an import that failed -- the viewer shows the source on it.
     QVERIFY(m_tree->writeFile(QStringLiteral("arrays.jsonl"), QByteArray("[1,2]\n[3,4]\n")));
 
-    DelimitedStore store(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
-    QVERIFY(store.open());
+    auto store = std::make_shared<DelimitedStore>(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
+    QVERIFY(store->open());
 
-    ImportJsonLinesTask* task = importRecords(QStringLiteral("arrays.jsonl"), &store);
+    ImportJsonLinesTask* task = importRecords(QStringLiteral("arrays.jsonl"), store);
     QVERIFY(task);
     QCOMPARE(task->state(), Task::State::Succeeded);
     QVERIFY(!task->looksLikeRecords());
     QCOMPARE(task->importedRows(), 0);
     // Nothing was imported, so the store answers nothing rather than throwing.
-    QCOMPARE(store.totalRows(), 0);
-    QVERIFY(store.headers().isEmpty());
+    QCOMPARE(store->totalRows(), 0);
+    QVERIFY(store->headers().isEmpty());
 }
 
 void TestDelimitedStore::everyKindOfJsonValueBecomesOneCell()
@@ -551,15 +554,14 @@ void TestDelimitedStore::theTableIsReadThroughoutAnImportAndEveryReadIsAnswered(
         contents += QStringLiteral("{\"id\":%1,\"name\":\"name %1\"}\n").arg(i).toUtf8();
     QVERIFY(m_tree->writeFile(QStringLiteral("records.jsonl"), contents));
 
-    DelimitedStore store(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
-    QVERIFY(store.open());
+    auto store = std::make_shared<DelimitedStore>(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
+    QVERIFY(store->open());
 
     // Not importRecords(), which waits for the task. Waiting is the one thing
     // this case must not do: the store is read while the import writes to it,
     // which is what attaching the grid before the import means.
     auto fs = std::make_shared<LocalFileSystem>();
-    auto* task
-        = new ImportJsonLinesTask(fs, m_tree->rootUri().child(QStringLiteral("records.jsonl")), &store);
+    auto* task = new ImportJsonLinesTask(fs, m_tree->rootUri().child(QStringLiteral("records.jsonl")), store);
 
     // The reads the interface makes, at the cadence it makes them. The preview
     // controller refreshes the model on rowsImported, and a refresh is a count
@@ -577,8 +579,8 @@ void TestDelimitedStore::theTableIsReadThroughoutAnImportAndEveryReadIsAnswered(
     QObject onThisThread;
     connect(task, &ImportJsonLinesTask::rowsImported, &onThisThread, [&](qint64) {
         bool readable = true;
-        const qint64 count = store.matchingRows({});
-        const QList<QStringList> window = store.rows(0, kWindow, {}, &readable);
+        const qint64 count = store->matchingRows({});
+        const QList<QStringList> window = store->rows(0, kWindow, {}, &readable);
 
         if (count < 0 || !readable) {
             ++unanswered;
@@ -607,7 +609,7 @@ void TestDelimitedStore::theTableIsReadThroughoutAnImportAndEveryReadIsAnswered(
     // cut short by a write that gave up partway.
     QCOMPARE(task->state(), Task::State::Succeeded);
     QCOMPARE(task->importedRows(), kRecords);
-    QCOMPARE(store.totalRows(), kRecords);
+    QCOMPARE(store->totalRows(), kRecords);
 }
 
 void TestDelimitedStore::aReadIsAnsweredWhileAWriteIsStillInFlight()
@@ -634,52 +636,58 @@ void TestDelimitedStore::aReadIsAnsweredWhileAWriteIsStillInFlight()
     QVERIFY(m_tree->writeFile(QStringLiteral("two.csv"), QByteArray("a,b\n1,2\n3,4\n")));
 
     const QString path = QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite"));
-    DelimitedStore store(path);
-    QVERIFY(store.open());
-    QVERIFY(importFile(QStringLiteral("two.csv"), &store, QLatin1Char(',')));
+    auto store = std::make_shared<DelimitedStore>(path);
+    QVERIFY(store->open());
+    QVERIFY(importFile(QStringLiteral("two.csv"), store, QLatin1Char(',')));
 
-    const QString side = QStringLiteral("mole-test-writer");
-    QSqlDatabase writer = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), side);
-    writer.setDatabaseName(path);
-    QVERIFY(writer.open());
-    QSqlQuery write(writer);
-
-    std::atomic_bool connected { false };
-    std::atomic_bool writeInFlight { false };
     qint64 before = -2;
     qint64 during = -2;
 
-    // The reader takes its connection before the writer holds anything, because
-    // a connection is made on first use and making one is itself a read of the
-    // file -- doing it under the lock would be measuring the wrong thing.
-    std::thread reader([&store, &connected, &writeInFlight, &before, &during] {
-        before = store.matchingRows({});
-        connected = true;
-        while (!writeInFlight.load())
+    const QString side = QStringLiteral("mole-test-writer");
+    // Scoped, so no copy of the connection is alive when it is removed below --
+    // removeDatabase says so loudly, and a warning in a passing test is a line
+    // somebody has to read and dismiss on every run.
+    {
+        QSqlDatabase writer = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), side);
+        writer.setDatabaseName(path);
+        QVERIFY(writer.open());
+        QSqlQuery write(writer);
+
+        std::atomic_bool connected { false };
+        std::atomic_bool writeInFlight { false };
+
+        // The reader takes its connection before the writer holds anything, because
+        // a connection is made on first use and making one is itself a read of the
+        // file -- doing it under the lock would be measuring the wrong thing.
+        std::thread reader([store, &connected, &writeInFlight, &before, &during] {
+            before = store->matchingRows({});
+            connected = true;
+            while (!writeInFlight.load())
+                std::this_thread::yield();
+            during = store->matchingRows({});
+        });
+
+        while (!connected.load())
             std::this_thread::yield();
-        during = store.matchingRows({});
-    });
 
-    while (!connected.load())
-        std::this_thread::yield();
+        QVERIFY2(write.exec(QStringLiteral("BEGIN EXCLUSIVE")), qPrintable(write.lastError().text()));
+        QVERIFY2(write.exec(QStringLiteral("INSERT INTO rows_ (c0, c1) VALUES ('5', '6')")),
+            qPrintable(write.lastError().text()));
+        writeInFlight = true;
 
-    QVERIFY2(write.exec(QStringLiteral("BEGIN EXCLUSIVE")), qPrintable(write.lastError().text()));
-    QVERIFY2(write.exec(QStringLiteral("INSERT INTO rows_ (c0, c1) VALUES ('5', '6')")),
-        qPrintable(write.lastError().text()));
-    writeInFlight = true;
-
-    // Joined before the commit, so the write is in flight for the whole of the
-    // read: there is no ordering here to get lucky with.
-    reader.join();
-    QVERIFY2(write.exec(QStringLiteral("COMMIT")), qPrintable(write.lastError().text()));
-    writer.close();
+        // Joined before the commit, so the write is in flight for the whole of the
+        // read: there is no ordering here to get lucky with.
+        reader.join();
+        QVERIFY2(write.exec(QStringLiteral("COMMIT")), qPrintable(write.lastError().text()));
+        writer.close();
+    }
     QSqlDatabase::removeDatabase(side);
 
     QCOMPARE(before, qint64(2));
     // Two, and not three: the answer is the committed table, which is what a
     // snapshot means. -1 here is the read having given up on a locked file.
     QCOMPARE(during, qint64(2));
-    QCOMPARE(store.matchingRows({}), qint64(3));
+    QCOMPARE(store->matchingRows({}), qint64(3));
 }
 
 void TestDelimitedStore::aReadThatFailedIsNotATableWithNothingInIt()
@@ -687,10 +695,10 @@ void TestDelimitedStore::aReadThatFailedIsNotATableWithNothingInIt()
     QVERIFY(m_tree->writeFile(QStringLiteral("two.csv"), QByteArray("a,b\n1,2\n3,4\n")));
 
     const QString path = QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite"));
-    DelimitedStore store(path);
-    QVERIFY(store.open());
-    QVERIFY(importFile(QStringLiteral("two.csv"), &store, QLatin1Char(',')));
-    QCOMPARE(store.matchingRows({}), qint64(2));
+    auto store = std::make_shared<DelimitedStore>(path);
+    QVERIFY(store->open());
+    QVERIFY(importFile(QStringLiteral("two.csv"), store, QLatin1Char(',')));
+    QCOMPARE(store->matchingRows({}), qint64(2));
 
     // The table taken out from under the store, on a connection of its own. Any
     // failure would do and this one is a fact rather than a timing, but what the
@@ -710,25 +718,25 @@ void TestDelimitedStore::aReadThatFailedIsNotATableWithNothingInIt()
     // Not nought. Nought is a file with nothing in it; this one has two rows
     // that cannot be read at the moment, and ADR-0030 settled which of those two
     // answers to give. -1 is the one the model already shows as a blank.
-    QCOMPARE(store.matchingRows({}), qint64(-1));
-    QCOMPARE(store.totalRows(), qint64(-1));
+    QCOMPARE(store->matchingRows({}), qint64(-1));
+    QCOMPARE(store->totalRows(), qint64(-1));
     // Asked again it still says not known, rather than having settled on the
     // nought that made a file still importing read as an empty one.
-    QCOMPARE(store.totalRows(), qint64(-1));
+    QCOMPARE(store->totalRows(), qint64(-1));
 
     bool readable = true;
-    const QList<QStringList> window = store.rows(0, 10, {}, &readable);
+    const QList<QStringList> window = store->rows(0, 10, {}, &readable);
     QVERIFY(window.isEmpty());
     QVERIFY2(!readable, "an unreadable window came back as a window that held nothing");
 }
 
 void TestDelimitedStore::everyConnectionCarriesTheSettingsAndNotOnlyTheOpenersOwn()
 {
-    DelimitedStore store(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
-    QVERIFY(store.open());
+    auto store = std::make_shared<DelimitedStore>(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
+    QVERIFY(store->open());
 
-    QCOMPARE(store.pragmaValue(QStringLiteral("journal_mode")).toLower(), QStringLiteral("wal"));
-    QCOMPARE(store.pragmaValue(QStringLiteral("busy_timeout")).toInt(), 5000);
+    QCOMPARE(store->pragmaValue(QStringLiteral("journal_mode")).toLower(), QStringLiteral("wal"));
+    QCOMPARE(store->pragmaValue(QStringLiteral("busy_timeout")).toInt(), 5000);
 
     // The half that was wrong, and why this is a case of its own. A connection
     // is keyed by the thread that asked for it, so pragmas run by open() land on
@@ -738,14 +746,61 @@ void TestDelimitedStore::everyConnectionCarriesTheSettingsAndNotOnlyTheOpenersOw
     // writes, and no busy timeout at all.
     QString journal;
     int timeout = -1;
-    std::thread elsewhere([&store, &journal, &timeout] {
-        journal = store.pragmaValue(QStringLiteral("journal_mode")).toLower();
-        timeout = store.pragmaValue(QStringLiteral("busy_timeout")).toInt();
+    std::thread elsewhere([store, &journal, &timeout] {
+        journal = store->pragmaValue(QStringLiteral("journal_mode")).toLower();
+        timeout = store->pragmaValue(QStringLiteral("busy_timeout")).toInt();
     });
     elsewhere.join();
 
     QCOMPARE(journal, QStringLiteral("wal"));
     QCOMPARE(timeout, 5000);
+}
+
+void TestDelimitedStore::noConnectionIsLeftBehindWhateverThreadTheStoreDiesOn()
+{
+    QVERIFY(m_tree->writeFile(QStringLiteral("two.csv"), QByteArray("a,b\n1,2\n3,4\n")));
+
+    // Compared against what was there before rather than against nothing, so the
+    // case says something about this store and not about the whole binary.
+    QStringList before = QSqlDatabase::connectionNames();
+    before.sort();
+
+    {
+        auto store
+            = std::make_shared<DelimitedStore>(QDir(m_dir->path()).filePath(QStringLiteral("a.sqlite")));
+        QVERIFY(store->open());
+        QVERIFY(importFile(QStringLiteral("two.csv"), store, QLatin1Char(',')));
+
+        // Two by now: this thread's, from open(), and the importer's, made on
+        // whichever pool thread ran the task.
+        QVERIFY2(QSqlDatabase::connectionNames().size() >= before.size() + 2,
+            "the import has to have opened a connection of its own, or this asserts nothing");
+    }
+
+    QStringList after = QSqlDatabase::connectionNames();
+    after.sort();
+    // close() used to remove the calling thread's connection alone, so the
+    // importer's was left behind for the life of the process -- one per file
+    // opened, each holding a database Mole had finished with.
+    QCOMPARE(after, before);
+
+    // And the other way round, which is what a reader moving to the next file
+    // does: the interface lets go first, so the last reference is dropped by the
+    // task's thread and the store is destroyed there. The connection this thread
+    // opened has to go with it.
+    {
+        auto store
+            = std::make_shared<DelimitedStore>(QDir(m_dir->path()).filePath(QStringLiteral("b.sqlite")));
+        QVERIFY(store->open());
+        QVERIFY(importFile(QStringLiteral("two.csv"), store, QLatin1Char(',')));
+
+        std::thread elsewhere([last = std::move(store)]() mutable { last.reset(); });
+        elsewhere.join();
+    }
+
+    after = QSqlDatabase::connectionNames();
+    after.sort();
+    QCOMPARE(after, before);
 }
 
 MOLE_TEST_MAIN(TestDelimitedStore)

@@ -12,6 +12,7 @@
 
 class QSqlError;
 class QSqlQuery;
+class QTemporaryDir;
 
 namespace mole {
 
@@ -35,13 +36,24 @@ class DelimitedStore : public ITableSource
 public:
     /// `path` is a file the caller owns and will delete. An empty path makes a
     /// private in-memory database, which only the creating thread can use.
-    explicit DelimitedStore(QString path);
+    ///
+    /// `scratch` is the temporary directory `path` lives in, when it is one, and
+    /// the store keeps it alive. A store can outlive the interface that made it:
+    /// an import the reader walked away from goes on writing until it notices,
+    /// and a store whose file has been deleted from under it is no better off
+    /// than a store that has been deleted itself. See MOLE-290.
+    explicit DelimitedStore(QString path, std::shared_ptr<QTemporaryDir> scratch = {});
     ~DelimitedStore();
 
     DelimitedStore(const DelimitedStore&) = delete;
     DelimitedStore& operator=(const DelimitedStore&) = delete;
 
     bool open(QString* errorOut = nullptr);
+    /// Closes and removes **every** connection the store handed out, not only
+    /// the calling thread's. This is the end of the store's life rather than a
+    /// pause in it: a store is closed when it is being destroyed, and which
+    /// thread that happens on is whichever of the reader and the writer let go
+    /// of it last.
     void close();
     bool isOpen() const { return m_open; }
 
@@ -92,6 +104,14 @@ private:
     QStringList shape() const;
 
     QString m_path;
+    /// The directory the file lives in, held only so that it outlives the store.
+    /// Empty when the caller manages the path itself.
+    std::shared_ptr<QTemporaryDir> m_scratch;
+    /// Every connection name handed out, so close() can remove all of them. The
+    /// importer's connection is made on a pool thread and used to be left behind
+    /// whichever way the store ended.
+    mutable QMutex m_connectionGuard;
+    mutable QStringList m_connections;
     /// Guards m_headers alone: the importer settles the columns on a pool thread
     /// while the grid, already attached, is reading through the same store.
     mutable QMutex m_shapeGuard;

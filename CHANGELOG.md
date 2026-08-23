@@ -13,6 +13,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-23 #MOLE-290 Moving to another file while a large one is still being imported no longer risks taking the application with it: the import holds the scratch database it writes to, so it runs out on its own and reports nothing, and every connection it opened is closed when the store goes
 2026-08-23 #MOLE-289 A long file of records can be read while it is still being imported, instead of freezing the window for seconds at a time and then reading as an empty table — the scratch database is in WAL with a busy timeout on every connection, and a read that fails now says so rather than answering as a file with nothing in it
 2026-08-22 #MOLE-285 A file of JSON records opens as a table when its records are flat, with nested values shown as JSON in the cell — paged, filtered and counted over the whole file like any other grid, and shown as source when the records are not objects
 2026-08-22 #MOLE-284 A preview that reads a file and cannot show it says so and falls back to the next viewer down instead of leaving an empty pane — a video with no decoder and an image this build cannot decode now open the file's own facts, with a line saying which viewer gave up

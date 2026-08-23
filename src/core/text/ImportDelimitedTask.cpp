@@ -4,6 +4,7 @@
 #include "core/text/DelimitedStreamParser.h"
 #include "core/text/DelimitedText.h"
 
+#include <QScopeGuard>
 #include <QStringDecoder>
 
 #include <algorithm>
@@ -43,16 +44,22 @@ namespace {
 } // namespace
 
 ImportDelimitedTask::ImportDelimitedTask(
-    FileSystemPtr fileSystem, VfsUri target, DelimitedStore* store, QObject* parent)
+    FileSystemPtr fileSystem, VfsUri target, std::shared_ptr<DelimitedStore> store, QObject* parent)
     : Task(QStringLiteral("Import %1").arg(target.fileName()), parent)
     , m_fileSystem(std::move(fileSystem))
     , m_target(std::move(target))
-    , m_store(store)
+    , m_store(std::move(store))
 {
 }
 
 void ImportDelimitedTask::run()
 {
+    // The store is let go of the moment this returns, whichever way it returns.
+    // A finished task stays in the task list for an hour so somebody can see what
+    // ran, and holding the store that long would keep a scratch database, its
+    // connections and its temporary directory alive for every file previewed.
+    const auto release = qScopeGuard([this] { m_store.reset(); });
+
     if (!m_fileSystem || !m_store) {
         fail(VfsError::make(VfsError::NotFound, QStringLiteral("Nothing is mounted for this file")));
         return;

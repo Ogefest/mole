@@ -24,6 +24,8 @@
 
 #include "core/CoreMetaTypes.h"
 #include "core/data/FileType.h"
+#include "core/tasks/TaskManager.h"
+#include "core/text/ImportJsonLinesTask.h"
 #include "core/vfs/VfsManager.h"
 #include "core/vfs/backends/LocalFileSystem.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
@@ -223,6 +225,7 @@ private slots:
     void anAbsentKeyIsAnEmptyCellAndANullIsNot();
     void aFileWhoseRecordsAreNotObjectsShowsItsSourceAndSaysWhy();
     void askingForTheSourceOfAFileOfRecordsIsObeyedAndSaysNothing();
+    void movingToAnotherFileWhileAnImportRunsLeavesItToFinishOnItsOwn();
     void directoriesGetNothing();
     void imageProviderOnlyClaimsWhatQtCanDecode();
     void pdfProviderClaimsPdfsOnlyWhenItCanRenderThem();
@@ -1488,6 +1491,71 @@ void TestPreview::askingForTheSourceOfAFileOfRecordsIsObeyedAndSaysNothing()
     QVERIFY(nextViewer);
     QVERIFY(nextViewer->isShowingSource());
     QVERIFY2(nextViewer->sourceReason().isEmpty(), "the reader's own answer needs no explanation");
+}
+
+void TestPreview::movingToAnotherFileWhileAnImportRunsLeavesItToFinishOnItsOwn()
+{
+    // Long enough that the import is certainly still running when the next file
+    // opens. At a JSON parse per record that is seconds of work, and moving on
+    // costs the reader one arrow key -- which is the ordinary way to hit this,
+    // not an unusual one.
+    QByteArray records;
+    records.reserve(200000 * 40);
+    for (int i = 0; i < 200000; ++i)
+        records += QStringLiteral("{\"id\":%1,\"name\":\"name %1\"}\n").arg(i).toUtf8();
+    QVERIFY(m_tree->writeFile(QStringLiteral("huge.jsonl"), records));
+    QVERIFY(m_tree->writeFile(QStringLiteral("next.jsonl"), jsonLines({ QStringLiteral(R"({"id":1})") })));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("huge.jsonl"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<JsonLinesPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+
+    // Underway, and asserted on the condition: records in the grid mean the task
+    // is inside its loop with the store bound and a batch in its hands.
+    QVERIFY(waitFor([viewer] { return viewer->isImporting() && viewer->table()->totalRows() > 0; }, 30000));
+
+    // The task itself, so how it ends is asserted rather than assumed.
+    QPointer<Task> importing;
+    for (Task* task : m_app->services().tasks->tasks()) {
+        if (qobject_cast<ImportJsonLinesTask*>(task) && !task->isFinished())
+            importing = task;
+    }
+    QVERIFY2(importing, "the import has to still be running, or this case is testing nothing");
+
+    // Watched from here, because what the fault says out loud is a warning: the
+    // write into the destroyed store fails, and a failure with no message is
+    // reported against a file the reader has already left. `make asan` sees the
+    // use-after-free itself; this sees it in a plain build too.
+    CapturedWarnings warnings;
+
+    // The next file. The tab deletes the viewer before the new one arrives, and
+    // the viewer used to take the store and the scratch directory with it --
+    // while the task was still binding rows into that database from a pool
+    // thread.
+    PreviewTabController* next = openPreview(QStringLiteral("next.jsonl"));
+    QVERIFY(next);
+    auto* nextViewer = qobject_cast<JsonLinesPreviewController*>(next->viewer());
+    QVERIFY(nextViewer);
+
+    // The tab deletes the old viewer with deleteLater(), and a deferred delete
+    // needs an event loop turn. The application has one running; a test has to
+    // ask, and not asking would leave the outgoing viewer alive for the whole
+    // case -- which is to say it would test nothing at all.
+    drainEvents();
+
+    // The outgoing task runs out on its own, into a store nobody is reading.
+    QVERIFY(waitFor([importing] { return importing && importing->isFinished(); }, 30000));
+    // Cancelled and not Failed: a store the reader has moved on from is not an
+    // I/O error, and there is nobody left to report one to.
+    QCOMPARE(importing->state(), Task::State::Cancelled);
+    QVERIFY2(!warnings.contains(QStringLiteral("failed")),
+        qPrintable(
+            QStringLiteral("the import reported a failure on its way out: %1").arg(warnings.joined())));
+
+    // And the file that replaced it is the one on the screen.
+    QVERIFY(waitFor(
+        [nextViewer] { return !nextViewer->isImporting() && nextViewer->table()->rowCount() == 1; }, 30000));
 }
 
 void TestPreview::directoriesGetNothing()

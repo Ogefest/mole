@@ -3,6 +3,7 @@
 #include <QMutexLocker>
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QTemporaryDir>
 #include <QThread>
 #include <QUuid>
 #include <QVariant>
@@ -28,8 +29,9 @@ namespace {
 
 } // namespace
 
-DelimitedStore::DelimitedStore(QString path)
+DelimitedStore::DelimitedStore(QString path, std::shared_ptr<QTemporaryDir> scratch)
     : m_path(std::move(path))
+    , m_scratch(std::move(scratch))
 {
     if (m_path.isEmpty())
         m_path = QStringLiteral(":memory:");
@@ -88,6 +90,12 @@ QSqlDatabase DelimitedStore::connectionForCurrentThread() const
     // reason: WAL removes almost all of the contention and a checkpoint is the
     // moment it does not, so a reader that met one must wait rather than fail.
     pragma.exec(QStringLiteral("PRAGMA busy_timeout = %1").arg(kBusyTimeoutMs));
+
+    {
+        const QMutexLocker held(&m_connectionGuard);
+        if (!m_connections.contains(name))
+            m_connections.append(name);
+    }
     return database;
 }
 
@@ -122,15 +130,25 @@ void DelimitedStore::close()
         return;
     m_open = false;
 
-    const QString name = connectionNameFor(m_path);
-    if (QSqlDatabase::contains(name)) {
-        // The scope matters: QSqlDatabase::removeDatabase warns loudly if any
-        // copy of the connection is still alive when it is called.
-        {
-            QSqlDatabase database = QSqlDatabase::database(name, false);
-            if (database.isOpen())
-                database.close();
-        }
+    QStringList names;
+    {
+        const QMutexLocker held(&m_connectionGuard);
+        names.swap(m_connections);
+    }
+
+    // Every connection the store handed out, and not the calling thread's alone.
+    // The importer writes through one of its own on a pool thread, so closing
+    // only the caller's left that one behind for the life of the process --
+    // whichever way the store ended, and however many files were opened.
+    for (const QString& name : names) {
+        if (!QSqlDatabase::contains(name))
+            continue;
+        // Removed without being fetched first. Taking a copy is what the old
+        // close() did, to avoid removeDatabase's "still in use" warning, and it
+        // cannot be done here: asking for a connection that belongs to another
+        // thread is itself a warning, and one of these two always does. Removing
+        // it deletes the driver, which closes the file -- and nothing holds a
+        // copy at this point, because a store is only closed as it is destroyed.
         QSqlDatabase::removeDatabase(name);
     }
 }

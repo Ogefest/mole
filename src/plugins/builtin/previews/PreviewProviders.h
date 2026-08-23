@@ -529,8 +529,10 @@ private:
     PluginServices m_services;
     TableModel* m_table = nullptr;
     FileEntry m_entry;
-    std::unique_ptr<QTemporaryDir> m_scratch;
-    std::unique_ptr<DelimitedStore> m_store;
+    /// Shared with the import task, so a reader moving to the next file drops
+    /// the interface's reference and not the store: the outgoing task holds it,
+    /// and the scratch directory with it, until it notices it was cancelled.
+    std::shared_ptr<DelimitedStore> m_store;
     QChar m_separator;
     bool m_firstRowIsHeader = true;
     bool m_importing = false;
@@ -735,8 +737,10 @@ private:
     PluginServices m_services;
     TableModel* m_table = nullptr;
     FileEntry m_entry;
-    std::unique_ptr<QTemporaryDir> m_scratch;
-    std::unique_ptr<DelimitedStore> m_store;
+    /// Shared with the import task, so a reader moving to the next file drops
+    /// the interface's reference and not the store: the outgoing task holds it,
+    /// and the scratch directory with it, until it notices it was cancelled.
+    std::shared_ptr<DelimitedStore> m_store;
     QPointer<TextPreviewController> m_text;
     bool m_importing = false;
     /// What the reader asked for.

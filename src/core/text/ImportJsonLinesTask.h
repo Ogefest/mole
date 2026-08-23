@@ -6,6 +6,8 @@
 #include <QJsonObject>
 #include <QStringList>
 
+#include <memory>
+
 namespace mole {
 
 class DelimitedStore;
@@ -37,9 +39,14 @@ class ImportJsonLinesTask final : public Task
     Q_OBJECT
 
 public:
-    /// `store` is owned by the caller and must outlive the task.
-    ImportJsonLinesTask(
-        FileSystemPtr fileSystem, VfsUri target, DelimitedStore* store, QObject* parent = nullptr);
+    /// The task holds a reference to `store` rather than a pointer to it. The
+    /// interface lets go of the store the moment the reader moves to another
+    /// file -- and this task may be halfway through a batch of inserts on a pool
+    /// thread when that happens, because a cancellation is a flag it reads
+    /// between chunks. Shared ownership makes that a write into a store nobody
+    /// is reading rather than a write into freed memory. See MOLE-290.
+    ImportJsonLinesTask(FileSystemPtr fileSystem, VfsUri target, std::shared_ptr<DelimitedStore> store,
+        QObject* parent = nullptr);
 
     /// How much of the file the columns are decided from. The delimited
     /// importer's own sample, for the same reason: re-guessing further down would
@@ -85,7 +92,7 @@ private:
 
     FileSystemPtr m_fileSystem;
     VfsUri m_target;
-    DelimitedStore* m_store = nullptr;
+    std::shared_ptr<DelimitedStore> m_store;
     QStringList m_headers;
     qint64 m_importedRows = 0;
     qint64 m_skippedLines = 0;
