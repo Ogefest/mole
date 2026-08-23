@@ -10,6 +10,8 @@
 #include <QList>
 #include <QMutex>
 #include <QSqlDatabase>
+
+class QSqlQuery;
 #include <QString>
 
 #include <atomic>
@@ -244,6 +246,10 @@ private:
     /// Warns when `what` is being asked from the thread that draws the window.
     void checkNotOnTheDrawingThread(const char* what) const;
     Result<void> applyMigrations();
+    /// A failure to report, from whichever of the two has it. A statement that
+    /// failed carries its own error and the connection does not -- see the note on
+    /// the query overload.
+    static Result<void> sqlError(const QSqlQuery& query, const QString& context);
     static Result<void> sqlError(const QSqlDatabase& db, const QString& context);
 
     QString m_filePath;

@@ -1,5 +1,7 @@
 #include "core/text/DelimitedStore.h"
 
+#include "core/data/SqliteError.h"
+
 #include <QMutexLocker>
 #include <QSqlError>
 #include <QSqlQuery>
@@ -326,17 +328,12 @@ void DelimitedStore::bindFilter(QSqlQuery& query, const QString& filter)
 
 QString DelimitedStore::describe(const QSqlError& error)
 {
-    // SQLITE_BUSY and SQLITE_LOCKED. Told apart from an I/O error because they
-    // are a different thing to report and a different thing to do about: a
-    // locked database is another connection holding the file, and an import
-    // that reported one as a fault of the disk sent whoever read it looking in
-    // the wrong place entirely.
-    const QString code = error.nativeErrorCode();
-    if (code == QLatin1String("5") || code == QLatin1String("6")) {
-        return QStringLiteral("The scratch database was still locked by another connection after %1 seconds")
-            .arg(kBusyTimeoutMs / 1000);
-    }
-    return error.text();
+    // Shared with the index, which reports the same failures on a database with
+    // the same timeout -- and had none of these words at all. The comparison this
+    // used to make was on the whole native code, which Qt gives as SQLite's
+    // *extended* one wherever there is one, so every busy code but the bare 5 fell
+    // through to the driver's text. See MOLE-306.
+    return sqlite::describe(error, kBusyTimeoutMs);
 }
 
 qint64 DelimitedStore::totalRows() const

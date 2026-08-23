@@ -69,6 +69,7 @@ private slots:
     void anImportWhoseLastCommitFailedSaysSoRatherThanFinishing();
     void aWriteRefusedByAnotherConnectionIsReportedAsALockedDatabase();
     void aWriteWithNoRoomLeftIsToldApartFromALockedDatabase();
+    void aWriteRefusedBecauseTheDatabaseMovedOnIsNotDescribedAsAWait();
     void everyConnectionCarriesTheSettingsAndNotOnlyTheOpenersOwn();
     void noConnectionIsLeftBehindWhateverThreadTheStoreDiesOn();
 
@@ -860,7 +861,7 @@ void TestDelimitedStore::aWriteWithNoRoomLeftIsToldApartFromALockedDatabase()
 
     QSqlDatabase writing = storeConnectionOn(path);
     QVERIFY(writing.isValid());
-    QVERIFY2(sqlite::capAt(writing, 3), "the cap has to take, or the rows below are unhindered");
+    QVERIFY2(sqlite::capAtCurrentSize(writing), "the cap has to take, or the rows below are unhindered");
 
     QList<QStringList> rows;
     rows.reserve(4000);
@@ -875,6 +876,40 @@ void TestDelimitedStore::aWriteWithNoRoomLeftIsToldApartFromALockedDatabase()
     // about another connection.
     QVERIFY2(error.contains(QStringLiteral("disk is full")), qPrintable(error));
     QVERIFY2(!error.contains(QStringLiteral("locked by another connection")), qPrintable(error));
+}
+
+void TestDelimitedStore::aWriteRefusedBecauseTheDatabaseMovedOnIsNotDescribedAsAWait()
+{
+    // Qt reports SQLite's extended code wherever there is one, and describe() used
+    // to compare the whole of it against "5" and "6" -- so every busy code but the
+    // bare one arrived as the driver's "database is locked Unable to fetch row".
+    // 517 is SQLITE_BUSY_SNAPSHOT: another connection wrote while this one had a
+    // read open, so what it is looking at is no longer the database. Nothing
+    // waited and nothing is holding the file, which is why "still locked, after
+    // five seconds" is the wrong thing to tell anybody about it -- being told to
+    // wait is watching a progress bar that will never move. See MOLE-306.
+    const QString path = QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite"));
+    DelimitedStore store(path);
+    QVERIFY(store.open());
+    QVERIFY(store.beginImport({ QStringLiteral("id"), QStringLiteral("name") }));
+
+    QSqlDatabase writing = storeConnectionOn(path);
+    QVERIFY(writing.isValid());
+    // Inside the transaction the import already opened, which is the state this
+    // happens in.
+    sqlite::StaleReadSnapshot stale(writing, path);
+    QVERIFY2(stale.isStale(), "the snapshot has to go stale, or the write below is unhindered");
+
+    QString error;
+    QVERIFY2(!store.addRows({ { QStringLiteral("1"), QStringLiteral("one") } }, &error),
+        "a write from a stale snapshot was reported as a write that landed");
+
+    QVERIFY2(
+        error.contains(QStringLiteral("changed the database while this one was reading")), qPrintable(error));
+    QVERIFY2(!error.contains(QStringLiteral("still locked")), qPrintable(error));
+    QVERIFY2(!error.contains(QStringLiteral("seconds")), qPrintable(error));
+    // And not the driver's own words, which is what arrived before.
+    QVERIFY2(!error.contains(QStringLiteral("Unable to fetch row")), qPrintable(error));
 }
 
 void TestDelimitedStore::everyConnectionCarriesTheSettingsAndNotOnlyTheOpenersOwn()

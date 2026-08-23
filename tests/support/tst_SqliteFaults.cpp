@@ -28,6 +28,7 @@ private slots:
     void andItCostsNoTimeAtAll();
     void aCapMakesTheNextWriteSayTheDiskIsFull();
     void theLockAndTheCapAreBothUndoneAfterwards();
+    void aStaleReadSnapshotIsRefusedWithAnExtendedCode();
     void anExtendedCodeIsStillReadAsWhatItIs();
 
 private:
@@ -162,6 +163,33 @@ void TestSqliteFaults::theLockAndTheCapAreBothUndoneAfterwards()
     QSqlQuery more(store);
     QVERIFY2(more.exec(QStringLiteral("INSERT INTO rows_ (c0) VALUES ('z')")),
         qPrintable(more.lastError().text()));
+}
+
+void TestSqliteFaults::aStaleReadSnapshotIsRefusedWithAnExtendedCode()
+{
+    // The third arrangement, and the one that produces an *extended* code: a
+    // connection reads, another writes, and the first one's write is refused at
+    // once -- without the busy handler being consulted at all, because there is
+    // nothing to wait for. 517 is SQLITE_BUSY_SNAPSHOT, and a comparison against
+    // "5" does not see it. See MOLE-306.
+    QSqlDatabase store = openLikeAStore();
+    QVERIFY(store.isOpen());
+    QSqlDatabase found = sqlite::connectionOn(m_path);
+    QVERIFY(found.isValid());
+
+    QElapsedTimer timer;
+    timer.start();
+    sqlite::StaleReadSnapshot stale(found, m_path);
+    QVERIFY2(stale.isStale(), "the snapshot has to go stale, or the write below is unhindered");
+
+    QSqlQuery write(store);
+    QVERIFY2(!write.exec(QStringLiteral("INSERT INTO rows_ (c0) VALUES ('too late')")),
+        "a write from a stale snapshot has to be refused");
+    QCOMPARE(write.lastError().nativeErrorCode(), QStringLiteral("517"));
+    QCOMPARE(sqlite::primaryCode(write.lastError().nativeErrorCode()), sqlite::kBusy);
+    // Nothing waited: this is not the busy timeout expiring, which is the whole
+    // reason it needs a sentence of its own.
+    QVERIFY2(timer.elapsed() < 1000, qPrintable(QString::number(timer.elapsed())));
 }
 
 void TestSqliteFaults::anExtendedCodeIsStillReadAsWhatItIs()

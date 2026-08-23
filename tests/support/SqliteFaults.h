@@ -50,7 +50,16 @@ bool stopWaitingForLocks(QSqlDatabase& connection);
 /// Caps the database this connection sees at `pages`, so the write that needs one
 /// more fails with `SQLITE_FULL`. Three pages is enough to hold a small schema and
 /// not enough for rows.
+///
+/// False when the cap did not take, and it will not go below the pages already in
+/// use -- which is why a database with a schema of any size wants the call below
+/// instead of a number somebody guessed.
 bool capAt(QSqlDatabase& connection, int pages);
+
+/// Caps the database at exactly what it already uses, so there is no room for
+/// anything more. What a full disk looks like from inside SQLite, whatever the
+/// schema happens to cost.
+bool capAtCurrentSize(QSqlDatabase& connection);
 
 /// Holds the write lock on a database for as long as it is alive, so any other
 /// connection's write is refused. One writer at a time is the rule in WAL, which
@@ -73,6 +82,43 @@ private:
     bool m_held = false;
 };
 
+/// Makes a connection's read snapshot stale, so its next write is refused with
+/// `SQLITE_BUSY_SNAPSHOT` -- an *extended* code, and the one a comparison against
+/// "5" does not recognise.
+///
+/// What it arranges is the real sequence: this connection opens a transaction and
+/// reads, another connection writes and commits, and what the first is looking at
+/// is no longer the database. SQLite refuses its write **at once**, without
+/// consulting the busy handler at all -- there is nothing to wait for, which is
+/// exactly why "still locked, try again in a moment" is the wrong thing to tell
+/// anybody about it.
+///
+/// The transaction is left open on purpose: the case wants the connection in that
+/// state. Rolling it back is the caller's, or the store's -- and where the
+/// connection was *already* in a transaction, which is what an import looks like,
+/// this leaves that one alone.
+class StaleReadSnapshot
+{
+public:
+    /// `connection` is the one whose write should fail; `databasePath` is the file,
+    /// so this can open a second connection of its own to move it on.
+    StaleReadSnapshot(QSqlDatabase& connection, const QString& databasePath);
+    ~StaleReadSnapshot();
+
+    StaleReadSnapshot(const StaleReadSnapshot&) = delete;
+    StaleReadSnapshot& operator=(const StaleReadSnapshot&) = delete;
+
+    /// False when the sequence could not be arranged, which a case has to check:
+    /// asserting on a write that nothing had made stale proves nothing.
+    bool isStale() const { return m_stale; }
+
+private:
+    QSqlDatabase m_connection;
+    QString m_moverName;
+    bool m_began = false;
+    bool m_stale = false;
+};
+
 /// SQLite's own numbers, so a case can say which failure it meant.
 ///
 /// Qt reports the *extended* code where SQLite gives one -- 517 for
@@ -82,6 +128,7 @@ private:
 constexpr int kBusy = 5;
 constexpr int kLocked = 6;
 constexpr int kFull = 13;
+constexpr int kBusySnapshot = 517;
 
 /// The primary code out of whatever the driver reported.
 int primaryCode(const QString& nativeErrorCode);

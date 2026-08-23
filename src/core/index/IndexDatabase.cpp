@@ -1,5 +1,7 @@
 #include "core/index/IndexDatabase.h"
 
+#include "core/data/SqliteError.h"
+
 #include <QDir>
 #include <QFileInfo>
 #include <QMutexLocker>
@@ -14,6 +16,11 @@ namespace mole {
 namespace {
 
     constexpr int kSchemaVersion = 5;
+
+    /// How long a write waits for another connection before giving up. Named
+    /// because the sentence a reader gets says how long that was -- see
+    /// sqlite::describe().
+    constexpr int kBusyTimeoutMs = 5000;
 
 } // namespace
 
@@ -62,7 +69,7 @@ QSqlDatabase IndexDatabase::connectionForCurrentThread() const
     pragma.exec(QStringLiteral("PRAGMA journal_mode=WAL"));
     pragma.exec(QStringLiteral("PRAGMA synchronous=NORMAL"));
     pragma.exec(QStringLiteral("PRAGMA foreign_keys=ON"));
-    pragma.exec(QStringLiteral("PRAGMA busy_timeout=5000"));
+    pragma.exec(QStringLiteral("PRAGMA busy_timeout=%1").arg(kBusyTimeoutMs));
 
     m_connections.insert(thread, name);
     return db;
@@ -158,10 +165,28 @@ bool IndexDatabase::isOpen() const
     return m_open;
 }
 
+Result<void> IndexDatabase::sqlError(const QSqlQuery& query, const QString& context)
+{
+    // The query's error and not the connection's, which is the difference between
+    // an explanation and a colon with nothing after it. A statement that fails
+    // records its error on itself: QSqlDatabase::lastError() is about opening,
+    // transactions and commits, and for a failed INSERT it is empty -- so
+    // "Inserting indexed file: " is what every write failure in this file used to
+    // report. Found writing the case for MOLE-306, which was about the *wording*
+    // of a locked database and could say nothing at all here until this was fixed.
+    return Result<void>::failure(VfsError::IoError,
+        QStringLiteral("%1: %2").arg(context, sqlite::describe(query.lastError(), kBusyTimeoutMs)));
+}
+
 Result<void> IndexDatabase::sqlError(const QSqlDatabase& db, const QString& context)
 {
-    return Result<void>::failure(
-        VfsError::IoError, QStringLiteral("%1: %2").arg(context, db.lastError().text()));
+    // Every write failure in this file arrives here, and until MOLE-306 every one
+    // of them arrived as the driver's own text: "database is locked Unable to
+    // fetch row" behind whatever this was doing. A locked index is another
+    // connection holding the file and waiting is the answer, which is worth
+    // saying, and it is not what a full disk needs.
+    return Result<void>::failure(VfsError::IoError,
+        QStringLiteral("%1: %2").arg(context, sqlite::describe(db.lastError(), kBusyTimeoutMs)));
 }
 
 Result<void> IndexDatabase::applyMigrations()
@@ -173,7 +198,7 @@ Result<void> IndexDatabase::applyMigrations()
 
     QSqlQuery query(db);
     if (!query.exec(QStringLiteral("PRAGMA user_version")))
-        return sqlError(db, QStringLiteral("Reading schema version"));
+        return sqlError(query, QStringLiteral("Reading schema version"));
 
     int version = 0;
     if (query.next())
@@ -192,7 +217,7 @@ Result<void> IndexDatabase::applyMigrations()
             QSqlQuery migration(db);
             if (!migration.exec(statement)) {
                 db.rollback();
-                return sqlError(db, QStringLiteral("Applying migration %1").arg(number));
+                return sqlError(migration, QStringLiteral("Applying migration %1").arg(number));
             }
         }
         if (!db.commit())
@@ -313,7 +338,7 @@ Result<void> IndexDatabase::applyMigrations()
 
     QSqlQuery bump(db);
     if (!bump.exec(QStringLiteral("PRAGMA user_version=%1").arg(kSchemaVersion)))
-        return sqlError(db, QStringLiteral("Writing schema version"));
+        return sqlError(bump, QStringLiteral("Writing schema version"));
 
     return {};
 }
@@ -334,7 +359,7 @@ Result<qint64> IndexDatabase::upsertVolume(const VfsUri& root, const QString& la
     select.prepare(QStringLiteral("SELECT id FROM volumes WHERE root_uri = ?"));
     select.addBindValue(rootUri);
     if (!select.exec())
-        return sqlError(db, QStringLiteral("Looking up volume")).error();
+        return sqlError(select, QStringLiteral("Looking up volume")).error();
     if (select.next())
         return select.value(0).toLongLong();
 
@@ -343,7 +368,7 @@ Result<qint64> IndexDatabase::upsertVolume(const VfsUri& root, const QString& la
     insert.addBindValue(rootUri);
     insert.addBindValue(label.isEmpty() ? rootUri : label);
     if (!insert.exec())
-        return sqlError(db, QStringLiteral("Creating volume")).error();
+        return sqlError(insert, QStringLiteral("Creating volume")).error();
 
     return insert.lastInsertId().toLongLong();
 }
@@ -362,13 +387,13 @@ Result<void> IndexDatabase::removeVolume(qint64 volumeId)
     files.prepare(QStringLiteral("DELETE FROM files WHERE volume_id = ?"));
     files.addBindValue(volumeId);
     if (!files.exec())
-        return sqlError(db, QStringLiteral("Removing volume files"));
+        return sqlError(files, QStringLiteral("Removing volume files"));
 
     QSqlQuery volume(db);
     volume.prepare(QStringLiteral("DELETE FROM volumes WHERE id = ?"));
     volume.addBindValue(volumeId);
     if (!volume.exec())
-        return sqlError(db, QStringLiteral("Removing volume"));
+        return sqlError(volume, QStringLiteral("Removing volume"));
     return {};
 }
 
@@ -390,7 +415,7 @@ Result<qint64> IndexDatabase::beginScan(qint64 volumeId)
     take.addBindValue(volumeId);
     if (!take.exec()) {
         db.rollback();
-        return sqlError(db, QStringLiteral("Taking a scan generation")).error();
+        return sqlError(take, QStringLiteral("Taking a scan generation")).error();
     }
 
     QSqlQuery read(db);
@@ -413,7 +438,7 @@ Result<qint64> IndexDatabase::beginScan(qint64 volumeId)
     sweep.addBindValue(visible);
     if (!sweep.exec()) {
         db.rollback();
-        return sqlError(db, QStringLiteral("Clearing an abandoned scan")).error();
+        return sqlError(sweep, QStringLiteral("Clearing an abandoned scan")).error();
     }
 
     if (!db.commit()) {
@@ -449,7 +474,7 @@ Result<QHash<QString, qint64>> IndexDatabase::directoryTimes(qint64 volumeId) co
                                  "AND v.last_scan IS NOT NULL AND f.mtime < v.last_scan"));
     query.addBindValue(volumeId);
     if (!query.exec())
-        return sqlError(db, QStringLiteral("Reading the last scan's folders")).error();
+        return sqlError(query, QStringLiteral("Reading the last scan's folders")).error();
 
     QHash<QString, qint64> times;
     while (query.next())
@@ -492,7 +517,7 @@ Result<qint64> IndexDatabase::carryForward(qint64 volumeId, qint64 generation, c
     rows.addBindValue(prefix + QStringLiteral("/%"));
     if (!rows.exec()) {
         db.rollback();
-        return sqlError(db, QStringLiteral("Carrying rows forward")).error();
+        return sqlError(rows, QStringLiteral("Carrying rows forward")).error();
     }
     const qint64 carried = rows.numRowsAffected();
 
@@ -509,7 +534,7 @@ Result<qint64> IndexDatabase::carryForward(qint64 volumeId, qint64 generation, c
     facts.addBindValue(prefix + QStringLiteral("/%"));
     if (!facts.exec()) {
         db.rollback();
-        return sqlError(db, QStringLiteral("Carrying a subtree's facts forward")).error();
+        return sqlError(facts, QStringLiteral("Carrying a subtree's facts forward")).error();
     }
 
     if (!db.commit()) {
@@ -542,7 +567,7 @@ Result<void> IndexDatabase::commitScan(
     previous.addBindValue(generation);
     if (!previous.exec()) {
         db.rollback();
-        return sqlError(db, QStringLiteral("Dropping the previous scan"));
+        return sqlError(previous, QStringLiteral("Dropping the previous scan"));
     }
 
     QSqlQuery swap(db);
@@ -560,7 +585,7 @@ Result<void> IndexDatabase::commitScan(
     swap.addBindValue(volumeId);
     if (!swap.exec()) {
         db.rollback();
-        return sqlError(db, QStringLiteral("Updating volume"));
+        return sqlError(swap, QStringLiteral("Updating volume"));
     }
 
     if (!db.commit()) {
@@ -590,7 +615,7 @@ Result<void> IndexDatabase::abandonScan(qint64 volumeId, qint64 generation)
     query.addBindValue(generation);
     query.addBindValue(volumeId);
     if (!query.exec())
-        return sqlError(db, QStringLiteral("Abandoning a scan"));
+        return sqlError(query, QStringLiteral("Abandoning a scan"));
     return {};
 }
 
@@ -610,7 +635,7 @@ Result<QList<IndexVolume>> IndexDatabase::volumes() const
     if (!query.exec(QStringLiteral("SELECT id, root_uri, label, last_scan, file_count, "
                                    "scan_incremental, scan_metadata, scan_archives "
                                    "FROM volumes ORDER BY label")))
-        return sqlError(db, QStringLiteral("Listing volumes")).error();
+        return sqlError(query, QStringLiteral("Listing volumes")).error();
 
     QList<IndexVolume> out;
     while (query.next()) {
@@ -673,7 +698,7 @@ Result<void> IndexDatabase::insertBatch(qint64 volumeId, qint64 generation, cons
         query.addBindValue(file.uri.isEmpty() ? QVariant() : QVariant(file.uri));
         if (!query.exec()) {
             db.rollback();
-            return sqlError(db, QStringLiteral("Inserting indexed file"));
+            return sqlError(query, QStringLiteral("Inserting indexed file"));
         }
 
         if (file.facts.isEmpty())
@@ -686,7 +711,7 @@ Result<void> IndexDatabase::insertBatch(qint64 volumeId, qint64 generation, cons
             fact.addBindValue(one.hasNumber ? QVariant(one.number) : QVariant());
             if (!fact.exec()) {
                 db.rollback();
-                return sqlError(db, QStringLiteral("Inserting a file's own facts"));
+                return sqlError(fact, QStringLiteral("Inserting a file's own facts"));
             }
         }
     }
@@ -807,7 +832,7 @@ Result<QList<IndexSearchHit>> IndexDatabase::search(const SearchQuery& query) co
         statement.addBindValue(value);
 
     if (!statement.exec())
-        return sqlError(db, QStringLiteral("Searching index")).error();
+        return sqlError(statement, QStringLiteral("Searching index")).error();
 
     QList<IndexSearchHit> hits;
     while (statement.next()) {
@@ -856,7 +881,7 @@ Result<QStringList> IndexDatabase::factKeys(qint64 volumeId) const
         query.prepare(sql + QStringLiteral(" ORDER BY m.key"));
     }
     if (!query.exec())
-        return sqlError(db, QStringLiteral("Listing the facts a volume holds")).error();
+        return sqlError(query, QStringLiteral("Listing the facts a volume holds")).error();
 
     QStringList keys;
     while (query.next())
@@ -889,7 +914,7 @@ Result<qint64> IndexDatabase::fileCount(qint64 volumeId) const
         query.prepare(sql);
     }
     if (!query.exec())
-        return sqlError(db, QStringLiteral("Counting files")).error();
+        return sqlError(query, QStringLiteral("Counting files")).error();
     if (!query.next())
         return qint64 { 0 };
     return query.value(0).toLongLong();

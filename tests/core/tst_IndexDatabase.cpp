@@ -1,4 +1,5 @@
 #include "support/MoleTestMain.h"
+#include "support/SqliteFaults.h"
 #include "support/TestSupport.h"
 
 #include "core/index/IndexDatabase.h"
@@ -27,6 +28,8 @@ private slots:
     void reopeningIsIdempotent();
     void upsertVolumeReturnsSameIdForSameRoot();
     void insertBatchStoresRows();
+    void aWriteRefusedByAnotherConnectionSaysTheIndexWasLocked();
+    void aWriteThatRanOutOfRoomSaysWhatHappenedRatherThanNothing();
     void searchMatchesSubstring();
     void searchIsCaseInsensitiveForNonAsciiByDefault();
     void searchHonoursCaseSensitiveFlag();
@@ -200,6 +203,82 @@ void TestIndexDatabase::insertBatchStoresRows()
     // An empty batch is a legal no-op, not an error.
     QVERIFY(m_db->insertBatch(volume, 1, {}).ok());
     QCOMPARE(m_db->fileCount(volume).value(), 2);
+}
+
+void TestIndexDatabase::aWriteRefusedByAnotherConnectionSaysTheIndexWasLocked()
+{
+    // Every write failure in IndexDatabase arrives through one helper, and until
+    // MOLE-306 it arrived as the driver's own text: "database is locked Unable to
+    // fetch row" behind whatever the index was doing. A locked index is another
+    // connection holding the file and waiting is the answer, which is a different
+    // thing to be told than that the disk is full.
+    //
+    // Arranged with the equipment rather than by waiting: the index has the same
+    // five-second busy timeout as the scratch store, and a suite that waits it out
+    // once waits it out on every machine for ever. See tests/support/SqliteFaults.h.
+    const QString path = QDir(m_dir->path()).filePath(QStringLiteral("index.sqlite"));
+    Result<qint64> volume
+        = m_db->upsertVolume(VfsUri::fromString(QStringLiteral("file:///data")), QStringLiteral("vol"));
+    QVERIFY(volume.ok());
+
+    QSqlDatabase writing = sqlite::connectionOn(path);
+    QVERIFY2(writing.isValid(), "the index's connection has to be findable, or this case tests nothing");
+    QVERIFY(sqlite::stopWaitingForLocks(writing));
+
+    sqlite::WriteLock held(path);
+    QVERIFY2(held.isHeld(), "the lock has to be taken, or the write below is unhindered");
+
+    IndexedFile row;
+    row.name = QStringLiteral("a.txt");
+    row.path = QStringLiteral("/data/a.txt");
+    row.parentPath = QStringLiteral("/data");
+    row.extension = QStringLiteral("txt");
+    const Result<void> written = m_db->insertBatch(volume.value(), 1, { row });
+
+    QVERIFY2(!written.ok(), "a write into a locked index was reported as a write that landed");
+    QVERIFY2(written.error().message.contains(QStringLiteral("locked by another connection")),
+        qPrintable(written.error().message));
+    QVERIFY2(!written.error().message.contains(QStringLiteral("Unable to fetch row")),
+        qPrintable(written.error().message));
+}
+
+void TestIndexDatabase::aWriteThatRanOutOfRoomSaysWhatHappenedRatherThanNothing()
+{
+    // The fault found while writing the case above, and it is worse than the
+    // wording it was about: every write failure in IndexDatabase reported the
+    // connection's last error, and a *statement* that fails records its error on
+    // itself. QSqlDatabase::lastError() is about opening, transactions and
+    // commits, so for a failed INSERT it is empty -- and what a reader got was
+    // "Inserting indexed file: " with nothing after the colon.
+    //
+    // Held with a failure that is not a locked database, so this case is about the
+    // error arriving at all rather than about the sentence the other one asserts.
+    const QString path = QDir(m_dir->path()).filePath(QStringLiteral("index.sqlite"));
+    Result<qint64> volume
+        = m_db->upsertVolume(VfsUri::fromString(QStringLiteral("file:///data")), QStringLiteral("vol"));
+    QVERIFY(volume.ok());
+
+    QSqlDatabase writing = sqlite::connectionOn(path);
+    QVERIFY(writing.isValid());
+    QVERIFY2(sqlite::capAtCurrentSize(writing), "the cap has to take, or the rows below are unhindered");
+
+    QList<IndexedFile> rows;
+    rows.reserve(3000);
+    for (int i = 0; i < 3000; ++i) {
+        IndexedFile row;
+        row.name = QStringLiteral("file-%1-%2").arg(i).arg(QString(120, QLatin1Char('x')));
+        row.path = QStringLiteral("/data/") + row.name;
+        row.parentPath = QStringLiteral("/data");
+        row.extension = QStringLiteral("txt");
+        rows.append(row);
+    }
+
+    const Result<void> written = m_db->insertBatch(volume.value(), 1, rows);
+    QVERIFY2(!written.ok(), "rows that did not fit were reported as rows that did");
+    QVERIFY2(written.error().message.contains(QStringLiteral("disk is full")),
+        qPrintable(written.error().message));
+    // The shape of the old answer, spelled out so it cannot come back quietly.
+    QVERIFY2(!written.error().message.endsWith(QStringLiteral(": ")), qPrintable(written.error().message));
 }
 
 void TestIndexDatabase::searchMatchesSubstring()
