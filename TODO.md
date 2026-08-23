@@ -224,6 +224,44 @@ project, and a contributor should never hit a wall of text they cannot read.
   `tst_MoleControl.sh` now fails if any suite invents a pid-stamped name outside
   the convention, so the situation cannot recur.
 
+- **Six checks were green — or red — for a reason other than the one they were
+  written for, inside four days.** Four rules came out of that. Each is enforced
+  somewhere now, and none of them was written anywhere a person would look before
+  writing the next check. The evidence is in the commits and the second-family
+  reasoning in
+  [ADR-0081](docs/adr/0081-a-second-distribution-is-built-on-a-clock.md); what
+  follows is the part to read first.
+
+  - **A check has to be able to fail, and a missing input is a failure rather than
+    a pass.** Held by `tst_Changelog.sh`, which proves each expression matches
+    something before asserting that nothing else does, and by
+    `tst_ShellScripts.sh`, which fails on a short glob count. `licence-check.sh`
+    reported no GPL-only Qt modules in use when what it could not find was a
+    `CMakeLists.txt`. Not only checks: `collect_deps` in `make-bundle.sh` skipped
+    in silence every library the build machine had not got, and two artefacts went
+    out short of five.
+  - **Ask something whose answer could differ.** `mole --version` was the release
+    workflow's proof that a package worked, and it was green on an `.rpm` and an
+    AppImage that had loaded none of the plugins they shipped — and it then turned
+    out `--version` could not answer at all on a machine with no display, because
+    it was answered after the whole plugin host was up. Blind, and broken in the
+    one situation it existed for. The steps ask `--plugins`;
+    `scripts/check-artefact-starts.sh` starts the artefact for real, and
+    `tst_StartCheck.sh` holds that that check can fail both ways.
+  - **Skip the file's own account of the rule.** Three checks read a file's
+    explanation of itself as an instance of what they were looking for — a column
+    reading `SKIPPED-none` in the heavy tier's own report tail refused a good
+    release. Anchored patterns and skipped fences in `scripts/release.sh` and
+    `scripts/changelog-block.sh`, and comments skipped in `tst_Packages.sh`.
+  - **A fixture that cannot be true is the same fault as a check that cannot
+    fail.** `tst_Release.sh` cut four releases without writing a changelog line
+    for any of them, which no real cut can do; four cases could not fail for their
+    own reason when the account is root, and one asserted that `QTemporaryFile`
+    refuses a missing directory, which is a claim about Qt and untrue.
+    `test::madeUnreadable()` makes those four skip rather than pass, and the Fedora
+    job runs them as an account that can be refused — a machine that is not this
+    one is what asks a fixture whether it meant it.
+
 - **`shellcheck` is not in the suite, and the rules it would enforce are held by
   hand instead.** `shellcheck` flags the class of fault MOLE-233 was about — a
   `\$` on a line that runs in the outer shell rather than in a heredoc — and is
