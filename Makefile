@@ -14,7 +14,7 @@ DESTDIR ?=
 # a script can rewrite that line and everything follows.
 VERSION := $(shell sed -n 's/^ *VERSION \([0-9][0-9.]*\)$$/\1/p' CMakeLists.txt)
 
-.PHONY: all build configure optimised release run test packages deb rpm appimage test-live test-heavy test-verbose tsan clean distclean format tidy help guide-images where-the-log-is \
+.PHONY: all build configure optimised release run test packages deb rpm appimage start-check test-live test-heavy test-verbose tsan clean distclean format tidy help guide-images where-the-log-is \
         install uninstall bundle licence-check screenshots version
 
 all: build
@@ -272,6 +272,20 @@ screenshots-check: build
 ## licence-check: verify the Qt LGPL conditions still hold
 licence-check:
 	@scripts/licence-check.sh
+
+## start-check: start the artefacts on a display of their own and see them come up
+##              The check every other one could not make: --version and --plugins
+##              answer without a platform plugin, so an artefact that cannot open a
+##              window at all passes them. See MOLE-300.
+start-check:
+	@fail=0; \
+	if [ -x dist/mole ]; then scripts/check-artefact-starts.sh dist/mole || fail=1; \
+	else echo "  skipped: no bundle in dist/ -- run make bundle"; fi; \
+	for image in build/packages/*.AppImage; do \
+		[ -f "$$image" ] || continue; \
+		scripts/check-artefact-starts.sh "$$image" || fail=1; \
+	done; \
+	exit $$fail
 
 ## clean: remove build artefacts for the current preset
 clean:

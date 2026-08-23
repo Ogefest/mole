@@ -176,6 +176,10 @@ if(BASH_PROGRAM)
     # questions it asks are about one. See MOLE-298.
     mole_add_shell_test(tst_LicenceCheck
                         SCRIPT scripts/tst_LicenceCheck.sh)
+    # And the check that starts an artefact for real, which exists because every
+    # other one answers without a platform plugin. See MOLE-300.
+    mole_add_shell_test(tst_StartCheck
+                        SCRIPT scripts/tst_StartCheck.sh)
     if(NOT MOLE_CORE_ONLY)
         set_property(TEST tst_LicenceCheck APPEND PROPERTY
                      ENVIRONMENT "MOLE_BINARY=$<TARGET_FILE:mole>")

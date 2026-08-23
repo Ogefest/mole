@@ -62,6 +62,10 @@ jobs:
       #
       # rpm and cpio are not for building anything: they are what unpacks the .rpm
       # so the licence check can be asked of it here rather than named as unasked.
+      # xvfb and x11-utils are what starts an artefact against a real platform
+      # plugin, and libxcb-cursor0 is what the plugin has needed since Qt 6.5 --
+      # make-bundle.sh can only bundle what this machine has, so the tarball is
+      # short of it unless the runner has it. See MOLE-300.
       #
       # ninja-build because that is the generator every preset uses.
       - name: Install what the artefact is built from
@@ -77,7 +81,7 @@ jobs:
             qml6-module-qtqml-workerscript qml6-module-qtquick-shapes \
             libarchive-dev libcurl4-openssl-dev libssl-dev \
             libsmbclient-dev libnfs-dev libvterm-dev libgit2-dev libxxhash-dev \
-            rpm cpio
+            rpm cpio xvfb x11-utils libxcb-cursor0
 
       # Arrow is not in Ubuntu's archive at any version, so the Parquet grid can
       # only come from Apache's own repository -- which is where the author's
@@ -247,6 +251,15 @@ jobs:
             grep -q 'Archive drives' /tmp/said
             grep -q 'Standard network drives' /tmp/said
           done
+
+      # And they start. Every other artefact check asks something a broken platform
+      # plugin cannot fail -- `--version` and `--plugins` answer without initialising
+      # one, and the containers have no X server to initialise against -- so the
+      # AppImage went out unable to open a window at all and nothing noticed. This
+      # starts both no-Qt-needed artefacts on a display of their own and waits for a
+      # window. See MOLE-300.
+      - name: The artefacts start and reach a window
+        run: make start-check
 
       # The Qt LGPL conditions, asked of every artefact this release publishes: the
       # bundle, the .deb, the .rpm and the AppImage, each unpacked and asked about

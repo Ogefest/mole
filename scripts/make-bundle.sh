@@ -33,19 +33,55 @@ QT_ROOT="$QT_LIBDIR/qt6"
 
 mkdir -p "$LIBDIR" "$PLUGINDIR" "$QMLDIR"
 
-# Libraries that must come from the host: they are tied to the running kernel,
-# the graphics driver or the C library, and bundling them breaks more than it
-# fixes.
+# Libraries that must come from the host, and the test for being one.
+#
+# **The test is whether it is tied to the host's kernel, graphics driver, display
+# server or C library** -- not whether its name looks like one that is. That
+# distinction was implicit and a pattern got it wrong: `libxcb*` also matches
+# xcb-util-cursor, which is an ordinary helper library that Qt's xcb plugin has
+# hard-required since 6.5 and that nothing on a desktop installs by itself. So the
+# AppImage carried a platform plugin it could not load, and aborted on start on any
+# machine without libxcb-cursor0 -- including the one this project is developed on.
+# See MOLE-300.
+#
+# Anything not answering that test is bundled, because a library that is merely
+# usually present is a library that is sometimes not.
 is_excluded() {
     case "$1" in
-        libc.so*|libm.so*|libdl.so*|librt.so*|libpthread.so*|ld-linux*|libresolv.so*)
+        # The xcb-util family. Listed first, and it is the whole point of the list
+        # having a reason: these are userspace helpers over the protocol library,
+        # coupled to nothing, and each is a separate package that only arrives when
+        # something asks for it.
+        libxcb-cursor.so* | libxcb-util.so* | libxcb-image.so* | libxcb-keysyms.so*             | libxcb-icccm.so* | libxcb-render-util.so*)
+            return 1 ;;
+
+        # The C library and its loader. Bundling these is how an AppImage stops
+        # working on the distribution it was built for.
+        libc.so* | libm.so* | libdl.so* | librt.so* | libpthread.so* | ld-linux* | libresolv.so*)
             return 0 ;;
-        libGL.so*|libGLX.so*|libEGL.so*|libGLdispatch.so*|libOpenGL.so*|libdrm.so*|libgbm.so*)
+
+        # The graphics driver's own stack: what these load is chosen by the kernel
+        # module and the card in the machine, not by us.
+        libGL.so* | libGLX.so* | libEGL.so* | libGLdispatch.so* | libOpenGL.so* | libdrm.so* | libgbm.so*)
             return 0 ;;
-        libX11*|libxcb*|libXau*|libXdmcp*|libXext*|libXrender*|libXi*|libXfixes*|libwayland*)
+
+        # The display server's client side. libX11 and libxcb are one half of a
+        # protocol whose other half is running on the machine, and every X or
+        # Wayland desktop has them because nothing draws a window without them.
+        libX11.so* | libX11-xcb.so* | libxcb.so* | libXau.so* | libXdmcp.so* | libwayland*)
             return 0 ;;
-        libgcc_s.so*|libstdc++.so*)
+
+        # X extensions, on the same terms: they arrive with the client stack any
+        # desktop already has, and each pairs with a server-side extension.
+        libXext.so* | libXrender.so* | libXi.so* | libXfixes.so* | libxcb-*.so*)
             return 0 ;;
+
+        # The C++ runtime. Left to the host because the host's is never older than
+        # the one this was built against -- the AppImage's floor is the oldest
+        # distribution Mole runs on, and the tarball's build host is newer still.
+        libgcc_s.so* | libstdc++.so*)
+            return 0 ;;
+
         *) return 1 ;;
     esac
 }
@@ -101,6 +137,50 @@ export QML_IMPORT_PATH="$HERE/usr/qml"
 exec "$HERE/usr/bin/mole" "$@"
 LAUNCHER
 chmod +x "$DIST/mole"
+
+# A Qt plugin whose libraries this machine cannot provide is left out rather than
+# carried. Qt loads what it finds and shrugs at what will not load, so an unloadable
+# plugin is either harmless -- a platform theme, a style -- or fatal, which is the
+# platform plugin itself and is checked separately below. Carrying one that cannot
+# load is weight and a puzzle: the AppImage was shipping libqgtk3.so with no GTK on
+# the build host to bundle. See MOLE-300.
+while IFS= read -r -d '' plugin; do
+    short_of=$(LD_LIBRARY_PATH="$LIBDIR" ldd "$plugin" 2>/dev/null | awk '/not found/{print $1}' | tr '\n' ' ')
+    [[ -n "$short_of" ]] || continue
+    echo "  leaving out ${plugin#"$PLUGINDIR"/}: this machine has no ${short_of% }"
+    rm -f "$plugin"
+done < <(find "$PLUGINDIR" -name '*.so' -print0 2>/dev/null)
+
+# The one plugin that is not optional: without a platform plugin the application
+# aborts on start rather than falling back to anything.
+if [[ ! -e "$PLUGINDIR/platforms/libqxcb.so" ]]; then
+    echo "  the xcb platform plugin is not in the bundle, so it would not start at all"
+    exit 1
+fi
+
+# Nothing in the bundle may be short of a library. `ldd` over every object it holds,
+# with the bundle's own lib directory ahead of the host's, and anything still "not
+# found" is a dependency this machine did not have to give -- so it was skipped in
+# silence, which is how the AppImage went out carrying a platform plugin it could
+# not load. A bundle that is missing something is not a bundle. See MOLE-300.
+echo "  checking the bundle is complete"
+short=0
+while IFS= read -r -d '' object; do
+    while read -r name; do
+        echo "  missing: $name, needed by ${object#"$DIST"/}"
+        short=1
+    done < <(LD_LIBRARY_PATH="$LIBDIR" ldd "$object" 2>/dev/null | awk '/not found/{print $1}')
+done < <(find "$DIST/usr/bin" "$LIBDIR" "$PLUGINDIR" "$QMLDIR" $MOLE_PLUGIN_DIRS -type f \
+              \( -name '*.so*' -o -perm -u+x \) -print0 2>/dev/null)
+if [[ "$short" != 0 ]]; then
+    echo ""
+    echo "  This machine has not got everything the bundle needs, so the bundle would"
+    echo "  start on this machine and fail on one without those libraries. Install them"
+    echo "  and run again -- libxcb-cursor0 (Debian/Ubuntu) or xcb-util-cursor (RPM) is"
+    echo "  the usual one: Qt's xcb platform plugin has required it since 6.5 and"
+    echo "  nothing on a desktop installs it by itself."
+    exit 1
+fi
 
 echo ""
 echo "  bundle: $DIST/mole"

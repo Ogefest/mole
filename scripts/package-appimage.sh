@@ -59,6 +59,13 @@ set -e
 dnf install -y -q dnf-plugins-core >/dev/null
 dnf config-manager --set-enabled crb >/dev/null
 dnf install -y -q epel-release >/dev/null
+# xcb-util-cursor is not a build dependency and is in this list anyway: the Qt xcb
+# platform plugin has hard-required it since 6.5, nothing else pulls it in, and
+# make-bundle.sh can only bundle what the machine it runs on has. Without it the
+# AppImage aborts on start with "no Qt platform plugin could be initialized" on
+# every machine that has not got it -- which is most of them. See MOLE-300.
+# (No apostrophes in this block: it is inside a single-quoted container script.)
+#
 # Everything EPEL 9 has, which is everything: the first version of this list was
 # short, and the AppImage went out without the Parquet grid, without PDF rendering,
 # with a reduced terminal parser and with no NFS drives -- none of which was a
@@ -68,7 +75,8 @@ dnf install -y -q gcc-c++ cmake ninja-build pkgconf-pkg-config file which findut
     qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qttools-devel qt6-qtsvg-devel \
     qt6-qtbase-gui qt6-qtmultimedia-devel qt6-qtpdf-devel libarchive-devel \
     libcurl-devel openssl-devel libgit2-devel xxhash-devel libsmbclient-devel \
-    libnfs-devel libvterm-devel libarrow-devel parquet-libs-devel >/dev/null
+    libnfs-devel libvterm-devel libarrow-devel parquet-libs-devel \
+    xcb-util-cursor >/dev/null
 
 # What the build found, printed and then held to. An artefact that quietly came out
 # without a feature is the fault MOLE-120 built its own check for; this is the same
