@@ -46,10 +46,16 @@ jobs:
       # distribution this was written on and does not exist here.
       #
       # shadow-utils and util-linux are for the account the suite runs as, below.
+      #
+      # rpm-build is here for one case: the archive suite builds a real package
+      # with it and opens it, which is the only machine in this project's reach
+      # where that can be done. It builds its own .rpm out of bytes as well, so
+      # the question is asked everywhere -- but what rpmbuild puts behind the rpm
+      # filter today is zstd, and only a real package says so. See MOLE-301.
       - name: Install what the build and the suite need
         run: |
           dnf install -y -q gcc-c++ cmake ninja-build pkgconf-pkg-config git \
-            shadow-utils util-linux \
+            shadow-utils util-linux rpm-build \
             python3-pyyaml dejavu-sans-fonts xorg-x11-server-Xvfb xwininfo \
             qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qttools-devel qt6-qtsvg-devel \
             qt6-qtmultimedia-devel qt6-qtpdf-devel libarchive-devel libcurl-devel \

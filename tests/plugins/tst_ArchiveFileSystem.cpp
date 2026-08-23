@@ -1,10 +1,13 @@
 #include "plugins/archive/ArchiveFileSystem.h"
 #include "support/FileSystemConformance.h"
 #include "support/MoleTestMain.h"
+#include "support/PackageFixtures.h"
 #include "support/TestSupport.h"
 
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
+#include <QFileInfo>
 #include <QProcess>
 #include <QStandardPaths>
 
@@ -179,6 +182,14 @@ private slots:
     void aPlainFileIsStillNotAnArchive();
     void aSevenZipIsUnaffected();
     void aGzippedFileAnotherFormatWouldBidForStillOpens();
+
+    void aBundleThatIsAZipUnderAnotherNameOpensAsADrive_data();
+    void aBundleThatIsAZipUnderAnotherNameOpensAsADrive();
+    void aDebianPackageOpensOntoItsThreeMembers();
+    void anRpmOpensOntoWhatItCarries();
+    void aRealPackageOpensWhereThereIsSomethingToBuildOneWith();
+    void aDocumentThatHappensToBeAZipIsNotOfferedAsADrive();
+    void anArchiveInsideAnArchiveCannotBeOpenedInPlace();
 
     void openingAMemberOfATruncatedArchiveStillGivesItsFirstWindow();
     void theDamageInATruncatedMemberIsReportedByTheReadThatReachesIt();
@@ -1006,6 +1017,219 @@ void TestArchiveFileSystem::aGzippedFileAnotherFormatWouldBidForStillOpens()
     Result<std::unique_ptr<QIODevice>> device = fs->openRead(listing.value().first().uri);
     QVERIFY2(device.ok(), qPrintable(device.error().message));
     QCOMPARE(device.value()->readAll(), payload);
+}
+
+// ---- the formats whose identity is a bundle of files ---------------------
+//
+// A .jar is a zip, a .deb is an ar archive, an .rpm is a cpio stream behind
+// libarchive's rpm filter -- and none of them was offered as something to open,
+// because what decides is a list of suffixes and they were not on it. So this is
+// a deliberately narrow list catching up with machinery that could already read
+// all of it. Asked for by the author; see MOLE-301.
+//
+// Each one is opened here rather than reasoned about from its format family. A
+// format that is recognised and then cannot be read is worse than one that was
+// never offered, and the .rpm is the case that could have gone either way: its
+// filter is a build-time option in libarchive.
+
+void TestArchiveFileSystem::aBundleThatIsAZipUnderAnotherNameOpensAsADrive_data()
+{
+    QTest::addColumn<QString>("name");
+    // Every one of these is a zip with a job. libarchive goes by what is in the
+    // file rather than by what it is called, so the reader was always there.
+    for (const char* name : { "plugin.jar", "service.war", "beans.ear", "app.apk", "wheel.whl", "package.egg",
+             "library.nupkg", "extension.xpi", "editor.vsix" })
+        QTest::newRow(name) << QString::fromLatin1(name);
+}
+
+void TestArchiveFileSystem::aBundleThatIsAZipUnderAnotherNameOpensAsADrive()
+{
+    if (m_zip.isEmpty())
+        QSKIP("zip is not available");
+    QFETCH(QString, name);
+
+    // The same bytes, under the name the format is known by.
+    const QString path = QDir(m_workspace->path()).filePath(name);
+    QFile source(m_zip);
+    QVERIFY(source.copy(path));
+
+    ArchiveFileSystemFactory factory;
+    const QString suffix = QFileInfo(path).suffix();
+    QVERIFY2(factory.mountableFileSuffixes().contains(suffix), qPrintable(suffix));
+
+    QString error;
+    FileSystemPtr inside = factory.create(factory.configForFile(path), &error);
+    QVERIFY2(inside, qPrintable(error));
+    const Result<FileEntryList> listing = inside->list(factory.rootUriForFile(path), CancelToken());
+    QVERIFY2(listing.ok(), qPrintable(listing.error().message));
+    QCOMPARE(listing.value().size(), 2);
+}
+
+void TestArchiveFileSystem::aDebianPackageOpensOntoItsThreeMembers()
+{
+    // What a .deb is, and the ticket said to find out rather than deliver
+    // something that opens onto three files nobody was looking for: an ar archive
+    // of exactly these members, with the files somebody wants one level further
+    // in, inside data.tar.*.
+    const QString path = QDir(m_workspace->path()).filePath(QStringLiteral("fixture.deb"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QVERIFY(file.write(arArchive({ { QByteArrayLiteral("debian-binary"), QByteArrayLiteral("2.0\n") },
+                { QByteArrayLiteral("control.tar.gz"), QByteArray(64, 'c') },
+                { QByteArrayLiteral("data.tar.gz"), QByteArray(128, 'd') } }))
+        > 0);
+    file.close();
+
+    ArchiveFileSystemFactory factory;
+    QVERIFY(factory.mountableFileSuffixes().contains(QStringLiteral("deb")));
+
+    QString error;
+    FileSystemPtr inside = factory.create(factory.configForFile(path), &error);
+    QVERIFY2(inside, qPrintable(error));
+    const Result<FileEntryList> listing = inside->list(factory.rootUriForFile(path), CancelToken());
+    QVERIFY2(listing.ok(), qPrintable(listing.error().message));
+
+    QStringList names;
+    for (const FileEntry& entry : listing.value())
+        names.append(entry.name);
+    names.sort();
+    QCOMPARE(names,
+        QStringList({ QStringLiteral("control.tar.gz"), QStringLiteral("data.tar.gz"),
+            QStringLiteral("debian-binary") }));
+
+    // And the member is readable, which is what makes the recognition worth
+    // having even though the payload is a level down: it can be taken out and
+    // opened. Opening it in place is a different question -- see
+    // anArchiveInsideAnArchiveCannotBeOpenedInPlace().
+    const VfsUri member = factory.rootUriForFile(path).child(QStringLiteral("debian-binary"));
+    Result<std::unique_ptr<QIODevice>> device = inside->openRead(member);
+    QVERIFY2(device.ok(), qPrintable(device.error().message));
+    QCOMPARE(device.value()->readAll(), QByteArrayLiteral("2.0\n"));
+}
+
+void TestArchiveFileSystem::anRpmOpensOntoWhatItCarries()
+{
+    // The one on the list whose reader is a build-time option in libarchive, so
+    // this case is the whole reason the suffix could be added: a build without the
+    // rpm filter fails here rather than shipping a file it offers and cannot open.
+    const QString path = QDir(m_workspace->path()).filePath(QStringLiteral("fixture.rpm"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QVERIFY(file.write(rpmPackage({ { QByteArrayLiteral("./usr/share/mole/greeting.txt"),
+                                        QByteArrayLiteral("hello from inside a package\n") },
+                { QByteArrayLiteral("./usr/share/mole/second.txt"), QByteArrayLiteral("another one\n") } }))
+        > 0);
+    file.close();
+
+    ArchiveFileSystemFactory factory;
+    QVERIFY(factory.mountableFileSuffixes().contains(QStringLiteral("rpm")));
+
+    QString error;
+    FileSystemPtr inside = factory.create(factory.configForFile(path), &error);
+    QVERIFY2(inside, qPrintable(error));
+
+    const VfsUri root = factory.rootUriForFile(path);
+    const Result<FileEntryList> listing = inside->list(root, CancelToken());
+    QVERIFY2(listing.ok(), qPrintable(listing.error().message));
+    // The payload's paths start "./usr", so the top of the mount is one folder.
+    QCOMPARE(listing.value().size(), 1);
+    QCOMPARE(listing.value().first().name, QStringLiteral("usr"));
+
+    Result<std::unique_ptr<QIODevice>> device
+        = inside->openRead(root.child(QStringLiteral("usr/share/mole/greeting.txt")));
+    QVERIFY2(device.ok(), qPrintable(device.error().message));
+    QCOMPARE(device.value()->readAll(), QByteArrayLiteral("hello from inside a package\n"));
+}
+
+void TestArchiveFileSystem::aRealPackageOpensWhereThereIsSomethingToBuildOneWith()
+{
+    // The case above builds its own package, which is what makes it run
+    // everywhere; this one asks the same question of a package a packaging tool
+    // wrote, on the machines that have one. Both matter: the fixture is exact
+    // about the structure and says nothing about what rpmbuild does with a
+    // payload today -- zstd, at the time of writing, which is a filter of its own.
+    const QString tool = QStandardPaths::findExecutable(QStringLiteral("rpmbuild"));
+    if (tool.isEmpty())
+        QSKIP("no rpmbuild here, so there is nothing to build a real package with");
+
+    const QString home = QDir(m_workspace->path()).filePath(QStringLiteral("rpm"));
+    QVERIFY(QDir().mkpath(home + QStringLiteral("/SPECS")));
+    const QString spec = home + QStringLiteral("/SPECS/fixture.spec");
+    QFile specFile(spec);
+    QVERIFY(specFile.open(QIODevice::WriteOnly));
+    specFile.write(R"(Name:      mole-fixture
+Version:   1
+Release:   1
+Summary:   A package built to be read rather than installed
+License:   MIT
+BuildArch: noarch
+%description
+One file, so there is something to list inside it.
+%install
+mkdir -p %{buildroot}/usr/share/mole-fixture
+echo "hello from a real package" > %{buildroot}/usr/share/mole-fixture/greeting.txt
+%files
+/usr/share/mole-fixture/greeting.txt
+)");
+    specFile.close();
+
+    QProcess build;
+    build.start(tool,
+        { QStringLiteral("--define"), QStringLiteral("_topdir %1").arg(home), QStringLiteral("-bb"), spec });
+    if (!build.waitForFinished(120000) || build.exitCode() != 0)
+        QSKIP("rpmbuild is here but could not build a package");
+
+    QDirIterator found(home + QStringLiteral("/RPMS"), { QStringLiteral("*.rpm") }, QDir::Files,
+        QDirIterator::Subdirectories);
+    QVERIFY2(found.hasNext(), "rpmbuild reported success and wrote no package");
+    const QString path = found.next();
+
+    ArchiveFileSystemFactory factory;
+    QString error;
+    FileSystemPtr inside = factory.create(factory.configForFile(path), &error);
+    QVERIFY2(inside, qPrintable(error));
+    Result<std::unique_ptr<QIODevice>> device = inside->openRead(
+        factory.rootUriForFile(path).child(QStringLiteral("usr/share/mole-fixture/greeting.txt")));
+    QVERIFY2(device.ok(), qPrintable(device.error().message));
+    QVERIFY(device.value()->readAll().contains(QByteArrayLiteral("hello from a real package")));
+}
+
+void TestArchiveFileSystem::aDocumentThatHappensToBeAZipIsNotOfferedAsADrive()
+{
+    // The decision MOLE-301 made, and the case that keeps somebody from undoing
+    // it by tidying the list. .docx, .xlsx, .odt and .epub are all zips, and Mole
+    // previews every one of them properly: making "open as a folder" the default
+    // for a Word document would replace the thing a reader wants with the thing
+    // they almost never want. Reaching inside one is worth having as an explicit
+    // action beside the ordinary open, which is a different ticket.
+    ArchiveFileSystemFactory factory;
+    const QStringList suffixes = factory.mountableFileSuffixes();
+    for (const char* document : { "docx", "xlsx", "pptx", "odt", "ods", "odp", "epub" }) {
+        const QString suffix = QString::fromLatin1(document);
+        QVERIFY2(!suffixes.contains(suffix), qPrintable(suffix));
+        QVERIFY2(!ArchiveFileSystemFactory::looksLikeArchive(QStringLiteral("report.") + suffix),
+            qPrintable(suffix));
+    }
+}
+
+void TestArchiveFileSystem::anArchiveInsideAnArchiveCannotBeOpenedInPlace()
+{
+    // Said rather than left to be discovered, because the .deb is what raises it:
+    // its payload is a tarball inside an ar archive, and the obvious next move is
+    // to open that. It does not work, and the reason is structural -- a mount is
+    // named by a local path, and a member of an archive has none. What a reader
+    // does instead is take the member out and open the copy.
+    const QString path = QDir(m_workspace->path()).filePath(QStringLiteral("nested.deb"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QVERIFY(file.write(arArchive({ { QByteArrayLiteral("data.tar.gz"), QByteArray(32, 'd') } })) > 0);
+    file.close();
+
+    ArchiveFileSystemFactory factory;
+    const VfsUri member = factory.rootUriForFile(path).child(QStringLiteral("data.tar.gz"));
+    QVERIFY2(member.toLocalPath().isEmpty(),
+        "a member of an archive has no local path, which is what a mount is named by");
+    QVERIFY(ArchiveFileSystemFactory::looksLikeArchive(member.fileName()));
 }
 
 MOLE_TEST_MAIN(TestArchiveFileSystem)

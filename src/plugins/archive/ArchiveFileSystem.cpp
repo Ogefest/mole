@@ -590,9 +590,37 @@ QStringList ArchiveFileSystemFactory::supportedSuffixes()
 {
     // libarchive handles more than this; the list is what we advertise as
     // "double-click to open as a drive".
-    return { QStringLiteral("zip"), QStringLiteral("tar"), QStringLiteral("gz"), QStringLiteral("tgz"),
+    //
+    // **What earns a place: a container libarchive can read, whose primary
+    // identity is a bundle of files rather than a document.** Both halves do
+    // work. The first keeps off anything this build cannot actually open, because
+    // a file that is offered and then fails is worse than one that was never
+    // offered. The second is the interesting one, and it is a decision rather
+    // than an oversight: .docx, .xlsx, .pptx, .odt, .ods, .odp and .epub are all
+    // zips, and Mole previews every one of them properly. Making "open as a
+    // folder" the default for a Word document would replace the thing a reader
+    // wants with the thing they almost never want. Reaching inside one is worth
+    // having as an explicit action beside the ordinary open; it is not this list.
+    //
+    // So the next format is judged rather than added by resemblance to one that
+    // is already here. See MOLE-301.
+    return { // Containers by name, and what libarchive has always read.
+        QStringLiteral("zip"), QStringLiteral("tar"), QStringLiteral("gz"), QStringLiteral("tgz"),
         QStringLiteral("bz2"), QStringLiteral("xz"), QStringLiteral("zst"), QStringLiteral("7z"),
-        QStringLiteral("rar"), QStringLiteral("iso"), QStringLiteral("cpio"), QStringLiteral("ar") };
+        QStringLiteral("rar"), QStringLiteral("iso"), QStringLiteral("cpio"), QStringLiteral("ar"),
+        // A zip whose name says what the bundle is for. Every one of these is
+        // read by the zip reader that was already here -- libarchive goes by what
+        // is in the file, so the only thing that was missing was the name.
+        QStringLiteral("jar"), QStringLiteral("war"), QStringLiteral("ear"), QStringLiteral("apk"),
+        QStringLiteral("whl"), QStringLiteral("egg"), QStringLiteral("nupkg"), QStringLiteral("xpi"),
+        QStringLiteral("vsix"),
+        // Packages, which are containers with a header in front. A .deb is an ar
+        // archive of three members -- so it opens onto debian-binary,
+        // control.tar.* and data.tar.*, and the payload is one level further in
+        // than somebody may expect. An .rpm is a cpio stream behind libarchive's
+        // rpm filter.
+        QStringLiteral("deb"), QStringLiteral("rpm")
+    };
 }
 
 bool ArchiveFileSystemFactory::looksLikeArchive(const QString& fileName)
