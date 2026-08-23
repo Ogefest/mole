@@ -513,6 +513,14 @@ void SourceHighlighter::applyColours()
     m_attribute.setForeground(QColor(p.attribute));
     m_comment.setForeground(QColor(p.comment));
     m_preprocessor.setForeground(QColor(p.preprocessor));
+
+    // A search hit is a *background*, not a colour: the text under it may be a
+    // keyword, a string or a comment, and repainting the foreground would take
+    // away the one thing that says which. Amber on either ground, with the
+    // foreground left alone -- picked to read against both the light and dark
+    // slabs rather than one of them. See MOLE-308.
+    m_searchHit.setBackground(
+        m_light ? QColor(QStringLiteral("#ffe082")) : QColor(QStringLiteral("#7a5c00")));
 }
 
 QString SourceHighlighter::languageForSuffix(const QString& suffix)
@@ -594,13 +602,40 @@ void SourceHighlighter::highlightBlock(const QString& text)
 {
     if (!m_rules) {
         setCurrentBlockState(StateNormal);
+        // No language is not nothing to do any more: a search marks its hits
+        // over plain text, a folded window and a file nothing colours.
+        markSearchHits(text);
         return;
     }
     if (m_rules->markup) {
         highlightMarkup(text);
+        markSearchHits(text);
         return;
     }
     highlightCode(text, *m_rules);
+    // Last, so a hit inside a string or a comment is still visible as a hit.
+    markSearchHits(text);
+}
+
+void SourceHighlighter::setSearchTerm(const QString& term)
+{
+    if (m_searchTerm == term)
+        return;
+    m_searchTerm = term;
+    if (document())
+        rehighlight();
+}
+
+void SourceHighlighter::markSearchHits(const QString& text)
+{
+    if (m_searchTerm.isEmpty() || text.isEmpty())
+        return;
+
+    int at = text.indexOf(m_searchTerm, 0, Qt::CaseInsensitive);
+    while (at >= 0) {
+        setFormat(at, static_cast<int>(m_searchTerm.size()), m_searchHit);
+        at = text.indexOf(m_searchTerm, at + static_cast<int>(m_searchTerm.size()), Qt::CaseInsensitive);
+    }
 }
 
 int SourceHighlighter::highlightNumber(const QString& text, int start)

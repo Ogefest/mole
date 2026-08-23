@@ -13,6 +13,15 @@ Item {
 
     function focusActivePane() { body.forceActiveFocus() }
 
+    /// Asks whichever viewer is loaded to open its find bar, for the palette
+    /// entry that reaches this by name. A viewer that has no such bar is left
+    /// alone rather than being made to grow one: finding a word is a text
+    /// viewer's business, and a picture has nothing to find. See MOLE-308.
+    function findInViewer() {
+        if (viewerLoader.item && viewerLoader.item.beginFind)
+            viewerLoader.item.beginFind("")
+    }
+
     Component.onCompleted: Qt.callLater(focusActivePane)
     onVisibleChanged: if (visible) Qt.callLater(focusActivePane)
 

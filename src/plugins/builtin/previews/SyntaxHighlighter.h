@@ -102,6 +102,18 @@ public:
     /// Attaches to the document behind a QML TextArea. Passing nullptr detaches.
     void attachTo(QQuickTextDocument* document);
 
+    /// Text to mark wherever it appears, case-insensitively. Empty for none.
+    ///
+    /// **Here rather than in an overlay the view paints.** An overlay would have
+    /// to be kept in step with wrapping, folding and the theme, and would be
+    /// wrong the first time any of the three changed; a format laid on the
+    /// document is re-applied by whatever re-runs the formats, which is the same
+    /// mechanism that gets colouring right. It also means a search works where
+    /// colouring is off -- a folded window has no language and still has text a
+    /// reader is looking for. See MOLE-308.
+    void setSearchTerm(const QString& term);
+    QString searchTerm() const { return m_searchTerm; }
+
 protected:
     void highlightBlock(const QString& text) override;
 
@@ -115,9 +127,15 @@ private:
     /// string is left open at the end of the line.
     int highlightString(const QString& text, int start, QChar quote);
 
+    /// Marks the hits over whatever the language did, because a reader looking
+    /// for a word wants to see it whether it is a keyword or a comment.
+    void markSearchHits(const QString& text);
+
     QString m_languageId;
     const Rules* m_rules = nullptr;
     bool m_light = false;
+    QString m_searchTerm;
+    QTextCharFormat m_searchHit;
 
     QTextCharFormat m_key;
     QTextCharFormat m_string;

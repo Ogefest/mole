@@ -1520,6 +1520,24 @@ void AppController::registerShellActions()
         m_actions->addAction(std::move(action));
     }
     {
+        // Find in a preview, by name, so the feature does not depend on a reader
+        // guessing that typing does something. The gesture is start-typing, the
+        // way filtering a folder is -- Ctrl+F is a search of the folder in a new
+        // tab and is a more valuable meaning for that key. See MOLE-308.
+        MenuAction action;
+        action.id = QStringLiteral("mole.view.findInPreview");
+        action.section = MenuAction::Section::View;
+        action.title = QStringLiteral("Find in this file");
+        action.shortcut = QStringLiteral("type to find, or /");
+        action.sortOrder = 26;
+        // The bar belongs to whichever viewer is showing text, so the shell asks
+        // and QML answers -- and the entry is offered whatever is on screen,
+        // because a reader who asks for it and gets nothing has learnt something
+        // about the tab they are on.
+        action.trigger = [this] { emit dialogRequested(QStringLiteral("mole.view.findInPreview")); };
+        m_actions->addAction(std::move(action));
+    }
+    {
         MenuAction action;
         action.id = QStringLiteral("mole.view.filter");
         action.section = MenuAction::Section::View;

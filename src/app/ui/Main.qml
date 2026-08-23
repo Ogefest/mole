@@ -917,7 +917,12 @@ ApplicationWindow {
     Connections {
         target: App
         function onDialogRequested(actionId) {
-            if (actionId === "mole.view.filter") {
+            if (actionId === "mole.view.findInPreview") {
+                var previewing = root.currentTabItem()
+                if (previewing && previewing.findInViewer)
+                    previewing.findInViewer()
+            }
+            else if (actionId === "mole.view.filter") {
                 var view = root.currentTabItem()
                 if (view && view.focusFilter)
                     view.focusFilter()

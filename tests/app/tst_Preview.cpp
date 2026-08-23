@@ -267,6 +267,14 @@ private slots:
     void aWindowOfTheSameSizeWithLinesInItIsUntouched();
     void pagingOnFromAFoldedWindowGetsColouringBack();
 
+    // ---- finding a word in what is on screen ------------------------------
+    void aSearchMarksEveryHitThroughTheDocument();
+    void aSearchCountsTheHitsAndStepsThroughThemWrappingRound();
+    void aSearchInAPagedFileSaysTheCountIsForThisWindow();
+    void aSearchSurvivesPagingOnAndCountsTheNewWindow();
+    void aMatchInsideAFoldedRunIsStillFound();
+    void clearingTheSearchLeavesNoHighlightingBehind();
+
     // --- markdown the window cannot afford to render ---
     void aMarkdownFileWithAHugeTableOpensAsSourceAndSaysWhy();
     void aMarkdownFileUnderTheBudgetIsRenderedAsBefore();
@@ -2034,6 +2042,209 @@ void TestPreview::aFileAlreadyColouredFollowsTheThemesPolarity()
     // the commonest way this gets exercised.
     highlighter.setLightBackground(false);
     QCOMPARE(commentColour(), darkComment);
+}
+
+// ---- finding a word in what is on screen ------------------------------------
+//
+// A preview of a long text file gave a reader nothing to aim at, while the grid
+// next door has had a filter box since it was written. See MOLE-308.
+
+/// The marks are the document's own formats, which is what makes them survive
+/// everything that re-runs them.
+///
+/// A second overlay painted by the view would have to be kept in step with
+/// wrapping, folding and the theme, and would be wrong the first time any of the
+/// three changed. Asserted here the way the colouring case above is: on a real
+/// QTextDocument, reading back the formats the highlighter laid down.
+void TestPreview::aSearchMarksEveryHitThroughTheDocument()
+{
+    QTextDocument document;
+    document.setPlainText(QStringLiteral("error here\nnothing\nERROR again\n"));
+
+    SourceHighlighter highlighter;
+    highlighter.setDocument(&document);
+
+    const auto marksOn = [&document](int blockNumber) {
+        const QTextBlock block = document.findBlockByNumber(blockNumber);
+        int marked = 0;
+        for (const QTextLayout::FormatRange& run : block.layout()->formats()) {
+            if (run.format.background().style() != Qt::NoBrush)
+                ++marked;
+        }
+        return marked;
+    };
+
+    QCOMPARE(marksOn(0), 0);
+    highlighter.setSearchTerm(QStringLiteral("error"));
+    QCOMPARE(marksOn(0), 1);
+    // Case-insensitively, because a reader looking for `error` in a log does not
+    // want to be asked about case first.
+    QCOMPARE(marksOn(2), 1);
+    QCOMPARE(marksOn(1), 0);
+
+    // A theme change re-runs every format, and the marks come back with them --
+    // which is the whole reason they live here rather than in an overlay.
+    highlighter.setLightBackground(true);
+    QCOMPARE(marksOn(0), 1);
+    QCOMPARE(marksOn(2), 1);
+
+    // And nothing is left behind when the search is over.
+    highlighter.setSearchTerm(QString());
+    QCOMPARE(marksOn(0), 0);
+    QCOMPARE(marksOn(2), 0);
+}
+
+void TestPreview::aSearchCountsTheHitsAndStepsThroughThemWrappingRound()
+{
+    QVERIFY(m_tree->writeFile(
+        QStringLiteral("app.log"), QByteArray("start\nerror one\nfine\nerror two\nfine\nerror three\n")));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("app.log"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(waitFor([viewer] { return !viewer->text().isEmpty(); }, 5000));
+
+    QCOMPARE(viewer->findCount(), 0);
+    QCOMPARE(viewer->findIndex(), 0);
+    QVERIFY(viewer->findSummary().isEmpty());
+
+    viewer->find(QStringLiteral("error"));
+    QCOMPARE(viewer->findCount(), 3);
+    QCOMPARE(viewer->findIndex(), 1);
+    // The count is what tells a reader whether to keep looking or to page on.
+    QCOMPARE(viewer->findSummary(), QStringLiteral("1 of 3"));
+    const int first = viewer->findPosition();
+    QVERIFY(first >= 0);
+
+    viewer->findNext();
+    QCOMPARE(viewer->findIndex(), 2);
+    QVERIFY2(viewer->findPosition() > first, "stepping on did not move");
+
+    viewer->findNext();
+    QCOMPARE(viewer->findIndex(), 3);
+    // Wrapping, because a reader at the last match wants the first one rather
+    // than a key that does nothing.
+    viewer->findNext();
+    QCOMPARE(viewer->findIndex(), 1);
+    QCOMPARE(viewer->findPosition(), first);
+    viewer->findPrevious();
+    QCOMPARE(viewer->findIndex(), 3);
+
+    // A word that is not there is not a failure, and says so plainly.
+    viewer->find(QStringLiteral("catastrophe"));
+    QCOMPARE(viewer->findCount(), 0);
+    QCOMPARE(viewer->findIndex(), 0);
+    QCOMPARE(viewer->findPosition(), -1);
+    QCOMPARE(viewer->findSummary(), QStringLiteral("no matches"));
+}
+
+void TestPreview::aSearchInAPagedFileSaysTheCountIsForThisWindow()
+{
+    // The scope is the window, and an interface that says "no matches" when it
+    // means "none in this window" has told the reader the file does not contain a
+    // word it may contain thousands of times.
+    QByteArray big;
+    while (big.size() < TextPreviewController::kWindowBytes + 4096)
+        big += "a line with the word needle in it\n";
+    QVERIFY(m_tree->writeFile(QStringLiteral("huge.log"), big));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("huge.log"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(waitFor([viewer] { return !viewer->text().isEmpty(); }, 5000));
+    QVERIFY(viewer->isPaged());
+
+    viewer->find(QStringLiteral("needle"));
+    QVERIFY(viewer->findCount() > 0);
+    QVERIFY2(
+        viewer->findSummary().endsWith(QStringLiteral("in this window")), qPrintable(viewer->findSummary()));
+
+    viewer->find(QStringLiteral("haystack"));
+    QCOMPARE(viewer->findSummary(), QStringLiteral("no matches in this window"));
+
+    // And a file held whole is its own window, where the qualifier would be about
+    // nothing.
+    PreviewTabController* small = openPreview(QStringLiteral("notes.txt"));
+    QVERIFY(small);
+    auto* held = qobject_cast<TextPreviewController*>(small->viewer());
+    QVERIFY(held);
+    QVERIFY(waitFor([held] { return !held->text().isEmpty(); }, 5000));
+    QVERIFY(!held->isPaged());
+    held->find(QStringLiteral("preview"));
+    QVERIFY(held->findCount() > 0);
+    QVERIFY2(!held->findSummary().contains(QStringLiteral("window")), qPrintable(held->findSummary()));
+}
+
+void TestPreview::aSearchSurvivesPagingOnAndCountsTheNewWindow()
+{
+    // The term stays and the count follows the window, so a reader paging through
+    // a log does not retype it once per window -- and the number always describes
+    // what is in front of them.
+    QByteArray big;
+    while (big.size() < TextPreviewController::kWindowBytes * 2)
+        big += "ordinary line\n";
+    QVERIFY(m_tree->writeFile(QStringLiteral("pages.log"), big));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("pages.log"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(waitFor([viewer] { return !viewer->text().isEmpty(); }, 5000));
+
+    viewer->find(QStringLiteral("ordinary"));
+    const int here = viewer->findCount();
+    QVERIFY(here > 0);
+
+    viewer->nextWindow();
+    QVERIFY(waitFor([viewer] { return viewer->windowOffset() > 0; }, 5000));
+    QCOMPARE(viewer->findTerm(), QStringLiteral("ordinary"));
+    QVERIFY2(viewer->findCount() > 0, "the search was forgotten on paging");
+}
+
+void TestPreview::aMatchInsideAFoldedRunIsStillFound()
+{
+    // A fold is a layout device and must not hide text from a search: the window
+    // is one enormous line broken up for the text engine's sake, and a reader
+    // looking for a key in it is looking for something that is there.
+    QByteArray minified = minifiedJson(300 * 1024);
+    QVERIFY(m_tree->writeFile(QStringLiteral("blob.json"), minified));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("blob.json"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(waitFor([viewer] { return !viewer->text().isEmpty(); }, 5000));
+    QVERIFY(viewer->longLinesFolded());
+    // Colouring is off for a folded window, and finding is not: they are
+    // different questions, and only one of them is about tokens.
+    QVERIFY(!viewer->isHighlighted());
+
+    viewer->find(QStringLiteral("\"id\""));
+    QVERIFY2(viewer->findCount() > 0, "a folded window hid its text from a search");
+    QVERIFY(viewer->findPosition() >= 0);
+}
+
+void TestPreview::clearingTheSearchLeavesNoHighlightingBehind()
+{
+    QVERIFY(m_tree->writeFile(QStringLiteral("clear.log"), QByteArray("error\nerror\n")));
+    PreviewTabController* preview = openPreview(QStringLiteral("clear.log"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(waitFor([viewer] { return !viewer->text().isEmpty(); }, 5000));
+
+    viewer->find(QStringLiteral("error"));
+    QCOMPARE(viewer->findCount(), 2);
+
+    // What Escape does.
+    viewer->clearFind();
+    QVERIFY(viewer->findTerm().isEmpty());
+    QCOMPARE(viewer->findCount(), 0);
+    QCOMPARE(viewer->findIndex(), 0);
+    QCOMPARE(viewer->findPosition(), -1);
+    QVERIFY(viewer->findSummary().isEmpty());
 }
 
 void TestPreview::coloursFilesWhoseNameIsTheirType_data()

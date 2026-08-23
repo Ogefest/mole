@@ -384,6 +384,11 @@ void TextPreviewController::updateDisplayText()
     m_longLinesFolded = !m_markdown && !isRenderedHtml() && hasOverlongLine(m_displayText, kFoldedLineChars);
     if (m_longLinesFolded)
         m_displayText = withLongLinesFolded(m_displayText, kFoldedLineChars);
+
+    // Over the text as the reader sees it, folds and all -- and after the fold,
+    // deliberately: a fold is a layout device and must not hide text from a
+    // search, so the hits are found in the same string the view is handed.
+    refreshFind();
 }
 
 void TextPreviewController::applyViewers()
@@ -413,13 +418,112 @@ void TextPreviewController::applyViewers()
     //
     // The language itself is unchanged, so paging on to a window that does have
     // lines in it gets its colour back.
+    // A search still marks its hits here, which is why the term is set before
+    // the return: the fold is a layout device, and a reader who cannot find a
+    // word in a minified window has been told it is not there. Attached with no
+    // language, so nothing is coloured and everything is findable.
+    m_highlighter->setSearchTerm(m_findTerm);
     if (m_longLinesFolded) {
-        m_highlighter->attachTo(nullptr);
+        if (m_findTerm.isEmpty()) {
+            m_highlighter->attachTo(nullptr);
+            return;
+        }
+        m_highlighter->attachTo(m_document);
+        m_highlighter->setLanguage(QString());
         return;
     }
 
     m_highlighter->attachTo(m_document);
     m_highlighter->setLanguage(m_language);
+}
+
+// ---- finding a word in what is on screen -----------------------------------
+
+void TextPreviewController::refreshFind()
+{
+    const QList<int> before = m_findHits;
+    m_findHits.clear();
+    if (!m_findTerm.isEmpty()) {
+        int at = m_displayText.indexOf(m_findTerm, 0, Qt::CaseInsensitive);
+        while (at >= 0) {
+            m_findHits.append(at);
+            // Overlapping hits are not wanted: "aa" in "aaaa" is two matches,
+            // which is what a reader counts.
+            at = m_displayText.indexOf(m_findTerm, at + m_findTerm.size(), Qt::CaseInsensitive);
+        }
+    }
+    m_findAt = m_findHits.isEmpty() ? 0 : qBound(0, m_findAt, static_cast<int>(m_findHits.size()) - 1);
+    if (before != m_findHits)
+        emit findChanged();
+}
+
+void TextPreviewController::find(const QString& term)
+{
+    if (m_findTerm == term)
+        return;
+    m_findTerm = term;
+    m_findAt = 0;
+    // The marks are the document's own formats rather than an overlay, so
+    // wrapping, folding and a theme change cannot leave them behind: whatever
+    // re-runs the formats re-runs these too.
+    if (m_highlighter)
+        m_highlighter->setSearchTerm(m_findTerm);
+    applyViewers();
+    refreshFind();
+    emit findChanged();
+}
+
+void TextPreviewController::findNext()
+{
+    if (m_findHits.isEmpty())
+        return;
+    // Wrapping, because a reader at the last match wants the first one and not a
+    // key that does nothing.
+    m_findAt = (m_findAt + 1) % m_findHits.size();
+    emit findChanged();
+}
+
+void TextPreviewController::findPrevious()
+{
+    if (m_findHits.isEmpty())
+        return;
+    m_findAt = static_cast<int>((m_findAt + m_findHits.size() - 1) % m_findHits.size());
+    emit findChanged();
+}
+
+void TextPreviewController::clearFind()
+{
+    if (m_findTerm.isEmpty() && m_findHits.isEmpty())
+        return;
+    m_findTerm.clear();
+    m_findHits.clear();
+    m_findAt = 0;
+    if (m_highlighter)
+        m_highlighter->setSearchTerm(QString());
+    applyViewers();
+    emit findChanged();
+}
+
+int TextPreviewController::findPosition() const
+{
+    if (m_findHits.isEmpty())
+        return -1;
+    return m_findHits.at(qBound(0, m_findAt, static_cast<int>(m_findHits.size()) - 1));
+}
+
+QString TextPreviewController::findSummary() const
+{
+    if (m_findTerm.isEmpty())
+        return {};
+
+    // Which of the two truths this is. A file held whole is its own window, and
+    // saying "in this window" there would be a qualifier about nothing; a file
+    // being paged has more of itself elsewhere, and a count that did not say so
+    // would be read as a count for the file.
+    const QString scope = isPaged() ? QStringLiteral(" in this window") : QString();
+    if (m_findHits.isEmpty())
+        return QStringLiteral("no matches%1").arg(scope);
+    return QStringLiteral("%1 of %2%3").arg(findIndex()).arg(findCount()).arg(scope);
 }
 
 void TextPreviewController::load(const FileEntry& entry)

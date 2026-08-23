@@ -98,6 +98,28 @@ class TextPreviewController final : public PreviewController
     Q_PROPERTY(QString positionText READ positionText NOTIFY windowChanged)
     Q_PROPERTY(QString sizeText READ sizeText NOTIFY windowChanged)
 
+    // ---- finding a word in what is on screen ------------------------------
+    //
+    // **The scope is the window, and the interface has to say so.** The
+    // controller holds one window and never the file, so a search covers what is
+    // on screen -- and an interface that says *no matches* when it means *none in
+    // this window* has told the reader the file does not contain a word it may
+    // contain thousands of times. `paged` is what tells the two apart, and
+    // findSummary() spells whichever is true.
+    //
+    // Searching the whole file is deliberately not here: content search across a
+    // file is what the search tab does, with an index behind it, and a second
+    // implementation living in a preview would be a slower answer to a question
+    // already answered somewhere better. See MOLE-308.
+    Q_PROPERTY(QString findTerm READ findTerm NOTIFY findChanged)
+    Q_PROPERTY(int findCount READ findCount NOTIFY findChanged)
+    /// Which match is current, counting from one. 0 when there are none.
+    Q_PROPERTY(int findIndex READ findIndex NOTIFY findChanged)
+    /// Where the current match starts in the window's text, for a view that
+    /// wants to put the cursor there. -1 when there is none.
+    Q_PROPERTY(int findPosition READ findPosition NOTIFY findChanged)
+    Q_PROPERTY(QString findSummary READ findSummary NOTIFY findChanged)
+
 public:
     explicit TextPreviewController(PluginServices services, QObject* parent = nullptr);
     ~TextPreviewController() override;
@@ -194,9 +216,29 @@ public:
     Q_INVOKABLE void setDocumentStyle(
         bool light, const QColor& codeBackground, const QColor& mutedText, const QColor& rule);
 
+    /// Looks for `term` in the window, case-insensitively, and marks every hit.
+    ///
+    /// No options, deliberately: the filter box in the grid next door has none,
+    /// and a reader searching a log for `error` does not want to be asked about
+    /// case first.
+    Q_INVOKABLE void find(const QString& term);
+    /// Steps through the hits, wrapping at either end -- because a reader who has
+    /// reached the last match wants the first one, not a dead key.
+    Q_INVOKABLE void findNext();
+    Q_INVOKABLE void findPrevious();
+    /// Forgets the term and takes the marks off. What Escape does.
+    Q_INVOKABLE void clearFind();
+
+    QString findTerm() const { return m_findTerm; }
+    int findCount() const { return static_cast<int>(m_findHits.size()); }
+    int findIndex() const { return m_findHits.isEmpty() ? 0 : m_findAt + 1; }
+    int findPosition() const;
+    QString findSummary() const;
+
 signals:
     void textChanged();
     void windowChanged();
+    void findChanged();
 
 private:
     void readWindow(qint64 offset);
@@ -205,6 +247,12 @@ private:
     void applyViewers();
     /// Recomputes what the view shows from what was read.
     void updateDisplayText();
+    /// Finds every hit for the current term in the current window.
+    ///
+    /// Run again whenever the text changes, so paging on keeps the search rather
+    /// than making a reader type it once per window -- and so the count is always
+    /// about what is on screen.
+    void refreshFind();
 
     PluginServices m_services;
     SourceHighlighter* m_highlighter = nullptr;
@@ -239,6 +287,11 @@ private:
     /// Whether deriving it had to break long runs up. A property of the window
     /// rather than of the file: paging on to one with lines in it clears it.
     bool m_longLinesFolded = false;
+    QString m_findTerm;
+    /// Where each hit starts in the window's text, in order.
+    QList<int> m_findHits;
+    /// Which of them is current, counting from nought.
+    int m_findAt = 0;
 
     FileEntry m_entry;
     FileSystemPtr m_fileSystem;

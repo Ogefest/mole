@@ -66,6 +66,7 @@ private slots:
     void f3PreviewsTheResultUnderTheCursor();
     void f3OnAFolderInTheResultsOpensIt();
     void previewArrowsStepThroughTheFolder();
+    void typingInAPreviewOpensTheFindBarHoldingWhatWasTyped();
     void newTabShortcutOpensATab();
     void f4MenuWalksIntoSubmenusWithTheKeyboard();
 
@@ -647,6 +648,44 @@ void TestKeyboardNavigation::f3OpensAPreviewAndReusesTheTab()
     QCOMPARE(m_app->tabs()->rowCount(), before + 1);
     QCOMPARE(m_app->tabs()->currentController()->property("currentUri").toString(),
         m_tree->rootUri().child(QStringLiteral("two.txt")).toString());
+}
+
+void TestKeyboardNavigation::typingInAPreviewOpensTheFindBarHoldingWhatWasTyped()
+{
+    // The gesture, end to end: Ctrl+F is a search of the folder in a new tab, so
+    // the way into finding a word in what is on screen is the one this
+    // application already uses in whichever pane has focus -- start typing. See
+    // MOLE-308.
+    const int row = pane()->files()->rowOfUri(m_tree->rootUri().child(QStringLiteral("one.txt")).toString());
+    QVERIFY(row >= 0);
+    pane()->setCurrentIndex(row);
+    settle();
+    pressKey(Qt::Key_F3);
+    settle();
+
+    QQuickItem* bar = findItem(QStringLiteral("findBar"));
+    QVERIFY2(bar, "a text preview has a find bar");
+    QVERIFY2(!bar->isVisible(), "the bar is not there until somebody looks for something");
+
+    QQuickItem* body = findItem(QStringLiteral("previewText"));
+    QVERIFY(body);
+    body->forceActiveFocus();
+    settle();
+
+    pressKey(Qt::Key_E);
+
+    QQuickItem* field = findItem(QStringLiteral("findField"));
+    QVERIFY(field);
+    QVERIFY2(bar->isVisible(), "typing did not open the bar");
+    QVERIFY2(field->hasActiveFocus(), "the keyboard did not move into the bar");
+    // The first keystroke is not lost: it is what the reader was looking for.
+    QCOMPARE(field->property("text").toString(), QStringLiteral("e"));
+
+    // Escape closes it and leaves no highlighting behind.
+    pressKey(Qt::Key_Escape);
+    settle();
+    QVERIFY2(!bar->isVisible(), "Escape left the bar open");
+    QVERIFY(field->property("text").toString().isEmpty());
 }
 
 void TestKeyboardNavigation::f3OnAFolderOpensItInstead()

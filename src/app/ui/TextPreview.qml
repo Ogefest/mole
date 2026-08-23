@@ -64,8 +64,54 @@ Item {
                    [Qt.Key_Home, Qt.ControlModifier], [Qt.Key_End, Qt.ControlModifier]]
     }
 
+    // ---- finding a word in what is on screen ---------------------------
+    //
+    // Ctrl+F is not available and is not taken: it opens a search of the folder
+    // in a new tab, which is a different and more valuable thing. So the way in
+    // is the gesture this application already uses for exactly this purpose in
+    // whichever pane has focus -- start typing, which the keyboard help calls
+    // "just start typing — filter this folder". Here it means find in this file.
+    // `/` does the same explicitly, for anyone who reads logs in a pager and
+    // reaches for it without thinking. See MOLE-308.
+    property bool finding: false
+
+    function beginFind(initial) {
+        view.finding = true
+        findField.text = initial !== undefined ? initial : ""
+        findField.forceActiveFocus()
+        findField.cursorPosition = findField.text.length
+    }
+
+    function endFind() {
+        view.finding = false
+        findField.text = ""
+        if (controller && controller.clearFind)
+            controller.clearFind()
+        area.forceActiveFocus()
+    }
+
     // Paging by keyboard, because that is how anyone reads a long file.
     Keys.onPressed: function(event) {
+        if (controller) {
+            if (event.key === Qt.Key_Escape && view.finding) {
+                view.endFind()
+                event.accepted = true
+                return
+            }
+            // Guarded on the modifiers, or Ctrl+D would type a "d" into the bar
+            // instead of adding a bookmark -- the same guard FilePane makes.
+            if (!view.finding && event.text.length > 0
+                    && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))) {
+                var ch = event.text
+                if (ch >= " " && ch !== "\u007f") {
+                    // `/` opens it empty; anything else opens it holding what was
+                    // typed, so the first keystroke is not lost.
+                    view.beginFind(ch === "/" ? "" : ch)
+                    event.accepted = true
+                    return
+                }
+            }
+        }
         if (!controller || !controller.paged)
             return
         if (event.key === Qt.Key_PageDown && (event.modifiers & Qt.ControlModifier)) {
@@ -198,6 +244,94 @@ Item {
                 // is why Ctrl+W stopped closing the tab once the body had the
                 // keyboard. See ViewerKeys.qml.
                 Keys.onPressed: function(event) { viewerKeys.relay(event) }
+
+                // The current match is scrolled to by moving the cursor, which is
+                // the one thing a TextArea does for free -- and it leaves the
+                // marks alone, because they are the document's formats rather
+                // than a selection.
+                Connections {
+                    target: controller
+                    enabled: controller !== null
+                    function onFindChanged() {
+                        if (!controller || controller.findPosition < 0)
+                            return
+                        area.cursorPosition = controller.findPosition
+                    }
+                }
+            }
+        }
+
+        // ---- the find bar, only while somebody is looking ------------------
+
+        ToolBar {
+            objectName: "findBar"
+            Layout.fillWidth: true
+            visible: view.finding
+            Material.background: App.colour.panel
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 6
+                anchors.rightMargin: 6
+                spacing: 8
+
+                Label {
+                    text: "Find"
+                    color: App.colour.textMuted
+                }
+
+                TextField {
+                    id: findField
+                    objectName: "findField"
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: 320
+                    placeholderText: "a word in this window"
+                    // Every keystroke, like the filter box in the grid next door:
+                    // a reader watching the count decides whether to keep typing.
+                    onTextChanged: if (controller && controller.find) controller.find(text)
+                    Keys.onPressed: function(event) {
+                        if (event.key === Qt.Key_Escape) {
+                            view.endFind()
+                            event.accepted = true
+                        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                            if (event.modifiers & Qt.ShiftModifier)
+                                controller.findPrevious()
+                            else
+                                controller.findNext()
+                            event.accepted = true
+                        }
+                    }
+                }
+
+                // Which of how many, because a count is what tells a reader
+                // whether to keep looking or to page on -- and where the file is
+                // being shown a window at a time it says so, since "no matches"
+                // about a window reads as "not in this file".
+                Label {
+                    objectName: "findCount"
+                    text: controller ? controller.findSummary : ""
+                    color: App.colour.textMuted
+                }
+
+                ToolButton {
+                    objectName: "findPrevious"
+                    text: "\u2191"
+                    enabled: controller && controller.findCount > 0
+                    onClicked: controller.findPrevious()
+                }
+
+                ToolButton {
+                    objectName: "findNext"
+                    text: "\u2193"
+                    enabled: controller && controller.findCount > 0
+                    onClicked: controller.findNext()
+                }
+
+                ToolButton {
+                    objectName: "findClose"
+                    text: "\u2715"
+                    onClicked: view.endFind()
+                }
             }
         }
 
