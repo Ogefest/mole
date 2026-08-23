@@ -3,6 +3,7 @@
 #include "sdk/FeatureController.h"
 #include "sdk/PluginApi.h"
 
+#include "core/automation/Chain.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
 #include <QColor>
@@ -299,6 +300,34 @@ private:
 };
 
 /// Configurable plugin used to drive PluginManager through its edge cases.
+/// A chain step kind that exists only to be registered and asked about itself.
+class FakeChainStepKind final : public IChainStepKind
+{
+public:
+    FakeChainStepKind(QString id, StepRole role)
+        : m_id(std::move(id))
+        , m_role(role)
+    {
+    }
+
+    QString kind() const override { return m_id; }
+    QString displayName() const override { return m_id; }
+    StepRole role() const override { return m_role; }
+    QList<StepParameter> parameters() const override
+    {
+        StepParameter where;
+        where.key = QStringLiteral("where");
+        where.label = QStringLiteral("Where");
+        where.kind = StepParameter::Kind::Uri;
+        where.required = true;
+        return { where };
+    }
+
+private:
+    QString m_id;
+    StepRole m_role;
+};
+
 class FakePlugin final : public IPlugin
 {
 public:
@@ -312,6 +341,10 @@ public:
         QStringList metadataReaderIds;
         QStringList thumbnailerIds;
         QStringList menuActionIds;
+        /// Step kinds this plugin contributes, as `id` -- registered through
+        /// PluginServices the way a real one would, so a test can assert that a
+        /// plugin's step is offered exactly like a built-in.
+        QList<QPair<QString, StepRole>> chainStepKinds;
         /// Set to true by shutdown(). Owned by the test, because the manager
         /// destroys the plugin before the test can inspect it.
         bool* shutdownFlag = nullptr;
@@ -345,6 +378,12 @@ public:
             registry.addMetadataReader(std::make_unique<FakeMetadataReader>(id, QList<FileFact> {}));
         for (const QString& id : m_config.thumbnailerIds)
             registry.addThumbnailer(std::make_unique<FakeThumbnailer>(id, QColor(Qt::red)));
+        for (const auto& [id, role] : m_config.chainStepKinds) {
+            if (!registry.services().chains)
+                continue;
+            m_stepKinds.push_back(std::make_unique<FakeChainStepKind>(id, role));
+            registry.services().chains->registerKind(m_stepKinds.back().get());
+        }
         for (const QString& id : m_config.menuActionIds) {
             MenuAction action;
             action.id = id;
@@ -364,6 +403,7 @@ public:
     bool sawValidServices() const { return m_sawServices; }
 
 private:
+    std::vector<std::unique_ptr<FakeChainStepKind>> m_stepKinds;
     Config m_config;
     bool m_sawServices = false;
 };

@@ -57,6 +57,10 @@ add_library(mole_core STATIC
     automation/ScheduleRule.cpp
     automation/ScheduleStore.h
     automation/ScheduleStore.cpp
+    automation/Chain.h
+    automation/Chain.cpp
+    automation/ChainStore.h
+    automation/ChainStore.cpp
     automation/Scheduler.h
     automation/Scheduler.cpp
 

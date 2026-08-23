@@ -11,6 +11,7 @@ class IPreviewLookup;
 class IMetadataLookup;
 class IThumbnailLookup;
 class Scheduler;
+class ChainRegistry;
 class AlertStore;
 class AnalysisStore;
 class FileSetStore;
@@ -75,6 +76,13 @@ struct PluginServices
     /// plugin ABI surface: a field inserted in the middle moves every one after
     /// it, which is what the note at the top of the file is about.
     IndexSummary* indexSummary = nullptr;
+
+    /// The step kinds a chain can be built from. Register one here to have an
+    /// operation offered as a step; the chains that use it outlive the plugin,
+    /// which is why a kind may be replaced rather than only added. Appended for
+    /// the reason above. See
+    /// docs/adr/0082-a-chain-is-a-line-and-a-list-of-uris-passes-along-it.md.
+    ChainRegistry* chains = nullptr;
 
     bool isValid() const { return vfs && tasks && index && events; }
 };

@@ -358,6 +358,7 @@ that third-party code uses, so the API cannot quietly rot.
 | `MOLE_BOOKMARKS_PATH` | where the bookmarks file lives, instead of the user profile |
 | `MOLE_ANALYSIS_PATH` | where saved reports live, instead of the user profile |
 | `MOLE_SCHEDULE_PATH` | where the job schedule lives, instead of the user profile |
+| `MOLE_CHAINS_PATH` | where saved chains live, instead of the user profile |
 | `MOLE_ALERTS_PATH` | where watched metrics live, instead of the user profile |
 | `MOLE_SETS_PATH` | where file sets live, instead of the user profile |
 | `MOLE_SECRETS_PATH` | where encrypted credentials live, instead of the user profile |

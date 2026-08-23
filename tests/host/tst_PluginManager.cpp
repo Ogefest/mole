@@ -7,6 +7,7 @@
 #include "support/FakePlugin.h"
 #include "support/MoleTestMain.h"
 
+#include "core/automation/Chain.h"
 #include "core/events/EventBus.h"
 #include "core/index/IndexDatabase.h"
 #include "core/tasks/TaskManager.h"
@@ -27,6 +28,7 @@ private slots:
     void cleanup();
 
     void builtInPluginContributesEverything();
+    void aPluginContributesAChainStepKind();
     void pluginSeesValidServices();
     void wrongApiVersionIsRejected();
     void duplicatePluginIdIsRejected();
@@ -53,6 +55,7 @@ private:
     ThumbnailRegistry* m_thumbnails = nullptr;
     ActionRegistry* m_actions = nullptr;
     PluginServices m_services;
+    ChainRegistry m_chains;
 };
 
 void TestPluginManager::init()
@@ -72,6 +75,7 @@ void TestPluginManager::init()
     QVERIFY(m_index->open().ok());
 
     m_services = PluginServices { m_vfs, m_tasks, m_index.get(), m_events };
+    m_services.chains = &m_chains;
 }
 
 void TestPluginManager::cleanup()
@@ -129,6 +133,40 @@ void TestPluginManager::builtInPluginContributesEverything()
     // becomes reachable without touching the shell.
     QVERIFY(m_actions->contains(QStringLiteral("org.test.tool")));
     QVERIFY2(manager->errors().isEmpty(), qPrintable(manager->errors().join(QLatin1Char('\n'))));
+}
+
+void TestPluginManager::aPluginContributesAChainStepKind()
+{
+    // Where this lives, and why it is not in tst_Chain.cpp with the rest of the
+    // vocabulary: the claim is that a plugin's step kind is offered *exactly* like
+    // a built-in one, and the only way to assert that rather than inspect it is to
+    // send it through the manager -- which is here, with every other "a plugin
+    // contributes" case. See MOLE-164, and tst_Chain for the vocabulary itself.
+    PluginManager* manager = makeManager();
+
+    FakePlugin::Config config;
+    config.chainStepKinds = { { QStringLiteral("org.test.transcode"), StepRole::Transform },
+        { QStringLiteral("org.test.publish"), StepRole::Sink } };
+    QVERIFY(manager->addBuiltIn(std::make_unique<FakePlugin>(config)));
+
+    QCOMPARE(m_chains.kinds().size(), 2);
+    IChainStepKind* transcode = m_chains.kind(QStringLiteral("org.test.transcode"));
+    QVERIFY(transcode != nullptr);
+    QVERIFY(transcode->role() == StepRole::Transform);
+    QCOMPARE(transcode->parameters().size(), 1);
+    QVERIFY(transcode->parameters().first().required);
+
+    // And it is a step like any other: a chain built from a plugin's kinds is
+    // judged by the same rules, including the one about where a sink may sit.
+    Chain chain;
+    ChainStep first;
+    first.kind = QStringLiteral("org.test.publish");
+    ChainStep second;
+    second.kind = QStringLiteral("org.test.transcode");
+    chain.steps = { first, second };
+    QString why;
+    QVERIFY2(!m_chains.isRunnable(chain, &why), "a plugin's sink was allowed to sit first");
+    QVERIFY2(why.contains(QStringLiteral("step 1 of 2")), qPrintable(why));
 }
 
 void TestPluginManager::pluginSeesValidServices()
