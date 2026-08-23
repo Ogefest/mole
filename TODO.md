@@ -48,9 +48,24 @@ project, and a contributor should never hit a wall of text they cannot read.
   which is a piece of work rather than a setting. Raising it — building on
   something newer because it is convenient — silently drops every user between the
   two, which is why the figure is written here and in the release notes and not
-  only in `scripts/package-appimage.sh`. What that distribution has not got is part
-  of the same promise: no Arrow, so the AppImage has no Parquet grid, and no
-  libvterm or libnfs either.
+  only in `scripts/package-appimage.sh`.
+
+  **What that distribution has not got is part of the same promise, and it is one
+  thing rather than the four it first looked like.** This note used to say the
+  AppImage had no Parquet grid, no terminal panel and no NFS drives; that was the
+  package list in `scripts/package-appimage.sh` being short, not a property of
+  AlmaLinux 9. EPEL 9 has `qt6-qtpdf`, `libvterm`, `libnfs` and Arrow, so the
+  AppImage has PDF rendering, the full terminal parser, NFS drives and everything
+  else — and the build now refuses to be packed if any of them is missing, so the
+  next short list fails rather than ships.
+
+  The Parquet grid is the one real absence: EPEL 9 ships Arrow 9.0.0 and no
+  `ParquetConfig.cmake` at all, so `find_package(Parquet)` cannot succeed there
+  whatever is installed. **Accepted rather than fixed**, and the difference matters:
+  the alternative is building Arrow and Parquet from source inside the AppImage's own
+  container, which is a third-party build of a large library on the critical path of
+  a release that already does five, for one preview. A Parquet file opens as the list
+  of facts there, which is what a viewer that declines is supposed to do.
 
 - **The nine viewers, swept for what a file costs once it is on screen.** MOLE-284
   asked each of them one question: can this viewer find out only after it has read

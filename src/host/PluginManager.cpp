@@ -245,11 +245,22 @@ QStringList PluginManager::defaultSearchPaths()
     // Next to the executable, so a build tree works without installing.
     paths.append(appDir.filePath(QStringLiteral("plugins")));
 
-    // Installed layout: <prefix>/bin/mole finds
-    // <prefix>/lib/mole/plugins. Resolved relative to the binary
-    // rather than baked in, so the same build works from any prefix and from
-    // inside an AppImage.
-    paths.append(QDir::cleanPath(appDir.absoluteFilePath(QStringLiteral("../lib/mole/plugins"))));
+    // Installed layout: <prefix>/bin/mole finds <prefix>/lib/mole/plugins.
+    // Resolved relative to the binary rather than baked in, so the same build works
+    // from any prefix and from inside an AppImage.
+    //
+    // Both lib and lib64, and that is not belt-and-braces. GNUInstallDirs gives
+    // CMAKE_INSTALL_LIBDIR as `lib64` on every RPM distribution, so the install
+    // rules put the plugins in <prefix>/lib64/mole/plugins there -- and with only
+    // `lib` searched, the .rpm and the AppImage each shipped an archive plugin and
+    // a network plugin that nothing ever looked for. No archive browsing and no
+    // sftp, ftp, s3, webdav, smb or nfs drives, reported as nothing at all rather
+    // than as a failure, because a plugin that is not found is not a plugin that
+    // failed. Found while measuring the artefacts for MOLE-296.
+    for (const char* libdir : { "lib", "lib64" }) {
+        paths.append(QDir::cleanPath(
+            appDir.absoluteFilePath(QStringLiteral("../%1/mole/plugins").arg(QLatin1String(libdir)))));
+    }
 
     const QString dataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     if (!dataDir.isEmpty())

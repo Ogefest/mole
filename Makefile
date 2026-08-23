@@ -231,7 +231,11 @@ bundle:
 	@$(MAKE) build PRESET=release
 	@rm -rf dist && mkdir -p dist
 	@cmake --install build/release --prefix dist/usr >/dev/null
-	@strip dist/usr/bin/mole dist/usr/lib/mole/plugins/*.so 2>/dev/null || true
+	@# Both binaries, not `mole` by name: mole-tasks was installed unstripped and
+	@# carried 51 MB of debug symbols into every bundle -- about a third of the
+	@# tarball -- because this line named one of the two. Found by measuring the
+	@# artefacts for MOLE-296.
+	@strip dist/usr/bin/* dist/usr/lib/mole/plugins/*.so 2>/dev/null || true
 	@scripts/make-bundle.sh dist
 	@cp LICENSE NOTICE THIRD-PARTY-NOTICES.md dist/
 	@cp -r licenses dist/

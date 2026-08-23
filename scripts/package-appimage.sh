@@ -59,24 +59,50 @@ set -e
 dnf install -y -q dnf-plugins-core >/dev/null
 dnf config-manager --set-enabled crb >/dev/null
 dnf install -y -q epel-release >/dev/null
+# Everything EPEL 9 has, which is everything: the first version of this list was
+# short, and the AppImage went out without the Parquet grid, without PDF rendering,
+# with a reduced terminal parser and with no NFS drives -- none of which was a
+# property of the distribution. Checked package by package rather than assumed, and
+# the step below refuses a build that came out missing one.
 dnf install -y -q gcc-c++ cmake ninja-build pkgconf-pkg-config file which findutils \
     qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qttools-devel qt6-qtsvg-devel \
-    qt6-qtbase-gui qt6-qtmultimedia-devel libarchive-devel libcurl-devel openssl-devel \
-    libgit2-devel xxhash-devel libsmbclient-devel >/dev/null
+    qt6-qtbase-gui qt6-qtmultimedia-devel qt6-qtpdf-devel libarchive-devel \
+    libcurl-devel openssl-devel libgit2-devel xxhash-devel libsmbclient-devel \
+    libnfs-devel libvterm-devel libarrow-devel parquet-libs-devel >/dev/null
 
-# What this distribution has not got is a decision by omission, so it is said out
-# loud: no Arrow (so no Parquet grid), no Qt Pdf, no libvterm, no libnfs. The
-# configure summary below is what a reader should be shown.
+# What the build found, printed and then held to. An artefact that quietly came out
+# without a feature is the fault MOLE-120 built its own check for; this is the same
+# question asked on the oldest distribution.
 echo "--- what this build found ---"
 cmake -S /src -B /build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMOLE_BUILD_TESTS=OFF \
-    2>&1 | grep -E "Parquet|Terminal|Git state|Network drives|Credential|Windows shares|NFS exports|Qt6 Pdf|Multimedia|libarchive" || true
+    2>&1 | tee /tmp/configure.log \
+    | grep -E "Parquet|Terminal|Git state|Network drives|Credential|Windows shares|NFS exports|Qt6 Pdf|Multimedia|libarchive" || true
+
+# Everything the distribution can give, which is everything except the Parquet
+# grid: EPEL 9 ships Arrow 9.0.0 and no ParquetConfig.cmake at all, so
+# find_package(Parquet) cannot succeed there whatever is installed. That one
+# absence is a property of the oldest distribution Mole runs on, and it is written
+# in TODO.md and in the release notes rather than discovered by a downloader.
+missing=0
+for wanted in "Terminal: libvterm" "Git state: libgit2" \
+    "Credential store: OpenSSL" "Network drives: sftp, ftp, s3, webdav" \
+    "Windows shares: smb" "NFS exports: nfs"; do
+    grep -qF "$wanted" /tmp/configure.log || { echo "missing: $wanted"; missing=1; }
+done
+for refused in "Qt6 Pdf not found" "Qt6 Multimedia not found" "libarchive not found"; do
+    grep -qF "$refused" /tmp/configure.log && { echo "not built with: $refused"; missing=1; }
+done
+[ "$missing" = 0 ] || { echo "this AppImage would go out missing something the distribution has"; exit 1; }
+
 cmake --build /build --parallel "$(nproc)"
 
 # The same three steps `make bundle` takes, out of source because /src is read-only:
 # install, strip, and bring the Qt libraries, plugins and QML modules in.
 APPDIR=/appdir
 cmake --install /build --prefix "$APPDIR/usr" >/dev/null
-strip "$APPDIR/usr/bin/mole" "$APPDIR/usr/lib/mole/plugins/"*.so 2>/dev/null || true
+# Both binaries: naming `mole` alone left mole-tasks unstripped, which is 51 MB of
+# debug symbols in an artefact people download. See MOLE-296.
+strip "$APPDIR/usr/bin/"* "$APPDIR/usr/lib/mole/plugins/"*.so 2>/dev/null || true
 /src/scripts/make-bundle.sh "$APPDIR"
 cp /src/LICENSE /src/NOTICE /src/THIRD-PARTY-NOTICES.md "$APPDIR/"
 cp -r /src/licenses "$APPDIR/"

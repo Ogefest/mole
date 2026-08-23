@@ -15,6 +15,13 @@ set -euo pipefail
 DIST="${1:?usage: make-bundle.sh <dist-dir>}"
 BIN="$DIST/usr/bin/mole"
 LIBDIR="$DIST/usr/lib"
+# Mole's own plugins, wherever the install rules put them. Not assumed to be under
+# lib: GNUInstallDirs gives lib64 on every RPM distribution, and with the scan below
+# looking only under $LIBDIR their dependencies went uncollected -- so the AppImage's
+# network plugin could not load for want of libsmbclient, reported as a problem
+# nobody was reading. The archive plugin got away with it because libarchive came in
+# as something else's dependency. See MOLE-296.
+MOLE_PLUGIN_DIRS="$(find "$DIST/usr" -type d -path '*/mole/plugins' 2>/dev/null | tr '\n' ' ')"
 PLUGINDIR="$DIST/usr/plugins"
 QMLDIR="$DIST/usr/qml"
 
@@ -57,7 +64,7 @@ collect_deps() {
                 cp -L "$path" "$LIBDIR/$name"
                 changed=1
             done < <(ldd "$object" 2>/dev/null | awk '/=> \//{print $1, $3}')
-        done < <(find "$BIN" "$LIBDIR" "$PLUGINDIR" "$QMLDIR" -type f \
+        done < <(find "$DIST/usr/bin" "$LIBDIR" "$PLUGINDIR" "$QMLDIR" $MOLE_PLUGIN_DIRS -type f \
                       \( -name '*.so*' -o -perm -u+x \) -print0 2>/dev/null)
     done
 }
@@ -97,4 +104,7 @@ chmod +x "$DIST/mole"
 
 echo ""
 echo "  bundle: $DIST/mole"
-echo "  size:   $(du -sh "$DIST" | cut -f1)"
+# Apparent size, not disk usage: this machine's filesystem compresses, so `du -sh`
+# reported 807K one run and 143M another for the same bundle. A figure nobody can
+# reproduce is worse than none -- see MOLE-296.
+echo "  size:   $(du -sh --apparent-size "$DIST" | cut -f1) (unpacked)"

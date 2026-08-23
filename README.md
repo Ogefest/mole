@@ -159,13 +159,36 @@ debug build that only runs from the build tree. For anything else:
 make optimised   # optimised, still run from build/release/
 make install     # into /usr/local — override with PREFIX=~/.local
 make bundle      # self-contained folder in dist/, runs without Qt installed
+make packages    # a .deb, an .rpm and an AppImage, each for the family it installs on
 ```
 
-| | Size | Needs Qt on the target | Use it for |
-|---|---|---|---|
-| `make optimised` | 24 MB | yes | running on this machine |
-| `make install` | 24 MB | yes | your own machine, or building a `.deb` |
-| `make bundle` | 68 MB | **no** | handing it to someone else |
+| | Download | On disk | Needs Qt on the target | What it cannot do | Use it for |
+|---|---|---|---|---|---|
+| `make optimised` | — | 127 MB | yes | — | running on this machine |
+| `make install` | — | 196 MB | yes | — | your own machine |
+| `.deb` | 3.6 MB | 10 MB | yes, from the archive | no Parquet grid | Debian and Ubuntu |
+| `.rpm` | 2.4 MB | 11 MB | yes, from the archive | — | Fedora and RHEL |
+| tarball (`make bundle`) | 79 MB | 208 MB | **no** | — | handing it to someone else |
+| AppImage | 74 MB | 211 MB | **no** | no Parquet grid | any distribution from 2021 onwards |
+
+**Where those figures come from, because a size is not a property of the program.**
+Measured on 2026-08-23 from the artefacts the release workflow builds, against Qt
+6.4 on Ubuntu 24.04 — except the `.rpm`, built on Fedora 40, and the AppImage, built
+on AlmaLinux 9 for the glibc floor (see `TODO.md`). MB means 10⁶ bytes; *on disk* is
+the apparent size of the unpacked tree, which is what your filesystem has to hold.
+A build finds what a machine has, so yours will differ: leaving Arrow out takes tens
+of megabytes off, and the two figures for `make optimised` and `make install` are
+large because neither strips debug information — the packages, the tarball and the
+AppImage all do.
+
+**What it cannot do** is the column to read before choosing. Every artefact browses
+archives, opens the network drives, renders PDFs, plays video, shows git state and
+keeps its credential store encrypted; the differences are all about one optional
+library apiece. `libarrow` is in no Ubuntu archive at any version, so the `.deb` is
+built without it and a Parquet file opens as the list of facts rather than a grid.
+AlmaLinux 9 has Arrow but ships no `ParquetConfig.cmake`, so the AppImage is the
+same. Fedora packages both, so the `.rpm` has everything, and the tarball carries
+its own libraries and answers to nobody's archive.
 
 `make install` lays out `<prefix>/bin/mole` and
 `<prefix>/lib/mole/plugins`, plus a desktop entry and icon so the

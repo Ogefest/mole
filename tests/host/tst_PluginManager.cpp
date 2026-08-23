@@ -34,6 +34,7 @@ private slots:
     void duplicateFeatureIdIsRejectedWithNamedError();
     void duplicateMenuActionIsRejectedWithNamedError();
     void missingPluginDirectoryIsNotAnError();
+    void theInstalledLayoutIsLookedForUnderBothLibAndLib64();
     void nonPluginFileIsReportedNotFatal();
     void shutdownIsCalledOnDestruction();
     void loadsTheRealArchivePluginFromDisk();
@@ -232,6 +233,30 @@ void TestPluginManager::duplicateMenuActionIsRejectedWithNamedError()
     QCOMPARE(manager->errors().size(), 1);
     QVERIFY2(manager->errors().first().contains(QStringLiteral("plugin.two")),
         "the error has to name which plugin caused it");
+}
+
+void TestPluginManager::theInstalledLayoutIsLookedForUnderBothLibAndLib64()
+{
+    // GNUInstallDirs gives CMAKE_INSTALL_LIBDIR as `lib64` on every RPM
+    // distribution, so the install rules put the plugins in
+    // <prefix>/lib64/mole/plugins there. With only `lib` searched, the .rpm and the
+    // AppImage each shipped an archive plugin and a network plugin that nothing ever
+    // looked for: no archive browsing and no sftp, ftp, s3, webdav, smb or nfs
+    // drives, reported as nothing at all rather than as a failure -- a plugin that
+    // is not found is not a plugin that failed. See MOLE-296.
+    const QStringList paths = PluginManager::defaultSearchPaths();
+
+    const QDir beside(QCoreApplication::applicationDirPath());
+    for (const QString& libdir : { QStringLiteral("lib"), QStringLiteral("lib64") }) {
+        const QString wanted
+            = QDir::cleanPath(beside.absoluteFilePath(QStringLiteral("../%1/mole/plugins").arg(libdir)));
+        QVERIFY2(paths.contains(wanted),
+            qPrintable(QStringLiteral("%1 is not searched; it looks in: %2")
+                           .arg(wanted, paths.join(QStringLiteral(", ")))));
+    }
+
+    // And next to the binary, which is what makes a build tree work uninstalled.
+    QVERIFY(paths.contains(beside.filePath(QStringLiteral("plugins"))));
 }
 
 void TestPluginManager::missingPluginDirectoryIsNotAnError()

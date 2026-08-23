@@ -192,13 +192,21 @@ jobs:
       - name: Both packages install on a clean system
         run: |
           version=$(make version)
+          # --plugins rather than --version, and this is the check that matters: a
+          # package can install, start and answer its version while loading none of
+          # the plugins it shipped. Both of these did. GNUInstallDirs gives lib64 on
+          # an RPM distribution, so the plugins went to /usr/lib64/mole/plugins and
+          # nothing looked there -- no archive browsing and no network drives,
+          # reported as nothing at all rather than as a failure. See MOLE-296.
           echo "--- Ubuntu ---"
           docker run --rm -v "$PWD/build/packages:/pkg:ro" ubuntu:24.04 bash -c "
             set -e
             export DEBIAN_FRONTEND=noninteractive
             apt-get update -qq >/dev/null
             apt-get install -y -qq /pkg/mole_${version}_amd64.deb >/dev/null
-            QT_QPA_PLATFORM=offscreen mole --version
+            QT_QPA_PLATFORM=offscreen mole --plugins | tee /tmp/said
+            grep -q 'Archive drives' /tmp/said
+            grep -q 'Standard network drives' /tmp/said
             test -f /usr/share/applications/mole.desktop
             apt-get remove -y -qq mole >/dev/null
             test ! -e /usr/bin/mole"
@@ -206,7 +214,9 @@ jobs:
           docker run --rm -v "$PWD/build/packages:/pkg:ro" fedora:40 bash -c "
             set -e
             dnf install -y -q /pkg/mole-${version}-1.x86_64.rpm >/dev/null
-            QT_QPA_PLATFORM=offscreen mole --version
+            QT_QPA_PLATFORM=offscreen mole --plugins | tee /tmp/said
+            grep -q 'Archive drives' /tmp/said
+            grep -q 'Standard network drives' /tmp/said
             test -f /usr/share/applications/mole.desktop
             dnf remove -y -q mole >/dev/null
             test ! -e /usr/bin/mole"
@@ -230,9 +240,12 @@ jobs:
                 apt-get update -qq >/dev/null
                 apt-get install -y -qq libglx0 libopengl0 libgl1 libegl1 >/dev/null
                 cp /pkg/mole-${version}-x86_64.AppImage /tmp/m && chmod +x /tmp/m
-                cd /tmp && QT_QPA_PLATFORM=offscreen HOME=/tmp ./m --version | tail -1" \
+                cd /tmp && QT_QPA_PLATFORM=offscreen HOME=/tmp ./m --plugins" \
               | tee /tmp/said
             grep -qF "Mole ${version}" /tmp/said
+            # The plugins it carries, for the reason the packages check them too.
+            grep -q 'Archive drives' /tmp/said
+            grep -q 'Standard network drives' /tmp/said
           done
 
       # The Qt LGPL conditions, asked of every artefact this release publishes: the
@@ -281,7 +294,7 @@ jobs:
 
           The .deb and the .rpm carry what their own distribution can satisfy, which is not quite the same list: Arrow is in no Ubuntu archive, so the .deb has no Parquet grid, and Fedora packages it, so the .rpm does. MOLE-296 puts the table here.
 
-          **The AppImage runs on glibc 2.34 and upwards** — Ubuntu 22.04, Debian 12, RHEL 9, and anything newer. It is built on AlmaLinux 9 for that reason, and what that distribution has not got the AppImage has not either: no Parquet grid, no terminal panel and no NFS drives." \
+          **The AppImage runs on glibc 2.34 and upwards** — Ubuntu 22.04, Debian 12, RHEL 9, and anything newer. It is built on AlmaLinux 9 for that reason, and the one thing that costs is the Parquet grid: EPEL 9 ships Arrow without a CMake config for Parquet, so a Parquet file opens there as the list of facts. Everything else is in it." \
             "$TARBALL" \
             build/packages/mole_*.deb \
             build/packages/mole-*.rpm \
