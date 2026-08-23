@@ -53,7 +53,7 @@ SMB_SHARE="${MOLE_TESTBED_SMB_SHARE:-moledata}"
 # whole subnet by accident.
 NFS_CLIENTS="${MOLE_TESTBED_NFS_CLIENTS:-}"
 
-say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
+heading() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 note() { printf '  %s\n' "$*"; }
 die() { printf '\n%s\n' "$*" >&2; exit 1; }
 
@@ -68,7 +68,7 @@ esac
 
 on_server() { ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$ACCOUNT@$ADDRESS" "sudo bash -s"; }
 
-say "Packages"
+heading "Packages"
 on_server <<'REMOTE' || die "could not install the servers"
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -83,7 +83,7 @@ note "OpenSSH, Apache, vsftpd, Samba, NFS"
 # condition those two have to be able to produce. SFTP stays in the home
 # directory on the system disk: filling that would take the machine with it.
 
-say "Roots"
+heading "Roots"
 on_server <<REMOTE || die "could not make the roots"
 set -euo pipefail
 mountpoint -q /srv/moledata || { echo "the small disk is not mounted"; exit 1; }
@@ -99,7 +99,7 @@ note "/home/$ACCOUNT/sftp (system disk)"
 
 # --- SFTP, and a second sshd that re-keys ------------------------------------
 
-say "SFTP"
+heading "SFTP"
 on_server <<REMOTE || die "could not configure the second sshd"
 set -euo pipefail
 install -d -m 0755 /etc/ssh/rekey
@@ -185,7 +185,7 @@ note "port $REKEY_PORT: chacha20-poly1305, RekeyLimit $REKEY_LIMIT"
 # host key that is never rotated, and a port no test is allowed to name. See
 # ADR-0054.
 
-say "the control channel's own sshd"
+heading "the control channel's own sshd"
 on_server <<REMOTE || die "could not configure the control sshd"
 set -euo pipefail
 install -d -m 0755 /etc/ssh/control
@@ -228,7 +228,7 @@ note "port $CONTROL_PORT: the control channel, attacked by nothing"
 
 # --- WebDAV ------------------------------------------------------------------
 
-say "WebDAV"
+heading "WebDAV"
 on_server <<REMOTE || die "could not configure Apache"
 set -euo pipefail
 a2enmod dav dav_fs auth_basic authn_file authz_user >/dev/null
@@ -258,7 +258,7 @@ note "http://$ADDRESS/dav"
 
 # --- SMB ---------------------------------------------------------------------
 
-say "SMB"
+heading "SMB"
 on_server <<REMOTE || die "could not configure Samba"
 set -euo pipefail
 cat > /etc/samba/smb.conf <<'CONF'
@@ -295,7 +295,7 @@ note "//$ADDRESS/$SMB_SHARE, root /srv/moledata/smb"
 
 # --- NFS ---------------------------------------------------------------------
 
-say "NFS"
+heading "NFS"
 # `$NFS_CLIENTS`, not `\$NFS_CLIENTS`. This line is in the script that runs here,
 # not in the heredoc four lines below, so the backslash it used to carry made the
 # test compare the literal string -- never empty, so the guard never held and the
@@ -340,7 +340,7 @@ fi
 
 # --- FTP ---------------------------------------------------------------------
 
-say "FTP"
+heading "FTP"
 on_server <<REMOTE || die "could not configure vsftpd"
 set -euo pipefail
 # A self-signed certificate, so FTP is FTPS. The suite requires TLS unless
@@ -462,7 +462,7 @@ note "  and /Shared inside it, which is where tst_FtpFileSystem works by default
 # MinIO rather than a bill. Its store goes on the system disk: a bucket has no
 # business filling the disk that "the destination is full" is measured on.
 
-say "S3"
+heading "S3"
 on_server <<REMOTE || die "could not install MinIO"
 set -euo pipefail
 if [ ! -x /usr/local/bin/minio ]; then
@@ -545,7 +545,7 @@ chown -R minio:minio /var/lib/minio
 REMOTE
 note "http://$ADDRESS:$S3_PORT, buckets $S3_BUCKET and $S3_VERSIONED_BUCKET (versioned)"
 
-say "Ready"
+heading "Ready"
 note "Check them with scripts/testbed/check-services.sh"
 printf '\n  The addresses and the password belong in the environment directory,\n'
 printf '  not in this repository. Next: issue #21, the control channel.\n\n'

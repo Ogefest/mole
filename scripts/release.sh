@@ -33,7 +33,7 @@ MINOR="${MINOR:-}"
 VERSION="${VERSION:-}"
 
 step() { printf '\n== %s\n' "$1"; }
-say() { printf '   %s\n' "$1"; }
+note() { printf '   %s\n' "$1"; }
 
 # The live tiers print the address they are talking to. Theirs is their business;
 # this script's output is the thing somebody pastes into a ticket or a release
@@ -85,12 +85,12 @@ on=$(git rev-parse --abbrev-ref HEAD)
 # A release commit that swallowed somebody's work in progress cannot be taken
 # apart afterwards: the version, the marker and the pictures are in it too.
 [ -z "$(git status --porcelain)" ] || die "the tree is dirty, and a release commit must carry only its own changes"
-say "on $BRANCH, and the tree is clean"
+note "on $BRANCH, and the tree is clean"
 
 step "the test suite"
-say "$MAKE test"
+note "$MAKE test"
 "$MAKE" test || die "the suite is not green"
-say "green"
+note "green"
 
 # The tiers that need the live environment. This is the only place they will ever
 # be a precondition of anything: they can only run from a machine that can reach
@@ -105,7 +105,7 @@ run_tier() {
     local log="$SCRATCH/$target.log"
 
     step "the $target tier"
-    say "$MAKE $target"
+    note "$MAKE $target"
     "$MAKE" "$target" 2>&1 | tee "$log" | redact
     local code=${PIPESTATUS[0]}
 
@@ -134,7 +134,7 @@ run_tier() {
         die "$target could not run: the live environment is not configured on this machine"
     fi
     [ "$code" = 0 ] || die "$target is not green"
-    say "green, against the real environment"
+    note "green, against the real environment"
 }
 
 run_tier test-live
@@ -142,14 +142,14 @@ run_tier test-heavy
 
 step "the guide pictures"
 if [ -n "$DRY" ]; then
-    say "skipped in a dry run: it rewrites the pictures under docs/guide/images"
+    note "skipped in a dry run: it rewrites the pictures under docs/guide/images"
 else
     # Armed before the step rather than after it: this is the first thing that
     # writes a tracked file, and a release that stops later must not leave
     # regenerated pictures behind. Found by the test, which cut a version that was
     # already tagged and then asked whether the tree had moved.
     mutating=1
-    say "$MAKE guide-images"
+    note "$MAKE guide-images"
     "$MAKE" guide-images || die "the guide pictures could not be regenerated"
 fi
 
@@ -159,7 +159,7 @@ step "the version"
 current=$("$MAKE" version | tail -1)
 printf '%s\n' "$current" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' \
     || die "the repository does not say what version it is at ($MAKE version said '$current')"
-say "at $current"
+note "at $current"
 
 tags=$(git tag --list 'v*')
 if [ -n "$VERSION" ]; then
@@ -186,7 +186,7 @@ fi
 
 printf '%s\n' "$next" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || die "'$next' is not a version of three numbers"
 git rev-parse -q --verify "refs/tags/v$next" >/dev/null && die "v$next is already a tag"
-say "cutting $next -- $decided"
+note "cutting $next -- $decided"
 
 # ------------------------------------------------------------- the marker
 
@@ -212,20 +212,20 @@ entry_re=${entry_re//\\./[.]}
 marker="## $next — released $(date +%F)"
 printf '%s\n' "$marker" | grep -qE "$marker_re" \
     || die "the marker '$marker' is not the shape CHANGELOG.md states"
-say "marker: $marker"
+note "marker: $marker"
 
 # The notes, before anything is written: they are this version's block in the
 # changelog, and a release whose block is empty or missing is one nobody can publish.
 # Checked here rather than discovered by the workflow after the tag is pushed, since
 # a tag is the one step that cannot be taken back.
 step "the release notes"
-say "the block for $next in CHANGELOG.md, which is what the release will carry"
+note "the block for $next in CHANGELOG.md, which is what the release will carry"
 
 if [ -n "$DRY" ]; then
     step "what a real run would do next"
-    say "rewrite project(VERSION $current) to $next in CMakeLists.txt"
-    say "insert the marker above the newest entry in CHANGELOG.md"
-    say "commit those with the regenerated pictures, tag v$next, and push both to $REMOTE"
+    note "rewrite project(VERSION $current) to $next in CMakeLists.txt"
+    note "insert the marker above the newest entry in CHANGELOG.md"
+    note "commit those with the regenerated pictures, tag v$next, and push both to $REMOTE"
     printf '\ndry run: nothing was written\n'
     exit 0
 fi
@@ -246,7 +246,7 @@ awk -v marker="$marker" -v entry="$entry_re" -v release="$marker_re" '
 ' CHANGELOG.md > "$SCRATCH/changelog" 2>/dev/null \
     || die "could not find an entry in CHANGELOG.md to put the marker above"
 cat "$SCRATCH/changelog" > CHANGELOG.md
-say "marker written above the newest entry"
+note "marker written above the newest entry"
 
 # And it has something under it. `make release` has just put the marker above the
 # newest entry, so an empty block here means nothing was written down for anything in
@@ -256,7 +256,7 @@ say "marker written above the newest entry"
 # next door falls back to its own repository's copy, which is the wrong file when
 # this is run anywhere else -- as its own test does.
 notes=$("$SOURCE_SCRIPTS/changelog-block.sh" "$next" "$PWD/CHANGELOG.md" 2>&1) || die "$notes"
-say "$(printf '%s\n' "$notes" | grep -c .) lines of notes for $next"
+note "$(printf '%s\n' "$notes" | grep -c .) lines of notes for $next"
 
 # ------------------------------------------------------------ the version line
 
@@ -265,7 +265,7 @@ step "the version line"
 sed -i "s/^\( *VERSION \)[0-9][0-9.]*$/\1$next/" CMakeLists.txt
 wrote=$("$MAKE" version | tail -1)
 [ "$wrote" = "$next" ] || die "CMakeLists.txt still says $wrote after being rewritten"
-say "project(VERSION $next)"
+note "project(VERSION $next)"
 
 # ------------------------------------------------------------ commit and tag
 
@@ -275,15 +275,15 @@ git add $PATHS
 git commit --quiet -m "Release $next" -m "The version, the changelog marker for $next, and the guide pictures as they are at this commit." \
     || die "the commit failed"
 mutating=0
-say "$(git log --oneline -1)"
+note "$(git log --oneline -1)"
 
 step "the tag"
 git tag -a "v$next" -m "Mole $next" || die "the tag failed"
-say "v$next, annotated, on $(git rev-parse --short HEAD)"
+note "v$next, annotated, on $(git rev-parse --short HEAD)"
 
 step "the push"
 git push --quiet "$REMOTE" "$BRANCH" || die "the commit is made and tagged locally, but the push failed"
 git push --quiet "$REMOTE" "v$next" || die "the commit and tag are local; pushing the tag failed"
-say "pushed $BRANCH and v$next to $REMOTE"
+note "pushed $BRANCH and v$next to $REMOTE"
 
 printf '\nMole %s is cut.\n' "$next"

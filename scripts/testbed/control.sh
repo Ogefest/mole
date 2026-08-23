@@ -90,7 +90,7 @@ sftp_home() {
 CONTROL_PORT="$(awk '/^Port /{print $2}' /etc/ssh/sshd_config.control 2>/dev/null | head -1)"
 CONTROL_UNIT=sshd-control
 
-say() { printf 'mole-control: %s\n' "$*"; }
+report() { printf 'mole-control: %s\n' "$*"; }
 
 # Says no, and says why. Used where a command would take away the path back.
 refuse() { printf 'mole-control: refusing: %s\n' "$*" >&2; exit 3; }
@@ -116,7 +116,7 @@ schedule_undo() {
             --timer-property=AccuracySec=1s /bin/bash -c "$*" >/dev/null 2>&1; then
         # Said out loud rather than swallowed. An undo that was never scheduled
         # is a machine left damaged, which is worth more than a tidy line.
-        say "WARNING: could not schedule the undo -- put it back by hand"
+        report "WARNING: could not schedule the undo -- put it back by hand"
         return 1
     fi
 }
@@ -184,7 +184,7 @@ service)
             sleep 1
         done
     fi
-    say "$action $unit -> $(systemctl is-active "$unit")"
+    report "$action $unit -> $(systemctl is-active "$unit")"
     ;;
 
 kill-connections)
@@ -195,7 +195,7 @@ kill-connections)
     # not.
     before=$(ss -tn state established "( sport = :$port )" | tail -n +2 | wc -l)
     ss -K state established "( sport = :$port )" >/dev/null 2>&1
-    say "killed $before established connection(s) on port $port; $(systemctl is-active sshd 2>/dev/null || echo server) still up"
+    report "killed $before established connection(s) on port $port; $(systemctl is-active sshd 2>/dev/null || echo server) still up"
     ;;
 
 fill)
@@ -205,19 +205,19 @@ fill)
     want=$(( total * percent / 100 ))
     need=$(( want - used ))
     if [ "$need" -le 0 ]; then
-        say "already at or above $percent% of $DATA"
+        report "already at or above $percent% of $DATA"
         exit 0
     fi
     # fallocate, so filling four gigabytes is instant rather than a minute of
     # writing zeroes -- a test that has to wait for the disk to fill is a test
     # nobody runs.
     fallocate -l "${need}K" "$BALLAST" 2>/dev/null || dd if=/dev/zero of="$BALLAST" bs=1K count="$need" status=none
-    say "filled $DATA to $(df --output=pcent "$DATA" | tail -1 | tr -d ' %')%"
+    report "filled $DATA to $(df --output=pcent "$DATA" | tail -1 | tr -d ' %')%"
     ;;
 
 empty)
     rm -f "$BALLAST"
-    say "emptied $DATA, now $(df --output=pcent "$DATA" | tail -1 | tr -d ' %')% used"
+    report "emptied $DATA, now $(df --output=pcent "$DATA" | tail -1 | tr -d ' %')% used"
     ;;
 
 blackhole)
@@ -270,16 +270,16 @@ blackhole)
     tc qdisc add dev "$IFACE" parent 1:4 handle 40: netem loss 100%
     tc filter add dev "$IFACE" protocol ip parent 1:0 prio 4 u32 \
         match ip sport "$port" 0xffff flowid 1:4
-    say "everything leaving port $port is dropped on $IFACE"
+    report "everything leaving port $port is dropped on $IFACE"
     if [ -n "$rate" ]; then
-        say "the $rate limit stays in force underneath it"
+        report "the $rate limit stays in force underneath it"
     fi
 
     # Back to what was in force before the outage rather than to no qdisc at all.
     schedule_undo "$seconds" "tc qdisc del dev $IFACE root 2>/dev/null; \
         rate=\$(cat /run/mole-rate 2>/dev/null || true); \
         if [ -n \"\$rate\" ]; then tc qdisc add dev $IFACE root tbf rate \"\$rate\" burst 32kbit latency 400ms; fi"
-    say "it clears itself in ${seconds}s, scheduled with systemd"
+    report "it clears itself in ${seconds}s, scheduled with systemd"
     ;;
 
 netem)
@@ -295,14 +295,14 @@ netem)
     seconds="${4:-30}"
     tc qdisc del dev "$IFACE" root 2>/dev/null
     case "$what" in
-    delay) tc qdisc add dev "$IFACE" root netem delay "${3:-200ms}"; say "netem delay ${3:-200ms} on $IFACE" ;;
-    loss)  tc qdisc add dev "$IFACE" root netem loss "${3:-10%}";    say "netem loss ${3:-10%} on $IFACE" ;;
+    delay) tc qdisc add dev "$IFACE" root netem delay "${3:-200ms}"; report "netem delay ${3:-200ms} on $IFACE" ;;
+    loss)  tc qdisc add dev "$IFACE" root netem loss "${3:-10%}";    report "netem loss ${3:-10%} on $IFACE" ;;
     rate)  tc qdisc add dev "$IFACE" root tbf rate "${3:-1mbit}" burst 32kbit latency 400ms
            # Recorded so a blackhole can put it back underneath itself rather
            # than replacing it -- see the note there.
            printf '%s' "${3:-1mbit}" > /run/mole-rate
-           say "rate limited to ${3:-1mbit} on $IFACE" ;;
-    clear) rm -f /run/mole-rate; say "netem cleared on $IFACE"; exit 0 ;;
+           report "rate limited to ${3:-1mbit} on $IFACE" ;;
+    clear) rm -f /run/mole-rate; report "netem cleared on $IFACE"; exit 0 ;;
     *)     usage; exit 2 ;;
     esac
     # Scheduled with systemd, and a new one replaces the old by name.
@@ -313,7 +313,7 @@ netem)
     # script started with setsid, which stopped surviving the ssh session at all.
     # A transient timer is owned by init and cancels by name.
     schedule_undo "$seconds" "tc qdisc del dev $IFACE root 2>/dev/null; rm -f /run/mole-rate; true"
-    say "it clears itself in ${seconds}s, because this channel travels over the link it just damaged"
+    report "it clears itself in ${seconds}s, because this channel travels over the link it just damaged"
     ;;
 
 hostkey)
@@ -334,7 +334,7 @@ hostkey)
         rm -f "$dir/ssh_host_ed25519_key" "$dir/ssh_host_ed25519_key.pub"
         ssh-keygen -q -t ed25519 -N '' -f "$dir/ssh_host_ed25519_key"
         systemctl restart sshd-rekey
-        say "the second sshd has a new host key"
+        report "the second sshd has a new host key"
         ;;
     restore)
         if [ -f "$dir/ssh_host_ed25519_key.original" ]; then
@@ -342,7 +342,7 @@ hostkey)
             mv "$dir/ssh_host_ed25519_key.original.pub" "$dir/ssh_host_ed25519_key.pub"
             systemctl restart sshd-rekey
         fi
-        say "the second sshd has its own host key back"
+        report "the second sshd has its own host key back"
         ;;
     *) usage; exit 2 ;;
     esac
@@ -371,14 +371,14 @@ many-files)
     chown -R "$(stat -c %U "$DATA")" "$dir"
     made=$(find "$dir" -maxdepth 1 -type f | wc -l)
     [ "$made" = "$count" ] || refuse "asked for $count entries and made $made"
-    say "$dir has $made entries"
+    report "$dir has $made entries"
     printf '%s\n' "$dir"
     ;;
 
 no-files)
     home=$(sftp_home)
     rm -rf "$home/sftp/mole-many-files"
-    say "the many-files directory is gone"
+    report "the many-files directory is gone"
     ;;
 
 sweep)
@@ -416,7 +416,7 @@ sweep)
     # than N minutes passes on one machine and deletes a live transfer on another.
     have_fuser=1
     command -v fuser >/dev/null 2>&1 || have_fuser=
-    [ -n "$have_fuser" ] || say "WARNING: no fuser here; a transfer in flight cannot be told from litter"
+    [ -n "$have_fuser" ] || report "WARNING: no fuser here; a transfer in flight cannot be told from litter"
 
     in_use() {
         [ -n "$have_fuser" ] || return 1
@@ -452,12 +452,12 @@ INNER
             case " $keep " in
             *" $pid "*)
                 kept=$((kept + 1))
-                say "  kept $path -- run $pid is still going"
+                report "  kept $path -- run $pid is still going"
                 continue ;;
             esac
             if in_use "$path"; then
                 kept=$((kept + 1))
-                say "  kept $path -- a transfer has it open"
+                report "  kept $path -- a transfer has it open"
                 continue
             fi
             size=$(du -sb "$path" 2>/dev/null | cut -f1)
@@ -469,13 +469,13 @@ INNER
             # of a tier is noise rather than signal.
             if [ "$listed" -lt 20 ]; then
                 listed=$((listed + 1))
-                say "  $([ -n "$dry" ] && echo would take || echo took) $path ($(numfmt --to=iec --suffix=B "$size" 2>/dev/null || echo "$size bytes"))"
+                report "  $([ -n "$dry" ] && echo would take || echo took) $path ($(numfmt --to=iec --suffix=B "$size" 2>/dev/null || echo "$size bytes"))"
             fi
         done <<LIST
 $(find "$root" -mindepth 1 -maxdepth 2 -name 'mole-*-[0-9]*' -prune -print 2>/dev/null)
 LIST
     done
-    [ "$swept" -le "$listed" ] || say "  ...and $((swept - listed)) more"
+    [ "$swept" -le "$listed" ] || report "  ...and $((swept - listed)) more"
 
     # Said out loud even when it is nothing, because "the sweep ran and found
     # nothing" and "the sweep never ran" are different facts and a tier that
@@ -483,10 +483,10 @@ LIST
     inprogress=
     [ "$kept" -eq 0 ] || inprogress=", $kept in progress"
     if [ "$swept" -eq 0 ]; then
-        say "sweep: nothing left behind$inprogress"
+        report "sweep: nothing left behind$inprogress"
     else
-        say "sweep: $([ -n "$dry" ] && echo would take || echo took) $swept leftover$([ "$swept" = 1 ] || echo s), $(numfmt --to=iec --suffix=B "$bytes" 2>/dev/null || echo "$bytes bytes")${inprogress:+, kept $kept in progress}"
-        [ -n "$dry" ] || say "sweep: that many is how often a run is dying without reaching cleanup()"
+        report "sweep: $([ -n "$dry" ] && echo would take || echo took) $swept leftover$([ "$swept" = 1 ] || echo s), $(numfmt --to=iec --suffix=B "$bytes" 2>/dev/null || echo "$bytes bytes")${inprogress:+, kept $kept in progress}"
+        [ -n "$dry" ] || report "sweep: that many is how often a run is dying without reaching cleanup()"
     fi
     ;;
 
@@ -501,17 +501,17 @@ room)
     ;;
 
 status)
-    say "disk $(df --output=pcent "$DATA" | tail -1 | tr -d ' ') used, ballast $([ -f "$BALLAST" ] && echo present || echo absent)"
-    say "netem $(tc qdisc show dev "$IFACE" | head -1)"
+    report "disk $(df --output=pcent "$DATA" | tail -1 | tr -d ' ') used, ballast $([ -f "$BALLAST" ] && echo present || echo absent)"
+    report "netem $(tc qdisc show dev "$IFACE" | head -1)"
     for unit in ssh sshd-rekey sshd-control vsftpd apache2 minio; do
         printf 'mole-control:   %-12s %s\n' "$unit" "$(systemctl is-active "$unit" 2>/dev/null || echo unknown)"
     done
     if [ -n "$CONTROL_PORT" ]; then
-        say "control channel on port $CONTROL_PORT, which nothing here may damage"
+        report "control channel on port $CONTROL_PORT, which nothing here may damage"
     else
         # Said plainly rather than softened. On a machine with no control sshd
         # this command arrives over port 22, which `blackhole 22` takes away.
-        say "WARNING: no control sshd; this channel is on port 22, which blackhole can cut"
+        report "WARNING: no control sshd; this channel is on port 22, which blackhole can cut"
     fi
     ;;
 
@@ -532,7 +532,7 @@ restore)
     for unit in ssh sshd-rekey sshd-control vsftpd apache2 minio; do
         systemctl is-active --quiet "$unit" || systemctl start "$unit" 2>/dev/null
     done
-    say "restored: no ballast, no netem, every server up"
+    report "restored: no ballast, no netem, every server up"
     ;;
 
 *)

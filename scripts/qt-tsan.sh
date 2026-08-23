@@ -39,7 +39,7 @@ declare -A SHA256=(
     [6.4.2]=a88bc6cedbb34878a49a622baa79cace78cfbad4f95fdbd3656ddb21c705525d
 )
 
-say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
+heading() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 note() { printf '  %s\n' "$*"; }
 die() { printf '\n%s\n' "$*" >&2; exit 1; }
 
@@ -49,7 +49,7 @@ url="https://download.qt.io/archive/qt/$branch/$VERSION/submodules/$tarball"
 
 if [ -x "$PREFIX/lib/libQt6Core.so.6" ] || [ -f "$PREFIX/lib/libQt6Core.so.6" ]; then
     if ldd "$PREFIX/lib/libQt6Core.so.6" | grep -q libtsan; then
-        say "Already there"
+        heading "Already there"
         note "$PREFIX"
         note "libQt6Core.so.6 links libtsan, so this is the instrumented build."
         exit 0
@@ -63,7 +63,7 @@ command -v setarch >/dev/null || die "setarch is needed -- see the note below ab
 mkdir -p "$WORK"
 cd "$WORK"
 
-say "Source"
+heading "Source"
 if [ ! -f "$tarball" ]; then
     note "$url"
     curl -fsSL -o "$tarball.part" "$url" || die "could not download the Qt source"
@@ -82,7 +82,7 @@ fi
 
 [ -d "qtbase-everywhere-src-$VERSION" ] || tar xf "$tarball"
 
-say "Configure"
+heading "Configure"
 mkdir -p build
 # -release with debug info rather than a debug build: what matters is the
 # instrumentation, not the optimisation level, and a debug Qt is several times
@@ -94,7 +94,7 @@ mkdir -p build
     -nomake examples -nomake tests \
     -opensource -confirm-license) || die "configure failed"
 
-say "Build"
+heading "Build"
 note "this takes a while -- qtbase is about 1500 translation units"
 # Under setarch -R, and that is not optional.
 #
@@ -107,12 +107,12 @@ note "this takes a while -- qtbase is about 1500 translation units"
 # reason when it runs the suites.
 setarch "$(uname -m)" -R cmake --build build --parallel "$JOBS" || die "build failed"
 
-say "Install"
+heading "Install"
 setarch "$(uname -m)" -R cmake --install build || die "install failed"
 
 ldd "$PREFIX/lib/libQt6Core.so.6" | grep -q libtsan \
     || die "installed, but libQt6Core.so.6 does not link libtsan -- the sanitizer did not take"
 
-say "Ready"
+heading "Ready"
 note "$PREFIX"
 note "make tsan finds it there by default; MOLE_TSAN_QT points somewhere else."

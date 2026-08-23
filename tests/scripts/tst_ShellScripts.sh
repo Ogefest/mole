@@ -73,6 +73,67 @@ if [ -s "$SHELLTEST_TMP/deferred" ]; then
     sed 's/^/    /' "$SHELLTEST_TMP/deferred"
 fi
 
+begin "no function takes the name of a program the script would otherwise run"
+# A function named after a command on the machine replaces that command for the
+# rest of the file, silently. A test script defined one called `cut`, and a
+# `grep -n ... | cut -d: -f1` a few lines later ran the function instead of the
+# program -- an hour at the wrong end of a pipe, on a fault that reading the file
+# would have caught. See MOLE-294.
+#
+# **What counts as a program is what the machine has, plus a floor that does not
+# depend on it.** Keyed only to the live PATH, the rule would pass or fail by what
+# happens to be installed where it runs, which is a check nobody can trust; keyed
+# only to a written list, it goes stale. The floor is the utilities these scripts
+# actually use, so the case means the same thing on a machine with a thin PATH --
+# a container, or a hook that runs with almost nothing set.
+#
+# **Shell builtins are deliberately not flagged.** Overriding `echo` or `cd`
+# inside a test is a legitimate thing to do, and a few of the names below exist on
+# disk as well as in the shell -- `printf` and `test` among them. What is being
+# looked for is a function standing in front of a program the shell would
+# otherwise have run.
+floor="awk basename cat chmod chown cmp cp curl cut date dd df diff dirname du env expr file find
+       grep gzip head id install ln ls make mkdir mktemp mv od printf ps readlink realpath rm rmdir
+       sed seq sort stat tail tar tee test touch tr uname uniq wc which xargs xz zip"
+
+is_a_program() { # 0 when a program of this name is what the shell would run
+    case " $floor " in *" $1 "*) return 0 ;; esac
+    [ -n "$(type -P -- "$1" 2>/dev/null)" ]
+}
+is_a_builtin() { [ "$(type -t -- "$1" 2>/dev/null)" = builtin ]; }
+
+: > "$SHELLTEST_TMP/shadowed"
+for f in $scripts; do
+    grep -nE '^[[:space:]]*(function[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(\)' "$f" \
+        > "$SHELLTEST_TMP/definitions" || continue
+    while IFS= read -r hit; do
+        [ -n "$hit" ] || continue
+        at=${hit%%:*}
+        name=$(printf '%s' "${hit#*:}" \
+            | sed -E 's/^[[:space:]]*(function[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*).*/\2/')
+        is_a_builtin "$name" && continue
+        is_a_program "$name" && printf '%s:%s: %s\n' "$f" "$at" "$name" >> "$SHELLTEST_TMP/shadowed"
+    done < "$SHELLTEST_TMP/definitions"
+done
+if [ -s "$SHELLTEST_TMP/shadowed" ]; then
+    fail "a function stands in front of a program, so every later use of that name in the file runs the function instead -- rename it"
+    sed 's/^/    /' "$SHELLTEST_TMP/shadowed"
+fi
+
+begin "the floor still answers on a machine with nothing on PATH"
+# The half of the rule that would rot in silence: with an empty PATH every name
+# looks like it is not a program, and the case above would pass over a script that
+# shadows every one of them. Nothing external is called while PATH is empty --
+# `type` and `case` are the shell's own.
+saved_path=$PATH
+PATH=''
+searched=$(type -P -- cut 2>/dev/null)
+answered=no
+is_a_program cut && answered=yes
+PATH=$saved_path
+[ -z "$searched" ] || fail "PATH was not actually empty, so this proved nothing"
+[ "$answered" = yes ] || fail "with nothing on PATH the rule stopped recognising cut as a program"
+
 begin "nothing in a script names a real machine"
 # CLAUDE.md's rule, held rather than trusted: every address these scripts use
 # comes from the environment at run time. A literal address in a tracked file is

@@ -24,7 +24,7 @@ SNAPSHOT="${MOLE_TESTBED_SNAPSHOT:-provisioned}"
 ADDRESS="${MOLE_TESTBED_ADDRESS:-}"
 ACCOUNT="${MOLE_TESTBED_ACCOUNT:-moletest}"
 
-say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
+heading() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 note() { printf '  %s\n' "$*"; }
 
 [ -n "$NODE" ] || { echo "Set MOLE_PROXMOX_HOST. It is not in this repository." >&2; exit 2; }
@@ -47,7 +47,7 @@ wait_for_ssh() {
 
 case "$1" in
 take)
-    say "Taking $SNAPSHOT of $VMID"
+    heading "Taking $SNAPSHOT of $VMID"
     on_node <<REMOTE
 set -e
 qm listsnapshot $VMID | grep -q ' $SNAPSHOT ' && qm delsnapshot $VMID $SNAPSHOT >/dev/null 2>&1
@@ -59,7 +59,7 @@ REMOTE
     ;;
 
 rollback)
-    say "Rolling $VMID back to $SNAPSHOT"
+    heading "Rolling $VMID back to $SNAPSHOT"
     on_node <<REMOTE
 set -e
 qm rollback $VMID $SNAPSHOT

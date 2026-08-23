@@ -55,7 +55,7 @@ ACCOUNT="${MOLE_TESTBED_ACCOUNT:-moletest}"
 ADDRESS="${MOLE_TESTBED_ADDRESS:-}"
 PASSWORD="${MOLE_TESTBED_PASSWORD:-}"
 
-say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
+heading() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 note() { printf '  %s\n' "$*"; }
 die() { printf '\n%s\n' "$*" >&2; exit 1; }
 
@@ -84,13 +84,13 @@ on_node() { ssh -o BatchMode=yes "$NODE" "LC_ALL=C bash -s" -- "$@"; }
 
 # --- the virtual machine ----------------------------------------------------
 
-say "Hypervisor"
+heading "Hypervisor"
 on_node <<'REMOTE' || die "cannot reach the hypervisor, or it is not Proxmox"
 command -v qm >/dev/null || { echo "no qm on this host"; exit 1; }
 pveversion | head -1
 REMOTE
 
-say "Machine $VMID ($NAME)"
+heading "Machine $VMID ($NAME)"
 if on_node <<REMOTE
 test -f /etc/pve/qemu-server/$VMID.conf
 REMOTE
@@ -139,7 +139,7 @@ REMOTE
 fi
 note "cores $CORES, memory ${MEMORY_MB}M, system ${SYSTEM_GB}G, data disk ${DATA_GB}G"
 
-say "Starting"
+heading "Starting"
 on_node <<REMOTE
 set -euo pipefail
 if [ "\$(qm status $VMID | awk '{print \$2}')" != "running" ]; then
@@ -150,7 +150,7 @@ REMOTE
 # The address comes from DHCP on the hypervisor's bridge, so it is discovered
 # rather than assumed -- unless it was given, in which case there is nothing to
 # discover and the machine is simply where it was said to be.
-say "Address"
+heading "Address"
 if [ -n "$ADDRESS" ]; then
     note "$ADDRESS (given, not discovered)"
 fi
@@ -193,7 +193,7 @@ note "$address"
 # Made through the hypervisor rather than over ssh, so this works before the
 # machine will accept a connection from anybody but the template's own key.
 
-say "Finishing the machine off"
+heading "Finishing the machine off"
 ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$ACCOUNT@$address" \
     "sudo bash -s" <<'REMOTE' || die "could not finish the machine off"
 set -euo pipefail
@@ -221,7 +221,7 @@ fi
 # nobody can read.
 REMOTE
 
-say "Ready"
+heading "Ready"
 note "machine   $VMID ($NAME) on $NODE"
 note "address   $address"
 note "account   $ACCOUNT"
