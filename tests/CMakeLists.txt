@@ -166,6 +166,11 @@ if(BASH_PROGRAM)
     # that would make that run wrong. See MOLE-120.
     mole_add_shell_test(tst_ReleaseWorkflow
                         SCRIPT scripts/tst_ReleaseWorkflow.sh)
+    # The .deb and the .rpm. Building one takes a release build and installing one
+    # takes a container, so what is held here is the part that goes stale in
+    # silence: the dependencies nothing links and so nothing derives. See MOLE-121.
+    mole_add_shell_test(tst_Packages
+                        SCRIPT scripts/tst_Packages.sh)
     if(NOT MOLE_CORE_ONLY)
         set_property(TEST tst_Version APPEND PROPERTY
                      ENVIRONMENT "MOLE_BINARY=$<TARGET_FILE:mole>")

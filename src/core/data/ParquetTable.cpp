@@ -6,6 +6,7 @@
 #include <arrow/io/file.h>
 #include <arrow/record_batch.h>
 #include <arrow/util/compression.h>
+#include <arrow/util/config.h>
 #include <parquet/arrow/reader.h>
 #include <parquet/file_reader.h>
 #include <parquet/properties.h>
@@ -101,10 +102,23 @@ struct ParquetTable::Private
         qint64 walked = 0;
 
         for (int group = firstGroup; group < groupFirstRow.size() && walked < maxRows; ++group) {
+            // Two spellings of one call, because the Arrow a distribution ships is
+            // not the Arrow this is developed against. The Result-returning
+            // overload arrived in 21.0.0 and the out-parameter one it replaced is
+            // deprecated there but present; before 21 only the second exists.
+            // Fedora 40 ships 15.0.2, and MOLE-287 was written against 25.0.1 --
+            // so the Parquet grid did not compile at all on the family the .rpm is
+            // for, which is how this was found. See MOLE-121.
+            std::unique_ptr<arrow::RecordBatchReader> batches;
+#if ARROW_VERSION_MAJOR >= 21
             auto opened = reader->GetRecordBatchReader(std::vector<int> { group });
             if (!opened.ok())
                 return false;
-            std::unique_ptr<arrow::RecordBatchReader> batches = std::move(opened).ValueUnsafe();
+            batches = std::move(opened).ValueUnsafe();
+#else
+            if (!reader->GetRecordBatchReader(std::vector<int> { group }, &batches).ok())
+                return false;
+#endif
 
             while (walked < maxRows) {
                 std::shared_ptr<arrow::RecordBatch> batch;

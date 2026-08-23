@@ -165,6 +165,48 @@ jobs:
           fi
           echo "$shipped"
 
+      # The distribution packages, each built for the family it installs on. Both
+      # come out of the install rules through CPack, so a package and
+      # `make install` cannot come apart -- and both carry what their own
+      # distribution can satisfy, which is not the same list: no Ubuntu archive has
+      # Arrow, and Fedora packages it, so the .deb has no Parquet grid and the .rpm
+      # does. The tarball above has it either way, because it carries its own
+      # libraries.
+      #
+      # `make rpm` builds in a container of that family. An .rpm built on Debian
+      # cannot be installed on an RPM system -- Debian's libcurl carries symbol
+      # versions no RPM distribution provides, and rpmbuild records them as
+      # requirements -- so the only honest way to produce one is to build it where
+      # it will be installed. See scripts/package-rpm.sh.
+      - name: The .deb and the .rpm
+        run: make packages
+
+      # And they install, on a clean system of each family, with nothing installed
+      # by hand. This is the check the ticket asks for and it is the one a runner
+      # can actually make: docker is on the runner, and a fresh container is a clean
+      # system by definition.
+      - name: Both packages install on a clean system
+        run: |
+          version=$(make version)
+          echo "--- Ubuntu ---"
+          docker run --rm -v "$PWD/build/packages:/pkg:ro" ubuntu:24.04 bash -c "
+            set -e
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq >/dev/null
+            apt-get install -y -qq /pkg/mole_${version}_amd64.deb >/dev/null
+            QT_QPA_PLATFORM=offscreen mole --version
+            test -f /usr/share/applications/mole.desktop
+            apt-get remove -y -qq mole >/dev/null
+            test ! -e /usr/bin/mole"
+          echo "--- Fedora ---"
+          docker run --rm -v "$PWD/build/packages:/pkg:ro" fedora:40 bash -c "
+            set -e
+            dnf install -y -q /pkg/mole-${version}-1.x86_64.rpm >/dev/null
+            QT_QPA_PLATFORM=offscreen mole --version
+            test -f /usr/share/applications/mole.desktop
+            dnf remove -y -q mole >/dev/null
+            test ! -e /usr/bin/mole"
+
       # Named after the version, which CMakeLists.txt is the only place holding --
       # see MOLE-117. Checked against the tag rather than trusted: they are written
       # by the same commit, so a tag on the wrong one is worth catching here.
@@ -198,5 +240,9 @@ jobs:
             --title "Mole $VERSION" \
             --notes "The notes for this release are its block in [CHANGELOG.md](CHANGELOG.md). MOLE-123 puts them here.
 
-          Built on Ubuntu 24.04 against Qt 6.4, with Parquet, PDF, video, archives, network drives (sftp, ftp, s3, webdav), Windows shares, NFS, the terminal panel, git state and the encrypted credential store. Needs no Qt on the target: unpack and run \`mole\`." \
-            "$TARBALL"
+          The tarball needs no Qt on the target: unpack and run \`mole\`. It was built on Ubuntu 24.04 against Qt 6.4 with Parquet, PDF, video, archives, network drives (sftp, ftp, s3, webdav), Windows shares, NFS, the terminal panel, git state and the encrypted credential store.
+
+          The .deb and the .rpm carry what their own distribution can satisfy, which is not quite the same list: Arrow is in no Ubuntu archive, so the .deb has no Parquet grid, and Fedora packages it, so the .rpm does. MOLE-296 puts the table here." \
+            "$TARBALL" \
+            build/packages/mole_*.deb \
+            build/packages/mole-*.rpm

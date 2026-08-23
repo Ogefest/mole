@@ -1,0 +1,7 @@
+An IDE, but for files. One window in which to browse local disks, network
+shares and archives, search them, compare and sync them, rename in bulk,
+find duplicates, preview anything and run long jobs in the background --
+all under one keyboard, without reaching for a terminal.
+
+Drives and viewers are extension points, so an archive is a place you can
+walk into and a Parquet file or a PDF opens where it is.

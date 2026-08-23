@@ -14,7 +14,7 @@ DESTDIR ?=
 # a script can rewrite that line and everything follows.
 VERSION := $(shell sed -n 's/^ *VERSION \([0-9][0-9.]*\)$$/\1/p' CMakeLists.txt)
 
-.PHONY: all build configure optimised release run test test-live test-heavy test-verbose tsan clean distclean format tidy help guide-images where-the-log-is \
+.PHONY: all build configure optimised release run test packages deb rpm test-live test-heavy test-verbose tsan clean distclean format tidy help guide-images where-the-log-is \
         install uninstall bundle licence-check screenshots version
 
 all: build
@@ -187,6 +187,37 @@ uninstall:
 	@xargs -a build/release/install_manifest.txt rm -f 2>/dev/null || true
 	@rm -rf $(DESTDIR)$(PREFIX)/lib/mole
 	@echo "removed"
+
+# Where the distribution packages are built, and why it is not build/release.
+#
+# Arrow is in no Ubuntu archive at any version, so a .deb built with it depends on
+# libarrow2500 and `apt install ./mole_*.deb` refuses on a clean system -- proved
+# in a container, and the only dependency that failed. A distribution package may
+# only need what the distribution can give it, so this build leaves Arrow out and
+# the Parquet grid with it. The self-contained tarball keeps it: it carries its own
+# libraries and answers to nobody's archive. See MOLE-121.
+PACKAGE_DIR := build/packages
+PACKAGE_FLAGS := -DCMAKE_DISABLE_FIND_PACKAGE_Arrow=ON -DCMAKE_DISABLE_FIND_PACKAGE_Parquet=ON
+
+## packages: build the .deb and the .rpm, each on the family it is for
+##           Both come from the install rules, through CPack, so the package and
+##           `make install` cannot come apart. Skips one with a reason rather than
+##           failing when the tool for it is not on the machine.
+packages: deb rpm
+
+## deb: the .deb, built here, from what this distribution's archive can satisfy
+deb:
+	@command -v dpkg-deb >/dev/null || { echo "  skipped: no dpkg-deb on this machine"; exit 0; }
+	@cmake -S . -B $(PACKAGE_DIR) -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo 		-DMOLE_BUILD_TESTS=OFF $(PACKAGE_FLAGS) >/dev/null
+	@cmake --build $(PACKAGE_DIR) --parallel $(JOBS) >/dev/null
+	@cd $(PACKAGE_DIR) && cpack -G DEB | tail -1
+
+## rpm: the .rpm, built in a container of the family it installs on
+##      An .rpm built on Debian cannot be installed on an RPM system: rpmbuild
+##      records what the binaries link, and Debian's libcurl carries symbol
+##      versions no RPM distribution provides. See scripts/package-rpm.sh.
+rpm:
+	@scripts/package-rpm.sh $(PACKAGE_DIR) || true
 
 ## bundle: self-contained folder in dist/ that runs on machines without Qt
 bundle:
