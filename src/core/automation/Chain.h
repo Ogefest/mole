@@ -112,6 +112,43 @@ struct StepOutcome
     [[nodiscard]] bool ok() const { return result != Result::Failed; }
 };
 
+/// What a step says it *would* do, asked without doing any of it.
+///
+/// **A preview that does not name the actual files answers a different question
+/// from the one asked**, so sources and filters genuinely evaluate: a dry run
+/// lists the forty-one files it found, not the fact that it found forty-one.
+/// Everything that writes reports its intent instead -- *compress 41 files into
+/// reports.zip*, *move 1 file to the archive drive*.
+///
+/// The third result is the honest one. A step whose output cannot be known without
+/// doing the work says so, and the preview ends there saying how many steps are
+/// left -- rather than inventing a list, or stopping in a way that makes the chain
+/// look shorter than it is. Compression is the interesting case in the other
+/// direction: it produces one archive whose name is already known, so the step
+/// after it can still be planned.
+struct StepPreview
+{
+    enum class Result {
+        Produced, ///< here is the list it would hand on
+        Nothing, ///< it would produce nothing, which stops the chain as usual
+        Unpredictable, ///< it cannot know without doing the work
+        Failed, ///< it could not even work out what it would do
+    };
+
+    Result result = Result::Unpredictable;
+    /// What would be handed to the next step. Named, not counted.
+    QStringList uris;
+    /// What this step would do, in words: the line a person reads before saying
+    /// yes. Required for anything that writes, whose list says nothing about what
+    /// it would write.
+    QString intent;
+
+    static StepPreview would(QStringList uris, QString intent = {});
+    static StepPreview nothing(QString intent = {});
+    static StepPreview unpredictable(QString intent = {});
+    static StepPreview cannotSay(QString intent);
+};
+
 /// What a step is given while it runs, beside its own parameters.
 ///
 /// Not a Task, deliberately: a step runs *inside* the chain's task, on the pool
@@ -196,6 +233,18 @@ public:
     /// see StepContext.
     virtual StepOutcome run(const ChainStep& step, const QStringList& incoming, const StepContext& context)
         = 0;
+
+    /// What it would produce, and what it would do, without doing any of it.
+    ///
+    /// **Must write nothing.** A step that cannot answer without writing does not
+    /// answer: the default here is Unpredictable, which is the honest reply for a
+    /// kind that has not thought about it, and it costs the preview the steps
+    /// after this one rather than costing somebody their files.
+    ///
+    /// A source or a filter overrides this and really evaluates, because a preview
+    /// naming no files is a preview of nothing.
+    virtual StepPreview preview(
+        const ChainStep& step, const QStringList& incoming, const StepContext& context);
 };
 
 /// Everything a chain is.

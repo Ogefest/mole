@@ -45,10 +45,33 @@ public:
     };
     Q_ENUM(Ending)
 
+    /// One line of what a dry run would do.
+    struct PreviewLine
+    {
+        QString step; ///< the kind's display name
+        QStringList incoming; ///< what it would be handed
+        QStringList outgoing; ///< what it would hand on
+        QString intent; ///< what it would *do*, for a step that writes
+        /// False for the line that says the preview ended here, and for the
+        /// step that could not answer.
+        bool predictable = true;
+    };
+
     /// The registry is borrowed and must outlive the task, the way a task's
     /// filesystem does. A chain naming a kind it does not hold is refused before
     /// any step runs rather than half way along.
     ChainTask(Chain chain, const ChainRegistry* registry, QObject* parent = nullptr);
+
+    /// Asks every step what it *would* do and writes nothing.
+    ///
+    /// **An option and not a compulsory first run.** A chain can be run outright
+    /// the first time; somebody who wants to look first says so. Set before the
+    /// task is submitted, like setBackground().
+    void setDryRun(bool dryRun) { m_dryRun = dryRun; }
+    [[nodiscard]] bool isDryRun() const { return m_dryRun; }
+
+    /// What a dry run found, a line per step, in order. Empty after a real run.
+    [[nodiscard]] QList<PreviewLine> preview() const { return m_preview; }
 
     /// Read after the task has finished.
     [[nodiscard]] Ending ending() const { return m_ending; }
@@ -66,8 +89,25 @@ private:
     /// The step count in the strip: which of how many, and its name.
     void announce(int index, const IChainStepKind& kind);
 
+    /// What one step did, or said it would do. `unpredictable` is the one answer
+    /// a real run cannot give, and the loop ends the preview on it.
+    struct StepResult
+    {
+        StepOutcome outcome;
+        bool unpredictable = false;
+    };
+
+    /// One step, run or asked. **The same loop asks both questions**, rather than
+    /// a second loop for the dry run: two loops would answer differently the first
+    /// time one of them learned something, and the whole value of a preview is
+    /// that it is the same walk.
+    StepResult runOneStep(
+        int index, IChainStepKind& kind, const QStringList& carried, const StepContext& context);
+
     Chain m_chain;
     const ChainRegistry* m_registry = nullptr;
+    bool m_dryRun = false;
+    QList<PreviewLine> m_preview;
     Ending m_ending = Ending::Ran;
     QStringList m_produced;
     int m_stepsRun = 0;

@@ -13,11 +13,58 @@ void ChainTask::announce(int index, const IChainStepKind& kind)
 {
     const int count = m_chain.steps.size();
     reportText(QStringLiteral("step"), QStringLiteral("Step"),
-        QStringLiteral("%1 of %2: %3").arg(index + 1).arg(count).arg(kind.displayName()));
+        QStringLiteral("%1 of %2: %3%4")
+            .arg(index + 1)
+            .arg(count)
+            .arg(kind.displayName(), m_dryRun ? QStringLiteral(" (dry run)") : QString()));
     setStatusText(kind.displayName());
     // Per step rather than per file: a bar that moves four times in an hour tells
     // nobody anything, and the step's own metrics are underneath it.
     setProgress(count > 0 ? (index * 100) / count : 0);
+}
+
+ChainTask::StepResult ChainTask::runOneStep(
+    int index, IChainStepKind& kind, const QStringList& carried, const StepContext& context)
+{
+    const ChainStep& step = m_chain.steps.at(index);
+    if (!m_dryRun)
+        return { kind.run(step, carried, context), false };
+
+    const StepPreview said = kind.preview(step, carried, context);
+
+    PreviewLine line;
+    line.step = kind.displayName();
+    line.incoming = carried;
+    line.intent = said.intent;
+    switch (said.result) {
+    case StepPreview::Result::Produced:
+        line.outgoing = said.uris;
+        break;
+    case StepPreview::Result::Nothing:
+        break;
+    case StepPreview::Result::Unpredictable:
+    case StepPreview::Result::Failed:
+        line.predictable = false;
+        break;
+    }
+    m_preview.append(line);
+
+    switch (said.result) {
+    case StepPreview::Result::Produced:
+        return { StepOutcome::produced(said.uris, said.intent), false };
+    case StepPreview::Result::Nothing:
+        return { StepOutcome::nothing(said.intent), false };
+    case StepPreview::Result::Failed:
+        return { StepOutcome::failed(said.intent.isEmpty()
+                         ? QStringLiteral("%1 could not work out what it would do").arg(kind.displayName())
+                         : said.intent),
+            false };
+    case StepPreview::Result::Unpredictable:
+        break;
+    }
+    // Nothing invented and nothing hidden: the loop ends the preview here and says
+    // how much of the chain is left.
+    return { StepOutcome::produced(carried), true };
 }
 
 void ChainTask::run()
@@ -74,8 +121,28 @@ void ChainTask::run()
                     double(done) * 100.0 / double(total), 110);
         };
 
-        const StepOutcome outcome = kind->run(step, carried, context);
+        const StepResult result = runOneStep(i, *kind, carried, context);
+        const StepOutcome& outcome = result.outcome;
         ++m_stepsRun;
+
+        if (result.unpredictable) {
+            // The preview ends here, and says so with what is left rather than
+            // stopping in a way that makes the chain look shorter than it is.
+            const int remaining = m_chain.steps.size() - (i + 1);
+            PreviewLine tail;
+            tail.predictable = false;
+            tail.intent = remaining > 0
+                ? QStringLiteral("and then %1 more step(s), which cannot be predicted without "
+                                 "running this one")
+                      .arg(remaining)
+                : QStringLiteral("what this step would produce cannot be predicted without "
+                                 "running it");
+            m_preview.append(tail);
+            m_ending = Ending::Ran;
+            m_because = tail.intent;
+            setStatusText(m_because);
+            return;
+        }
 
         if (outcome.result == StepOutcome::Result::Failed) {
             // Nothing is handed on from a step that did not fully succeed, so
@@ -128,7 +195,8 @@ void ChainTask::run()
 
     m_ending = Ending::Ran;
     setProgress(100);
-    m_because = QStringLiteral("%1 step(s) ran").arg(m_stepsRun);
+    m_because = m_dryRun ? QStringLiteral("%1 step(s) previewed").arg(m_stepsRun)
+                         : QStringLiteral("%1 step(s) ran").arg(m_stepsRun);
     setStatusText(m_because);
 }
 

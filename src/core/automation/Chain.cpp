@@ -122,6 +122,49 @@ StepOutcome StepOutcome::failed(QString message)
     return outcome;
 }
 
+StepPreview StepPreview::would(QStringList uris, QString intent)
+{
+    StepPreview preview;
+    // The same normalisation StepOutcome::produced() makes: an empty list is
+    // Nothing whatever it was called, because what matters is what the next step
+    // would be handed.
+    preview.result = uris.isEmpty() ? Result::Nothing : Result::Produced;
+    preview.uris = std::move(uris);
+    preview.intent = std::move(intent);
+    return preview;
+}
+
+StepPreview StepPreview::nothing(QString intent)
+{
+    StepPreview preview;
+    preview.result = Result::Nothing;
+    preview.intent = std::move(intent);
+    return preview;
+}
+
+StepPreview StepPreview::unpredictable(QString intent)
+{
+    StepPreview preview;
+    preview.result = Result::Unpredictable;
+    preview.intent = std::move(intent);
+    return preview;
+}
+
+StepPreview StepPreview::cannotSay(QString intent)
+{
+    StepPreview preview;
+    preview.result = Result::Failed;
+    preview.intent = std::move(intent);
+    return preview;
+}
+
+StepPreview IChainStepKind::preview(const ChainStep&, const QStringList&, const StepContext&)
+{
+    // The honest default: a kind that has not been taught to answer this must not
+    // guess, and must not do the work to find out either.
+    return StepPreview::unpredictable(QStringLiteral("cannot be predicted without running it"));
+}
+
 QList<StepParameter> IChainStepKind::chainProperties() const
 {
     if (role() == StepRole::Sink)

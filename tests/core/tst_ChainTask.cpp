@@ -3,6 +3,7 @@
 
 #include "core/automation/ChainTask.h"
 #include "core/tasks/TaskManager.h"
+#include "core/vfs/backends/MemoryFileSystem.h"
 
 #include <QTest>
 #include <QThread>
@@ -24,11 +25,15 @@ class ScriptedStep final : public IChainStepKind
 {
 public:
     using Body = std::function<StepOutcome(const QStringList& incoming, const StepContext&)>;
+    /// What it says it *would* do. Absent means it cannot say, which is the
+    /// default every step kind starts with.
+    using Foresight = std::function<StepPreview(const QStringList& incoming, const StepContext&)>;
 
-    ScriptedStep(QString id, StepRole role, Body body)
+    ScriptedStep(QString id, StepRole role, Body body, Foresight foresight = {})
         : m_id(std::move(id))
         , m_role(role)
         , m_body(std::move(body))
+        , m_foresight(std::move(foresight))
     {
     }
 
@@ -48,7 +53,17 @@ public:
         return m_body(incoming, context);
     }
 
+    StepPreview preview(
+        const ChainStep& step, const QStringList& incoming, const StepContext& context) override
+    {
+        m_previews.fetch_add(1, std::memory_order_relaxed);
+        if (!m_foresight)
+            return IChainStepKind::preview(step, incoming, context);
+        return m_foresight(incoming, context);
+    }
+
     int runs() const { return m_runs.load(std::memory_order_relaxed); }
+    int previews() const { return m_previews.load(std::memory_order_relaxed); }
     bool hasStarted() const { return m_started.load(std::memory_order_acquire); }
     QStringList received() const
     {
@@ -60,9 +75,11 @@ private:
     QString m_id;
     StepRole m_role;
     Body m_body;
+    Foresight m_foresight;
     mutable QMutex m_guard;
     QStringList m_received;
     std::atomic_int m_runs { 0 };
+    std::atomic_int m_previews { 0 };
     std::atomic_bool m_started { false };
 };
 
@@ -97,14 +114,22 @@ private slots:
     void aChainCancelledBeforeItStartsRunsNoStepAtAll();
     void aChainThatCannotRunIsRefusedBeforeAnythingRuns();
 
+    // ---- a dry run -------------------------------------------------------
+    void aDryRunListsWhatCameInAndWhatWouldGoOutPerStep();
+    void aDryRunWritesNothingAtAll();
+    void aFilterInADryRunNamesTheFilesItWouldKeep();
+    void aStepThatCannotPredictItsOutputEndsThePreviewAndSaysSo();
+    void aDryRunWhoseSourceFindsNothingReportsTheEmptyStop();
+
 private:
     std::unique_ptr<TaskManager> m_tasks;
     ChainRegistry m_registry;
     std::vector<std::unique_ptr<ScriptedStep>> m_kinds;
 
-    ScriptedStep* give(const QString& id, StepRole role, ScriptedStep::Body body)
+    ScriptedStep* give(
+        const QString& id, StepRole role, ScriptedStep::Body body, ScriptedStep::Foresight foresight = {})
     {
-        m_kinds.push_back(std::make_unique<ScriptedStep>(id, role, std::move(body)));
+        m_kinds.push_back(std::make_unique<ScriptedStep>(id, role, std::move(body), std::move(foresight)));
         m_registry.registerKind(m_kinds.back().get());
         return m_kinds.back().get();
     }
@@ -338,6 +363,251 @@ void TestChainTask::aChainThatCannotRunIsRefusedBeforeAnythingRuns()
     QCOMPARE(task->stepsRun(), 0);
     QCOMPARE(first->runs(), 0);
     QVERIFY2(task->endedBecause().contains(QStringLiteral("step 1 of 2")), qPrintable(task->endedBecause()));
+}
+
+// ---- a dry run --------------------------------------------------------------
+//
+// A chain that finds files, compresses them, moves the archive and deletes the
+// originals is four irreversible acts behind one button, over a set of files
+// chosen by a query somebody wrote a fortnight ago. See MOLE-166.
+
+void TestChainTask::aDryRunListsWhatCameInAndWhatWouldGoOutPerStep()
+{
+    const QStringList found { QStringLiteral("mem:///a.txt"), QStringLiteral("mem:///b.txt"),
+        QStringLiteral("mem:///c.txt") };
+
+    // A source that really evaluates, which is the whole point: a preview that
+    // does not name the actual files answers a different question.
+    give(
+        QStringLiteral("find"), StepRole::Source,
+        [found](const QStringList&, const StepContext&) { return StepOutcome::produced(found); },
+        [found](const QStringList&, const StepContext&) {
+            return StepPreview::would(found, QStringLiteral("look in mem:///"));
+        });
+    // Something that writes: it says what it would do, and its output is known
+    // because the archive's name is already decided.
+    give(
+        QStringLiteral("pack"), StepRole::Transform,
+        [](const QStringList&, const StepContext&) {
+            return StepOutcome::produced({ QStringLiteral("mem:///reports.zip") });
+        },
+        [](const QStringList& incoming, const StepContext&) {
+            return StepPreview::would({ QStringLiteral("mem:///reports.zip") },
+                QStringLiteral("compress %1 files into reports.zip").arg(incoming.size()));
+        });
+    give(
+        QStringLiteral("move"), StepRole::Sink,
+        [](const QStringList&, const StepContext&) { return StepOutcome::nothing(); },
+        [](const QStringList& incoming, const StepContext&) {
+            return StepPreview::nothing(
+                QStringLiteral("move %1 file(s) to the archive drive").arg(incoming.size()));
+        });
+
+    Chain chain;
+    chain.id = QStringLiteral("c1");
+    chain.steps
+        = { stepOf(QStringLiteral("find")), stepOf(QStringLiteral("pack")), stepOf(QStringLiteral("move")) };
+    auto* task = new ChainTask(chain, &m_registry);
+    task->setDryRun(true);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task, 30000));
+
+    QCOMPARE(task->state(), Task::State::Succeeded);
+    QVERIFY(task->ending() == ChainTask::Ending::Ran);
+
+    const QList<ChainTask::PreviewLine> lines = task->preview();
+    QCOMPARE(lines.size(), 3);
+    QVERIFY(lines.at(0).predictable);
+    QVERIFY2(lines.at(0).incoming.isEmpty(), "a source was shown as receiving something");
+    QCOMPARE(lines.at(0).outgoing, found);
+    // The files by name, at every step, and not a count of them.
+    QCOMPARE(lines.at(1).incoming, found);
+    QCOMPARE(lines.at(1).outgoing, QStringList { QStringLiteral("mem:///reports.zip") });
+    QVERIFY2(lines.at(1).intent.contains(QStringLiteral("compress 3 files")), qPrintable(lines.at(1).intent));
+    QCOMPARE(lines.at(2).incoming, QStringList { QStringLiteral("mem:///reports.zip") });
+    QVERIFY2(lines.at(2).outgoing.isEmpty(), "a sink was shown as producing something");
+    QVERIFY2(lines.at(2).intent.contains(QStringLiteral("move 1 file")), qPrintable(lines.at(2).intent));
+}
+
+void TestChainTask::aDryRunWritesNothingAtAll()
+{
+    // The steps here write for real when they run, into a MemoryFileSystem, and
+    // the same chain is asked both ways: what the run does is what proves the dry
+    // run did not do it. A step's run() being called at all is the failure -- so
+    // the writes are counted rather than asserted from the worker thread, where a
+    // QVERIFY cannot be trusted.
+    auto disk = std::make_shared<MemoryFileSystem>();
+    disk->addFile(QStringLiteral("/a.txt"), QByteArray("one"));
+
+    std::atomic_int writes { 0 };
+    give(
+        QStringLiteral("find"), StepRole::Source,
+        [](const QStringList&, const StepContext&) {
+            return StepOutcome::produced({ QStringLiteral("mem:///a.txt") });
+        },
+        [](const QStringList&, const StepContext&) {
+            return StepPreview::would({ QStringLiteral("mem:///a.txt") });
+        });
+    ScriptedStep* destroy = give(
+        QStringLiteral("destroy"), StepRole::Sink,
+        [disk, &writes](const QStringList& incoming, const StepContext&) {
+            for (const QString& uri : incoming) {
+                ++writes;
+                disk->remove(VfsUri::fromString(uri), false);
+            }
+            return StepOutcome::nothing();
+        },
+        [](const QStringList& incoming, const StepContext&) {
+            return StepPreview::nothing(QStringLiteral("delete %1 file(s)").arg(incoming.size()));
+        });
+
+    Chain chain;
+    chain.id = QStringLiteral("c1");
+    chain.steps = { stepOf(QStringLiteral("find")), stepOf(QStringLiteral("destroy")) };
+
+    auto* dry = new ChainTask(chain, &m_registry);
+    dry->setDryRun(true);
+    m_tasks->submit(dry);
+    QVERIFY(waitForTask(dry, 30000));
+
+    QCOMPARE(writes.load(), 0);
+    QCOMPARE(destroy->runs(), 0);
+    QVERIFY2(destroy->previews() > 0, "the step was not even asked what it would do");
+    QVERIFY2(disk->stat(VfsUri::fromString(QStringLiteral("mem:///a.txt"))).ok(), "a dry run deleted a file");
+    QVERIFY2(dry->preview().last().intent.contains(QStringLiteral("delete 1 file")),
+        qPrintable(dry->preview().last().intent));
+
+    // And the same chain run for real does the thing, which is what makes the
+    // assertion above about the dry run rather than about a chain that does
+    // nothing.
+    auto* real = new ChainTask(chain, &m_registry);
+    m_tasks->submit(real);
+    QVERIFY(waitForTask(real, 30000));
+    QCOMPARE(writes.load(), 1);
+    QVERIFY2(!disk->stat(VfsUri::fromString(QStringLiteral("mem:///a.txt"))).ok(),
+        "the real run left the file behind, so the case above proved nothing");
+}
+
+void TestChainTask::aFilterInADryRunNamesTheFilesItWouldKeep()
+{
+    // A filter genuinely evaluates, so the preview says *which* files survive it.
+    // "3 of 5 would be kept" is the answer to a question nobody asked.
+    const QStringList all { QStringLiteral("mem:///a.txt"), QStringLiteral("mem:///b.pdf"),
+        QStringLiteral("mem:///c.txt") };
+    give(
+        QStringLiteral("find"), StepRole::Source,
+        [all](const QStringList&, const StepContext&) { return StepOutcome::produced(all); },
+        [all](const QStringList&, const StepContext&) { return StepPreview::would(all); });
+
+    const auto onlyText = [](const QStringList& incoming) {
+        QStringList kept;
+        for (const QString& uri : incoming) {
+            if (uri.endsWith(QStringLiteral(".txt")))
+                kept.append(uri);
+        }
+        return kept;
+    };
+    give(
+        QStringLiteral("filter"), StepRole::Transform,
+        [onlyText](const QStringList& incoming, const StepContext&) {
+            return StepOutcome::produced(onlyText(incoming));
+        },
+        [onlyText](const QStringList& incoming, const StepContext&) {
+            return StepPreview::would(onlyText(incoming));
+        });
+
+    Chain chain;
+    chain.id = QStringLiteral("c1");
+    chain.steps = { stepOf(QStringLiteral("find")), stepOf(QStringLiteral("filter")) };
+    auto* task = new ChainTask(chain, &m_registry);
+    task->setDryRun(true);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task, 30000));
+
+    const QList<ChainTask::PreviewLine> lines = task->preview();
+    QCOMPARE(lines.size(), 2);
+    QCOMPARE(lines.at(1).outgoing,
+        QStringList({ QStringLiteral("mem:///a.txt"), QStringLiteral("mem:///c.txt") }));
+}
+
+void TestChainTask::aStepThatCannotPredictItsOutputEndsThePreviewAndSaysSo()
+{
+    // The honest answer, and the default for a kind that has not been taught to
+    // predict: it says so, and the preview ends there naming what is left --
+    // rather than inventing a list, or stopping in a way that makes the chain look
+    // shorter than it is.
+    give(
+        QStringLiteral("find"), StepRole::Source,
+        [](const QStringList&, const StepContext&) {
+            return StepOutcome::produced({ QStringLiteral("mem:///a.txt") });
+        },
+        [](const QStringList&, const StepContext&) {
+            return StepPreview::would({ QStringLiteral("mem:///a.txt") });
+        });
+    // No foresight given, so this one falls back on the default.
+    ScriptedStep* murky
+        = give(QStringLiteral("transcode"), StepRole::Transform, [](const QStringList&, const StepContext&) {
+              return StepOutcome::produced({ QStringLiteral("mem:///out.mkv") });
+          });
+    ScriptedStep* after = give(QStringLiteral("move"), StepRole::Sink,
+        [](const QStringList&, const StepContext&) { return StepOutcome::nothing(); });
+
+    Chain chain;
+    chain.id = QStringLiteral("c1");
+    chain.steps = { stepOf(QStringLiteral("find")), stepOf(QStringLiteral("transcode")),
+        stepOf(QStringLiteral("move")) };
+    auto* task = new ChainTask(chain, &m_registry);
+    task->setDryRun(true);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task, 30000));
+
+    // Not a failure: nothing went wrong, and the chain is simply not knowable
+    // beyond here.
+    QCOMPARE(task->state(), Task::State::Succeeded);
+    const QList<ChainTask::PreviewLine> lines = task->preview();
+    QCOMPARE(lines.size(), 3);
+    QVERIFY2(!lines.at(1).predictable, "a step that could not answer was shown as if it had");
+    QVERIFY2(lines.at(2).step.isEmpty(), "the closing line was shown as a step");
+    QVERIFY2(lines.at(2).intent.contains(QStringLiteral("1 more step")), qPrintable(lines.at(2).intent));
+    QVERIFY2(task->endedBecause().contains(QStringLiteral("cannot be predicted")),
+        qPrintable(task->endedBecause()));
+    // And the steps past it were neither run nor previewed, because there is
+    // nothing to hand them.
+    QCOMPARE(murky->runs(), 0);
+    QCOMPARE(after->previews(), 0);
+    QCOMPARE(after->runs(), 0);
+}
+
+void TestChainTask::aDryRunWhoseSourceFindsNothingReportsTheEmptyStop()
+{
+    // The same rules, asked the other way: a preview of a chain that would stop
+    // has to say it would stop, or somebody schedules a chain that never does
+    // anything and reads the preview as proof that it will.
+    give(
+        QStringLiteral("find"), StepRole::Source,
+        [](const QStringList&, const StepContext&) { return StepOutcome::nothing(); },
+        [](const QStringList&, const StepContext&) {
+            return StepPreview::nothing(QStringLiteral("nothing matches in mem:///"));
+        });
+    ScriptedStep* pack
+        = give(QStringLiteral("pack"), StepRole::Transform, [](const QStringList&, const StepContext&) {
+              return StepOutcome::produced({ QStringLiteral("mem:///reports.zip") });
+          });
+
+    Chain chain;
+    chain.id = QStringLiteral("c1");
+    chain.steps = { stepOf(QStringLiteral("find")), stepOf(QStringLiteral("pack")) };
+    auto* task = new ChainTask(chain, &m_registry);
+    task->setDryRun(true);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task, 30000));
+
+    QCOMPARE(task->state(), Task::State::Succeeded);
+    QVERIFY(task->ending() == ChainTask::Ending::StoppedEmpty);
+    QVERIFY2(
+        task->endedBecause().contains(QStringLiteral("nothing matches")), qPrintable(task->endedBecause()));
+    QCOMPARE(pack->previews(), 0);
+    QCOMPARE(pack->runs(), 0);
 }
 
 MOLE_TEST_MAIN(TestChainTask)
