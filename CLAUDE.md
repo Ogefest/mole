@@ -249,11 +249,19 @@ The three files alongside it keep what a tracker holds badly:
   first answer turned out to be wrong. Write `#MOLE-22`, never `#22`: GitHub turns `#22` into a link to
   an issue that was deleted on 2026-08-10.
 
-  **This file is the release notes.** `make release` will insert a marker line above
-  the unreleased entries, and everything between two markers is one version's notes,
-  pulled out by a regular expression — so a line that does not follow the shape is a
-  line that will not reach anybody. Lines already in the file from before
-  2026-08-10 are prose and stay that way; they belong to the first release.
+  **This file is the release notes, and its shape is enforced rather than
+  conventional.** `tests/scripts/tst_Changelog.sh` reads the two expressions out of
+  the file's own header and holds every line against them, so a line in another shape
+  fails the suite rather than quietly not reaching anybody. **The header is where the
+  rules live — read it rather than this page when you are unsure**, because the whole
+  point of them living there is that there is no second copy to disagree with the
+  first. The one most likely to catch you out: **every `##` line in the file is a
+  release marker**, so nothing else may be a second-level heading. `make release`
+  writes the first marker and there is none yet, because nothing has been released;
+  until there is, everything in the file is unreleased. Lines from before 2026-08-10
+  are prose at the end and stay that way; they belong to the first release.
+  [ADR-0080](docs/adr/0080-the-changelog-is-a-structured-log-and-the-release-notes-come-out-of-it.md)
+  records the format and what was considered instead.
 - [TODO.md](TODO.md) — context that is *not* a task: behaviour we have decided to
   live with, conventions to follow, gaps that are documented rather than
   scheduled.
