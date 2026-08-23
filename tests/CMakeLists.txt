@@ -149,6 +149,16 @@ if(BASH_PROGRAM)
     # discovered by a release workflow. See ADR-0080.
     mole_add_shell_test(tst_Changelog
                         SCRIPT scripts/tst_Changelog.sh)
+    # The version is written in one place and this holds everything that reads it to
+    # that place, including the binary -- which is why this one is told where the
+    # application is. A core-only build has no application, and the case says it
+    # skipped rather than passing quietly. See MOLE-117.
+    mole_add_shell_test(tst_Version
+                        SCRIPT scripts/tst_Version.sh)
+    if(NOT MOLE_CORE_ONLY)
+        set_property(TEST tst_Version APPEND PROPERTY
+                     ENVIRONMENT "MOLE_BINARY=$<TARGET_FILE:mole>")
+    endif()
 else()
     message(WARNING "Shell tests skipped: no bash found")
 endif()

@@ -21,7 +21,7 @@ int main(int argc, char* argv[])
     // credentials and the index are the ones the user already configured, and a
     // second name would quietly give this tool a second, empty configuration.
     app.setApplicationName(QStringLiteral("Mole"));
-    app.setApplicationVersion(QStringLiteral("0.1.0"));
+    app.setApplicationVersion(QStringLiteral(MOLE_VERSION));
 
     // MOLE_LOG applies before anything is built, exactly as it does for the
     // window. `--log` is read later and adds to it.

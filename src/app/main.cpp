@@ -128,7 +128,7 @@ int main(int argc, char* argv[])
     app.setOrganizationName(QStringLiteral("Mole"));
     app.setOrganizationDomain(QStringLiteral("io.github.ogefest"));
     app.setApplicationName(QStringLiteral("Mole"));
-    app.setApplicationVersion(QStringLiteral("0.1.0"));
+    app.setApplicationVersion(QStringLiteral(MOLE_VERSION));
 
     // Before anything else can complain. A crash takes the terminal's
     // scrollback with it, and the lines printed just before the fall are the

@@ -53,6 +53,16 @@ qt_standard_project_setup()
 
 # Compile flags shared by every target in the project.
 add_library(mole_flags INTERFACE)
+
+# The version, and this is the only place in the repository that holds it.
+#
+# project(VERSION) above is where every packaging tool looks for it, so that is
+# what owns it, and it reaches the code from here rather than being typed a second
+# time -- `mole --version` is how somebody with a bug report says which build they
+# are holding, and two copies agreeing today is not the same as staying true. The
+# Makefile reads the same line out of this file. See MOLE-117.
+target_compile_definitions(mole_flags INTERFACE MOLE_VERSION="${PROJECT_VERSION}")
+
 target_compile_options(mole_flags INTERFACE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wshadow;-Wnon-virtual-dtor>
     $<$<CXX_COMPILER_ID:MSVC>:/W4;/permissive->)

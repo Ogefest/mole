@@ -45,7 +45,7 @@ PluginMetadata BuiltinPlugin::metadata() const
     PluginMetadata data;
     data.id = QStringLiteral("mole.builtin");
     data.name = QStringLiteral("Mole built-ins");
-    data.version = QStringLiteral("0.1.0");
+    data.version = QStringLiteral(MOLE_VERSION);
     data.author = QStringLiteral("Mole");
     data.description = QStringLiteral("Local and in-memory drives, browsing, search and text preview.");
     return data;

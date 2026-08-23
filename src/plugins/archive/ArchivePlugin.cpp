@@ -21,7 +21,7 @@ public:
         PluginMetadata data;
         data.id = QStringLiteral("mole.archive");
         data.name = QStringLiteral("Archive drives");
-        data.version = QStringLiteral("0.1.0");
+        data.version = QStringLiteral(MOLE_VERSION);
         data.author = QStringLiteral("Mole");
         data.description
             = QStringLiteral("Mount zip, tar, 7z and other archives as browsable drives (read-only).");

@@ -8,10 +8,23 @@ JOBS ?= $(shell nproc)
 PREFIX ?= /usr/local
 DESTDIR ?=
 
+# The version, read out of the one place that holds it rather than written here as
+# well. The artefacts a release produces are named after it -- mole-<version>-x86_64 --
+# and a third copy would defeat the point of MOLE-117. One `sed` over one line, so
+# a script can rewrite that line and everything follows.
+VERSION := $(shell sed -n 's/^ *VERSION \([0-9][0-9.]*\)$$/\1/p' CMakeLists.txt)
+
 .PHONY: all build configure release run test test-live test-heavy test-verbose tsan clean distclean format tidy help guide-images where-the-log-is \
-        install uninstall bundle licence-check screenshots
+        install uninstall bundle licence-check screenshots version
 
 all: build
+
+## version: print the version this repository is at
+##          Read from project(VERSION) in CMakeLists.txt, which is the only place
+##          it is written down; `make release` rewrites that line and nothing else.
+version:
+	@test -n "$(VERSION)" || { echo "no VERSION in CMakeLists.txt"; exit 1; }
+	@echo "$(VERSION)"
 
 ## build: configure if needed, then compile (default)
 build: configure

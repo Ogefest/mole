@@ -32,7 +32,7 @@ public:
         PluginMetadata data;
         data.id = QStringLiteral("mole.network");
         data.name = QStringLiteral("Standard network drives");
-        data.version = QStringLiteral("0.1.0");
+        data.version = QStringLiteral(MOLE_VERSION);
         data.author = QStringLiteral("Mole");
         data.description = QStringLiteral("Connect to SFTP, FTP, S3-compatible object stores and WebDAV.");
         return data;
