@@ -61,6 +61,8 @@ add_library(mole_core STATIC
     automation/Chain.cpp
     automation/ChainStore.h
     automation/ChainStore.cpp
+    automation/ChainTask.h
+    automation/ChainTask.cpp
     automation/Scheduler.h
     automation/Scheduler.cpp
 

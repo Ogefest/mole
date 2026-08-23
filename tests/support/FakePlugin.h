@@ -323,6 +323,13 @@ public:
         return { where };
     }
 
+    /// Enough to be run as well as described: it hands back what it was given,
+    /// which is what a step that does nothing looks like from the chain's side.
+    StepOutcome run(const ChainStep&, const QStringList& incoming, const StepContext&) override
+    {
+        return StepOutcome::produced(incoming);
+    }
+
 private:
     QString m_id;
     StepRole m_role;

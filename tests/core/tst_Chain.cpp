@@ -32,6 +32,14 @@ public:
     StepRole role() const override { return m_role; }
     QList<StepParameter> parameters() const override { return m_parameters; }
 
+    /// This suite is about describing and validating rather than running --
+    /// tst_ChainTask is where running is asked about -- so this hands back
+    /// what it was given, and nothing here calls it.
+    StepOutcome run(const ChainStep&, const QStringList& incoming, const StepContext&) override
+    {
+        return StepOutcome::produced(incoming);
+    }
+
 private:
     QString m_id;
     StepRole m_role;

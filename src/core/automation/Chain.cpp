@@ -93,6 +93,35 @@ std::optional<StepParameter::Kind> StepParameter::kindFromString(const QString& 
     return std::nullopt;
 }
 
+StepOutcome StepOutcome::produced(QStringList uris, QString message)
+{
+    StepOutcome outcome;
+    // An empty list is Nothing whatever the caller called it: the distinction is
+    // about what the next step would be handed, not about what a step meant to
+    // say. A step that produced nothing and reported success is exactly the
+    // mistake the third outcome exists to stop.
+    outcome.result = uris.isEmpty() ? Result::Nothing : Result::Produced;
+    outcome.uris = std::move(uris);
+    outcome.message = std::move(message);
+    return outcome;
+}
+
+StepOutcome StepOutcome::nothing(QString message)
+{
+    StepOutcome outcome;
+    outcome.result = Result::Nothing;
+    outcome.message = std::move(message);
+    return outcome;
+}
+
+StepOutcome StepOutcome::failed(QString message)
+{
+    StepOutcome outcome;
+    outcome.result = Result::Failed;
+    outcome.message = std::move(message);
+    return outcome;
+}
+
 QList<StepParameter> IChainStepKind::chainProperties() const
 {
     if (role() == StepRole::Sink)

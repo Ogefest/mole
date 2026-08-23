@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/vfs/VfsTypes.h"
+
 #include <QHash>
 #include <QJsonObject>
 #include <QList>
@@ -7,6 +9,7 @@
 #include <QStringList>
 #include <QVariantMap>
 
+#include <functional>
 #include <optional>
 
 namespace mole {
@@ -80,6 +83,79 @@ struct StepParameter
 /// follows about its own fields.
 inline constexpr auto kStopWhenEmpty = "stopWhenEmpty";
 
+/// What running one step gave back.
+///
+/// Three outcomes and not two, and the third is the point: **a step that produced
+/// nothing is not a step that failed, and it is not a step that succeeded
+/// either.** A chain that carried on with nothing writes an empty archive and
+/// moves it somewhere, which reads exactly like working. The scheduler already
+/// draws this distinction between Skipped and Failed, for the same reason.
+struct StepOutcome
+{
+    enum class Result {
+        Produced, ///< here is the list
+        Nothing, ///< it ran, it worked, and there was nothing
+        Failed, ///< it did not do what it said it would
+    };
+
+    Result result = Result::Produced;
+    /// What to hand to the next step. Empty for Nothing and for Failed.
+    QStringList uris;
+    /// What happened, in words somebody reading a task strip can use. Required
+    /// for a failure, welcome otherwise.
+    QString message;
+
+    static StepOutcome produced(QStringList uris, QString message = {});
+    static StepOutcome nothing(QString message = {});
+    static StepOutcome failed(QString message);
+
+    [[nodiscard]] bool ok() const { return result != Result::Failed; }
+};
+
+/// What a step is given while it runs, beside its own parameters.
+///
+/// Not a Task, deliberately: a step runs *inside* the chain's task, on the pool
+/// thread the chain is already on. Submitting a task per step would take the
+/// chain's cancellation away from it -- the chain would be waiting on something
+/// it cannot stop -- and would put a row in the strip per step for work somebody
+/// asked for once.
+struct StepContext
+{
+    /// The chain's own token. A step that runs for any length of time polls it,
+    /// because cancelling a chain has to reach the step that is running rather
+    /// than only the gap after it.
+    CancelToken cancel;
+    /// A line for the strip: what this step is doing at the moment.
+    std::function<void(const QString& text)> say;
+    /// How far through this step is, when it can say. Feeds the chain's own
+    /// progress under the step count.
+    std::function<void(qint64 done, qint64 total)> progress;
+};
+
+/// One step of a chain: which kind, and what it was given.
+struct ChainStep
+{
+    /// Names a registered kind. A step whose kind is not registered is a step
+    /// nothing can run, and a chain holding one refuses to run rather than
+    /// skipping it.
+    QString kind;
+    /// What the operation was given, by the kind's own parameter keys.
+    QVariantMap parameters;
+    /// What the chain was told about this step -- see kStopWhenEmpty. Separate
+    /// from `parameters` because they are answers to different questions, and a
+    /// step kind's parameters are its own business.
+    QVariantMap properties;
+
+    [[nodiscard]] QJsonObject toJson() const;
+    /// Nothing for a step with no kind: a step nobody can name is not a step,
+    /// and dropping it silently would change what the chain does.
+    [[nodiscard]] static std::optional<ChainStep> fromJson(const QJsonObject& json);
+
+    /// Whether a step that produced nothing stops the line. True unless the step
+    /// says otherwise.
+    [[nodiscard]] bool stopsWhenEmpty() const;
+};
+
 /// One kind of step: what it is, what it does, and what it needs.
 ///
 /// Implemented by whoever owns the work, the way IScheduledJob already is -- so
@@ -108,30 +184,18 @@ public:
     /// property every step that produces something has; a sink produces nothing,
     /// so there is nothing after it to stop.
     virtual QList<StepParameter> chainProperties() const;
-};
 
-/// One step of a chain: which kind, and what it was given.
-struct ChainStep
-{
-    /// Names a registered kind. A step whose kind is not registered is a step
-    /// nothing can run, and a chain holding one refuses to run rather than
-    /// skipping it.
-    QString kind;
-    /// What the operation was given, by the kind's own parameter keys.
-    QVariantMap parameters;
-    /// What the chain was told about this step -- see kStopWhenEmpty. Separate
-    /// from `parameters` because they are answers to different questions, and a
-    /// step kind's parameters are its own business.
-    QVariantMap properties;
-
-    [[nodiscard]] QJsonObject toJson() const;
-    /// Nothing for a step with no kind: a step nobody can name is not a step,
-    /// and dropping it silently would change what the chain does.
-    [[nodiscard]] static std::optional<ChainStep> fromJson(const QJsonObject& json);
-
-    /// Whether a step that produced nothing stops the line. True unless the step
-    /// says otherwise.
-    [[nodiscard]] bool stopsWhenEmpty() const;
+    /// Does the work, on the chain's own thread, and says what came of it.
+    ///
+    /// `incoming` is what the step before produced -- empty for a source, which
+    /// takes nothing. A sink returns Nothing when it worked, because there is no
+    /// list after it; that is not an empty result and nothing follows it to stop.
+    ///
+    /// **Runs to completion or to cancellation, and never throws.** A kind whose
+    /// work is a Task of its own runs that work here rather than submitting it:
+    /// see StepContext.
+    virtual StepOutcome run(const ChainStep& step, const QStringList& incoming, const StepContext& context)
+        = 0;
 };
 
 /// Everything a chain is.
