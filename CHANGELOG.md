@@ -66,9 +66,8 @@ two expressions out of the block above rather than keeping a copy of its own —
 the file and the thing that checks it cannot come apart.
 
 2026-08-23 #MOLE-304 A download, a preview or a dragged copy that has to be staged is refused when there is nowhere to stage it, instead of being written somewhere nobody would look for it — and `MOLE_STAGING_DIR` says where staging happens, for a machine whose temporary directory is small or on the wrong disk
-2026-08-23 #MOLE-125 A run that ends in a crash leaves a backtrace in the session log on macOS as well, where the whole of it was compiled out for want of a macro
+2026-08-23 #MOLE-125 A run that ends in a crash leaves a backtrace in the session log, on Linux and macOS alike
 2026-08-23 #MOLE-306 A database write that fails says which failure it was — the file locked by another connection, a disk with no room left, or a database that moved on while this connection was reading it — in the index and in a file being imported alike
-2026-08-23 #MOLE-306 An index write that fails carries the reason it failed, where it named the step and then said nothing
 2026-08-23 #MOLE-301 A .jar, .war, .ear, .apk, .whl, .egg, .nupkg, .xpi, .vsix, .deb and .rpm open as drives like any other archive, because that is what they are — a document that happens to be a zip is deliberately still a document
 2026-08-23 #MOLE-297 A listing sorts names naturally on a machine that names no language, where "file10" used to come before "file9" — a container, a cron job and a service started at boot are all in that state
 2026-08-23 #MOLE-297 `mole --version` answers on a machine with no display, where it used to print nothing at all: the build somebody most needs to identify is the build that will not start

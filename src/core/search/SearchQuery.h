@@ -2,11 +2,13 @@
 
 #include "core/vfs/FileEntry.h"
 
+#include <QJsonObject>
 #include <QList>
 #include <QString>
 #include <QStringList>
 
 #include <functional>
+#include <optional>
 
 namespace mole {
 
@@ -224,6 +226,52 @@ struct SearchPredicate
     /// True when it needs the whole file rather than a page of it, which is
     /// what makes a search worth warning somebody about before it starts.
     [[nodiscard]] bool readsWholeFile() const { return field == Field::Content; }
+
+    // ---- written down ----------------------------------------------------
+    //
+    // A search that can be stored is a search that can outlive the tab that ran
+    // it: saved, handed to a headless runner, put on a clock, or made one step
+    // of a chain. Until this there was nothing to store -- the only thing that
+    // persisted a search anywhere was a form's own twenty-seven fields, which
+    // is the shape of a form rather than a query. See MOLE-163.
+    //
+    // Two rules, and both are about a stored query meaning next year what it
+    // means today. **Enums are stored as names**, because Field has gained
+    // values and will gain more, and a stored `3` quietly becomes a different
+    // field the next time somebody inserts one. And **`cost` is not stored**:
+    // it is the planner's own answer, decided afresh from where the search is
+    // running, so a stored copy would be a second opinion that goes wrong the
+    // first time a criterion is cheap on a volume where it used to be dear.
+
+    [[nodiscard]] QJsonObject toJson() const;
+
+    /// Nothing when the object names a field or a match this build does not
+    /// know. Refused rather than defaulted: a stored query that will not load is
+    /// something somebody can act on, and one that quietly means something else
+    /// is not -- a criterion silently dropped from a chain that deletes files
+    /// makes it delete more of them.
+    ///
+    /// A key that is absent takes the member's default; a key that is there and
+    /// unreadable is a refusal. Unknown keys are ignored.
+    [[nodiscard]] static std::optional<SearchPredicate> fromJson(const QJsonObject& json);
+
+    /// What a criterion of this kind costs before anybody has looked at where it
+    /// is running.
+    ///
+    /// The other half of not storing `cost`: a loaded query has to arrive with a
+    /// cost, or a content search comes back looking like the cheapest criterion
+    /// there is -- evaluated first, and reported by SearchPlan::needsFile() as
+    /// something a source that cannot read files can answer. Derived from the
+    /// field rather than remembered from the file, which is the point: the same
+    /// criterion is a column on an indexed volume and a read on one that was
+    /// never scanned, and the planner is what settles that.
+    [[nodiscard]] static PredicateCost costOf(Field field);
+
+    /// The stored names of the two enums, and back.
+    [[nodiscard]] static QString fieldName(Field field);
+    [[nodiscard]] static std::optional<Field> fieldFromName(const QString& name);
+    [[nodiscard]] static QString matchName(Match match);
+    [[nodiscard]] static std::optional<Match> matchFromName(const QString& name);
 };
 
 /// Everything one search asks for.
@@ -264,6 +312,15 @@ struct SearchQuery
 
     /// Whether a directory called `name` is one the walk should not enter.
     [[nodiscard]] bool isExcluded(const QString& name) const;
+
+    /// The whole search, written down. See SearchPredicate::toJson().
+    [[nodiscard]] QJsonObject toJson() const;
+
+    /// Nothing when any criterion in it is one this build cannot read. One bad
+    /// criterion refuses the whole query on purpose: a query that came back with
+    /// three of its four criteria is a query that matches more files than
+    /// whoever saved it asked for.
+    [[nodiscard]] static std::optional<SearchQuery> fromJson(const QJsonObject& json);
 };
 
 /// Which engine a plan is for.

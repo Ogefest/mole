@@ -2,6 +2,7 @@
 
 #include "core/data/FileType.h"
 
+#include <QJsonArray>
 #include <QMimeDatabase>
 #include <QRegularExpression>
 #include <QStringDecoder>
@@ -627,6 +628,259 @@ ContentMatch findInContents(
 }
 
 // ----------------------------------------------------------------- the query
+
+// ---- written down -----------------------------------------------------------
+
+namespace {
+
+    /// The stored name of every Field, in one table read both ways.
+    ///
+    /// One table rather than two switch statements, because two of those drift:
+    /// the day somebody adds a value to Field and only one of them knows about
+    /// it, a query saves under a name nothing can read back. See MOLE-163.
+    struct FieldName
+    {
+        SearchPredicate::Field field;
+        const char* name;
+    };
+
+    const QList<FieldName>& fieldNames()
+    {
+        using Field = SearchPredicate::Field;
+        static const QList<FieldName> names {
+            { Field::Name, "name" },
+            { Field::Path, "path" },
+            { Field::Extension, "extension" },
+            { Field::Size, "size" },
+            { Field::Modified, "modified" },
+            { Field::Created, "created" },
+            { Field::Accessed, "accessed" },
+            { Field::Kind, "kind" },
+            { Field::Hidden, "hidden" },
+            { Field::TypeClass, "typeClass" },
+            { Field::Content, "content" },
+            { Field::Metadata, "metadata" },
+            { Field::Under, "under" },
+        };
+        return names;
+    }
+
+    struct MatchName
+    {
+        SearchPredicate::Match match;
+        const char* name;
+    };
+
+    const QList<MatchName>& matchNames()
+    {
+        using Match = SearchPredicate::Match;
+        static const QList<MatchName> names {
+            { Match::Contains, "contains" },
+            { Match::Equals, "equals" },
+            { Match::AtLeast, "atLeast" },
+            { Match::AtMost, "atMost" },
+            { Match::Glob, "glob" },
+            { Match::Regex, "regex" },
+            { Match::OneOf, "oneOf" },
+        };
+        return names;
+    }
+
+    /// A flag that is absent takes its default, and one that is there is what it
+    /// says. The four that are usually false are exactly the ones a hand-written
+    /// object leaves out.
+    bool flagOf(const QJsonObject& json, const char* key, bool fallback = false)
+    {
+        const QJsonValue value = json.value(QLatin1String(key));
+        return value.isBool() ? value.toBool() : fallback;
+    }
+
+} // namespace
+
+PredicateCost SearchPredicate::costOf(Field field)
+{
+    switch (field) {
+    case Field::Path:
+    case Field::Hidden:
+    case Field::Under:
+        // Answerable from the entry a listing already handed over, and not
+        // from any source's own query: a uri prefix and a hidden flag are
+        // ours to check.
+        return PredicateCost::Cheap;
+    case Field::TypeClass:
+        // What is *in* the file decides its class, so an unscanned volume
+        // pays for a bounded read.
+        return PredicateCost::Metadata;
+    case Field::Content:
+        return PredicateCost::Content;
+    case Field::Name:
+    case Field::Extension:
+    case Field::Size:
+    case Field::Modified:
+    case Field::Created:
+    case Field::Accessed:
+    case Field::Kind:
+    case Field::Metadata:
+        // The claim that a source can state it in its own query. A source
+        // that cannot say so demotes it, which is what the planner is for.
+        return PredicateCost::PushedDown;
+    }
+    return PredicateCost::Cheap;
+}
+
+QString SearchPredicate::fieldName(Field field)
+{
+    for (const FieldName& entry : fieldNames()) {
+        if (entry.field == field)
+            return QString::fromLatin1(entry.name);
+    }
+    // Unreachable while the table covers the enum, and a suite holds it to that.
+    return {};
+}
+
+std::optional<SearchPredicate::Field> SearchPredicate::fieldFromName(const QString& name)
+{
+    for (const FieldName& entry : fieldNames()) {
+        if (QLatin1String(entry.name) == name)
+            return entry.field;
+    }
+    return std::nullopt;
+}
+
+QString SearchPredicate::matchName(Match match)
+{
+    for (const MatchName& entry : matchNames()) {
+        if (entry.match == match)
+            return QString::fromLatin1(entry.name);
+    }
+    return {};
+}
+
+std::optional<SearchPredicate::Match> SearchPredicate::matchFromName(const QString& name)
+{
+    for (const MatchName& entry : matchNames()) {
+        if (QLatin1String(entry.name) == name)
+            return entry.match;
+    }
+    return std::nullopt;
+}
+
+QJsonObject SearchPredicate::toJson() const
+{
+    QJsonObject json;
+    json[QStringLiteral("field")] = fieldName(field);
+    json[QStringLiteral("match")] = matchName(match);
+    if (!text.isEmpty())
+        json[QStringLiteral("text")] = text;
+    if (!list.isEmpty())
+        json[QStringLiteral("list")] = QJsonArray::fromStringList(list);
+    // The numbers are written when they say something. A size of nought and an
+    // epoch of nought are what a criterion looks like before anybody filled it
+    // in, and an object with every member in it is one nobody can read.
+    if (number != 0)
+        json[QStringLiteral("number")] = number;
+    if (numberValue != 0)
+        json[QStringLiteral("numberValue")] = numberValue;
+    // The four that are usually false, and are the whole of what somebody means
+    // when they set them: written only when true, read as false when absent.
+    if (flag)
+        json[QStringLiteral("flag")] = true;
+    if (caseSensitive)
+        json[QStringLiteral("caseSensitive")] = true;
+    if (wholeWord)
+        json[QStringLiteral("wholeWord")] = true;
+    if (negate)
+        json[QStringLiteral("negate")] = true;
+    if (includeBinary)
+        json[QStringLiteral("includeBinary")] = true;
+    // `cost` is deliberately absent -- see the note in the header.
+    return json;
+}
+
+std::optional<SearchPredicate> SearchPredicate::fromJson(const QJsonObject& json)
+{
+    SearchPredicate predicate;
+
+    // Absent takes the default; present and unreadable is a refusal. That is the
+    // whole distinction: a query written by an older build is missing keys, and a
+    // query written by a newer one names things this build has never heard of.
+    const QJsonValue fieldValue = json.value(QStringLiteral("field"));
+    if (!fieldValue.isUndefined()) {
+        const std::optional<Field> read = fieldFromName(fieldValue.toString());
+        if (!read)
+            return std::nullopt;
+        predicate.field = *read;
+    }
+    const QJsonValue matchValue = json.value(QStringLiteral("match"));
+    if (!matchValue.isUndefined()) {
+        const std::optional<Match> read = matchFromName(matchValue.toString());
+        if (!read)
+            return std::nullopt;
+        predicate.match = *read;
+    }
+
+    predicate.text = json.value(QStringLiteral("text")).toString();
+    const QJsonArray list = json.value(QStringLiteral("list")).toArray();
+    for (const QJsonValue& value : list) {
+        if (value.isString())
+            predicate.list.append(value.toString());
+    }
+    predicate.number = json.value(QStringLiteral("number")).toInteger(0);
+    predicate.numberValue = json.value(QStringLiteral("numberValue")).toDouble(0);
+    predicate.flag = flagOf(json, "flag");
+    predicate.caseSensitive = flagOf(json, "caseSensitive");
+    predicate.wholeWord = flagOf(json, "wholeWord");
+    predicate.negate = flagOf(json, "negate");
+    predicate.includeBinary = flagOf(json, "includeBinary");
+    // And `cost` is derived rather than read. Not stored, because it is the
+    // planner's answer and depends on where the search runs -- and not left at
+    // its default either, because a content search that arrives claiming to be
+    // pushed down is one a source will answer without ever opening a file.
+    predicate.cost = costOf(predicate.field);
+    return predicate;
+}
+
+QJsonObject SearchQuery::toJson() const
+{
+    QJsonObject json;
+    QJsonArray stored;
+    for (const SearchPredicate& predicate : predicates)
+        stored.append(predicate.toJson());
+    json[QStringLiteral("predicates")] = stored;
+    if (volumeId != -1)
+        json[QStringLiteral("volumeId")] = volumeId;
+    json[QStringLiteral("limit")] = limit;
+    if (!excluded.isEmpty())
+        json[QStringLiteral("excluded")] = QJsonArray::fromStringList(excluded);
+    if (maxDepth != -1)
+        json[QStringLiteral("maxDepth")] = maxDepth;
+    return json;
+}
+
+std::optional<SearchQuery> SearchQuery::fromJson(const QJsonObject& json)
+{
+    SearchQuery query;
+    const QJsonArray stored = json.value(QStringLiteral("predicates")).toArray();
+    for (const QJsonValue& value : stored) {
+        const std::optional<SearchPredicate> predicate = SearchPredicate::fromJson(value.toObject());
+        // One criterion this build cannot read refuses the whole query. A query
+        // that came back with three of its four criteria matches more files than
+        // whoever saved it asked for, and a chain that deletes what it finds is
+        // exactly where that must not happen quietly.
+        if (!predicate)
+            return std::nullopt;
+        query.predicates.append(*predicate);
+    }
+    query.volumeId = json.value(QStringLiteral("volumeId")).toInteger(-1);
+    query.limit = json.value(QStringLiteral("limit")).toInt(query.limit);
+    const QJsonArray excluded = json.value(QStringLiteral("excluded")).toArray();
+    for (const QJsonValue& value : excluded) {
+        if (value.isString())
+            query.excluded.append(value.toString());
+    }
+    query.maxDepth = json.value(QStringLiteral("maxDepth")).toInt(-1);
+    return query;
+}
 
 SearchQuery& SearchQuery::add(SearchPredicate predicate)
 {
