@@ -1,0 +1,71 @@
+# Does Mole build on macOS, and does the fast tier hold there?
+#
+# The same question `windows.yml` asks, with the same shape and for the same
+# reasons -- nothing optional installed, Qt from aqtinstall rather than a
+# marketplace action, `workflow_dispatch` only until it has passed once. The note
+# in that file is the argument; this one records what is different about a Mac.
+#
+# **Signing and notarisation are not in scope, and their absence is a decision
+# rather than an oversight.** An unsigned application downloaded from the internet
+# is refused by Gatekeeper by default, and the two ways past that are an Apple
+# developer account wired into the pipeline -- a recurring cost, and the author's
+# call to make -- or instructions telling somebody how to open it anyway. MOLE-125
+# takes the second road, and neither road is worth building until something is
+# known to compile. See TODO.md.
+#
+# **The build here uses the project's own preset**, unlike the Windows job: Ninja
+# and clang are what everybody else builds with, so a failure is about the code and
+# not about a generator nobody uses.
+name: macOS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  macos:
+    name: Configure, build and the fast tier on macOS
+    runs-on: macos-14
+
+    env:
+      # As on Windows: not the 6.4 baseline, because what a first run has to say is
+      # whether the code is portable, and asking two questions at once means not
+      # knowing which answer failed.
+      QT_VERSION: 6.8.2
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ninja
+        run: brew install ninja
+
+      # clang_64 is Qt's own name for the desktop build, on both architectures --
+      # the arm64 runner gets an arm64 Qt under that name.
+      - name: Qt ${{ env.QT_VERSION }}
+        run: |
+          python3 -m pip install --break-system-packages --disable-pip-version-check "aqtinstall==3.1.*"
+          python3 -m aqt install-qt mac desktop ${{ env.QT_VERSION }} clang_64 \
+            -m qtimageformats qtmultimedia qtpdf -O "$GITHUB_WORKSPACE/Qt"
+          echo "CMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/Qt/${{ env.QT_VERSION }}/macos" >> "$GITHUB_ENV"
+
+      - name: Configure on macOS
+        run: |
+          cmake --preset debug 2>&1 | tee configure.log
+          echo "--- what this machine gave the build ---"
+          grep -E "Parquet|Terminal|Git state|Credential|Windows shares|NFS exports|Network drives" configure.log || true
+
+      - name: Build on macOS
+        run: cmake --build build/debug --parallel "$(sysctl -n hw.ncpu)"
+
+      # The shell tier is excluded for the reason it is on Windows: those suites
+      # read the release scripts and the testbed provisioning, which are
+      # Linux-side machinery. What is asked here is whether the C++ holds.
+      #
+      # One case is worth watching on the first green run rather than asserting
+      # here: the session log's backtrace was compiled out on macOS until MOLE-125,
+      # because it was guarded on `__unix__`, which Apple's compiler does not
+      # define. execinfo.h is present on a Mac, so the guard was the whole of it --
+      # and tst_SessionLog is what will say whether that is true.
+      - name: The fast tier on macOS
+        run: >
+          ctest --test-dir build/debug --output-on-failure
+          --parallel "$(sysctl -n hw.ncpu)" --label-exclude heavy --label-exclude shell

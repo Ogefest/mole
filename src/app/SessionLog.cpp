@@ -12,7 +12,13 @@
 #include <atomic>
 #include <memory>
 
-#if defined(__unix__)
+// Qt's macro rather than `__unix__`, which Apple's compiler does not define --
+// so this whole thing was compiled out on macOS while the suite that asserts a
+// backtrace is built there. `execinfo.h`, `backtrace()` and
+// `backtrace_symbols_fd()` are all present on macOS, so what was missing was the
+// macro and not the platform. Unverified on a Mac, because there is not one here:
+// the job in .github/workflows/macos.yml is what will say. See MOLE-125.
+#if defined(Q_OS_UNIX)
 #include <csignal>
 #include <execinfo.h>
 #include <unistd.h>
@@ -72,7 +78,7 @@ namespace {
         g_file->flush();
     }
 
-#if defined(__unix__)
+#if defined(Q_OS_UNIX)
 
     /// Formats a number into `buffer` without allocating or calling into stdio,
     /// neither of which is safe from a signal handler. Returns how many characters

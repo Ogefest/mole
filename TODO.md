@@ -462,15 +462,37 @@ project, and a contributor should never hit a wall of text they cannot read.
   written on, and it is `workflow_dispatch` only until it has passed once — a
   scheduled job that is red from the day it lands teaches everybody to ignore it.
 
-  **No .zip is attached to anything, and the reason is not the build.** The job
-  installs nothing optional on purpose, so what it produces has no archive browsing,
-  no network drives, no git band, no Parquet grid and no terminal panel — the last
-  of those on Windows regardless, which is MOLE-38. Publishing that would answer a
-  question nobody asked. Getting to an artefact worth downloading means nine
-  libraries through vcpkg and `windeployqt` for a self-contained folder, and both of
-  those are worth doing once the first question has an answer. In that order,
-  because a .zip of a build nobody has seen compile is not a release, it is a guess
-  with a filename.
+  **macOS is the same question with a different obstacle, and reading it found
+  one real fault.** `.github/workflows/macos.yml` is its job, built the same way
+  and with the project's own Ninja preset, because clang and Ninja are what
+  everybody here builds with. What reading settles: the only Apple-specific code in
+  the tree is one branch of `HostPlatform.h`, `forkpty` is already not linked
+  there, and the /proc probe that had to be guarded for Windows degrades on a Mac
+  on its own -- `Q_OS_UNIX` is true there, the file is simply not present, and the
+  case skips. What reading *found* is that the session log's crash backtrace was
+  guarded on `__unix__`, which Apple's compiler does not define: `execinfo.h`,
+  `backtrace()` and `backtrace_symbols_fd()` are all present on macOS, so a Mac had
+  no backtrace for the want of a macro -- while the suite that asserts one is built
+  there. It is `Q_OS_UNIX` now, which changes nothing on Linux and cannot be
+  verified from here; that case on the first green run is the check.
+
+  **Signing and notarisation are out of scope, and that is a decision rather than
+  an oversight.** An unsigned application downloaded from the internet is refused
+  by Gatekeeper, and the two ways past it are an Apple developer account wired into
+  the pipeline -- a recurring cost, and the author's call -- or instructions for
+  opening it anyway. MOLE-125 chose the instructions, and they are worth writing
+  when there is something to open: an artefact whose only description is "nobody
+  has run this" does not become useful by being told how to get past Gatekeeper.
+
+  **Neither job attaches anything, and the reason is not the build.** Both install
+  nothing optional on purpose, so what they produce has no archive browsing, no
+  network drives, no git band, no Parquet grid and no terminal panel — the last on
+  Windows regardless, which is MOLE-38. Publishing that would answer a question
+  nobody asked. An artefact worth downloading needs the optional libraries first —
+  vcpkg on Windows, Homebrew on macOS, and libsmbclient is the one that has no
+  comfortable answer on either — and then a self-contained bundle, `windeployqt` or
+  `macdeployqt`. In that order, because a .zip of a build nobody has seen compile is
+  not a release; it is a guess with a filename.
 
 Tracked as issues rather than kept here: the full-screen window geometry (#31),
 FTP staging (#34), WebDAV against a real server (#35), video preview (#37) and
