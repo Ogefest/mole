@@ -3,11 +3,15 @@
 #include "sdk/IMetadataReader.h"
 #include "sdk/IPreviewProvider.h"
 
+#include <QPointer>
+#include <QSet>
 #include <QTemporaryDir>
 
 #include <memory>
 
 #ifdef MOLE_HAVE_QTPDF
+#include "plugins/builtin/previews/RenderPdfPageTask.h"
+
 #include <QPdfDocument>
 #endif
 
@@ -31,6 +35,17 @@ class PdfPreviewController final : public PreviewController
     Q_PROPERTY(int currentPage READ currentPage WRITE setCurrentPage NOTIFY currentPageChanged)
     Q_PROPERTY(QString positionText READ positionText NOTIFY currentPageChanged)
     Q_PROPERTY(QString title READ title NOTIFY documentChanged)
+    /// How many pages of this document have been rendered so far.
+    ///
+    /// A count rather than a state, and it exists to be read from a binding: a
+    /// page is asked for, answered with nothing, and arrives later, so a view that
+    /// did not watch something would never ask again. See pageImage().
+    Q_PROPERTY(int pagesRendered READ pagesRendered NOTIFY renderChanged)
+    /// What to say while a page is being rasterised, empty when none is. The pane
+    /// says everything else about the document in its strip; a page that takes a
+    /// second has to be visible there rather than looking like a page that is
+    /// blank.
+    Q_PROPERTY(QString renderNote READ renderNote NOTIFY renderChanged)
 
 public:
     explicit PdfPreviewController(PluginServices services, QObject* parent = nullptr);
@@ -41,11 +56,25 @@ public:
     void setCurrentPage(int page);
     QString positionText() const;
     QString title() const;
+    int pagesRendered() const { return m_pagesRendered; }
+    QString renderNote() const;
 
-    /// A `file:` url for `page` rendered `width` pixels wide, or an empty string
-    /// when it cannot be rendered. Renders on first ask and reuses the file
-    /// afterwards, so scrolling back is free.
+    /// A `file:` url for `page` at `width` pixels wide, or an empty string while
+    /// there is not one yet.
+    ///
+    /// **Nothing here rasterises.** A page that has not been rendered starts a
+    /// task and this answers with nothing; the file arrives later and
+    /// `pagesRendered` is what tells a binding to ask again. Asking for the same
+    /// page at the same width twice is one render, and asking again once it has
+    /// landed is a stat() -- so scrolling back is free and a binding may re-run as
+    /// often as it likes.
     Q_INVOKABLE QString pageImage(int page, int width);
+
+    /// Renders asked for and not yet answered, in flight and queued together.
+    /// Exposed so a test can hold that stepping off a document abandons what it
+    /// had outstanding, which is a claim about the controller and the queue
+    /// together and cannot be made about either alone.
+    int outstandingRenders() const;
     /// The page's aspect, so a delegate can reserve the right height before the
     /// image exists and the list does not jump as pages arrive.
     Q_INVOKABLE double pageAspect(int page) const;
@@ -55,15 +84,51 @@ public:
 signals:
     void documentChanged();
     void currentPageChanged();
+    /// A render landed, or the last one finished. Coarse on purpose: a view asks
+    /// again for whatever it is showing rather than being told about one page.
+    void renderChanged();
 
 private:
     void openLocalFile(const QString& path);
+    /// Queues `page` at `width` unless it is already asked for, and starts it if
+    /// nothing else is rendering.
+    void requestRender(int page, int width);
+    /// Starts the next queued render, if there is room. One at a time: see
+    /// RenderPdfPageTask.
+    void startNextRender();
+    /// Cancels what is in flight and forgets what is queued. Called when the
+    /// reader steps off the document and when this is destroyed.
+    void abandonRenders();
+    /// The file a page at a width renders into, empty when there is nowhere to put
+    /// it. Creates the scratch directory on first use.
+    QString targetFor(int page, int width);
+
+    /// One page at one width, which is what a render is keyed on.
+    struct PageKey
+    {
+        int page = 0;
+        int width = 0;
+
+        bool operator==(const PageKey& other) const { return page == other.page && width == other.width; }
+    };
 
     PluginServices m_services;
     std::unique_ptr<LocalCopyProvider> m_copy;
     std::unique_ptr<QPdfDocument> m_document;
-    /// Where rendered pages go. One directory per preview, gone when it closes.
-    std::unique_ptr<QTemporaryDir> m_scratch;
+    /// Where rendered pages go. One directory per preview, gone when it closes --
+    /// or when the last render writing into it finishes, whichever is later, which
+    /// is why this is shared rather than owned outright. See MOLE-290 for the fault
+    /// that taught us the difference.
+    std::shared_ptr<QTemporaryDir> m_scratch;
+    /// The local copy every render opens for itself. Empty until the file lands.
+    QString m_documentPath;
+    /// The one render allowed to be running, and the ones waiting behind it.
+    QPointer<RenderPdfPageTask> m_render;
+    QList<PageKey> m_queued;
+    /// Pages that could not be rendered, so a binding asking again does not start
+    /// the same doomed task for ever.
+    QSet<QString> m_unrenderable;
+    int m_pagesRendered = 0;
     int m_currentPage = 0;
     QString m_fileName;
 };

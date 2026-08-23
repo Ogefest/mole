@@ -7,6 +7,7 @@
 #include "plugins/builtin/previews/MetadataReaders.h"
 #include "plugins/builtin/previews/PdfPreview.h"
 #include "plugins/builtin/previews/PreviewProviders.h"
+#include "plugins/builtin/previews/RenderPdfPageTask.h"
 #include "plugins/builtin/previews/SyntaxHighlighter.h"
 #include "plugins/builtin/previews/VideoPreview.h"
 #include "support/FakePlugin.h"
@@ -55,6 +56,7 @@
 #include <QTextFrame>
 #include <QTextLayout>
 #include <QTextTable>
+#include <QThread>
 
 using namespace mole;
 using namespace mole::test;
@@ -232,6 +234,8 @@ private slots:
     void imageProviderOnlyClaimsWhatQtCanDecode();
     void pdfProviderClaimsPdfsOnlyWhenItCanRenderThem();
     void pdfPreviewRendersPagesOnDemand();
+    void aPageIsRasterisedOnATaskRatherThanOnTheThreadThatDraws();
+    void steppingOffADocumentAbandonsTheRendersItHadOutstanding();
     void htmlCanBeShownAsSourceOrAsAPage();
     void aRenderedPageReachesForNothingOffTheDisk();
     void theChoiceIsRememberedPerFileType();
@@ -1653,9 +1657,18 @@ void TestPreview::pdfPreviewRendersPagesOnDemand()
     // this before any image exists, which is what stops the list jumping about.
     QVERIFY(viewer->pageAspect(0) > 1.0);
 
-    // Rendered when asked for, not up front, and written where it can be read.
+    // Asked for when the view needs it, not up front -- and answered with nothing
+    // to begin with, because the rasterising happens on a task. See MOLE-286.
+    //
+    // Waited for on the count rather than on the file appearing: the file is
+    // written and committed inside the task, so it is there a moment before the
+    // controller has been told, and a case that raced the bookkeeping would fail
+    // on a fast machine and pass on a slow one.
+    QVERIFY2(viewer->pageImage(0, 320).isEmpty(), "the first ask must not rasterise");
+    QVERIFY(waitFor([viewer] { return viewer->pagesRendered() == 1; }, 15000));
+
     const QString first = viewer->pageImage(0, 320);
-    QVERIFY2(!first.isEmpty(), "the first page has to render");
+    QVERIFY2(!first.isEmpty(), "the first page has to arrive");
     const QString firstPath = QUrl(first).toLocalFile();
     QVERIFY(QFileInfo::exists(firstPath));
 
@@ -1677,16 +1690,181 @@ void TestPreview::pdfPreviewRendersPagesOnDemand()
     }
     QVERIFY2(anyInk, "the rendered page has something on it");
 
-    // Asking twice at the same width reuses the file rather than rendering again.
+    // Asking again at the same width is the file, not a second render: one page
+    // rendered is all that has landed.
     QCOMPARE(viewer->pageImage(0, 320), first);
+    QCOMPARE(viewer->outstandingRenders(), 0);
+
     // A different width is a different file, because scaling a small render up
     // would just look soft.
+    QVERIFY(viewer->pageImage(0, 480).isEmpty());
+    QVERIFY(waitFor([viewer] { return viewer->pagesRendered() == 2; }, 15000));
     QVERIFY(viewer->pageImage(0, 480) != first);
 
     // The second page renders too, and only when it is asked for.
+    QVERIFY(viewer->pageImage(1, 320).isEmpty());
+    QVERIFY(waitFor([viewer] { return viewer->pagesRendered() == 3; }, 15000));
     QVERIFY(!viewer->pageImage(1, 320).isEmpty());
-    // Past the end is nothing, not a crash.
+
+    // Past the end is nothing, not a crash, and not a task either.
     QVERIFY(viewer->pageImage(5, 320).isEmpty());
+    QCOMPARE(viewer->outstandingRenders(), 0);
+}
+
+void TestPreview::aPageIsRasterisedOnATaskRatherThanOnTheThreadThatDraws()
+{
+    if (!PdfPreviewProvider::isAvailable())
+        QSKIP("this build cannot render a PDF");
+
+    // The output of a render is bounded -- it is the width the view asked for --
+    // but the work is not: a page is proportional to what is on it, and one large
+    // vector drawing takes as long as its paths take. So what is asserted here is
+    // *where* it happens, not how long it takes: a page that arrives from the
+    // thread that draws is the window not answering while it draws. See MOLE-286.
+    const QString path = QDir(m_tree->path()).filePath(QStringLiteral("plots.pdf"));
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        QVERIFY(painter.isActive());
+        // Paths rather than text, because paths are what makes a page slow.
+        for (int i = 0; i < 400; ++i)
+            painter.drawEllipse(QRect(i * 5, i * 3, 900, 700));
+    }
+
+    PreviewTabController* preview = openPreview(QStringLiteral("plots.pdf"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<PdfPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(waitFor([viewer] { return viewer->pageCount() > 0; }, 10000));
+
+    // The ask answers with nothing and says what it is doing. Both read straight
+    // afterwards on purpose: the note is set on this thread inside the ask, and
+    // only a task finishing clears it -- which needs the event loop this test has
+    // not returned to yet, so there is no race to lose.
+    QVERIFY2(viewer->pageImage(0, 320).isEmpty(), "the first ask must not rasterise");
+    QCOMPARE(viewer->outstandingRenders(), 1);
+    QVERIFY2(viewer->renderNote().contains(QStringLiteral("page 1")), qPrintable(viewer->renderNote()));
+
+    // The task itself, so where the work ran is asserted rather than assumed.
+    QPointer<RenderPdfPageTask> render;
+    for (Task* task : m_app->services().tasks->tasks()) {
+        if (auto* candidate = qobject_cast<RenderPdfPageTask*>(task); candidate && !candidate->isFinished())
+            render = candidate;
+    }
+    QVERIFY2(render, "the page has to be on a task");
+    QVERIFY(waitFor([render] { return render && render->isFinished(); }, 30000));
+    QCOMPARE(render->state(), Task::State::Succeeded);
+    QVERIFY2(render->ranOn() && render->ranOn() != QThread::currentThread(),
+        "a page must not be rasterised on the thread that draws");
+
+    // And the page is there afterwards, with the strip back to saying nothing.
+    QVERIFY(waitFor([viewer] { return viewer->pagesRendered() == 1; }, 5000));
+    const QString first = viewer->pageImage(0, 320);
+    QVERIFY(!first.isEmpty());
+    QVERIFY(QFileInfo::exists(QUrl(first).toLocalFile()));
+    QVERIFY(viewer->renderNote().isEmpty());
+    QCOMPARE(viewer->outstandingRenders(), 0);
+    QVERIFY2(viewer->errorText().isEmpty(), qPrintable(viewer->errorText()));
+}
+
+void TestPreview::steppingOffADocumentAbandonsTheRendersItHadOutstanding()
+{
+    if (!PdfPreviewProvider::isAvailable())
+        QSKIP("this build cannot render a PDF");
+
+    // Six pages, because a window tall enough to show several asks for several in
+    // one turn and there is one worker: one renders and the rest queue behind it.
+    const QString path = QDir(m_tree->path()).filePath(QStringLiteral("report.pdf"));
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        QVERIFY(painter.isActive());
+        for (int page = 0; page < 6; ++page) {
+            for (int i = 0; i < 200; ++i)
+                painter.drawEllipse(QRect(i * 7, i * 4, 800, 600));
+            if (page < 5)
+                QVERIFY(writer.newPage());
+        }
+    }
+    QVERIFY(m_tree->writeFile(QStringLiteral("after.txt"), QByteArray("something else entirely\n")));
+
+    FileEntry document;
+    document.name = QStringLiteral("report.pdf");
+    document.uri = m_tree->rootUri().child(QStringLiteral("report.pdf"));
+
+    // The controller directly for this half: what is under test is what it does
+    // with what it has outstanding, and the tab deleting it would take the answer
+    // away with the object.
+    PdfPreviewController viewer(m_app->services());
+    viewer.load(document);
+    QVERIFY(waitFor([&viewer] { return viewer.pageCount() == 6; }, 10000));
+
+    for (int page = 0; page < 6; ++page)
+        QVERIFY(viewer.pageImage(page, 320).isEmpty());
+    QCOMPARE(viewer.outstandingRenders(), 6);
+
+    QPointer<RenderPdfPageTask> inFlight;
+    for (Task* task : m_app->services().tasks->tasks()) {
+        if (auto* candidate = qobject_cast<RenderPdfPageTask*>(task); candidate && !candidate->isFinished())
+            inFlight = candidate;
+    }
+    QVERIFY2(inFlight, "one of the six has to be running, or this case is testing nothing");
+
+    // The reader moves on. Everything outstanding goes with the document: the five
+    // that were queued are never started, and the one that was running is told to
+    // stop and is no longer anybody's business.
+    FileEntry next;
+    next.name = QStringLiteral("after.txt");
+    next.uri = m_tree->rootUri().child(QStringLiteral("after.txt"));
+    viewer.load(next);
+    QCOMPARE(viewer.outstandingRenders(), 0);
+    QVERIFY(viewer.renderNote().isEmpty());
+    QCOMPARE(viewer.pagesRendered(), 0);
+
+    // How the abandoned one ends is asserted rather than assumed. It holds its own
+    // document and a share of the scratch directory, so it runs out into a file
+    // nobody reads -- never into a failure, which is what a render writing into a
+    // directory the reader has already deleted would report.
+    QVERIFY(waitFor([inFlight] { return !inFlight || inFlight->isFinished(); }, 30000));
+    if (inFlight) {
+        QVERIFY2(inFlight->state() != Task::State::Failed,
+            qPrintable(QStringLiteral("the abandoned render failed: %1").arg(inFlight->error().message)));
+    }
+
+    // And the same thing through the tab, which is how a reader actually does it:
+    // the viewer is deleted outright while a render is in flight. Watched for
+    // warnings, because that is what a write into a directory that has gone says.
+    CapturedWarnings warnings;
+
+    PreviewTabController* preview = openPreview(QStringLiteral("report.pdf"));
+    QVERIFY(preview);
+    auto* opened = qobject_cast<PdfPreviewController*>(preview->viewer());
+    QVERIFY(opened);
+    QVERIFY(waitFor([opened] { return opened->pageCount() == 6; }, 10000));
+    for (int page = 0; page < 6; ++page)
+        QVERIFY(opened->pageImage(page, 320).isEmpty());
+    QCOMPARE(opened->outstandingRenders(), 6);
+
+    QPointer<RenderPdfPageTask> orphan;
+    for (Task* task : m_app->services().tasks->tasks()) {
+        if (auto* candidate = qobject_cast<RenderPdfPageTask*>(task); candidate && !candidate->isFinished())
+            orphan = candidate;
+    }
+    QVERIFY(orphan);
+
+    PreviewTabController* after = openPreview(QStringLiteral("after.txt"));
+    QVERIFY(after);
+    // The tab deletes the old viewer with deleteLater(), and a deferred delete
+    // needs the loop to come round before the object is actually gone.
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QVERIFY(waitFor([orphan] { return !orphan || orphan->isFinished(); }, 30000));
+    if (orphan) {
+        QVERIFY2(orphan->state() != Task::State::Failed,
+            qPrintable(QStringLiteral("the orphaned render failed: %1").arg(orphan->error().message)));
+    }
+    QVERIFY2(warnings.messages().isEmpty(), qPrintable(warnings.joined()));
 }
 
 void TestPreview::htmlCanBeShownAsSourceOrAsAPage()

@@ -57,7 +57,10 @@ Item {
             spacing: 8
 
             BusyIndicator {
-                running: controller ? controller.loading : false
+                // Spinning while a page is being rasterised as well as while the
+                // document is being fetched: both are the pane waiting for
+                // something, and only one of them used to show.
+                running: controller ? controller.loading || controller.renderNote.length > 0 : false
                 visible: running
                 implicitWidth: 18
                 implicitHeight: 18
@@ -82,6 +85,16 @@ Item {
             }
 
             Item { Layout.fillWidth: true }
+
+            // A page that takes a second has to say so where the pane says
+            // everything else, or it reads as a page that is blank.
+            Label {
+                objectName: "pdfRenderNote"
+                visible: controller && controller.renderNote.length > 0
+                text: controller ? controller.renderNote : ""
+                color: App.colour.textMuted
+                font.pixelSize: App.smallTextSize
+            }
 
             Label {
                 objectName: "pdfPosition"
@@ -136,7 +149,16 @@ Item {
                     fillMode: Image.PreserveAspectFit
                     // Asked for when this delegate exists, which is when the page
                     // is at or near the viewport -- that is the whole lazy part.
-                    source: controller ? controller.pageImage(index, view.renderWidth) : ""
+                    //
+                    // Nothing here rasterises. The controller answers with nothing
+                    // for a page it has not rendered yet and puts it on a task, so
+                    // a page of vector art costs the window nothing while it draws
+                    // -- and `pagesRendered` is read on purpose: a render landing
+                    // is what makes an answer available, and a binding that did
+                    // not watch it would never ask again. See MOLE-286.
+                    source: controller && controller.pagesRendered >= 0
+                            ? controller.pageImage(index, view.renderWidth)
+                            : ""
                 }
 
                 Label {

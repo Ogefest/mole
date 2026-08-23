@@ -13,6 +13,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-23 #MOLE-286 A document with a heavy page no longer holds the window while it draws: a page is rasterised on a task, the strip says which one is being drawn, and stepping off a document abandons what it had outstanding
 2026-08-23 #MOLE-288 Asking to see a very large image at full size says it cannot rather than emptying the pane: the button is offered only where this build of Qt can decode the whole picture, and says how large it is where it cannot
 2026-08-23 #MOLE-290 Moving to another file while a large one is still being imported no longer risks taking the application with it: the import holds the scratch database it writes to, so it runs out on its own and reports nothing, and every connection it opened is closed when the store goes
 2026-08-23 #MOLE-289 A long file of records can be read while it is still being imported, instead of freezing the window for seconds at a time and then reading as an empty table — the scratch database is in WAL with a busy timeout on every connection, and a read that fails now says so rather than answering as a file with nothing in it

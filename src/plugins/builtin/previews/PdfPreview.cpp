@@ -2,6 +2,7 @@
 
 #include "plugins/builtin/previews/PreviewProviders.h"
 
+#include "core/tasks/TaskManager.h"
 #include "core/vfs/VfsManager.h"
 
 #include <QDir>
@@ -9,11 +10,6 @@
 #include <QLocale>
 #include <QTemporaryFile>
 #include <QUrl>
-
-#ifdef MOLE_HAVE_QTPDF
-#include <QImage>
-#include <QPdfDocumentRenderOptions>
-#endif
 
 namespace mole {
 namespace {
@@ -33,7 +29,13 @@ PdfPreviewController::PdfPreviewController(PluginServices services, QObject* par
 {
 }
 
-PdfPreviewController::~PdfPreviewController() = default;
+PdfPreviewController::~PdfPreviewController()
+{
+    // A render in flight outlives this object and must not be left connected to
+    // it. It holds its own document and a share of the scratch directory, so what
+    // it goes on to do is write a file nobody will read.
+    abandonRenders();
+}
 
 int PdfPreviewController::pageCount() const
 {
@@ -78,48 +80,140 @@ double PdfPreviewController::pageAspect(int page) const
     return size.height() / size.width();
 }
 
+QString PdfPreviewController::targetFor(int page, int width)
+{
+    if (!m_scratch) {
+        m_scratch = std::make_shared<QTemporaryDir>();
+        if (!m_scratch->isValid()) {
+            setErrorText(QStringLiteral("Could not create a scratch directory for rendered pages"));
+            m_scratch.reset();
+            return {};
+        }
+    }
+    // Keyed by width as well as page: the same page at the same width is rendered
+    // once and read from disk afterwards, and a resized window re-renders rather
+    // than scaling something blurry up.
+    return QDir(m_scratch->path()).filePath(QStringLiteral("page-%1-%2.png").arg(page).arg(width));
+}
+
 QString PdfPreviewController::pageImage(int page, int width)
 {
     if (!m_document || page < 0 || page >= pageCount() || width <= 0)
         return {};
-    if (!m_scratch) {
-        m_scratch = std::make_unique<QTemporaryDir>();
-        if (!m_scratch->isValid()) {
-            setErrorText(QStringLiteral("Could not create a scratch directory for rendered pages"));
-            return {};
-        }
-    }
 
-    // Keyed by width as well as page: the same page at the same width is rendered
-    // once and read from disk afterwards, and a resized window re-renders rather
-    // than scaling something blurry up.
-    const QString target
-        = QDir(m_scratch->path()).filePath(QStringLiteral("page-%1-%2.png").arg(page).arg(width));
+    const QString target = targetFor(page, width);
+    if (target.isEmpty())
+        return {};
     if (QFileInfo::exists(target))
         return QUrl::fromLocalFile(target).toString();
 
-    const double aspect = pageAspect(page);
-    const QSize size(width, qMax(1, qRound(width * aspect)));
-    const QImage rendered = m_document->render(page, size, QPdfDocumentRenderOptions {});
-    if (rendered.isNull()) {
-        setErrorText(QStringLiteral("Page %1 could not be rendered").arg(page + 1));
+    // A page whose render failed is not asked for again. Without this, clearing
+    // the note after a failure would re-run every binding, every binding would
+    // ask again, and a damaged page would render for ever.
+    if (m_unrenderable.contains(target))
         return {};
+
+    requestRender(page, width);
+    return {};
+}
+
+void PdfPreviewController::requestRender(int page, int width)
+{
+    if (m_documentPath.isEmpty())
+        return;
+
+    const PageKey key { page, width };
+    if (m_render && m_render->page() == page && m_render->width() == width)
+        return; // already going
+    if (m_queued.contains(key))
+        return;
+
+    // A window being dragged asks at a new width, and what was queued at the old
+    // one is a render nothing will ever show. The one in flight is left alone: it
+    // is already paying for itself, and cancelling it would leave the pane empty
+    // for the pages that had arrived.
+    m_queued.removeIf([width](const PageKey& queued) { return queued.width != width; });
+
+    m_queued.append(key);
+    startNextRender();
+    emit renderChanged();
+}
+
+void PdfPreviewController::startNextRender()
+{
+    if (m_render || m_queued.isEmpty() || m_documentPath.isEmpty())
+        return;
+
+    const PageKey key = m_queued.takeFirst();
+    const QString target = targetFor(key.page, key.width);
+    if (target.isEmpty())
+        return;
+
+    const QSize size(key.width, qMax(1, qRound(key.width * pageAspect(key.page))));
+    auto* task = new RenderPdfPageTask(m_documentPath, m_scratch, target, key.page, size);
+    m_render = task;
+    // `this` as the context, so a controller that goes away takes the connection
+    // with it; the task itself holds nothing of ours but a share of the scratch
+    // directory, and finishes into it harmlessly.
+    connect(task, &Task::finished, this, [this, task, target] {
+        if (m_render != task)
+            return;
+        m_render.clear();
+        if (task->rendered()) {
+            ++m_pagesRendered;
+        } else if (task->state() == Task::State::Failed) {
+            m_unrenderable.insert(target);
+            setErrorText(task->error().message);
+        }
+        startNextRender();
+        emit renderChanged();
+    });
+    m_services.tasks->submit(task);
+}
+
+void PdfPreviewController::abandonRenders()
+{
+    m_queued.clear();
+    if (m_render) {
+        // The task runs out on its own -- it holds its own document and a share of
+        // the scratch directory, so there is nothing to wait for and nothing it can
+        // pull down. Detached first: whatever it reports now is about a document
+        // nobody is looking at.
+        m_render->disconnect(this);
+        m_render->requestCancel();
+        m_render.clear();
     }
-    if (!rendered.save(target, "PNG")) {
-        setErrorText(QStringLiteral("Could not write a rendered page"));
+}
+
+int PdfPreviewController::outstandingRenders() const
+{
+    return (m_render ? 1 : 0) + int(m_queued.size());
+}
+
+QString PdfPreviewController::renderNote() const
+{
+    if (!m_render)
         return {};
+    const int waiting = int(m_queued.size());
+    if (waiting > 0) {
+        return QStringLiteral("Rendering page %1, %2 to follow")
+            .arg(QLocale().toString(m_render->page() + 1), QLocale().toString(waiting));
     }
-    return QUrl::fromLocalFile(target).toString();
+    return QStringLiteral("Rendering page %1…").arg(QLocale().toString(m_render->page() + 1));
 }
 
 void PdfPreviewController::openLocalFile(const QString& path)
 {
+    // Kept, because every render opens this file for itself rather than sharing
+    // the document below.
+    m_documentPath = path;
     m_document = std::make_unique<QPdfDocument>();
     const QPdfDocument::Error error = m_document->load(path);
     setLoading(false);
 
     if (error != QPdfDocument::Error::None) {
         m_document.reset();
+        m_documentPath.clear();
         // Said plainly rather than as an enum: a reader wants to know whether the
         // file is broken or simply locked.
         switch (error) {
@@ -150,12 +244,19 @@ void PdfPreviewController::openLocalFile(const QString& path)
 
 void PdfPreviewController::load(const FileEntry& entry)
 {
+    // What is in flight goes first, before the document and the directory it was
+    // rendering into are let go of.
+    abandonRenders();
     m_document.reset();
     m_scratch.reset();
+    m_documentPath.clear();
+    m_unrenderable.clear();
+    m_pagesRendered = 0;
     m_currentPage = 0;
     m_fileName = entry.name;
     setErrorText({});
     emit documentChanged();
+    emit renderChanged();
 
     // A renderer needs a file. Anything not on local disk is streamed into a
     // scratch copy first, which is why LocalCopyProvider exists.
