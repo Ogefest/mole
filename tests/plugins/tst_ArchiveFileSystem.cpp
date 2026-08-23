@@ -12,7 +12,10 @@
 #include <QStandardPaths>
 
 #include <algorithm>
+
+#ifdef Q_OS_UNIX
 #include <unistd.h>
+#endif
 
 using namespace mole;
 using namespace mole::test;
@@ -134,8 +137,15 @@ char patternByteAt(qint64 offset)
 }
 
 /// Resident memory, in bytes, or -1 where the platform will not say.
+///
+/// /proc is Linux's, and the case that uses this skips where the answer is -1.
+/// Compiled away rather than left to fail at run time, because `sysconf` is a
+/// POSIX call and a file that names it does not build on Windows at all -- which
+/// is the difference between a suite that skips a case there and a tier that
+/// cannot be built. See MOLE-124.
 qint64 residentBytes()
 {
+#ifdef Q_OS_UNIX
     QFile statm(QStringLiteral("/proc/self/statm"));
     if (!statm.open(QIODevice::ReadOnly))
         return -1;
@@ -145,6 +155,9 @@ qint64 residentBytes()
     bool ok = false;
     const qint64 pages = fields.at(1).toLongLong(&ok);
     return ok ? pages * static_cast<qint64>(sysconf(_SC_PAGESIZE)) : -1;
+#else
+    return -1;
+#endif
 }
 
 } // namespace

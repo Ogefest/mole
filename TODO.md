@@ -437,6 +437,41 @@ project, and a contributor should never hit a wall of text they cannot read.
   the gap is known and tracked rather than a surprise waiting for whoever tries a
   Windows build first.
 
+  **What reading the tree says, so the next person does not have to find it out
+  again.** MOLE-124 asked for a Windows build or a written reason there is not one;
+  `.github/workflows/windows.yml` is the job that would produce the first, and this
+  is what is known before it has ever run.
+
+  Nothing in `src/` that a Windows compiler would see includes an unguarded POSIX
+  header. There are three places that include one at all: `Pty.cpp` puts everything
+  behind `Q_OS_UNIX` and reports the terminal unavailable rather than failing to
+  build, `SessionLog.cpp` guards its backtrace with `__unix__`, and
+  `NfsFileSystem.cpp` is only added to its target when libnfs is found — which is a
+  Unix library, so that file is never handed to MSVC. The warning flags were already
+  written for both compilers. What had to change was two things in the test tree: a
+  resident-memory probe that reads `/proc` and calls `sysconf`, now compiled away
+  where it cannot work, and `tst_SessionLog`, which crashes a forked child in every
+  case and is therefore registered on Unix only. A suite that cannot be built is what
+  stops a whole tier, where a case that skips costs one line of output.
+
+  **What only a run can settle**, and this is why the job exists rather than a
+  paragraph of confidence: whether Qt's add-on modules install unattended, what MSVC
+  makes of code no MSVC has read, how paths and encodings behave once `QFileInfo` is
+  answering for a different filesystem, and which fixtures skip because they shell
+  out to `zip`, `tar` or `gzip`. The job cannot be run from the machine it was
+  written on, and it is `workflow_dispatch` only until it has passed once — a
+  scheduled job that is red from the day it lands teaches everybody to ignore it.
+
+  **No .zip is attached to anything, and the reason is not the build.** The job
+  installs nothing optional on purpose, so what it produces has no archive browsing,
+  no network drives, no git band, no Parquet grid and no terminal panel — the last
+  of those on Windows regardless, which is MOLE-38. Publishing that would answer a
+  question nobody asked. Getting to an artefact worth downloading means nine
+  libraries through vcpkg and `windeployqt` for a self-contained folder, and both of
+  those are worth doing once the first question has an answer. In that order,
+  because a .zip of a build nobody has seen compile is not a release, it is a guess
+  with a filename.
+
 Tracked as issues rather than kept here: the full-screen window geometry (#31),
 FTP staging (#34), WebDAV against a real server (#35), video preview (#37) and
 the terminal on Windows (#38).

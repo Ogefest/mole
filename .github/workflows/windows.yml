@@ -1,0 +1,86 @@
+# Does Mole build on Windows, and does the fast tier hold there?
+#
+# **Nobody knows, because nobody has tried.** This is the job that answers it, and
+# it is written to answer that one question rather than to produce an artefact:
+# what a Windows .zip should contain is a second question, and it cannot be
+# discussed before the first has an answer. MOLE-124 asked for either a .zip or a
+# written reason there is not one; TODO.md carries the reason, this carries the
+# means.
+#
+# **Nothing optional is installed, and that is the design.** Every dependency in
+# this project is found QUIET and switched on with a MOLE_HAVE_* flag, so a machine
+# with none of them builds the application and a smaller suite. Adding libarchive,
+# libcurl, OpenSSL, libgit2, xxhash, libvterm, Arrow and the rest through vcpkg is
+# twenty minutes a run and eight more things that can fail -- and it would confuse
+# "does the code compile for MSVC" with "can this runner get nine libraries". The
+# configure summary is printed, so what was absent is on the record for whoever
+# reads the run.
+#
+# **On demand only, until it has passed once.** A scheduled job that is red from
+# the day it lands teaches everybody to ignore it. When this goes green, a weekly
+# schedule beside `second-family.yml`'s is the next step, and that is a line in
+# this file rather than a ticket.
+name: Windows
+
+on:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    name: Configure, build and the fast tier on Windows
+    runs-on: windows-2022
+
+    env:
+      # The baseline is Qt 6.4 and this is deliberately not it: what a first run
+      # has to tell us is whether the code is portable, not whether it survives
+      # the oldest Qt as well. 6.4 on Windows is a separate question, and asking
+      # both at once means not knowing which answer failed.
+      QT_VERSION: 6.8.2
+      # Qt's own name for its MSVC 2022 build. If aqt refuses the pair, its first
+      # line says which versions carry which architecture -- that is the answer,
+      # not a puzzle.
+      QT_ARCH: win64_msvc2022_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # aqtinstall rather than a marketplace action: it is a pinned Python package
+      # doing one visible thing, where an action is a repository whose contents
+      # change under a tag. Neither is Qt's own installer, which cannot run
+      # unattended.
+      #
+      # The modules are the ones the application actually uses beyond qtbase and
+      # qtdeclarative. qtpdf and qtmultimedia are add-ons, so a build without them
+      # loses the document viewer and video previews -- named here so a run that
+      # cannot get them says which feature went.
+      - name: Qt ${{ env.QT_VERSION }}
+        run: |
+          python -m pip install --disable-pip-version-check "aqtinstall==3.1.*"
+          python -m aqt install-qt windows desktop ${{ env.QT_VERSION }} ${{ env.QT_ARCH }} `
+            -m qtimageformats qtmultimedia qtpdf -O ${{ github.workspace }}\Qt
+          echo "CMAKE_PREFIX_PATH=${{ github.workspace }}\Qt\${{ env.QT_VERSION }}\msvc2022_64" >> $env:GITHUB_ENV
+
+      # The Visual Studio generator rather than Ninja: it finds MSVC by itself,
+      # where Ninja needs a developer shell set up first -- one moving part fewer
+      # in a job whose whole purpose is to find out what breaks. It is
+      # multi-config, so the build type is chosen at build time and ctest is told
+      # which one to run.
+      - name: Configure on Windows
+        run: |
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+          echo "--- what this machine gave the build ---"
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -LH 2>&1 |
+            Select-String -Pattern "MOLE_HAVE" -Context 0,1
+
+      - name: Build on Windows
+        run: cmake --build build --config Debug --parallel
+
+      # The shell tier is excluded, and the reason is not that bash is missing --
+      # the runners have Git for Windows. Those suites read the release scripts and
+      # the testbed provisioning, which are Linux-side machinery; running them
+      # under Git bash would answer a question about Git bash. What is being asked
+      # here is whether the C++ holds.
+      - name: The fast tier on Windows
+        run: >
+          ctest --test-dir build --build-config Debug --output-on-failure
+          --label-exclude heavy --label-exclude shell

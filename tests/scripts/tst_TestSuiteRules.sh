@@ -148,6 +148,60 @@ if [ -s "$SHELLTEST_TMP/unbuildable" ]; then
     sed 's/^/    /' "$SHELLTEST_TMP/unbuildable"
 fi
 
+begin "no suite includes a POSIX header outside a guard"
+# A suite that cannot be *built* stops a whole tier, where a case that cannot run
+# costs one line of output -- and the difference is what a Windows build turns on.
+# Two files had to be changed by hand for MOLE-124: one read /proc and called
+# sysconf, and one crashes a forked child in every case and is registered on Unix
+# only now. This is what stops the third being found by a red build on a machine
+# nobody here has.
+#
+# The include has to sit inside a `#if defined(Q_OS_UNIX)` or the like -- or the
+# whole suite has to be registered inside `if(UNIX)` in tests/CMakeLists.txt, which
+# is the right answer when every case in it is Unix's and guarding the includes
+# would leave a suite with nothing in it. Both are read for here, so the rule
+# accepts the resolution that fits rather than forcing one shape.
+unix_only=$(awk '
+    /^[[:space:]]*if[[:space:]]*\(UNIX\)/ { inside = 1; next }
+    /^[[:space:]]*endif/ { inside = 0; next }
+    inside && /mole_add_test\(/ {
+        if (match($0, /mole_add_test\([[:space:]]*[A-Za-z0-9_]+/)) {
+            name = substr($0, RSTART, RLENGTH)
+            sub(/mole_add_test\([[:space:]]*/, "", name)
+            print name
+        }
+    }
+' "$MOLE_SOURCE_DIR/tests/CMakeLists.txt")
+
+: > "$SHELLTEST_TMP/unguarded"
+find "$MOLE_SOURCE_DIR/tests" -name '*.cpp' -o -name '*.h' | sort | while IFS= read -r file; do
+    awk -v name="$file" '
+        /^[[:space:]]*#[[:space:]]*if/ {
+            depth++
+            if ($0 ~ /Q_OS_UNIX|Q_OS_LINUX|Q_OS_MACOS|__unix__|__linux__|__APPLE__/) guard[depth] = 1
+            next
+        }
+        /^[[:space:]]*#[[:space:]]*endif/ { delete guard[depth]; depth--; next }
+        /^[[:space:]]*#[[:space:]]*include[[:space:]]*<(unistd|pty|termios|dlfcn|pwd|poll|fcntl)[.]h>/ ||
+        /^[[:space:]]*#[[:space:]]*include[[:space:]]*<sys\// {
+            inside = 0
+            for (d in guard) inside = 1
+            if (!inside) printf "%s:%d:%s\n", name, FNR, $0
+        }
+    ' "$file" > "$SHELLTEST_TMP/hits"
+    [ -s "$SHELLTEST_TMP/hits" ] || continue
+    suite=$(basename "$file" .cpp)
+    suite=$(basename "$suite" .h)
+    case " $unix_only " in
+        *" $suite "*) continue ;;   # built on Unix only, so no other compiler sees it
+    esac
+    cat "$SHELLTEST_TMP/hits" >> "$SHELLTEST_TMP/unguarded"
+done
+if [ -s "$SHELLTEST_TMP/unguarded" ]; then
+    fail "a suite includes a POSIX header with nothing to switch it off, so a build on another platform fails to compile rather than skipping a case"
+    sed "s|$MOLE_SOURCE_DIR/||" "$SHELLTEST_TMP/unguarded" | sed 's/^/    /'
+fi
+
 begin "a shell test answers the same whether make or ctest started it"
 # `make test` exports MAKEFLAGS and MAKELEVEL to everything below it, so a `make`
 # run by a test was a recursive one: it prints "Entering directory" and "Leaving

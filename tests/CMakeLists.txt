@@ -503,8 +503,19 @@ mole_add_test(tst_RepositoryBand    SOURCES app/tst_RepositoryBand.cpp  LIBS mol
 # The session log lives in the application target rather than a library, so the
 # test compiles the one file it is about. Exported symbols, so the backtrace it
 # checks for carries names.
-mole_add_test(tst_SessionLog        SOURCES app/tst_SessionLog.cpp ../src/app/SessionLog.cpp)
-set_target_properties(tst_SessionLog PROPERTIES ENABLE_EXPORTS ON)
+#
+# Unix only, and it is the suite rather than the feature: the log is written on
+# every platform, and what this asks is what survives a *crash* -- so every case
+# in it crashes a forked child and reads what the child managed to write. fork(),
+# waitpid() and a raised signal have no Windows equivalent worth writing, and a
+# suite that cannot be built is what stops a whole tier rather than one case. See
+# MOLE-124.
+if(UNIX)
+    mole_add_test(tst_SessionLog        SOURCES app/tst_SessionLog.cpp ../src/app/SessionLog.cpp)
+    set_target_properties(tst_SessionLog PROPERTIES ENABLE_EXPORTS ON)
+else()
+    message(STATUS "Session log tests skipped: they crash a forked child, which is Unix's")
+endif()
 
 # Drives the real QML with real key events. The model tests prove a cursor
 # moves; only this proves a keystroke ever reaches it.
