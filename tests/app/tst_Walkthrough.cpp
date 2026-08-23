@@ -4034,10 +4034,14 @@ void TestWalkthrough::aParquetFileOpensItsColumns()
 
     QObject* viewer = preview->viewer();
     QVERIFY(viewer);
+    // Waited for on a cell rather than on the row count: the count comes from the
+    // file's metadata and is there at once, while the rows themselves are read on a
+    // task since MOLE-287 -- and a picture of an empty grid is not a picture of
+    // this viewer.
     QVERIFY(m_harness->until(
         [viewer] {
             auto* table = viewer->property("table").value<TableModel*>();
-            return table && table->rowCount() > 0;
+            return table && table->rowCount() > 0 && !table->cellAt(0, 0).isEmpty();
         },
         20000));
     m_harness->screenshot(QStringLiteral("22-preview-parquet"));

@@ -1,5 +1,7 @@
 #include "ui/models/TableModel.h"
 
+#include "core/tasks/TaskManager.h"
+
 #include <QTimer>
 
 #include <algorithm>
@@ -30,19 +32,32 @@ TableModel::TableModel(QObject* parent)
     connect(m_filterTimer, &QTimer::timeout, this, &TableModel::applyFilter);
 }
 
-void TableModel::setSource(ITableSource* source)
+void TableModel::setSource(std::shared_ptr<ITableSource> source, TaskManager* tasks)
 {
+    abandonReads();
+
     beginResetModel();
-    m_source = source;
+    m_source = std::move(source);
+    m_tasks = tasks;
     m_filter.clear();
     m_typedFilter.clear();
     m_filterTimer->stop();
-    m_headers = source ? source->headers() : QStringList {};
-    m_columnWidths = source ? source->columnWidths() : QList<int> {};
+    // Answered here whatever the source is: the shape of a table is what the model
+    // needs before it can ask for any of it, and a source read on a task promises
+    // these three cost nothing -- see ITableSource::canBeReadOnATask().
+    m_headers = m_source ? m_source->headers() : QStringList {};
+    if (readsOnATask()) {
+        // A sample of the rows, which is a read. Asked for rather than taken.
+        m_columnWidths.clear();
+        m_wantWidths = true;
+    } else {
+        m_columnWidths = m_source ? m_source->columnWidths() : QList<int> {};
+    }
     readCounts();
     const bool moved = resetToFirstPage();
     endResetModel();
 
+    pumpReads();
     if (moved)
         emit pageChanged();
     emit tableChanged();
@@ -56,11 +71,17 @@ void TableModel::clear()
 
 void TableModel::refresh()
 {
+    abandonReads();
+
     beginResetModel();
     m_chunks.clear();
     m_chunkOrder.clear();
     m_headers = m_source ? m_source->headers() : QStringList {};
-    m_columnWidths = m_source ? m_source->columnWidths() : QList<int> {};
+    if (readsOnATask()) {
+        m_wantWidths = true;
+    } else {
+        m_columnWidths = m_source ? m_source->columnWidths() : QList<int> {};
+    }
     readCounts();
     // The page it was on may be gone: the delimited viewer refreshes while rows
     // are still arriving from an import, and a filter narrowing the table can
@@ -68,9 +89,20 @@ void TableModel::refresh()
     const bool moved = m_page >= pageCount() && resetToFirstPage();
     endResetModel();
 
+    pumpReads();
     if (moved)
         emit pageChanged();
     emit tableChanged();
+}
+
+bool TableModel::readsOnATask() const
+{
+    return m_tasks && m_source && m_source->canBeReadOnATask();
+}
+
+bool TableModel::isReading() const
+{
+    return m_reading || m_wantCount || m_wantWidths || !m_wantedChunks.isEmpty();
 }
 
 void TableModel::readCounts()
@@ -79,7 +111,21 @@ void TableModel::readCounts()
     // taken yet comes back as -1, which travels: the view shows a blank until
     // it lands rather than a nought that would read as an empty table.
     m_totalRows = m_source ? m_source->totalRows() : 0;
-    m_matchingRows = m_source ? m_source->matchingRows(m_filter) : 0;
+    if (!m_source) {
+        m_matchingRows = 0;
+        return;
+    }
+
+    // An unfiltered count is the source's own figure. A filtered one is a scan --
+    // no index answers a substring match across every column -- so where the
+    // source allows it, that goes on a task and the count reads as "not taken yet"
+    // in the meantime, which is what -1 has always meant here.
+    if (m_filter.isEmpty() || !readsOnATask()) {
+        m_matchingRows = m_source->matchingRows(m_filter);
+        return;
+    }
+    m_matchingRows = -1;
+    m_wantCount = true;
 }
 
 void TableModel::setFilter(const QString& filter)
@@ -102,14 +148,18 @@ void TableModel::applyFilter()
     if (m_filter == m_typedFilter)
         return;
 
+    // What is outstanding was asked with the filter that is being replaced.
+    abandonReads();
+
     beginResetModel();
     m_filter = m_typedFilter;
-    m_matchingRows = m_source ? m_source->matchingRows(m_filter) : 0;
+    readCounts();
     // A different set of rows is a different table as far as the page is
     // concerned, and page seven of the old one means nothing in the new.
     const bool moved = resetToFirstPage();
     endResetModel();
 
+    pumpReads();
     if (moved)
         emit pageChanged();
     emit tableChanged();
@@ -150,6 +200,10 @@ void TableModel::setPage(int page)
     if (wanted == m_page)
         return; // past the end, or before the start: nothing changes
 
+    // Asked for at an offset inside the page being left, so the answers are about
+    // rows nobody is looking at any more.
+    abandonReads();
+
     beginResetModel();
     m_page = wanted;
     // The chunks hold rows from the page being left, and they are keyed by
@@ -166,6 +220,7 @@ bool TableModel::resetToFirstPage()
 {
     m_chunks.clear();
     m_chunkOrder.clear();
+    m_wantedChunks.clear();
     if (m_page == 0)
         return false;
     m_page = 0;
@@ -218,6 +273,13 @@ void TableModel::ensureLoaded(int row) const
     if (m_chunks.contains(chunk))
         return;
 
+    if (readsOnATask()) {
+        // Asked for, not waited for. The cells stay blank until the answer lands,
+        // and absorb() tells the view which rows to draw again.
+        requestChunk(chunk);
+        return;
+    }
+
     // The page's own start, plus where in the page this chunk begins. This is
     // the only place the two coordinate systems meet.
     const qint64 offset = firstRowOnPage() + static_cast<qint64>(chunk) * kChunkRows;
@@ -236,6 +298,124 @@ void TableModel::ensureLoaded(int row) const
 
     while (m_chunkOrder.size() > kMaxCachedChunks)
         m_chunks.remove(m_chunkOrder.takeFirst());
+}
+
+void TableModel::requestChunk(int chunk) const
+{
+    if (m_readingChunk == chunk || m_wantedChunks.contains(chunk))
+        return;
+    m_wantedChunks.append(chunk);
+    pumpReads();
+}
+
+void TableModel::pumpReads() const
+{
+    if (!readsOnATask() || m_reading)
+        return;
+    if (!m_wantCount && !m_wantWidths && m_wantedChunks.isEmpty())
+        return;
+
+    // const because this is reached from data(), which Qt makes const, and asking
+    // for a row is not a change to what the table says. The cache above has been
+    // mutable for the same reason since the model was written.
+    auto* self = const_cast<TableModel*>(this);
+
+    ReadTableTask* task = nullptr;
+    int chunk = -1;
+    if (m_wantCount) {
+        // First, because until a filtered count lands the view is offered no rows
+        // at all, and every chunk asked for before it would be a chunk of a table
+        // whose size is not known yet.
+        self->m_wantCount = false;
+        task = new ReadTableTask(m_source, ReadTableTask::Question::MatchCount, 0, 0, m_filter);
+    } else if (m_wantWidths) {
+        self->m_wantWidths = false;
+        task = new ReadTableTask(
+            m_source, ReadTableTask::Question::ColumnWidths, 0, kWidthSampleRows, QString());
+    } else {
+        chunk = self->m_wantedChunks.takeFirst();
+        const qint64 offset = firstRowOnPage() + static_cast<qint64>(chunk) * kChunkRows;
+        task = new ReadTableTask(m_source, ReadTableTask::Question::Window, offset, kChunkRows, m_filter);
+    }
+
+    self->m_reading = task;
+    self->m_readingChunk = chunk;
+    connect(task, &Task::finished, self, [self, task, chunk] {
+        if (self->m_reading != task)
+            return; // abandoned: this answer is about a page or a filter that has been left
+        self->m_reading.clear();
+        self->m_readingChunk = -1;
+        self->absorb(task, chunk);
+        self->pumpReads();
+        emit self->readingChanged();
+    });
+    m_tasks->submit(task);
+    emit self->readingChanged();
+}
+
+void TableModel::absorb(ReadTableTask* task, int chunk)
+{
+    switch (task->question()) {
+    case ReadTableTask::Question::Window: {
+        // A window that could not be read is not cached, for the reason
+        // ensureLoaded() gives above: it would leave that stripe of the grid blank
+        // until something else cleared the cache.
+        if (!task->wasReadable() || chunk < 0)
+            return;
+        m_chunks.insert(chunk, task->rows());
+        m_chunkOrder.append(chunk);
+        while (m_chunkOrder.size() > kMaxCachedChunks)
+            m_chunks.remove(m_chunkOrder.takeFirst());
+
+        // The rows this chunk covers and no others, so a grid the reader is
+        // scrolling redraws the stripe that arrived rather than all of it.
+        const int first = chunk * kChunkRows;
+        const int last = std::min(first + kChunkRows, rowCount()) - 1;
+        if (last >= first && columnCount() > 0)
+            emit dataChanged(index(first, 0), index(last, columnCount() - 1), { CellRole, Qt::DisplayRole });
+        return;
+    }
+    case ReadTableTask::Question::MatchCount: {
+        if (m_matchingRows == task->count())
+            return;
+        beginResetModel();
+        m_matchingRows = task->count();
+        // The chunks are kept: they were fetched with the filter that is applied
+        // and are keyed within a page that has not moved. Only a count that has
+        // taken the page away moves it, and then they go with it.
+        const bool moved = m_page >= pageCount() && resetToFirstPage();
+        endResetModel();
+
+        if (moved)
+            emit pageChanged();
+        emit tableChanged();
+        return;
+    }
+    case ReadTableTask::Question::ColumnWidths:
+        if (m_columnWidths == task->widths())
+            return;
+        m_columnWidths = task->widths();
+        emit tableChanged();
+        return;
+    }
+}
+
+void TableModel::abandonReads()
+{
+    m_wantedChunks.clear();
+    m_wantCount = false;
+    m_wantWidths = false;
+    if (!m_reading)
+        return;
+
+    // Detached before it is cancelled, so nothing arrives from it afterwards. The
+    // task holds its own share of the source, so what it goes on to do is read
+    // rows nobody is waiting for -- a read that is bounded, which is the whole
+    // point of MOLE-287.
+    m_reading->disconnect(this);
+    m_reading->requestCancel();
+    m_reading.clear();
+    m_readingChunk = -1;
 }
 
 QVariant TableModel::data(const QModelIndex& index, int role) const

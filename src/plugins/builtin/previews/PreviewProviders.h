@@ -610,7 +610,7 @@ private:
 
     PluginServices m_services;
     TableModel* m_table = nullptr;
-    std::unique_ptr<SqliteTable> m_database;
+    std::shared_ptr<SqliteTable> m_database;
     std::unique_ptr<LocalCopyProvider> m_copy;
     QString m_summary;
     QPointer<CountTableRowsTask> m_counting;
@@ -660,7 +660,9 @@ signals:
 private:
     PluginServices m_services;
     TableModel* m_table = nullptr;
-    std::unique_ptr<ParquetTable> m_file;
+    /// Shared, because the grid reads a Parquet file on a task and an answer must
+    /// arrive into a source that is still there -- see TableModel::setSource().
+    std::shared_ptr<ParquetTable> m_file;
     std::unique_ptr<LocalCopyProvider> m_copy;
     QString m_summary;
 };

@@ -1226,7 +1226,7 @@ void TablePreviewController::reimport()
     // far, so the grid can show the first rows while the rest are still being
     // read -- and a model with no source reports no rows however many have
     // arrived, which is what made a large file look like a hang.
-    m_table->setSource(m_store.get());
+    m_table->setSource(m_store, m_services.tasks);
 
     setErrorText({});
     setLoading(true);
@@ -1303,7 +1303,7 @@ SqlitePreviewController::SqlitePreviewController(PluginServices services, QObjec
         setLoading(false);
 
         m_table->clear();
-        m_database = std::make_unique<SqliteTable>(QUrl(fileUrl).toLocalFile());
+        m_database = std::make_shared<SqliteTable>(QUrl(fileUrl).toLocalFile());
 
         QString error;
         if (!m_database->open(&error)) {
@@ -1313,7 +1313,7 @@ SqlitePreviewController::SqlitePreviewController(PluginServices services, QObjec
             return;
         }
 
-        m_table->setSource(m_database.get());
+        m_table->setSource(m_database, m_services.tasks);
         refreshSummary();
         countTables();
     });
@@ -1419,7 +1419,7 @@ void SqlitePreviewController::setCurrentTable(const QString& table)
 
     // A different table is a different shape, so the model is repointed rather
     // than refreshed -- its cached pages and column widths belong to the old one.
-    m_table->setSource(m_database.get());
+    m_table->setSource(m_database, m_services.tasks);
     refreshSummary();
 }
 
@@ -1481,7 +1481,7 @@ ParquetPreviewController::ParquetPreviewController(PluginServices services, QObj
         setLoading(false);
 
         m_table->clear();
-        m_file = std::make_unique<ParquetTable>(QUrl(fileUrl).toLocalFile());
+        m_file = std::make_shared<ParquetTable>(QUrl(fileUrl).toLocalFile());
 
         QString error;
         if (!m_file->open(&error)) {
@@ -1491,7 +1491,7 @@ ParquetPreviewController::ParquetPreviewController(PluginServices services, QObj
             return;
         }
 
-        m_table->setSource(m_file.get());
+        m_table->setSource(m_file, m_services.tasks);
 
         const QLocale locale;
         m_summary = QStringLiteral("%1 rows × %2 columns · %3")
@@ -1715,7 +1715,7 @@ void JsonLinesPreviewController::import()
     // Attached before the import starts, so the grid shows the first records
     // while the rest are still being read -- a model with no source reports no
     // rows however many have arrived.
-    m_table->setSource(m_store.get());
+    m_table->setSource(m_store, m_services.tasks);
 
     setErrorText({});
     setLoading(true);

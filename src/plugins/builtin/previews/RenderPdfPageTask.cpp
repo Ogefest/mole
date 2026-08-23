@@ -4,9 +4,9 @@
 
 #include <QFileInfo>
 #include <QImage>
-#include <QSaveFile>
 #include <QPdfDocument>
 #include <QPdfDocumentRenderOptions>
+#include <QSaveFile>
 #include <QThread>
 
 namespace mole {

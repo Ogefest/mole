@@ -36,6 +36,25 @@ Item {
                     Layout.maximumWidth: 520
                 }
 
+                // A row of the grid is read on a task now -- a row group written as
+                // the whole file is not something to decode on the thread that
+                // draws -- so the rows arrive a moment after the file opens. Said
+                // out loud: a grid filling in must not read as a grid with holes.
+                BusyIndicator {
+                    running: view.table ? view.table.reading : false
+                    visible: running
+                    implicitWidth: 16
+                    implicitHeight: 16
+                }
+
+                Label {
+                    objectName: "parquetReading"
+                    visible: view.table && view.table.reading
+                    text: "Reading…"
+                    color: App.colour.textMuted
+                    font.pixelSize: App.smallTextSize
+                }
+
                 Item { Layout.fillWidth: true }
 
                 // Parquet has no query engine behind it, so filtering means

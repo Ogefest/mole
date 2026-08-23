@@ -13,9 +13,14 @@ namespace mole {
 /// grid or its own import. Both are wasteful: a database *is* already a queryable
 /// table, and importing it again to page through it would be absurd.
 ///
-/// Every method is called from the thread that owns the source. Implementations
-/// that talk to a file must be usable from the interface thread, which in
-/// practice means answering a windowed query quickly rather than scanning.
+/// THREADING
+/// ---------
+/// A source is asked one question at a time, and `canBeReadOnATask()` says where
+/// the asking may happen. The default is the thread that owns the source -- which
+/// is what a SQLite table and a delimited store need, their connections being
+/// bound to the thread that opened them -- and a source that answers true instead
+/// gets its file-touching questions asked on a pool thread, one at a time, with
+/// the model filling the rows in when they land. See ADR-0079.
 class ITableSource
 {
 public:
@@ -25,6 +30,21 @@ public:
     /// a spreadsheet letter rather than inventing one.
     virtual QStringList headers() const = 0;
     int columnCount() const { return static_cast<int>(headers().size()); }
+
+    /// Whether rows(), a filtered matchingRows() and columnWidths() may be called
+    /// from a pool thread rather than from the thread that owns this source.
+    ///
+    /// False by default, which is the safe answer: a source whose reads are a
+    /// query with a bounded offset -- see ADR-0045 -- costs little enough to
+    /// answer inline, and both of the ones that do hold a database connection
+    /// belonging to the thread that opened it.
+    ///
+    /// A source that answers true is promising two things. That those three may be
+    /// called from another thread, never two at once. And that headers(),
+    /// totalRows() and an *unfiltered* matchingRows() answer without touching the
+    /// file at all, because the model keeps asking those where it always did: they
+    /// are what it needs to know the shape of a table before it has any of it.
+    virtual bool canBeReadOnATask() const { return false; }
 
     /// Rows in the whole table, or -1 when that is not known yet.
     ///

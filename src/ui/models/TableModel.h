@@ -1,13 +1,19 @@
 #pragma once
 
 #include "core/data/ITableSource.h"
+#include "core/data/ReadTableTask.h"
 
 #include <QAbstractTableModel>
 #include <QHash>
+#include <QPointer>
+
+#include <memory>
 
 class QTimer;
 
 namespace mole {
+
+class TaskManager;
 
 /// Presents one page of a table to a QML TableView.
 ///
@@ -54,6 +60,11 @@ class TableModel : public QAbstractTableModel
     Q_PROPERTY(qint64 firstRowOnPage READ firstRowOnPage NOTIFY pageChanged)
     /// Width hints in characters, so columns fit their contents.
     Q_PROPERTY(QVariantList columnWidths READ columnWidths NOTIFY tableChanged)
+    /// True while something has been asked of the source and not yet answered.
+    /// Only ever true for a source read on a task; a view says so where it says
+    /// everything else, because a grid filling in a moment later must not read as
+    /// a grid with holes in it.
+    Q_PROPERTY(bool reading READ isReading NOTIFY readingChanged)
 
 public:
     enum Role {
@@ -62,15 +73,25 @@ public:
 
     explicit TableModel(QObject* parent = nullptr);
 
-    /// Points the model at a table the caller owns. Passing nullptr empties it.
-    /// Anything implementing ITableSource will do -- a CSV import, a SQLite
-    /// table, a Parquet file -- which is the whole point of the interface.
-    void setSource(ITableSource* source);
+    /// Points the model at a table. Passing nothing empties it. Anything
+    /// implementing ITableSource will do -- a CSV import, a SQLite table, a
+    /// Parquet file -- which is the whole point of the interface.
+    ///
+    /// **Ownership is shared, and with `tasks` the reading leaves this thread.**
+    /// A source that says it may be read on a task -- see
+    /// ITableSource::canBeReadOnATask() -- has its windows, its filtered counts
+    /// and its column widths asked for there, and this model fills them in as they
+    /// land. The share is what makes that safe: a reader steps off a file while a
+    /// read is running as a matter of course, and the answer arrives into a source
+    /// that is still there. Without `tasks` every source is read inline, exactly as
+    /// it always was.
+    void setSource(std::shared_ptr<ITableSource> source, TaskManager* tasks = nullptr);
     Q_INVOKABLE void clear();
     /// Re-reads counts and drops the cache, after an import has added rows.
     Q_INVOKABLE void refresh();
 
     QStringList headers() const { return m_headers; }
+    bool isReading() const;
     qint64 totalRows() const { return m_totalRows; }
     qint64 matchingRows() const { return m_matchingRows; }
 
@@ -115,6 +136,7 @@ public:
 signals:
     void tableChanged();
     void filterChanged();
+    void readingChanged();
     /// The page moved, or was put back to the first because what is being shown
     /// changed underneath it. A view watching this clears its cell cursor and
     /// its selection: row indices are page-relative, so a block held across a
@@ -122,8 +144,23 @@ signals:
     void pageChanged();
 
 private:
-    /// Loads the chunk containing page-relative `row` if it is not cached.
+    /// Loads the chunk containing page-relative `row` if it is not cached. For a
+    /// source read on a task, "loads" means asks: the answer arrives later and the
+    /// cells stay blank until it does.
     void ensureLoaded(int row) const;
+    /// Whether reads of the current source go on a task.
+    bool readsOnATask() const;
+    /// Asks for `chunk` unless it is already asked for.
+    void requestChunk(int chunk) const;
+    /// Starts the next thing wanted, if nothing is outstanding. Counts first,
+    /// because a count decides how many rows the view is offered at all.
+    void pumpReads() const;
+    /// Takes an answer that has landed.
+    void absorb(ReadTableTask* task, int chunk);
+    /// Cancels what is outstanding and forgets what was queued. Called whenever
+    /// what the view is showing changes underneath it: those answers are about a
+    /// page, or a filter, that has been left.
+    void abandonReads();
     /// Re-reads the counts the source can answer for the applied filter.
     void readCounts();
     /// Moves to `page`, clamped to the pages that exist. Drops the chunks with
@@ -146,6 +183,9 @@ private:
     /// Rows in one fetch from the source, inside the page. One screen is well
     /// under this; a chunk per scroll step would be a query per row.
     static constexpr int kChunkRows = 500;
+    /// Rows sampled to size the columns. A hint about how to draw a grid, not a
+    /// claim about the file, so it is a sample and a small one.
+    static constexpr int kWidthSampleRows = 200;
     /// Chunks kept before the oldest is dropped. Enough to scroll back a few
     /// screens without refetching, bounded so a long scroll cannot grow
     /// without limit -- which would defeat the entire design.
@@ -157,7 +197,9 @@ private:
     /// Short enough to feel immediate, long enough to sit inside a keypress.
     static constexpr int kFilterQuietMs = 250;
 
-    ITableSource* m_source = nullptr;
+    std::shared_ptr<ITableSource> m_source;
+    /// Where a read is submitted, and null for a model that reads inline.
+    TaskManager* m_tasks = nullptr;
     QStringList m_headers;
     /// What the rows on screen were fetched with.
     QString m_filter;
@@ -172,6 +214,19 @@ private:
     /// Fetched chunks, keyed by their index within the current page.
     mutable QHash<int, QList<QStringList>> m_chunks;
     mutable QList<int> m_chunkOrder;
+
+    // Reads that have been asked for and not yet answered. Mutable for the same
+    // reason the cache above is: they are reached from data(), which Qt makes
+    // const, and a read that has to happen is not a change to what the table says.
+    /// The one read allowed to be outstanding, because a source is asked one
+    /// question at a time.
+    mutable QPointer<ReadTableTask> m_reading;
+    /// Which chunk that read is for, or -1 when it is not a window.
+    mutable int m_readingChunk = -1;
+    /// Chunks wanted, in the order the view asked for them.
+    mutable QList<int> m_wantedChunks;
+    mutable bool m_wantCount = false;
+    mutable bool m_wantWidths = false;
 };
 
 } // namespace mole

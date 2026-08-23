@@ -156,6 +156,8 @@ add_library(mole_core STATIC
     data/CountTableRowsTask.cpp
     data/ParquetTable.h
     data/ParquetTable.cpp
+    data/ReadTableTask.h
+    data/ReadTableTask.cpp
 
     text/DelimitedText.h
     text/DelimitedText.cpp

@@ -43,6 +43,7 @@ private slots:
     // ---- Parquet ----
     void readsAParquetFile();
     void pagesThroughAParquetFileWithoutReadingItAll();
+    void aParquetFileWrittenAsOneRowGroupIsNotReadWhole();
     void parquetReportsItselfWhenUnsupported();
 
 private:
@@ -350,6 +351,92 @@ void TestTableSources::pagesThroughAParquetFileWithoutReadingItAll()
 
     QVERIFY(table.rows(6000, 5).isEmpty());
     QCOMPARE(table.matchingRows(QStringLiteral("4999")), 1);
+#endif
+}
+
+void TestTableSources::aParquetFileWrittenAsOneRowGroupIsNotReadWhole()
+{
+#ifndef MOLE_HAVE_PARQUET
+    QSKIP("this build has no Parquet support");
+#else
+    // The whole variable is the row-group size, which is why the file is written
+    // here rather than taken from the fixtures: those are written in small groups,
+    // as Arrow's defaults produce, and that is precisely the case the fault hides
+    // in. A row group is whatever the writer chose -- the convention is 128 MB or
+    // a million rows, and plenty of tools write one group for the entire file.
+    const QString path = QDir(m_dir->path()).filePath(QStringLiteral("one-group.parquet"));
+    constexpr int kRows = 200000;
+
+    arrow::Int64Builder ids;
+    arrow::StringBuilder names;
+    for (int i = 0; i < kRows; ++i) {
+        QVERIFY(ids.Append(i).ok());
+        QVERIFY(names.Append(QStringLiteral("name %1").arg(i).toStdString()).ok());
+    }
+    std::shared_ptr<arrow::Array> idArray;
+    std::shared_ptr<arrow::Array> nameArray;
+    QVERIFY(ids.Finish(&idArray).ok());
+    QVERIFY(names.Finish(&nameArray).ok());
+
+    auto schema = arrow::schema({ arrow::field("id", arrow::int64()), arrow::field("name", arrow::utf8()) });
+    auto arrowTable = arrow::Table::Make(schema, { idArray, nameArray });
+    auto out = arrow::io::FileOutputStream::Open(path.toStdString());
+    QVERIFY(out.ok());
+    // One group for the lot, which is the whole point of this fixture.
+    QVERIFY(
+        parquet::arrow::WriteTable(*arrowTable, arrow::default_memory_pool(), out.ValueUnsafe(), kRows).ok());
+    QVERIFY(out.ValueUnsafe()->Close().ok());
+
+    ParquetTable table(path);
+    QString error;
+    QVERIFY2(table.open(&error), qPrintable(error));
+    QCOMPARE(table.totalRows(), kRows);
+    // Opening reads the metadata and nothing else.
+    QCOMPARE(table.rowsDecoded(), 0);
+
+    // Fifty rows off the front. Asserted on what was decoded rather than on how
+    // long it took: the rows are the same either way, so the bound is invisible in
+    // the answer, and a stopwatch would fail on a busy machine.
+    const QList<QStringList> window = table.rows(0, 50);
+    QCOMPARE(window.size(), 50);
+    QCOMPARE(window.first().first(), QStringLiteral("0"));
+    QCOMPARE(window.last().first(), QStringLiteral("49"));
+    QVERIFY2(table.rowsDecoded() < kRows / 10,
+        qPrintable(QStringLiteral("fifty rows decoded %1 of %2").arg(table.rowsDecoded()).arg(kRows)));
+
+    // The same for the width sample the grid takes when it opens a file.
+    const qint64 beforeWidths = table.rowsDecoded();
+    const QList<int> widths = table.columnWidths(200);
+    QCOMPARE(widths.size(), 2);
+    QVERIFY(widths.at(1) >= int(QStringLiteral("name 199").size()));
+    QVERIFY2(table.rowsDecoded() - beforeWidths < kRows / 10, "a width sample read the group whole");
+
+    // A filtered read stops at the rows it was asked for rather than at the end of
+    // the file: five matches near the front cost the front of the file.
+    const qint64 beforeFilter = table.rowsDecoded();
+    const QList<QStringList> hits = table.rows(0, 5, QStringLiteral("name 10"));
+    QCOMPARE(hits.size(), 5);
+    QVERIFY2(table.rowsDecoded() - beforeFilter < kRows / 10, "a filtered read walked the whole file");
+
+    // A count over a filter that matches nothing is the walk at its longest, and
+    // it is one walk: it used to be a call per four thousand rows, each finding its
+    // own way back to the top of the group, so a single group meant the file
+    // decoded fifty times over.
+    const qint64 beforeCount = table.rowsDecoded();
+    QCOMPARE(table.matchingRows(QStringLiteral("no such value anywhere")), 0);
+    const qint64 walked = table.rowsDecoded() - beforeCount;
+    QVERIFY2(walked <= kRows + 5000,
+        qPrintable(QStringLiteral("counting walked %1 rows of a %2-row file").arg(walked).arg(kRows)));
+
+    // And it still answers correctly, which is the half a bound can quietly break.
+    const QList<QStringList> middle = table.rows(150000, 3);
+    QCOMPARE(middle.size(), 3);
+    QCOMPARE(middle.first().first(), QStringLiteral("150000"));
+    QCOMPARE(middle.last().at(1), QStringLiteral("name 150002"));
+    // A value nothing else contains: "name 4242" would match ten more, since
+    // "name 42420" contains it, and the filter is a substring by design.
+    QCOMPARE(table.matchingRows(QStringLiteral("name 42425")), 1);
+    QVERIFY(table.rows(kRows + 10, 5).isEmpty());
 #endif
 }
 

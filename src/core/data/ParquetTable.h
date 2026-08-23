@@ -35,12 +35,25 @@ public:
     /// What the file says about itself, for the header strip: row groups,
     /// compression, the writer that produced it.
     QString fileSummary() const;
+
+    /// Rows Arrow has decoded for this file since it was opened.
+    ///
+    /// Here to be asserted on. A read that decodes a whole row group to show
+    /// fifty rows gives exactly the same answer as one that decodes a batch, so
+    /// the bound is invisible in the rows themselves -- and a test that timed it
+    /// instead would be a test that fails on a busy machine. See MOLE-287.
+    qint64 rowsDecoded() const;
     /// Column types as Arrow reports them, for the tooltip on each header.
     QStringList columnTypes() const;
 
     // ---- ITableSource ---------------------------------------------------
 
     QStringList headers() const override;
+    /// True: a Parquet file is read through Arrow, which knows nothing of the
+    /// thread it is called on, and nothing here is bound to one. The grid reads it
+    /// on a task because a windowed read of this format is not bounded by its
+    /// arguments the way a SQL one is -- see ITableSource::canBeReadOnATask().
+    bool canBeReadOnATask() const override { return true; }
     qint64 totalRows() const override;
     qint64 matchingRows(const QString& filter) const override;
     QList<QStringList> rows(
