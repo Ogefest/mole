@@ -284,6 +284,7 @@ mole_add_test(tst_RunningOut        SOURCES core/tst_RunningOut.cpp)
 mole_add_test(tst_Staging            SOURCES core/tst_Staging.cpp)
 mole_add_test(tst_Chain              SOURCES core/tst_Chain.cpp)
 mole_add_test(tst_ChainTask          SOURCES core/tst_ChainTask.cpp)
+mole_add_test(tst_ChainSources       SOURCES core/tst_ChainSources.cpp)
 
 # Names people really have, and shapes a filesystem really holds.
 mole_add_test(tst_AwkwardNames      SOURCES core/tst_AwkwardNames.cpp)

@@ -86,6 +86,9 @@ struct FaultyFileSystem::Policy
     int stalledStreams = 0;
     bool released = false;
     std::atomic_bool revoked { false };
+    /// What was asked of the drive, rather than what came back through a stream.
+    std::atomic_int lists { 0 };
+    std::atomic_int stats { 0 };
     /// What went through, for a test that is about how much was read rather than
     /// about what came back. Atomic because the streams run on worker threads.
     /// One entry per stream opened, holding what it delivered. Guarded by the
@@ -556,6 +559,24 @@ int FaultyFileSystem::openReadCount() const
     return static_cast<int>(m_policy->readSizes.size());
 }
 
+int FaultyFileSystem::listCount() const
+{
+    return m_policy->lists.load(std::memory_order_relaxed);
+}
+
+int FaultyFileSystem::statCount() const
+{
+    return m_policy->stats.load(std::memory_order_relaxed);
+}
+
+void FaultyFileSystem::forgetCounts()
+{
+    m_policy->lists.store(0, std::memory_order_relaxed);
+    m_policy->stats.store(0, std::memory_order_relaxed);
+    QMutexLocker lock(&m_policy->mutex);
+    m_policy->readSizes.clear();
+}
+
 qint64 FaultyFileSystem::bytesRead() const
 {
     QMutexLocker lock(&m_policy->mutex);
@@ -603,6 +624,7 @@ VfsCapabilities FaultyFileSystem::capabilities() const
 
 Result<FileEntryList> FaultyFileSystem::list(const VfsUri& dir, const CancelToken& cancel)
 {
+    m_policy->lists.fetch_add(1, std::memory_order_relaxed);
     if (m_policy->revoked.load())
         return revokedError();
 
@@ -635,6 +657,7 @@ Result<FileEntryList> FaultyFileSystem::list(const VfsUri& dir, const CancelToke
 
 Result<FileEntry> FaultyFileSystem::stat(const VfsUri& target)
 {
+    m_policy->stats.fetch_add(1, std::memory_order_relaxed);
     if (m_policy->revoked.load())
         return revokedError();
 

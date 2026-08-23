@@ -172,6 +172,19 @@ public:
     /// from one read of the two together, and only this can tell them apart.
     QList<qint64> readSizes() const;
 
+    /// How many listings and how many stats were asked of the drive.
+    ///
+    /// The same argument as the byte counts: a claim about work *avoided* can
+    /// only be held to account by counting the asks. A filter folded into a walk
+    /// answers from the listing the walk already had; one that runs as its own
+    /// step has to ask about every uri it was handed, because a uri is not a
+    /// FileEntry. Nothing else can tell those two apart. See MOLE-167.
+    int listCount() const;
+    int statCount() const;
+    /// Sets the counts back to nought, for a case that sets something up and
+    /// then measures what the thing under test did.
+    void forgetCounts();
+
     // ---- the stall, from the test's side ----------------------------------
 
     /// Whether a stream is sitting at a readStallsAt() offset right now. Wait

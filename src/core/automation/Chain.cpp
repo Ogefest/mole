@@ -178,6 +178,16 @@ QList<StepParameter> IChainStepKind::chainProperties() const
     return { stop };
 }
 
+bool IChainStepKind::absorbs(const IChainStepKind&) const
+{
+    return false;
+}
+
+ChainStep IChainStepKind::absorb(const ChainStep& mine, const ChainStep&) const
+{
+    return mine;
+}
+
 QJsonObject ChainStep::toJson() const
 {
     QJsonObject json;
@@ -254,6 +264,28 @@ IChainStepKind* ChainRegistry::kind(const QString& id) const
 QStringList ChainRegistry::kinds() const
 {
     return m_order;
+}
+
+Chain ChainRegistry::fused(const Chain& chain) const
+{
+    Chain out = chain;
+    bool again = true;
+    while (again) {
+        again = false;
+        for (int i = 0; i + 1 < out.steps.size(); ++i) {
+            IChainStepKind* mine = kind(out.steps.at(i).kind);
+            IChainStepKind* next = kind(out.steps.at(i + 1).kind);
+            if (!mine || !next || !mine->absorbs(*next))
+                continue;
+            out.steps[i] = mine->absorb(out.steps.at(i), out.steps.at(i + 1));
+            out.steps.removeAt(i + 1);
+            // Start again rather than carry on from here: absorbing one filter
+            // can leave the next one absorbable too.
+            again = true;
+            break;
+        }
+    }
+    return out;
 }
 
 bool ChainRegistry::isRunnable(const Chain& chain, QString* whyOut) const

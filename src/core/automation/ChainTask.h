@@ -62,6 +62,11 @@ public:
     /// any step runs rather than half way along.
     ChainTask(Chain chain, const ChainRegistry* registry, QObject* parent = nullptr);
 
+    /// What the chain was started from: a pane's selection, usually. Read by the
+    /// source that means "whatever was on screen"; a scheduled chain has none,
+    /// and that source then produces nothing and says so.
+    void setStartingList(const QStringList& uris) { m_startedWith = uris; }
+
     /// Asks every step what it *would* do and writes nothing.
     ///
     /// **An option and not a compulsory first run.** A chain can be run outright
@@ -107,6 +112,7 @@ private:
     Chain m_chain;
     const ChainRegistry* m_registry = nullptr;
     bool m_dryRun = false;
+    QStringList m_startedWith;
     QList<PreviewLine> m_preview;
     Ending m_ending = Ending::Ran;
     QStringList m_produced;

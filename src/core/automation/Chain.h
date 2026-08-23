@@ -167,6 +167,11 @@ struct StepContext
     /// How far through this step is, when it can say. Feeds the chain's own
     /// progress under the step count.
     std::function<void(qint64 done, qint64 total)> progress;
+    /// What the chain was started from -- a pane's selection, usually. Empty for
+    /// a chain nothing handed a list to, which is what a scheduled run looks
+    /// like, and a source that needs one then produces nothing and says so
+    /// rather than acting on whatever it can find.
+    QStringList startedWith;
 };
 
 /// One step of a chain: which kind, and what it was given.
@@ -245,6 +250,25 @@ public:
     /// naming no files is a preview of nothing.
     virtual StepPreview preview(
         const ChainStep& step, const QStringList& incoming, const StepContext& context);
+
+    // ---- taking the next step's work into this one ------------------------
+    //
+    // **The fusion planSearch() already makes, one level up.** Walking a large
+    // tree and discarding nine tenths of the result throws away the pushdown the
+    // search planner exists to provide -- and a filter handed a list of uris has
+    // to ask the drive about every one of them again, because a uri is not a
+    // FileEntry. Fused into the place that produced them, the same criteria are
+    // answered from the listing the walk already had.
+    //
+    // The line is what somebody built; the plan is what runs; nothing is dropped
+    // in between. Whether it happened is said in the preview, so a dry run does
+    // not hide it.
+
+    /// Whether this kind can do `next`'s work as part of its own.
+    virtual bool absorbs(const IChainStepKind& next) const;
+    /// This step, with `next`'s work folded into it. Only called when absorbs()
+    /// said yes.
+    virtual ChainStep absorb(const ChainStep& mine, const ChainStep& next) const;
 };
 
 /// Everything a chain is.
@@ -305,6 +329,13 @@ public:
     ///   steps before it produced, and a chain that starts with a transform has
     ///   nothing to hand it.
     [[nodiscard]] bool isRunnable(const Chain& chain, QString* whyOut = nullptr) const;
+
+    /// The same chain with every fusion made: what actually runs.
+    ///
+    /// Left to right and repeatedly, so a place followed by two filters absorbs
+    /// both. A chain whose kinds absorb nothing comes back unchanged, which is
+    /// the ordinary case.
+    [[nodiscard]] Chain fused(const Chain& chain) const;
 
 private:
     QStringList m_order;

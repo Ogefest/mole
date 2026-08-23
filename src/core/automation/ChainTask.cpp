@@ -76,6 +76,11 @@ void ChainTask::run()
         return;
     }
 
+    // Fused first, because the fused chain is what runs -- and what is judged.
+    // A place with a filter after it is one step by the time anything asks
+    // whether the line is valid, which is also what the preview shows.
+    m_chain = m_registry->fused(m_chain);
+
     QString why;
     if (!m_registry->isRunnable(m_chain, &why)) {
         // Refused before anything runs, rather than half way along: a chain that
@@ -112,6 +117,7 @@ void ChainTask::run()
 
         StepContext context;
         context.cancel = cancelToken();
+        context.startedWith = m_startedWith;
         context.say = [this, kind](const QString& text) {
             setStatusText(QStringLiteral("%1: %2").arg(kind->displayName(), text));
         };
