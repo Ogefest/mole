@@ -44,10 +44,13 @@ optimised:
 	@$(MAKE) build PRESET=release
 
 ## release: cut a release -- gate, version, changelog marker, commit, tag, push
-##          Stops at the first step that fails and puts the tree back. DRY=1 does
-##          everything except the writes and prints what it would have written;
-##          MAJOR=1, MINOR=1 or VERSION=x.y.z choose the number. The only thing
-##          here that makes a tag, because the tag is what publishes a release.
+##          The gate is all three test tiers, so it runs from a machine that can
+##          reach the live environment and nowhere else: a suite that skipped never
+##          met it, and that is a refusal rather than a pass. Stops at the first
+##          step that fails and puts the tree back. DRY=1 does everything except
+##          the writes and prints what it would have written; MAJOR=1, MINOR=1 or
+##          VERSION=x.y.z choose the number. The only thing here that makes a tag,
+##          because the tag is what publishes a release.
 release:
 	@MAKE="$(MAKE)" scripts/release.sh
 

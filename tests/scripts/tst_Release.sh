@@ -66,6 +66,21 @@ test:
 	@test ! -f fail-the-suite || { echo "a case failed"; exit 1; }
 	@echo "suite green"
 
+# The two tiers, standing in for scripts/testbed/*.sh: they answer the way those
+# do -- 2 when the environment is not configured, a SKIP line when a suite never
+# met it, and non-zero when something failed.
+test-live:
+	@test ! -f no-environment || { echo "Set MOLE_TESTBED_ADDRESS and MOLE_TESTBED_PASSWORD."; exit 2; }
+	@test ! -f live-skips || { printf "  \033[33mSKIP\033[0m    tst_SftpFileSystem  Totals: 0 passed\n"; exit 1; }
+	@echo "Live suites against a-machine.invalid"
+	@echo "  6 ran, 0 skipped, 0 failed"
+
+test-heavy:
+	@test ! -f heavy-skips || { echo "SKIP   : TestHeavyTransfers::aTenGigabyteCopy() no room at the far end"; exit 0; }
+	@echo "heavy tier green"
+	@echo "recorded in the report:"
+	@echo "  10 GiB copy    SKIPPED-none    412 MiB/s"
+
 guide-images:
 	@echo "a picture, taken at $$(date +%s%N)" > docs/guide/images/01-shot.png
 	@echo "  guide images: 1 rewritten"
@@ -131,6 +146,51 @@ said "the suite is not green"
 [ -z "$(git -C "$repo" status --porcelain)" ] || fail "it left the tree dirty"
 [ -z "$(git -C "$repo" tag --list)" ] || fail "a tag was made anyway"
 
+begin "an environment that is not configured is a refusal, not a pass"
+repo=$(fixture)
+touch "$repo/no-environment"
+git -C "$repo" add -A && git -C "$repo" commit -q -m "No environment on this machine"
+cut_release "$repo" IGNORE=1
+[ "$SCRIPT_STATUS" != 0 ] || fail "a release was cut without the live tiers running"
+said "the live environment is not configured on this machine"
+[ -z "$(git -C "$repo" tag --list)" ] || fail "a tag was made anyway"
+
+begin "a live suite that skipped is a refusal, and it is named"
+repo=$(fixture)
+touch "$repo/live-skips"
+git -C "$repo" add -A && git -C "$repo" commit -q -m "The live tier will skip"
+cut_release "$repo" IGNORE=1
+[ "$SCRIPT_STATUS" != 0 ] || fail "a release was cut over a skipped live suite"
+said "tst_SftpFileSystem"
+said "a suite that never met the environment is not a pass"
+
+begin "a word in the heavy tier's report is not a skipped suite"
+# The tier prints the tail of its own report, and a column in it saying
+# SKIPPED-none is not a suite that skipped. An unanchored search refused this.
+repo=$(fixture)
+cut_release "$repo" DRY=1
+[ "$SCRIPT_STATUS" = 0 ] || fail "a line in the report was read as a skipped suite"
+
+begin "a heavy suite that skipped is a refusal even though it exits zero"
+# The one that cannot be left to the tier: a QTest binary returns 0 for a case it
+# skipped, so a destination with no room looks exactly like success from outside.
+repo=$(fixture)
+touch "$repo/heavy-skips"
+git -C "$repo" add -A && git -C "$repo" commit -q -m "The heavy tier will skip"
+cut_release "$repo" IGNORE=1
+[ "$SCRIPT_STATUS" != 0 ] || fail "a release was cut over a skipped heavy suite"
+said "TestHeavyTransfers"
+[ -z "$(git -C "$repo" tag --list)" ] || fail "a tag was made anyway"
+
+begin "the address the tiers print does not come through this gate"
+# What a release note or a ticket ends up holding. The tier says what it is talking
+# to; this script is what somebody pastes.
+repo=$(fixture)
+cut_release "$repo" DRY=1 MOLE_TESTBED_ADDRESS=a-machine.invalid
+[ "$SCRIPT_STATUS" = 0 ] || fail "the dry run failed"
+grep -qF "a-machine.invalid" "$SCRIPT_OUTPUT" && fail "the address came through the gate's output"
+said "<the testbed>"
+
 # ---------------------------------------------------------------- a dry run
 
 begin "a dry run says what it would cut and writes nothing"
@@ -151,6 +211,8 @@ repo=$(fixture)
 cut_release "$repo"
 [ "$SCRIPT_STATUS" = 0 ] || fail "the release did not go through"
 said "the first release, which is the version the code already claims"
+said "the test-live tier"
+said "the test-heavy tier"
 # One commit, and it carries all three things.
 [ "$(git -C "$repo" rev-list --count HEAD)" = 2 ] || fail "expected exactly one release commit"
 [ "$(git -C "$repo" log -1 --format=%s)" = "Release 0.4.0" ] || fail "the commit message does not name the version"

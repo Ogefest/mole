@@ -197,7 +197,7 @@ Check a packaged build without a display:
 | `make screenshots` | drive the real interface headlessly and photograph each verified state |
 | `make guide-images` | the same, copied into the user guide |
 | `make optimised` | optimised build with debug info |
-| `make release` | cut a release: gate, version, changelog marker, commit, tag, push |
+| `make release` | cut a release: all three test tiers, version, changelog marker, commit, tag, push |
 | `make format` | apply `.clang-format` across the tree |
 | `make tidy` | run `clang-tidy` over the compilation database |
 | `make help` | list all targets |

@@ -16,7 +16,8 @@
 #
 #   DRY=1              everything except the version, the marker, the commit,
 #                      the tag and the push -- and it prints the two it would
-#                      have written
+#                      have written. The tiers still run: a dry run says whether a
+#                      real one would go through, and that includes the live ones
 #   MAJOR=1  MINOR=1   bump that part instead of the patch
 #   VERSION=x.y.z      cut exactly this version
 #   BRANCH=  REMOTE=   where releases are cut from and pushed to
@@ -33,6 +34,20 @@ VERSION="${VERSION:-}"
 
 step() { printf '\n== %s\n' "$1"; }
 say() { printf '   %s\n' "$1"; }
+
+# The live tiers print the address they are talking to. Theirs is their business;
+# this script's output is the thing somebody pastes into a ticket or a release
+# note, so the address does not pass through here. CLAUDE.md's rule about what may
+# leave the environment directory, held rather than trusted.
+redact() {
+    if [ -n "${MOLE_TESTBED_ADDRESS:-}" ]; then
+        sed "s|${MOLE_TESTBED_ADDRESS}|<the testbed>|g"
+    else
+        cat
+    fi
+}
+# Without the colour, for reading rather than for showing.
+plain() { sed 's/\x1b\[[0-9;]*m//g' "$1"; }
 die() {
     printf '\nrefused: %s\n' "$1" >&2
     exit 1
@@ -76,11 +91,53 @@ say "$MAKE test"
 "$MAKE" test || die "the suite is not green"
 say "green"
 
-step "the live tiers"
-# The hook, and it is empty on purpose: the tiers that need a server are added by
-# MOLE-119. Said out loud rather than left absent, because a gate with a silent
-# gap in it is a gate nobody can reason about.
-say "skipped: nothing here yet -- the live tiers are MOLE-119, and this is where they go"
+# The tiers that need the live environment. This is the only place they will ever
+# be a precondition of anything: they can only run from a machine that can reach
+# that environment, and whatever publishes a release cannot. So everything needing
+# it runs before the tag exists, and a pipeline re-runs what it can. See MOLE-119.
+#
+# There is no way round them. A gate with a documented bypass is a gate that gets
+# gone around; if that turns out to be too strict, the ticket to loosen it can be
+# written by somebody who has met the case.
+run_tier() {
+    local target="$1"
+    local log="$SCRATCH/$target.log"
+
+    step "the $target tier"
+    say "$MAKE $target"
+    "$MAKE" "$target" 2>&1 | tee "$log" | redact
+    local code=${PIPESTATUS[0]}
+
+    # A skip is not a pass, and this is where that has to be enforced rather than
+    # assumed: test-live.sh already exits non-zero when a suite skipped, but the
+    # heavy tier exits with its binaries' status and a QTest binary returns 0 for a
+    # case it skipped. A destination with no room, or a control channel that is not
+    # there, therefore looks exactly like success from the outside.
+    #
+    # Two shapes and both anchored, rather than "any line with SKIP in it": the
+    # heavy tier prints the tail of its own report at the end, and a column in it
+    # reading SKIPPED-none would have refused a perfectly good release.
+    local skipped
+    skipped=$(plain "$log" | sed -n \
+        -e 's/^[[:space:]]*SKIP[[:space:]]*:[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*\).*/\1/p' \
+        -e 's/^[[:space:]]*SKIP[[:space:]]\{2,\}\(tst_[A-Za-z0-9_]*\).*/\1/p' \
+        | sort -u | tr '\n' ' ')
+    if [ -n "$skipped" ]; then
+        die "$target skipped: $skipped -- a suite that never met the environment is not a pass"
+    fi
+
+    # 2 is what both tier scripts exit when the environment is not configured at
+    # all. Named separately because it is the one failure that is about this
+    # machine rather than about the code.
+    if [ "$code" = 2 ]; then
+        die "$target could not run: the live environment is not configured on this machine"
+    fi
+    [ "$code" = 0 ] || die "$target is not green"
+    say "green, against the real environment"
+}
+
+run_tier test-live
+run_tier test-heavy
 
 step "the guide pictures"
 if [ -n "$DRY" ]; then
