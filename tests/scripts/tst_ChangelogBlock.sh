@@ -147,4 +147,55 @@ ask 0.2.0 "$SHELLTEST_TMP/silent.md"
 [ "$SCRIPT_STATUS" != 0 ] || fail "it found a block in a file that states no expression"
 said "does not state its release-marker expression"
 
+# --- the body, which is the block and one generated line -------------------
+
+NOTES="$MOLE_SOURCE_DIR/scripts/release-notes.sh"
+
+body() {
+    GITHUB_REPOSITORY=Someone/mole bash "$NOTES" "$1" "$2" "$3" > "$SCRIPT_OUTPUT" 2>&1
+    SCRIPT_STATUS=$?
+}
+
+begin "the body is the block, plus exactly one line, and nothing else"
+# MOLE-123 settled that the body is the block; MOLE-303 added the one line a release
+# page needs, because it shows four filenames and nothing that says which to take.
+# This holds both at once: the block is unchanged and the addition is one line.
+file=$(fixture)
+ask 0.2.0 "$file"
+block_lines=$(grep -c . "$SCRIPT_OUTPUT")
+body 0.2.0 v0.2.0 "$file"
+exited 0
+said "MOLE-8 The newest thing in the second release"
+body_lines=$(grep -c . "$SCRIPT_OUTPUT")
+[ "$body_lines" = "$((block_lines + 1))" ] \
+    || fail "the body has $body_lines lines to the block's $block_lines; it should be one more"
+
+begin "the line points at the table at this tag, not at whatever is on the branch"
+# The table a reader follows has to describe the files they are looking at. A link to
+# the default branch describes whatever it says months later.
+body 0.2.0 v0.2.0 "$file"
+said "blob/v0.2.0/README.md#getting-a-binary"
+grep -qF "blob/main" "$SCRIPT_OUTPUT" && fail "the link points at a branch rather than the tag"
+
+begin "an empty block still stops everything, and the line does not paper over it"
+# The line is not content: a body of one link would look like a release with notes.
+cat > "$SHELLTEST_TMP/nothing.md" <<'EOF'
+# Changelog
+
+```
+entry:  ^(\d{4}-\d{2}-\d{2}) (#MOLE-\d+) (.+)$
+marker: ^## (\d+\.\d+\.\d+) — released (\d{4}-\d{2}-\d{2})$
+```
+
+## 0.3.0 — released 2026-08-26
+
+## 0.2.0 — released 2026-08-24
+
+2026-08-24 #MOLE-8 The one release with anything in it
+EOF
+body 0.3.0 v0.3.0 "$SHELLTEST_TMP/nothing.md"
+[ "$SCRIPT_STATUS" != 0 ] || fail "an empty block produced a body"
+said "is empty"
+grep -qF "README.md#getting-a-binary" "$SCRIPT_OUTPUT" && fail "it printed the line for an empty block"
+
 done_testing

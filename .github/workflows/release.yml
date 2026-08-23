@@ -294,9 +294,17 @@ jobs:
       # would disagree with the first inside two releases. An empty block stops the
       # release: it means either the marker is in the wrong place or nobody wrote a
       # line for anything that went in. See MOLE-123 and ADR-0080.
+      #
+      # Plus one generated line pointing at README.md's table at this tag, because a
+      # release page shows four filenames and nothing that tells anybody which to
+      # take. Generated and not written: a line assembled from the tag has nothing
+      # to drift from, while a sentence about what the .deb lacks would be wrong the
+      # first time an artefact changed. Nothing else goes in the body -- everything
+      # anybody has wanted there is a fact that lives somewhere already, sizes
+      # included, which GitHub prints beside every file it lists. See MOLE-303.
       - name: The release notes, out of the changelog
         run: |
-          scripts/changelog-block.sh "$VERSION" CHANGELOG.md > notes.md
+          scripts/release-notes.sh "$VERSION" "$GITHUB_REF_NAME" CHANGELOG.md > notes.md
           echo "--- what will be published as the notes ---"
           cat notes.md
 
