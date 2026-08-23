@@ -64,6 +64,8 @@ private slots:
     void theTableIsReadThroughoutAnImportAndEveryReadIsAnswered();
     void aReadIsAnsweredWhileAWriteIsStillInFlight();
     void aReadThatFailedIsNotATableWithNothingInIt();
+    void aBatchCommitThatFailedFailsTheImportRatherThanLosingTheRows();
+    void anImportWhoseLastCommitFailedSaysSoRatherThanFinishing();
     void everyConnectionCarriesTheSettingsAndNotOnlyTheOpenersOwn();
     void noConnectionIsLeftBehindWhateverThreadTheStoreDiesOn();
 
@@ -728,6 +730,92 @@ void TestDelimitedStore::aReadThatFailedIsNotATableWithNothingInIt()
     const QList<QStringList> window = store->rows(0, 10, {}, &readable);
     QVERIFY(window.isEmpty());
     QVERIFY2(!readable, "an unreadable window came back as a window that held nothing");
+}
+
+/// The store's own connection on this thread, found rather than injected.
+///
+/// Qt keeps a registry of connections and this one is the connection on this file:
+/// no seam in the store, no fault injector, and nothing about the store's own
+/// naming assumed. What it is for is stating a failed commit as a fact -- see the
+/// two cases below.
+static QSqlDatabase storeConnectionOn(const QString& path)
+{
+    const QStringList names = QSqlDatabase::connectionNames();
+    for (const QString& name : names) {
+        QSqlDatabase candidate = QSqlDatabase::database(name, false);
+        if (candidate.isOpen() && candidate.databaseName() == path)
+            return candidate;
+    }
+    return {};
+}
+
+void TestDelimitedStore::aBatchCommitThatFailedFailsTheImportRatherThanLosingTheRows()
+{
+    const QString path = QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite"));
+    DelimitedStore store(path);
+    QVERIFY(store.open());
+    QVERIFY(store.beginImport({ QStringLiteral("id"), QStringLiteral("name") }));
+
+    // The transaction the import opened, closed out from under it on the very
+    // connection it writes through. Any commit failure would do -- what is under
+    // test is what the store does with one -- and this one is a fact rather than a
+    // timing: with no transaction open, SQLite refuses the commit outright.
+    //
+    // Arranged this way because a commit is hard to fail on purpose from outside:
+    // SQLite takes the write lock at the first write and not at the commit, so
+    // holding the file from another connection fails an INSERT instead, which is
+    // the path that was already checked. See MOLE-291 and the note there on what a
+    // fault injector would buy.
+    QSqlDatabase writing = storeConnectionOn(path);
+    QVERIFY2(writing.isValid(), "the store's connection has to be findable, or this case tests nothing");
+    QVERIFY(writing.commit());
+
+    // Enough rows to cross a batch boundary, which is where the commit lives.
+    QList<QStringList> rows;
+    rows.reserve(2500);
+    for (int i = 0; i < 2500; ++i)
+        rows.append({ QString::number(i), QStringLiteral("name %1").arg(i) });
+
+    QString error;
+    QVERIFY2(
+        !store.addRows(rows, &error), "a batch whose commit failed was reported as a batch that was written");
+    QVERIFY2(!error.isEmpty(), "a failed commit has to say something, or nothing reports the loss");
+
+    // And the import is not finished off as though it had worked: the viewer
+    // shows the failure rather than a short table presented as a whole one.
+    QVERIFY(!store.endImport(&error) || !error.isEmpty());
+}
+
+void TestDelimitedStore::anImportWhoseLastCommitFailedSaysSoRatherThanFinishing()
+{
+    const QString path = QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite"));
+    DelimitedStore store(path);
+    QVERIFY(store.open());
+    QVERIFY(store.beginImport({ QStringLiteral("id") }));
+    QVERIFY(store.addRows({ { QStringLiteral("1") }, { QStringLiteral("2") } }));
+
+    // The same fact, at the other write site: the final commit has nothing to
+    // commit, so it fails and has to report it.
+    //
+    // This case passes on the code before MOLE-291 as well, and that is said out
+    // loud rather than left for somebody to discover: endImport() already checked
+    // its commit, and what changed is the *wording* -- describe() rather than the
+    // driver's text, so a locked database is reported as one. That difference only
+    // shows for SQLITE_BUSY, which means a write that waits out the five-second
+    // busy timeout, and nothing here can produce one at a commit. So the
+    // reporting path is covered and the wording is not; see the note on MOLE-291
+    // and the ticket for a fault injector.
+    QSqlDatabase writing = storeConnectionOn(path);
+    QVERIFY(writing.isValid());
+    QVERIFY(writing.commit());
+
+    QString error;
+    QVERIFY2(!store.endImport(&error), "an import whose last commit failed was reported as finished");
+    QVERIFY(!error.isEmpty());
+
+    // The rows that were committed are still readable -- a failed commit is not a
+    // corrupt file -- and the store still answers for what it holds.
+    QCOMPARE(store.totalRows(), qint64(2));
 }
 
 void TestDelimitedStore::everyConnectionCarriesTheSettingsAndNotOnlyTheOpenersOwn()

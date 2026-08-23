@@ -13,6 +13,7 @@ the first release; they stay as they are.
 
 ## Unreleased
 
+2026-08-23 #MOLE-291 An import that cannot commit a batch says so rather than finishing as though it had worked, so a table missing two thousand rows is never presented as a whole one
 2026-08-23 #MOLE-287 A Parquet file written as one row group no longer holds the window while it is read whole: a window decodes a batch at a time and stops where the answer does, and the grid reads its rows, its filtered counts and its column widths on a task
 2026-08-23 #MOLE-286 A document with a heavy page no longer holds the window while it draws: a page is rasterised on a task, the strip says which one is being drawn, and stepping off a document abandons what it had outstanding
 2026-08-23 #MOLE-288 Asking to see a very large image at full size says it cannot rather than emptying the pane: the button is offered only where this build of Qt can decode the whole picture, and says how large it is where it cannot

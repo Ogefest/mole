@@ -94,6 +94,10 @@ public:
 
 private:
     QSqlDatabase connectionForCurrentThread() const;
+    /// Closes the batch and opens the next, reporting either failing. A write
+    /// that is acknowledged and lost is the one fault shape this project singles
+    /// out, and an unchecked commit here was exactly that -- see MOLE-291.
+    static bool commitBatch(QSqlDatabase& database, QString* errorOut);
     static QString columnName(int index);
     static QString whereClause(const QString& filter, int columns);
     static void bindFilter(QSqlQuery& query, const QString& filter);

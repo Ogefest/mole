@@ -204,7 +204,15 @@ bool DelimitedStore::beginImport(const QStringList& headers, QString* errorOut)
         m_headers = headers;
     }
 
-    database.transaction();
+    // Checked, like every other write here. A transaction that never opened does
+    // not lose rows -- each INSERT commits itself -- but it turns an import into
+    // one fsync per row, and finding that out from the timing of a large file is
+    // worse than being told.
+    if (!database.transaction()) {
+        if (errorOut)
+            *errorOut = describe(database.lastError());
+        return false;
+    }
     return true;
 }
 
@@ -241,13 +249,36 @@ bool DelimitedStore::addRows(const QList<QStringList>& rows, QString* errorOut)
         }
 
         if (++sinceCommit >= kBatchRows) {
-            database.commit();
-            database.transaction();
+            if (!commitBatch(database, errorOut))
+                return false;
             sinceCommit = 0;
         }
     }
 
     m_totalRows.store(-1, std::memory_order_relaxed);
+    return true;
+}
+
+bool DelimitedStore::commitBatch(QSqlDatabase& database, QString* errorOut)
+{
+    // Both halves, because either one failing is the same fault. A commit that
+    // failed leaves that batch uncommitted; a transaction() over the top of it
+    // then succeeded, addRows() returned true, and the task counted the batch and
+    // finished as Succeeded -- so the grid reported a number of records the table
+    // did not hold and nothing anywhere said a write had been lost. This is the
+    // half of the index's pattern the store had not copied: IndexDatabase checks
+    // every transaction() and every commit() at all five of its write sites. See
+    // MOLE-291.
+    if (!database.commit()) {
+        if (errorOut)
+            *errorOut = describe(database.lastError());
+        return false;
+    }
+    if (!database.transaction()) {
+        if (errorOut)
+            *errorOut = describe(database.lastError());
+        return false;
+    }
     return true;
 }
 
@@ -258,8 +289,11 @@ bool DelimitedStore::endImport(QString* errorOut)
 
     QSqlDatabase database = connectionForCurrentThread();
     if (!database.commit()) {
+        // describe(), like every other write here: a locked database said as that
+        // rather than in the driver's words, which is what describe() is for and
+        // what addRows() has always done.
         if (errorOut)
-            *errorOut = database.lastError().text();
+            *errorOut = describe(database.lastError());
         return false;
     }
     m_totalRows.store(-1, std::memory_order_relaxed);
