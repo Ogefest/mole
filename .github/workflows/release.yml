@@ -1,0 +1,202 @@
+# What a pushed tag does.
+#
+# Until this file existed, nothing: a tag went to GitHub and was looked at by
+# nobody. `scripts/release.sh` is the only thing that makes one, and it has
+# already run all three test tiers -- including the two that need the live
+# environment, which this runner cannot reach and never will. So the division is
+# deliberate: the local gate runs everything, and this runs the tier a runner can.
+# See MOLE-118, MOLE-119 and MOLE-120.
+#
+# Testing again here is the point rather than a formality. It is a different
+# machine with different libraries, and a suite that is green on the author's
+# machine and red on a clean Ubuntu is exactly the fact worth learning before the
+# artefacts are published rather than after.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Only what creating the release needs.
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    name: Test, bundle and publish
+    # The runner's distribution sets the glibc floor for everything built on it,
+    # which is the AppImage's whole problem and has its own ticket (MOLE-122).
+    # 24.04 is also the distribution the baseline Qt comes from: 6.4.2, the
+    # version CMakeLists.txt requires and the one the author develops against.
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Qt 6.4 is the only hard dependency. Everything else is found QUIET and
+      # switched on with a MOLE_HAVE_* flag, and src/core/CMakeLists.txt says
+      # outright that a missing optional library must never stop the build -- so
+      # which of them a release is built with is a decision rather than an
+      # accident. An artefact built without LibArchive silently has no archive
+      # browsing in it, and nobody would find out from the release page.
+      #
+      # This is the decision, in one place, and the step below refuses to publish
+      # anything that came out missing one of them:
+      #
+      #   qt6-base, -declarative, -svg, -tools, the qml6 modules  the application
+      #   libqt6sql6-sqlite       every table, index and scratch database
+      #   qt6-pdf-dev             PDFs render as pages instead of a fact sheet
+      #   qt6-multimedia-dev      video plays, with the QML module for the surface
+      #   qml6-module-qtmultimedia
+      #   libarchive-dev          archives are browsable drives
+      #   libcurl4-openssl-dev    sftp, ftp, s3 and webdav drives
+      #   libssl-dev              the encrypted credential store, and s3 signing
+      #   libsmbclient-dev        Windows shares
+      #   libnfs-dev              NFS exports
+      #   libvterm-dev            the terminal panel, rather than its own parser
+      #   libgit2-dev             git state in the listing
+      #   libxxhash-dev           the fast head filter for duplicate scans
+      #   libarrow-dev            Parquet files as a grid -- see the step after
+      #   libparquet-dev
+      #
+      # ninja-build because that is the generator every preset uses.
+      - name: Install what the artefact is built from
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ninja-build pkg-config \
+            qt6-base-dev qt6-base-dev-tools qt6-declarative-dev qt6-declarative-dev-tools \
+            qt6-tools-dev qt6-tools-dev-tools qt6-svg-dev libqt6sql6-sqlite \
+            qt6-pdf-dev qt6-multimedia-dev qml6-module-qtmultimedia \
+            qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts \
+            qml6-module-qtquick-templates qml6-module-qtquick-window \
+            qml6-module-qtqml-workerscript qml6-module-qtquick-shapes \
+            libarchive-dev libcurl4-openssl-dev libssl-dev \
+            libsmbclient-dev libnfs-dev libvterm-dev libgit2-dev libxxhash-dev
+
+      # Arrow is not in Ubuntu's archive at any version, so the Parquet grid can
+      # only come from Apache's own repository -- which is where the author's
+      # machine gets it too, so the artefact and the development build hold the
+      # same reader. The alternative was an artefact whose Parquet preview is
+      # silently absent, which is the accident this file exists to avoid.
+      - name: Arrow and Parquet, from Apache's own repository
+        run: |
+          sudo apt-get install -y --no-install-recommends ca-certificates lsb-release wget
+          wget -q "https://packages.apache.org/artifactory/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb"
+          sudo apt-get install -y "./apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libarrow-dev libparquet-dev
+
+      # The fast tier, which is the whole suite anybody can run: 118 suites,
+      # offscreen, no server. The live and heavy tiers are not here and cannot be
+      # -- they need the test environment, the local gate has already run them,
+      # and that division is the subject of MOLE-119.
+      #
+      # Before the build below rather than beside it: nothing is packed until this
+      # has passed, and a step that fails stops the job, so a red suite attaches
+      # nothing. There is no continue-on-error anywhere in this file.
+      - name: The fast tier
+        run: make test
+
+      # What the artefact can actually do, checked rather than hoped. Every
+      # optional library above earns a line in the configure summary when it is
+      # found; Qt Pdf and Qt Multimedia are the two that say nothing when they are
+      # there and complain when they are not. A missing one is a feature quietly
+      # absent from a published build, so it fails here instead.
+      #
+      # The strings are the ones src/core/CMakeLists.txt and
+      # src/plugins/CMakeLists.txt print. tests/scripts/tst_ReleaseWorkflow.sh
+      # holds them to that, so a reworded message breaks the suite here rather
+      # than a release later.
+      - name: Refuse a build with a feature missing
+        run: |
+          cmake --preset release 2>&1 | tee configure.log
+          missing=0
+          # An array rather than a heredoc: inside a YAML block scalar every line
+          # carries the block's indentation, and a heredoc keeps it -- so each of
+          # these would have been searched for with ten spaces in front of it.
+          wanted=(
+            "Parquet preview: enabled"
+            "Terminal: libvterm"
+            "Git state: libgit2"
+            "Duplicate scan head: xxhash"
+            "Credential store: OpenSSL"
+            "Network drives: sftp, ftp, s3, webdav"
+            "Windows shares: smb"
+            "NFS exports: nfs"
+          )
+          refused=(
+            "Qt6 Pdf not found"
+            "Qt6 Multimedia not found"
+            "its QML module is not"
+            "libarchive not found"
+          )
+          for line in "${wanted[@]}"; do
+            grep -qF "$line" configure.log || { echo "missing: $line"; missing=1; }
+          done
+          for line in "${refused[@]}"; do
+            grep -qF "$line" configure.log && { echo "not built with: $line"; missing=1; }
+          done
+          [ "$missing" = 0 ] || { echo "::error::this build is missing something a release is supposed to have"; exit 1; }
+
+      # make bundle installs, strips, brings the Qt libraries in through
+      # scripts/make-bundle.sh, copies the licences, and runs
+      # scripts/licence-check.sh -- which stays a hard failure. The LGPL
+      # conditions are not optional and a release is exactly when they matter.
+      - name: Bundle it
+        run: make bundle
+
+      # Every plugin that was built has to be in it. The network plugin was built
+      # and never installed, so `make bundle` produced an artefact with no sftp,
+      # ftp, s3 or webdav drives while the machine that built it had all four --
+      # and the configure summary said "Network drives: sftp, ftp, s3, webdav",
+      # because it was answering a different question. Derived from what is on disk
+      # rather than from a list, so the next plugin is covered by existing.
+      - name: Every plugin that was built is in the artefact
+        run: |
+          built=$(find build/release/plugins -name '*.so' -printf '%f\n' | sort)
+          shipped=$(find dist/usr/lib/mole/plugins -name '*.so' -printf '%f\n' | sort)
+          if [ "$built" != "$shipped" ]; then
+            echo "built:   $built"
+            echo "shipped: $shipped"
+            echo "::error::a plugin was built and not packed -- a feature the artefact has not got"
+            exit 1
+          fi
+          echo "$shipped"
+
+      # Named after the version, which CMakeLists.txt is the only place holding --
+      # see MOLE-117. Checked against the tag rather than trusted: they are written
+      # by the same commit, so a tag on the wrong one is worth catching here.
+      - name: Pack the tarball
+        run: |
+          version=$(make version)
+          tag="${GITHUB_REF_NAME#v}"
+          [ "$version" = "$tag" ] || {
+            echo "::error::the tag says $tag and the build says $version"
+            exit 1
+          }
+          name="mole-$version-x86_64"
+          mv dist "$name"
+          tar czf "$name.tar.gz" "$name"
+          echo "TARBALL=$name.tar.gz" >> "$GITHUB_ENV"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      # The release, with the tarball on it. `gh` is on the runner and
+      # authenticates with the job's own token, so there is no third-party action
+      # in the path between a tag and a published artefact.
+      #
+      # The notes are a placeholder on purpose: they are the block for this version
+      # in CHANGELOG.md, and putting them here is MOLE-123. Anything written by
+      # hand in the meantime would be the second list that disagrees with the
+      # first, which ADR-0080 exists to prevent.
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "Mole $VERSION" \
+            --notes "The notes for this release are its block in [CHANGELOG.md](CHANGELOG.md). MOLE-123 puts them here.
+
+          Built on Ubuntu 24.04 against Qt 6.4, with Parquet, PDF, video, archives, network drives (sftp, ftp, s3, webdav), Windows shares, NFS, the terminal panel, git state and the encrypted credential store. Needs no Qt on the target: unpack and run \`mole\`." \
+            "$TARBALL"

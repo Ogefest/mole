@@ -161,6 +161,11 @@ if(BASH_PROGRAM)
     # tag and the push are real and none of it leaves the machine. See MOLE-118.
     mole_add_shell_test(tst_Release
                         SCRIPT scripts/tst_Release.sh)
+    # And what the tag it pushes sets off. Structural, because whether a runner
+    # publishes anything is a fact about GitHub -- what is held here is everything
+    # that would make that run wrong. See MOLE-120.
+    mole_add_shell_test(tst_ReleaseWorkflow
+                        SCRIPT scripts/tst_ReleaseWorkflow.sh)
     if(NOT MOLE_CORE_ONLY)
         set_property(TEST tst_Version APPEND PROPERTY
                      ENVIRONMENT "MOLE_BINARY=$<TARGET_FILE:mole>")

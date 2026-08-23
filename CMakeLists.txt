@@ -126,8 +126,19 @@ if(NOT MOLE_CORE_ONLY)
 install(TARGETS mole mole-tasks
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
+# Every plugin that was built, because a plugin left out here is a feature the
+# artefact silently has not got. The network one was: it has been built since it
+# replaced rclone and never installed, so `make install` and `make bundle` -- and
+# so every release a workflow would publish -- had no sftp, ftp, s3 or webdav
+# drives in them, while the machine it was built on had all four. Found by running
+# the artefact rather than by reading these lines. See MOLE-120.
 if(MOLE_HAVE_ARCHIVE_PLUGIN)
     install(TARGETS mole_plugin_archive
+        LIBRARY DESTINATION ${MOLE_PLUGIN_INSTALL_DIR})
+endif()
+
+if(MOLE_HAVE_NETWORK_PLUGIN)
+    install(TARGETS mole_plugin_network
         LIBRARY DESTINATION ${MOLE_PLUGIN_INSTALL_DIR})
 endif()
 endif() # MOLE_CORE_ONLY: there is no application to install
