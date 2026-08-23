@@ -156,14 +156,14 @@ kind is missing, which configure names.
 debug build that only runs from the build tree. For anything else:
 
 ```sh
-make release     # optimised, still run from build/release/
+make optimised   # optimised, still run from build/release/
 make install     # into /usr/local — override with PREFIX=~/.local
 make bundle      # self-contained folder in dist/, runs without Qt installed
 ```
 
 | | Size | Needs Qt on the target | Use it for |
 |---|---|---|---|
-| `make release` | 24 MB | yes | running on this machine |
+| `make optimised` | 24 MB | yes | running on this machine |
 | `make install` | 24 MB | yes | your own machine, or building a `.deb` |
 | `make bundle` | 68 MB | **no** | handing it to someone else |
 
@@ -196,7 +196,8 @@ Check a packaged build without a display:
 | `make asan` | build and test under AddressSanitizer + UBSan + leak detection |
 | `make screenshots` | drive the real interface headlessly and photograph each verified state |
 | `make guide-images` | the same, copied into the user guide |
-| `make release` | optimised build with debug info |
+| `make optimised` | optimised build with debug info |
+| `make release` | cut a release: gate, version, changelog marker, commit, tag, push |
 | `make format` | apply `.clang-format` across the tree |
 | `make tidy` | run `clang-tidy` over the compilation database |
 | `make help` | list all targets |

@@ -12,7 +12,7 @@ bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; fail=1; }
 echo "Licence check: $BIN"
 
 if [[ ! -x "$BIN" ]]; then
-    bad "no binary at $BIN (run: make release)"
+    bad "no binary at $BIN (run: make optimised)"
     exit 1
 fi
 

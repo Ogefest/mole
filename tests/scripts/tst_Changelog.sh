@@ -179,14 +179,23 @@ first_bullet=$(grep -n '^- ' "$PLAIN" | head -1 | cut -d: -f1)
 [ "$first_bullet" -gt "$last_entry" ] \
     || fail "a prose bullet at line $first_bullet is above the last entry at line $last_entry"
 
-begin "no release marker is in the file, because nothing has been released"
-# Stated rather than assumed. `make release` writes the first one (MOLE-118), and
-# until it does, a marker in here is a release that did not happen -- which is a
-# false record in the one file a pipeline reads.
-markers=$(grep -cE "$MARKER_RE" "$PLAIN")
-[ "$markers" = 0 ] || fail "found $markers release markers; the first one is make release's to write"
-headings=$(grep -c '^## ' "$PLAIN")
-[ "$headings" = 0 ] || fail "found $headings second-level headings; there should be none at all yet"
+begin "the release markers are newest first, each version once, and are the only ## lines"
+# Not "there are none", which is what this case said until MOLE-118 built the thing
+# that writes one: a case asserting the absence would have failed the release that
+# ended it, which is the opposite of what a check is for. The file holds none today
+# and that is printed rather than asserted.
+#
+# What survives a cut is the order. A version's notes are the block below its
+# marker, so a marker out of place, or a version marked twice, hands a reader
+# another release's changes under this one's number.
+markers=$(grep -E "$MARKER_RE" "$PLAIN" | sed 's/^## \([0-9.]*\) .*/\1/')
+count=$(printf '%s\n' "$markers" | grep -c .)
+echo "  the file holds $count release markers"
+[ "$count" = "$(printf '%s\n' "$markers" | sort -u | grep -c .)" ] || fail "a version is marked more than once"
+[ "$markers" = "$(printf '%s\n' "$markers" | sort -rV)" ] \
+    || fail "the markers are not newest first: $(printf '%s ' $markers)"
+# And the rule the header states, over the whole file: every ## line is one of them.
+[ "$count" = "$(grep -c '^## ' "$PLAIN")" ] || fail "a ## line in the file is not a release marker"
 
 # --- what it catches -------------------------------------------------------
 #

@@ -14,7 +14,7 @@ DESTDIR ?=
 # a script can rewrite that line and everything follows.
 VERSION := $(shell sed -n 's/^ *VERSION \([0-9][0-9.]*\)$$/\1/p' CMakeLists.txt)
 
-.PHONY: all build configure release run test test-live test-heavy test-verbose tsan clean distclean format tidy help guide-images where-the-log-is \
+.PHONY: all build configure optimised release run test test-live test-heavy test-verbose tsan clean distclean format tidy help guide-images where-the-log-is \
         install uninstall bundle licence-check screenshots version
 
 all: build
@@ -36,9 +36,20 @@ build: configure
 configure:
 	@test -f $(BUILD_DIR)/CMakeCache.txt || cmake --preset $(PRESET)
 
-## release: optimised build with debug info
-release:
+## optimised: optimised build with debug info
+##            What `make release` used to mean. It was renamed when release
+##            started meaning "cut a release", which is what everybody outside
+##            this file assumes it means. See MOLE-118.
+optimised:
 	@$(MAKE) build PRESET=release
+
+## release: cut a release -- gate, version, changelog marker, commit, tag, push
+##          Stops at the first step that fails and puts the tree back. DRY=1 does
+##          everything except the writes and prints what it would have written;
+##          MAJOR=1, MINOR=1 or VERSION=x.y.z choose the number. The only thing
+##          here that makes a tag, because the tag is what publishes a release.
+release:
+	@MAKE="$(MAKE)" scripts/release.sh
 
 SESSION_LOG ?= $(HOME)/.local/share/Mole/Mole/session.log
 
@@ -161,7 +172,7 @@ tidy: configure
 	@cmake --build $(BUILD_DIR) --target mole_core --parallel $(JOBS) >/dev/null
 	@find src -name '*.cpp' | xargs -P $(JOBS) -I{} clang-tidy -p $(BUILD_DIR) {} 2>/dev/null || true
 
-## install: build release and install into $(PREFIX) (override with PREFIX=...)
+## install: build optimised and install into $(PREFIX) (override with PREFIX=...)
 install:
 	@$(MAKE) build PRESET=release
 	@cmake --install build/release --prefix $(DESTDIR)$(PREFIX)

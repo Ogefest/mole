@@ -155,6 +155,12 @@ if(BASH_PROGRAM)
     # skipped rather than passing quietly. See MOLE-117.
     mole_add_shell_test(tst_Version
                         SCRIPT scripts/tst_Version.sh)
+    # Cutting a release, driven against a repository the test builds: a work tree,
+    # a bare repository standing in for the remote, and a Makefile carrying the
+    # three targets the script asks of the project. So the commit, the annotated
+    # tag and the push are real and none of it leaves the machine. See MOLE-118.
+    mole_add_shell_test(tst_Release
+                        SCRIPT scripts/tst_Release.sh)
     if(NOT MOLE_CORE_ONLY)
         set_property(TEST tst_Version APPEND PROPERTY
                      ENVIRONMENT "MOLE_BINARY=$<TARGET_FILE:mole>")
