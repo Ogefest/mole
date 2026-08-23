@@ -94,16 +94,56 @@ namespace {
     }
 
     /// Breaks every run longer than `limit` into pieces of `limit` characters.
-    QString withLongLinesFolded(const QString& text, qsizetype limit)
+    /// The file's line numbers, one per row of `text` as a document lays it out.
+    ///
+    /// Counting `\n` and nothing else. isLineBreak() is wider on purpose -- it
+    /// decides where a *fold* may go -- but a number in a gutter has to agree with
+    /// every other tool the reader owns, and those count newlines.
+    QList<int> lineNumbersFor(const QString& text)
+    {
+        QList<int> rows;
+        rows.reserve(text.count(u'\n') + 1);
+        int number = 1;
+        rows.append(number);
+        for (const QChar c : text) {
+            if (c == u'\n')
+                rows.append(++number);
+        }
+        // A file ending in a newline has one row after it with nothing in it, and
+        // that row is not a line of the file: `wc -l` says forty for forty lines
+        // however the last one ends, and a gutter that said forty-one would be
+        // arguing with the tool the reader checked it against.
+        if (text.endsWith(u'\n') && rows.size() > 1)
+            rows.last() = 0;
+        return rows;
+    }
+
+    /// Folds over-long runs, and says which file line each resulting row belongs
+    /// to when `rowsOut` is given.
+    ///
+    /// **A folded run is one line of the file shown as several rows**, so the
+    /// rows it was broken into carry 0 rather than a number of their own: a gutter
+    /// numbering rows would disagree with the compiler, the stack trace and the
+    /// reader's editor, which is the same reason the fold exists at all. Reported
+    /// from in here because this is the only place that knows which breaks it put
+    /// in and which were already there.
+    QString withLongLinesFolded(const QString& text, qsizetype limit, QList<int>* rowsOut = nullptr)
     {
         QString folded;
         folded.reserve(text.size() + text.size() / limit + 1);
+        int number = 1;
+        if (rowsOut) {
+            rowsOut->clear();
+            rowsOut->append(number);
+        }
 
         qsizetype run = 0;
         for (const QChar c : text) {
             if (isLineBreak(c)) {
                 folded.append(c);
                 run = 0;
+                if (rowsOut && c == u'\n')
+                    rowsOut->append(++number);
                 continue;
             }
             if (run >= limit) {
@@ -121,10 +161,17 @@ namespace {
                     folded.append(u'\n');
                     run = 0;
                 }
+                // A row this fold made, and not a line of the file.
+                if (rowsOut)
+                    rowsOut->append(0);
             }
             folded.append(c);
             ++run;
         }
+        // The same trailing row as above: what a final newline leaves behind is
+        // not a line.
+        if (rowsOut && text.endsWith(u'\n') && rowsOut->size() > 1)
+            rowsOut->last() = 0;
         return folded;
     }
 
@@ -382,8 +429,15 @@ void TextPreviewController::updateDisplayText()
     // A Markdown file being shown as source is the plain text case again, and is
     // folded like any other: nothing is parsing it any more.
     m_longLinesFolded = !m_markdown && !isRenderedHtml() && hasOverlongLine(m_displayText, kFoldedLineChars);
-    if (m_longLinesFolded)
-        m_displayText = withLongLinesFolded(m_displayText, kFoldedLineChars);
+    if (m_longLinesFolded) {
+        m_displayText = withLongLinesFolded(m_displayText, kFoldedLineChars, &m_lineRows);
+    } else if (isNumbered()) {
+        m_lineRows = lineNumbersFor(m_displayText);
+    } else {
+        // Nothing to number: a paged file gets no gutter, and a rendered page has
+        // no lines in the file's sense.
+        m_lineRows.clear();
+    }
 
     // Over the text as the reader sees it, folds and all -- and after the fold,
     // deliberately: a fold is a layout device and must not hide text from a
@@ -502,6 +556,35 @@ void TextPreviewController::clearFind()
         m_highlighter->setSearchTerm(QString());
     applyViewers();
     emit findChanged();
+}
+
+QVariantList TextPreviewController::lineNumbers() const
+{
+    if (!isNumbered())
+        return {};
+    QVariantList numbers;
+    numbers.reserve(m_lineRows.size());
+    for (int number : m_lineRows)
+        numbers.append(number);
+    return numbers;
+}
+
+int TextPreviewController::lineCount() const
+{
+    if (m_lineRows.isEmpty())
+        return 0;
+    // The last row that is a line of the file, which is not the last row when a
+    // fold made rows after it.
+    for (auto it = m_lineRows.crbegin(); it != m_lineRows.crend(); ++it) {
+        if (*it > 0)
+            return *it;
+    }
+    return 0;
+}
+
+int TextPreviewController::lineNumberDigits() const
+{
+    return QString::number(qMax(1, lineCount())).size();
 }
 
 int TextPreviewController::findPosition() const

@@ -205,6 +205,76 @@ Item {
             }
         }
 
+        // ---- the text, with a gutter of line numbers beside it -------------
+        //
+        // Numbers where there is no paging, and no gutter at all where there is:
+        // a number here always means which line of the file this is. See
+        // MOLE-309 and the note on TextPreviewController::numbered.
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            spacing: 0
+
+            Item {
+                id: numbers
+                objectName: "lineNumbers"
+                visible: controller ? controller.numbered === true : false
+                Layout.fillHeight: true
+                // Sized from the widest number there will be, so the text does
+                // not shift a column as a reader scrolls into four figures.
+                Layout.preferredWidth: visible
+                    ? numberMetrics.width * Math.max(2, controller.lineNumberDigits) + 16
+                    : 0
+                clip: true
+
+                TextMetrics {
+                    id: numberMetrics
+                    font.family: App.monospaceFont
+                    font.pixelSize: view.bodyPixelSize
+                    text: "0"
+                }
+
+                // Taken from the text's own layout rather than from the font's
+                // metrics: one row per block with wrapping off, so this is exact,
+                // and a leading the metrics do not report would drift a number
+                // away from its line a few hundred rows down.
+                readonly property real rowHeight: (area.contentHeight > 0 && numberList.count > 0)
+                                                  ? area.contentHeight / numberList.count
+                                                  : numberMetrics.height
+
+                Rectangle {
+                    anchors.fill: parent
+                    color: App.colour.panel
+                }
+
+                // A list rather than a Repeater: ten thousand lines is an ordinary
+                // source file, and a delegate per row that is recycled costs what
+                // is on screen instead of what is in the file.
+                ListView {
+                    id: numberList
+                    anchors.fill: parent
+                    anchors.topMargin: area.topPadding
+                    interactive: false
+                    // Follows the text rather than scrolling itself, which is what
+                    // keeps a number beside its line.
+                    contentY: scroll.contentItem ? scroll.contentItem.contentY : 0
+                    model: controller ? controller.lineNumbers : []
+                    delegate: Text {
+                        width: numberList.width - 8
+                        height: numbers.rowHeight
+                        horizontalAlignment: Text.AlignRight
+                        verticalAlignment: Text.AlignVCenter
+                        font.family: App.monospaceFont
+                        font.pixelSize: view.bodyPixelSize
+                        color: App.colour.textMuted
+                        // 0 is a row a fold made rather than a line of the file,
+                        // and it is left blank: a folded run is one line, however
+                        // many rows it is shown as.
+                        text: modelData > 0 ? modelData : ""
+                    }
+                }
+            }
+
         ScrollView {
             id: scroll
             Layout.fillWidth: true
@@ -259,6 +329,7 @@ Item {
                     }
                 }
             }
+        }
         }
 
         // ---- the find bar, only while somebody is looking ------------------

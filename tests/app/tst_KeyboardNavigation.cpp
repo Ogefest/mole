@@ -67,6 +67,7 @@ private slots:
     void f3OnAFolderInTheResultsOpensIt();
     void previewArrowsStepThroughTheFolder();
     void typingInAPreviewOpensTheFindBarHoldingWhatWasTyped();
+    void copyingFromAPreviewTakesTheTextAndNotTheLineNumbers();
     void newTabShortcutOpensATab();
     void f4MenuWalksIntoSubmenusWithTheKeyboard();
 
@@ -686,6 +687,36 @@ void TestKeyboardNavigation::typingInAPreviewOpensTheFindBarHoldingWhatWasTyped(
     settle();
     QVERIFY2(!bar->isVisible(), "Escape left the bar open");
     QVERIFY(field->property("text").toString().isEmpty());
+}
+
+void TestKeyboardNavigation::copyingFromAPreviewTakesTheTextAndNotTheLineNumbers()
+{
+    // A reader copying a block out of a log must not get the numbers with it,
+    // which is why the gutter is beside the text rather than in it. See MOLE-309.
+    const int row = pane()->files()->rowOfUri(m_tree->rootUri().child(QStringLiteral("one.txt")).toString());
+    QVERIFY(row >= 0);
+    pane()->setCurrentIndex(row);
+    settle();
+    pressKey(Qt::Key_F3);
+    settle();
+
+    QQuickItem* gutter = findItem(QStringLiteral("lineNumbers"));
+    QVERIFY2(gutter, "an unpaged text file has a gutter");
+    QVERIFY2(gutter->isVisible(), "the gutter is there for a file held whole");
+
+    QQuickItem* body = findItem(QStringLiteral("previewText"));
+    QVERIFY(body);
+    body->forceActiveFocus();
+    settle();
+    pressKey(Qt::Key_A, Qt::ControlModifier);
+    settle();
+
+    const QString selected = body->property("selectedText").toString();
+    QVERIFY2(!selected.isEmpty(), "selecting everything selected nothing");
+    // Exactly the text, and no number in front of any line: the gutter is a
+    // separate item, so there is nothing for a selection to reach.
+    QCOMPARE(selected, body->property("text").toString());
+    QVERIFY2(!selected.startsWith(QStringLiteral("1")), qPrintable(selected.left(20)));
 }
 
 void TestKeyboardNavigation::f3OnAFolderOpensItInstead()

@@ -120,6 +120,31 @@ class TextPreviewController final : public PreviewController
     Q_PROPERTY(int findPosition READ findPosition NOTIFY findChanged)
     Q_PROPERTY(QString findSummary READ findSummary NOTIFY findChanged)
 
+    // ---- line numbers, and the files that do not get any ------------------
+    //
+    // **Numbers where there is no paging, and no gutter at all where there is.**
+    // The controller holds one window and never the file, so the number of lines
+    // before a window is not known -- and getting it means reading everything
+    // before it, while paging is random access. So a number in the gutter always
+    // means the same thing, *which line of the file this is*, with no qualifier to
+    // read and no case where it means something else. A window-relative number
+    // with a label saying so is worse than none: a plausible number is what a
+    // reader acts on, and the label is the part they skip.
+    //
+    // `paged` is a property of the file rather than of the window somebody
+    // happens to be on, so the gutter is decided when the file opens and does not
+    // appear and disappear while they read. Nothing explains the absence: the
+    // position strip is already on screen for exactly those files and already
+    // says the file is being shown a window at a time. See MOLE-309.
+    Q_PROPERTY(bool numbered READ isNumbered NOTIFY textChanged)
+    /// The file's line number for each row a document lays out, or 0 for a row a
+    /// fold made. Empty when there are no numbers to show.
+    Q_PROPERTY(QVariantList lineNumbers READ lineNumbers NOTIFY textChanged)
+    /// How many lines there are, and how wide the widest number is -- so the
+    /// gutter can be sized once rather than growing a column as a reader scrolls.
+    Q_PROPERTY(int lineCount READ lineCount NOTIFY textChanged)
+    Q_PROPERTY(int lineNumberDigits READ lineNumberDigits NOTIFY textChanged)
+
 public:
     explicit TextPreviewController(PluginServices services, QObject* parent = nullptr);
     ~TextPreviewController() override;
@@ -229,6 +254,16 @@ public:
     /// Forgets the term and takes the marks off. What Escape does.
     Q_INVOKABLE void clearFind();
 
+    /// Whether this file gets a gutter at all.
+    ///
+    /// Not for a rendered page either: Markdown rendered, or HTML shown as a
+    /// page, has no lines in the file's sense, and a reader who wants numbered
+    /// lines in a Markdown file opens it as source -- which the strip offers.
+    bool isNumbered() const { return !isPaged() && !m_markdown && !isRenderedHtml(); }
+    QVariantList lineNumbers() const;
+    int lineCount() const;
+    int lineNumberDigits() const;
+
     QString findTerm() const { return m_findTerm; }
     int findCount() const { return static_cast<int>(m_findHits.size()); }
     int findIndex() const { return m_findHits.isEmpty() ? 0 : m_findAt + 1; }
@@ -287,6 +322,8 @@ private:
     /// Whether deriving it had to break long runs up. A property of the window
     /// rather than of the file: paging on to one with lines in it clears it.
     bool m_longLinesFolded = false;
+    /// The file's line number per laid-out row, or 0 for a row a fold made.
+    QList<int> m_lineRows;
     QString m_findTerm;
     /// Where each hit starts in the window's text, in order.
     QList<int> m_findHits;

@@ -275,6 +275,12 @@ private slots:
     void aMatchInsideAFoldedRunIsStillFound();
     void clearingTheSearchLeavesNoHighlightingBehind();
 
+    // ---- line numbers, and the files that get none ------------------------
+    void anUnpagedFileIsNumberedFromOneToItsLastLine();
+    void aFileJustOverAWindowGetsNoGutterAndTheSameFileJustUnderOneDoes();
+    void aFoldedLongLineTakesOneNumberRatherThanSeveral();
+    void aRenderedPageHasNoNumbersAndTheSameFileAsSourceDoes();
+
     // --- markdown the window cannot afford to render ---
     void aMarkdownFileWithAHugeTableOpensAsSourceAndSaysWhy();
     void aMarkdownFileUnderTheBudgetIsRenderedAsBefore();
@@ -2245,6 +2251,136 @@ void TestPreview::clearingTheSearchLeavesNoHighlightingBehind()
     QCOMPARE(viewer->findIndex(), 0);
     QCOMPARE(viewer->findPosition(), -1);
     QVERIFY(viewer->findSummary().isEmpty());
+}
+
+// ---- line numbers, and the files that get none ------------------------------
+//
+// **Numbers where there is no paging, and no gutter at all where there is.** The
+// controller holds one window and never the file, so the number of lines before a
+// window is not known -- and a window-relative number with a label saying so is
+// worse than none, because a plausible number is what a reader acts on and the
+// label is the part they skip. See MOLE-309.
+
+void TestPreview::anUnpagedFileIsNumberedFromOneToItsLastLine()
+{
+    QByteArray source;
+    for (int i = 1; i <= 40; ++i)
+        source += QByteArray("line ") + QByteArray::number(i) + "\n";
+    QVERIFY(m_tree->writeFile(QStringLiteral("small.py"), source));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("small.py"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(waitFor([viewer] { return !viewer->text().isEmpty(); }, 5000));
+
+    QVERIFY(viewer->isNumbered());
+    QCOMPARE(viewer->lineCount(), 40);
+    // The width follows the digits, so the text does not shift a column as a
+    // reader scrolls into three figures.
+    QCOMPARE(viewer->lineNumberDigits(), 2);
+
+    const QVariantList numbers = viewer->lineNumbers();
+    // One row per line, plus the empty one a document ends with after a trailing
+    // newline -- which carries no number, because `wc -l` says forty and a gutter
+    // that said forty-one would be arguing with the tool the reader checked it
+    // against.
+    QCOMPARE(numbers.size(), 41);
+    QCOMPARE(numbers.first().toInt(), 1);
+    QCOMPARE(numbers.at(39).toInt(), 40);
+    QCOMPARE(numbers.at(40).toInt(), 0);
+}
+
+void TestPreview::aFileJustOverAWindowGetsNoGutterAndTheSameFileJustUnderOneDoes()
+{
+    // The pair is the rule, and one without the other asserts half of it: the
+    // gutter is decided by whether the *file* is bigger than a window, so it
+    // never appears and disappears while somebody reads.
+    QByteArray lines;
+    while (lines.size() < TextPreviewController::kWindowBytes + 2048)
+        lines += "a line of about forty characters in it..\n";
+
+    QVERIFY(m_tree->writeFile(QStringLiteral("over.log"), lines));
+    PreviewTabController* over = openPreview(QStringLiteral("over.log"));
+    QVERIFY(over);
+    auto* paged = qobject_cast<TextPreviewController*>(over->viewer());
+    QVERIFY(paged);
+    QVERIFY(waitFor([paged] { return !paged->text().isEmpty(); }, 5000));
+    QVERIFY(paged->isPaged());
+    QVERIFY2(!paged->isNumbered(), "a paged file was given numbers that cannot be right");
+    QVERIFY2(paged->lineNumbers().isEmpty(), "a paged file handed the view numbers anyway");
+
+    // The same content, one window's worth, and the gutter is there.
+    QVERIFY(m_tree->writeFile(
+        QStringLiteral("under.log"), lines.left(TextPreviewController::kWindowBytes - 2048)));
+    PreviewTabController* under = openPreview(QStringLiteral("under.log"));
+    QVERIFY(under);
+    auto* held = qobject_cast<TextPreviewController*>(under->viewer());
+    QVERIFY(held);
+    QVERIFY(waitFor([held] { return !held->text().isEmpty(); }, 5000));
+    QVERIFY(!held->isPaged());
+    QVERIFY2(held->isNumbered(), "a file held whole was left without numbers");
+    QVERIFY(held->lineCount() > 100);
+}
+
+void TestPreview::aFoldedLongLineTakesOneNumberRatherThanSeveral()
+{
+    // A run the fold broke up is one line of the file shown as several rows, and a
+    // gutter numbering rows would disagree with the compiler, the stack trace and
+    // the reader's own editor.
+    QByteArray file = "first\n";
+    file += QByteArray(TextPreviewController::kFoldedLineChars * 3, 'x');
+    file += "\nlast\n";
+    QVERIFY(m_tree->writeFile(QStringLiteral("wide.txt"), file));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("wide.txt"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(waitFor([viewer] { return !viewer->text().isEmpty(); }, 5000));
+    QVERIFY(viewer->longLinesFolded());
+    QVERIFY(viewer->isNumbered());
+
+    // Three lines in the file, whatever the layout does with the middle one.
+    QCOMPARE(viewer->lineCount(), 3);
+
+    const QVariantList numbers = viewer->lineNumbers();
+    QVERIFY2(numbers.size() > 4, "the long line was not broken into rows at all");
+    QCOMPARE(numbers.at(0).toInt(), 1);
+    QCOMPARE(numbers.at(1).toInt(), 2);
+    // The rows the fold made carry no number of their own.
+    QCOMPARE(numbers.at(2).toInt(), 0);
+    QCOMPARE(numbers.at(3).toInt(), 0);
+    int numbered = 0;
+    for (const QVariant& row : numbers) {
+        if (row.toInt() > 0)
+            ++numbered;
+    }
+    // Three lines, and the row after the last newline is not one of them.
+    QCOMPARE(numbered, 3);
+}
+
+void TestPreview::aRenderedPageHasNoNumbersAndTheSameFileAsSourceDoes()
+{
+    // A rendered page has no lines in the file's sense, and a reader who wants
+    // numbered lines in a Markdown file opens it as source -- which the strip
+    // already offers.
+    QVERIFY(m_tree->writeFile(
+        QStringLiteral("notes.md"), QByteArray("# Title\n\nSome prose about something.\n")));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("notes.md"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(waitFor([viewer] { return !viewer->text().isEmpty(); }, 5000));
+    QVERIFY(viewer->isMarkdown());
+    QVERIFY2(!viewer->isNumbered(), "a rendered page was given a gutter");
+
+    // The same switch the strip offers a reader.
+    viewer->setViewerOption(QStringLiteral("mode"), QStringLiteral("Source"));
+    QVERIFY(waitFor([viewer] { return !viewer->isMarkdown(); }, 5000));
+    QVERIFY2(viewer->isNumbered(), "the same file as source was left without one");
+    QCOMPARE(viewer->lineCount(), 3);
 }
 
 void TestPreview::coloursFilesWhoseNameIsTheirType_data()
