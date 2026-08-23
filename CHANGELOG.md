@@ -1,17 +1,69 @@
 # Changelog
 
-New features and visible changes in Mole, newest first — **one line each**, in the
-shape `YYYY-MM-DD #MOLE-nn what changed`. This file is the release notes: the
-block between two release markers is one version's, pulled out by a regular
-expression, so a line in another shape is a line nobody reads. The reasoning
-belongs in the commit message — including where the first answer turned out to be
-wrong — and a decision about shape in [docs/adr/](docs/adr/). See
-[ADR-0071](docs/adr/0071-the-record-of-finished-work-is-the-commit.md).
+New features and visible changes in Mole, newest first. **This file is the release
+notes**: a version's notes are the block between two release markers, pulled out by
+a regular expression, so a line written in another shape is a line nobody will
+read.
 
-The prose entries below the dated ones are from before 2026-08-10 and belong to
-the first release; they stay as they are.
+Two shapes, and outside a fenced code block nothing else in this file may match
+either of them:
 
-## Unreleased
+```
+entry:  ^(\d{4}-\d{2}-\d{2}) (#MOLE-\d+) (.+)$
+marker: ^## (\d+\.\d+\.\d+) — released (\d{4}-\d{2}-\d{2})$
+```
+
+An **entry** is the day it landed, the ticket, and the shortest phrase that says
+what changed:
+
+```
+2026-08-11 #MOLE-112 A file with no newlines no longer stops the preview
+```
+
+A phrase and not a sentence. This is a list; the reasoning belongs in the commit
+message — including where the first answer turned out to be wrong — and a
+decision about shape in [docs/adr/](docs/adr/). See
+[ADR-0071](docs/adr/0071-the-record-of-finished-work-is-the-commit.md) for why
+there is no second telling of it anywhere, and
+[ADR-0080](docs/adr/0080-the-changelog-is-a-structured-log-and-the-release-notes-come-out-of-it.md)
+for this format.
+
+**One line per change, not one per ticket.** A ticket that fixed two things
+somebody would notice separately earns two lines, and they are not to be tidied
+into one.
+
+**`#MOLE-22`, never `#22`.** GitHub turns `#22` into a link to an issue that was
+deleted on 2026-08-10, so a bare number in a published note is a dead link to
+something that no longer exists; `#MOLE-22` links to nothing and reads correctly as
+text. See [ADR-0022](docs/adr/0022-work-is-tracked-in-vikunja.md).
+
+A **marker** says that everything below it, down to the next marker, went out as
+that version:
+
+```
+## 0.2.0 — released 2026-08-11
+```
+
+Newest first, so cutting a release puts a marker in at the top and the entries it
+contains fall underneath it. The oldest marker's block runs to the end of the file.
+
+**Every `##` line in this file is a release marker, and there are no other
+second-level headings** — not `## Unreleased`, not one over the prose below, not
+one somebody adds in a year. Everything above the topmost marker is unreleased by
+definition, so a heading saying so would have to be moved on every cut, and any
+other heading is one a looser expression would one day read as a release.
+
+The bullets at the end, below the last entry, are prose from before this format.
+They belong to the first release whatever shape they are in and they stay as they
+are: recovering a date and a ticket for each one would be archaeology. Nothing is
+added to them, and nothing dated goes below them.
+
+There is no release marker in the file yet, because nothing has been released.
+`make release` writes the first one.
+
+`tests/scripts/tst_Changelog.sh` holds every rule on this page, and it reads the
+two expressions out of the block above rather than keeping a copy of its own — so
+the file and the thing that checks it cannot come apart.
 
 2026-08-23 #MOLE-291 An import that cannot commit a batch says so rather than finishing as though it had worked, so a table missing two thousand rows is never presented as a whole one
 2026-08-23 #MOLE-287 A Parquet file written as one row group no longer holds the window while it is read whole: a window decodes a batch at a time and stops where the answer does, and the grid reads its rows, its filtered counts and its column widths on a task
@@ -83,81 +135,43 @@ the first release; they stay as they are.
 2026-08-20 #MOLE-239 A video thumbnail seeks to its frame, so a file over a minute gets a tile at all
 2026-08-20 #MOLE-237 Fix the sanitizer tier going red on GStreamer's device monitor and on a pooled NFS mount
 2026-08-20 #MOLE-144 A folder of PDFs shows first pages and a folder of videos shows frames — not frame zero, which is black in a great many of them
-
 2026-08-20 #MOLE-143 A gallery over a network drive now reads the thumbnail a camera already put in each photograph — kilobytes rather than megabytes — and leaves a file past a ceiling alone rather than downloading it
-
 2026-08-20 #MOLE-142 A flick through a folder of photographs now makes thumbnails for what is on screen, a few at a time, newest request first — and leaving a folder takes its queue with it
-
 2026-08-20 #MOLE-141 Thumbnails are kept, in memory for the scroll and on disk for the next visit, so a folder of photographs is decoded once rather than on every look
-
 2026-08-20 #MOLE-140 The gallery now shows what pictures look like: thumbnails are a new extension point, made off the UI thread, bounded in size, and in the right orientation for a photograph taken upright
-
 2026-08-20 #MOLE-139 A fourth way of looking at a folder: Gallery, with tiles big enough to see a picture in — the same pane, so selection, sorting, filter-by-typing and F3 all work in it
-
 2026-08-20 #MOLE-138 In a grid of tiles the left and right arrows now move a tile and up and down move a visual row, and Page Up/Down move by the number of entries actually on screen instead of by fifteen
-
 2026-08-20 #MOLE-231 An index can now be rescanned, put on a clock or forgotten from the Indexes tab, and a scan that is running shows on its row with a way to stop it
-
 2026-08-20 #MOLE-230 A new Indexes tab lists every indexed tree — how old it is, how big it is, what kind of scan built it, and whether anything is keeping it fresh
-
 2026-08-20 #MOLE-228 Index this folder now opens the indexing dialog on that folder, instead of quietly starting a full walk that recorded nothing about the files
-
 2026-08-19 #MOLE-227 A folder's re-index can be set to any interval from hourly to monthly, changed afterwards, and turned off again — it was a checkbox that only ever created a rule, fixed at 24 hours
-
 2026-08-19 #MOLE-226 A scheduled re-index now repeats the scan that created it — a folder indexed with metadata or archive contents no longer loses them, a subtree at a time, every night
-
 2026-08-19 #MOLE-126 A sync now reports how much it has copied — the figure and the progress bar used to stop advancing part way through and settle on a fraction of the real total, while the copy itself was correct all along
-
 2026-08-19 #MOLE-224 The drives dialog's Kind picker now names the drive you selected, instead of the one you looked at before
-
 2026-08-19 #MOLE-225 A video preview can be muted, and remembers it — for every video and across restarts
-
 2026-08-19 #MOLE-223 A video preview starts playing when it opens, instead of waiting on the Play button
-
 2026-08-19 #MOLE-210 A duplicate scan no longer stops the window responding as it fills — a confirmed group is added to the list instead of rebuilding every group already in it, so the results can be read and scrolled while the scan is still running
-
 2026-08-19 #MOLE-222 A drive being worked on breathes gently rather than flickering — the disk activity light was accurate and read as an alarm next to everything else in the sidebar
-
 2026-08-19 #MOLE-221 A drive being worked on is now green instead of pulsing in the same blue that means "the drive you are looking at"
-
 2026-08-19 #MOLE-162 A drive shows when Mole is working on it — a copy makes both ends pulse in the sidebar and stops the moment it finishes, so which drives a transfer is touching is visible rather than something to read out of a task title
-
 2026-08-19 #MOLE-161 A drive's dot in the sidebar now says what the drive is doing rather than whether it is plugged in — filled grey for here and quiet, blue for one you are looking at, a hollow ring for one that is not connected, and a pulsing ring while it connects
-
 2026-08-19 #MOLE-37 F3 on a video now plays it — the file opens paused at its first frame with a play button, a position and somewhere to drag it to, and a build without Qt Multimedia shows the file's details as before
-
 2026-08-19 #MOLE-128 A dialog, a menu or the command palette no longer washes the window behind it out to a pale grey — Qt's dark-theme dim is near-white at sixty percent, and what sits behind a popup is now dimmed instead of faded almost away
-
 2026-08-19 #MOLE-219 F3 on a file compressed on its own now shows what is inside it — a gzipped log opens in the text viewer, a gzipped CSV as a table and a gzipped photograph as the picture, instead of a list of properties
-
 2026-08-19 #MOLE-218 A file inside an archive is decompressed as it is read instead of all at once, so previewing a member of any size opens at once and costs its window rather than the whole file
-
 2026-08-19 #MOLE-216 A file compressed on its own — a `.gz`, `.xz`, `.bz2` or `.zst` with no tar inside — now opens as a drive instead of being offered and then refused, with its one row named after the file that was compressed rather than "data"
-
 2026-08-19 #MOLE-215 A sync that compares by contents is noticeably quicker over fast storage — the two files are compared byte for byte instead of both being hashed with SHA-256, and two that differ now stop at the first block that differs instead of being read to the end
-
 2026-08-19 #MOLE-214 A duplicate scan by content is much faster, and what it reports is now exact — the reads are spread across threads instead of running on one, nothing in the scan is capped by a digest any more, and a group reported as identical has been compared byte for byte rather than hashed
-
 2026-08-19 #MOLE-213 Mole can now open an NFS export as a drive, in the application and without mounting it or needing root
-
 2026-08-19 #MOLE-36 Mole can now open a Windows or NAS share (SMB) as a drive, without mounting it and without root
-
 2026-08-19 #MOLE-212 A transfer that stops moving is given up on when Mole's own guard says so, on every protocol, instead of when the operating system happens to notice — and cancelling one takes effect at once
-
 2026-08-19 #MOLE-108 A transfer over a link that drops and comes back is no longer lost — a read keeps retrying from where it got to while bytes are still arriving, and gives up only once nothing has arrived for two minutes
-
 2026-08-19 #MOLE-96 An S3 drive can now be asked what uploads it never finished — the parts a killed process leaves behind are charged for until somebody removes them, and until now nothing in Mole could even see them
-
 2026-08-19 #MOLE-99 A large file can now be read from an SFTP server that re-keys part way through a span — the read resumes from the byte it reached instead of failing, so a file that could not be read at all now arrives whole
-
 2026-08-19 #MOLE-98 Sync no longer takes a dropped connection for the end of a file — a read that dies half way is a failure instead of a file counted as copied, and a destination that fills up says so instead of saying "short write"
-
 2026-08-19 #MOLE-127 An FTP drive can now read a file larger than the local scratch space — reads stream a span at a time instead of downloading the whole file first, which was the last place a backend staged anything
-
 2026-08-18 #MOLE-187 A table, a database or a Parquet file is now shown five thousand rows at a time, with page controls under the grid, instead of one scrollbar over the whole of it
-
 2026-08-18 #MOLE-186 A database with large tables now opens at once and fills its row counts in behind, instead of holding the window until every table has been counted — and a filter typed into a table, a CSV or a Parquet file is now scanned once when the typing stops rather than once per character
-
 2026-08-18 #MOLE-188 Analysing a large folder no longer freezes the window while it runs — every task's status line and published counts are now handed to the interface ten times a second at most, however fast the work produces them
 2026-08-18 #MOLE-191 Identical contents compares the first megabyte instead of the first 16 kB, so video, RAW photographs, PDFs and disk images that merely share a header stop reaching the whole-file hash
 2026-08-18 #MOLE-190 Fix every dropdown in Mole cutting its longest name in half — the list is now as wide as the names in it, in the same text size as the control

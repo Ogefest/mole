@@ -145,6 +145,10 @@ if(BASH_PROGRAM)
                         SCRIPT scripts/tst_TestSuiteRules.sh)
     mole_add_shell_test(tst_MoleControl
                         SCRIPT scripts/tst_MoleControl.sh)
+    # The changelog is the release notes, so its shape is checked here rather than
+    # discovered by a release workflow. See ADR-0080.
+    mole_add_shell_test(tst_Changelog
+                        SCRIPT scripts/tst_Changelog.sh)
 else()
     message(WARNING "Shell tests skipped: no bash found")
 endif()
