@@ -171,6 +171,15 @@ if(BASH_PROGRAM)
     # silence: the dependencies nothing links and so nothing derives. See MOLE-121.
     mole_add_shell_test(tst_Packages
                         SCRIPT scripts/tst_Packages.sh)
+    # The guard on the Qt LGPL conditions, and whether it can fail for the reason it
+    # exists. It needs a real binary to build an artefact around: the first two
+    # questions it asks are about one. See MOLE-298.
+    mole_add_shell_test(tst_LicenceCheck
+                        SCRIPT scripts/tst_LicenceCheck.sh)
+    if(NOT MOLE_CORE_ONLY)
+        set_property(TEST tst_LicenceCheck APPEND PROPERTY
+                     ENVIRONMENT "MOLE_BINARY=$<TARGET_FILE:mole>")
+    endif()
     if(NOT MOLE_CORE_ONLY)
         set_property(TEST tst_Version APPEND PROPERTY
                      ENVIRONMENT "MOLE_BINARY=$<TARGET_FILE:mole>")

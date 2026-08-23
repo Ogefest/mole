@@ -84,11 +84,12 @@ cp -r /src/licenses "$APPDIR/"
 # The licence check stays a hard failure. The LGPL conditions are not optional and
 # a release is exactly when they matter.
 #
-# Run from inside the AppDir, because that is what the paperwork has to travel in:
-# the check looks for the licence files in the working directory, so `make bundle`
-# running it from the repository root asks whether *this repository* has them
-# rather than whether the artefact does. Here it is asked about the artefact.
-( cd "$APPDIR" && /src/scripts/licence-check.sh "$APPDIR/usr/bin/mole" )
+# The artefact root is given rather than implied by the working directory, which is
+# what MOLE-298 separated: the paperwork question is about the AppDir, and the
+# question about which Qt modules the build uses is about /src. Before that, this
+# call worked by being run from inside the AppDir and the source question went
+# unanswered.
+/src/scripts/licence-check.sh "$APPDIR/usr/bin/mole" "$APPDIR"
 
 # What the format wants and the bundle does not already arrange: an AppRun, and the
 # desktop entry and icon at the top level, where a desktop that integrates

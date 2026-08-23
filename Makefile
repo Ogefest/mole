@@ -235,7 +235,7 @@ bundle:
 	@scripts/make-bundle.sh dist
 	@cp LICENSE NOTICE THIRD-PARTY-NOTICES.md dist/
 	@cp -r licenses dist/
-	@scripts/licence-check.sh dist/usr/bin/mole
+	@scripts/licence-check.sh dist/usr/bin/mole dist
 
 ## screenshots: run the walkthrough and write pictures of each verified state
 screenshots: build
@@ -267,7 +267,7 @@ screenshots-check: build
 
 ## licence-check: verify the Qt LGPL conditions still hold
 licence-check:
-	@scripts/licence-check.sh $(if $(wildcard build/release/mole),build/release/mole,build/debug/mole)
+	@scripts/licence-check.sh
 
 ## clean: remove build artefacts for the current preset
 clean:

@@ -60,6 +60,9 @@ jobs:
       #   libarrow-dev            Parquet files as a grid -- see the step after
       #   libparquet-dev
       #
+      # rpm and cpio are not for building anything: they are what unpacks the .rpm
+      # so the licence check can be asked of it here rather than named as unasked.
+      #
       # ninja-build because that is the generator every preset uses.
       - name: Install what the artefact is built from
         run: |
@@ -73,7 +76,8 @@ jobs:
             qml6-module-qtquick-templates qml6-module-qtquick-window \
             qml6-module-qtqml-workerscript qml6-module-qtquick-shapes \
             libarchive-dev libcurl4-openssl-dev libssl-dev \
-            libsmbclient-dev libnfs-dev libvterm-dev libgit2-dev libxxhash-dev
+            libsmbclient-dev libnfs-dev libvterm-dev libgit2-dev libxxhash-dev \
+            rpm cpio
 
       # Arrow is not in Ubuntu's archive at any version, so the Parquet grid can
       # only come from Apache's own repository -- which is where the author's
@@ -230,6 +234,15 @@ jobs:
               | tee /tmp/said
             grep -qF "Mole ${version}" /tmp/said
           done
+
+      # The Qt LGPL conditions, asked of every artefact this release publishes: the
+      # bundle, the .deb, the .rpm and the AppImage, each unpacked and asked about
+      # its own paperwork. These are the conditions that let an Apache-2.0
+      # application ship LGPL Qt at all, so a release is exactly when they count --
+      # and until MOLE-298 the check was asking the working directory, which meant
+      # it could not fail for the reason it exists.
+      - name: The licence conditions, on every artefact
+        run: make licence-check
 
       # Named after the version, which CMakeLists.txt is the only place holding --
       # see MOLE-117. Checked against the tag rather than trusted: they are written

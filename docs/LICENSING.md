@@ -24,8 +24,26 @@ Verified against the current build:
 Re-run the check any time with:
 
 ```sh
-make licence-check
+make licence-check                                  # every artefact it can find
+scripts/licence-check.sh <binary> [<artefact root>] # one of them
 ```
+
+`make licence-check` sweeps what has been built: the bundle in `dist/`, and the
+`.deb`, the `.rpm` and the AppImage in `build/packages/`. Each is unpacked and asked
+about its own paperwork, and one it cannot unpack here — the `.rpm`, on a machine
+with no `rpm2cpio` — is *named as unasked* rather than passed over. The release
+workflow asks all four, which is why it installs `rpm` and `cpio` on the runner.
+
+The script asks two kinds of question and keeps them apart, which it did not always
+do. **Which Qt modules the build uses** is a question about the source tree, and it
+is asked of the repository the script lives in, found from its own path. **The
+paperwork, and whether a bundled Qt stays replaceable**, are questions about an
+artefact, and they are asked of a root: given as the second argument, or derived
+from the binary's own location. They used to be asked of the working directory, so
+`make bundle` running the check from the repository root was asking whether *this
+repository* carries `LICENSE`. It always does; an artefact carrying none of the five
+files passed. Nothing published was ever wrong — `make bundle` copies them itself —
+but a guard that cannot fail for the reason it exists is not a guard. See MOLE-298.
 
 ## Why dynamic linking is the whole ballgame
 
