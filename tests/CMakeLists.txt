@@ -294,12 +294,9 @@ mole_add_test(tst_DriveListModel       SOURCES ui/tst_DriveListModel.cpp       L
 mole_add_test(tst_TableModel           SOURCES ui/tst_TableModel.cpp           LIBS mole_ui)
 mole_add_test(tst_TaskListModel        SOURCES ui/tst_TaskListModel.cpp        LIBS mole_ui)
 mole_add_test(tst_TabsModel            SOURCES ui/tst_TabsModel.cpp            LIBS mole_ui)
-# Qt6::Quick because the one mistake worth testing for here is a QML binding that
-# never re-evaluates, and only a real engine can be asked whether it did; and
-# mole_builtin because the contrast floor covers the source highlighter's nine
-# colours, which live with the preview that uses them.
-mole_add_test(tst_Palette              SOURCES ui/tst_Palette.cpp              LIBS mole_ui mole_builtin Qt6::Quick)
 mole_add_test(tst_BrowserPaneController SOURCES ui/tst_BrowserPaneController.cpp LIBS mole_ui)
+# tst_Palette is a ui suite and is not here: it needs Qt6::Quick, so it sits below
+# the core-only guard with the rest of what needs an engine. See MOLE-292.
 
 # The headless half of the thumbnails: the url that keys one, the thread it is
 # decoded on, and the cancellation that stops one nobody is waiting for.
@@ -322,6 +319,16 @@ mole_add_test(tst_CommandPalette       SOURCES ui/tst_CommandPalette.cpp       L
 if(NOT MOLE_CORE_ONLY)
 
 mole_add_test(tst_AppIntegration    SOURCES app/tst_AppIntegration.cpp   LIBS mole_builtin)
+
+# A ui suite, kept down here rather than with the other ui ones because of what it
+# links. Qt6::Quick because the one mistake worth testing for is a QML binding that
+# never re-evaluates, and only a real engine can be asked whether it did; and
+# mole_builtin because the contrast floor covers the source highlighter's nine
+# colours, which live with the preview that uses them. A qtbase-only build has
+# neither, and this being above the guard is what stopped `make tsan` configuring
+# at all -- see MOLE-292 and the rule in tests/scripts/tst_TestSuiteRules.sh.
+mole_add_test(tst_Palette           SOURCES ui/tst_Palette.cpp
+                                    LIBS mole_ui mole_builtin Qt6::Quick)
 
 # A folder with an indexed subtree in it, answered by both engines at once. Its
 # own binary because it fills an in-memory drive and interferes with it between

@@ -6,7 +6,11 @@
 # of a static rule is that a new suite joins it by existing rather than by
 # somebody remembering, which is the difference between a rule and a habit.
 #
-# The rule here is MOLE-273. A task logs "started" from a pool thread; in a test
+# Two rules live here, and what they have in common is the tier they keep alive:
+# both faults made `make tsan` red for everybody, and neither showed up as a
+# failing assertion in the suite that caused it.
+#
+# The first is MOLE-273. A task logs "started" from a pool thread; in a test
 # binary the Qt message handler *is* testlib's logger, which reads the global
 # naming the test function currently running; and the main thread writes that
 # same global on its way into the next one. So a suite that lets a test function
@@ -56,4 +60,93 @@ if [ -s "$SHELLTEST_TMP/undrained" ]; then
     sed 's/^/    /' "$SHELLTEST_TMP/undrained"
 fi
 
+# The second rule is MOLE-292, and it is about a configuration rather than a run.
+#
+# The tsan tier builds against an instrumented Qt that is qtbase only -- ADR-0055
+# says why building more of it that way is not a thing to ask of anybody -- so the
+# preset sets MOLE_CORE_ONLY, the top-level CMakeLists leaves out src/plugins and
+# src/app, and this file leaves out every suite that needs them. A suite added
+# above that guard which links something a qtbase-only build has not got does not
+# fail its own case: it fails `cmake` at generate time, for the whole tier, with an
+# error naming a test that has nothing to do with whatever was being changed. That
+# is how the tier sat unusable from the day tst_Palette was added until somebody
+# touched a CMakeLists and forced a reconfigure.
+#
+# An allowlist rather than a list of what is forbidden, and both halves of it are
+# read from the build files: a Qt component nobody has heard of, or a library from
+# a subdirectory that is not built, is refused by existing rather than by being
+# remembered.
+
+begin "the suites built in a core-only configuration link only what one has"
+
+# The Qt components a qtbase-only build has, taken from the branch that asks for
+# them, plus the two the test tier always finds for itself.
+allowedQt=$(sed -n '/^if(MOLE_CORE_ONLY)/,/^else()/p' CMakeLists.txt \
+            | sed -n 's/.*COMPONENTS \(.*\))/\1/p') || true
+allowedQt="$allowedQt Test Network"
+[ -n "$(echo "$allowedQt" | tr -d ' ')" ] || fail "cannot tell which Qt components a core-only build asks for"
+
+# The libraries the always-built subdirectories define. src/plugins and src/app are
+# the two the top-level guard leaves out, so nothing they define may appear here.
+allowedLibs="mole_flags mole_test_support"
+for dir in core sdk host ui tools; do
+    allowedLibs="$allowedLibs $(sed -n 's/^ *\(qt_\)\?add_library(\([A-Za-z0-9_]*\).*/\2/p' \
+                                "src/$dir/CMakeLists.txt" | tr '\n' ' ')"
+done
+case " $allowedLibs " in
+    *" mole_core "*|*" mole_ui "*) ;;
+    *) fail "cannot tell which libraries the always-built subdirectories define" ;;
+esac
+
+# Every mole_add_test call outside an `if(NOT MOLE_CORE_ONLY)` region, one per line,
+# whether or not it was written on one. Parentheses are counted rather than assumed:
+# the longer calls in this file wrap.
+awk '
+    /^[ \t]*if\(NOT MOLE_CORE_ONLY\)/ { depth++; if (!guard) guard = depth; next }
+    /^[ \t]*if\(/  { depth++; next }
+    /^[ \t]*endif/ { if (guard && depth == guard) guard = 0; depth--; next }
+    /mole_add_test\(/ { collecting = 1; text = "" }
+    collecting {
+        text = text " " $0
+        opens = gsub(/\(/, "(")
+        closes = gsub(/\)/, ")")
+        balance += opens - closes
+        if (balance <= 0) { collecting = 0; balance = 0; if (!guard) print text }
+    }
+' tests/CMakeLists.txt > "$SHELLTEST_TMP/unguarded"
+
+count=$(grep -c . "$SHELLTEST_TMP/unguarded")
+[ "$count" -ge 30 ] || fail "found only $count suites above the guard; expected the core and ui tiers"
+
+: > "$SHELLTEST_TMP/unbuildable"
+while read -r call; do
+    name=$(echo "$call" | sed -n 's/.*mole_add_test( *\([A-Za-z0-9_]*\).*/\1/p')
+    libs=$(echo "$call" | sed -n 's/.*LIBS *\(.*\))/\1/p')
+    for lib in $libs; do
+        case "$lib" in
+            Qt6::*)
+                component=${lib#Qt6::}
+                case " $allowedQt " in
+                    *" $component "*) ;;
+                    *) echo "$name links $lib, which a qtbase-only build has not got" \
+                       >> "$SHELLTEST_TMP/unbuildable" ;;
+                esac
+                ;;
+            mole*)
+                case " $allowedLibs " in
+                    *" $lib "*) ;;
+                    *) echo "$name links $lib, which a core-only build does not define" \
+                       >> "$SHELLTEST_TMP/unbuildable" ;;
+                esac
+                ;;
+        esac
+    done
+done < "$SHELLTEST_TMP/unguarded"
+
+if [ -s "$SHELLTEST_TMP/unbuildable" ]; then
+    fail "cmake cannot generate a core-only build, so the whole tsan tier is red -- see MOLE-292"
+    sed 's/^/    /' "$SHELLTEST_TMP/unbuildable"
+fi
+
 done_testing
+
