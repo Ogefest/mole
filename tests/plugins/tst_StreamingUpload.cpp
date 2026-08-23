@@ -4,6 +4,8 @@
 #include "core/vfs/backends/MemoryFileSystem.h"
 
 #include <QBuffer>
+#include <QDir>
+#include <QTemporaryDir>
 #include <QTest>
 
 #include <atomic>
@@ -404,13 +406,19 @@ void TestStreamingUpload::aStagingFileThatCannotBeOpenedIsRefusedRatherThanLost(
     // error anywhere.
     //
     // **What refuses is our own check, not Qt's.** QTemporaryFile is happy to put
-    // its file wherever a missing TMPDIR leaves it -- the filesystem root, on the
-    // Qt build this was found on -- which succeeds for any account that can write
-    // there. So open() looks at the staging directory itself, and this case fails
-    // the moment that look is removed, on root and on anybody else. See
-    // MOLE-297.
-    const QByteArray previous = qgetenv("TMPDIR");
-    qputenv("TMPDIR", "/proc/mole-has-no-temporary-directory-here");
+    // its file wherever a missing temporary directory leaves it -- the filesystem
+    // root, on the Qt build this was found on -- which succeeds for any account
+    // that can write there. So opening goes through staging::openFile(), which
+    // asks about the directory first, and this case fails the moment that is
+    // removed. See MOLE-297 and MOLE-304.
+    // A directory this case owns and takes away, rather than a TMPDIR pointed at
+    // something that does not exist: what refuses then is Mole, on any account,
+    // and not the platform declining to write to somewhere it cannot reach.
+    QTemporaryDir own;
+    QVERIFY(own.isValid());
+    const QString gone = QDir(own.path()).filePath(QStringLiteral("taken-away"));
+    const QByteArray previous = qgetenv("MOLE_STAGING_DIR");
+    qputenv("MOLE_STAGING_DIR", gone.toUtf8());
 
     FakeServer server;
     FakeCommit commit;
@@ -418,9 +426,9 @@ void TestStreamingUpload::aStagingFileThatCannotBeOpenedIsRefusedRatherThanLost(
     const bool opened = stream.open(QIODevice::WriteOnly);
 
     if (previous.isEmpty())
-        qunsetenv("TMPDIR");
+        qunsetenv("MOLE_STAGING_DIR");
     else
-        qputenv("TMPDIR", previous);
+        qputenv("MOLE_STAGING_DIR", previous);
 
     QVERIFY2(!opened, "an upload with nowhere to stage itself has to refuse to open");
     QVERIFY2(stream.errorString().contains(QStringLiteral("temporary")), qPrintable(stream.errorString()));

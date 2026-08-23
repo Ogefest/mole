@@ -2,6 +2,8 @@
 
 #include "plugins/network/TransferStreams.h"
 
+#include "core/platform/Staging.h"
+
 #include <QBuffer>
 #include <QSet>
 #include <QTemporaryFile>
@@ -771,9 +773,10 @@ Result<void> S3FileSystem::rename(const VfsUri& from, const VfsUri& to)
 Result<std::unique_ptr<QIODevice>> S3FileSystem::openRead(const VfsUri& target, qint64)
 {
     auto scratch = std::make_unique<QTemporaryFile>();
-    if (!scratch->open()) {
-        return Result<std::unique_ptr<QIODevice>>::failure(
-            VfsError::IoError, QStringLiteral("Could not open a local copy for %1").arg(target.path()));
+    QString staging;
+    if (!staging::openFile(*scratch, &staging)) {
+        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError,
+            QStringLiteral("Could not open a local copy for %1: %2").arg(target.path(), staging));
     }
 
     Call call;
@@ -1021,8 +1024,11 @@ Result<std::unique_ptr<QIODevice>> S3FileSystem::openWrite(const VfsUri& target,
 
     auto send = [this, key, upload](QIODevice& source, qint64 span, bool append, const CancelToken&) {
         QTemporaryFile part;
-        if (!part.open())
-            return VfsError::make(VfsError::IoError, QStringLiteral("Could not stage a part of %1").arg(key));
+        QString staging;
+        if (!staging::openFile(part, &staging)) {
+            return VfsError::make(
+                VfsError::IoError, QStringLiteral("Could not stage a part of %1: %2").arg(key, staging));
+        }
 
         QByteArray buffer(256 * 1024, Qt::Uninitialized);
         qint64 staged = 0;

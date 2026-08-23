@@ -1,8 +1,8 @@
 #include "plugins/network/TransferStreams.h"
 
-#include <QDir>
+#include "core/platform/Staging.h"
+
 #include <QElapsedTimer>
-#include <QFileInfo>
 
 #include <algorithm>
 #include <cstring>
@@ -29,27 +29,16 @@ bool BufferedUpload::open(OpenMode mode)
         setErrorString(QStringLiteral("an upload stream can only be opened for writing"));
         return false;
     }
-    // Where it would be staged, before staging anything there.
-    //
-    // **A missing temporary directory has to be a refusal, and Qt does not make
-    // it one.** QDir::tempPath() hands back whatever TMPDIR says without asking
-    // whether it is there, and on some builds hands back nothing at all -- and
-    // QTemporaryFile then puts its file in the filesystem root, which succeeds
-    // for anybody who can write there. So an upload whose staging directory had
-    // been removed was accepted, staged somewhere nobody would look for it, and
-    // sent from there. Refusing is the whole point of this device: the bytes are
-    // acknowledged to the caller before they reach the server, so a stage that
-    // cannot be trusted must fail at open() rather than at send. Found by the
-    // second-family job in MOLE-297, where the suite runs as root.
-    const QString staging = QDir::tempPath();
-    if (staging.isEmpty() || !QFileInfo(staging).isDir()) {
-        setErrorString(QStringLiteral("there is no temporary directory to stage the upload in: %1")
-                           .arg(staging.isEmpty() ? QStringLiteral("nothing is set") : staging));
-        return false;
-    }
-    if (!m_scratch.open()) {
-        setErrorString(QStringLiteral("could not open a temporary file to stage the upload: %1")
-                           .arg(m_scratch.errorString()));
+    // Refusing when there is nowhere to stage is the whole point of this device:
+    // the bytes are acknowledged to the caller before they reach the server, so a
+    // stage that cannot be trusted has to fail at open() rather than at send. Qt
+    // does not refuse a staging directory that is not there -- it puts the file in
+    // the filesystem root, which succeeds for anybody who can write there -- so
+    // the question goes through staging::openFile(), which asks first and creates
+    // the file where it said it would. See MOLE-297 and MOLE-304.
+    QString why;
+    if (!staging::openFile(m_scratch, &why)) {
+        setErrorString(QStringLiteral("could not stage the upload: %1").arg(why));
         return false;
     }
     return QIODevice::open(mode | QIODevice::Unbuffered);

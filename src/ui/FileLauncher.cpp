@@ -1,5 +1,6 @@
 #include "ui/FileLauncher.h"
 
+#include "core/platform/Staging.h"
 #include "core/tasks/ReadFileTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/NameRules.h"
@@ -36,8 +37,8 @@ QString FileLauncher::scratchDirectory() const
 QString FileLauncher::scratchPathFor(const VfsUri& uri)
 {
     if (!m_scratch)
-        m_scratch = std::make_unique<QTemporaryDir>();
-    if (!m_scratch->isValid())
+        m_scratch = staging::makeDirectory();
+    if (!m_scratch)
         return {};
 
     // Built from components rather than from a path string, and this is the

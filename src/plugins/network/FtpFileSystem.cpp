@@ -3,6 +3,8 @@
 #include "plugins/network/TransferStreams.h"
 #include "plugins/network/UnixListing.h"
 
+#include "core/platform/Staging.h"
+
 #include <QTemporaryFile>
 
 namespace mole {
@@ -323,9 +325,10 @@ Result<std::unique_ptr<QIODevice>> FtpFileSystem::openRead(const VfsUri& target,
     // Small enough to hold: fetched whole, over a warm connection, as before.
     if (length <= kFetchWholeBelow) {
         auto scratch = std::make_unique<QTemporaryFile>();
-        if (!scratch->open()) {
-            return Result<std::unique_ptr<QIODevice>>::failure(
-                VfsError::IoError, QStringLiteral("Could not open a local copy for %1").arg(target.path()));
+        QString staging;
+        if (!staging::openFile(*scratch, &staging)) {
+            return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError,
+                QStringLiteral("Could not open a local copy for %1: %2").arg(target.path(), staging));
         }
 
         auto lease = m_pool->take();

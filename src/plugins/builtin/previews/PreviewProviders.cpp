@@ -1,5 +1,6 @@
 #include "plugins/builtin/previews/PreviewProviders.h"
 
+#include "core/platform/Staging.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/VfsManager.h"
 
@@ -171,11 +172,13 @@ void LocalCopyProvider::request(const VfsUri& uri, qint64 maxBytes)
         return;
     }
 
-    if (!m_scratch)
-        m_scratch = std::make_unique<QTemporaryDir>();
-    if (!m_scratch->isValid()) {
-        emit failed(QStringLiteral("Cannot create a scratch directory"));
-        return;
+    if (!m_scratch) {
+        QString why;
+        m_scratch = staging::makeDirectory(&why);
+        if (!m_scratch) {
+            emit failed(QStringLiteral("Cannot make a scratch directory: %1").arg(why));
+            return;
+        }
     }
 
     // The name is kept so the image loader can still pick a decoder by suffix.
@@ -1205,9 +1208,10 @@ void TablePreviewController::reimport()
     m_store.reset();
     // Held by the store rather than by this controller: the store is what has to
     // outlive a reader moving on, and the file it writes to lives in here.
-    auto scratch = std::make_shared<QTemporaryDir>();
-    if (!scratch->isValid()) {
-        setErrorText(QStringLiteral("Could not create a scratch database"));
+    QString why;
+    std::shared_ptr<QTemporaryDir> scratch = staging::makeDirectory(&why);
+    if (!scratch) {
+        setErrorText(QStringLiteral("Could not make a scratch database: %1").arg(why));
         return;
     }
 
@@ -1696,9 +1700,10 @@ void JsonLinesPreviewController::import()
     m_store.reset();
     // Held by the store rather than by this controller: the store is what has to
     // outlive a reader moving on, and the file it writes to lives in here.
-    auto scratch = std::make_shared<QTemporaryDir>();
-    if (!scratch->isValid()) {
-        setErrorText(QStringLiteral("Could not create a scratch database"));
+    QString why;
+    std::shared_ptr<QTemporaryDir> scratch = staging::makeDirectory(&why);
+    if (!scratch) {
+        setErrorText(QStringLiteral("Could not make a scratch database: %1").arg(why));
         return;
     }
 

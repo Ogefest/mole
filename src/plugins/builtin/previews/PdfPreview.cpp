@@ -2,6 +2,7 @@
 
 #include "plugins/builtin/previews/PreviewProviders.h"
 
+#include "core/platform/Staging.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/VfsManager.h"
 
@@ -83,10 +84,11 @@ double PdfPreviewController::pageAspect(int page) const
 QString PdfPreviewController::targetFor(int page, int width)
 {
     if (!m_scratch) {
-        m_scratch = std::make_shared<QTemporaryDir>();
-        if (!m_scratch->isValid()) {
-            setErrorText(QStringLiteral("Could not create a scratch directory for rendered pages"));
-            m_scratch.reset();
+        QString why;
+        m_scratch = staging::makeDirectory(&why);
+        if (!m_scratch) {
+            setErrorText(
+                QStringLiteral("Could not make a scratch directory for rendered pages: %1").arg(why));
             return {};
         }
     }
@@ -394,7 +396,7 @@ QList<FileFact> PdfMetadataReader::factsForBytes(const QByteArray& document)
     // while a path returns the status. It is also what the viewer does with a
     // remote document, so the two agree about what opening one means.
     QTemporaryFile staged;
-    if (!staged.open())
+    if (!staging::openFile(staged))
         return {};
     if (staged.write(document) != document.size())
         return {};

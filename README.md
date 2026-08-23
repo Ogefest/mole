@@ -364,6 +364,7 @@ that third-party code uses, so the API cannot quietly rot.
 | `MOLE_REMOTES_PATH` | where configured drives live, instead of the user profile |
 | `MOLE_PLUGIN_PATH` | extra directories to load plugins from |
 | `MOLE_LOG_PATH` | where the session log is written, instead of the user profile |
+| `MOLE_STAGING_DIR` | where a payload is staged while it is written, instead of the temporary directory |
 | `MOLE_LOG` | what to record in detail: `task`, `drive`, `net`, `curl`, or `all` |
 | `MOLE_PASSPHRASE` | unlocks the credential store for `mole-tasks`, which has nobody to ask |
 | `MOLE_SCREENSHOT_DIR` | where `tst_Walkthrough` writes its pictures |

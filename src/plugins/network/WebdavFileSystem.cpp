@@ -2,6 +2,8 @@
 
 #include "plugins/network/TransferStreams.h"
 
+#include "core/platform/Staging.h"
+
 #include <QTemporaryFile>
 #include <QUrl>
 
@@ -302,9 +304,10 @@ Result<void> WebdavFileSystem::rename(const VfsUri& from, const VfsUri& to)
 Result<std::unique_ptr<QIODevice>> WebdavFileSystem::openRead(const VfsUri& target, qint64)
 {
     auto scratch = std::make_unique<QTemporaryFile>();
-    if (!scratch->open()) {
-        return Result<std::unique_ptr<QIODevice>>::failure(
-            VfsError::IoError, QStringLiteral("Could not open a local copy for %1").arg(target.path()));
+    QString staging;
+    if (!staging::openFile(*scratch, &staging)) {
+        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError,
+            QStringLiteral("Could not open a local copy for %1: %2").arg(target.path(), staging));
     }
 
     Call call;

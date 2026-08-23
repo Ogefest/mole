@@ -1,5 +1,6 @@
 #include "ui/DragSource.h"
 
+#include "core/platform/Staging.h"
 #include "core/tasks/TaskManager.h"
 #include "core/tasks/TransferTask.h"
 #include "core/vfs/VfsManager.h"
@@ -29,8 +30,8 @@ void DragSource::setStartHook(StartHook hook)
 QString DragSource::stagedPathFor(const VfsUri& uri)
 {
     if (!m_scratch)
-        m_scratch = std::make_unique<QTemporaryDir>();
-    if (!m_scratch->isValid())
+        m_scratch = staging::makeDirectory();
+    if (!m_scratch)
         return {};
 
     QString relative = uri.path();
