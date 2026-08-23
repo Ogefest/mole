@@ -8,6 +8,8 @@ add_library(mole_test_support STATIC
     support/FileSystemConformance.cpp
     support/FaultyFileSystem.h
     support/FaultyFileSystem.cpp
+    support/SqliteFaults.h
+    support/SqliteFaults.cpp
     support/OfferingFileSystem.h
     support/OfferingFileSystem.cpp
     support/FakePlugin.h
@@ -243,6 +245,9 @@ mole_add_test(tst_FileVersions      SOURCES core/tst_FileVersions.cpp)
 # The fault injector is a test tool, and one that miscounts bytes would make
 # every suite built on it green for the wrong reason.
 mole_add_test(tst_FaultyFileSystem  SOURCES support/tst_FaultyFileSystem.cpp)
+# And the SQLite fault equipment, held to what it claims: a case that arranges a
+# failure which does not happen asserts on whatever happened instead. See MOLE-293.
+mole_add_test(tst_SqliteFaults      SOURCES support/tst_SqliteFaults.cpp)
 
 # The drive that contributes actions. A fake that lies makes every suite built on
 # it green for the wrong reason, so it is held to the same contract as a backend.

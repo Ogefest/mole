@@ -1,4 +1,5 @@
 #include "support/MoleTestMain.h"
+#include "support/SqliteFaults.h"
 #include "support/TestSupport.h"
 
 #include "core/tasks/TaskManager.h"
@@ -66,6 +67,8 @@ private slots:
     void aReadThatFailedIsNotATableWithNothingInIt();
     void aBatchCommitThatFailedFailsTheImportRatherThanLosingTheRows();
     void anImportWhoseLastCommitFailedSaysSoRatherThanFinishing();
+    void aWriteRefusedByAnotherConnectionIsReportedAsALockedDatabase();
+    void aWriteWithNoRoomLeftIsToldApartFromALockedDatabase();
     void everyConnectionCarriesTheSettingsAndNotOnlyTheOpenersOwn();
     void noConnectionIsLeftBehindWhateverThreadTheStoreDiesOn();
 
@@ -736,17 +739,11 @@ void TestDelimitedStore::aReadThatFailedIsNotATableWithNothingInIt()
 ///
 /// Qt keeps a registry of connections and this one is the connection on this file:
 /// no seam in the store, no fault injector, and nothing about the store's own
-/// naming assumed. What it is for is stating a failed commit as a fact -- see the
-/// two cases below.
+/// naming assumed. It lives in tests/support/SqliteFaults.h now, because
+/// everything MOLE-293 built stands on it.
 static QSqlDatabase storeConnectionOn(const QString& path)
 {
-    const QStringList names = QSqlDatabase::connectionNames();
-    for (const QString& name : names) {
-        QSqlDatabase candidate = QSqlDatabase::database(name, false);
-        if (candidate.isOpen() && candidate.databaseName() == path)
-            return candidate;
-    }
-    return {};
+    return sqlite::connectionOn(path);
 }
 
 void TestDelimitedStore::aBatchCommitThatFailedFailsTheImportRatherThanLosingTheRows()
@@ -816,6 +813,68 @@ void TestDelimitedStore::anImportWhoseLastCommitFailedSaysSoRatherThanFinishing(
     // The rows that were committed are still readable -- a failed commit is not a
     // corrupt file -- and the store still answers for what it holds.
     QCOMPARE(store.totalRows(), qint64(2));
+}
+
+void TestDelimitedStore::aWriteRefusedByAnotherConnectionIsReportedAsALockedDatabase()
+{
+    // The case MOLE-291 left open, and could not write: describe()'s wording for a
+    // locked database had never been reached by anything, because reaching it means
+    // a write that has waited out a five-second busy timeout. A connection told to
+    // stop waiting fails at once with the same SQLITE_BUSY the timeout would have
+    // produced, which is what makes this a test rather than a five-second sleep.
+    // See MOLE-293, and tests/support/SqliteFaults.h for why this is SQLite's own
+    // levers rather than a driver wrapper.
+    const QString path = QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite"));
+    DelimitedStore store(path);
+    QVERIFY(store.open());
+    QVERIFY(store.beginImport({ QStringLiteral("id"), QStringLiteral("name") }));
+
+    QSqlDatabase writing = storeConnectionOn(path);
+    QVERIFY2(writing.isValid(), "the store's connection has to be findable, or this case tests nothing");
+    QVERIFY(sqlite::stopWaitingForLocks(writing));
+
+    sqlite::WriteLock held(path);
+    QVERIFY2(held.isHeld(), "the lock has to be taken, or the write below is unhindered");
+
+    QString error;
+    QVERIFY2(!store.addRows({ { QStringLiteral("1"), QStringLiteral("one") } }, &error),
+        "a write into a locked database was reported as a write that landed");
+
+    // The wording, which is the whole point: a locked database is another
+    // connection holding the file, and an import that reported it as a fault of
+    // the disk sent whoever read it looking in the wrong place entirely.
+    QVERIFY2(error.contains(QStringLiteral("locked by another connection")), qPrintable(error));
+    QVERIFY2(!error.contains(QStringLiteral("disk is full")), qPrintable(error));
+}
+
+void TestDelimitedStore::aWriteWithNoRoomLeftIsToldApartFromALockedDatabase()
+{
+    // The other failure that loses an import's rows, and the one whose reporting a
+    // reader is most likely to meet. SQLite's own answer for it, from a database
+    // capped at three pages -- so this is "database or disk is full" out of the
+    // layer that really produces it, rather than a string a test wrote.
+    const QString path = QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite"));
+    DelimitedStore store(path);
+    QVERIFY(store.open());
+    QVERIFY(store.beginImport({ QStringLiteral("id"), QStringLiteral("name") }));
+
+    QSqlDatabase writing = storeConnectionOn(path);
+    QVERIFY(writing.isValid());
+    QVERIFY2(sqlite::capAt(writing, 3), "the cap has to take, or the rows below are unhindered");
+
+    QList<QStringList> rows;
+    rows.reserve(4000);
+    for (int i = 0; i < 4000; ++i)
+        rows.append({ QString::number(i), QString(200, QLatin1Char('x')) });
+
+    QString error;
+    QVERIFY2(!store.addRows(rows, &error), "rows that did not fit were reported as rows that did");
+
+    // Told apart from a locked database, which is what describe() exists for: this
+    // one is the disk, and it says so in SQLite's words rather than in the sentence
+    // about another connection.
+    QVERIFY2(error.contains(QStringLiteral("disk is full")), qPrintable(error));
+    QVERIFY2(!error.contains(QStringLiteral("locked by another connection")), qPrintable(error));
 }
 
 void TestDelimitedStore::everyConnectionCarriesTheSettingsAndNotOnlyTheOpenersOwn()
