@@ -537,6 +537,13 @@ if(MOLE_HAVE_ARCHIVE_PLUGIN)
 
     mole_add_test(tst_CompressTask      SOURCES plugins/tst_CompressTask.cpp
                                        LIBS mole_archive_backend)
+
+    # Which files a scan goes inside, asked of the real function with the real
+    # factory behind it. Here rather than beside the other sdk code because it
+    # needs the archive backend, which is what makes the answer real. See
+    # MOLE-305.
+    mole_add_test(tst_ScanReaders       SOURCES sdk/tst_ScanReaders.cpp
+                                       LIBS mole_archive_backend)
 else()
     message(STATUS "Archive tests skipped: the archive plugin was not built")
 endif()
