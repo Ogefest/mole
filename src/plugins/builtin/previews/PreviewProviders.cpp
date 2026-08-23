@@ -8,6 +8,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QImage>
 #include <QImageReader>
 #include <QLocale>
 #include <QMimeDatabase>
@@ -975,6 +976,9 @@ ImagePreviewController::ImagePreviewController(PluginServices services, QObject*
         setLoading(false);
         m_source = url;
         emit sourceChanged();
+        // Before the view has a source, so the button is already right the first
+        // time it is drawn rather than being corrected after a failed attempt.
+        examineHeader(QUrl(url).toLocalFile());
     });
     connect(m_copy, &LocalCopyProvider::failed, this, [this](const QString& reason) {
         setLoading(false);
@@ -988,10 +992,57 @@ void ImagePreviewController::load(const FileEntry& entry)
     setLoading(true);
     m_source.clear();
     emit sourceChanged();
+    m_actualSizeAvailable = true;
+    m_actualSizeReason.clear();
+    emit actualSizeChanged();
     m_copy->request(entry.uri);
 }
 
-void ImagePreviewController::reportDecodeFailure()
+void ImagePreviewController::examineHeader(const QString& path)
+{
+    // The header and nothing else: QImageReader::size() is read out of it
+    // without decoding a pixel, and allocationLimit() is what this build of Qt
+    // will let a handler allocate. The file is already on local disk by the time
+    // this runs, so it costs an open and a few dozen bytes.
+    QImageReader reader(path);
+    const QSize pixels = reader.size();
+    const int limitMiB = QImageReader::allocationLimit();
+
+    // A handler that will not say how large the image is, or a build with the
+    // limit turned off, leaves 1:1 offered: nothing here says it cannot be done,
+    // and reportDecodeFailure() is where an attempt that then fails is caught.
+    if (!pixels.isValid() || limitMiB <= 0)
+        return;
+
+    // What the decode would ask for, in the format the handler says it would
+    // produce. One that will not say is assumed to want the widest, because
+    // guessing low here is what shows an empty frame.
+    int bits = 32;
+    const QImage::Format format = reader.imageFormat();
+    if (format != QImage::Format_Invalid)
+        bits = qMax(1, int(QImage::toPixelFormat(format).bitsPerPixel()));
+
+    const qint64 bytes = qint64(pixels.width()) * pixels.height() * bits / 8;
+    if (bytes <= qint64(limitMiB) * 1024 * 1024)
+        return;
+
+    // The size is in the reason on purpose. A greyed button with no explanation
+    // reads as the application being broken; this reads as the picture being
+    // bigger than the machine will hold at once.
+    withdrawActualSize(
+        QStringLiteral("too large to show at full size (%1 × %2)").arg(pixels.width()).arg(pixels.height()));
+}
+
+void ImagePreviewController::withdrawActualSize(const QString& reason)
+{
+    if (!m_actualSizeAvailable && m_actualSizeReason == reason)
+        return;
+    m_actualSizeAvailable = false;
+    m_actualSizeReason = reason;
+    emit actualSizeChanged();
+}
+
+void ImagePreviewController::reportDecodeFailure(bool atActualSize)
 {
     // Only once there is something to have failed at. A QML Image reports Error
     // for an empty source as well, which is what it has between the file being
@@ -999,6 +1050,17 @@ void ImagePreviewController::reportDecodeFailure()
     // that gap would never show an image at all.
     if (m_source.isEmpty())
         return;
+
+    // The file is not what failed here: it was on screen, fitted, until somebody
+    // asked to see it closer. The header does not always know -- a handler that
+    // will not report a size leaves 1:1 offered -- so this is the other place
+    // that finds out, and the answer is the same one: the button goes, with a
+    // reason beside it, and the picture stays.
+    if (atActualSize) {
+        withdrawActualSize(QStringLiteral("too large to show at full size"));
+        return;
+    }
+
     decline(QStringLiteral("this build's image plugins could not decode it"));
 }
 

@@ -47,8 +47,21 @@ Item {
     Connections {
         target: picture
         function onStatusChanged() {
-            if (picture.status === Image.Error && controller && controller.reportDecodeFailure)
-                controller.reportDecodeFailure()
+            if (picture.status !== Image.Error || !controller || !controller.reportDecodeFailure)
+                return
+
+            // Two different answers arrive through this one status, and telling
+            // them apart is the whole of MOLE-288. A decode that failed at full
+            // size failed because of what was asked for: the fitted picture was
+            // on screen a moment ago, so the view goes back to it and the
+            // controller withdraws 1:1 rather than handing the file down the
+            // ladder to a page of metadata.
+            if (view.actualSize) {
+                view.actualSize = false
+                controller.reportDecodeFailure(true)
+                return
+            }
+            controller.reportDecodeFailure()
         }
     }
 
@@ -78,18 +91,22 @@ Item {
         }
         Button {
             text: view.actualSize ? "Fit" : "1:1"
+            // Going back to a fitted view always works. Leaving it is what the
+            // controller has an opinion about.
+            enabled: view.actualSize || !controller || controller.actualSizeAvailable
             flat: true
             font.pixelSize: App.smallTextSize
             focusPolicy: Qt.NoFocus
             onClicked: view.actualSize = !view.actualSize
         }
-    }
-
-    Label {
-        anchors.centerIn: parent
-        visible: controller && controller.errorText.length > 0
-        text: controller ? controller.errorText : ""
-        color: App.colour.bad
-        wrapMode: Text.Wrap
+        // Why it is greyed. A disabled button with nothing beside it reads as
+        // the application being broken rather than as the picture being larger
+        // than this build will decode at once.
+        Label {
+            visible: !view.actualSize && controller && !controller.actualSizeAvailable
+            text: controller ? controller.actualSizeReason : ""
+            color: App.colour.textMuted
+            font.pixelSize: App.smallTextSize
+        }
     }
 }

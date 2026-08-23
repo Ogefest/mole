@@ -426,11 +426,23 @@ class ImagePreviewController final : public PreviewController
 {
     Q_OBJECT
     Q_PROPERTY(QString source READ source NOTIFY sourceChanged)
+    /// Whether this image can be shown at full size at all, and what to say
+    /// where it cannot.
+    ///
+    /// A fitted view decodes at the size it is drawn at, which is why an
+    /// enormous photograph previews perfectly well; 1:1 removes that bound, and
+    /// Qt refuses any decode whose pixels exceed QImageReader::allocationLimit().
+    /// So the button has to know what it is asking for before it offers it --
+    /// pressing it used to replace the picture with an empty frame. See MOLE-288.
+    Q_PROPERTY(bool actualSizeAvailable READ actualSizeAvailable NOTIFY actualSizeChanged)
+    Q_PROPERTY(QString actualSizeReason READ actualSizeReason NOTIFY actualSizeChanged)
 
 public:
     explicit ImagePreviewController(PluginServices services, QObject* parent = nullptr);
 
     QString source() const { return m_source; }
+    bool actualSizeAvailable() const { return m_actualSizeAvailable; }
+    QString actualSizeReason() const { return m_actualSizeReason; }
     void load(const FileEntry& entry) override;
 
     /// What the view calls when the image element cannot decode the file.
@@ -444,13 +456,28 @@ public:
     ///
     /// So it gives the file up and the tab steps down to the list of facts, which
     /// is more than an empty frame with a sentence in it. See ADR-0078.
-    Q_INVOKABLE void reportDecodeFailure();
+    ///
+    /// `atActualSize` is what separates two answers that arrive through one
+    /// status. A decode that failed because the reader asked for full size says
+    /// nothing about the file -- the fitted picture was on screen a moment ago --
+    /// so it withdraws 1:1 rather than handing the file down the ladder. Without
+    /// it, asking to see an image closer turned a working preview into a page of
+    /// metadata.
+    Q_INVOKABLE void reportDecodeFailure(bool atActualSize = false);
 
 signals:
     void sourceChanged();
+    void actualSizeChanged();
 
 private:
+    /// Reads the local copy's header -- no decode -- and works out whether Qt
+    /// would allow a full-size one, so 1:1 is offered only where it can work.
+    void examineHeader(const QString& path);
+    void withdrawActualSize(const QString& reason);
+
     QString m_source;
+    bool m_actualSizeAvailable = true;
+    QString m_actualSizeReason;
     LocalCopyProvider* m_copy = nullptr;
 };
 

@@ -37,11 +37,13 @@
 #include <QFile>
 #include <QGuiApplication>
 #include <QImage>
+#include <QImageReader>
 #include <QImageWriter>
 #include <QPageSize>
 #include <QPainter>
 #include <QPdfWriter>
 #include <QProcess>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QSqlDatabase>
 #include <QSqlQuery>
@@ -301,6 +303,8 @@ private slots:
     void aRefusalWithNothingToSayStillSaysWhichViewerGaveUp();
     void anImageThisBuildCannotDecodeFallsBackToTheFacts();
     void aViewerWithNoSourceYetDoesNotGiveTheFileUp();
+    void anImageTooLargeToDecodeWholeIsNotOfferedAtFullSize();
+    void anImageThatFailedOnlyAtFullSizeKeepsItsPicture();
     void aDeclineStepsOneRungDownRatherThanToTheBottom();
     void theSoundIsOneSettingForEveryVideo();
 
@@ -3330,6 +3334,132 @@ void TestPreview::aViewerWithNoSourceYetDoesNotGiveTheFileUp()
     viewer.reportDecodeFailure();
     QCOMPARE(gaveUp.count(), 0);
     QVERIFY(viewer.errorText().isEmpty());
+}
+
+void TestPreview::anImageTooLargeToDecodeWholeIsNotOfferedAtFullSize()
+{
+    // A fitted view decodes at the size it is drawn at, which is why an enormous
+    // photograph previews perfectly well. 1:1 removes that bound, and Qt refuses
+    // any decode whose pixels exceed QImageReader::allocationLimit() -- so
+    // pressing it used to replace the picture with an empty frame, and since a
+    // decode error hands the file back, with a page of metadata.
+    //
+    // The limit is lowered rather than the fixture made enormous. What the fault
+    // turns on is the comparison, and the default limit is 128 MiB: a file past
+    // it would be thirty-six million pixels written and read on every run. The
+    // limit is asked for and never assumed -- it is a property of the build --
+    // and restored afterwards, because it belongs to the process and not to this
+    // case.
+    const int limit = QImageReader::allocationLimit();
+    const auto restore = qScopeGuard([limit] { QImageReader::setAllocationLimit(limit); });
+    QImageReader::setAllocationLimit(1);
+
+    // Four million pixels: past one mebibyte at any depth a PNG handler might
+    // choose, so the case does not turn on which one it picks.
+    QImage wall(2000, 2000, QImage::Format_RGB32);
+    wall.fill(Qt::darkCyan);
+    QByteArray encoded;
+    {
+        QBuffer buffer(&encoded);
+        buffer.open(QIODevice::WriteOnly);
+        QImageWriter writer(&buffer, "png");
+        QVERIFY(writer.write(wall));
+    }
+    QVERIFY(m_tree->writeFile(QStringLiteral("wall.png"), encoded));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("wall.png"));
+    QVERIFY(preview);
+    QCOMPARE(preview->providerId(), QStringLiteral("mole.preview.image"));
+
+    auto* viewer = qobject_cast<ImagePreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QSignalSpy gaveUp(viewer, &PreviewController::declined);
+    QVERIFY(waitFor([viewer] { return !viewer->source().isEmpty(); }, 5000));
+
+    // The fitted view is untouched: the picture is there and nothing failed.
+    QVERIFY(viewer->errorText().isEmpty());
+
+    // Full size is not offered, and the reason carries the size -- a greyed
+    // button with no explanation reads as the application being broken rather
+    // than as the picture being larger than this build will hold at once.
+    QVERIFY2(!viewer->actualSizeAvailable(), "full size was offered for an image Qt will not allocate");
+    QVERIFY2(viewer->actualSizeReason().contains(QStringLiteral("2000 × 2000")),
+        qPrintable(viewer->actualSizeReason()));
+    QVERIFY2(viewer->actualSizeReason().contains(QStringLiteral("full size")),
+        qPrintable(viewer->actualSizeReason()));
+
+    // And it is still an image. Nothing about this file failed to decode, so the
+    // tab must not step down to the list of facts.
+    QCOMPARE(gaveUp.count(), 0);
+    QCOMPARE(preview->providerId(), QStringLiteral("mole.preview.image"));
+
+    // The other half, and why this is one case rather than two: an image the
+    // limit does allow still offers 1:1 exactly as it did before.
+    QImage stamp(64, 48, QImage::Format_RGB32);
+    stamp.fill(Qt::darkGreen);
+    QByteArray small;
+    {
+        QBuffer buffer(&small);
+        buffer.open(QIODevice::WriteOnly);
+        QImageWriter writer(&buffer, "png");
+        QVERIFY(writer.write(stamp));
+    }
+    QVERIFY(m_tree->writeFile(QStringLiteral("stamp.png"), small));
+
+    PreviewTabController* fits = openPreview(QStringLiteral("stamp.png"));
+    QVERIFY(fits);
+    auto* fitsViewer = qobject_cast<ImagePreviewController*>(fits->viewer());
+    QVERIFY(fitsViewer);
+    QVERIFY(waitFor([fitsViewer] { return !fitsViewer->source().isEmpty(); }, 5000));
+    QVERIFY2(fitsViewer->actualSizeAvailable(), "an image well inside the limit was refused full size");
+    QVERIFY(fitsViewer->actualSizeReason().isEmpty());
+}
+
+void TestPreview::anImageThatFailedOnlyAtFullSizeKeepsItsPicture()
+{
+    // The header is not always enough to know: a handler that will not report a
+    // size leaves 1:1 offered, and the refusal then arrives from the decode
+    // instead. It is still not the file's fault -- the fitted picture was on
+    // screen a moment ago -- so the viewer withdraws the button rather than
+    // handing the file down the ladder.
+    //
+    // The controller directly, because what is under test is which of two
+    // answers one Image status turns into, and the QML view has no part in that.
+    QImage tile(64, 48, QImage::Format_RGB32);
+    tile.fill(Qt::darkRed);
+    QByteArray encoded;
+    {
+        QBuffer buffer(&encoded);
+        buffer.open(QIODevice::WriteOnly);
+        QImageWriter writer(&buffer, "png");
+        QVERIFY(writer.write(tile));
+    }
+    QVERIFY(m_tree->writeFile(QStringLiteral("tile.png"), encoded));
+
+    FileEntry entry;
+    entry.name = QStringLiteral("tile.png");
+    entry.uri = m_tree->rootUri().child(QStringLiteral("tile.png"));
+    entry.mimeType = QStringLiteral("image/png");
+
+    ImagePreviewController viewer(m_app->services());
+    QSignalSpy gaveUp(&viewer, &PreviewController::declined);
+    viewer.load(entry);
+    QVERIFY(waitFor([&viewer] { return !viewer.source().isEmpty(); }, 5000));
+    QVERIFY(viewer.actualSizeAvailable());
+
+    // Reported from a view that was showing the image at full size.
+    viewer.reportDecodeFailure(true);
+    QCOMPARE(gaveUp.count(), 0);
+    QVERIFY2(!viewer.actualSizeAvailable(), "1:1 was still offered after it had failed");
+    QVERIFY(!viewer.actualSizeReason().isEmpty());
+    // No error text either: what is on screen is the fitted picture, and a red
+    // sentence over it would be describing something that is not wrong.
+    QVERIFY(viewer.errorText().isEmpty());
+
+    // And the same status from a fitted view is the other answer, unchanged: a
+    // file this build cannot decode is handed to the viewer below.
+    viewer.reportDecodeFailure();
+    QCOMPARE(gaveUp.count(), 1);
 }
 
 void TestPreview::aDeclineStepsOneRungDownRatherThanToTheBottom()
