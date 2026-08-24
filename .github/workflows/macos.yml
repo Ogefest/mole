@@ -33,7 +33,7 @@ jobs:
       QT_VERSION: 6.8.2
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Ninja
         run: brew install ninja

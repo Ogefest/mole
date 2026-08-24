@@ -42,7 +42,7 @@ jobs:
       QT_ARCH: win64_msvc2022_64
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # aqtinstall rather than a marketplace action: it is a pinned Python package
       # doing one visible thing, where an action is a repository whose contents

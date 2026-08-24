@@ -62,7 +62,11 @@ jobs:
             openssl-devel libgit2-devel xxhash-devel libvterm-devel libsmbclient-devel \
             libnfs-devel libarrow-devel parquet-libs-devel
 
-      - uses: actions/checkout@v4
+      # v7 rather than v4, because the first run of this job said so: the runner
+      # forced v4's Node 20 onto Node 24 and annotated it. Nothing else about the
+      # run needed changing -- 130 tests passed against Arrow 15.0.2, as an
+      # unprivileged account, with no locale. See MOLE-307.
+      - uses: actions/checkout@v7
 
       # **The suite does not run as root, and that is not tidiness.** A container
       # job is root, and root reads a file whose permissions have all been taken

@@ -476,6 +476,22 @@ project, and a contributor should never hit a wall of text they cannot read.
   there. It is `Q_OS_UNIX` now, which changes nothing on Linux and cannot be
   verified from here; that case on the first green run is the check.
 
+  **What has run, and what has not.** Until 2026-08-24 no workflow in this
+  repository had ever executed -- the branch was unpushed for a while, and the three
+  that are not the release are `workflow_dispatch` only. *Second family* has now
+  run once and passed: configure, build and the fast tier on Fedora 40, 130 tests
+  green against Arrow 15.0.2, as an unprivileged account with no locale. Its weekly
+  schedule therefore stays enabled; a red one would have been switched off, for the
+  reason the Windows job is dispatch-only.
+
+  **The Windows and macOS jobs have deliberately not been dispatched, and the
+  reason is the code rather than the runners.** The author's call, in their words:
+  the other systems are not ready at the level of the code to build the application
+  correctly. So the two files are the means, ready for the day that changes, and
+  running them now would produce a red badge that says something everybody already
+  knows. What each of them settles when it is finally run is in the paragraphs
+  above.
+
   **Signing and notarisation are out of scope, and that is a decision rather than
   an oversight.** An unsigned application downloaded from the internet is refused
   by Gatekeeper, and the two ways past it are an Apple developer account wired into

@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Qt 6.4 is the only hard dependency. Everything else is found QUIET and
       # switched on with a MOLE_HAVE_* flag, and src/core/CMakeLists.txt says
