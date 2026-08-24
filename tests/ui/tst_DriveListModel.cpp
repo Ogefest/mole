@@ -4,6 +4,7 @@
 
 #include "core/CoreMetaTypes.h"
 #include "core/credentials/SecretStore.h"
+#include "core/settings/Preferences.h"
 #include "core/tasks/QuerySpaceTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/RemoteRegistry.h"
@@ -89,6 +90,13 @@ private slots:
     void connectingDoesNotMoveTheRow();
     void disconnectingReturnsTheRowRatherThanRemovingIt();
     void aShutCredentialStoreShowsAsLocked();
+
+    // ---- which drives the sidebar shows -----------------------------------
+    void everyDriveIsShownUntilSomebodySaysOtherwise();
+    void hidingOneTakesItOutOfTheSidebarAndNothingElse();
+    void theChoiceIsRememberedAcrossARebuild();
+    void aVolumeHiddenAtOnePathIsVisibleAgainAtAnother();
+    void hidingEverythingLeavesNothingToShow();
     void aMountNobodyConfiguredIsIdleLikeAnythingNobodyIsUsing();
 
     void aDriveIsConnectingUntilSomethingHasActuallyAsked();
@@ -134,6 +142,7 @@ private:
     std::unique_ptr<VfsManager> m_vfs;
     std::unique_ptr<TaskManager> m_tasks;
     std::unique_ptr<DriveListModel> m_model;
+    std::unique_ptr<Preferences> m_preferences;
 };
 
 void TestDriveListModel::init()
@@ -148,7 +157,9 @@ void TestDriveListModel::init()
     m_vfs = std::make_unique<VfsManager>();
     m_tasks = std::make_unique<TaskManager>();
     m_gate = std::make_shared<QSemaphore>();
-    m_model = std::make_unique<DriveListModel>(m_vfs.get(), m_registry.get(), m_tasks.get());
+    m_preferences = std::make_unique<Preferences>(QDir(m_dir->path()).filePath(QStringLiteral("prefs.json")));
+    m_model
+        = std::make_unique<DriveListModel>(m_vfs.get(), m_registry.get(), m_tasks.get(), m_preferences.get());
     // The periodic refresh would keep submitting work behind the assertions.
     m_model->setRefreshInterval(0);
 }
@@ -876,6 +887,145 @@ void TestDriveListModel::nothingRecomputesBusyOnATimer()
         QVERIFY2(
             !timer->isActive(), "the only timer here is the capacity refresh, and this test turned it off");
     }
+}
+
+// ---- which drives the sidebar shows -----------------------------------------
+//
+// Nothing said which ones it shows: Home, then every volume discovery admitted,
+// then every configured drive, with no flag anywhere saying *not that one*. See
+// MOLE-311.
+
+/// A drive nobody has said anything about is shown.
+///
+/// Ticking is how you take one out, not how you let one in -- a USB stick plugged
+/// in has to appear, and a stick that appeared in the machine and nowhere in Mole
+/// until somebody opened a dialog would be a worse fault than the clutter.
+void TestDriveListModel::everyDriveIsShownUntilSomebodySaysOtherwise()
+{
+    mountSized(QStringLiteral("one"), std::make_shared<SizedFileSystem>());
+    mountSized(QStringLiteral("two"), std::make_shared<SizedFileSystem>());
+
+    QCOMPARE(m_model->rowCount(), 2);
+    QCOMPARE(m_model->shownCount(), 2);
+    for (int row = 0; row < m_model->rowCount(); ++row) {
+        QVERIFY2(m_model->index(row, 0).data(DriveListModel::ShownRole).toBool(),
+            qPrintable(m_model->index(row, 0).data(DriveListModel::DisplayNameRole).toString()));
+        QVERIFY(!m_model->visibilityKeyAt(row).isEmpty());
+    }
+}
+
+void TestDriveListModel::hidingOneTakesItOutOfTheSidebarAndNothingElse()
+{
+    const QString driveId = configure(QStringLiteral("archive box"));
+    connectConfigured(driveId);
+    mountSized(QStringLiteral("local"), std::make_shared<SizedFileSystem>());
+    QCOMPARE(m_model->rowCount(), 2);
+
+    // The configured one, found by its id rather than by a row number.
+    int row = -1;
+    for (int i = 0; i < m_model->rowCount(); ++i) {
+        if (m_model->configuredIdAt(i) == driveId)
+            row = i;
+    }
+    QVERIFY(row >= 0);
+
+    QSignalSpy changed(m_model.get(), &QAbstractItemModel::dataChanged);
+    m_model->setShown(row, false);
+
+    QVERIFY2(!m_model->index(row, 0).data(DriveListModel::ShownRole).toBool(),
+        "the drive was still marked as shown");
+    QCOMPARE(m_model->shownCount(), 1);
+    QCOMPARE(changed.count(), 1);
+
+    // **And nothing else happened.** The row is still there, the drive is still
+    // configured, and it is still mounted and reachable by its uri: hiding is
+    // about the sidebar and about nothing else.
+    QCOMPARE(m_model->rowCount(), 2);
+    QCOMPARE(m_model->configuredIdAt(row), driveId);
+    QVERIFY(m_registry->drive(driveId).isValid());
+    const QString rootUri = m_model->index(row, 0).data(DriveListModel::RootUriRole).toString();
+    QVERIFY(!rootUri.isEmpty());
+    QVERIFY2(
+        m_vfs->resolve(VfsUri::fromString(rootUri)) != nullptr, "hiding a drive stopped it being reachable");
+
+    // Ticking it again puts it back.
+    m_model->setShown(row, true);
+    QVERIFY(m_model->index(row, 0).data(DriveListModel::ShownRole).toBool());
+    QCOMPARE(m_model->shownCount(), 2);
+}
+
+void TestDriveListModel::theChoiceIsRememberedAcrossARebuild()
+{
+    // A preference rather than session state, which is what makes it survive a
+    // restart -- asserted by building the model again over the same store rather
+    // than by restarting anything.
+    mountSized(QStringLiteral("keep"), std::make_shared<SizedFileSystem>());
+    mountSized(QStringLiteral("hide"), std::make_shared<SizedFileSystem>());
+
+    int hidden = -1;
+    for (int row = 0; row < m_model->rowCount(); ++row) {
+        if (m_model->index(row, 0).data(DriveListModel::DisplayNameRole).toString()
+            == QStringLiteral("hide")) {
+            hidden = row;
+        }
+    }
+    QVERIFY(hidden >= 0);
+    const QString key = m_model->visibilityKeyAt(hidden);
+    m_model->setShown(hidden, false);
+    QVERIFY(m_preferences->value(DriveListModel::hiddenPreferenceKey()).toStringList().contains(key));
+
+    DriveListModel rebuilt(m_vfs.get(), m_registry.get(), m_tasks.get(), m_preferences.get());
+    rebuilt.setRefreshInterval(0);
+    QCOMPARE(rebuilt.rowCount(), 2);
+    QCOMPARE(rebuilt.shownCount(), 1);
+    for (int row = 0; row < rebuilt.rowCount(); ++row) {
+        const bool isTheHiddenOne = rebuilt.visibilityKeyAt(row) == key;
+        QCOMPARE(rebuilt.index(row, 0).data(DriveListModel::ShownRole).toBool(), !isTheHiddenOne);
+    }
+}
+
+void TestDriveListModel::aVolumeHiddenAtOnePathIsVisibleAgainAtAnother()
+{
+    // The documented direction of the error. A detected volume has no id that
+    // outlives the run, so the choice is keyed on the device where there is one
+    // and the root path where there is not -- and a removable disk hidden at one
+    // path and mounted next time at another comes back. A drive that reappears is
+    // a nuisance; a drive that silently does not appear is somebody's files
+    // missing with no way to find out why.
+    Mount stick;
+    stick.id = QStringLiteral("stick");
+    stick.displayName = QStringLiteral("STICK");
+    stick.root = VfsUri::fromLocalPath(QDir(m_dir->path()).filePath(QStringLiteral("media/a/STICK")));
+    stick.fileSystem = std::make_shared<MemoryFileSystem>();
+    m_vfs->addMount(stick);
+    QCOMPARE(m_model->rowCount(), 1);
+    m_model->setShown(0, false);
+    QCOMPARE(m_model->shownCount(), 0);
+
+    // Gone, and back somewhere else -- which is what a stick pulled out and put
+    // in again looks like to the machine.
+    m_vfs->removeMount(QStringLiteral("stick"));
+    Mount again = stick;
+    again.root = VfsUri::fromLocalPath(QDir(m_dir->path()).filePath(QStringLiteral("media/b/STICK")));
+    m_vfs->addMount(again);
+
+    QCOMPARE(m_model->rowCount(), 1);
+    QVERIFY2(m_model->index(0, 0).data(DriveListModel::ShownRole).toBool(),
+        "a volume that came back at a different path stayed hidden, which is the wrong "
+        "direction for this error");
+}
+
+void TestDriveListModel::hidingEverythingLeavesNothingToShow()
+{
+    // A sidebar with every drive taken out has to say so rather than draw an empty
+    // strip, and this is the fact it says it from.
+    mountSized(QStringLiteral("one"), std::make_shared<SizedFileSystem>());
+    mountSized(QStringLiteral("two"), std::make_shared<SizedFileSystem>());
+    for (int row = 0; row < m_model->rowCount(); ++row)
+        m_model->setShown(row, false);
+
+    QCOMPARE(m_model->rowCount(), 2);
+    QCOMPARE(m_model->shownCount(), 0);
 }
 
 MOLE_TEST_MAIN(TestDriveListModel)

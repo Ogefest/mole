@@ -1,17 +1,21 @@
 #include "ui/models/DriveListModel.h"
 
+#include "core/settings/Preferences.h"
 #include "core/tasks/QuerySpaceTask.h"
 #include "core/tasks/TaskManager.h"
+#include "core/vfs/SystemVolumes.h"
 
 #include <QLocale>
 
 namespace mole {
 
-DriveListModel::DriveListModel(VfsManager* vfs, RemoteRegistry* remotes, TaskManager* tasks, QObject* parent)
+DriveListModel::DriveListModel(
+    VfsManager* vfs, RemoteRegistry* remotes, TaskManager* tasks, Preferences* preferences, QObject* parent)
     : QAbstractListModel(parent)
     , m_vfs(vfs)
     , m_remotes(remotes)
     , m_tasks(tasks)
+    , m_preferences(preferences)
 {
     // A minute is often enough to notice a disk filling up and rare enough
     // that nobody will ever see it happen.
@@ -497,6 +501,10 @@ QVariant DriveListModel::data(const QModelIndex& index, int role) const
         const QDateTime at = m_reach.value(row.drive.id).at;
         return at.isValid() ? QLocale().toString(at.time(), QLocale::ShortFormat) : QString();
     }
+    case ShownRole:
+        return isShown(row);
+    case VisibilityKeyRole:
+        return keyFor(row);
     default:
         break;
     }
@@ -516,6 +524,85 @@ QVariant DriveListModel::data(const QModelIndex& index, int role) const
     default:
         return {};
     }
+}
+
+// ---- whether the sidebar shows it ------------------------------------------
+
+QStringList DriveListModel::hiddenKeys() const
+{
+    if (!m_preferences)
+        return {};
+    return m_preferences->value(hiddenPreferenceKey()).toStringList();
+}
+
+QString DriveListModel::keyFor(const Row& row) const
+{
+    // A configured drive has an id of its own and that is the end of it.
+    if (row.isConfigured())
+        return QStringLiteral("configured:") + row.drive.id;
+
+    // A detected volume has no id that outlives the run -- the mount id is made
+    // at startup -- so it is keyed on the device, and on the root path where
+    // there is no device to key on.
+    //
+    // **A stick hidden at /media/x/STICK that comes back somewhere else is
+    // visible again**, and that is the documented direction of the error rather
+    // than a fault: a drive that reappears is a nuisance, and a drive that
+    // silently does not appear is somebody's files missing with no way to find
+    // out why. See MOLE-311.
+    const QString localPath = row.mount.root.toLocalPath();
+    if (!localPath.isEmpty()) {
+        for (const SystemVolume& volume : SystemVolumes::enumerate()) {
+            if (volume.rootPath == localPath && !volume.device.isEmpty())
+                return QStringLiteral("device:") + volume.device;
+        }
+        return QStringLiteral("path:") + localPath;
+    }
+    // Anything else -- a bucket, a share, a scratch drive -- by the root it is
+    // reached at, which is as stable as the mount that made it.
+    return QStringLiteral("root:") + row.mount.root.toString();
+}
+
+bool DriveListModel::isShown(const Row& row) const
+{
+    if (!m_preferences)
+        return true;
+    return !hiddenKeys().contains(keyFor(row));
+}
+
+void DriveListModel::setShown(int row, bool shown)
+{
+    if (!m_preferences || row < 0 || row >= m_rows.size())
+        return;
+    const QString key = keyFor(m_rows.at(row));
+    QStringList hidden = hiddenKeys();
+    if (shown == !hidden.contains(key))
+        return;
+    if (shown)
+        hidden.removeAll(key);
+    else
+        hidden.append(key);
+    m_preferences->setValue(hiddenPreferenceKey(), hidden);
+    const QModelIndex changed = index(row, 0);
+    emit dataChanged(changed, changed, { ShownRole });
+    emit countChanged();
+}
+
+int DriveListModel::shownCount() const
+{
+    int shown = 0;
+    for (const Row& row : m_rows) {
+        if (isShown(row))
+            ++shown;
+    }
+    return shown;
+}
+
+QString DriveListModel::visibilityKeyAt(int row) const
+{
+    if (row < 0 || row >= m_rows.size())
+        return {};
+    return keyFor(m_rows.at(row));
 }
 
 QHash<int, QByteArray> DriveListModel::roleNames() const
@@ -542,6 +629,8 @@ QHash<int, QByteArray> DriveListModel::roleNames() const
         { CanUnlockRole, "canUnlock" },
         { CheckMessageRole, "checkMessage" },
         { CheckedAtRole, "checkedAt" },
+        { ShownRole, "shown" },
+        { VisibilityKeyRole, "visibilityKey" },
     };
 }
 
@@ -566,6 +655,22 @@ void DriveListModel::unmount(int row)
     if (!m_rows.at(row).isMounted())
         return;
     m_vfs->removeMount(m_rows.at(row).mount.id);
+}
+
+void DriveListModel::unmountRoot(const QString& rootUri)
+{
+    // By what the row *is* rather than by where it sits. The sidebar draws a
+    // filtered view of this model now, so a row index there is not a row index
+    // here -- and an eject that acted on the wrong drive because a hidden one sat
+    // above it is exactly the fault worth designing out. See MOLE-311.
+    if (!m_vfs || rootUri.isEmpty())
+        return;
+    for (const Row& row : m_rows) {
+        if (row.isMounted() && row.mount.root.toString() == rootUri) {
+            m_vfs->removeMount(row.mount.id);
+            return;
+        }
+    }
 }
 
 } // namespace mole

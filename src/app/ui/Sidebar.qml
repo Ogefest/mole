@@ -392,11 +392,16 @@ Rectangle {
         // Local disks, network shares and mounted archives are the same kind
         // of row -- that uniformity is the point of the VFS layer.
         ListView {
+            id: driveList
             objectName: "driveList"
             Layout.fillWidth: true
             Layout.preferredHeight: Math.min(contentHeight, sidebar.height * 0.45)
             clip: true
-            model: App.drives
+            // What the sidebar shows is what somebody has left in the list, which
+            // is not necessarily everything: see the Drives dialog. Filtered
+            // rather than a second list, so a row here and a row there are the
+            // same answer about the same drive. MOLE-311.
+            model: App.sidebarDrives
             boundsBehavior: Flickable.StopAtBounds
 
             delegate: PlaceRow {
@@ -448,9 +453,29 @@ Rectangle {
                 // ways of doing the same thing.
                 onUnlockRequested: App.requestCredentials()
                 onCheckRequested: App.checkDrive(configuredId)
+                // By uri rather than by index: this list is filtered, so its row
+                // numbers are not the model's.
                 onRemoveRequested: configuredId !== "" ? App.disconnectDrive(configuredId)
-                                                       : App.drives.unmount(index)
+                                                       : App.drives.unmountRoot(rootUri)
             }
+        }
+
+        // Every drive taken out of the list is a thing to say rather than an
+        // empty strip: a blank space where the drives were reads as a list that
+        // failed to load, and the one place that can explain it is here.
+        Label {
+            objectName: "everyDriveHidden"
+            Layout.fillWidth: true
+            Layout.leftMargin: 8
+            Layout.rightMargin: 8
+            // The view's own count rather than the model's rowCount(): a method
+            // call is not a binding, and this line has to appear the moment the
+            // last row goes.
+            visible: driveList.count === 0
+            text: "No drives are shown — the Drives dialog decides which appear"
+            wrapMode: Text.WordWrap
+            color: App.colour.textMuted
+            font.pixelSize: App.smallTextSize
         }
 
         Rectangle {

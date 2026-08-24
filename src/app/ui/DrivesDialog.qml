@@ -287,7 +287,10 @@ Dialog {
                     Layout.fillWidth: true
                     Label {
                         Layout.fillWidth: true
-                        text: "Your drives"
+                        // Both kinds, because the sidebar has always treated them
+                        // as one kind of thing and this is the same claim made
+                        // where somebody can act on it. See MOLE-311.
+                        text: "Drives"
                         font.bold: true
                     }
                     ToolButton {
@@ -300,24 +303,38 @@ Dialog {
                     }
                 }
 
+                Label {
+                    Layout.fillWidth: true
+                    text: "Tick the ones the sidebar should show"
+                    color: App.colour.textMuted
+                    font.pixelSize: App.smallTextSize
+                    wrapMode: Text.WordWrap
+                }
+
                 ListView {
                     objectName: "configuredDriveList"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     clip: true
                     spacing: 2
-                    model: App.configuredDrives
+                    // Everything the sidebar could show, detected volumes and
+                    // configured drives alike -- the question this list answers is
+                    // *which of these do I want*, and a list of only the ones
+                    // somebody typed in cannot answer it.
+                    model: App.drives
 
                     delegate: Rectangle {
                         // Roles of the one drive model, not fields of a list
                         // built for this dialog. The state shown here and the
                         // state shown in the sidebar are now the same answer.
+                        required property int index
                         required property string configuredId
                         required property string displayName
                         required property string stateText
                         required property string stateSeverity
                         required property bool canConnect
                         required property bool canEject
+                        required property bool shown
 
                         width: ListView.view.width
                         implicitHeight: 40
@@ -330,14 +347,31 @@ Dialog {
                             anchors.fill: parent
                             hoverEnabled: true
                             // The configuration is fetched when a row is opened
-                            // rather than carried on every row all the time.
-                            onClicked: dialog.startEditing(App.driveConfiguration(configuredId))
+                            // rather than carried on every row all the time. A
+                            // detected volume has none to open: it is a disk the
+                            // machine found, and the only thing to say about it
+                            // here is whether it appears.
+                            onClicked: if (configuredId !== "")
+                                           dialog.startEditing(App.driveConfiguration(configuredId))
                         }
 
                         RowLayout {
                             anchors.fill: parent
                             anchors.leftMargin: 8
                             anchors.rightMargin: 4
+
+                            // Unticking takes the row out of the sidebar and does
+                            // nothing else: the drive is not forgotten, not
+                            // unmounted and not unconfigured, and ticking it again
+                            // puts it back.
+                            CheckBox {
+                                objectName: "driveShownTick"
+                                checked: shown
+                                implicitWidth: 28
+                                ToolTip.text: "Show this drive in the sidebar"
+                                ToolTip.visible: hovered
+                                onToggled: App.drives.setShown(index, checked)
+                            }
 
                             ColumnLayout {
                                 Layout.fillWidth: true
@@ -359,6 +393,7 @@ Dialog {
 
                             ToolButton {
                                 objectName: "driveCheckButton"
+                                visible: configuredId !== ""
                                 text: "?"
                                 implicitWidth: 24
                                 implicitHeight: 24
@@ -375,6 +410,7 @@ Dialog {
 
                             ToolButton {
                                 objectName: "driveSweepButton"
+                                visible: configuredId !== ""
                                 text: "⌫"
                                 implicitWidth: 24
                                 implicitHeight: 24
@@ -393,6 +429,7 @@ Dialog {
 
                             ToolButton {
                                 objectName: "driveConnectButton"
+                                visible: configuredId !== ""
                                 text: canEject ? "⏏" : "▶"
                                 implicitWidth: 24
                                 implicitHeight: 24

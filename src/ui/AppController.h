@@ -132,6 +132,9 @@ class AppController : public QObject
     /// the pointer never changes and the model announces its own rows, so a
     /// binding cannot go stale the way a rebuilt list of maps could.
     Q_PROPERTY(QAbstractItemModel* configuredDrives READ configuredDrives CONSTANT)
+    /// What the sidebar draws: every drive that has not been taken out of the
+    /// list. See MOLE-311 and DriveListModel::ShownRole.
+    Q_PROPERTY(QAbstractItemModel* sidebarDrives READ sidebarDrives CONSTANT)
 
 public:
     explicit AppController(QObject* parent = nullptr);
@@ -189,6 +192,7 @@ public:
     /// than a second list carrying its own copy of what state each is in. Two
     /// implementations of one piece of state is how the two drift apart.
     QAbstractItemModel* configuredDrives() const;
+    QAbstractItemModel* sidebarDrives() const;
     /// What was typed to make this drive: the factory, the variant, the root
     /// and the settings, with no secrets and no state. Asked for by id when a
     /// row is opened, rather than carried on every row all the time.
@@ -659,6 +663,7 @@ private:
 
     DriveListModel* m_drives = nullptr;
     QSortFilterProxyModel* m_configuredDrives = nullptr;
+    QSortFilterProxyModel* m_sidebarDrives = nullptr;
     TaskListModel* m_taskModel = nullptr;
     PluginServices m_services;
 };

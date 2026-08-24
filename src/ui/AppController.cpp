@@ -315,7 +315,9 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     // Before the palette, which is handed a pointer to it. Built after, the palette
     // held a null one for the lifetime of the application and quietly offered no
     // drives at all -- everything else about it worked, which is why nobody noticed.
-    m_drives = new DriveListModel(m_vfs, m_remotes, m_taskManager, this);
+    // The preference is what makes a hidden drive still hidden tomorrow, and it
+    // is the same store the theme choice lives in. See MOLE-311.
+    m_drives = new DriveListModel(m_vfs, m_remotes, m_taskManager, m_preferences, this);
 
     // The dialog lists what somebody set up; the sidebar lists everything. One
     // model underneath both, filtered rather than rebuilt, so there is a single
@@ -325,6 +327,19 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     m_configuredDrives->setFilterRole(DriveListModel::ConfiguredIdRole);
     // Any non-empty id: a mount nobody configured has none.
     m_configuredDrives->setFilterRegularExpression(QRegularExpression(QStringLiteral(".+")));
+
+    // What the *sidebar* draws, which is no longer everything: a drive somebody
+    // has taken out of the list is still configured, still mounted and still
+    // reachable, and simply not on the strip. The dialog goes on showing the whole
+    // model, because a list you cannot see is a list you cannot tick. See
+    // MOLE-311.
+    //
+    // Filtered on the role rather than rebuilt, the way the configured list above
+    // is, so every row in either place is the same answer about the same drive.
+    m_sidebarDrives = new QSortFilterProxyModel(this);
+    m_sidebarDrives->setSourceModel(m_drives);
+    m_sidebarDrives->setFilterRole(DriveListModel::ShownRole);
+    m_sidebarDrives->setFilterRegularExpression(QRegularExpression(QStringLiteral("^true$")));
 
     // The palette knows nothing about tabs or navigation: it says what was chosen
     // and the shell does it, which is why the model can be a plain view over the
@@ -721,6 +736,11 @@ QVariantList AppController::driveFields(const QString& factoryScheme, const QStr
 QAbstractItemModel* AppController::configuredDrives() const
 {
     return m_configuredDrives;
+}
+
+QAbstractItemModel* AppController::sidebarDrives() const
+{
+    return m_sidebarDrives;
 }
 
 QVariantMap AppController::driveConfiguration(const QString& id) const

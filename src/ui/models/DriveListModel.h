@@ -12,6 +12,7 @@
 namespace mole {
 
 class TaskManager;
+class Preferences;
 
 /// The sidebar's list of drives. A local disk, an SFTP share and an in-memory
 /// scratch space are all just rows here -- that uniformity is the point.
@@ -120,13 +121,34 @@ public:
         /// anyone can act on.
         CheckMessageRole,
         CheckedAtRole,
+        // ---- whether the sidebar shows it ---------------------------------
+        //
+        // **Nothing said which drives the sidebar shows** -- Home, then every
+        // volume discovery admitted, then every configured drive, and no flag
+        // anywhere saying *not that one*. This is that flag, and it does exactly
+        // one thing: a drive that is not shown is left out of the sidebar. It is
+        // still configured, still mounted and still reachable by its uri.
+        //
+        // **A drive nobody has said anything about is shown.** Ticking is how you
+        // take one out, not how you let one in: a USB stick plugged in has to
+        // appear, and discovery goes to some trouble to admit exactly those. A
+        // stick that appeared in the machine and nowhere in Mole until somebody
+        // opened a dialog would be a worse fault than the clutter it prevents.
+        // See MOLE-311.
+        ShownRole,
+        /// What the choice is remembered against. A configured drive has an id
+        /// that outlives the run; a detected volume has not, so it is keyed on its
+        /// device, or on its root path where there is no device.
+        VisibilityKeyRole,
     };
 
     /// `remotes` may be null in tests that only care about mounts, and `tasks`
     /// in tests that do not care about capacity; the model then simply never
     /// learns any and reports every drive as unknown.
+    /// `preferences` may be null, and then nothing is hidden and nothing can be
+    /// -- which is what every test that does not care about the sidebar wants.
     explicit DriveListModel(VfsManager* vfs, RemoteRegistry* remotes = nullptr, TaskManager* tasks = nullptr,
-        QObject* parent = nullptr);
+        Preferences* preferences = nullptr, QObject* parent = nullptr);
 
     int rowCount(const QModelIndex& parent = {}) const override;
     QVariant data(const QModelIndex& index, int role) const override;
@@ -136,6 +158,25 @@ public:
     /// The configured drive at this row, or empty for a plain mount.
     Q_INVOKABLE QString configuredIdAt(int row) const;
     Q_INVOKABLE void unmount(int row);
+    /// The same, named by the row's root uri rather than by its position -- for a
+    /// view that draws a filtered list and has no source row to give.
+    Q_INVOKABLE void unmountRoot(const QString& rootUri);
+
+    /// Shows or hides the drive at this row in the sidebar.
+    ///
+    /// Nothing else: not unmounted, not unconfigured, not forgotten. Kept in
+    /// Preferences rather than in the session, so a hidden drive is still hidden
+    /// tomorrow -- the same place the theme lives.
+    Q_INVOKABLE void setShown(int row, bool shown);
+    /// How many rows the sidebar would draw. Zero is a thing the sidebar has to
+    /// say out loud, or it reads as a drive list that failed to load.
+    Q_INVOKABLE int shownCount() const;
+    /// The key the choice is stored against, for a test or a dialog that wants to
+    /// speak about a drive that is not on screen.
+    Q_INVOKABLE QString visibilityKeyAt(int row) const;
+
+    /// Where the hidden ones are remembered.
+    static QString hiddenPreferenceKey() { return QStringLiteral("drives.hidden"); }
 
     // ---- what is known about reaching a drive ----------------------------
     //
@@ -242,6 +283,11 @@ private:
 
     void reload();
     State stateOf(const Row& row) const;
+    /// What this row's choice is remembered against. See VisibilityKeyRole.
+    QString keyFor(const Row& row) const;
+    bool isShown(const Row& row) const;
+    /// Every hidden key, from the preference.
+    QStringList hiddenKeys() const;
     /// Redraws the rows whose drive is in `mounts`. What both of the sets above
     /// need after they change.
     void announceStateOf(const QSet<QString>& mounts);
@@ -272,6 +318,7 @@ private:
     int rowOfMount(const QString& mountId) const;
 
     VfsManager* m_vfs = nullptr;
+    Preferences* m_preferences = nullptr;
     RemoteRegistry* m_remotes = nullptr;
     TaskManager* m_tasks = nullptr;
     QList<Row> m_rows;
