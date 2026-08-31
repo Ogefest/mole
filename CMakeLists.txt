@@ -201,9 +201,10 @@ set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
 set(CPACK_STRIP_FILES ON)
 set(CPACK_GENERATOR "DEB;RPM")
 
-# Qt loads two kinds of thing that nothing links, so no tool can derive them from
-# the binaries: the SQL driver, and the QML modules the interface imports. Every
-# other dependency is derived below rather than typed.
+# Qt loads three kinds of thing that nothing links, so no tool can derive them from
+# the binaries: the SQL driver, the QML modules the interface imports, and the media
+# backend that actually decodes. Every other dependency is derived below rather than
+# typed.
 set(MOLE_RUNTIME_QML_MODULES
     qml6-module-qtquick
     qml6-module-qtquick-controls
@@ -229,6 +230,23 @@ set(CPACK_DEBIAN_PACKAGE_PRIORITY optional)
 # much, so it refuses to install on a system that has everything it needs.
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
 set(CPACK_DEBIAN_PACKAGE_DEPENDS "libqt6sql6-sqlite, ${MOLE_DEB_QML_DEPENDS}")
+
+# The third kind. Qt Multimedia is a front end and picks a backend at run time; on
+# Debian and Ubuntu the platform default is GStreamer, whose decoders live in
+# packages nothing here links. Measured on a clean ubuntu:24.04 with the .deb
+# installed and nothing else -- MOLE-317:
+#
+#   as it installs today          none -- so videos are tried anyway and nothing decodes
+#   with these two                MPEG4, H264, H265, VP8, Theora, WMV
+#
+# Recommends rather than Depends, because that is the strength the relationship has:
+# apt installs recommends by default, so the ordinary install gets video, while a
+# minimal system without `universe` enabled -- where gstreamer1.0-libav lives -- can
+# still install the package and browse files. A missing decoder must not be an
+# install failure.
+if(MOLE_HAVE_MULTIMEDIA)
+    set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "gstreamer1.0-plugins-good, gstreamer1.0-libav")
+endif()
 
 # --- .rpm -------------------------------------------------------------------
 

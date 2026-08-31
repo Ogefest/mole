@@ -173,6 +173,11 @@ if(BASH_PROGRAM)
     # silence: the dependencies nothing links and so nothing derives. See MOLE-121.
     mole_add_shell_test(tst_Packages
                         SCRIPT scripts/tst_Packages.sh)
+    # The self-contained bundle, and the same kind of silence one layer over: which
+    # Qt plugin trees it carries. A tree left out of the bundler's list is a feature
+    # the artefact has not got, and every other check still passes. See MOLE-317.
+    mole_add_shell_test(tst_Bundle
+                        SCRIPT scripts/tst_Bundle.sh)
     # The guard on the Qt LGPL conditions, and whether it can fail for the reason it
     # exists. It needs a real binary to build an artefact around: the first two
     # questions it asks are about one. See MOLE-298.

@@ -118,13 +118,40 @@ collect_deps() {
 }
 
 echo "  collecting Qt plugins"
-for group in platforms platformthemes sqldrivers imageformats iconengines \
+for group in platforms platformthemes sqldrivers imageformats iconengines multimedia \
              xcbglintegrations wayland-shell-integration wayland-decoration-client \
              wayland-graphics-integration-client; do
     [[ -d "$QT_ROOT/plugins/$group" ]] || continue
     mkdir -p "$PLUGINDIR/$group"
     cp -a "$QT_ROOT/plugins/$group/." "$PLUGINDIR/$group/"
 done
+
+# **Of the two media backends only one can be bundled, and it is not the default.**
+# Qt Multimedia is a front end; the plugin above is what decodes. Both were absent
+# until now, which is why the AppImage reported no codecs on any machine however well
+# equipped, and why `mole --plugins` from the tarball aborted outright on a machine
+# with no Qt installed -- QMediaFormat::supportedVideoCodecs() asserts when there is
+# no backend at all. See MOLE-317.
+#
+# The gstreamer backend cannot be made self-contained by anything this script does.
+# Its NEEDED libraries are the GStreamer framework and nothing else; the 127 elements
+# that do the actual work are dlopened at run time from the host's
+# gstreamer-1.0 directory, so the dependency walk below cannot see them and would not
+# copy them. Bundling it produces a backend with nothing behind it -- which is not a
+# harmless absence but the exact state that segfaulted the release runner in
+# MOLE-314: Qt reports no codecs, Mole tries anyway, and GStreamer dies linking a
+# NULL element.
+#
+# The ffmpeg backend asks for libavcodec, libavformat, libswscale, libswresample,
+# libavutil and libva, every one of them a NEEDED that the walk below collects. So it
+# is the one that can travel, and it is named in the launcher rather than left to
+# whichever Qt enumerates first.
+if [[ -d "$PLUGINDIR/multimedia" ]]; then
+    rm -f "$PLUGINDIR/multimedia/libgstreamermediaplugin.so"
+    if [[ ! -e "$PLUGINDIR/multimedia/libffmpegmediaplugin.so" ]]; then
+        echo "  this Qt has no ffmpeg media backend, so the bundle would carry none"
+    fi
+fi
 
 echo "  collecting QML modules"
 if [[ -d "$QT_ROOT/qml" ]]; then
@@ -146,6 +173,10 @@ export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export QT_PLUGIN_PATH="$HERE/usr/plugins"
 export QML2_IMPORT_PATH="$HERE/usr/qml"
 export QML_IMPORT_PATH="$HERE/usr/qml"
+# The one backend a bundle can carry -- see the note beside the plugin groups. Named
+# rather than left to Qt's enumeration, so what this artefact decodes with is a fact
+# and shows up in `mole --plugins`.
+export QT_MEDIA_BACKEND=ffmpeg
 exec "$HERE/usr/bin/mole" "$@"
 LAUNCHER
 chmod +x "$DIST/mole"
@@ -168,6 +199,22 @@ done < <(find "$PLUGINDIR" -name '*.so' -print0 2>/dev/null)
 if [[ ! -e "$PLUGINDIR/platforms/libqxcb.so" ]]; then
     echo "  the xcb platform plugin is not in the bundle, so it would not start at all"
     exit 1
+fi
+
+# And the second one that is not optional, for a build that has Qt Multimedia in it.
+# Asked of the binary rather than of a build flag, so it follows the build: if this
+# links Qt6Multimedia then something will ask that library what it can decode, and
+# with no backend the answer is an assertion rather than an empty list. A bundle
+# without a backend is an application that ends the process on `mole --plugins`.
+# See MOLE-317, and MOLE-316 for why the absence is fatal rather than disappointing.
+if objdump -p "$BIN" 2>/dev/null | grep -q 'NEEDED.*libQt6Multimedia'; then
+    if ! compgen -G "$PLUGINDIR/multimedia/*.so" > /dev/null; then
+        echo "  this build links Qt6Multimedia and the bundle carries no media backend,"
+        echo "  so mole --plugins would abort on any machine without Qt installed."
+        echo "  Install Qt's ffmpeg media plugin on this machine and run again --"
+        echo "  libqt6multimedia6 carries it on Debian/Ubuntu."
+        exit 1
+    fi
 fi
 
 # Nothing in the bundle may be short of a library. `ldd` over every object it holds,

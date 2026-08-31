@@ -30,6 +30,22 @@ grep -q 'set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")' CMakeLists.txt \
 grep -q 'set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)' CMakeLists.txt \
     || fail "the .deb does not derive its dependencies from what was linked"
 
+begin "the .deb asks for the decoders Qt Multimedia is a front end to"
+# The third thing nothing links and so nothing derives, beside the QML modules and
+# the SQL driver. Measured on a clean ubuntu:24.04 with the .deb installed and
+# nothing else: the platform default is GStreamer, whose decoders are in separate
+# packages, so video preview reported no codecs at all. Recommends rather than
+# Depends is deliberate -- see the note beside it -- so this asks for the
+# relationship it should have rather than merely for a mention. See MOLE-317.
+if grep -q 'MOLE_HAVE_MULTIMEDIA' CMakeLists.txt; then
+    recommends=$(sed -n 's/^ *set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "\(.*\)").*/\1/p' CMakeLists.txt)
+    [ -n "$recommends" ] || fail "the .deb recommends nothing, so a plain install decodes no video"
+    for package in gstreamer1.0-plugins-good gstreamer1.0-libav; do
+        printf '%s' "$recommends" | grep -qF "$package" \
+            || fail "the .deb does not ask for $package"
+    done
+fi
+
 begin "the packaged version is the one place the version lives"
 version=$(sed -n 's/^ *VERSION \([0-9][0-9.]*\)$/\1/p' CMakeLists.txt)
 [ -n "$version" ] || fail "cannot tell what version the repository is at"

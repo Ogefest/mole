@@ -236,6 +236,14 @@ jobs:
       - name: Both packages install on a clean system
         run: |
           version=$(make version)
+          # The codec line beside the two plugin lines, one step further down and for
+          # the same reason: a package can install, start, load every Mole plugin and
+          # still decode nothing, because Qt Multimedia is a front end that picks its
+          # backend at run time. `none` there is not a missing feature but the state
+          # that segfaulted this runner in MOLE-314, so it fails here. An uppercase
+          # letter after the colon is a codec named; the failing answer begins
+          # "none". See MOLE-317.
+          #
           # --plugins rather than --version, and this is the check that matters: a
           # package can install, start and answer its version while loading none of
           # the plugins it shipped. Both of these did. GNUInstallDirs gives lib64 on
@@ -251,6 +259,7 @@ jobs:
             QT_QPA_PLATFORM=offscreen mole --plugins | tee /tmp/said
             grep -q 'Archive drives' /tmp/said
             grep -q 'Standard network drives' /tmp/said
+            grep -qE 'video codecs it reports: [A-Z]' /tmp/said
             test -f /usr/share/applications/mole.desktop
             apt-get remove -y -qq mole >/dev/null
             test ! -e /usr/bin/mole"
@@ -261,6 +270,7 @@ jobs:
             QT_QPA_PLATFORM=offscreen mole --plugins | tee /tmp/said
             grep -q 'Archive drives' /tmp/said
             grep -q 'Standard network drives' /tmp/said
+            grep -qE 'video codecs it reports: [A-Z]' /tmp/said
             test -f /usr/share/applications/mole.desktop
             dnf remove -y -q mole >/dev/null
             test ! -e /usr/bin/mole"
@@ -273,6 +283,14 @@ jobs:
       # newest thing here. Extracted rather than mounted, because a container has no
       # FUSE, and with the GL runtime any desktop has -- the bundle deliberately
       # leaves those to the host, since they belong to the graphics driver.
+      #
+      # The X client libraries are installed for that same reason and were missing
+      # here: `is_excluded` in make-bundle.sh names them as the host's half of a
+      # protocol whose other half is a running server, so every desktop has them and
+      # a bare container has not. Nothing in the bundle needed them until it started
+      # carrying a media backend, whose dependency closure reaches them through
+      # libva. A container leaner than any desktop is not the machine this step is
+      # asking about. See MOLE-317.
       - name: The AppImage starts on the oldest distribution it promises, and the newest
         run: |
           version=$(make version)
@@ -282,7 +300,8 @@ jobs:
               -e APPIMAGE_EXTRACT_AND_RUN=1 -e DEBIAN_FRONTEND=noninteractive "$image" bash -c "
                 set -e
                 apt-get update -qq >/dev/null
-                apt-get install -y -qq libglx0 libopengl0 libgl1 libegl1 >/dev/null
+                apt-get install -y -qq libglx0 libopengl0 libgl1 libegl1 \
+                  libxrender1 libxcb-render0 libxfixes3 libxcb-cursor0 >/dev/null
                 cp /pkg/mole-${version}-x86_64.AppImage /tmp/m && chmod +x /tmp/m
                 cd /tmp && QT_QPA_PLATFORM=offscreen HOME=/tmp ./m --plugins" \
               | tee /tmp/said
@@ -290,6 +309,9 @@ jobs:
             # The plugins it carries, for the reason the packages check them too.
             grep -q 'Archive drives' /tmp/said
             grep -q 'Standard network drives' /tmp/said
+            # And the media backend it carries, which is the one an AppImage cannot
+            # borrow from the host: it sets its own QT_PLUGIN_PATH. See MOLE-317.
+            grep -qE 'video codecs it reports: [A-Z]' /tmp/said
           done
 
       # And they start. Every other artefact check asks something a broken platform
