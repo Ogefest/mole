@@ -61,6 +61,8 @@ jobs:
       #   qt6-pdf-dev             PDFs render as pages instead of a fact sheet
       #   qt6-multimedia-dev      video plays, with the QML module for the surface
       #   qml6-module-qtmultimedia
+      #   gstreamer1.0-plugins-good  the decoders Qt Multimedia is a front end to
+      #   gstreamer1.0-libav
       #   libarchive-dev          archives are browsable drives
       #   libcurl4-openssl-dev    sftp, ftp, s3 and webdav drives
       #   libssl-dev              the encrypted credential store, and s3 signing
@@ -79,6 +81,21 @@ jobs:
       # make-bundle.sh can only bundle what this machine has, so the tarball is
       # short of it unless the runner has it. See MOLE-300.
       #
+      # **The GStreamer plugins are named because this file asks for none of what it
+      # is not told to ask for**, and Qt Multimedia is a front end rather than a
+      # decoder: `--no-install-recommends` is right for everything else here and it
+      # is what left the first dispatch run with `gstreamer1.0-plugins-base` alone,
+      # pulled in as a hard dependency. That is a machine that reports itself able to
+      # decode video and cannot, and Mole believed it -- two suites went down with
+      # `gst_element_link_many: assertion 'GST_IS_ELEMENT (element_2)' failed` and a
+      # SIGSEGV inside the backend. See MOLE-314 for the run, and MOLE-316 for the
+      # half of that which is Mole's rather than this file's: an artefact whose video
+      # preview takes the application down on a machine as lean as this runner was.
+      #
+      # Two cases stay skipped here and that is not this: they want ffmpeg to *write*
+      # a fixture, which is a question about test coverage on the release builder
+      # rather than about what the artefact can do.
+      #
       # ninja-build because that is the generator every preset uses.
       - name: Install what the artefact is built from
         run: |
@@ -91,6 +108,7 @@ jobs:
             qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts \
             qml6-module-qtquick-templates qml6-module-qtquick-window \
             qml6-module-qtqml-workerscript qml6-module-qtquick-shapes \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav \
             libarchive-dev libcurl4-openssl-dev libssl-dev \
             libsmbclient-dev libnfs-dev libvterm-dev libgit2-dev libxxhash-dev \
             rpm cpio xvfb x11-utils libxcb-cursor0
