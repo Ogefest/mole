@@ -35,17 +35,61 @@ ask parses > "$SHELLTEST_TMP/parse" 2>&1 || {
     sed 's/^/    /' "$SHELLTEST_TMP/parse"
 }
 
-begin "a pushed v tag is the only thing that starts it"
-# The tag is the whole trigger, and `scripts/release.sh` is the only thing that
-# makes a tag. A second way in -- a manual dispatch, a push to a branch -- would be
-# a way to publish something the local gate never saw.
+begin "a pushed v tag and a dispatch start it, and nothing else"
+# The tag is the trigger that publishes, and `scripts/release.sh` is the only thing
+# that makes a tag. The dispatch exists because a file of fourteen steps that had
+# never executed would otherwise have had its first run be a real release -- see
+# MOLE-314 -- and it is safe only because the publish step is guarded, which is the
+# case below. A third way in, or a dispatch with that guard gone, would each be a way
+# to publish something the local gate never saw.
 triggers=$(ask triggers)
-[ "$triggers" = "push.tags=v*" ] || fail "it starts on: $triggers"
+[ "$triggers" = "push.tags=v* workflow_dispatch" ] || fail "it starts on: $triggers"
+
+begin "a dispatch run publishes nothing"
+# The whole safety of the dispatch, in one condition. Asked of the step that creates
+# the release rather than of a step name, because a step can be renamed.
+guard=$(ask condition 'gh release create')
+case "$guard" in
+    *github.event_name*push*) ;;
+    *) fail "the step that creates the release is guarded by: ${guard:-nothing at all}" ;;
+esac
+
+# And nothing else in the file publishes or tags. `gh release create` is the one
+# command that makes a release; a `git push` or a `git tag` anywhere here would be a
+# second way out that the guard above does not cover.
+publishers=$(grep -c 'gh release create' "$WORKFLOW")
+[ "$publishers" = 1 ] || fail "$publishers steps create a release; only the guarded one may"
+forbidden=$(grep -nE '\bgit (push|tag)\b' "$WORKFLOW")
+[ -z "$forbidden" ] || fail "the workflow pushes or tags: $forbidden"
+
+begin "a rehearsal leaves the four artefacts behind"
+# A dispatch that only says "passed" cannot be looked at, and the ticket asks for
+# each of the four to be started rather than merely produced -- which needs them
+# downloadable. Conditional on the dispatch: on a tag run they are on the release.
+guard=$(ask condition 'upload-artifact')
+case "$guard" in
+    *github.event_name*workflow_dispatch*) ;;
+    *) fail "nothing uploads the artefacts on a dispatch; the guard reads: ${guard:-nothing at all}" ;;
+esac
+: > "$SHELLTEST_TMP/unuploaded"
+for artefact in TARBALL '*.deb' '*.rpm' '*.AppImage'; do
+    grep -qF "$artefact" "$WORKFLOW" || echo "$artefact" >> "$SHELLTEST_TMP/unuploaded"
+done
+if [ -s "$SHELLTEST_TMP/unuploaded" ]; then
+    fail "a rehearsal would not leave all four artefacts behind; missing:"
+    sed 's/^/    /' "$SHELLTEST_TMP/unuploaded"
+fi
 
 begin "nothing is published unless the suite has passed"
 # One job, so nothing runs beside the tests; the publish step after the test step,
 # so a red suite ends the job before anything is attached; and nothing anywhere
 # that lets a step carry on past a failure.
+#
+# "Anywhere" means `continue-on-error`, or an `if` that asks about job status --
+# `always()` and the three like it. An `if` that asks about the event does not: a
+# step's condition is evaluated only while the job is still succeeding unless the
+# expression itself asks otherwise, which is what lets the guard above exist without
+# putting a hole in this.
 jobs=$(ask jobs)
 [ "$jobs" = "linux" ] || fail "expected one job, found: $jobs"
 

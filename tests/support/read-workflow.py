@@ -61,23 +61,51 @@ def order(document, first, second):
     return "before" if positions[first][1] < positions[second][1] else "after"
 
 
+# The four expressions that ask about job status. A step whose `if` calls one of
+# them runs after a failure; a step whose `if` does not is evaluated only while the
+# job is still succeeding, which is GitHub's own rule and the reason a condition on
+# the event -- `github.event_name == 'push'` -- takes nothing away from "a red suite
+# attaches nothing". Asked of the words rather than of the presence of an `if`,
+# because the guard that keeps a dispatch from publishing is an `if`.
+STATUS_FUNCTIONS = ("always(", "failure(", "cancelled(", "success(")
+
+
 def bypasses(document):
     """Anything that would let the job get past a failing step.
 
-    `continue-on-error` is the direct form; a condition on a later step is the
-    indirect one -- `if: always()` publishes whatever the suite did.
+    `continue-on-error` is the direct form; a condition that asks about job status
+    is the indirect one -- `if: always()` publishes whatever the suite did.
     """
     found = []
     for job, index, step in steps_of(document):
         name = step.get("name") or step.get("uses") or f"step {index}"
         if step.get("continue-on-error"):
             found.append(f"{job}: {name} has continue-on-error")
-        if "if" in step:
-            found.append(f"{job}: {name} is conditional on: {step['if']}")
+        condition = str(step.get("if", ""))
+        if any(function in condition for function in STATUS_FUNCTIONS):
+            found.append(f"{job}: {name} runs regardless of failure, on: {condition}")
     for name, job in (document.get("jobs") or {}).items():
         if job.get("continue-on-error"):
             found.append(f"{name}: the job has continue-on-error")
     return "\n".join(found)
+
+
+def condition(document, needle):
+    """The `if` guarding the first step that mentions `needle`.
+
+    "mentions" covers the three places a step can name what it does: the script it
+    runs, the action it uses, and the arguments handed to that action. Prints an
+    empty line when the step is unconditional, and says so when there is no such
+    step -- an assertion about a guard must not pass because the step went away.
+    """
+    for _job, index, step in steps_of(document):
+        haystack = "\n".join(
+            [step.get("run") or "", step.get("uses") or ""]
+            + [str(value) for value in (step.get("with") or {}).values()]
+        )
+        if needle in haystack:
+            return str(step.get("if", ""))
+    return f"nothing in this workflow mentions {needle!r}"
 
 
 def summary_strings(document):
@@ -143,6 +171,9 @@ def main():
         return 0
     if question == "order":
         print(order(document, arguments[0], arguments[1]))
+        return 0
+    if question == "condition":
+        print(condition(document, arguments[0]))
         return 0
     if question == "bypasses":
         print(bypasses(document))

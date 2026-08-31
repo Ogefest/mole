@@ -11,12 +11,24 @@
 # machine with different libraries, and a suite that is green on the author's
 # machine and red on a clean Ubuntu is exactly the fact worth learning before the
 # artefacts are published rather than after.
+#
+# **A dispatch run is a rehearsal and publishes nothing.** Fourteen steps had never
+# executed and the only trigger was a real tag, so the first run of any of them
+# would have been a release -- and a failure at step eight leaves a published tag,
+# no release, and a version number that is either burned or has to be un-published.
+# A dispatch runs the thirteen steps that can fail, unchanged, and stops at the
+# last one: `Publish` is guarded to a push, and the artefacts go to the run instead
+# so a rehearsal can be looked at rather than only passed. MOLE-307's rule and
+# MOLE-314 applying it here: a YAML file that has never run is a hypothesis.
 name: Release
 
 on:
   push:
     tags:
       - 'v*'
+  # On demand, so the file can be exercised without spending a version number.
+  # It publishes nothing -- see the note above and the guard on `Publish`.
+  workflow_dispatch:
 
 # Only what creating the release needs.
 permissions:
@@ -273,14 +285,26 @@ jobs:
       # Named after the version, which CMakeLists.txt is the only place holding --
       # see MOLE-117. Checked against the tag rather than trusted: they are written
       # by the same commit, so a tag on the wrong one is worth catching here.
+      #
+      # **On a dispatch there is no tag to compare against.** GITHUB_REF_NAME is the
+      # branch then, so the comparison would fail every rehearsal for a reason that is
+      # not a fault, and the version comes from CMakeLists.txt alone -- which is where
+      # it always came from; the tag is the copy being checked. The check is not
+      # skipped quietly but kept on the only path where a tag exists, which is the
+      # only path that publishes, and the run says which of the two it did.
       - name: Pack the tarball
         run: |
           version=$(make version)
-          tag="${GITHUB_REF_NAME#v}"
-          [ "$version" = "$tag" ] || {
-            echo "::error::the tag says $tag and the build says $version"
-            exit 1
-          }
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            tag="${GITHUB_REF_NAME#v}"
+            [ "$version" = "$tag" ] || {
+              echo "::error::the tag says $tag and the build says $version"
+              exit 1
+            }
+            echo "the tag and the build agree on $version"
+          else
+            echo "$GITHUB_EVENT_NAME run: there is no tag, so the version is CMakeLists.txt's alone -- $version"
+          fi
           name="mole-$version-x86_64"
           mv dist "$name"
           tar czf "$name.tar.gz" "$name"
@@ -302,16 +326,62 @@ jobs:
       # first time an artefact changed. Nothing else goes in the body -- everything
       # anybody has wanted there is a fact that lives somewhere already, sizes
       # included, which GitHub prints beside every file it lists. See MOLE-303.
+      # **A rehearsal excuses exactly one refusal here, and no others.** Nothing has
+      # ever been released, so CHANGELOG.md holds no marker for any version and this
+      # step cannot come back green on a dispatch until `make release` writes the
+      # first one -- MOLE-315. That one message is reported and the run carries on;
+      # anything else the script says stops it, so this does not become a check that
+      # passes by doing nothing. On a push it is fatal exactly as it always was.
       - name: The release notes, out of the changelog
         run: |
-          scripts/release-notes.sh "$VERSION" "$GITHUB_REF_NAME" CHANGELOG.md > notes.md
-          echo "--- what will be published as the notes ---"
-          cat notes.md
+          if scripts/release-notes.sh "$VERSION" "$GITHUB_REF_NAME" CHANGELOG.md > notes.md 2> refused; then
+            echo "--- what will be published as the notes ---"
+            cat notes.md
+            exit 0
+          fi
+          cat refused
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            echo "::error::there are no notes to publish"
+            exit 1
+          fi
+          grep -q "no release marker for $VERSION" refused || {
+            echo "::error::the notes failed for something other than the one reason a rehearsal excuses"
+            exit 1
+          }
+          echo "::notice::no changelog marker for $VERSION yet, so there are no notes to rehearse -- see MOLE-315"
+
+      # What a rehearsal leaves behind. On a tag run these are attached to the release
+      # itself and a second copy on the run would be storage for nothing; on a dispatch
+      # there is no release, and a rehearsal nobody can download only tells you it
+      # passed. The four are named one by one rather than as a directory, so the four
+      # things a release publishes are the four things here.
+      #
+      # No `always()`, deliberately: a step that runs after a failure is the one thing
+      # this file has never allowed, and a red rehearsal is answered by its own log.
+      - name: Upload the four artefacts, so a rehearsal can be looked at
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v7
+        with:
+          name: mole-${{ env.VERSION }}-rehearsal
+          if-no-files-found: error
+          path: |
+            ${{ env.TARBALL }}
+            build/packages/mole_*.deb
+            build/packages/mole-*.rpm
+            build/packages/mole-*.AppImage
 
       # The release, with the artefacts on it. `gh` is on the runner and
       # authenticates with the job's own token, so there is no third-party action
       # in the path between a tag and a published artefact.
+      #
+      # **Guarded to a pushed tag, and that guard is what makes a rehearsal safe**: a
+      # dispatch creates no release and pushes no tag, while every step above it runs
+      # unchanged, which is the entire point of the exercise. The condition asks about
+      # the event and not about job status, so it does not weaken the rule that a red
+      # suite attaches nothing -- GitHub evaluates a step's `if` only while the job is
+      # still succeeding, unless the expression asks about status itself.
       - name: Publish
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
