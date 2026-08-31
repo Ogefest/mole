@@ -166,16 +166,19 @@ make packages    # a .deb, an .rpm and an AppImage, each for the family it insta
 |---|---|---|---|---|---|
 | `make optimised` | — | 127 MB | yes | — | running on this machine |
 | `make install` | — | 196 MB | yes | — | your own machine |
-| `.deb` | 3.6 MB | 10 MB | yes, from the archive | no Parquet grid | Debian and Ubuntu |
-| `.rpm` | 2.4 MB | 11 MB | yes, from the archive | — | Fedora and RHEL |
-| tarball (`make bundle`) | 79 MB | 208 MB | **no** | — | handing it to someone else |
-| AppImage | 74 MB | 211 MB | **no** | no Parquet grid | any distribution from 2021 onwards — it **runs on glibc 2.34** and upwards |
+| `.deb` | 3.7 MB | 10 MB | yes, from the archive | no Parquet grid | Debian and Ubuntu |
+| `.rpm` | 2.5 MB | 11 MB | yes, from the archive | — | Fedora and RHEL |
+| tarball (`make bundle`) | 113 MB | 294 MB | **no** | — | handing it to someone else |
+| AppImage | 110 MB | 294 MB | **no** | no Parquet grid | any distribution from 2021 onwards — it **runs on glibc 2.34** and upwards |
 
 **Where those figures come from, because a size is not a property of the program.**
-Measured on 2026-08-23 from the artefacts the release workflow builds, against Qt
+Measured on 2026-09-01 from the artefacts the release workflow builds, against Qt
 6.4 on Ubuntu 24.04 — except the `.rpm`, built on Fedora 40, and the AppImage, built
 on AlmaLinux 9 for the glibc floor (see `TODO.md`). MB means 10⁶ bytes; *on disk* is
 the apparent size of the unpacked tree, which is what your filesystem has to hold.
+The two self-contained artefacts grew by about 85 MB on 2026-09-01: neither carried
+a media backend, so neither could decode a video anywhere, and the one that can be
+bundled brings ffmpeg's decoding libraries with it.
 A build finds what a machine has, so yours will differ: leaving Arrow out takes tens
 of megabytes off, and the two figures for `make optimised` and `make install` are
 large because neither strips debug information — the packages, the tarball and the
