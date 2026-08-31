@@ -20,6 +20,16 @@
 # last one: `Publish` is guarded to a push, and the artefacts go to the run instead
 # so a rehearsal can be looked at rather than only passed. MOLE-307's rule and
 # MOLE-314 applying it here: a YAML file that has never run is a hypothesis.
+#
+# **It has now run: 33443800178, dispatched 2026-08-31, green in 38m.** Fifteen
+# steps executed and `Publish` skipped, which is the arrangement above doing what
+# it says. The run before it -- 33442511853 -- died at step four with two suites
+# segfaulting inside GStreamer, and the install list below is what that fixed.
+# Starting the four artefacts it left behind found a second thing, one layer down
+# and not a fault in this file: no bundle carries a Qt media backend, so the
+# AppImage can decode nothing on any machine. That is MOLE-317, and the step that
+# checks plugins here cannot see it because it compares Mole's plugins and Qt's
+# are a different tree.
 name: Release
 
 on:
