@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Cuts a release: the gate, the version, the changelog marker, one commit, an
-# annotated tag, and the push.
+# Cuts a release: the gate, the version, the changelog marker, the manifest that
+# says what the newest release is, one commit, an annotated tag, and the push.
 #
 # `git tag` printed nothing until this existed. The tag is the whole trigger for
 # whatever publishes a release, so this is deliberately the only thing in the
@@ -14,10 +14,11 @@
 #
 # Overrides, all through the environment so `make release FOO=1` reaches them:
 #
-#   DRY=1              everything except the version, the marker, the commit,
-#                      the tag and the push -- and it prints the two it would
-#                      have written. The tiers still run: a dry run says whether a
-#                      real one would go through, and that includes the live ones
+#   DRY=1              everything except the version, the marker, the manifest,
+#                      the commit, the tag and the push -- and it prints what it
+#                      would have written. The tiers still run: a dry run says
+#                      whether a real one would go through, and that includes the
+#                      live ones
 #   MAJOR=1  MINOR=1   bump that part instead of the patch
 #   VERSION=x.y.z      cut exactly this version
 #   BRANCH=  REMOTE=   where releases are cut from and pushed to
@@ -57,18 +58,36 @@ die() {
 # the first write puts all of it back: a half-cut release is worse than none,
 # because the next run starts from a tree nobody has looked at.
 mutating=0
-PATHS="CMakeLists.txt CHANGELOG.md docs/guide/images"
+
+# The file that says what the newest release is, and **the one decision here that
+# can never be revisited**: its path. Every binary that ships from now on asks for
+#
+#   https://raw.githubusercontent.com/Ogefest/mole/main/latest.json
+#
+# for the rest of its life, and a binary released years earlier cannot be told that
+# the file moved -- being told things is what the file is for. So it sits at the top
+# of the repository: discoverable, and short enough to read out. See ADR-0084 and
+# MOLE-323.
+MANIFEST="latest.json"
+PATHS="CMakeLists.txt CHANGELOG.md docs/guide/images $MANIFEST"
 SOURCE_SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/mole-release.XXXXXX")
 cleanup() {
     rm -rf "$SCRATCH"
     if [ "$mutating" = 1 ]; then
         printf '\n   putting the tree back\n'
-        # shellcheck disable=SC2086
-        git checkout -- $PATHS 2>/dev/null
-        # A picture with a name nothing had before is not restored by a checkout.
+        # One path at a time, rather than `git checkout -- $PATHS`: a checkout of
+        # several paths is refused *whole* when any one of them is unknown to git,
+        # and on the first release cut in a repository that has never had a
+        # manifest that is the manifest. It would have put nothing back at all --
+        # not the changelog, not the pictures.
+        for path in $PATHS; do
+            git checkout -- "$path" 2>/dev/null
+        done
+        # A file with a name nothing had before is not restored by a checkout: a
+        # regenerated picture, and the manifest on the cut that introduces it.
         # Safe to remove: the gate refused anything untracked before writing began.
-        git clean -fq docs/guide/images 2>/dev/null
+        git clean -fq docs/guide/images "$MANIFEST" 2>/dev/null
     fi
 }
 trap cleanup EXIT
@@ -216,7 +235,10 @@ marker_re=${marker_re//\\./[.]}
 entry_re=${entry_re//\\d/[0-9]}
 entry_re=${entry_re//\\./[.]}
 
-marker="## $next — released $(date +%F)"
+# One reading of the clock, for the marker and for the manifest, so a cut that
+# crosses midnight cannot date the two of them differently.
+today=$(date +%F)
+marker="## $next — released $today"
 printf '%s\n' "$marker" | grep -qE "$marker_re" \
     || die "the marker '$marker' is not the shape CHANGELOG.md states"
 note "marker: $marker"
@@ -228,16 +250,53 @@ note "marker: $marker"
 step "the release notes"
 note "the block for $next in CHANGELOG.md, which is what the release will carry"
 
+# ------------------------------------------------------------ the manifest
+
+# What a running Mole asks, and until this file existed there was no answer: a
+# release page states the version in HTML and `git tag` states it to somebody with a
+# checkout, and neither is something a program can read. See MOLE-323 and ADR-0084.
+#
+# `format` is what lets the file grow later without breaking a binary released years
+# earlier: a field may be added, and never renamed or removed. `url` is the landing
+# page, and the application opens what it is handed rather than assembling anything
+# -- so pointing it at a real page one day is an edit to this file and no change to
+# any copy of Mole already installed.
+#
+# Nothing here can produce a document that does not parse: `next` has been held
+# against the version expression above, `today` is `date`'s own, and the URL is
+# built out of `next`. That is what makes the template safe rather than lucky, and
+# tst_Release.sh parses what comes out of it in both a dry run and a real one.
+step "the manifest"
+manifest=$(cat <<JSON
+{
+  "format": 1,
+  "version": "$next",
+  "released": "$today",
+  "url": "https://github.com/Ogefest/mole/releases/tag/v$next"
+}
+JSON
+)
+note "$MANIFEST, and what this cut writes into it:"
+printf '%s\n' "$manifest" | sed 's/^/   /'
+
 if [ -n "$DRY" ]; then
     step "what a real run would do next"
     note "rewrite project(VERSION $current) to $next in CMakeLists.txt"
     note "insert the marker above the newest entry in CHANGELOG.md"
+    note "write that manifest to $MANIFEST"
     note "commit those with the regenerated pictures, tag v$next, and push both to $REMOTE"
     printf '\ndry run: nothing was written\n'
     exit 0
 fi
 
 mutating=1
+
+# The manifest, first of the writes and silent, because the step above printed the
+# whole of it. It describes the release that has been *published*, and between this
+# line and the push at the foot of this script it names one that does not exist yet.
+# That window is a few seconds inside one script, and saying so here is the right
+# amount of engineering for it.
+printf '%s\n' "$manifest" > "$MANIFEST" || die "could not write $MANIFEST"
 
 # At the top of the log, which means above the first entry *or marker*, whichever
 # comes first. Above the newest entry alone is not enough and the test caught it:

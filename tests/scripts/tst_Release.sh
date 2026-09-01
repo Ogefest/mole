@@ -14,6 +14,12 @@
 # tst_Version.sh. What is under test here is the gate and the order of it. See
 # MOLE-118.
 #
+# The manifest -- `latest.json`, the machine-readable statement of what the newest
+# release is -- is cut by the same script and so is asserted here too: that a real
+# cut writes it into the release commit naming what was cut, that a dry run prints
+# it and writes nothing, that a field may be added to it, and that a cut which
+# stops afterwards puts it back. See MOLE-323 and ADR-0084.
+#
 . "$(dirname "${BASH_SOURCE[0]}")/../support/shelltest.sh"
 
 RELEASE="$MOLE_SOURCE_DIR/scripts/release.sh"
@@ -144,6 +150,39 @@ cut_release() {
 # The first line of the file matching a pattern, without a pipe into `head`.
 line_of() { awk -v re="$2" '$0 ~ re { print NR; exit }' "$1"; }
 
+# --- the manifest ------------------------------------------------------------
+
+# python3 rather than jq, and rather than a grep for a quoted string: the suite
+# already depends on python3 -- tst_Workflows.sh reads every workflow with it --
+# and what these cases are asserting is that the file is a *document*, which only a
+# parser can say. A grep would pass on something no application could read.
+parses() {
+    python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "$1" 2>"$SHELLTEST_TMP/parse" \
+        || {
+            fail "$2 is not a JSON document"
+            sed 's/^/    /' "$SHELLTEST_TMP/parse"
+            sed 's/^/    /' "$1"
+        }
+}
+
+# One field, or nothing at all when the file will not parse -- which `parses` is
+# what reports. Never an error message where a value was expected.
+manifest_field() {
+    python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' \
+        "$1" "$2" 2>/dev/null
+}
+
+# The changelog with every entry and marker taken out of it, committed. A cut then
+# gets as far as looking for somewhere to put its marker and dies there -- which is
+# the cheapest failure available *after* the manifest has been written, and that is
+# what the two restore cases need.
+empty_the_changelog() {
+    local repo="$1"
+    grep -v -e '^2026-' -e '^## ' "$repo/CHANGELOG.md" > "$repo/CHANGELOG.next"
+    mv "$repo/CHANGELOG.next" "$repo/CHANGELOG.md"
+    git -C "$repo" commit -q -am "Nothing written down for anything"
+}
+
 # --------------------------------------------------------------- refusals
 
 begin "a dirty tree is refused, and nothing is touched"
@@ -263,6 +302,23 @@ said "dry run: nothing was written"
 [ -z "$(git -C "$repo" tag --list)" ] || fail "a dry run made a tag"
 grep -q '^## ' "$repo/CHANGELOG.md" && fail "a dry run wrote the marker into the file"
 
+begin "a dry run prints the manifest it would write, and writes none"
+repo=$(fixture)
+cut_release "$repo" DRY=1
+[ "$SCRIPT_STATUS" = 0 ] || fail "a dry run failed"
+said "latest.json, and what this cut writes into it:"
+said '"version": "0.4.0"'
+said '"format": 1'
+said "releases/tag/v0.4.0"
+[ ! -e "$repo/latest.json" ] || fail "a dry run wrote the manifest"
+# And what it printed is a document rather than something that reads like one. A
+# real cut commits exactly these bytes, so a dry run is the last chance anybody has
+# to look at them.
+sed -n '/^   {$/,/^   }$/p' "$SCRIPT_OUTPUT" | sed 's/^   //' > "$SHELLTEST_TMP/printed.json"
+parses "$SHELLTEST_TMP/printed.json" "the manifest a dry run printed"
+[ "$(manifest_field "$SHELLTEST_TMP/printed.json" version)" = "0.4.0" ] \
+    || fail "the manifest a dry run printed does not name the version it would cut"
+
 # ------------------------------------------------------------- a real cut
 
 begin "the first cut is the version the code already claims"
@@ -300,6 +356,27 @@ entry_line=$(line_of "$repo/CHANGELOG.md" '^2026-08-23')
 [ "$(git -C "$SHELLTEST_TMP/remote.git" cat-file -t v0.4.0)" = tag ] || fail "the tag was not pushed"
 # The version is untouched by a first cut, because it is already the one being cut.
 [ "$( (cd "$repo" && make version) )" = "0.4.0" ] || fail "the first cut changed the version"
+# And the manifest, which is the whole of what something running can ask. In the
+# release commit rather than in a second one, and naming what was cut.
+[ -f "$repo/latest.json" ] || fail "the release wrote no manifest"
+case "$carried" in
+    *latest.json*) ;;
+    *) fail "the release commit does not carry the manifest: $carried" ;;
+esac
+parses "$repo/latest.json" "the manifest a real cut wrote"
+[ "$(manifest_field "$repo/latest.json" version)" = "$( (cd "$repo" && make version) )" ] \
+    || fail "the manifest says $(manifest_field "$repo/latest.json" version) and project(VERSION) says something else"
+[ "$(manifest_field "$repo/latest.json" format)" = "1" ] \
+    || fail "the manifest does not say which format it is, so nothing can tell whether it may read it"
+[ "$(manifest_field "$repo/latest.json" released)" = "$TODAY" ] \
+    || fail "the manifest is dated $(manifest_field "$repo/latest.json" released), and the tag was cut today"
+case "$(manifest_field "$repo/latest.json" url)" in
+    *"/releases/tag/v0.4.0") ;;
+    *) fail "the landing page does not name the version: $(manifest_field "$repo/latest.json" url)" ;;
+esac
+# A trailing newline. Without one every tool that reads the file complains about
+# it, and somebody eventually "fixes" it in a commit of its own.
+[ -z "$(tail -c 1 "$repo/latest.json")" ] || fail "the manifest has no trailing newline"
 
 begin "the next cut bumps the patch, and the overrides choose otherwise"
 # Sequential on purpose: each cut has to put its marker above the last one, which
@@ -337,10 +414,77 @@ marker_re=${marker_re//\\d/[0-9]}
 [ "$(grep -c '^## ' "$repo/CHANGELOG.md")" = "$(grep -cE "$marker_re" "$repo/CHANGELOG.md")" ] \
     || fail "a ## line in the file is not a release marker"
 
+begin "the manifest names the newest cut and nothing older"
+# Four more releases have gone through above. The file is the answer to one
+# question -- what is the newest -- so what matters is that the last cut is what it
+# says, and that it was rewritten by the release commit each time rather than
+# trailing a cut behind.
+[ "$(manifest_field "$repo/latest.json" version)" = "2.3.4" ] \
+    || fail "the manifest says $(manifest_field "$repo/latest.json" version) after 2.3.4 was cut"
+case "$(manifest_field "$repo/latest.json" url)" in
+    *"/releases/tag/v2.3.4") ;;
+    *) fail "the landing page still names an older release: $(manifest_field "$repo/latest.json" url)" ;;
+esac
+[ "$(git -C "$repo" log -1 --format=%s -- latest.json)" = "Release 2.3.4" ] \
+    || fail "the manifest was last written by '$(git -C "$repo" log -1 --format=%s -- latest.json)'"
+
+begin "a field added to the manifest does not stop the rest of it being read"
+# The property `format` exists to protect: a field may be added and never renamed
+# or removed, because a binary released years earlier cannot be told otherwise.
+# Spliced in as text, the way a later release.sh would write one, rather than by
+# re-serialising the document -- what is under test is this file's format and not
+# python's json module.
+sed 's/^  "format": 1,$/  "format": 1,\n  "sha256": "not a real digest",/' \
+    "$repo/latest.json" > "$SHELLTEST_TMP/grown.json"
+grep -q '"sha256"' "$SHELLTEST_TMP/grown.json" \
+    || fail "no field was added, so this case asserts nothing"
+parses "$SHELLTEST_TMP/grown.json" "a manifest with a field added to it"
+for field in format version released url; do
+    [ "$(manifest_field "$SHELLTEST_TMP/grown.json" "$field")" \
+      = "$(manifest_field "$repo/latest.json" "$field")" ] \
+        || fail "$field reads differently once a field was added beside it"
+done
+
 begin "a version that has already been cut is refused"
 cut_release "$repo" VERSION=1.0.0
 [ "$SCRIPT_STATUS" != 0 ] || fail "a version that is already a tag was cut again"
 said "v1.0.0 is already a tag"
 [ -z "$(git -C "$repo" status --porcelain)" ] || fail "it left the tree dirty"
+
+# ------------------------------------------------- putting the manifest back
+
+begin "a cut that stops after writing the manifest puts back what it said"
+# The manifest is the first tracked file a real cut writes, so every failure after
+# it has to leave the file naming the release that was actually published. 2.3.4
+# was, and nobody cut 2.3.5.
+before=$(cat "$repo/latest.json")
+empty_the_changelog "$repo"
+cut_release "$repo"
+[ "$SCRIPT_STATUS" != 0 ] || fail "a release was cut with nothing written down for it"
+said "could not find an entry in CHANGELOG.md to put the marker above"
+[ "$(cat "$repo/latest.json")" = "$before" ] \
+    || fail "the manifest was left naming $(manifest_field "$repo/latest.json" version), which nobody cut"
+[ -z "$(git -C "$repo" status --porcelain)" ] || {
+    fail "it left the tree dirty"
+    git -C "$repo" status --short | sed 's/^/    /'
+}
+
+begin "a cut that stops leaves behind no manifest the repository never had"
+# The other half of that restore, and the half that would have broken everything
+# else with it: on the first cut in a repository with no manifest in HEAD there is
+# nothing to check one out of, and `git checkout -- a b c` is refused *whole* when
+# one of its paths is unknown to git. A single checkout of every path would
+# therefore have put none of them back -- not the changelog, and not the pictures.
+repo=$(fixture)
+empty_the_changelog "$repo"
+cut_release "$repo"
+[ "$SCRIPT_STATUS" != 0 ] || fail "a release was cut with nothing written down for it"
+[ ! -e "$repo/latest.json" ] || fail "the manifest was left behind, naming a release nobody cut"
+[ "$(cat "$repo/docs/guide/images/01-shot.png")" = "a picture" ] \
+    || fail "the regenerated picture was not put back, so the restore stopped at the manifest"
+[ -z "$(git -C "$repo" status --porcelain)" ] || {
+    fail "it left the tree dirty"
+    git -C "$repo" status --short | sed 's/^/    /'
+}
 
 done_testing

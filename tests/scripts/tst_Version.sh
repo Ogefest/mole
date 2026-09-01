@@ -8,9 +8,13 @@
 # --version is how somebody with a bug report says which build they are holding,
 # which is the whole reason it exists. See MOLE-117.
 #
-# Static where it can be: two of the three cases here read files and cost nothing.
-# The third starts the binary, because "what it prints" is a claim about a process
-# and cannot be checked from inside one.
+# Static where it can be: every case here but one reads files and costs nothing. The
+# other starts the binary, because "what it prints" is a claim about a process and
+# cannot be checked from inside one.
+#
+# `latest.json` is the one place outside the build that legitimately spells the
+# version out -- it is what a running Mole asks in order to find out it is out of
+# date -- so this is where it is held to the same number. See MOLE-323 and ADR-0084.
 #
 . "$(dirname "${BASH_SOURCE[0]}")/../support/shelltest.sh"
 
@@ -63,6 +67,34 @@ if [ -s "$SHELLTEST_TMP/makefile-literals" ]; then
 fi
 said=$(make version 2>/dev/null | tail -1)
 [ "$said" = "$VERSION" ] || fail "make version said '$said' and CMakeLists.txt says '$VERSION'"
+
+begin "the manifest names the version this repository is at"
+# The one copy of the version that is meant to exist: `make release` writes it as it
+# cuts, and a stale one is worse than none, because something running believes it. A
+# hand edit is the only way the two can come apart, and this is what notices.
+manifest="$MOLE_SOURCE_DIR/latest.json"
+[ -f "$manifest" ] || fail "there is no latest.json, so nothing running can ask what the newest release is"
+if [ -f "$manifest" ]; then
+    python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "$manifest" 2>"$SHELLTEST_TMP/parse" \
+        || {
+            fail "latest.json is not a JSON document, so no release of Mole can read it"
+            sed 's/^/    /' "$SHELLTEST_TMP/parse"
+        }
+    field() {
+        python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' \
+            "$manifest" "$1" 2>/dev/null
+    }
+    [ "$(field version)" = "$VERSION" ] \
+        || fail "latest.json says $(field version) and CMakeLists.txt says $VERSION"
+    # An integer, because a build that does not know a format must be able to tell
+    # so and stay quiet. Fields may be added to this file and never renamed.
+    [ "$(field format)" = "1" ] || fail "latest.json does not say which format it is"
+    [ -n "$(field released)" ] || fail "latest.json does not say when the release was cut"
+    case "$(field url)" in
+        *"/releases/tag/v$VERSION") ;;
+        *) fail "latest.json's landing page does not name $VERSION: $(field url)" ;;
+    esac
+fi
 
 begin "the binary prints the version it was configured with"
 # MOLE_BINARY is set by the test's own environment in tests/CMakeLists.txt. A
