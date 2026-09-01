@@ -48,7 +48,7 @@ begin "the bundle carries a media backend"
 # must be short enough to be a list.
 groups=$(sed -n '/^for group in/,/; do$/p' "$BUNDLE")
 [ -n "$groups" ] || fail "cannot find the list of Qt plugin groups the bundler copies"
-printf '%s' "$groups" | tail -1 | grep -q '; do$' \
+grep -q '; do$' <<<"$(printf '%s' "$groups" | tail -1)" \
     || fail "the plugin-group list does not end where this expects, so the case below reads too much"
 lines=$(printf '%s\n' "$groups" | grep -c .)
 [ "$lines" -le 6 ] \
@@ -88,7 +88,7 @@ begin "a build with Qt Multimedia refuses to bundle without a backend"
 # flag, so it follows the build.
 grep -q 'NEEDED.*libQt6Multimedia' "$BUNDLE" \
     || fail "nothing checks whether a build that links Qt Multimedia got a backend"
-sed -n '/NEEDED.*libQt6Multimedia/,/^fi$/p' "$BUNDLE" | grep -q 'exit 1' \
+grep -q 'exit 1' <<<"$(sed -n '/NEEDED.*libQt6Multimedia/,/^fi$/p' "$BUNDLE")" \
     || fail "the media-backend check does not stop the bundle"
 
 begin "an exclusion takes the subtree with it"
@@ -116,7 +116,7 @@ for lib in libavcodec libavformat libavutil libswscale libswresample; do
         || grep -q "$lib.so\*" "$BUNDLE" \
         || fail "$lib is not left to the host, so the bundle carries a distribution's codec choices"
 done
-sed -n '/is_excluded()/,/^}/p' "$BUNDLE" | grep -q "Apache-2.0" \
+grep -q "Apache-2.0" <<<"$(sed -n '/is_excluded()/,/^}/p' "$BUNDLE")" \
     || fail "the licence reason for excluding the codec stack is not stated where the exclusion is"
 
 begin "the platform plugin is still the one that stops everything"

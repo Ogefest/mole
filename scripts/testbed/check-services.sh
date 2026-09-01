@@ -124,7 +124,7 @@ fi
 # list rather than for a check that would need privileges to answer.
 
 if command -v showmount >/dev/null 2>&1; then
-    if showmount -e "$ADDRESS" 2>/dev/null | grep -q "/srv/moledata/nfs"; then
+    if grep -q "/srv/moledata/nfs" <<<"$(showmount -e "$ADDRESS" 2>/dev/null)"; then
         ok "nfs $ADDRESS:/srv/moledata/nfs"
     else
         note "nfs: not exported (set MOLE_TESTBED_NFS_CLIENTS and run services.sh)"

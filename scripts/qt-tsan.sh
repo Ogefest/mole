@@ -48,7 +48,7 @@ tarball="qtbase-everywhere-src-$VERSION.tar.xz"
 url="https://download.qt.io/archive/qt/$branch/$VERSION/submodules/$tarball"
 
 if [ -x "$PREFIX/lib/libQt6Core.so.6" ] || [ -f "$PREFIX/lib/libQt6Core.so.6" ]; then
-    if ldd "$PREFIX/lib/libQt6Core.so.6" | grep -q libtsan; then
+    if grep -q libtsan <<<"$(ldd "$PREFIX/lib/libQt6Core.so.6")"; then
         heading "Already there"
         note "$PREFIX"
         note "libQt6Core.so.6 links libtsan, so this is the instrumented build."
@@ -110,7 +110,7 @@ setarch "$(uname -m)" -R cmake --build build --parallel "$JOBS" || die "build fa
 heading "Install"
 setarch "$(uname -m)" -R cmake --install build || die "install failed"
 
-ldd "$PREFIX/lib/libQt6Core.so.6" | grep -q libtsan \
+grep -q libtsan <<<"$(ldd "$PREFIX/lib/libQt6Core.so.6")" \
     || die "installed, but libQt6Core.so.6 does not link libtsan -- the sanitizer did not take"
 
 heading "Ready"

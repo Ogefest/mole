@@ -148,4 +148,52 @@ if [ -s "$SHELLTEST_TMP/addresses" ]; then
     sed 's/^/    /' "$SHELLTEST_TMP/addresses"
 fi
 
+
+begin "nothing pipes a program's output into grep -q"
+# **`producer | grep -q pattern` fails at random wherever `pipefail` is set**, which
+# is every script here. `grep -q` exits the moment it matches; the producer's next
+# write lands on a closed pipe, takes SIGPIPE, and pipefail reports the pipeline as
+# failed although the pattern was found. Whether it happens is a matter of how the
+# two processes are scheduled, so it passes on an idle machine and fails under load.
+#
+# Measured: `sed -n '/is_excluded()/,/^}/p' scripts/make-bundle.sh | grep -q Apache-2.0`
+# failed twice in two hundred runs on an idle workstation, and once on a CI runner
+# that was also running the rest of the tier. Two of the sites were inside
+# `set -euo pipefail`, where a spurious failure does not report anything -- it kills
+# the script; one of those decided whether a bundle carries the multimedia plugin
+# tree, and one is in the licence check a release runs over every artefact.
+#
+# The fix is a here-string rather than a pipe -- `grep -q P <<<"$(producer)"` -- which
+# keeps the same grep and cannot lose the race. See MOLE-329.
+#
+# **`printf … | grep -q` is deliberately allowed**, and there are about twenty of
+# them. `printf` writes once and exits, so its write always completes before grep can
+# close the pipe. What is refused is a producer that writes more than one buffer,
+# which is every program.
+: > "$SHELLTEST_TMP/racy-pipes"
+for f in $scripts; do
+    # A real pipe, not `||`: one bar with no bar on either side of it. And the
+    # left-hand side asked about, because that is what decides whether it can race.
+    awk -v file="$f" '
+        # Prose about the shape is not the shape. This file explains it at length,
+        # and the MOLE-233 rule above had to learn the same lesson about its own
+        # comments.
+        /^[ \t]*#/ { next }
+        /\|\|/ { next }
+        /[^|]\|[ \t]*grep[ \t]+-[a-zA-Z]*q/ {
+            before = $0
+            sub(/\|[ \t]*grep.*/, "", before)
+            if (before ~ /printf|echo/) next
+            printf "%s:%d:%s\n", file, FNR, $0
+        }
+    ' "$f" >> "$SHELLTEST_TMP/racy-pipes"
+done
+if [ -s "$SHELLTEST_TMP/racy-pipes" ]; then
+    # Single-quoted, so the example needs no backslash before its dollar -- which
+    # the rule above would have refused, correctly, as deferred expansion on a line
+    # that runs here.
+    fail 'a pipeline into grep -q reports failure at random under pipefail; put the producer in a here-string instead'
+    sed 's/^/    /' "$SHELLTEST_TMP/racy-pipes"
+fi
+
 done_testing

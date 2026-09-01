@@ -76,7 +76,8 @@ check_binary() {
     fi
 
     # 2. Qt symbols must live in the shared libraries, not inside our binary.
-    if nm -C --defined-only "$bin" 2>/dev/null | grep -qE ' T (QQuickItem|QQmlEngine|QCoreApplication)::'; then
+    if grep -qE ' T (QQuickItem|QQmlEngine|QCoreApplication)::' \
+            <<<"$(nm -C --defined-only "$bin" 2>/dev/null)"; then
         bad "Qt symbols are defined inside the binary -- Qt appears to be static"
     else
         ok "no Qt symbols compiled into the binary"

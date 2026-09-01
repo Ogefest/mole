@@ -341,7 +341,7 @@ case "$carried" in
     *) fail "the release commit does not carry the regenerated pictures: $carried" ;;
 esac
 # The marker, above the newest entry and nowhere else.
-head -n 20 "$repo/CHANGELOG.md" | grep -qF "## 0.4.0 — released $TODAY" \
+grep -qF "## 0.4.0 — released $TODAY" <<<"$(head -n 20 "$repo/CHANGELOG.md")" \
     || { fail "the marker is not near the top of the file"; head -n 20 "$repo/CHANGELOG.md" | sed 's/^/    /'; }
 [ "$(grep -c '^## ' "$repo/CHANGELOG.md")" = 1 ] || fail "more than one marker was written"
 marker_line=$(line_of "$repo/CHANGELOG.md" '^## ')

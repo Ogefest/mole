@@ -445,7 +445,7 @@ systemctl stop vsftpd 2>/dev/null || true
 # first and puts a newline between every number, which ends the for-list on the
 # first one and is a syntax error on arrival.
 for _ in \$(seq 1 20); do
-    ss -ltn 2>/dev/null | grep -q ':21 ' || break
+    grep -q ':21 ' <<<"$(ss -ltn 2>/dev/null)" || break
     sleep 1
 done
 systemctl start vsftpd
@@ -530,7 +530,7 @@ for attempt in 1 2 3 4 5 6 7 8 9 10; do
 done
 /usr/local/bin/mc mb --ignore-existing testbed/$S3_VERSIONED_BUCKET >/dev/null
 /usr/local/bin/mc version enable testbed/$S3_VERSIONED_BUCKET >/dev/null
-/usr/local/bin/mc version info testbed/$S3_VERSIONED_BUCKET | grep -q enabled \
+grep -q enabled <<<"$(/usr/local/bin/mc version info testbed/$S3_VERSIONED_BUCKET)" \
     || { echo "this MinIO will not keep earlier objects" >&2; exit 1; }
 
 # A container that keeps every state of every object is a container that fills

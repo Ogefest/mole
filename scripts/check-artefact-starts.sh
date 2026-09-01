@@ -87,7 +87,7 @@ for _ in $(seq 1 "$DEADLINE"); do
         exit 1
     fi
     if command -v xwininfo >/dev/null 2>&1; then
-        if xwininfo -display ":$DISPLAY_NUMBER" -root -children 2>/dev/null | grep -qF "$WANTED"; then
+        if grep -qF "$WANTED" <<<"$(xwininfo -display ":$DISPLAY_NUMBER" -root -children 2>/dev/null)"; then
             found=1
             break
         fi

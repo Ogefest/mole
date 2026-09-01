@@ -50,7 +50,7 @@ take)
     heading "Taking $SNAPSHOT of $VMID"
     on_node <<REMOTE
 set -e
-qm listsnapshot $VMID | grep -q ' $SNAPSHOT ' && qm delsnapshot $VMID $SNAPSHOT >/dev/null 2>&1
+grep -q " $SNAPSHOT " <<<"$(qm listsnapshot $VMID)" && qm delsnapshot $VMID $SNAPSHOT >/dev/null 2>&1
 # With the memory, so a rollback lands on a machine that is already running its
 # servers rather than one that has to boot and be waited for.
 qm snapshot $VMID $SNAPSHOT --vmstate 1 --description 'Provisioned and seeded. scripts/testbed/snapshot.sh'

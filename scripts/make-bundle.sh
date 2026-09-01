@@ -256,7 +256,7 @@ fi
 # with no backend the answer is an assertion rather than an empty list. A bundle
 # without a backend is an application that ends the process on `mole --plugins`.
 # See MOLE-317, and MOLE-316 for why the absence is fatal rather than disappointing.
-if objdump -p "$BIN" 2>/dev/null | grep -q 'NEEDED.*libQt6Multimedia'; then
+if grep -q 'NEEDED.*libQt6Multimedia' <<<"$(objdump -p "$BIN" 2>/dev/null)"; then
     if ! compgen -G "$PLUGINDIR/multimedia/*.so" > /dev/null; then
         echo "  this build links Qt6Multimedia and the bundle carries no media backend,"
         echo "  so mole --plugins would abort on any machine without Qt installed."
