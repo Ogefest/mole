@@ -4,6 +4,10 @@
 
 #include "core/settings/Preferences.h"
 
+#include <QCoreApplication>
+#include <QDir>
+#include <QLibraryInfo>
+#include <QPluginLoader>
 #include <QMimeDatabase>
 #include <QMimeType>
 
@@ -103,6 +107,48 @@ VideoPreviewProvider::VideoPreviewProvider(PluginServices services)
 {
 }
 
+#ifdef MOLE_HAVE_MULTIMEDIA
+/// Can a media backend plugin actually be loaded?
+///
+/// Asked of the plugin files rather than of Qt Multimedia, because the only Qt
+/// question that answers it -- `QMediaFormat::supportedVideoCodecs()` -- aborts when
+/// the answer is no. Qt loads a backend from a `multimedia` directory under one of
+/// its library paths; with nothing loadable there, `QMediaFormat` has nothing behind
+/// it and touching it ends the process.
+///
+/// **`QPluginLoader::load()` and not "is the file there".** That was the first
+/// attempt and it does not work: the bundle carries `libffmpegmediaplugin.so`, so the
+/// file is always present, and on a machine without libx264 and libx265 -- which the
+/// bundle deliberately does not carry, see make-bundle.sh -- Ubuntu's libavcodec
+/// cannot load, so the plugin cannot either. Existing and loading are different
+/// questions and only the second one is safe to build on. `load()` is a dlopen: it
+/// fails and says why, rather than aborting.
+///
+/// A plugin that loads is still not a promise that it decodes: GStreamer may have no
+/// elements behind it, which is why an empty codec list is treated generously below.
+/// This rules out only the case that cannot be survived.
+static bool aMediaBackendExists()
+{
+    QStringList roots = QCoreApplication::libraryPaths();
+    roots.append(QLibraryInfo::path(QLibraryInfo::PluginsPath));
+    for (const QString& root : roots) {
+        const QDir dir(root + QStringLiteral("/multimedia"));
+        if (!dir.exists())
+            continue;
+        const QStringList candidates = dir.entryList({ QStringLiteral("*.so") }, QDir::Files);
+        for (const QString& candidate : candidates) {
+            // Left loaded on purpose. Qt is about to load it again for itself, and
+            // unloading a plugin that has already registered its factories is a
+            // hazard with nothing to gain.
+            QPluginLoader loader(dir.absoluteFilePath(candidate));
+            if (loader.load())
+                return true;
+        }
+    }
+    return false;
+}
+#endif
+
 const VideoPreviewProvider::Probe& VideoPreviewProvider::probe()
 {
     static const Probe probe = [] {
@@ -110,10 +156,16 @@ const VideoPreviewProvider::Probe& VideoPreviewProvider::probe()
         out.requestedBackend = qEnvironmentVariable("QT_MEDIA_BACKEND");
 #ifdef MOLE_HAVE_MULTIMEDIA
         out.moduleBuiltIn = true;
-        const QList<QMediaFormat::VideoCodec> codecs
-            = QMediaFormat().supportedVideoCodecs(QMediaFormat::Decode);
-        for (QMediaFormat::VideoCodec codec : codecs)
-            out.decodableVideoCodecs.append(QMediaFormat::videoCodecName(codec));
+        out.backendPresent = aMediaBackendExists();
+        // Only asked when there is something to answer it. See the note on
+        // Probe::backendPresent: with no backend this call aborts rather than
+        // returning nothing, so the guard is not a tidiness measure.
+        if (out.backendPresent) {
+            const QList<QMediaFormat::VideoCodec> codecs
+                = QMediaFormat().supportedVideoCodecs(QMediaFormat::Decode);
+            for (QMediaFormat::VideoCodec codec : codecs)
+                out.decodableVideoCodecs.append(QMediaFormat::videoCodecName(codec));
+        }
 #endif
         return out;
     }();
@@ -126,7 +178,13 @@ bool VideoPreviewProvider::videoIsWorthTrying(const Probe& probe)
     // that is present and working is indistinguishable here from no multimedia
     // at all, and treating the two the same made videos stop existing in the
     // application with nothing said about it.
-    return probe.moduleBuiltIn;
+    //
+    // **But a backend has to exist.** Without one there is nothing to try: the
+    // player cannot be built, and the call that would have said so is the call that
+    // ends the process. A video then gets the ordinary fact sheet, which is what any
+    // file Mole cannot preview gets, rather than taking the application down with
+    // it. See MOLE-316.
+    return probe.moduleBuiltIn && probe.backendPresent;
 }
 
 QStringList VideoPreviewProvider::diagnosticLines()
@@ -140,10 +198,29 @@ QStringList VideoPreviewProvider::diagnosticLines()
     if (!current.moduleBuiltIn)
         return out;
 
-    out.append(QStringLiteral("media backend: %1")
+    // "asked for" rather than "in use", because Qt 6.4 has no API that names the
+    // backend actually chosen. Saying `media backend: ffmpeg` and then that none is
+    // installed read as a contradiction; the two lines are about different things
+    // and now say which.
+    out.append(QStringLiteral("media backend asked for: %1")
                    .arg(current.requestedBackend.isEmpty()
                            ? QStringLiteral("the platform default (QT_MEDIA_BACKEND is not set)")
                            : current.requestedBackend));
+
+    // **Three answers, not two**, because they lead to three different behaviours
+    // and the middle one used to be reported as the last. No backend at all means
+    // a video gets the ordinary fact sheet; a backend that names no codec means
+    // videos are tried and a failure is reported per file; a list means it decodes.
+    // Telling the first two apart is what MOLE-316 asked for, and it is the
+    // difference between "install a decoder" and "this file is not one".
+    if (!current.backendPresent) {
+        out.append(QStringLiteral(
+            "backend found: none that will load, so a video gets the file-information "
+            "view rather than a frame. See \"Video previews\" in README.md for what to "
+            "install"));
+        return out;
+    }
+    out.append(QStringLiteral("backend found: yes"));
     out.append(QStringLiteral("video codecs it reports: %1")
                    .arg(current.decodableVideoCodecs.isEmpty()
                            ? QStringLiteral("none -- the backend did not say, so videos are tried anyway "

@@ -65,6 +65,9 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-01 #MOLE-316 A video on a machine with no decoder installed shows the file-information view instead of ending the application, and `mole --plugins` says what to install
+2026-09-01 #MOLE-322 The tarball and the AppImage no longer carry a distribution's video codecs, which cuts the tarball from 114 MB to 79 MB and leaves video to the ffmpeg on your own machine
+
 ## 0.1.0 — released 2026-09-01
 
 2026-09-01 #MOLE-318 Renaming a file on a Windows share to a different capitalisation works, and copying onto one warns before it overwrites a name that differs only in case

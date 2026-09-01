@@ -94,24 +94,73 @@ is_excluded() {
         libgcc_s.so* | libstdc++.so*)
             return 0 ;;
 
+        # **The media codec stack, left to the host for a licence reason rather than
+        # a coupling one -- which makes this a different kind of entry from every
+        # group above.**
+        #
+        # A distribution's ffmpeg is built against whatever that distribution is
+        # willing to ship, and what it links is not a list this project chose. On
+        # Ubuntu that closure includes libx264 and libx265 (GPL-2+) and libxvidcore
+        # and libzvbi (GPL-2+); the AppImage's AlmaLinux closure adds libfdk-aac,
+        # which is not free software at all. Mole is Apache-2.0. A self-contained
+        # artefact carrying any of them is a combined work nobody may redistribute,
+        # and v0.1.0 went out carrying several. See MOLE-322.
+        #
+        # **Excluding them one name at a time is what produced this**, so the rule is
+        # the stack rather than the offenders: none of libav*, libsw* or libpostproc
+        # is bundled, and with nothing left needing them their whole codec closure
+        # stops being collected too. What the artefact carries is then decided by
+        # this project rather than by a distribution's packaging policy.
+        #
+        # Qt's own `libffmpegmediaplugin.so` is still bundled -- it is LGPL like the
+        # rest of Qt. It loads where the host has ffmpeg and does not where it has
+        # not, which is the arrangement the author asked for: a machine with the
+        # codecs decodes video, a machine without gets the file-information view for
+        # one and is told so by `mole --plugins`. MOLE-316 is what makes the second
+        # case survivable rather than an abort, and README.md says what to install.
+        libavcodec.so* | libavformat.so* | libavutil.so* | libavfilter.so* \
+            | libavdevice.so* | libswscale.so* | libswresample.so* | libpostproc.so*)
+            return 0 ;;
+
         *) return 1 ;;
     esac
 }
 
 # Walks dependencies to a fixed point: a copied Qt library pulls in more Qt
 # libraries, so one pass is never enough.
+#
+# **Each object's own NEEDED entries, not `ldd`'s flattened closure**, and the
+# difference is the whole reason an exclusion works. `ldd` reports everything an
+# object reaches, however indirectly, so excluding a library did nothing about what
+# *it* needs: libavcodec was refused and libx264, libx265 and libxvidcore -- its
+# dependencies, GPL-2+ every one -- were copied anyway, because they were still in
+# the plugin's `ldd` output. An exclusion has to take the subtree with it or it is
+# not an exclusion. See MOLE-322.
+#
+# `ldd` is still what resolves a soname to a path, because that is the question it
+# answers well. The direct entries decide *whether*, the closure decides *where*.
+# This is also the question the completeness check at the bottom of this file has
+# always asked, so the collector and the check now agree rather than differing in a
+# way nobody noticed.
 collect_deps() {
     local changed=1
     while (( changed )); do
         changed=0
         while IFS= read -r -d '' object; do
+            local -A path_of=()
+            local name path
             while read -r name path; do
-                [[ -n "$path" && -f "$path" ]] || continue
+                [[ -n "$path" && -f "$path" ]] && path_of["$name"]="$path"
+            done < <(ldd "$object" 2>/dev/null | awk '/=> \//{print $1, $3}')
+
+            while read -r name; do
+                path="${path_of[$name]:-}"
+                [[ -n "$path" ]] || continue
                 is_excluded "$name" && continue
                 [[ -f "$LIBDIR/$name" ]] && continue
                 cp -L "$path" "$LIBDIR/$name"
                 changed=1
-            done < <(ldd "$object" 2>/dev/null | awk '/=> \//{print $1, $3}')
+            done < <(objdump -p "$object" 2>/dev/null | awk '/NEEDED/{print $2}')
         done < <(find "$DIST/usr/bin" "$LIBDIR" "$PLUGINDIR" "$QMLDIR" $MOLE_PLUGIN_DIRS -type f \
                       \( -name '*.so*' -o -perm -u+x \) -print0 2>/dev/null)
     done

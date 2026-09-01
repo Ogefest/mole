@@ -168,17 +168,19 @@ make packages    # a .deb, an .rpm and an AppImage, each for the family it insta
 | `make install` | — | 196 MB | yes | — | your own machine |
 | `.deb` | 3.7 MB | 10 MB | yes, from the archive | no Parquet grid | Debian and Ubuntu |
 | `.rpm` | 2.5 MB | 11 MB | yes, from the archive | — | Fedora and RHEL |
-| tarball (`make bundle`) | 113 MB | 294 MB | **no** | — | handing it to someone else |
-| AppImage | 110 MB | 294 MB | **no** | no Parquet grid | any distribution from 2021 onwards — it **runs on glibc 2.34** and upwards |
+| tarball (`make bundle`) | 79 MB | 209 MB | **no** | video needs the host's ffmpeg | handing it to someone else |
+| AppImage | 110 MB | 294 MB | **no** | no Parquet grid; video needs the host's ffmpeg | any distribution from 2021 onwards — it **runs on glibc 2.34** and upwards |
 
 **Where those figures come from, because a size is not a property of the program.**
 Measured on 2026-09-01 from the artefacts the release workflow builds, against Qt
 6.4 on Ubuntu 24.04 — except the `.rpm`, built on Fedora 40, and the AppImage, built
 on AlmaLinux 9 for the glibc floor (see `TODO.md`). MB means 10⁶ bytes; *on disk* is
 the apparent size of the unpacked tree, which is what your filesystem has to hold.
-The two self-contained artefacts grew by about 85 MB on 2026-09-01: neither carried
-a media backend, so neither could decode a video anywhere, and the one that can be
-bundled brings ffmpeg's decoding libraries with it.
+The tarball moved twice on 2026-09-01 and ended smaller than it started: up by
+about 85 MB when it gained a media backend it had never had, then down by 80 when the
+whole codec stack was left to the host for the licence reason under *Video previews*
+below. The AppImage row is from a build of the same day; it was never carrying the
+Ubuntu codec closure, so it did not shrink the same way.
 A build finds what a machine has, so yours will differ: leaving Arrow out takes tens
 of megabytes off, and the two figures for `make optimised` and `make install` are
 large because neither strips debug information — the packages, the tarball and the
@@ -191,14 +193,63 @@ something newer it would refuse to start on everything older, with a `GLIBC_2.39
 found` that reads like a corrupt download. `TODO.md` records why that floor and not
 another, and the release checks both ends of it every time.
 
-**What it cannot do** is the column to read before choosing. Every artefact browses
-archives, opens the network drives, renders PDFs, plays video, shows git state and
-keeps its credential store encrypted; the differences are all about one optional
-library apiece. `libarrow` is in no Ubuntu archive at any version, so the `.deb` is
-built without it and a Parquet file opens as the list of facts rather than a grid.
-AlmaLinux 9 has Arrow but ships no `ParquetConfig.cmake`, so the AppImage is the
-same. Fedora packages both, so the `.rpm` has everything, and the tarball carries
-its own libraries and answers to nobody's archive.
+**What it cannot do** is the column to read before choosing — and the rule behind
+that column is the same everywhere: **a preview whose library is missing falls back
+to the file-information view.** You get what Mole can say about the file without
+reading it — its size, type and dates — rather than an error, an empty pane or a
+crash. `mole --plugins` says which libraries it found, so a preview that is not
+what you expected has an answer rather than a guess.
+
+Every artefact browses archives, opens the network drives, renders PDFs, shows git
+state and keeps its credential store encrypted. The two differences worth knowing
+about are below, and both are libraries you can install yourself.
+
+### The Parquet grid
+
+A `.parquet` file opens as a grid with filtering and copyable cells where Apache
+Arrow is available, and as the file-information view where it is not.
+
+**`libarrow` is in no Debian or Ubuntu archive today** — not in Debian 12 or 13, not
+in Ubuntu 24.04 or 25.04 — so the `.deb` is built without it, and so is the AppImage,
+whose build host has only Arrow 9 and the code needs newer. Fedora packages Arrow and
+Parquet, so the `.rpm` has the grid; the tarball carries its own copy and answers to
+nobody's archive.
+
+If you want the grid on Debian or Ubuntu, install Arrow from the project's own
+packages — <https://arrow.apache.org/install/> — and use the tarball, which is the
+artefact built against it. **Ubuntu 26.04 carries Arrow 23 in the archive**, and from
+there the `.deb` can have the grid without anything extra.
+
+### Video previews
+
+A video shows a frame from it, and a folder of videos shows a tile for each, where
+the host has the decoders. Where it has not, both fall back to the
+file-information view, and `mole --plugins` says `backend found: none that will load`.
+
+**The tarball and the AppImage deliberately do not carry ffmpeg.** A
+distribution's ffmpeg is built against whatever that distribution is willing to
+ship, and on Ubuntu that includes `libx264`, `libx265`, `libxvidcore` and `libzvbi`
+— GPL-2+ every one — while the AlmaLinux build the AppImage comes from adds
+`libfdk-aac`, which is not free software at all. Mole is Apache-2.0, so a
+self-contained artefact carrying any of them would be one nobody could
+redistribute. What Mole carries is decided here rather than by somebody's packaging
+policy, so the whole codec stack is the host's.
+
+Qt's ffmpeg *plugin* is in both artefacts — it is LGPL, like the rest of Qt. It
+loads where the host has the libraries and does not where it has not. On any desktop
+that plays video they are already installed. Where they are not:
+
+| | |
+|---|---|
+| Debian, Ubuntu | `sudo apt install libavcodec60 libavformat60 libswscale7` — or `ffmpeg`, which pulls all of them |
+| Fedora | `sudo dnf install ffmpeg-libs` (RPM Fusion free) |
+| Arch | `sudo pacman -S ffmpeg` |
+| openSUSE | `sudo zypper install ffmpeg-4` |
+
+The Debian sonames move between releases; `apt search libavcodec` names the one that
+release has, and installing `ffmpeg` is the version-proof way. The `.deb` and `.rpm`
+need none of this — they depend on the distribution's own ffmpeg, which arrives with
+whatever it was built against.
 
 `make install` lays out `<prefix>/bin/mole` and
 `<prefix>/lib/mole/plugins`, plus a desktop entry and icon so the

@@ -91,11 +91,57 @@ grep -q 'NEEDED.*libQt6Multimedia' "$BUNDLE" \
 sed -n '/NEEDED.*libQt6Multimedia/,/^fi$/p' "$BUNDLE" | grep -q 'exit 1' \
     || fail "the media-backend check does not stop the bundle"
 
+begin "an exclusion takes the subtree with it"
+# The fault that put GPL-2+ libraries into a published release. The collector used
+# `ldd`, which reports everything an object reaches however indirectly, so refusing
+# libavcodec did nothing about what libavcodec needs: libx264, libx265, libxvidcore
+# and libzvbi were still in the plugin's ldd output and were copied. An exclusion
+# that does not take the subtree is not an exclusion. See MOLE-322.
+#
+# Asked of the collector rather than of a bundle, because a bundle only shows what
+# this machine happened to have.
+collector=$(sed -n '/^collect_deps()/,/^}/p' "$BUNDLE")
+[ -n "$collector" ] || fail "cannot find the dependency collector"
+printf '%s' "$collector" | grep -q 'objdump -p' \
+    || fail "the collector does not read each object's own NEEDED entries, so an exclusion cannot prune"
+printf '%s' "$collector" | grep -qE 'ldd .*\| *awk.*NEEDED' \
+    && fail "the collector decides what to copy from ldd's flattened closure again"
+
+begin "the media codec stack is left to the host, and the reason is written down"
+# Not a preference about size. A distribution's ffmpeg links whatever that
+# distribution ships, which on Ubuntu is four GPL-2+ libraries and on the AppImage's
+# base adds a non-free one. Mole is Apache-2.0 and a bundle is one artefact.
+for lib in libavcodec libavformat libavutil libswscale libswresample; do
+    grep -qE "^ *\| *$lib\.so\*|$lib\.so\* *\|" "$BUNDLE" \
+        || grep -q "$lib.so\*" "$BUNDLE" \
+        || fail "$lib is not left to the host, so the bundle carries a distribution's codec choices"
+done
+sed -n '/is_excluded()/,/^}/p' "$BUNDLE" | grep -q "Apache-2.0" \
+    || fail "the licence reason for excluding the codec stack is not stated where the exclusion is"
+
 begin "the platform plugin is still the one that stops everything"
 # The check this one was written beside. Kept here so that removing either is a
 # failure rather than a quiet loss.
 grep -q 'platforms/libqxcb.so' "$BUNDLE" \
     || fail "nothing checks that the bundle can start at all"
+
+begin "a bundle on this machine carries no library it may not redistribute"
+# The behavioural half. Named rather than derived, because a licence is not a fact
+# any tool here can read off a .so -- these are the ones a distribution's ffmpeg
+# pulls in that an Apache-2.0 artefact cannot absorb. See MOLE-322.
+if [ ! -d dist/usr/lib ]; then
+    echo "  skipped: no bundle in dist/ -- run make bundle"
+else
+    : > "$SHELLTEST_TMP/unredistributable"
+    for pattern in libx264 libx265 libxvidcore libzvbi libfdk-aac; do
+        found=$(find dist -name "$pattern*" 2>/dev/null | head -1)
+        [ -z "$found" ] || echo "$found" >> "$SHELLTEST_TMP/unredistributable"
+    done
+    if [ -s "$SHELLTEST_TMP/unredistributable" ]; then
+        fail "the bundle carries GPL or non-free libraries inside an Apache-2.0 artefact"
+        sed 's/^/    /' "$SHELLTEST_TMP/unredistributable"
+    fi
+fi
 
 begin "a bundle on this machine carries exactly one media backend"
 # The behavioural half, where there is something to look at.

@@ -122,6 +122,15 @@ public:
         /// backend actually in use, so this is the honest half of the question:
         /// what it was asked to be, or empty for the platform default.
         QString requestedBackend;
+        /// Whether a backend plugin exists to be loaded at all, decided by looking
+        /// for one rather than by asking Qt Multimedia a question.
+        ///
+        /// **This is what stops the process ending.** With no backend anywhere,
+        /// `QMediaFormat::supportedVideoCodecs()` does not return an empty list --
+        /// it asserts, and an assert in Qt is `abort()`. So `mole --plugins` from a
+        /// bundle on a machine with no Qt installed died in the probe, before any
+        /// video had been looked at. See MOLE-316.
+        bool backendPresent = false;
     };
 
     /// Asks the media stack. Cached, because building it costs 710 ms and five

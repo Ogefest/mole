@@ -467,11 +467,26 @@ void TestMediaThumbnailers::anEmptyCodecListIsNotTheSameAsNoMultimedia()
     absent.moduleBuiltIn = false;
     QVERIFY(!VideoPreviewProvider::videoIsWorthTrying(absent));
 
-    // A module that is there and lists what it can decode: obviously yes.
+    // A module that is there, with a backend behind it, listing what it can
+    // decode: obviously yes.
     Probe speaking;
     speaking.moduleBuiltIn = true;
+    speaking.backendPresent = true;
     speaking.decodableVideoCodecs = { QStringLiteral("H264"), QStringLiteral("VP8") };
     QVERIFY(VideoPreviewProvider::videoIsWorthTrying(speaking));
+
+    // **The module without a backend, which is a third answer and used to be read
+    // as the second.** Qt Multimedia compiled in says nothing about whether a
+    // backend plugin can be loaded, and where none can, the call that would report
+    // the codec list does not return an empty one -- it asserts, and an assert is
+    // abort(). So this is not a preference about tidiness: `mole --plugins` from a
+    // bundle on a machine with no media backend ended the process. A video has to
+    // get the ordinary file-information view instead. See MOLE-316.
+    Probe noBackend;
+    noBackend.moduleBuiltIn = true;
+    noBackend.backendPresent = false;
+    QVERIFY2(!VideoPreviewProvider::videoIsWorthTrying(noBackend),
+        "with no backend there is nothing to try, and trying anyway ends the process");
 
     // The case this exists for. A module that is present and reports nothing is
     // declining to say, not saying no -- QMediaFormat's codec list is the half
@@ -484,6 +499,7 @@ void TestMediaThumbnailers::anEmptyCodecListIsNotTheSameAsNoMultimedia()
     // on the machine this suite runs on.
     Probe silent;
     silent.moduleBuiltIn = true;
+    silent.backendPresent = true;
     QVERIFY2(VideoPreviewProvider::videoIsWorthTrying(silent),
         "a backend that reports no codecs is declining to answer, not answering no");
 }
@@ -503,7 +519,20 @@ void TestMediaThumbnailers::theDiagnosticsSayWhichOfTheTwoHappened()
         return;
     }
 
-    QVERIFY2(all.contains(QStringLiteral("media backend")), qPrintable(all));
+    QVERIFY2(all.contains(QStringLiteral("media backend asked for")), qPrintable(all));
+
+    // Three outcomes, not two, and the report has to name which. A machine with no
+    // loadable backend gets the file-information view; one whose backend names no
+    // codec tries anyway; one that lists them decodes. The middle case used to be
+    // reported as the last, so "no video and no explanation" was indistinguishable
+    // from "this file is not a video Mole knows". See MOLE-316.
+    if (!VideoPreviewProvider::probe().backendPresent) {
+        QVERIFY2(all.contains(QStringLiteral("backend found: none that will load")), qPrintable(all));
+        QVERIFY2(all.contains(QStringLiteral("README.md")),
+            "a report that says a thing is missing has to say what to install");
+        return;
+    }
+    QVERIFY2(all.contains(QStringLiteral("backend found: yes")), qPrintable(all));
     QVERIFY2(all.contains(QStringLiteral("video codecs it reports")), qPrintable(all));
 }
 
