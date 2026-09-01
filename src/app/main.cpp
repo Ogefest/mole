@@ -226,6 +226,14 @@ int main(int argc, char* argv[])
     // Once there is a window: a QDrag needs a real one as its source.
     installDragHook(controller, qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst()));
 
+    // And once there is a window, whether a newer Mole exists. Here rather than in
+    // initialise() because the answer arrives whenever it arrives, and a notice
+    // over a half-drawn window on a slow machine is the failure worth designing
+    // against. Nothing is held up: the request goes out on the event loop below
+    // and a signal comes back. See UpdateCheck.h -- including why there is no
+    // thread, and what does and does not leave the machine.
+    controller.startUpdateCheck();
+
     const int code = app.exec();
 
     // Closed before the engine and the plugins come down, so a message emitted

@@ -11,6 +11,8 @@ add_library(mole_ui STATIC
     FileLauncher.cpp
     SessionStore.h
     SessionStore.cpp
+    UpdateCheck.h
+    UpdateCheck.cpp
 
     models/CommandPaletteModel.h
     models/CommandPaletteModel.cpp
@@ -48,6 +50,13 @@ add_library(mole::ui ALIAS mole_ui)
 target_include_directories(mole_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 # QtGui only for QDesktopServices; there is still no widget or window here, so
 # the tests keep running headless.
+#
+# Network is the update check and nothing else -- one conditional GET of the
+# release manifest, on the event loop, at startup. PRIVATE because no header here
+# mentions it: UpdateCheck.h forward-declares what it holds, so nothing that links
+# this library has to know Qt Network exists, while the library itself still
+# carries the link. It stays out of mole_core deliberately, so the console runner
+# and every headless tool do not acquire an HTTP stack for a window's benefit.
 target_link_libraries(mole_ui
     PUBLIC mole_host Qt6::Gui
-    PRIVATE mole_flags)
+    PRIVATE mole_flags Qt6::Network)

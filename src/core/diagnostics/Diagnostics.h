@@ -25,10 +25,17 @@ Q_DECLARE_LOGGING_CATEGORY(networkLog)
 /// it stopped sending".
 Q_DECLARE_LOGGING_CATEGORY(curlLog)
 
+/// The one request Mole makes on its own account: whether a newer release
+/// exists. Everything that check decides is written here and nowhere else,
+/// because the whole of its design is that it never says anything out loud --
+/// so when somebody asks why they were or were not told about a version, this
+/// is the only place with an answer.
+Q_DECLARE_LOGGING_CATEGORY(updateLog)
+
 namespace diagnostics {
 
     /// Turns on the detail asked for in the `MOLE_LOG` environment variable, a
-    /// comma-separated list of `task`, `drive`, `net`, `curl`, or `all`.
+    /// comma-separated list of `task`, `drive`, `net`, `curl`, `update`, or `all`.
     ///
     /// Every category is silent by default at debug level and audible at warning
     /// level, so a truncated download or a failed job leaves a line in the session

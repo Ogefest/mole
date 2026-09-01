@@ -12,7 +12,7 @@ Verified against the current build:
 | Requirement | Status | How it was checked |
 |---|---|---|
 | Qt is dynamically linked, never static | **OK** | `ldd` shows 11 `libQt6*.so`; `nm` finds no Qt symbols inside the binary |
-| Only LGPL-licensed Qt modules are used | **OK** | Core, Gui, Qml, Quick, QuickControls2, Sql, Pdf — all LGPL-3.0. Qt Pdf embeds PDFium under permissive terms; see `THIRD-PARTY-NOTICES.md` |
+| Only LGPL-licensed Qt modules are used | **OK** | Core, Gui, Network, Qml, Quick, QuickControls2, Sql, Pdf — all LGPL-3.0. Qt Pdf embeds PDFium under permissive terms; see `THIRD-PARTY-NOTICES.md` |
 | No GPL-only Qt module (Charts, DataVisualization, …) | **OK** | none referenced in any `CMakeLists.txt` |
 | Qt is unmodified | **OK** | no Qt source is vendored; the system Qt is used as installed |
 | The user can replace Qt with their own build | **OK** | see *Relinking* below |

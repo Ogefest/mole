@@ -29,6 +29,8 @@
 #include "plugins/archive/CompressTask.h"
 #endif
 
+#include "ui/UpdateCheck.h"
+
 #include "core/settings/Preferences.h"
 #include "core/tasks/DriveCheckTask.h"
 #include "core/tasks/FolderSizesTask.h"
@@ -245,6 +247,10 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     // are, and before the engine loads a line of QML, so the first frame is
     // already the right colour. An absent or unknown value opens on the default.
     m_colour->setTheme(m_preferences->value(QStringLiteral("ui.theme"), Palette::defaultTheme()).toString());
+
+    // Built here, where the preferences it reads and writes already exist, and
+    // started later -- see startUpdateCheck(). Building it sends nothing.
+    m_updateCheck = new UpdateCheck(m_preferences, QStringLiteral(MOLE_VERSION), this);
 
     m_secrets = new SecretStore(SecretStore::defaultPath(), this);
     connect(m_secrets, &SecretStore::unlockedChanged, this, &AppController::credentialsChanged);
@@ -511,6 +517,16 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
         }
     }
     return true;
+}
+
+void AppController::startUpdateCheck()
+{
+    if (!m_updateCheck)
+        return;
+    // What comes back is MOLE-325's: the notice, and the switch that stops this
+    // being asked at all. Until then the only trace of an answer is one line in
+    // the session log, which is what UpdateCheck writes for itself.
+    m_updateCheck->start();
 }
 
 void AppController::mountDefaultDrives()

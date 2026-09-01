@@ -58,9 +58,9 @@ option(MOLE_CORE_ONLY "Build core, host, ui and their headless tests only" OFF)
 # Windows/macOS honest.
 if(MOLE_CORE_ONLY)
     # Everything here is in qtbase, which is the whole point -- see the option above.
-    find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Sql Concurrent)
+    find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Network Sql Concurrent)
 else()
-    find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Sql Concurrent)
+    find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Network Qml Quick QuickControls2 Sql Concurrent)
 endif()
 
 qt_standard_project_setup()
@@ -114,11 +114,13 @@ if(NOT MOLE_CORE_ONLY)
 endif()
 
 if(MOLE_BUILD_TESTS)
-    # Network is for the tests alone -- Mole itself talks to servers through
-    # libcurl and never links it. It is what lets a suite stand up a server that
-    # answers wrongly on purpose, which is the only way most of those answers can
-    # be met at all. See tests/support/ScriptedHttpServer.h.
-    find_package(Qt6 6.4 REQUIRED COMPONENTS Test Network)
+    # Test alone here now. Network used to be found only for the suites -- Mole
+    # talked to servers through libcurl and linked no HTTP client of its own -- and
+    # it is above with the rest since the update check, which is Qt Network on the
+    # event loop. What the suites still want it for is the other half: a server
+    # that answers wrongly on purpose, which is the only way most of those answers
+    # can be met at all. See tests/support/ScriptedHttpServer.h.
+    find_package(Qt6 6.4 REQUIRED COMPONENTS Test)
     enable_testing()
     add_subdirectory(tests)
 endif()

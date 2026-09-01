@@ -420,7 +420,8 @@ that third-party code uses, so the API cannot quietly rot.
 | `MOLE_PLUGIN_PATH` | extra directories to load plugins from |
 | `MOLE_LOG_PATH` | where the session log is written, instead of the user profile |
 | `MOLE_STAGING_DIR` | where a payload is staged while it is written, instead of the temporary directory |
-| `MOLE_LOG` | what to record in detail: `task`, `drive`, `net`, `curl`, or `all` |
+| `MOLE_UPDATE_MANIFEST` | where to ask what the newest release is, instead of the published manifest |
+| `MOLE_LOG` | what to record in detail: `task`, `drive`, `net`, `curl`, `update`, or `all` |
 | `MOLE_PASSPHRASE` | unlocks the credential store for `mole-tasks`, which has nobody to ask |
 | `MOLE_SCREENSHOT_DIR` | where `tst_Walkthrough` writes its pictures |
 
@@ -434,7 +435,8 @@ so `MOLE_LOG` turns up the detail by subject, into the same file:
 ```sh
 MOLE_LOG=net,curl mole      # every network transfer, and libcurl's own account of it
 MOLE_LOG=task,drive mole    # what every job did, and every operation on every drive
-MOLE_LOG=all mole           # all four
+MOLE_LOG=update mole        # whether it looked for a newer release, and what it decided
+MOLE_LOG=all mole           # all of them
 ```
 
 `task` and `drive` are written in one place each and so cover every job and every

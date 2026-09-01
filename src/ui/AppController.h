@@ -46,6 +46,7 @@ class FileSetStore;
 class Preferences;
 class SecretStore;
 class RemoteRegistry;
+class UpdateCheck;
 
 /// Owns the application's services and exposes them to QML as a single root
 /// object. Construction order here is the application's startup sequence.
@@ -148,6 +149,18 @@ public:
     /// layer does not depend on the features it hosts -- the same reason a
     /// third-party plugin does not get to reach into the shell.
     bool initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, QString* errorOut = nullptr);
+
+    /// Asks whether a newer Mole exists, at most once per run.
+    ///
+    /// Separate from initialise() and called by main.cpp once there is a window,
+    /// for two reasons. A notice must never appear over a half-drawn window, and
+    /// the answer can arrive at any moment. And every test that builds an
+    /// AppController would otherwise make a request: nothing in `make test` may
+    /// depend on GitHub being up. See UpdateCheck.h for what it does and does not
+    /// say.
+    void startUpdateCheck();
+
+    UpdateCheck* updateCheck() const { return m_updateCheck; }
 
     TabsModel* tabs() const { return m_tabs; }
     Palette* colour() const { return m_colour; }
@@ -626,6 +639,7 @@ private:
     std::unique_ptr<AnalysisStore> m_reports;
     FileSetStore* m_sets = nullptr;
     Preferences* m_preferences = nullptr;
+    UpdateCheck* m_updateCheck = nullptr;
     SecretStore* m_secrets = nullptr;
     RemoteRegistry* m_remotes = nullptr;
     QString m_credentialsError;

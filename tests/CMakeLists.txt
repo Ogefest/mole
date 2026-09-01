@@ -385,6 +385,13 @@ mole_add_test(tst_DragSource           SOURCES ui/tst_DragSource.cpp           L
 mole_add_test(tst_Bookmarks            SOURCES ui/tst_Bookmarks.cpp            LIBS mole_ui)
 mole_add_test(tst_CommandPalette       SOURCES ui/tst_CommandPalette.cpp       LIBS mole_ui)
 
+# The one request Mole makes on its own account, and everything it must not do
+# while making it. Against a scripted local server: an offline machine, a 500, a
+# body that stops half way and a connection that goes quiet all have to end in
+# silence, and silence is the state that looks exactly like the check working.
+# Nothing here reaches the internet -- see MOLE-324.
+mole_add_test(tst_UpdateCheck          SOURCES ui/tst_UpdateCheck.cpp          LIBS mole_ui)
+
 # --- the assembled application ----------------------------------------------
 #
 # From here down every suite needs the window, a plugin or a server, and each of

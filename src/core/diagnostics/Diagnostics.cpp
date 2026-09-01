@@ -13,6 +13,7 @@ Q_LOGGING_CATEGORY(taskLog, "mole.task", QtInfoMsg)
 Q_LOGGING_CATEGORY(driveLog, "mole.drive", QtInfoMsg)
 Q_LOGGING_CATEGORY(networkLog, "mole.net", QtInfoMsg)
 Q_LOGGING_CATEGORY(curlLog, "mole.curl", QtInfoMsg)
+Q_LOGGING_CATEGORY(updateLog, "mole.update", QtInfoMsg)
 
 namespace diagnostics {
     namespace {
@@ -28,6 +29,7 @@ namespace diagnostics {
             { "drive", "mole.drive" },
             { "net", "mole.net" },
             { "curl", "mole.curl" },
+            { "update", "mole.update" },
         };
 
     } // namespace
@@ -57,8 +59,8 @@ namespace diagnostics {
                 rules += categoryName + QStringLiteral(".debug=true\n");
             }
             if (!known) {
-                qWarning(
-                    "MOLE_LOG: no such log as \"%s\" -- try task, drive, net, curl or all", qPrintable(name));
+                qWarning("MOLE_LOG: no such log as \"%s\" -- try task, drive, net, curl, update or all",
+                    qPrintable(name));
             }
         }
 
