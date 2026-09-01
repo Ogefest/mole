@@ -220,6 +220,22 @@ cut_release "$repo" DRY=1 MOLE_TESTBED_ADDRESS=a-machine.invalid
 grep -qF "a-machine.invalid" "$SCRIPT_OUTPUT" && fail "the address came through the gate's output"
 said "<the testbed>"
 
+begin "make's own noise is not mistaken for the version"
+# This script is run by make, so every make it invokes is a recursive one -- and
+# make turns on --print-directory for those. `make version | tail -1` therefore came
+# back with "make[1]: Leaving directory ..." and the gate refused a release for not
+# knowing what version the repository was at, after running all three tiers. Nothing
+# saw it because these cases drive the script directly, where MAKEFLAGS is empty.
+# MAKEFLAGS=w is that condition without needing a real recursion. See MOLE-321.
+repo=$(fixture)
+MAKEFLAGS=w cut_release "$repo" DRY=1
+[ "$SCRIPT_STATUS" = 0 ] || fail "the gate could not read the version with make printing directories"
+# The noise has to be there, or the case is not reproducing the condition; and the
+# version has to have been read through it.
+grep -q "Leaving directory" "$SCRIPT_OUTPUT" \
+    || fail "MAKEFLAGS=w did not make the sub-make print directories, so this asserts nothing"
+said "cutting 0.4.0"
+
 begin "an override in the outer environment does not reach the script"
 # The gate runs this suite before it cuts, and make exports a command-line variable
 # to everything it runs -- so `make release VERSION=0.1.0` put VERSION=0.1.0 into

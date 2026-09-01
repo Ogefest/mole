@@ -156,7 +156,14 @@ fi
 # ------------------------------------------------------------- the version
 
 step "the version"
-current=$("$MAKE" version | tail -1)
+# **Asked for the line that is a version, not for the last line.** This script is
+# itself run by make, so a `make` it invokes is a recursive one -- and make turns on
+# --print-directory for those, so `make version | tail -1` came back with
+# "make[1]: Leaving directory ..." and the gate refused a release for not knowing
+# what version the repository was at. Both belts: the directory lines are switched
+# off, and what is read is the line shaped like a version rather than whichever line
+# happens to be last. See MOLE-321.
+current=$("$MAKE" --no-print-directory version 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | tail -1)
 printf '%s\n' "$current" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' \
     || die "the repository does not say what version it is at ($MAKE version said '$current')"
 note "at $current"
@@ -263,7 +270,7 @@ note "$(printf '%s\n' "$notes" | grep -c .) lines of notes for $next"
 step "the version line"
 # One line, and MOLE-117 made it the only place the number is written down.
 sed -i "s/^\( *VERSION \)[0-9][0-9.]*$/\1$next/" CMakeLists.txt
-wrote=$("$MAKE" version | tail -1)
+wrote=$("$MAKE" --no-print-directory version 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | tail -1)
 [ "$wrote" = "$next" ] || die "CMakeLists.txt still says $wrote after being rewritten"
 note "project(VERSION $next)"
 
