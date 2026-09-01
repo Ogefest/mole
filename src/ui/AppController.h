@@ -14,12 +14,14 @@
 
 #include <QObject>
 #include <QStringList>
+#include <QUrl>
 #include <QVariantList>
 
 class QTimer;
 class QAbstractItemModel;
 class QSortFilterProxyModel;
 
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -149,6 +151,20 @@ public:
     /// layer does not depend on the features it hosts -- the same reason a
     /// third-party plugin does not get to reach into the shell.
     bool initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, QString* errorOut = nullptr);
+
+    /// Opens the page the manifest named for the version last announced, and
+    /// nothing else. False when no version has been announced.
+    ///
+    /// **The URL never passes through QML and is never assembled here.** It is the
+    /// manifest's own field, opened verbatim -- which is the whole reason that
+    /// field exists, and the reason the window is handed a version and not a link.
+    Q_INVOKABLE bool openReleasePage();
+
+    /// The final "hand this to whatever opens links" step. Replaceable so a test
+    /// can assert what would have been opened without a browser appearing -- the
+    /// same seam FileLauncher has, for the same reason.
+    using LinkHook = std::function<bool(const QUrl&)>;
+    void setLinkHook(LinkHook hook);
 
     /// Asks whether a newer Mole exists, at most once per run.
     ///
@@ -468,6 +484,9 @@ public:
     Q_INVOKABLE QVariantList buildMenu();
     Q_INVOKABLE bool triggerAction(const QString& id);
     ActionRegistry* actions() const { return m_actions; }
+    /// The small things the application remembers about how somebody likes to
+    /// work, including whether it looks for a newer version of itself.
+    Preferences* preferences() const { return m_preferences; }
 
     /// Hands a file to the desktop's default application for its type. Files
     /// on a remote or archive drive are extracted to a scratch copy first.
@@ -543,6 +562,15 @@ signals:
     /// needs the store open.
     void credentialsRequested();
     void notification(int severity, const QString& title, const QString& detail);
+    /// A newer Mole exists, and this is the only place the window is told.
+    ///
+    /// Separate from notification() rather than a ninth caller of it, because this
+    /// notice has somewhere to go: the toast grows a button and stops counting
+    /// down, since a link that disappears after five seconds is not a link. The
+    /// page itself does not come through here -- see openReleasePage(). Shown once
+    /// per version; UpdateCheck decides when, and being shown is what counts as
+    /// having announced it. See MOLE-325.
+    void versionAvailable(const QString& version);
     /// The shell asks for the little dialog: a name and a format are the user's to
     /// choose, and a controller has no business owning a window.
     void compressionRequested();
@@ -640,6 +668,9 @@ private:
     FileSetStore* m_sets = nullptr;
     Preferences* m_preferences = nullptr;
     UpdateCheck* m_updateCheck = nullptr;
+    /// The landing page of the version last announced, and the only copy of it.
+    QUrl m_releasePage;
+    LinkHook m_linkHook;
     SecretStore* m_secrets = nullptr;
     RemoteRegistry* m_remotes = nullptr;
     QString m_credentialsError;

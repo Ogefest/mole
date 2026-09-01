@@ -43,6 +43,7 @@
 
 #include <QClipboard>
 #include <QCoreApplication>
+#include <QDesktopServices>
 #include <QDir>
 #include <QFileInfo>
 #include <QFontDatabase>
@@ -251,6 +252,14 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     // Built here, where the preferences it reads and writes already exist, and
     // started later -- see startUpdateCheck(). Building it sends nothing.
     m_updateCheck = new UpdateCheck(m_preferences, QStringLiteral(MOLE_VERSION), this);
+    // The page is kept here rather than handed to the window: what the window
+    // needs is a version to name, and openReleasePage() is the only thing that
+    // ever opens a URL that arrived over the network.
+    connect(
+        m_updateCheck, &UpdateCheck::newVersionFound, this, [this](const QString& version, const QUrl& page) {
+            m_releasePage = page;
+            emit versionAvailable(version);
+        });
 
     m_secrets = new SecretStore(SecretStore::defaultPath(), this);
     connect(m_secrets, &SecretStore::unlockedChanged, this, &AppController::credentialsChanged);
@@ -523,10 +532,23 @@ void AppController::startUpdateCheck()
 {
     if (!m_updateCheck)
         return;
-    // What comes back is MOLE-325's: the notice, and the switch that stops this
-    // being asked at all. Until then the only trace of an answer is one line in
-    // the session log, which is what UpdateCheck writes for itself.
+    // False when nothing was sent -- switched off, or a notice still inside its
+    // week -- and there is nothing to do about that: it is the ordinary answer.
     m_updateCheck->start();
+}
+
+void AppController::setLinkHook(LinkHook hook)
+{
+    m_linkHook = std::move(hook);
+}
+
+bool AppController::openReleasePage()
+{
+    if (!m_releasePage.isValid() || m_releasePage.isEmpty())
+        return false;
+    if (m_linkHook)
+        return m_linkHook(m_releasePage);
+    return QDesktopServices::openUrl(m_releasePage);
 }
 
 void AppController::mountDefaultDrives()
@@ -2039,6 +2061,37 @@ void AppController::registerShellActions()
         action.sortOrder = sortOrder;
         const QString actionId = id;
         action.trigger = [this, actionId] { emit dialogRequested(actionId); };
+        m_actions->addAction(std::move(action));
+    }
+
+    // And the one Help entry that is not a dialog: whether Mole looks for a newer
+    // version of itself when it starts.
+    //
+    // **A notice nobody can switch off is not a notice anybody should ship**, which
+    // is why this is in the same ticket as the notice. Default on, which is the
+    // author's decision of 2026-09-01 and the reason README.md has to say the
+    // request happens at all.
+    //
+    // Unticking stops the check and does nothing else: it does not clear which
+    // version was announced, does not clear the stored ETag, and does not take
+    // anything off the screen. Ticking it again resumes, and the week of silence
+    // still applies -- a switch that reset the state would be a switch people use
+    // to force a check, which is not what it is. See UpdateCheck.h.
+    {
+        MenuAction action;
+        action.id = QStringLiteral("mole.help.updates");
+        action.section = MenuAction::Section::Help;
+        action.title = QStringLiteral("Check for new versions");
+        action.sortOrder = 40;
+        // Set apart from the three dialogs above, because it is not one.
+        action.separatorBefore = true;
+        // Read when the menu opens rather than cached, which is what makes the tick
+        // right after a restart without anybody invalidating anything.
+        action.checked = [this] { return m_preferences->value(UpdateCheck::enabledKey(), true).toBool(); };
+        action.trigger = [this] {
+            const bool looking = m_preferences->value(UpdateCheck::enabledKey(), true).toBool();
+            m_preferences->setValue(UpdateCheck::enabledKey(), !looking);
+        };
         m_actions->addAction(std::move(action));
     }
 }

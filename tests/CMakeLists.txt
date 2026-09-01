@@ -478,6 +478,14 @@ mole_add_test(tst_DuplicatesTab     SOURCES app/tst_DuplicatesTab.cpp   LIBS mol
 # the controller answers; the fault in MOLE-265 was in the delegate the Repeat
 # dropdown lives in, which a headless controller does not have.
 mole_add_test(tst_IndexesView       SOURCES app/tst_IndexesView.cpp     LIBS mole_qml_harness mole_builtin)
+
+# The notice a newer version gets, and the switch in Help that stops it being
+# looked for. With a window behind it, because what is under test is what somebody
+# sees: one toast, the version and nothing else, a button that opens the page the
+# manifest named, and silence on every start where there is nothing new. The
+# manifest comes from a scripted local server -- nothing here reaches the
+# internet. See MOLE-325.
+mole_add_test(tst_UpdateNotice      SOURCES app/tst_UpdateNotice.cpp    LIBS mole_qml_harness mole_builtin)
 # Where the search form's criteria land on the screen. tst_MixedSearch is headless and
 # covers what a search answers; MOLE-270 was six labels on a different row from the
 # field they name, which only a window can see.

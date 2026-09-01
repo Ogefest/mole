@@ -944,6 +944,17 @@ ApplicationWindow {
         }
         function onNotification(severity, title, detail) {
             notificationLabel.text = detail.length > 0 ? title + " — " + detail : title
+            notificationPopup.offersRelease = false
+            notificationPopup.open()
+        }
+        // A newer Mole exists. The same toast, and the version is all it says: the
+        // release page has the notes, and a notice that carries them is a notice
+        // that needs scrolling. Shown once per version -- UpdateCheck decides when,
+        // and this appearing is what counts as having said it, whether the button
+        // is pressed, the toast dismissed or the window closed. See MOLE-325.
+        function onVersionAvailable(version) {
+            notificationLabel.text = "Mole " + version + " has been released."
+            notificationPopup.offersRelease = true
             notificationPopup.open()
         }
     }
@@ -955,6 +966,7 @@ ApplicationWindow {
         Overlay.modeless: DimVeil {}
 
         id: notificationPopup
+        objectName: "notificationPopup"
         x: (root.width - width) / 2
         y: root.height - height - 80
         width: Math.min(600, root.width - 100)
@@ -968,16 +980,47 @@ ApplicationWindow {
         // toast was up. Dismissing it by clicking outside still works.
         closePolicy: Popup.CloseOnPressOutside
 
+        /// Whether this notice has somewhere to go, which is the update notice and
+        /// nothing else so far.
+        property bool offersRelease: false
+
         Timer {
-            running: notificationPopup.opened
+            objectName: "notificationTimer"
+            // Not while there is a button. Five seconds is right for something to
+            // read and wrong for something to press: a link that disappears while
+            // somebody reaches for it is worse than no link. This notice goes when
+            // it is dismissed, which is a click anywhere outside it.
+            running: notificationPopup.opened && !notificationPopup.offersRelease
             interval: 5000
             onTriggered: notificationPopup.close()
         }
 
-        Label {
-            id: notificationLabel
+        RowLayout {
             anchors.fill: parent
-            wrapMode: Text.Wrap
+            spacing: 12
+
+            Label {
+                id: notificationLabel
+                objectName: "notificationLabel"
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+            }
+
+            ActionButton {
+                objectName: "openReleasePageButton"
+                visible: notificationPopup.offersRelease
+                // Outlined rather than filled: this is an offer, not the one thing
+                // the window exists to do.
+                filled: false
+                text: "Release page"
+                onClicked: {
+                    // The application opens what the manifest handed it. Nothing
+                    // here knows the URL, which is why there is nothing here that
+                    // could assemble one.
+                    App.openReleasePage()
+                    notificationPopup.close()
+                }
+            }
         }
     }
 }
