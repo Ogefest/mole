@@ -44,6 +44,10 @@ struct Target
     /// What this destination has room for, when the machine it lives on cannot
     /// be asked. Zero means no limit was declared.
     qint64 capacity = 0;
+    /// The most this destination will take in one request, which is a different
+    /// question from how much room it has -- see heavyPayloadFor(). Zero means no
+    /// such limit is known.
+    qint64 mostInOneTransfer = 0;
 };
 
 /// Every backend the environment has been told about.
@@ -73,6 +77,7 @@ QList<Target> targetsFromEnvironment()
                 base = QStringLiteral("/Shared");
             target.directory = VfsUri(QStringLiteral("sftp"), QString(), base);
             target.capacity = capacity;
+            target.mostInOneTransfer = envBytes("MOLE_TEST_HEAVY_MAX_SFTP", 0);
             return target;
         };
 
@@ -110,6 +115,7 @@ QList<Target> targetsFromEnvironment()
         target.fileSystem = std::make_shared<S3FileSystem>(QStringLiteral("s3"), settings);
         target.directory = VfsUri(QStringLiteral("s3"), QString(), QStringLiteral("/"));
         target.capacity = envBytes("MOLE_TEST_HEAVY_CAP_S3", 0);
+        target.mostInOneTransfer = envBytes("MOLE_TEST_HEAVY_MAX_S3", 0);
         targets.append(target);
     }
 
@@ -126,6 +132,10 @@ QList<Target> targetsFromEnvironment()
         target.fileSystem = std::make_shared<WebdavFileSystem>(QStringLiteral("dav"), settings);
         target.directory = VfsUri(QStringLiteral("dav"), QString(), QStringLiteral("/"));
         target.capacity = envBytes("MOLE_TEST_HEAVY_CAP_WEBDAV", 0);
+        // The one that is known to have such a limit, and it is not about space:
+        // Apache refuses a body over 1 GiB with a 413. See heavyPayloadFor() and
+        // scripts/testbed/test-heavy.sh, which is where the number comes from.
+        target.mostInOneTransfer = envBytes("MOLE_TEST_HEAVY_MAX_WEBDAV", 0);
         targets.append(target);
     }
 
@@ -147,6 +157,7 @@ QList<Target> targetsFromEnvironment()
             base = QStringLiteral("/Shared");
         target.directory = VfsUri(QStringLiteral("ftp"), QString(), base);
         target.capacity = envBytes("MOLE_TEST_HEAVY_CAP_FTP", 0);
+        target.mostInOneTransfer = envBytes("MOLE_TEST_HEAVY_MAX_FTP", 0);
         targets.append(target);
     }
 
@@ -617,6 +628,24 @@ void TestHeavyTransfers::thePayloadIsSizedToTheDestinationItGoesTo()
 
     // Never more than was asked for, whatever the destination has.
     QCOMPARE(heavyPayloadFor(256 * 1024 * 1024, 500 * gib), 256 * 1024 * 1024);
+
+    // --- and the ceiling that is not about space at all ---------------------
+    //
+    // The WebDAV destination on the test machine has 3,7 GB free and would take
+    // 1,82 GiB by the rule above -- and Apache refuses a request body over 1 GiB
+    // with a 413 whatever the disk holds. Measured on 2026-09-01: exactly
+    // 1073741824 bytes accepted, one byte more refused. It cost a seventy-minute
+    // heavy tier run to find, because Mole reports a 413 as "no room left on the
+    // server" and the destination really is on a small disk. See MOLE-320.
+    const qint64 apacheLimit = 1 * gib;
+    QCOMPARE(heavyPayloadFor(10 * gib, smallDisk, apacheLimit), apacheLimit);
+    // The smaller of the two wins, whichever it is.
+    QCOMPARE(heavyPayloadFor(10 * gib, 512 * 1024 * 1024, apacheLimit), 256 * 1024 * 1024);
+    QCOMPARE(heavyPayloadFor(10 * gib, 29 * gib, apacheLimit), apacheLimit);
+    // And a destination that states none is unaffected, which is every other one.
+    QCOMPARE(heavyPayloadFor(10 * gib, 29 * gib, 0), 10 * gib);
+    // Never more than was asked for, even where a server would take more.
+    QCOMPARE(heavyPayloadFor(512 * 1024 * 1024, 29 * gib, apacheLimit), 512 * 1024 * 1024);
 }
 
 void TestHeavyTransfers::aLargeFileMakesTheRoundTrip_data()
@@ -658,24 +687,34 @@ void TestHeavyTransfers::aLargeFileMakesTheRoundTrip()
     // answers met for the first time in a release, as two skips the gate refused --
     // correctly, because a suite that never met the environment is not a pass.
     // heavyPayloadFor() carries the reasoning.
-    const qint64 bytes = heavyPayloadFor(m_payloadBytes, target.capacity);
+    const qint64 bytes = heavyPayloadFor(m_payloadBytes, target.capacity, target.mostInOneTransfer);
     if (bytes < kSmallestHeavyPayload) {
         // Still a skip when even a small transfer will not fit: below that this case
         // could not tell a copy that streams from one that stages, which is the
         // assertion the whole tier is here for. A skip with the reason, printed,
         // never a silent pass.
-        QSKIP(qPrintable(QStringLiteral("%1 is declared to have room for %2, and half of that is "
-                                        "less than the %3 this case needs to mean anything")
-                             .arg(backend, QLocale().formattedDataSize(target.capacity),
-                                 QLocale().formattedDataSize(kSmallestHeavyPayload))));
+        QSKIP(qPrintable(
+            QStringLiteral("%1 has room for %2 and takes at most %3 in one request, which leaves "
+                           "less than the %4 this case needs to mean anything")
+                .arg(backend, QLocale().formattedDataSize(target.capacity),
+                    target.mostInOneTransfer > 0 ? QLocale().formattedDataSize(target.mostInOneTransfer)
+                                                 : QStringLiteral("no stated limit"),
+                    QLocale().formattedDataSize(kSmallestHeavyPayload))));
     }
     if (bytes < m_payloadBytes) {
-        // Said out loud, because a run whose report says 1,82 GiB against a tier that
-        // announced 10,00 GiB should not send anybody looking for a fault.
-        qInfo("%s has room for %s, so it gets %s of the %s payload", qPrintable(backend),
-            qPrintable(QLocale().formattedDataSize(target.capacity)),
+        // Said out loud, and saying *which* ceiling bit: a run whose report reads
+        // 1,00 GiB against a tier that announced 10,00 GiB should not send anybody
+        // looking for a fault, and "no room" and "the server will not take a request
+        // that big" send them looking in different places.
+        const bool roomBitFirst = target.capacity > 0 && target.capacity / 2 <= bytes;
+        qInfo("%s gets %s of the %s payload: %s", qPrintable(backend),
             qPrintable(QLocale().formattedDataSize(bytes)),
-            qPrintable(QLocale().formattedDataSize(m_payloadBytes)));
+            qPrintable(QLocale().formattedDataSize(m_payloadBytes)),
+            roomBitFirst
+                ? qPrintable(
+                      QStringLiteral("it has room for %1").arg(QLocale().formattedDataSize(target.capacity)))
+                : qPrintable(QStringLiteral("it takes at most %1 in one request")
+                                 .arg(QLocale().formattedDataSize(target.mostInOneTransfer))));
     }
 
     const QString name = QStringLiteral("mole-heavy-%1.bin").arg(QCoreApplication::applicationPid());

@@ -75,6 +75,26 @@ export MOLE_TEST_S3_SECRET="${MOLE_TEST_S3_SECRET:-$PASSWORD}"
 
 export MOLE_TEST_IGNORE_SELF_SIGNED_CERT=1
 export MOLE_TEST_HEAVY_BYTES="$BYTES"
+
+# **What a single request may carry, which is not the same question as how much room
+# a destination has** -- and for WebDAV it is the smaller of the two.
+#
+# Apache 2.4 refuses a request body over one gibibyte and answers 413, from its own
+# default rather than from anything in this machine's configuration: `LimitRequestBody`
+# has defaulted to 1 GiB since 2.4.54. Measured against the machine on 2026-09-01 --
+# exactly 1073741824 bytes is accepted with a 201, and one byte more is refused with a
+# 413 before the body is read at all. A WebDAV upload is one request, because the
+# protocol has no ranged PUT, so this is a ceiling on the file and not on a chunk of it.
+#
+# **It cost a heavy tier run to find, and why it was not obvious is worth keeping:**
+# Mole reports a 413 as "no room left on the server", so a 413 against a destination
+# that happens to live on a small disk reads exactly like the disk filling up. The room
+# figure said 3,64 GiB free and the transfer stopped at 1,01 GiB, which sends any reader
+# straight to the disk. See MOLE-320.
+#
+# Named per destination rather than as one number, because it is a fact about a server:
+# set MOLE_TEST_HEAVY_MAX_SFTP, _S3 or _FTP for one that has a limit of its own.
+export MOLE_TEST_HEAVY_MAX_WEBDAV="${MOLE_TEST_HEAVY_MAX_WEBDAV:-$((1024 * 1024 * 1024))}"
 export MOLE_TEST_HEAVY_REPORT="${MOLE_TEST_HEAVY_REPORT:-$BUILD/heavy-report.txt}"
 
 # On the control channel's own port, which is the whole of the answer to "which
@@ -150,7 +170,14 @@ status=$?
 echo
 QTEST_FUNCTION_TIMEOUT="${QTEST_FUNCTION_TIMEOUT:-7200000}" \
 QT_QPA_PLATFORM=offscreen "$BUILD/tests/tst_Interference"
-[ $? -eq 0 ] || status=$?
+# Kept in a variable first: `[ $? -eq 0 ] || status=$?` reads the *test command's*
+# status the second time, not the binary's, so an interference failure was reported as
+# 1 whatever it actually exited with -- and if the scale tier had already failed, this
+# overwrote its status with the same 1. Nothing noticed because both are non-zero and
+# the gate only asks whether the tier was green. Found while reading this file for
+# MOLE-320.
+interference=$?
+[ "$interference" -eq 0 ] || status=$interference
 
 echo
 echo "recorded in $MOLE_TEST_HEAVY_REPORT:"

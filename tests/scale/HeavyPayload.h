@@ -52,7 +52,8 @@ public:
 /// asks for more.
 constexpr qint64 kSmallestHeavyPayload = 256LL * 1024 * 1024;
 
-/// How much of `wanted` to send to a destination with `capacity` bytes free.
+/// How much of `wanted` to send to a destination with `capacity` bytes free that
+/// will accept at most `mostInOneTransfer` bytes in a single request.
 ///
 /// **The tier's payload, or as much of it as the destination can hold, rather than
 /// one figure for all four.** The WebDAV and FTP roots on the test machine are on a
@@ -72,7 +73,16 @@ constexpr qint64 kSmallestHeavyPayload = 256LL * 1024 * 1024;
 /// to the brim would take every other suite on that machine down with it. A capacity
 /// of zero means nobody could ask, and then the full payload goes -- an absent
 /// control channel must not quietly shrink the tier.
-[[nodiscard]] qint64 heavyPayloadFor(qint64 wanted, qint64 capacity);
+///
+/// **`mostInOneTransfer` is a second ceiling and it is not about space at all.**
+/// Apache 2.4 refuses a request body over 1 GiB with a 413, from its own default
+/// rather than from anything in its configuration -- measured against the test
+/// machine on 2026-09-01, where exactly 1073741824 bytes is accepted and one byte
+/// more is refused before the body is read. A WebDAV upload is one request, because
+/// the protocol has no ranged PUT, so that is a ceiling on the file and not on a
+/// chunk of it. Room and what one request may carry are different questions and the
+/// smaller answer wins. Zero means no such limit is known. See MOLE-320.
+[[nodiscard]] qint64 heavyPayloadFor(qint64 wanted, qint64 capacity, qint64 mostInOneTransfer = 0);
 
 /// What a transfer costs in things other than time.
 ///

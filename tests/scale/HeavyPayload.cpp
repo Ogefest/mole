@@ -69,11 +69,14 @@ namespace {
 
 } // namespace
 
-qint64 heavyPayloadFor(qint64 wanted, qint64 capacity)
+qint64 heavyPayloadFor(qint64 wanted, qint64 capacity, qint64 mostInOneTransfer)
 {
-    if (capacity <= 0)
-        return wanted;
-    return std::min(wanted, capacity / 2);
+    qint64 bytes = wanted;
+    if (capacity > 0)
+        bytes = std::min(bytes, capacity / 2);
+    if (mostInOneTransfer > 0)
+        bytes = std::min(bytes, mostInOneTransfer);
+    return bytes;
 }
 
 void HeavyPayload::block(QByteArray& out, qint64 blockIndex)
