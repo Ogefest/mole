@@ -124,10 +124,20 @@ add_entry() {
 #
 # It writes where the harness expects, so `said` and `exited` from shelltest.sh
 # are what assert on it -- including their dump of the whole run on a failure.
+#
+# **The script's own overrides are cleared before each run**, so what reaches it is
+# what the case asked for and nothing else. They all arrive through the environment
+# -- that is how `make release VERSION=x` reaches them -- and make exports a
+# command-line variable to everything it runs, including the suite the release gate
+# runs before it cuts. So `make release VERSION=0.1.0` handed `VERSION=0.1.0` to
+# this file's own fake repository, five cases cut that instead of what they asked
+# for, and the gate refused the release on its own test. Found on 2026-09-01 by the
+# first real use of `make release`. See MOLE-319.
 cut_release() {
     local repo="$1"
     shift
-    ( cd "$repo" && env "$@" bash "$RELEASE" ) > "$SCRIPT_OUTPUT" 2>&1
+    ( cd "$repo" && env -u VERSION -u MAJOR -u MINOR -u DRY -u BRANCH -u REMOTE \
+        "$@" bash "$RELEASE" ) > "$SCRIPT_OUTPUT" 2>&1
     SCRIPT_STATUS=$?
 }
 
@@ -209,6 +219,20 @@ cut_release "$repo" DRY=1 MOLE_TESTBED_ADDRESS=a-machine.invalid
 [ "$SCRIPT_STATUS" = 0 ] || fail "the dry run failed"
 grep -qF "a-machine.invalid" "$SCRIPT_OUTPUT" && fail "the address came through the gate's output"
 said "<the testbed>"
+
+begin "an override in the outer environment does not reach the script"
+# The gate runs this suite before it cuts, and make exports a command-line variable
+# to everything it runs -- so `make release VERSION=0.1.0` put VERSION=0.1.0 into
+# the environment of every case in this file. Five of them cut that instead of what
+# they asked for, and the release refused itself on its own test. The clearing in
+# cut_release is what stops it; this is what stops the clearing being removed.
+repo=$(fixture)
+VERSION=9.9.9 MAJOR=1 MINOR=1 cut_release "$repo" DRY=1
+[ "$SCRIPT_STATUS" = 0 ] || fail "the dry run failed with overrides in the environment"
+grep -qF "9.9.9" "$SCRIPT_OUTPUT" && fail "a VERSION from outside reached the script"
+# The fixture already has a tag, so the next cut is the patch bump -- not 1.0.0,
+# which is what the MAJOR=1 in the environment would have made of it.
+said "cutting 0.4.0"
 
 # ---------------------------------------------------------------- a dry run
 
