@@ -227,6 +227,19 @@ public:
     /// so there is nothing after it to stop.
     virtual QList<StepParameter> chainProperties() const;
 
+    /// Whether this step, configured like this, will open the files it is given.
+    ///
+    /// The one cost worth stating before a chain is left running: reading every
+    /// candidate is a different proposition from reading a listing, and on a remote
+    /// drive reading is downloading. Asked of the step rather than computed by
+    /// whoever displays it, because only the step knows what its own parameters
+    /// mean -- a filter derives it from `SearchPlan::needsFile()`.
+    ///
+    /// False by default, which is right for every step that acts on a list without
+    /// looking inside what is on it. A kind that reads files unconditionally says so
+    /// by returning true; the parameter is there for the ones where it depends.
+    virtual bool readsFileContents(const ChainStep& step) const;
+
     /// Does the work, on the chain's own thread, and says what came of it.
     ///
     /// `incoming` is what the step before produced -- empty for a source, which

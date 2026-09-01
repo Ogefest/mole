@@ -22,31 +22,6 @@ namespace {
         return planSearch(*query, SearchSource::Walk);
     }
 
-    /// The reader a criterion that needs the file is answered from.
-    ///
-    /// The same one LiveSearchTask builds, for the same reason: a content
-    /// criterion that is given no reader does not match, and a chain that
-    /// silently answered *nothing matches* would be worse than one that took
-    /// longer.
-    SearchIo readerFor(const FileSystemPtr& drive, const StepContext& context, bool needed)
-    {
-        SearchIo io;
-        if (!needed || !drive)
-            return io;
-        io.read = [drive](const VfsUri& uri, qint64 offset, qint64 bytes) -> QByteArray {
-            Result<std::unique_ptr<QIODevice>> stream = drive->openRead(uri, offset + bytes);
-            if (!stream.ok() || !stream.value())
-                return {};
-            if (offset > 0 && !stream.value()->seek(offset)) {
-                if (stream.value()->read(offset).size() != offset)
-                    return {};
-            }
-            return stream.value()->read(bytes);
-        };
-        io.cancelled = [cancel = context.cancel] { return cancel.isCancelled(); };
-        return io;
-    }
-
 } // namespace
 
 std::optional<SearchQuery> queryFrom(const QVariantMap& parameters, const QString& key)
@@ -60,6 +35,31 @@ std::optional<SearchQuery> queryFrom(const QVariantMap& parameters, const QStrin
 void putQuery(QVariantMap& parameters, const QString& key, const SearchQuery& query)
 {
     parameters.insert(key, query.toJson().toVariantMap());
+}
+
+/// The same reader LiveSearchTask builds, for the same reason: a content criterion
+/// that is given no reader does not match, and a chain that silently answered
+/// *nothing matches* would be worse than one that took longer.
+///
+/// Out of this file's anonymous namespace since MOLE-168, because FilterStep needed
+/// exactly this and had nothing -- see the declaration.
+SearchIo readerFor(const FileSystemPtr& drive, const StepContext& context, bool needed)
+{
+    SearchIo io;
+    if (!needed || !drive)
+        return io;
+    io.read = [drive](const VfsUri& uri, qint64 offset, qint64 bytes) -> QByteArray {
+        Result<std::unique_ptr<QIODevice>> stream = drive->openRead(uri, offset + bytes);
+        if (!stream.ok() || !stream.value())
+            return {};
+        if (offset > 0 && !stream.value()->seek(offset)) {
+            if (stream.value()->read(offset).size() != offset)
+                return {};
+        }
+        return stream.value()->read(bytes);
+    };
+    io.cancelled = [cancel = context.cancel] { return cancel.isCancelled(); };
+    return io;
 }
 
 // ---- a place ---------------------------------------------------------------

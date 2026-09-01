@@ -74,6 +74,9 @@ private slots:
     void aQueryIsStoredAndRunAgainRatherThanItsAnswer();
     void aFilterDirectlyAfterAPlaceIsFoldedIntoTheWalk();
     void theSameFilterOneStepFurtherDownIsNotFoldedInAndAnswersTheSame();
+    void aFilterOverNamesAndSizesOpensNoFiles();
+    void aFilterThatReachesIntoContentsAnswersTheSameWhereverItSits();
+    void aFilterSaysWhetherItWillOpenTheFilesItIsGiven();
     void aChainStartedFromWhatIsSelectedUsesIt();
     void aChainStartedFromNothingSaysSoRatherThanActingOnEverything();
 
@@ -115,6 +118,24 @@ private:
         SearchQuery query;
         query.add(SearchPredicate::extensions({ QStringLiteral("txt") }));
         return query;
+    }
+
+    /// A criterion that cannot be answered from a listing: the file has to be
+    /// opened and read. Only "three" is in a file under mem:///reports.
+    static SearchQuery onlyContaining(const QString& text)
+    {
+        SearchQuery query;
+        query.add(SearchPredicate::content(text));
+        return query;
+    }
+
+    ChainStep filterOn(const SearchQuery& query) const
+    {
+        ChainStep filter = stepOf(FilterStep::stepKind());
+        QVariantMap criteria;
+        putQuery(criteria, FilterStep::queryKey(), query);
+        filter.parameters = criteria;
+        return filter;
     }
 };
 
@@ -286,6 +307,77 @@ void TestChainSources::theSameFilterOneStepFurtherDownIsNotFoldedInAndAnswersThe
     // the drive about every one of them, because a uri is not a FileEntry.
     QVERIFY2(m_drive->statCount() > 0, "the filter answered without asking the drive anything");
     QCOMPARE(task->stepsRun(), 3);
+}
+
+void TestChainSources::aFilterOverNamesAndSizesOpensNoFiles()
+{
+    // The claim ARCHITECTURE.md makes about the bar over a listing, held for the
+    // step version of it: a filter over what a listing already says is free. Not
+    // "cheap" -- free, and the only way to hold that is to count the opens on a
+    // drive that would report any.
+    ChainStep place = stepOf(PlaceSource::stepKind());
+    place.parameters = { { PlaceSource::whereKey(), QStringLiteral("mem:///reports") } };
+
+    m_drive->forgetCounts();
+    ChainTask* task = run({ place, stepOf(QStringLiteral("passthrough")), filterOn(onlyText()) });
+    QVERIFY(task);
+    QStringList produced = task->produced();
+    produced.sort();
+    QCOMPARE(produced,
+        QStringList({ QStringLiteral("mem:///reports/a.txt"), QStringLiteral("mem:///reports/deep/c.txt") }));
+
+    // One stat per entry it was handed, and not one byte read.
+    QVERIFY2(m_drive->statCount() > 0, "the filter answered without asking the drive anything");
+    QCOMPARE(m_drive->openReadCount(), 0);
+    QCOMPARE(m_drive->bytesRead(), 0);
+}
+
+void TestChainSources::aFilterThatReachesIntoContentsAnswersTheSameWhereverItSits()
+{
+    // **The fault this case exists for.** A content criterion cannot be answered
+    // without a reader, and a reader is something the step has to build -- so the
+    // filter fused into the place answered correctly, from the reader PlaceSource
+    // builds, while the same criteria one step further down answered "nothing
+    // matches" for a query with a match. Two positions, two answers, and the
+    // position is not supposed to be visible at all. See MOLE-168.
+    ChainStep place = stepOf(PlaceSource::stepKind());
+    place.parameters = { { PlaceSource::whereKey(), QStringLiteral("mem:///reports") } };
+    const ChainStep filter = filterOn(onlyContaining(QStringLiteral("three")));
+
+    ChainTask* fused = run({ place, filter });
+    QVERIFY(fused);
+    QStringList fromFirst = fused->produced();
+    fromFirst.sort();
+
+    ChainTask* apart = run({ place, stepOf(QStringLiteral("passthrough")), filter });
+    QVERIFY(apart);
+    QStringList fromFourth = apart->produced();
+    fromFourth.sort();
+
+    // "three" is the contents of deep/c.txt and of nothing else under /reports.
+    QCOMPARE(fromFirst, QStringList({ QStringLiteral("mem:///reports/deep/c.txt") }));
+    QCOMPARE(fromFourth, fromFirst);
+}
+
+void TestChainSources::aFilterSaysWhetherItWillOpenTheFilesItIsGiven()
+{
+    // What a person has to be told before leaving a chain on a clock: reading every
+    // candidate is a different proposition from reading a listing, and on a remote
+    // drive reading is downloading. Derived from the plan rather than from the text
+    // of the criteria, so it is the same fact the search view shows.
+    QVERIFY(!m_filter->readsFileContents(filterOn(onlyText())));
+    QVERIFY(m_filter->readsFileContents(filterOn(onlyContaining(QStringLiteral("three")))));
+
+    // A filter with no criteria at all keeps everything and reads nothing, which is
+    // not the same as a filter whose criteria would not load -- that one refuses,
+    // and refusing is not a cost worth announcing either.
+    QVERIFY(!m_filter->readsFileContents(filterOn(SearchQuery())));
+    QVERIFY(!m_filter->readsFileContents(stepOf(FilterStep::stepKind())));
+
+    // And every other kind answers false without having to think about it, which is
+    // what the default on IChainStepKind is for.
+    QVERIFY(!m_place->readsFileContents(stepOf(PlaceSource::stepKind())));
+    QVERIFY(!m_passThrough->readsFileContents(stepOf(QStringLiteral("passthrough"))));
 }
 
 void TestChainSources::aChainStartedFromWhatIsSelectedUsesIt()

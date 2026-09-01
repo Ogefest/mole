@@ -165,6 +165,12 @@ StepPreview IChainStepKind::preview(const ChainStep&, const QStringList&, const 
     return StepPreview::unpredictable(QStringLiteral("cannot be predicted without running it"));
 }
 
+bool IChainStepKind::readsFileContents(const ChainStep& step) const
+{
+    Q_UNUSED(step)
+    return false;
+}
+
 QList<StepParameter> IChainStepKind::chainProperties() const
 {
     if (role() == StepRole::Sink)

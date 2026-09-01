@@ -17,6 +17,17 @@ QList<StepParameter> FilterStep::parameters() const
     return { query };
 }
 
+bool FilterStep::readsFileContents(const ChainStep& step) const
+{
+    const std::optional<SearchQuery> query = queryFrom(step.parameters, queryKey());
+    if (!query || query->predicates.isEmpty())
+        return false;
+    // Walk, the same source keep() plans against: what a filter has in hand is a
+    // list of uris and no index, so nothing is pushed down and every criterion is
+    // one this step evaluates itself.
+    return planSearch(*query, SearchSource::Walk).needsFile();
+}
+
 QStringList FilterStep::keep(
     const ChainStep& step, const QStringList& incoming, const StepContext& context, QString* whyOut) const
 {
@@ -46,7 +57,15 @@ QStringList FilterStep::keep(
         const Result<FileEntry> entry = drive->stat(target);
         if (!entry.ok())
             continue;
-        if (plan.matches(entry.value()))
+        // **The reader, and only when a criterion needs one.** Without it a content
+        // criterion does not match, so this step answered "nothing matches" for a
+        // query with matches -- while the same criteria fused into the place before
+        // it answered correctly, because PlaceSource builds one. Two positions, two
+        // answers, and the position is not supposed to be visible at all. A plan
+        // that needs no file gets a reader that reads nothing, so a filter over
+        // names and sizes still costs exactly one stat per entry. See MOLE-168.
+        const SearchIo io = readerFor(drive, context, plan.needsFile());
+        if (plan.matches(entry.value(), io))
             kept.append(uri);
     }
     return kept;

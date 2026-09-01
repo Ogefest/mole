@@ -34,6 +34,19 @@ public:
     StepRole role() const override { return StepRole::Transform; }
     QList<StepParameter> parameters() const override;
 
+    /// **What this filter will cost, which is the whole of what there is to say
+    /// about it.** A criterion about a name, an extension, a size or a date is
+    /// answered from the entry the drive already hands over: free, exactly like the
+    /// bar over a listing that this exists to be a step version of. A criterion that
+    /// reaches into the contents opens every candidate, and on a remote drive
+    /// opening is downloading -- which is the difference between a filter somebody
+    /// leaves on a clock and one that pulls a volume across a link every night.
+    ///
+    /// Derived from `SearchPlan::needsFile()` rather than worked out here, so it is
+    /// the same fact `LiveSearchController::readsFileContents` shows in the search
+    /// view and cannot drift from it.
+    bool readsFileContents(const ChainStep& step) const override;
+
     StepOutcome run(const ChainStep& step, const QStringList& incoming, const StepContext& context) override;
     /// Filtering writes nothing, so a preview is the real answer rather than an
     /// estimate of one.

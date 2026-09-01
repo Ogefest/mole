@@ -136,4 +136,18 @@ private:
 /// The other direction, for whoever builds a step.
 void putQuery(QVariantMap& parameters, const QString& key, const SearchQuery& query);
 
+/// The reader a criterion that needs the file itself is answered from.
+///
+/// Shared for the reason that made it worth finding: **a content criterion given no
+/// reader does not match**, so a step that built no reader would answer *nothing
+/// matches* for a search that has matches. A place with a filter fused into it built
+/// one; a filter standing on its own did not, so the same criteria gave opposite
+/// answers depending on which position the step sat in -- which is the one thing
+/// MOLE-168 asserts they must not do.
+///
+/// `needed` is `SearchPlan::needsFile()`. Answering false hands back a reader that
+/// reads nothing, which is what makes a filter over names and sizes cost no I/O at
+/// all rather than an unused connection per entry.
+[[nodiscard]] SearchIo readerFor(const FileSystemPtr& drive, const StepContext& context, bool needed);
+
 } // namespace mole

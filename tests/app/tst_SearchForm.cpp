@@ -7,6 +7,9 @@
 #include "core/CoreMetaTypes.h"
 
 #include <QGuiApplication>
+#include <QQmlComponent>
+#include <QQmlContext>
+#include <QQmlEngine>
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickWindow>
@@ -45,6 +48,7 @@ private slots:
     void typingOnTheLineMovesTheFields();
     void changingAFieldWritesTheLine();
     void scopeIsSaidOnTheLineAsWellAsInTheForm();
+    void theCriteriaStandUpOutsideTheSearchView();
 
 private:
     LiveSearchController* openSearch();
@@ -377,6 +381,48 @@ void TestSearchForm::everyLabelIsOnTheSameRowAsItsField()
                        .arg(apart.size())
                        .arg(pairs.size())
                        .arg(apart.join(QStringLiteral("\n  ")))));
+}
+
+void TestSearchForm::theCriteriaStandUpOutsideTheSearchView()
+{
+    // **The assertion that the extraction was one.** `ui/SearchCriteria.qml` was
+    // three hundred and sixty-five lines inside LiveSearchView.qml until MOLE-168,
+    // and a chain's filter step asks the same questions of the same controller. Two
+    // copies of thirty-five fields would have disagreed inside a week, so there is
+    // one file with two hosts -- and the only way to know it is a component rather
+    // than markup that happens to compile is to build it somewhere else.
+    //
+    // Here that somewhere is a bare QQmlComponent with nothing around it. The chain
+    // editor is MOLE-172's and will be the second host in the application; this is
+    // what says the component is ready for it, and what will fail if somebody
+    // reaches back into the search view from inside it.
+    LiveSearchController* controller = openSearch();
+    QVERIFY(controller);
+    m_harness->settle(3);
+
+    QQmlEngine* engine = qmlEngine(m_harness->item(QStringLiteral("advancedCriteria")));
+    QVERIFY2(engine, "the search view's criteria are not in an engine, so nothing can host them");
+
+    QQmlComponent component(engine, QUrl(QStringLiteral("qrc:/qt/qml/Mole/ui/SearchCriteria.qml")));
+    QVERIFY2(!component.isError(), qPrintable(component.errorString()));
+
+    // The one thing it declares it needs. A `required property` is what makes that a
+    // compile-time fact rather than a convention: leave it out and creation fails.
+    std::unique_ptr<QObject> alone(component.createWithInitialProperties(
+        { { QStringLiteral("controller"), QVariant::fromValue(static_cast<QObject*>(controller)) } }));
+    QVERIFY2(alone, qPrintable(component.errorString()));
+
+    auto* asItem = qobject_cast<QQuickItem*>(alone.get());
+    QVERIFY2(asItem, "the criteria are not an item, so nothing can lay them out");
+    QCOMPARE(asItem->objectName(), QStringLiteral("advancedCriteria"));
+
+    // And its fields are there, bound to the controller it was handed rather than to
+    // whatever the search view had: writing one changes the controller's own idea of
+    // the query, which is the whole point of hosting it twice.
+    QQuickItem* extension = QmlAppHarness::itemIn(asItem, QStringLiteral("extensionField"));
+    QVERIFY2(extension, "the extension criterion is missing from the component");
+    QVERIFY(extension->setProperty("text", QStringLiteral("csv")));
+    QTRY_COMPARE(controller->property("extension").toString(), QStringLiteral("csv"));
 }
 
 int main(int argc, char** argv)

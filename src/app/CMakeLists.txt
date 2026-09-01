@@ -52,6 +52,7 @@ set(MOLE_QML_FILES
     ui/Picker.qml
     ui/BrowserView.qml
     ui/LiveSearchView.qml
+    ui/SearchCriteria.qml
     ui/SearchResultList.qml
     ui/TextPreview.qml
     ui/HexPreview.qml
