@@ -23,6 +23,15 @@
 # printed, never a silent pass. The reasoning is in tests/scale/HeavyPayload.h beside
 # the arithmetic, and MOLE-320 is the ticket.
 #
+# **What it costs, measured on 2026-09-01 against the testbed as provisioned**, because
+# anybody about to run the release gate wants to know before rather than after: the
+# scale tier took 71 minutes at the ten-gibibyte default and the interference tier 26,
+# so the whole gate -- fast, live and heavy -- is about an hour and three quarters.
+# Twenty-eight of those minutes are the sftp-rekey download, at 5,7 MiB/s: a read from
+# a server that re-keys inside the span pays a stall-guard wait at every re-key point
+# (ADR-0013's amendment), and it is the one destination where the payload size costs
+# real time. Everything else moved at 15 to 111 MiB/s.
+#
 # Usage:
 #   MOLE_TESTBED_ADDRESS=<address> MOLE_TESTBED_PASSWORD=<throwaway> make test-heavy
 #   MOLE_TEST_HEAVY_BYTES=$((20 * 1024**3)) … make test-heavy
