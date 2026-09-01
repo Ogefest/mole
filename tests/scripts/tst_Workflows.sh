@@ -102,4 +102,144 @@ runs = "\n".join(
 sys.exit(1 if ("LANG=" in runs or "LC_ALL=" in runs) else 0)
 PY
 
+FAST=.github/workflows/fast-tier.yml
+RELEASE=.github/workflows/release.yml
+
+begin "the fast tier runs on a push and on a pull request"
+# The whole point of the file. A trigger deleted here puts the project back where it
+# was on 2026-08-31: a broken build found by the weekly Fedora job up to seven days
+# later, or by whoever next pushed a tag, mid-release. See MOLE-313.
+[ -f "$FAST" ] || fail "$FAST is not there at all"
+python3 - "$FAST" <<'PY' || fail "the fast tier does not run on a push, or not on a pull request"
+import sys, yaml
+document = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+triggers = document.get("on", document.get(True)) or {}
+sys.exit(0 if "push" in triggers and "pull_request" in triggers else 1)
+PY
+
+begin "the fast tier runs on the distribution the baseline Qt comes from"
+# Ubuntu 24.04 ships Qt 6.4.2, which is what CMakeLists.txt requires and what the
+# author develops against. A newer runner would quietly stop answering the question
+# this job exists for, and would answer a different one nobody asked.
+python3 - "$FAST" <<'PY' || fail "the fast tier does not run on ubuntu-24.04, so it is not testing the baseline"
+import sys, yaml
+document = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+runners = {job.get("runs-on") for job in document["jobs"].values()}
+sys.exit(0 if runners == {"ubuntu-24.04"} else 1)
+PY
+
+begin "the fast tier builds against the same libraries the release does"
+# **A missing optional library does not go red, it goes quiet.** Every one of them is
+# found QUIET behind a MOLE_HAVE_* flag, so a runner without it builds a smaller
+# suite -- and a suite that skipped is a suite that asserted nothing. A job testing a
+# leaner machine than the release builds on therefore misses exactly the breakages a
+# release would meet, and looks green while doing it.
+#
+# The two lists are held equal rather than one being a subset of the other, so a
+# library added to the release for the release's own reasons has to be a decision here
+# as well. The exceptions are named in the script and nowhere else.
+python3 - "$FAST" "$RELEASE" <<'PY' || fail "the fast tier and the release build against different libraries"
+import sys, yaml
+
+# Only the release needs these, and neither is a library: they unpack an .rpm so the
+# licence check can be asked of it. The fast tier builds no artefact.
+ONLY_THE_RELEASE_NEEDS = {"rpm", "cpio"}
+
+
+def packages(path):
+    document = yaml.safe_load(open(path, encoding="utf-8"))
+    # The steps that install what the *build* needs, found by what they install
+    # rather than by their names: Qt itself, and Arrow, which comes from Apache's
+    # own repository in a step of its own. Named steps would be one rename away from
+    # this rule quietly passing, and the release also installs packages for reasons
+    # that are not the build's -- it puts its own .deb into a container and lets apt
+    # pull the runtime libraries after it, and those are not a library this project
+    # was compiled against.
+    runs = "\n".join(
+        step.get("run", "")
+        for job in document["jobs"].values()
+        for step in job["steps"]
+        if "qt6-base-dev" in step.get("run", "") or "libarrow-dev" in step.get("run", ""))
+    found, collecting = set(), False
+    for line in runs.splitlines():
+        stripped = line.strip()
+        if "apt-get install" in stripped:
+            collecting = True
+            stripped = stripped.split("apt-get install", 1)[1]
+        elif not collecting:
+            continue
+        continues = stripped.endswith("\\")
+        for word in stripped.rstrip("\\").split():
+            # Options, and the local .deb that adds Apache's own repository, which is
+            # a path rather than a package name.
+            if word.startswith(("-", ".", '"', "$", "'", "|", "&", ";")):
+                continue
+            found.add(word)
+        if not continues:
+            collecting = False
+    return found
+
+
+fast, release = packages(sys.argv[1]), packages(sys.argv[2])
+missing = (release - ONLY_THE_RELEASE_NEEDS) - fast
+extra = fast - release
+if missing:
+    print("  the release builds against these and the fast tier does not:", " ".join(sorted(missing)))
+if extra:
+    print("  the fast tier installs these and the release does not:", " ".join(sorted(extra)))
+if missing or extra:
+    sys.exit(1)
+# And it found a list at all: an empty one would make the comparison vacuous, which is
+# the failure mode of every test that compares two sets.
+sys.exit(0 if len(fast) > 20 else 1)
+PY
+
+begin "the fast tier runs the fast tier and neither of the other two"
+# MOLE-119: the release gate is the only place the live tiers will ever be a
+# precondition of anything, because whatever runs this cannot reach the test
+# environment. A tier added here is a tier that can never pass.
+python3 - "$FAST" <<'PY' || fail "the fast tier reaches for a tier it cannot run, or has stopped excluding the heavy one"
+import sys, yaml
+document = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+runs = "\n".join(
+    step.get("run", "") for job in document["jobs"].values() for step in job["steps"])
+if "test-live" in runs or "test-heavy" in runs:
+    sys.exit(1)
+# What runs the suite, and what makes it the fast tier rather than all of it.
+sys.exit(0 if "ctest" in runs and "--label-exclude heavy" in runs else 1)
+PY
+
+begin "the fast tier says what the runner gave the build"
+# Whoever reads a red run is looking at a green tree on their own machine, so what
+# this runner did not have is the first thing worth knowing. Asked of the commands
+# rather than of the step names, because a step can be renamed.
+python3 - "$FAST" <<'PY' || fail "the fast tier does not print the configure summary, so a red run says less than it could"
+import sys, yaml
+document = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+runs = "\n".join(
+    step.get("run", "") for job in document["jobs"].values() for step in job["steps"])
+sys.exit(0 if "configure.log" in runs and "Parquet" in runs else 1)
+PY
+
+begin "the fast tier publishes nothing"
+# It runs on every push, so it is the workflow with the most chances to do something
+# it should not. Nothing here writes to the repository, makes a tag or makes a
+# release -- and a workflow that *cannot* is easier to be sure about than one that
+# could and does not.
+python3 - "$FAST" <<'PY' || fail "the fast tier could write to the repository, or tries to publish something"
+import sys, yaml
+document = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+if (document.get("permissions") or {}).get("contents") != "read":
+    sys.exit(1)
+steps = [s for job in document["jobs"].values() for s in job["steps"]]
+uses = " ".join(s.get("uses", "") for s in steps)
+runs = "\n".join(s.get("run", "") for s in steps)
+if "release" in uses.lower():
+    sys.exit(1)
+for forbidden in ("git push", "git tag", "gh release", "GITHUB_TOKEN"):
+    if forbidden in runs:
+        sys.exit(1)
+sys.exit(0)
+PY
+
 done_testing

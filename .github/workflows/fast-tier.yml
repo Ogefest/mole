@@ -1,0 +1,146 @@
+# The build and the fast tier, on every push, so a break is found by whoever caused
+# it.
+#
+# Until this file existed, nothing in .github/workflows fired on a push: release.yml
+# runs on a tag, second-family.yml on a Monday clock, and windows.yml and macos.yml
+# only when somebody asks. So a commit that broke the build was found up to seven days
+# later by the Fedora job, or by whoever next pushed a tag -- which is the worst moment
+# there is, because `scripts/release.sh` has already run the whole local gate by then
+# and somebody is mid-release when it goes red. See MOLE-313.
+#
+# **A fifth file rather than a second trigger on release.yml**, although that job
+# already configures, builds and runs the fast tier on this same runner. Two triggers
+# on one workflow means a reader has to work out whether a push publishes a release,
+# and the answer would be "no, because of a guard eleven steps down" -- a thing to
+# reason about where there should be nothing to reason about. Making release.yml's
+# setup a reusable workflow this one calls was the other candidate and was rejected
+# for now: release.yml's first real run is still ahead of it, and restructuring a file
+# whose whole job is to publish, in aid of a file that only tests, is the wrong order
+# to take those two risks in. What keeps the copy honest instead is
+# tests/scripts/tst_Workflows.sh, which holds this job to building against the same
+# optional libraries the release does.
+#
+# **The live and heavy tiers are not here and cannot be.** MOLE-119 settled that the
+# release gate is the only place they will ever be a precondition of anything, because
+# whatever runs this cannot reach the test environment; adding one would be adding a
+# tier that can never pass. second-family.yml gives the same reason in its own words.
+#
+# **This is not a build matrix.** One Ubuntu job. second-family.yml carries the
+# argument against growing one and it applies here unchanged: the second distribution,
+# on a clock, is a different question already answered elsewhere.
+#
+# **It publishes nothing.** No tag, no release, no artefact -- `permissions` says so
+# and the suite holds it.
+name: Fast tier
+
+on:
+  # Every push, on every branch, because the author's own history goes straight to
+  # main and a branch nobody has opened a pull request for still has to build.
+  push:
+  # And every pull request, which is how anything from a fork is checked at all --
+  # the Issues tab is open to people who cannot reach the board.
+  #
+  # A branch in this repository with an open pull request is therefore checked twice,
+  # once as it stands and once as it would be merged. That is the accepted cost of
+  # covering both, and the concurrency group below is what keeps it from stacking up.
+  pull_request:
+
+# Only reading it. Nothing here writes to the repository, and a workflow that cannot
+# publish is easier to be sure about than one that could and does not.
+permissions:
+  contents: read
+
+# Three pushes in a row should not pay for three full builds: the answer wanted is
+# about the tip. Superseded runs are cancelled on a branch and never on main, where
+# every commit's own answer is worth keeping -- and where the run that verifies this
+# file must not be cancelled by the next push.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  ubuntu:
+    name: Configure, build and the fast tier on Ubuntu
+    # The distribution the baseline comes from: Qt 6.4.2, which is the version
+    # CMakeLists.txt requires and the one the author develops against. A newer runner
+    # would quietly stop answering the question this job exists for -- whether the
+    # code still builds against the version it promises. tst_Workflows.sh holds it.
+    runs-on: ubuntu-24.04
+
+    steps:
+      # v7 rather than v4, and this job is what makes that bump verified rather than
+      # assumed: ee918a5 changed it in all four workflows and recorded it as
+      # unverified, "on a branch whose next push will exercise it". No push exercised
+      # anything until this file. See MOLE-307 and MOLE-313.
+      - uses: actions/checkout@v7
+
+      # The same libraries release.yml builds the artefacts against, because a job
+      # that tests a leaner machine than the release builds on is a job that misses
+      # exactly the breakages a release would meet. **Every optional dependency here
+      # is found QUIET behind a MOLE_HAVE_* flag, so a runner without one builds a
+      # smaller suite rather than failing** -- which means a missing library does not
+      # go red, it goes quiet, and a suite that skipped is a suite that asserted
+      # nothing. That is why they are all named, and why tst_Workflows.sh checks that
+      # they still are.
+      #
+      # What release.yml installs and this does not: `rpm` and `cpio`, which unpack
+      # an .rpm for the licence check, and nothing else. No artefact is built here.
+      #
+      # xvfb, x11-utils and libxcb-cursor0 are what let the two suites that start a
+      # real binary against a real platform plugin run rather than skip (MOLE-300).
+      # The GStreamer plugins are named for the reason release.yml names them: Qt
+      # Multimedia is a front end rather than a decoder, and a machine that reports
+      # itself able to decode video and cannot is a machine two suites once went down
+      # on. See MOLE-314 and MOLE-316.
+      - name: Install what the build and the suite need
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ninja-build pkg-config \
+            qt6-base-dev qt6-base-dev-tools qt6-declarative-dev qt6-declarative-dev-tools \
+            qt6-tools-dev qt6-tools-dev-tools qt6-svg-dev libqt6sql6-sqlite \
+            qt6-pdf-dev qt6-multimedia-dev qml6-module-qtmultimedia \
+            qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts \
+            qml6-module-qtquick-templates qml6-module-qtquick-window \
+            qml6-module-qtqml-workerscript qml6-module-qtquick-shapes \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav \
+            libarchive-dev libcurl4-openssl-dev libssl-dev \
+            libsmbclient-dev libnfs-dev libvterm-dev libgit2-dev libxxhash-dev \
+            xvfb x11-utils libxcb-cursor0
+
+      # Arrow is in no Ubuntu archive at any version, so the Parquet grid can only
+      # come from Apache's own repository -- which is where the author's machine and
+      # the release builder both get it. Without this the Parquet suites would skip,
+      # and a skip here says nothing while looking exactly like a pass.
+      - name: Arrow and Parquet, from Apache's own repository
+        run: |
+          sudo apt-get install -y --no-install-recommends ca-certificates lsb-release wget
+          wget -q "https://packages.apache.org/artifactory/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb"
+          sudo apt-get install -y "./apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libarrow-dev libparquet-dev
+
+      # The summary is printed the way windows.yml and second-family.yml print it, and
+      # for the same reason: whoever reads a red run is looking at a green tree on
+      # their own machine, and what this runner did *not* have is the first thing
+      # worth knowing. A library that went missing between one push and the next shows
+      # up here rather than as a suite that quietly stopped asserting.
+      - name: Configure
+        run: |
+          cmake --preset debug 2>&1 | tee configure.log
+          echo "--- what this runner gave the build ---"
+          grep -E "Parquet|Terminal|Git state|Credential|Windows shares|NFS exports|Network drives" configure.log || true
+
+      - name: Build
+        run: cmake --build build/debug --parallel "$(nproc)"
+
+      # `--output-on-failure`, so a red run says which case failed and what it said
+      # without anybody opening a browser: `gh run view --log-failed` is the whole
+      # diagnosis. `--label-exclude heavy` is what the Makefile's own `test` target
+      # passes, and it is the fast tier's definition rather than a choice made here.
+      #
+      # Nothing sets a language, deliberately, the way second-family.yml does not:
+      # natural ordering was byte ordering wherever the environment named none, and a
+      # LANG here would hide the next fault of that shape.
+      - name: The fast tier
+        run: ctest --test-dir build/debug --output-on-failure --parallel "$(nproc)" --label-exclude heavy
