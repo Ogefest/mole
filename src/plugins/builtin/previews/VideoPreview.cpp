@@ -7,9 +7,9 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QLibraryInfo>
-#include <QPluginLoader>
 #include <QMimeDatabase>
 #include <QMimeType>
+#include <QPluginLoader>
 
 #ifdef MOLE_HAVE_MULTIMEDIA
 #include <QMediaFormat>
@@ -214,10 +214,9 @@ QStringList VideoPreviewProvider::diagnosticLines()
     // Telling the first two apart is what MOLE-316 asked for, and it is the
     // difference between "install a decoder" and "this file is not one".
     if (!current.backendPresent) {
-        out.append(QStringLiteral(
-            "backend found: none that will load, so a video gets the file-information "
-            "view rather than a frame. See \"Video previews\" in README.md for what to "
-            "install"));
+        out.append(QStringLiteral("backend found: none that will load, so a video gets the file-information "
+                                  "view rather than a frame. See \"Video previews\" in README.md for what to "
+                                  "install"));
         return out;
     }
     out.append(QStringLiteral("backend found: yes"));
