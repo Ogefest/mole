@@ -31,6 +31,18 @@
 #
 # **It publishes nothing.** No tag, no release, no artefact -- `permissions` says so
 # and the suite holds it.
+#
+# **The first run was green, which is not the usual outcome for a file that has never
+# run.** Run 33515616139, 10m10s, on the commit that added this file: all 133 suites
+# passed in 98.61s and not one of them skipped for want of a library -- the same count
+# this machine gets. The configure summary said Arrow 25.0.1, libgit2 1.7.2, OpenSSL
+# 3.0.13, libsmbclient 0.7.0, libnfs 5.0.2, libcurl 8.5.0, which is what the equality
+# rule in tst_Workflows.sh exists to keep true. It also confirmed
+# `actions/checkout@v7`, which ee918a5 had recorded as unverified for want of exactly
+# this file. What it did surface is a warning backlog nothing was reading: 2,129 in the
+# build, 2,076 of them from Qt's generated QML cache and 53 in this project's own
+# files. That is reported on MOLE-313 rather than fixed here -- a first run's failures
+# belong to the file that has never run, and a warning that predates it does not.
 name: Fast tier
 
 on:

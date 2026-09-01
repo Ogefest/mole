@@ -230,6 +230,13 @@ void UpdateCheck::handle(QNetworkReply* reply)
     // not fetch these bytes again whether or not this build could make sense of
     // them. The same file will not have become readable in the meantime, and a file
     // that changes brings a new ETag with it.
+    //
+    // **Verbatim, whatever shape it is in.** Measured against the real manifest on
+    // 2026-09-01: `raw.githubusercontent.com` answers Qt's compressed request with a
+    // *weak* validator -- `W/"89fea521..."` -- and a strong one to a request that
+    // asks for no encoding. Handing it back exactly as it arrived is what makes the
+    // second start a `304`; an implementation that tidied the `W/` off would have
+    // downloaded the file every time and nothing would have looked wrong.
     const QByteArray tag = reply->rawHeader("ETag");
     if (!tag.isEmpty())
         m_preferences->setValue(etagKey(), QString::fromLatin1(tag));
