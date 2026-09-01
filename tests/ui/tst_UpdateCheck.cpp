@@ -5,6 +5,7 @@
 
 #include "core/settings/Preferences.h"
 
+#include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSignalSpy>
@@ -99,6 +100,7 @@ private slots:
     void aPageThatIsNotHttpsIsRefused();
     void nothingIdentifyingLeavesTheMachine();
     void theManifestCanBePointedSomewhereElseFromTheEnvironment();
+    void readmeStatesWhatLeavesTheMachine();
 
 private:
     /// A check pointed at `server`, with the preferences this test owns.
@@ -613,6 +615,29 @@ void TestUpdateCheck::nothingIdentifyingLeavesTheMachine()
     }
     QVERIFY(asked.header("Cookie").isEmpty());
     QVERIFY(asked.header("Authorization").isEmpty());
+}
+
+void TestUpdateCheck::readmeStatesWhatLeavesTheMachine()
+{
+    // **A README that is wrong about this is worse than one that says nothing.** It
+    // is where somebody decides whether they are comfortable with an application
+    // that makes a request on their behalf, so the URL and the headers it promises
+    // are held against the ones this file actually sends. See MOLE-326.
+    QFile readme(QStringLiteral(MOLE_SOURCE_ROOT "/README.md"));
+    QVERIFY2(readme.open(QIODevice::ReadOnly), qPrintable(readme.fileName()));
+    const QString said = QString::fromUtf8(readme.readAll()).simplified();
+
+    const QString url = UpdateCheck::defaultManifestUrl().toString();
+    QVERIFY2(said.contains(url), qPrintable(QStringLiteral("README.md does not state %1").arg(url)));
+
+    // The two headers Mole sets rather than leaving to Qt, both of them because of
+    // what a default request would otherwise have said about the machine.
+    QVERIFY2(said.contains(QLatin1String("User-Agent: Mole")),
+        "README.md does not say what user agent the request carries");
+    QVERIFY2(said.contains(QLatin1String("Accept-Language: en")),
+        "README.md does not say that the request does not carry the machine's locale");
+    QVERIFY2(said.contains(QLatin1String("If-None-Match")),
+        "README.md does not say that the request is a conditional one");
 }
 
 void TestUpdateCheck::theManifestCanBePointedSomewhereElseFromTheEnvironment()

@@ -29,6 +29,29 @@ make test       # the whole suite; it is expected to be green
 `make bundle` produces a self-contained folder in `dist/` that runs on a machine
 without Qt installed.
 
+## Staying up to date
+
+Mole is in no distribution's archive, so nothing updates it for you. When it starts
+it asks once whether a newer version has been released, and if one has it says so at
+the bottom of the window, with a button that opens that version's page.
+
+- **Once per version.** You hear about 0.2.0 once. Dismissing the notice counts as
+  having read it — there is no *remind me later*, and it is not shown again.
+- **Then a week of quiet.** If you do nothing, Mole does not even ask for seven days,
+  so a version released two days after you were told is not found until the week is
+  out. That is deliberate: being asked the same question every morning is worse than
+  hearing about a release a few days late.
+- **Nothing is downloaded and nothing is installed.** The notice names the version
+  and opens its page; installing it is whatever you did the first time.
+- **Help → Check for new versions** turns the whole thing off, the request included.
+  Unticking it changes nothing else: what you have already been told stays told, and
+  ticking it again does not force a check — the week of quiet still applies.
+- Offline, behind a proxy or behind a firewall, nothing happens at all: no message,
+  no warning and no delay.
+
+[README.md](../../README.md#checking-for-new-versions) has the exact URL and the
+exact headers, which is what to read if the question is what leaves the machine.
+
 ## The shortest possible tour
 
 ![The browser](images/01-browser.png)

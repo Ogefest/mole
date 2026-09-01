@@ -267,6 +267,55 @@ Check a packaged build without a display:
 ./dist/mole --diagnostics  # the same thing, under the name the code calls it
 ```
 
+### Checking for new versions
+
+Mole is in no distribution's archive, so nothing updates it for you and nothing would
+otherwise ever mention that a new version exists. **So when it starts, Mole asks once
+whether it is out of date.** That is on by default, and **Help → Check for new
+versions** turns it off.
+
+What leaves your machine is one `GET` of one file:
+
+```
+https://raw.githubusercontent.com/Ogefest/mole/main/latest.json
+```
+
+carrying these headers and nothing else:
+
+```
+Host: raw.githubusercontent.com
+User-Agent: Mole
+Accept-Language: en
+If-None-Match: "<the tag GitHub gave for that file last time>"
+Connection: Keep-Alive
+Accept-Encoding: <whatever compression your Qt offers>
+```
+
+**No install id, no counter, no platform, and no version number.** Two of those
+headers are set by Mole rather than left to Qt, and both for this reason. The user
+agent says `Mole` and no more: a version there would be a count of installs per
+release arriving at somebody else's server. And `Accept-Language` is fixed at `en`
+because Qt builds that header out of your system locale — a default request would say
+`pl-PL,en,*` on a Polish machine, which is the one thing in it that says anything
+about who is asking. `If-None-Match` is GitHub's own tag for the file from the last
+time it was read, which is what makes the ordinary answer `304 Not Modified` with no
+body at all. GitHub sees what it sees for any download from the repository, an
+address and a time; Mole tells it nothing beyond that.
+
+**Nothing is downloaded and nothing is installed, ever.** Mole names the version and
+offers to open its release page. Updating is whatever you did to install it.
+
+**You are told once per version, and then there is a week of quiet.** If a notice is
+shown and you do nothing, Mole does not ask again — not even the question — for seven
+days, and a version you have already been told about is never announced a second
+time.
+
+**Failure is silent.** No network, a captive portal, a proxy, a firewall, a server
+error, an answer that stops half way: none of them produces a message, a line in the
+session log above debug level, or a delay you would notice. A machine that cannot
+reach GitHub behaves exactly like one that is up to date. `MOLE_LOG=update mole` says
+what happened, if you want to know.
+
 ### Make targets
 
 | Target | Does |

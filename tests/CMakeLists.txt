@@ -82,6 +82,11 @@ target_compile_definitions(mole_test_support
 target_compile_definitions(mole_test_support
     PUBLIC MOLE_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 
+# The top of the checkout, so a test can hold a promise the documentation makes
+# against the code that has to keep it -- see readmeStatesWhatLeavesTheMachine.
+target_compile_definitions(mole_test_support
+    PUBLIC MOLE_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
+
 # Tests that load the archive plugin need to know where it was built.
 target_compile_definitions(mole_test_support
     PUBLIC MOLE_TEST_PLUGIN_DIR="${CMAKE_BINARY_DIR}/plugins")

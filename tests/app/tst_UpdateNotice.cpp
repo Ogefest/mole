@@ -8,6 +8,7 @@
 #include "core/CoreMetaTypes.h"
 #include "core/settings/Preferences.h"
 
+#include <QFile>
 #include <QGuiApplication>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -96,6 +97,7 @@ private slots:
     void theTickSurvivesARestartAndStillReflectsWhatWasStored();
     void switchedOffNothingIsAsked();
     void switchingOffLeavesWhatWasAnnouncedAlone();
+    void theDocumentationNamesTheSwitchTheWayTheMenuDoes();
 
 private:
     /// Points the application's own check at `m_server` and starts it.
@@ -373,6 +375,27 @@ void TestUpdateNotice::switchingOffLeavesWhatWasAnnouncedAlone()
     QCOMPARE(remembered->value(QStringLiteral("update.announcedVersion")).toString(), m_served);
     QVERIFY(remembered->contains(QStringLiteral("update.announcedOn")));
     QVERIFY(toastIsOpen());
+}
+
+void TestUpdateNotice::theDocumentationNamesTheSwitchTheWayTheMenuDoes()
+{
+    // **"Turn it off in Help" is only useful if the name matches.** Both places that
+    // tell somebody how to stop the check name the entry, and the entry's title
+    // lives in C++ -- so the two are held against each other rather than against a
+    // memory of what it used to be called. See MOLE-326.
+    const QString title = helpSwitch().value(QStringLiteral("title")).toString();
+    QVERIFY(!title.isEmpty());
+
+    for (const QString& page : { QStringLiteral(MOLE_SOURCE_ROOT "/README.md"),
+             QStringLiteral(MOLE_SOURCE_ROOT "/docs/guide/README.md") }) {
+        QFile file(page);
+        QVERIFY2(file.open(QIODevice::ReadOnly), qPrintable(page));
+        // Whitespace collapsed, because prose wraps: the first version of this
+        // failed on a README that names the entry across a line break.
+        const QString said = QString::fromUtf8(file.readAll()).simplified();
+        QVERIFY2(said.contains(title),
+            qPrintable(QStringLiteral("%1 does not name the menu entry, which is \"%2\"").arg(page, title)));
+    }
 }
 
 int main(int argc, char** argv)
