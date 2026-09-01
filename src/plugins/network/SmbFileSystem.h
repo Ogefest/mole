@@ -70,6 +70,14 @@ public:
     VfsCapabilities capabilities() const override;
 
     Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) override;
+    /// An SMB share does not distinguish case, and saying otherwise is not a
+    /// detail of renaming. `TransferTask` asks this to decide whether a copy would
+    /// land on something already there, and `BulkRenameFeature` asks it to decide
+    /// whether two new names collide -- both were being told a share behaves like
+    /// ext4. The default in IFileSystem is CaseSensitive, so this was inherited
+    /// rather than decided. See MOLE-318.
+    Qt::CaseSensitivity pathCaseSensitivity() const override { return Qt::CaseInsensitive; }
+
     Result<FileEntry> stat(const VfsUri& target) override;
 
     Result<void> makeDirectory(const VfsUri& target) override;

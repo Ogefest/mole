@@ -539,9 +539,26 @@ Result<void> SmbFileSystem::rename(const VfsUri& from, const VfsUri& to)
     {
     };
     if (smbc_stat(toUrl.constData(), &already) == 0) {
-        return VfsError::make(VfsError::AlreadyExists,
-            QStringLiteral("Renaming %1: there is already something called %2")
-                .arg(from.path(), to.fileName()));
+        // **Whether something is in the way is not the same question as whether
+        // it is somebody else.** A share that does not distinguish case answers
+        // this stat for `Beta-Renamed.log` with the very file being renamed, so
+        // the guard refused a case-only rename and there was no way to perform one
+        // at all. That is what the conformance suite's case-only rename exists to
+        // catch, and it caught it here the first time the live tier ran against
+        // Samba; `RenamePlan` reasons the same way one layer up -- the file in the
+        // way is the file being renamed.
+        //
+        // Asked of pathCaseSensitivity() rather than of the two stats: Samba
+        // answers a stat for either spelling and derives the inode it reports from
+        // the name it was asked with, so device and inode say two files where
+        // there is one. That was tried here first and did not work.
+        const bool sameEntry = pathCaseSensitivity() == Qt::CaseInsensitive
+            && from.path().compare(to.path(), Qt::CaseInsensitive) == 0;
+        if (!sameEntry) {
+            return VfsError::make(VfsError::AlreadyExists,
+                QStringLiteral("Renaming %1: there is already something called %2")
+                    .arg(from.path(), to.fileName()));
+        }
     }
 
     if (smbc_rename(fromUrl.constData(), toUrl.constData()) != 0) {

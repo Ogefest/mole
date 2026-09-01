@@ -65,6 +65,7 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-01 #MOLE-318 Renaming a file on a Windows share to a different capitalisation works, and copying onto one warns before it overwrites a name that differs only in case
 2026-08-24 #MOLE-311 Which drives the sidebar shows is a choice: the Drives dialog lists the disks the machine found beside the ones you set up, with a tick on each, and unticking one takes it off the strip without unmounting, unconfiguring or forgetting it
 2026-08-24 #MOLE-310 Opening an archive to look inside it leaves the drive list alone: it is somewhere to walk around in until the last tab leaves it, and a bookmark or a restored session opens it again from the uri
 2026-08-23 #MOLE-304 A download, a preview or a dragged copy that has to be staged is refused when there is nowhere to stage it, instead of being written somewhere nobody would look for it — and `MOLE_STAGING_DIR` says where staging happens, for a machine whose temporary directory is small or on the wrong disk
