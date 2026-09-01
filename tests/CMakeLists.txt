@@ -201,7 +201,23 @@ if(BASH_PROGRAM)
     # worth having: an account that is not root, and no locale. See MOLE-297.
     mole_add_shell_test(tst_Workflows
                         SCRIPT scripts/tst_Workflows.sh)
+    # Every shell test above, run once more with a documented command's variables in
+    # the environment. `make release VERSION=x` exports that assignment to
+    # everything it runs, including the suite the gate runs before it cuts -- which
+    # is how five cases in tst_Release stopped asserting what they were written to
+    # assert and the release refused itself. A test whose answer depends on how it
+    # was started cannot be trusted about anything. See MOLE-319.
+    #
+    # Longer than the sixty seconds the others get, because it is all of them in
+    # series; and given MOLE_BINARY for the same reason two of them are, so the
+    # inner runs assert rather than skip.
+    mole_add_shell_test(tst_InheritedEnvironment
+                        SCRIPT scripts/tst_InheritedEnvironment.sh)
+    set_tests_properties(tst_InheritedEnvironment PROPERTIES TIMEOUT 300)
+
     if(NOT MOLE_CORE_ONLY)
+        set_property(TEST tst_InheritedEnvironment APPEND PROPERTY
+                     ENVIRONMENT "MOLE_BINARY=$<TARGET_FILE:mole>")
         set_property(TEST tst_LicenceCheck APPEND PROPERTY
                      ENVIRONMENT "MOLE_BINARY=$<TARGET_FILE:mole>")
     endif()

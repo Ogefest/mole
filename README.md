@@ -508,6 +508,21 @@ export MOLE_TEST_WEBDAV_URL=… MOLE_TEST_WEBDAV_USER=… MOLE_TEST_WEBDAV_PASS=
 make test
 ```
 
+**One thing to know before running them that way, because the failure does not look
+like what it is.** Those suites run under CTest's 180-second limit like everything
+else in `make test`, and a conformance suite against a real server over a real link
+exceeds it — `tst_SftpFileSystem` does. What you see is a suite killed part way,
+which reads as a flaky test rather than as a limit being hit. Raise it for the run:
+
+```sh
+ctest --test-dir build/debug --timeout 900 -R 'FileSystem' --output-on-failure
+```
+
+or run the suite's binary directly, which is what the project's own live tier does
+— `scripts/testbed/test-live.sh` runs each one as its own process for exactly this
+reason, and reports a suite that skipped as *not green*, because a suite that never
+met the server is not a pass.
+
 Each suite works under a uniquely named directory or key prefix and removes it
 afterwards, so it is safe to point at a bucket or share that holds real files.
 `MOLE_TEST_SFTP_BASE`, `MOLE_TEST_FTP_BASE` and `MOLE_TEST_FTP_PORT` override where
