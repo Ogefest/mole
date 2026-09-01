@@ -68,6 +68,49 @@ void runFileSystemConformance(const ConformanceContext& context)
         QVERIFY2(!findEntry(entries, QStringLiteral("inner.dat")), "list() must return direct children only");
     }
 
+    // --- what the backend claims about case, against what the volume does -
+    //
+    // `pathCaseSensitivity()` is a constant per backend, and until MOLE-318 nothing
+    // had ever held one against the server behind it. `SmbFileSystem` never
+    // overrode `IFileSystem`'s default, so it told the rest of Mole that a Samba
+    // share behaves like ext4 -- and three places believed it:
+    //
+    // - the rename guard below, which refused a case-only rename outright, because
+    //   on a share the file in the way is the file being renamed;
+    // - `TransferTask`, which asks the *target* what it does about case to decide
+    //   whether a copy is about to land on something already there. On a share it
+    //   judged `Report.pdf` and `report.pdf` to be different destinations, so a
+    //   transfer could overwrite a file nobody was warned about -- which is the
+    //   failure that check exists to prevent;
+    // - `BulkRenameFeature`, which asks it whether two new names collide.
+    //
+    // Only the first of those had a sighting. The other two follow from the same
+    // wrong answer, which is why this is held here rather than beside the rename:
+    // one claim, checked once, for every backend at once.
+    //
+    // `alpha.txt` is on the volume. Whether `ALPHA.TXT` finds it is what the volume
+    // does, and what the backend says has to be the same thing.
+    {
+        const Qt::CaseSensitivity claimed = fs.pathCaseSensitivity();
+        const bool otherSpellingFindsIt = fs.stat(context.root.child(QStringLiteral("ALPHA.TXT"))).ok();
+
+        if (otherSpellingFindsIt) {
+            QVERIFY2(claimed == Qt::CaseInsensitive,
+                "this volume answered a stat for ALPHA.TXT while the file is alpha.txt, so it does "
+                "not distinguish case -- and pathCaseSensitivity() says it does. A transfer onto it "
+                "will judge Report.pdf and report.pdf to be different destinations and overwrite a "
+                "file nobody was warned about. Override pathCaseSensitivity() on this backend.");
+        } else {
+            QVERIFY2(claimed == Qt::CaseSensitive,
+                "this volume did not answer a stat for ALPHA.TXT while the file is alpha.txt, so it "
+                "distinguishes case -- and pathCaseSensitivity() says it does not. A case-only "
+                "rename will be taken for a no-op, and a bulk rename will refuse names that do not "
+                "collide. A volume that disagrees with its platform -- a FAT stick on Linux, a "
+                "case-sensitive APFS volume -- is the limitation "
+                "LocalFileSystem::pathCaseSensitivity() records in writing, not a fault here.");
+        }
+    }
+
     // --- listing a subdirectory ------------------------------------------
     {
         Result<FileEntryList> listing = fs.list(context.root.child(QStringLiteral("nested")), noCancel);
