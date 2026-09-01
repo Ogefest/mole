@@ -42,6 +42,38 @@ public:
     static bool verify(QIODevice& device, qint64 expectedBytes, QString* errorOut);
 };
 
+/// The smallest transfer still worth calling heavy.
+///
+/// Below this the case stops being about what this tier is about. `ResourceWatch`
+/// is asked whether a copy needed room for a chunk or room for the whole file, and
+/// the allowance that question is asked against never drops under 64 MiB -- so a
+/// payload anywhere near it could not tell a copy that streams from one that
+/// stages. Four times that, which is also the payload this binary uses when nobody
+/// asks for more.
+constexpr qint64 kSmallestHeavyPayload = 256LL * 1024 * 1024;
+
+/// How much of `wanted` to send to a destination with `capacity` bytes free.
+///
+/// **The tier's payload, or as much of it as the destination can hold, rather than
+/// one figure for all four.** The WebDAV and FTP roots on the test machine are on a
+/// four-gigabyte disk on purpose -- that is what makes "the destination filled up" a
+/// condition a test can create in seconds instead of faking -- and the tier's
+/// default payload is ten gibibytes, also on purpose. Both decisions are right, they
+/// are incompatible, and nothing had ever put them together: the first real use of
+/// `make release` refused itself, correctly, on the two destinations that skipped.
+/// See MOLE-320.
+///
+/// What this tier exists to prove is the *ratio* between a transfer and the
+/// temporary space it needs, and a gibibyte proves that as well as ten does. What it
+/// does not need is to be one number.
+///
+/// **Half the room, at most.** That is the headroom the skip it replaces used to
+/// insist on, and it is not caution for its own sake: a destination this tier filled
+/// to the brim would take every other suite on that machine down with it. A capacity
+/// of zero means nobody could ask, and then the full payload goes -- an absent
+/// control channel must not quietly shrink the tier.
+[[nodiscard]] qint64 heavyPayloadFor(qint64 wanted, qint64 capacity);
+
 /// What a transfer costs in things other than time.
 ///
 /// A copy of a hundred-gigabyte file must not need a hundred gigabytes of

@@ -194,6 +194,8 @@ private slots:
     void aLargeFileMakesTheRoundTrip_data();
     void aLargeFileMakesTheRoundTrip();
 
+    void thePayloadIsSizedToTheDestinationItGoesTo();
+
     void aStrategyBoundaryArrivesWhole_data();
     void aStrategyBoundaryArrivesWhole();
     void aDirectoryOfAHundredThousandEntriesCanBeListed();
@@ -584,6 +586,39 @@ void TestHeavyTransfers::aFileAcrossAThirtyTwoBitBoundaryArrivesWhole()
     QFile::remove(QDir(m_dir->path()).filePath(QStringLiteral("dst/boundary.bin")));
 }
 
+void TestHeavyTransfers::thePayloadIsSizedToTheDestinationItGoesTo()
+{
+    // No server, no room and no minutes: this is the arithmetic that stopped
+    // `make release` passing its own gate, and the rule is that a fault found
+    // against a real machine leaves behind a test that does not need one. This case
+    // is registered a second time in tests/CMakeLists.txt without the `heavy` label,
+    // so it runs in `make test` where nothing else in this file can. See MOLE-320.
+    constexpr qint64 gib = 1024LL * 1024 * 1024;
+
+    // Nobody could be asked, so the whole payload goes. An absent control channel
+    // must not quietly shrink the tier.
+    QCOMPARE(heavyPayloadFor(10 * gib, 0), 10 * gib);
+    QCOMPARE(heavyPayloadFor(10 * gib, -1), 10 * gib);
+
+    // Room to spare: what sftp and s3 had at 29 GB free on the day this was found.
+    QCOMPARE(heavyPayloadFor(10 * gib, 29 * gib), 10 * gib);
+    // Exactly twice the payload, which is the boundary the skip this replaced drew.
+    QCOMPARE(heavyPayloadFor(10 * gib, 20 * gib), 10 * gib);
+
+    // And the four-gigabyte data disk the WebDAV and FTP roots are on, which is the
+    // destination that used to skip: 3,7 GB free, so it gets half of that and runs.
+    const qint64 smallDisk = 3906250000LL;
+    QCOMPARE(heavyPayloadFor(10 * gib, smallDisk), smallDisk / 2);
+    QVERIFY(heavyPayloadFor(10 * gib, smallDisk) > kSmallestHeavyPayload);
+
+    // A destination with nothing worth using is still a skip, rather than a transfer
+    // too small to tell a copy that streams from one that stages.
+    QVERIFY(heavyPayloadFor(10 * gib, 64 * 1024 * 1024) < kSmallestHeavyPayload);
+
+    // Never more than was asked for, whatever the destination has.
+    QCOMPARE(heavyPayloadFor(256 * 1024 * 1024, 500 * gib), 256 * 1024 * 1024);
+}
+
 void TestHeavyTransfers::aLargeFileMakesTheRoundTrip_data()
 {
     QTest::addColumn<QString>("backend");
@@ -617,17 +652,34 @@ void TestHeavyTransfers::aLargeFileMakesTheRoundTrip()
     }
     QVERIFY2(target.fileSystem != nullptr, "the drive disappeared between listing and running");
 
-    // A destination that cannot hold it is a skip with the reason, not a
-    // failure and not a silent pass. Filling a test machine's disk would take
-    // every other suite down with it.
-    if (target.capacity > 0 && target.capacity < m_payloadBytes * 2) {
-        QSKIP(qPrintable(QStringLiteral("%1 is declared to have room for %2 and this needs twice %3")
+    // **As much of the tier's payload as this destination can hold**, rather than one
+    // figure aimed at all four. Two of them are on a four-gigabyte disk on purpose
+    // and the payload is ten gibibytes on purpose; before MOLE-320 those two right
+    // answers met for the first time in a release, as two skips the gate refused --
+    // correctly, because a suite that never met the environment is not a pass.
+    // heavyPayloadFor() carries the reasoning.
+    const qint64 bytes = heavyPayloadFor(m_payloadBytes, target.capacity);
+    if (bytes < kSmallestHeavyPayload) {
+        // Still a skip when even a small transfer will not fit: below that this case
+        // could not tell a copy that streams from one that stages, which is the
+        // assertion the whole tier is here for. A skip with the reason, printed,
+        // never a silent pass.
+        QSKIP(qPrintable(QStringLiteral("%1 is declared to have room for %2, and half of that is "
+                                        "less than the %3 this case needs to mean anything")
                              .arg(backend, QLocale().formattedDataSize(target.capacity),
-                                 QLocale().formattedDataSize(m_payloadBytes))));
+                                 QLocale().formattedDataSize(kSmallestHeavyPayload))));
+    }
+    if (bytes < m_payloadBytes) {
+        // Said out loud, because a run whose report says 1,82 GiB against a tier that
+        // announced 10,00 GiB should not send anybody looking for a fault.
+        qInfo("%s has room for %s, so it gets %s of the %s payload", qPrintable(backend),
+            qPrintable(QLocale().formattedDataSize(target.capacity)),
+            qPrintable(QLocale().formattedDataSize(bytes)),
+            qPrintable(QLocale().formattedDataSize(m_payloadBytes)));
     }
 
     const QString name = QStringLiteral("mole-heavy-%1.bin").arg(QCoreApplication::applicationPid());
-    const VfsUri source = makeSource(name);
+    const VfsUri source = makeSource(name, bytes);
     QVERIFY(source.isValid());
     const VfsUri landed = target.directory.child(name);
 
@@ -651,17 +703,17 @@ void TestHeavyTransfers::aLargeFileMakesTheRoundTrip()
         watch.stop();
 
         QVERIFY2(task->failures().isEmpty(), qPrintable(task->failures().join(QLatin1Char(' '))));
-        record(QStringLiteral("local -> %1").arg(backend), m_payloadBytes, elapsed, watch);
+        record(QStringLiteral("local -> %1").arg(backend), bytes, elapsed, watch);
 
         // The assertion this whole tier exists for. A copy that streams needs
         // room for a chunk; one that stages needs room for the file, and the
         // difference is invisible until the file is bigger than the disk.
-        const qint64 allowed = qMax<qint64>(64LL * 1024 * 1024, m_payloadBytes / 50);
+        const qint64 allowed = qMax<qint64>(64LL * 1024 * 1024, bytes / 50);
         QVERIFY2(watch.peakScratchBytes() < allowed,
             qPrintable(
                 QStringLiteral("uploading %1 used %2 of temporary space, which is staging. "
                                "The largest of it was %3")
-                    .arg(QLocale().formattedDataSize(m_payloadBytes),
+                    .arg(QLocale().formattedDataSize(bytes),
                         QLocale().formattedDataSize(watch.peakScratchBytes()), watch.largestScratchEntry())));
         QVERIFY2(watch.peakResidentGrowthBytes() < 1024LL * 1024 * 1024,
             qPrintable(
@@ -692,20 +744,20 @@ void TestHeavyTransfers::aLargeFileMakesTheRoundTrip()
         watch.stop();
 
         QVERIFY2(task->failures().isEmpty(), qPrintable(task->failures().join(QLatin1Char(' '))));
-        record(QStringLiteral("%1 -> local").arg(backend), m_payloadBytes, elapsed, watch);
+        record(QStringLiteral("%1 -> local").arg(backend), bytes, elapsed, watch);
 
-        const qint64 allowed = qMax<qint64>(64LL * 1024 * 1024, m_payloadBytes / 50);
+        const qint64 allowed = qMax<qint64>(64LL * 1024 * 1024, bytes / 50);
         QVERIFY2(watch.peakScratchBytes() < allowed,
             qPrintable(
                 QStringLiteral("downloading %1 used %2 of temporary space, which is staging. "
                                "The largest of it was %3")
-                    .arg(QLocale().formattedDataSize(m_payloadBytes),
+                    .arg(QLocale().formattedDataSize(bytes),
                         QLocale().formattedDataSize(watch.peakScratchBytes()), watch.largestScratchEntry())));
 
         QFile copy(QDir(m_dir->path()).filePath(QStringLiteral("back/") + name));
         QVERIFY2(copy.open(QIODevice::ReadOnly), "nothing came back");
         QString problem;
-        QVERIFY2(HeavyPayload::verify(copy, m_payloadBytes, &problem), qPrintable(problem));
+        QVERIFY2(HeavyPayload::verify(copy, bytes, &problem), qPrintable(problem));
     }
 
     // The machine is left as it was found, whatever happened above.

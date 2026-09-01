@@ -675,6 +675,17 @@ if(MOLE_HAVE_NETWORK_PLUGIN)
     set_tests_properties(tst_HeavyTransfers PROPERTIES TIMEOUT 7200 LABELS heavy
                          ENVIRONMENT "QTEST_FUNCTION_TIMEOUT=3600000")
 
+    # And one case out of that same binary a second time, without the `heavy` label,
+    # so it runs in `make test` where nothing else in that file can. How much of the
+    # payload each destination gets is arithmetic, it needs no server and no minutes,
+    # and it is the arithmetic that made `make release` refuse itself on two skips --
+    # a fault found against a real machine should leave behind a test that does not
+    # need one. See MOLE-320.
+    add_test(NAME tst_HeavyPayloadSizing
+             COMMAND tst_HeavyTransfers thePayloadIsSizedToTheDestinationItGoesTo)
+    set_tests_properties(tst_HeavyPayloadSizing PROPERTIES
+                         ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+
     # The same transfers with the server being attacked while they run. Needs
     # the control channel as well as an account, and skips itself with the
     # reason when either is missing.

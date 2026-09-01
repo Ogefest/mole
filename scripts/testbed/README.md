@@ -54,6 +54,15 @@ The data disk is small on purpose. The WebDAV and FTP roots go on it, so *the
 destination filled up* is a condition a test can create in seconds rather than
 one it has to fake.
 
+**What that implies for the heavy tier, and it took a release to notice.** The
+heavy tier's payload is ten gibibytes by default, which is also on purpose — and it
+will not fit on this disk twice. Both decisions are right and they are
+incompatible: the first real use of `make release` refused itself on two skips,
+because a suite that never met the environment is not a pass. The tier now sizes
+its payload per destination from the room each one reports, so this disk gets half
+of what it has and runs. Raising the disk instead would have taken away the very
+condition it exists to provide. See MOLE-320 and the head of `test-heavy.sh`.
+
 VM `200` is well clear of anything a person would have picked by hand. The
 hypervisor is allowed to have other work on it, and this script touches nothing
 but its own machine.
@@ -127,7 +136,8 @@ refuses to blackhole it or stop its unit.
 
 The WebDAV and FTP roots are on the small disk so that *the destination filled
 up* is a condition a test can create. MinIO's store is not: a bucket has no
-business filling the disk that condition is measured on.
+business filling the disk that condition is measured on. What the heavy tier sends
+to each of them follows the room they report — see above.
 
 ## Running the live suites
 

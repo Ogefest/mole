@@ -9,11 +9,19 @@
 # asserts beyond "the copy worked" is the part that matters: peak temporary
 # space, resident memory, file descriptors, and throughput recorded run over run.
 #
-# **It asks the machine how much room it has** rather than being told. The
-# WebDAV and FTP roots live on a small disk on purpose -- that is what makes
-# "the destination fills up" a real condition -- and a ten-gigabyte payload
-# aimed at it would take every other suite down with it. A destination without
-# room is a skip with the reason, printed, not a silent pass.
+# **It asks the machine how much room it has** rather than being told, and sends
+# each destination as much of the payload as that destination can hold. The WebDAV
+# and FTP roots live on a small disk on purpose -- that is what makes "the
+# destination fills up" a real condition, and scripts/testbed/README.md says so --
+# and a ten-gigabyte payload aimed at it would take every other suite down with it.
+#
+# **Those two right answers used to be incompatible.** The payload was one figure for
+# all four destinations, so the two on the small disk skipped, and `make release`
+# refused itself on the skips -- correctly, the first time the gate was ever run. What
+# each destination gets is now half the room it reports, capped at the payload asked
+# for; a destination with no room worth using is still a skip with the reason,
+# printed, never a silent pass. The reasoning is in tests/scale/HeavyPayload.h beside
+# the arithmetic, and MOLE-320 is the ticket.
 #
 # Usage:
 #   MOLE_TESTBED_ADDRESS=<address> MOLE_TESTBED_PASSWORD=<throwaway> make test-heavy

@@ -8,6 +8,7 @@
 #include <QSet>
 #include <QStandardPaths>
 
+#include <algorithm>
 #include <chrono>
 
 namespace mole::test {
@@ -67,6 +68,13 @@ namespace {
     }
 
 } // namespace
+
+qint64 heavyPayloadFor(qint64 wanted, qint64 capacity)
+{
+    if (capacity <= 0)
+        return wanted;
+    return std::min(wanted, capacity / 2);
+}
 
 void HeavyPayload::block(QByteArray& out, qint64 blockIndex)
 {
