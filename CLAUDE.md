@@ -257,9 +257,10 @@ The three files alongside it keep what a tracker holds badly:
   point of them living there is that there is no second copy to disagree with the
   first. The one most likely to catch you out: **every `##` line in the file is a
   release marker**, so nothing else may be a second-level heading. `make release`
-  writes the first marker and there is none yet, because nothing has been released;
-  until there is, everything in the file is unreleased. Lines from before 2026-08-10
-  are prose at the end and stay that way; they belong to the first release.
+  writes one as it cuts, and the first is `## 0.1.0 — released 2026-09-01`; anything
+  above the newest marker is unreleased and will belong to the next version's notes.
+  Lines from before 2026-08-10 are prose at the end and stay that way; they belong to
+  0.1.0, whose block is everything under its marker.
   [ADR-0080](docs/adr/0080-the-changelog-is-a-structured-log-and-the-release-notes-come-out-of-it.md)
   records the format and what was considered instead.
 - [TODO.md](TODO.md) — context that is *not* a task: behaviour we have decided to

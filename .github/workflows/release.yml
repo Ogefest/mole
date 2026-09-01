@@ -21,6 +21,13 @@
 # so a rehearsal can be looked at rather than only passed. MOLE-307's rule and
 # MOLE-314 applying it here: a YAML file that has never run is a hypothesis.
 #
+# **And it has published one: run 33472868494, from a pushed tag on 2026-09-01** --
+# the first release this repository has ever had. Eighteen steps, `Publish` among
+# them and the rehearsal upload correctly skipped, which is the arrangement below
+# doing both halves of what it says. The version is deliberately not written here:
+# this file asks the build what it is, and `tst_ReleaseWorkflow.sh` holds it to that
+# in prose as well as in code. See MOLE-315.
+#
 # **It has now run: 33443800178, dispatched 2026-08-31, green in 38m.** Fifteen
 # steps executed and `Publish` skipped, which is the arrangement above doing what
 # it says. The run before it -- 33442511853 -- died at step four with two suites
