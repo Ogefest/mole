@@ -65,6 +65,8 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+## 0.1.1 — released 2026-09-02
+
 2026-09-01 #MOLE-325 Mole says when a newer version has been released, once per version, with a button that opens its page — and Help → Check for new versions stops it looking at all
 2026-09-01 #MOLE-316 A video on a machine with no decoder installed shows the file-information view instead of ending the application, and `mole --plugins` says what to install
 2026-09-01 #MOLE-322 The tarball and the AppImage no longer carry a distribution's video codecs, which cuts the tarball from 114 MB to 79 MB and leaves video to the ffmpeg on your own machine
