@@ -29,6 +29,20 @@ project, and a contributor should never hit a wall of text they cannot read.
 
 ## Notes
 
+- **`v0.1.1` is a tag with no release behind it, and the gap in the version numbers
+  is deliberate.** The 0.1.1 cut passed all three tiers, wrote its commit and pushed
+  its tag, and then `release.yml` refused it six steps before `Publish`: the AppImage
+  step still demanded `video codecs it reports:` from an artefact that MOLE-322 had
+  deliberately stopped carrying codecs in. Run 33608556641. MOLE-330 fixed the check.
+
+  **The tag was left where it is rather than moved**, which was the author's call
+  between the two: re-pointing a pushed tag is the kind of thing somebody later
+  cannot tell happened. So 0.1.1 exists, nothing was ever published under it, and
+  **0.1.2 carries what it would have** — the three changelog entries that had been
+  filed under 0.1.1's marker were put back above it, because the changelog is the
+  release notes and nothing went out as 0.1.1. Anybody reading `git tag --list` and
+  wondering why there is no release for one of them is reading about it here.
+
 - **The AppImage runs on glibc 2.34 and upwards, and that is a promise rather than
   a build detail.** It carries its own Qt and its own libraries but links glibc
   dynamically and cannot carry that, so what it was built on decides what it runs
