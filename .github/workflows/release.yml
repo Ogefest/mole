@@ -37,6 +37,13 @@
 # AppImage can decode nothing on any machine. That is MOLE-317, and the step that
 # checks plugins here cannot see it because it compares Mole's plugins and Qt's
 # are a different tree.
+#
+# **And MOLE-322 then changed what the answer to that is allowed to be.** The Qt
+# ffmpeg plugin is bundled and the codec libraries are not -- they are GPL-2+ or
+# non-free and this artefact is Apache-2.0 -- so an AppImage on a host without
+# ffmpeg reports no backend, correctly. The AppImage step below asked for codecs
+# anyway and refused a release six steps before Publish -- run 33608556641. See
+# MOLE-330.
 name: Release
 
 on:
@@ -316,9 +323,29 @@ jobs:
             # The plugins it carries, for the reason the packages check them too.
             grep -q 'Archive drives' /tmp/said
             grep -q 'Standard network drives' /tmp/said
-            # And the media backend it carries, which is the one an AppImage cannot
-            # borrow from the host: it sets its own QT_PLUGIN_PATH. See MOLE-317.
-            grep -qE 'video codecs it reports: [A-Z]' /tmp/said
+            # **What the media section may say here changed with MOLE-322, and this
+            # check did not.** It asked for `video codecs it reports:` -- which is
+            # what an artefact carrying a distribution's ffmpeg answers, and the
+            # AppImage deliberately carries none since MOLE-322: libx264, libx265,
+            # libxvidcore and libfdk-aac are GPL-2+ or non-free and an Apache-2.0
+            # artefact cannot absorb them, so the codec stack is the host's. These
+            # containers have no ffmpeg, so the honest answer is *none that will
+            # load* -- and a release refused itself on this line six steps before
+            # Publish, for asking the artefact to be what it had stopped being.
+            # Run 33608556641.
+            #
+            # So what is asked now is the half that is the artefact's own: the
+            # module is compiled in, and the plugin it looks for is the ffmpeg one.
+            # Those are what MOLE-317 was about -- a bundle carrying no Qt media
+            # backend at all, which no other check here can see, because this
+            # compares Mole's plugins and Qt's are a different tree.
+            grep -q 'multimedia module: built in' /tmp/said
+            grep -q 'media backend asked for: ffmpeg' /tmp/said
+            # And it says which of the outcomes it found rather than nothing at all.
+            # On a container with no codec libraries that is the middle one, and
+            # saying so is MOLE-316's whole subject: a missing decoder is an
+            # ordinary answer that names what to install, not a silence.
+            grep -qE 'backend found: (yes|none that will load)' /tmp/said
           done
 
       # And they start. Every other artefact check asks something a broken platform
