@@ -50,7 +50,16 @@ take)
     heading "Taking $SNAPSHOT of $VMID"
     on_node <<REMOTE
 set -e
-grep -q " $SNAPSHOT " <<<"$(qm listsnapshot $VMID)" && qm delsnapshot $VMID $SNAPSHOT >/dev/null 2>&1
+# The substitution is escaped because qm is the node's program, not this
+# machine's: unescaped, the listing is taken here, comes back empty, and the
+# delete-old-snapshot branch never runs -- so taking a snapshot fails whenever
+# one already exists. The two variables around it are local and fill in here.
+# See MOLE-354.
+#
+# And no backticks in this comment: a comment inside an unquoted heredoc is not a
+# comment to the shell that builds it, so a backtick pair here is a command
+# substitution that runs on the workstation. See the same note in services.sh.
+grep -q " $SNAPSHOT " <<<"\$(qm listsnapshot $VMID)" && qm delsnapshot $VMID $SNAPSHOT >/dev/null 2>&1
 # With the memory, so a rollback lands on a machine that is already running its
 # servers rather than one that has to boot and be waited for.
 qm snapshot $VMID $SNAPSHOT --vmstate 1 --description 'Provisioned and seeded. scripts/testbed/snapshot.sh'

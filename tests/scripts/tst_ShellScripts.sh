@@ -57,19 +57,25 @@ for f in $scripts; do
     grep -q 'support/shelltest.sh' "$f" || fail "$f does not source shelltest.sh"
 done
 
-begin "no line that runs locally defers expansion to a machine"
-# The MOLE-233 class, over every script at once. The checker lives in
-# tests/support/deferred-expansion.awk -- see the note at the top of it for why it
-# cannot be written inline here.
+begin "every expansion is evaluated in the program it belongs to"
+# The MOLE-233 class and its mirror image, over every script at once: an escaped
+# dollar on a line that runs here defers nothing, and an unescaped substitution
+# in a heredoc bound for a server runs here instead of there. The checker lives in tests/support/deferred-expansion.awk --
+# see the note at the top of it for why it cannot be written inline -- behind
+# tests/support/heredoc-tracker.awk, which is what tells the two programs apart.
 #
 # The pattern is passed in rather than written into the program for the same
 # reason: an awk source file containing a literal backslash-dollar would match
 # itself the moment anybody pointed this check at the support directory.
 awk -v backslash_dollar='\\\\[$]' \
+    -f "$MOLE_SOURCE_DIR/tests/support/heredoc-tracker.awk" \
     -f "$MOLE_SOURCE_DIR/tests/support/deferred-expansion.awk" \
     $scripts > "$SHELLTEST_TMP/deferred"
 if [ -s "$SHELLTEST_TMP/deferred" ]; then
-    fail "deferred expansion outside a heredoc, or a heredoc the checker could not close -- see MOLE-233"
+    # Single-quoted, and worth a word: this very line is one of the lines the
+    # rule reads, so a backslash before a dollar in it would be reported -- which
+    # is the rule working, and how it caught its own explanation the first time.
+    fail 'an expansion evaluated in the wrong one of the two programs a testbed script contains, or a heredoc the checker could not close -- see MOLE-233 and MOLE-354'
     sed 's/^/    /' "$SHELLTEST_TMP/deferred"
 fi
 
@@ -150,44 +156,21 @@ fi
 
 
 begin "nothing pipes a program's output into grep -q"
-# **`producer | grep -q pattern` fails at random wherever `pipefail` is set**, which
-# is every script here. `grep -q` exits the moment it matches; the producer's next
-# write lands on a closed pipe, takes SIGPIPE, and pipefail reports the pipeline as
-# failed although the pattern was found. Whether it happens is a matter of how the
-# two processes are scheduled, so it passes on an idle machine and fails under load.
+# The rule and the reasoning are in tests/support/racy-pipe.awk, behind the same
+# heredoc tracker the check above uses -- because it is a rule about the outer
+# program only, and applying it inside a heredoc is what MOLE-354 was: the fix
+# for the race moved three server-side pipelines onto the workstation.
 #
-# Measured: `sed -n '/is_excluded()/,/^}/p' scripts/make-bundle.sh | grep -q Apache-2.0`
-# failed twice in two hundred runs on an idle workstation, and once on a CI runner
-# that was also running the rest of the tier. Two of the sites were inside
-# `set -euo pipefail`, where a spurious failure does not report anything -- it kills
-# the script; one of those decided whether a bundle carries the multimedia plugin
-# tree, and one is in the licence check a release runs over every artefact.
-#
-# The fix is a here-string rather than a pipe -- `grep -q P <<<"$(producer)"` -- which
-# keeps the same grep and cannot lose the race. See MOLE-329.
-#
-# **`printf … | grep -q` is deliberately allowed**, and there are about twenty of
-# them. `printf` writes once and exits, so its write always completes before grep can
-# close the pipe. What is refused is a producer that writes more than one buffer,
-# which is every program.
-: > "$SHELLTEST_TMP/racy-pipes"
-for f in $scripts; do
-    # A real pipe, not `||`: one bar with no bar on either side of it. And the
-    # left-hand side asked about, because that is what decides whether it can race.
-    awk -v file="$f" '
-        # Prose about the shape is not the shape. This file explains it at length,
-        # and the MOLE-233 rule above had to learn the same lesson about its own
-        # comments.
-        /^[ \t]*#/ { next }
-        /\|\|/ { next }
-        /[^|]\|[ \t]*grep[ \t]+-[a-zA-Z]*q/ {
-            before = $0
-            sub(/\|[ \t]*grep.*/, "", before)
-            if (before ~ /printf|echo/) next
-            printf "%s:%d:%s\n", file, FNR, $0
-        }
-    ' "$f" >> "$SHELLTEST_TMP/racy-pipes"
-done
+# Measured, in case the shape looks harmless: `sed -n '/is_excluded()/,/^}/p'
+# scripts/make-bundle.sh | grep -q Apache-2.0` failed twice in two hundred runs
+# on an idle workstation, and once on a CI runner that was also running the rest
+# of the tier. Two of the sites were inside `set -euo pipefail`, where a spurious
+# failure does not report anything -- it kills the script; one of those decided
+# whether a bundle carries the multimedia plugin tree, and one is in the licence
+# check a release runs over every artefact. See MOLE-329.
+awk -f "$MOLE_SOURCE_DIR/tests/support/heredoc-tracker.awk" \
+    -f "$MOLE_SOURCE_DIR/tests/support/racy-pipe.awk" \
+    $scripts > "$SHELLTEST_TMP/racy-pipes"
 if [ -s "$SHELLTEST_TMP/racy-pipes" ]; then
     # Single-quoted, so the example needs no backslash before its dollar -- which
     # the rule above would have refused, correctly, as deferred expansion on a line

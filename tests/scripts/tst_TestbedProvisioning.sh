@@ -81,6 +81,38 @@ exited 0
 never_reached_matching "$EMPTY_HOST"
 never_reached_matching "[[:space:]]\*\(rw"
 
+# --- what runs on the machine has to arrive as something that can run --------
+
+begin "the checks that ask the machine about itself reach it as commands, not as answers"
+# The MOLE-354 fault, from the only angle a test without a machine can see it.
+#
+# `grep -q P <<<"$(producer)"` inside an unquoted heredoc is evaluated here, once,
+# while the heredoc is being built -- so what reaches the machine is the
+# workstation's answer as a literal, and the command never runs there at all.
+# Three of them went that way: a wait for vsftpd to let go of port 21 asked this
+# machine's socket table, the MinIO versioning check ran `mc` where there is no
+# `mc`, and a snapshot script listed the wrong host's snapshots.
+#
+# What makes it visible from here is that the transcript is what was *sent*: a
+# substitution that happened locally leaves no command in it. So these two
+# assertions are the shape of the fault, and neither of them holds on the tree as
+# it was.
+stub_ssh
+export MOLE_TESTBED_NFS_CLIENTS=203.0.113.7
+run_script scripts/testbed/services.sh
+exited 0
+reached "ss -ltn"
+reached "mc version info"
+# And the escape really is an escape rather than a literal backslash arriving on
+# the far side, which would be a syntax error there.
+#
+# Spelled in bracket expressions because a backslash followed by a dollar in this
+# file is a finding in its own right -- tst_ShellScripts reads these lines too,
+# and it is right to: this line runs here. `[\\]` is a literal backslash to an
+# ERE and is not that sequence.
+never_reached_matching '[\\][$][(]ss -ltn'
+never_reached_matching '[\\][$][(]/usr/local/bin/mc version info'
+
 # --- and it refuses to run on nothing ----------------------------------------
 
 begin "without an address the script provisions nothing and says why"

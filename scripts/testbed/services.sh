@@ -445,7 +445,11 @@ systemctl stop vsftpd 2>/dev/null || true
 # first and puts a newline between every number, which ends the for-list on the
 # first one and is a syntax error on arrival.
 for _ in \$(seq 1 20); do
-    grep -q ':21 ' <<<"$(ss -ltn 2>/dev/null)" || break
+    # Escaped for the same reason as the seq above: unescaped, the workstation
+    # runs ss itself and bakes its own socket table into the heredoc, so this
+    # asks a constant, breaks on the first pass, and the silent bind failure the
+    # paragraph above describes comes straight back. See MOLE-354.
+    grep -q ':21 ' <<<"\$(ss -ltn 2>/dev/null)" || break
     sleep 1
 done
 systemctl start vsftpd
@@ -530,7 +534,19 @@ for attempt in 1 2 3 4 5 6 7 8 9 10; do
 done
 /usr/local/bin/mc mb --ignore-existing testbed/$S3_VERSIONED_BUCKET >/dev/null
 /usr/local/bin/mc version enable testbed/$S3_VERSIONED_BUCKET >/dev/null
-grep -q enabled <<<"$(/usr/local/bin/mc version info testbed/$S3_VERSIONED_BUCKET)" \
+# The substitution is escaped because mc is on the machine and not here.
+# Unescaped, the workstation tries to run it, has no such program, the
+# here-string is empty, and the check fails every time -- so this step could not
+# finish anywhere. The bucket name beside it is a local variable and is meant to
+# fill in here. See MOLE-354.
+#
+# No backticks anywhere in this heredoc, and that is not a style rule: a comment
+# inside an unquoted heredoc is not a comment to the shell that *builds* it, and
+# a backtick pair in one is a command substitution that shell will run. Naming
+# the client in prose that way here ran Midnight Commander on the workstation --
+# it is what mc is, on a machine that has it -- and it sat waiting for a terminal
+# for ever. Found while fixing the three lines below.
+grep -q enabled <<<"\$(/usr/local/bin/mc version info testbed/$S3_VERSIONED_BUCKET)" \
     || { echo "this MinIO will not keep earlier objects" >&2; exit 1; }
 
 # A container that keeps every state of every object is a container that fills
