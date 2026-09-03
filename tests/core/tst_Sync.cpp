@@ -9,6 +9,11 @@
 #include "core/vfs/backends/LocalFileSystem.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
+#include <QFile>
+#include <QFileInfo>
+
+#include <filesystem>
+
 using namespace mole;
 using namespace mole::test;
 
@@ -47,6 +52,9 @@ private slots:
     void sameSizeAndDifferentContentIsSeenOnlyWhereItCanBe_data();
     void sameSizeAndDifferentContentIsSeenOnlyWhereItCanBe();
     void aRenameIsNeverADeleteBeforeItIsACopy();
+
+    void aDirectoryLoopIsAFinitePlanThatNamesTheLink();
+    void aLinkIsPlannedAsALinkAndNotWalkedIntoAtAll();
 
     void aDryRunWritesNothing();
     void aDryRunAgainstADriveThatRefusesEveryWriteStillReportsNoFailures();
@@ -624,6 +632,60 @@ void TestSync::aRenameIsNeverADeleteBeforeItIsACopy()
     QVERIFY2(firstDelete >= 0, "the old name has to go eventually");
     QVERIFY2(lastCopy >= 0, "the new name has to arrive");
     QVERIFY2(lastCopy < firstDelete, "every copy is planned before any deletion");
+}
+
+// ------------------------------------------------------------------- links
+
+void TestSync::aDirectoryLoopIsAFinitePlanThatNamesTheLink()
+{
+    // src/inside/back -> src, so following links means planning a CreateDirectory
+    // at every level until the kernel refuses the path. The plan has to be finite
+    // and it has to say the link is there. See ADR-0092.
+    QVERIFY(m_tree->makeDirs(QStringLiteral("src/inside")));
+    QVERIFY(m_tree->writeFile(QStringLiteral("src/inside/leaf.txt"), QByteArray("a leaf")));
+    QVERIFY(QFile::link(
+        m_tree->absolute(QStringLiteral("src")), m_tree->absolute(QStringLiteral("src/inside/back"))));
+
+    SyncOptions options;
+    options.dryRun = true;
+
+    SyncTask* task = run(options);
+    QVERIFY(task);
+
+    const SyncPlan plan = task->plan();
+    // Every step's path is one of the four things in the tree. A walk that went
+    // through the link produces "inside/back/inside/back/..." and hundreds of
+    // steps; the count is what says it stopped.
+    QVERIFY2(plan.steps().size() <= 4, qPrintable(QStringLiteral("%1 steps").arg(plan.steps().size())));
+
+    QStringList paths;
+    for (const SyncPlan::Step& step : plan.steps())
+        paths.append(step.relativePath);
+    QVERIFY2(paths.contains(QStringLiteral("inside/back")), qPrintable(paths.join(QStringLiteral(", "))));
+    for (const QString& path : paths)
+        QVERIFY2(!path.contains(QStringLiteral("back/inside")), qPrintable(path));
+}
+
+void TestSync::aLinkIsPlannedAsALinkAndNotWalkedIntoAtAll()
+{
+    // The same rule a copy follows: the link arrives as a link, pointing where it
+    // pointed, and nothing is read through it.
+    QVERIFY(m_tree->makeDirs(QStringLiteral("src")));
+    QVERIFY(m_tree->writeFile(QStringLiteral("src/real.bin"), QByteArray("the real thing")));
+    QVERIFY(QFile::link(QStringLiteral("real.bin"), m_tree->absolute(QStringLiteral("src/near.bin"))));
+
+    SyncOptions options;
+    options.dryRun = false;
+
+    SyncTask* task = run(options);
+    QVERIFY(task);
+    QCOMPARE(task->failures(), QStringList());
+
+    const QFileInfo arrived(m_tree->absolute(QStringLiteral("dest/near.bin")));
+    QVERIFY2(arrived.isSymLink(), "a link must arrive as a link");
+    QCOMPARE(QString::fromStdString(
+                 std::filesystem::read_symlink(arrived.absoluteFilePath().toStdString()).string()),
+        QStringLiteral("real.bin"));
 }
 
 void TestSync::aDryRunWritesNothing()

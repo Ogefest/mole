@@ -21,6 +21,7 @@ public:
         CreateDirectory,
         Copy, ///< not at the destination
         Overwrite, ///< there and different
+        Link, ///< a symbolic link, copied as a link -- see ADR-0092
         Delete, ///< at the destination and not in the source
         Skip ///< matched a rule that says leave it alone
     };

@@ -70,6 +70,20 @@ Result<void> VersionGuard::makeDirectory(const VfsUri& target)
     return m_inner->makeDirectory(target);
 }
 
+Result<QString> VersionGuard::readLink(const VfsUri& link)
+{
+    if (!passes(link))
+        return refusal(link);
+    return m_inner->readLink(link);
+}
+
+Result<void> VersionGuard::makeLink(const VfsUri& link, const QString& target)
+{
+    if (!passes(link))
+        return Result<void>(refusal(link));
+    return m_inner->makeLink(link, target);
+}
+
 Result<void> VersionGuard::remove(const VfsUri& target, bool recursive)
 {
     if (!passes(target))

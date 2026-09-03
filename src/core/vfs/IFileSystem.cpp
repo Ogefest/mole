@@ -45,6 +45,16 @@ Result<void> IFileSystem::makeDirectory(const VfsUri&)
     return notSupported("makeDirectory");
 }
 
+Result<QString> IFileSystem::readLink(const VfsUri&)
+{
+    return VfsError::make(VfsError::NotSupported, QStringLiteral("readLink is not supported here"));
+}
+
+Result<void> IFileSystem::makeLink(const VfsUri&, const QString&)
+{
+    return notSupported("makeLink");
+}
+
 Result<void> IFileSystem::remove(const VfsUri&, bool)
 {
     return notSupported("remove");

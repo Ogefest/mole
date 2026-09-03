@@ -32,6 +32,10 @@ public:
 
     Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) override;
     Result<FileEntry> stat(const VfsUri& target) override;
+    /// What a link member points at, as the archive stores it -- so extracting a
+    /// tree of links puts links on the disk rather than empty files. Reading
+    /// only: nothing here can be written. See ADR-0092.
+    Result<QString> readLink(const VfsUri& link) override;
     Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override;
 
     QString archivePath() const { return m_archivePath; }

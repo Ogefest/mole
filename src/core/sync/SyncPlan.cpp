@@ -157,6 +157,25 @@ namespace {
                 continue;
             }
 
+            // A symbolic link is copied as a link and never walked into: nothing
+            // is read through it and a loop -- a/loop -> a -- is one step rather
+            // than a plan that grows until the kernel refuses the path. The same
+            // rule a copy follows, for the reasons ADR-0092 gives.
+            if (entry.isSymlink) {
+                const VfsUri destination = target.child(entry.name);
+                if (there.contains(entry.name)) {
+                    // Comparing a link with whatever is standing there is a
+                    // question Mole cannot answer usefully yet, and replacing the
+                    // far end on a guess is the worse of the two mistakes.
+                    steps.append(SyncPlan::Step { SyncPlan::Action::Skip, entry.uri, destination, path, 0,
+                        QStringLiteral("a symbolic link, and something is already there") });
+                    continue;
+                }
+                steps.append(SyncPlan::Step { SyncPlan::Action::Link, entry.uri, destination, path, 0,
+                    QStringLiteral("a symbolic link that is not there") });
+                continue;
+            }
+
             if (entry.isDir) {
                 if (!options.recursive)
                     continue;
@@ -249,12 +268,16 @@ SyncPlan SyncPlan::build(IFileSystem* sourceFs, const VfsUri& source, IFileSyste
             case Action::Copy:
             case Action::Overwrite:
                 return 1;
-            case Action::Skip:
+            // After the files, because a relative link is made to point at its
+            // neighbour and the neighbour should be there first.
+            case Action::Link:
                 return 2;
-            case Action::Delete:
+            case Action::Skip:
                 return 3;
+            case Action::Delete:
+                return 4;
             }
-            return 4;
+            return 5;
         };
         if (rank(a.action) != rank(b.action))
             return rank(a.action) < rank(b.action);
@@ -292,6 +315,8 @@ QString SyncPlan::actionLabel(Action action)
         return QStringLiteral("copy");
     case Action::Overwrite:
         return QStringLiteral("replace");
+    case Action::Link:
+        return QStringLiteral("link");
     case Action::Delete:
         return QStringLiteral("delete");
     case Action::Skip:

@@ -101,6 +101,17 @@ Result<void> LoggingFileSystem::makeDirectory(const VfsUri& target)
     return watch(m_name, "mkdir", target.toString(), [&] { return m_inner->makeDirectory(target); });
 }
 
+Result<QString> LoggingFileSystem::readLink(const VfsUri& link)
+{
+    return watch(m_name, "readlink", link.toString(), [&] { return m_inner->readLink(link); });
+}
+
+Result<void> LoggingFileSystem::makeLink(const VfsUri& link, const QString& target)
+{
+    const QString subject = link.toString() + QStringLiteral(" -> ") + target;
+    return watch(m_name, "link", subject, [&] { return m_inner->makeLink(link, target); });
+}
+
 Result<void> LoggingFileSystem::remove(const VfsUri& target, bool recursive)
 {
     return watch(m_name, "remove", target.toString(), [&] { return m_inner->remove(target, recursive); });

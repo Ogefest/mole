@@ -76,6 +76,27 @@ public:
     // and grow. Advertise the matching VfsCapability when you override one.
 
     virtual Result<void> makeDirectory(const VfsUri& target);
+
+    /// What a symbolic link points at, exactly as the drive stores it.
+    ///
+    /// **Not resolved.** A relative target comes back relative, and a target
+    /// that is not there comes back all the same -- copying a link is copying
+    /// the text, and a drive that helpfully answered with an absolute path would
+    /// turn a relocatable tree into one pinned to where it was copied from. The
+    /// caller that wants the node behind the link asks the drive about the
+    /// link's own path, which every backend already follows.
+    ///
+    /// Fails with NotSupported on a drive with no links, and with NotALink for
+    /// a path that is not one. See ADR-0092.
+    virtual Result<QString> readLink(const VfsUri& link);
+
+    /// Makes `link` a symbolic link pointing at `target`, which is stored as
+    /// given and never checked: a link may legitimately point at nothing, and on
+    /// a copy the thing it points at may not have arrived yet.
+    ///
+    /// Fails with AlreadyExists when the name is taken -- the same rule
+    /// makeDirectory() follows, and for the same reason. See ADR-0092.
+    virtual Result<void> makeLink(const VfsUri& link, const QString& target);
     virtual Result<void> remove(const VfsUri& target, bool recursive);
     virtual Result<void> rename(const VfsUri& from, const VfsUri& to);
 

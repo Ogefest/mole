@@ -43,6 +43,12 @@ private slots:
     void cancellationStopsMidway();
     void emptyRequestSucceeds();
 
+    void aLinkedDirectoryIsCopiedAsALinkAndNotAsAnEmptyFolder();
+    void aLinkedFileIsCopiedAsALinkAndNotAsACopyOfItsTarget();
+    void aRelativeLinkArrivesStillRelative();
+    void aDriveThatCannotHoldALinkRefusesItByName();
+    void aBrokenLinkSelectedOnItsOwnIsStillCopied();
+
     void deleteRemovesFilesAndTrees();
     void deleteReportsFailures();
 
@@ -587,6 +593,156 @@ void TestTransferTask::emptyRequestSucceeds()
 
     QCOMPARE(task->state(), Task::State::Succeeded);
     QCOMPARE(task->copiedCount(), 0);
+}
+
+// ------------------------------------------------------------------ links
+
+void TestTransferTask::aLinkedDirectoryIsCopiedAsALinkAndNotAsAnEmptyFolder()
+{
+    // Qt answers isDir() through the link, so a link to a directory used to be
+    // planned as a directory job: the far end got makeDirectory() and nothing
+    // inside it, counted as transferred -- and a move then deleted the link. See
+    // ADR-0092.
+    QVERIFY(m_tree->makeDirs(QStringLiteral("real/inside")));
+    QVERIFY(m_tree->writeFile(QStringLiteral("real/inside/leaf.txt"), QByteArray("a leaf")));
+    QVERIFY(
+        QFile::link(m_tree->absolute(QStringLiteral("real")), m_tree->absolute(QStringLiteral("pointer"))));
+
+    TransferTask::Request request;
+    request.sourceFileSystem = m_local;
+    request.targetFileSystem = m_mem;
+    request.sources = { m_tree->rootUri().child(QStringLiteral("pointer")) };
+    request.targetDirectory = VfsUri::fromString(QStringLiteral("mem:///arrived"));
+    m_mem->addDirectory(QStringLiteral("/arrived"));
+
+    auto* task = new TransferTask(request);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(task->state(), Task::State::Succeeded);
+    const VfsUri arrival = VfsUri::fromString(QStringLiteral("mem:///arrived/pointer"));
+    const Result<FileEntry> stat = m_mem->stat(arrival);
+    QVERIFY(stat.ok());
+    QVERIFY2(stat.value().isSymlink, "a link must arrive as a link, not as an empty folder");
+    QVERIFY(!stat.value().isDir);
+    const Result<QString> points = m_mem->readLink(arrival);
+    QVERIFY(points.ok());
+    QCOMPARE(points.value(), m_tree->absolute(QStringLiteral("real")));
+}
+
+void TestTransferTask::aLinkedFileIsCopiedAsALinkAndNotAsACopyOfItsTarget()
+{
+    // The other half of the same fault: the link was opened, the target's bytes
+    // were read through it, and a reference became a duplicate -- on a large
+    // target, a full disk.
+    QVERIFY(m_tree->writeFile(QStringLiteral("real.bin"), QByteArray("the real thing")));
+    QVERIFY(QFile::link(
+        m_tree->absolute(QStringLiteral("real.bin")), m_tree->absolute(QStringLiteral("pointer.bin"))));
+
+    TransferTask::Request request;
+    request.sourceFileSystem = m_local;
+    request.targetFileSystem = m_mem;
+    request.sources = { m_tree->rootUri().child(QStringLiteral("pointer.bin")) };
+    request.targetDirectory = VfsUri::fromString(QStringLiteral("mem:///arrived"));
+    m_mem->addDirectory(QStringLiteral("/arrived"));
+
+    auto* task = new TransferTask(request);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(task->state(), Task::State::Succeeded);
+    const VfsUri arrival = VfsUri::fromString(QStringLiteral("mem:///arrived/pointer.bin"));
+    const Result<FileEntry> stat = m_mem->stat(arrival);
+    QVERIFY(stat.ok());
+    QVERIFY2(stat.value().isSymlink, "the link itself must arrive, not the bytes behind it");
+    QCOMPARE(stat.value().size, 0);
+    const Result<QString> points = m_mem->readLink(arrival);
+    QVERIFY(points.ok());
+    QCOMPARE(points.value(), m_tree->absolute(QStringLiteral("real.bin")));
+}
+
+void TestTransferTask::aRelativeLinkArrivesStillRelative()
+{
+    // A relative link is relative on purpose: it keeps pointing at its
+    // neighbour wherever the tree is copied to. Resolving it on the way would
+    // pin the copy to the machine it came from.
+    QVERIFY(m_tree->makeDirs(QStringLiteral("tree")));
+    QVERIFY(m_tree->writeFile(QStringLiteral("tree/real.bin"), QByteArray("the real thing")));
+    QVERIFY(QFile::link(QStringLiteral("real.bin"), m_tree->absolute(QStringLiteral("tree/near.bin"))));
+
+    TransferTask::Request request;
+    request.sourceFileSystem = m_local;
+    request.targetFileSystem = m_mem;
+    request.sources = { m_tree->rootUri().child(QStringLiteral("tree")) };
+    request.targetDirectory = VfsUri::fromString(QStringLiteral("mem:///arrived"));
+    m_mem->addDirectory(QStringLiteral("/arrived"));
+
+    auto* task = new TransferTask(request);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(task->state(), Task::State::Succeeded);
+    const Result<QString> points
+        = m_mem->readLink(VfsUri::fromString(QStringLiteral("mem:///arrived/tree/near.bin")));
+    QVERIFY(points.ok());
+    QCOMPARE(points.value(), QStringLiteral("real.bin"));
+}
+
+void TestTransferTask::aDriveThatCannotHoldALinkRefusesItByName()
+{
+    // Most drives have no links at all. The refusal has to name the file and say
+    // why, rather than the link arriving as something else -- which is the whole
+    // reason this went unnoticed for so long.
+    QVERIFY(m_tree->writeFile(QStringLiteral("real.bin"), QByteArray("the real thing")));
+    QVERIFY(QFile::link(
+        m_tree->absolute(QStringLiteral("real.bin")), m_tree->absolute(QStringLiteral("pointer.bin"))));
+
+    auto flat = std::make_shared<FaultyFileSystem>(m_mem);
+    flat->holdsNoLinks();
+    TransferTask::Request request;
+    request.sourceFileSystem = m_local;
+    request.targetFileSystem = flat;
+    request.sources = { m_tree->rootUri().child(QStringLiteral("pointer.bin")) };
+    request.targetDirectory = VfsUri::fromString(QStringLiteral("mem:///arrived"));
+    m_mem->addDirectory(QStringLiteral("/arrived"));
+
+    auto* task = new TransferTask(request);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(task->failedCount(), 1);
+    QVERIFY2(task->failures().first().contains(QStringLiteral("pointer.bin")),
+        qPrintable(task->failures().first()));
+    QVERIFY2(task->failures().first().contains(QStringLiteral("symbolic link")),
+        qPrintable(task->failures().first()));
+    QVERIFY(!m_mem->stat(VfsUri::fromString(QStringLiteral("mem:///arrived/pointer.bin"))).ok());
+}
+
+void TestTransferTask::aBrokenLinkSelectedOnItsOwnIsStillCopied()
+{
+    // The plan stats what it was handed, and QFileInfo::exists() resolves a
+    // link: a link to nothing was "no such file" when selected on its own, while
+    // the same link one level inside a copied tree went through the listing and
+    // arrived. The two answers were about the same name. See ADR-0092.
+    QVERIFY(QFile::link(
+        m_tree->absolute(QStringLiteral("not-there.bin")), m_tree->absolute(QStringLiteral("dangling.bin"))));
+
+    TransferTask::Request request;
+    request.sourceFileSystem = m_local;
+    request.targetFileSystem = m_mem;
+    request.sources = { m_tree->rootUri().child(QStringLiteral("dangling.bin")) };
+    request.targetDirectory = VfsUri::fromString(QStringLiteral("mem:///arrived"));
+    m_mem->addDirectory(QStringLiteral("/arrived"));
+
+    auto* task = new TransferTask(request);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task));
+
+    QVERIFY2(task->failures().isEmpty(), qPrintable(task->failures().join(QStringLiteral("; "))));
+    const Result<QString> points
+        = m_mem->readLink(VfsUri::fromString(QStringLiteral("mem:///arrived/dangling.bin")));
+    QVERIFY(points.ok());
+    QCOMPARE(points.value(), m_tree->absolute(QStringLiteral("not-there.bin")));
 }
 
 void TestTransferTask::deleteRemovesFilesAndTrees()

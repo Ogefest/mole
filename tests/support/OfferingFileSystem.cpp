@@ -112,6 +112,16 @@ Result<void> OfferingFileSystem::makeDirectory(const VfsUri& target)
     return m_inner->makeDirectory(target);
 }
 
+Result<QString> OfferingFileSystem::readLink(const VfsUri& link)
+{
+    return m_inner->readLink(link);
+}
+
+Result<void> OfferingFileSystem::makeLink(const VfsUri& link, const QString& target)
+{
+    return m_inner->makeLink(link, target);
+}
+
 Result<void> OfferingFileSystem::remove(const VfsUri& target, bool recursive)
 {
     return m_inner->remove(target, recursive);

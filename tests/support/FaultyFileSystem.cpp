@@ -113,6 +113,7 @@ struct FaultyFileSystem::Policy
     QStringList listStallPaths;
     std::atomic_bool noRandomAccess { false };
     std::atomic_bool cannotWrite { false };
+    std::atomic_bool holdsNoLinks { false };
     bool failOnClose = false;
     QString closeMessage;
 };
@@ -553,6 +554,12 @@ FaultyFileSystem& FaultyFileSystem::readOnly()
     return *this;
 }
 
+FaultyFileSystem& FaultyFileSystem::holdsNoLinks()
+{
+    m_policy->holdsNoLinks.store(true);
+    return *this;
+}
+
 int FaultyFileSystem::openReadCount() const
 {
     QMutexLocker lock(&m_policy->mutex);
@@ -619,7 +626,23 @@ VfsCapabilities FaultyFileSystem::capabilities() const
         capabilities.setFlag(VfsCapability::RandomAccessRead, false);
     if (m_policy->cannotWrite.load())
         capabilities.setFlag(VfsCapability::Write, false);
+    if (m_policy->holdsNoLinks.load())
+        capabilities.setFlag(VfsCapability::Symlink, false);
     return capabilities;
+}
+
+Result<QString> FaultyFileSystem::readLink(const VfsUri& link)
+{
+    return m_inner->readLink(link);
+}
+
+Result<void> FaultyFileSystem::makeLink(const VfsUri& link, const QString& target)
+{
+    if (m_policy->holdsNoLinks.load()) {
+        return Result<void>::failure(
+            VfsError::NotSupported, QStringLiteral("This drive cannot hold a symbolic link"));
+    }
+    return m_inner->makeLink(link, target);
 }
 
 Result<FileEntryList> FaultyFileSystem::list(const VfsUri& dir, const CancelToken& cancel)

@@ -131,6 +131,22 @@ bool TransferTask::planJobs(QList<Job>& jobsOut)
             continue;
         }
 
+        // A symbolic link is copied as a link, whatever it points at and whether
+        // or not that is there -- see ADR-0092. Asked before the question below,
+        // because a link to nothing is *both* a link and a special, and it is
+        // the link that decides what to do with it.
+        if (stat.value().isSymlink) {
+            const QString arrival = arrivalNameFor(source);
+            if (const NameVerdict verdict = checkName(arrival, m_request.targetFileSystem->nameRules());
+                verdict.isRejected()) {
+                recordFailure(source, VfsError::make(VfsError::IoError, verdict.reason));
+                continue;
+            }
+            jobsOut.append(
+                Job { source, m_request.targetDirectory.child(arrival), Kind::Link, 0, sourceIndex });
+            continue;
+        }
+
         // Neither a file nor a folder: a named pipe, a socket, a device node, a
         // link to something that is not there. There is nothing to stream and
         // nothing sensible to make at the far end, so it is refused by name --
@@ -179,17 +195,28 @@ bool TransferTask::planJobs(QList<Job>& jobsOut)
         }
 
         if (!stat.value().isDir) {
-            jobsOut.append(Job { source, target, false, stat.value().size, sourceIndex });
+            jobsOut.append(Job { source, target, Kind::File, stat.value().size, sourceIndex });
             continue;
         }
 
         // The directory itself first, so its children have somewhere to land.
-        jobsOut.append(Job { source, target, true, 0, sourceIndex });
+        jobsOut.append(Job { source, target, Kind::Directory, 0, sourceIndex });
 
         const NameRules arrivalRules = m_request.targetFileSystem->nameRules();
 
         DirectoryWalker walker(m_request.sourceFileSystem);
         Result<void> walked = walker.walk(source, cancelToken(), [&](const FileEntry& entry, int) {
+            // The same rule as above, one level in, and in the same order: the
+            // walker does not descend into a link, so this is where a linked
+            // folder inside a copied tree becomes one job of its own.
+            if (entry.isSymlink) {
+                const QString relative = entry.uri.path().mid(source.path().size());
+                jobsOut.append(
+                    Job { entry.uri, VfsUri(target.scheme(), target.authority(), target.path() + relative),
+                        Kind::Link, 0, sourceIndex });
+                return DirectoryWalker::Action::Continue;
+            }
+
             // The same refusal as above, one level in. This is where it is met in
             // practice: nobody selects a socket and presses copy, and every tree
             // under /run and /tmp has one in it.
@@ -219,7 +246,7 @@ bool TransferTask::planJobs(QList<Job>& jobsOut)
             const QString relative = entry.uri.path().mid(source.path().size());
             jobsOut.append(
                 Job { entry.uri, VfsUri(target.scheme(), target.authority(), target.path() + relative),
-                    entry.isDir, entry.isDir ? 0 : entry.size, sourceIndex });
+                    entry.isDir ? Kind::Directory : Kind::File, entry.isDir ? 0 : entry.size, sourceIndex });
             return DirectoryWalker::Action::Continue;
         });
 
@@ -466,7 +493,10 @@ void TransferTask::verifyArrivals()
 
 TransferTask::Outcome TransferTask::transferOne(const Job& job)
 {
-    switch (resolveConflict(job.target, job.isDirectory)) {
+    // A link is a name, so a clash over one follows the rules for a file rather
+    // than the ones for a directory -- there is nothing to merge into.
+    bool replacing = false;
+    switch (resolveConflict(job.target, job.kind == Kind::Directory, &replacing)) {
     case Verdict::Failed:
         return Outcome::Failed;
     case Verdict::Skip:
@@ -477,7 +507,10 @@ TransferTask::Outcome TransferTask::transferOne(const Job& job)
         break;
     }
 
-    if (job.isDirectory) {
+    if (job.kind == Kind::Link)
+        return linkOne(job, replacing) ? Outcome::Transferred : Outcome::Failed;
+
+    if (job.kind == Kind::Directory) {
         Result<void> created = m_request.targetFileSystem->makeDirectory(job.target);
         if (!created.ok() && created.error().code != VfsError::AlreadyExists) {
             recordFailure(job.target, created.error());
@@ -487,6 +520,45 @@ TransferTask::Outcome TransferTask::transferOne(const Job& job)
     }
 
     return copyStream(job.source, job.target, job.size) ? Outcome::Transferred : Outcome::Failed;
+}
+
+bool TransferTask::linkOne(const Job& job, bool replacing)
+{
+    // Asked of the destination, because the destination is what knows -- the same
+    // sentence the name rules follow. Most drives have no links at all, and the
+    // refusal has to name the file and say why: a link that quietly arrived as
+    // something else is the fault this whole rule exists for. See ADR-0092.
+    if (!m_request.targetFileSystem->capabilities().testFlag(VfsCapability::Symlink)) {
+        recordFailure(job.source,
+            VfsError::make(
+                VfsError::NotSupported, QStringLiteral("a symbolic link, and this drive cannot hold one")));
+        return false;
+    }
+
+    const Result<QString> points = m_request.sourceFileSystem->readLink(job.source);
+    if (!points.ok()) {
+        recordFailure(job.source, points.error());
+        return false;
+    }
+
+    // Nothing is staged, because there is nothing to stream: a link is made in
+    // one call or not at all. So what is standing there is removed here rather
+    // than being left until the arrival is whole -- the moment ADR-0021 protects
+    // for a file does not exist for a link.
+    if (replacing) {
+        if (const Result<void> removed = m_request.targetFileSystem->remove(job.target, false);
+            !removed.ok()) {
+            recordFailure(job.target, removed.error());
+            return false;
+        }
+    }
+
+    const Result<void> made = m_request.targetFileSystem->makeLink(job.target, points.value());
+    if (!made.ok()) {
+        recordFailure(job.target, made.error());
+        return false;
+    }
+    return true;
 }
 
 void TransferTask::removeWhatArrivedUnder(
@@ -519,7 +591,7 @@ void TransferTask::removeWhatArrivedUnder(
         const Result<void> removed = m_request.sourceFileSystem->remove(job.source, false);
         // A directory that is not empty is one holding what was skipped, which
         // is the outcome asked for rather than a failure to report.
-        if (!removed.ok() && !(job.isDirectory && removed.error().code == VfsError::NotEmpty))
+        if (!removed.ok() && !(job.kind == Kind::Directory && removed.error().code == VfsError::NotEmpty))
             recordFailure(job.source, removed.error());
     }
 }
@@ -617,7 +689,7 @@ void TransferTask::run()
         // Directories are structure, not payload: only files count as copied.
         const Outcome outcome = transferOne(job);
         outcomes.append(outcome);
-        if (outcome == Outcome::Transferred && !job.isDirectory)
+        if (outcome == Outcome::Transferred && job.kind != Kind::Directory)
             ++m_copied;
         // Anything that did not arrive means this source has not been moved,
         // whatever the reason. A skipped file records no failure -- skipping is
@@ -635,7 +707,7 @@ void TransferTask::run()
         setBytesDone(m_bytesCompleted);
 
         ++done;
-        if (!job.isDirectory)
+        if (job.kind != Kind::Directory)
             ++files;
         setStatusText(QStringLiteral("%1 / %2 files").arg(files).arg(jobs.size()));
 

@@ -476,6 +476,47 @@ void runFileSystemConformance(const ConformanceContext& context)
         QVERIFY2(fs.remove(contested, false).ok(), "removing what this suite renamed must succeed");
     }
 
+    // --- links, on a drive that says it holds them -------------------------
+    //
+    // Gated on the capability rather than on a flag in the context: a drive that
+    // advertises Symlink is promising exactly this, and one that does not is
+    // promising nothing. What a copy needs from it is the round trip -- the text
+    // goes in, the same text comes back, and a listing calls the entry a link --
+    // because a copy of a link is a copy of that text and nothing else. Above
+    // all the target is stored as given: a drive that resolved a relative link
+    // would turn a relocatable tree into one pinned to where it was copied from.
+    // See ADR-0092.
+    if (context.expectsWriteSupport && fs.capabilities().testFlag(VfsCapability::Symlink)) {
+        const VfsUri link = context.root.child(QStringLiteral("pointer"));
+        const QString relative = QStringLiteral("neighbour.bin");
+        QVERIFY2(fs.makeLink(link, relative).ok(), "a drive advertising Symlink must make one");
+
+        const Result<QString> points = fs.readLink(link);
+        QVERIFY2(points.ok(), qPrintable(points.error().message));
+        QCOMPARE(points.value(), relative);
+
+        const Result<FileEntry> stat = fs.stat(link);
+        QVERIFY2(stat.ok(), qPrintable(stat.error().message));
+        QVERIFY2(stat.value().isSymlink, "a link has to be reported as one");
+
+        // The name is taken, whatever it points at -- the same answer
+        // makeDirectory() gives, and the reason a copy over a link has to remove
+        // it first rather than write through it.
+        QCOMPARE(fs.makeLink(link, relative).error().code, VfsError::AlreadyExists);
+
+        // And a name that is not a link says so, rather than answering with
+        // something a caller could mistake for a target.
+        QVERIFY2(
+            context.seedFile(QStringLiteral("ordinary.bin"), QByteArrayLiteral("bytes")), "seeding failed");
+        QCOMPARE(
+            fs.readLink(context.root.child(QStringLiteral("ordinary.bin"))).error().code, VfsError::NotALink);
+
+        // Removing a link removes the name and never what it points at, which is
+        // what makes a move of one safe.
+        QVERIFY2(fs.remove(link, false).ok(), "removing a link must succeed");
+        QVERIFY(!fs.stat(link).ok());
+    }
+
     // --- a directory that cannot be listed ---------------------------------
     //
     // "I could not read it" and "there is nothing in it" are the same sentence

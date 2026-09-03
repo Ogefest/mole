@@ -156,6 +156,11 @@ public:
     /// really are, and the answer every operation that writes has to have ready.
     FaultyFileSystem& readOnly();
 
+    /// The drive stops advertising Symlink: it can hold files and folders and
+    /// nothing else. What a bucket, an FTP server and most protocol backends
+    /// really are, and the answer a copy carrying a link has to have ready.
+    FaultyFileSystem& holdsNoLinks();
+
     // ---- what went through it ---------------------------------------------
     //
     // The wrapper already counts every byte through every stream to fire its
@@ -197,6 +202,8 @@ public:
 
     QString scheme() const override;
     VfsCapabilities capabilities() const override;
+    Result<QString> readLink(const VfsUri& link) override;
+    Result<void> makeLink(const VfsUri& link, const QString& target) override;
     /// The volume underneath decides this, not the wrapper. A decorator that
     /// answered for itself would quietly turn a case-insensitive volume back
     /// into a case-sensitive one at exactly the guards that care.

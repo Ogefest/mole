@@ -68,6 +68,29 @@ bool SyncTask::stillWhatThePlanSaw(const SyncPlan::Step& step, QString* changed)
     return true;
 }
 
+bool SyncTask::linkOne(const SyncPlan::Step& step)
+{
+    // Asked of the destination, because the destination is what knows. Most
+    // drives have no links at all, and a link that quietly arrived as something
+    // else is the fault ADR-0092 exists for -- so this says which file and why.
+    if (!m_targetFs->capabilities().testFlag(VfsCapability::Symlink)) {
+        m_failures.append(
+            QStringLiteral("%1: a symbolic link, and this drive cannot hold one").arg(step.relativePath));
+        return false;
+    }
+
+    const Result<QString> points = m_sourceFs->readLink(step.source);
+    if (!points.ok()) {
+        m_failures.append(QStringLiteral("%1: %2").arg(step.relativePath, points.error().message));
+        return false;
+    }
+    if (const Result<void> made = m_targetFs->makeLink(step.target, points.value()); !made.ok()) {
+        m_failures.append(QStringLiteral("%1: %2").arg(step.relativePath, made.error().message));
+        return false;
+    }
+    return true;
+}
+
 bool SyncTask::copyOne(const SyncPlan::Step& step)
 {
     // The plan measured the file already; passing that on is what lets a remote
@@ -240,6 +263,10 @@ void SyncTask::run()
         QStringLiteral("copy"), QStringLiteral("To copy"), m_plan.countOf(SyncPlan::Action::Copy), 10);
     reportCount(QStringLiteral("replace"), QStringLiteral("To replace"),
         m_plan.countOf(SyncPlan::Action::Overwrite), 20);
+    if (m_plan.countOf(SyncPlan::Action::Link) > 0) {
+        reportCount(
+            QStringLiteral("link"), QStringLiteral("To link"), m_plan.countOf(SyncPlan::Action::Link), 25);
+    }
     if (m_plan.countOf(SyncPlan::Action::Delete) > 0) {
         reportCount(QStringLiteral("delete"), QStringLiteral("To delete"),
             m_plan.countOf(SyncPlan::Action::Delete), 30);
@@ -283,6 +310,10 @@ void SyncTask::run()
         case SyncPlan::Action::Copy:
         case SyncPlan::Action::Overwrite:
             if (copyOne(step))
+                ++m_applied;
+            break;
+        case SyncPlan::Action::Link:
+            if (linkOne(step))
                 ++m_applied;
             break;
         case SyncPlan::Action::Delete: {

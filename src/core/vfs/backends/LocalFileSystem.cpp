@@ -105,6 +105,17 @@ namespace {
 #endif
     }
 
+    /// The other direction, for the one call that answers with a path rather
+    /// than taking one: what a link points at.
+    QString pathFromNative(const std::filesystem::path& path)
+    {
+#ifdef Q_OS_WIN
+        return QString::fromStdWString(path.wstring());
+#else
+        return QFile::decodeName(QByteArray::fromStdString(path.string()));
+#endif
+    }
+
     /// What an entry is, when Qt says it is neither a file nor a directory.
     ///
     /// Asked of the platform only for the entries Qt has already said are
@@ -269,7 +280,7 @@ VfsCapabilities LocalFileSystem::capabilities() const
 {
     return VfsCapability::Read | VfsCapability::Write | VfsCapability::Create | VfsCapability::Delete
         | VfsCapability::Rename | VfsCapability::MakeDirectory | VfsCapability::RandomAccessRead
-        | VfsCapability::ReportsSpace | VfsCapability::ReportsAccess;
+        | VfsCapability::ReportsSpace | VfsCapability::ReportsAccess | VfsCapability::Symlink;
 }
 
 Result<SpaceInfo> LocalFileSystem::space(const VfsUri& target)
@@ -454,7 +465,13 @@ Result<FileEntry> LocalFileSystem::stat(const VfsUri& target)
         return VfsError::make(VfsError::NotSupported, QStringLiteral("Not a local uri"));
 
     const QFileInfo info(path);
-    if (!info.exists())
+    // exists() resolves the link, so a link to something that is not there
+    // answered "no such file" -- for a name that is right there in its
+    // directory, and that list() has reported since MOLE-333. The two disagreed,
+    // and a copy asks stat() about the sources it was handed: a dangling link
+    // selected on its own was refused as missing while the same link one level
+    // inside a copied tree went through. See ADR-0092.
+    if (!info.exists() && !info.isSymbolicLink())
         return errorForPath(path);
 
     return entryFromInfo(info, target);
@@ -472,6 +489,72 @@ Result<void> LocalFileSystem::makeDirectory(const VfsUri& target)
         return Result<void>::failure(VfsError::AlreadyExists, QStringLiteral("Already exists: %1").arg(path));
     if (!QDir().mkpath(path))
         return Result<void>::failure(VfsError::IoError, QStringLiteral("Cannot create %1").arg(path));
+    return {};
+}
+
+Result<QString> LocalFileSystem::readLink(const VfsUri& link)
+{
+    checkNotOnTheDrawingThread("readLink");
+    const QString path = link.toLocalPath();
+    if (path.isEmpty())
+        return VfsError::make(VfsError::NotSupported, QStringLiteral("Not a local uri"));
+
+    // std::filesystem rather than QFileInfo::symLinkTarget(), which resolves the
+    // target against the link's directory and hands back an absolute path. A
+    // relative link copied as an absolute one still points at the right file on
+    // the machine it was copied on and at nothing anywhere else, which is the
+    // failure a relative link exists to avoid. See ADR-0092.
+    std::error_code failed;
+    const std::filesystem::path target = std::filesystem::read_symlink(nativePath(path), failed);
+    if (failed) {
+        // EINVAL for a name that is a file or a folder, which is the answer this
+        // call exists to give; anything else is the ordinary story about a path
+        // that cannot be reached at all.
+        const VfsError::Code code
+            = failed == std::errc::invalid_argument ? VfsError::NotALink : codeForSystemError(failed);
+        return VfsError::make(code,
+            QStringLiteral("Cannot read the link %1: %2")
+                .arg(path, QString::fromStdString(failed.message())));
+    }
+    return pathFromNative(target);
+}
+
+Result<void> LocalFileSystem::makeLink(const VfsUri& link, const QString& target)
+{
+    checkNotOnTheDrawingThread("makeLink");
+    if (Result<void> older = refuseWritingToAVersion(link); !older.ok())
+        return older;
+    const QString path = link.toLocalPath();
+    if (path.isEmpty())
+        return Result<void>::failure(VfsError::NotSupported, QStringLiteral("Not a local uri"));
+    // symlink_status() rather than exists(): a name holding a link to nothing is
+    // a name that is taken, and exists() resolves the link and says it is free.
+    // A status that could not be read at all is left to the call below, so the
+    // message comes from the platform rather than from a guess here.
+    std::error_code taken;
+    const std::filesystem::file_status standing = std::filesystem::symlink_status(nativePath(path), taken);
+    if (std::filesystem::exists(standing))
+        return Result<void>::failure(VfsError::AlreadyExists, QStringLiteral("Already exists: %1").arg(path));
+
+    const std::filesystem::path to = nativePath(target);
+    // Windows keeps two kinds of symbolic link and wants to be told which at
+    // creation time; POSIX has one and both calls do the same thing there. The
+    // question is asked of the target, resolved against the link's own directory
+    // the way the kernel will resolve it -- and a target that is not there yet
+    // gets a file link, which is the only answer available and the right one for
+    // the ordinary case of a link whose target has not been copied over yet.
+    const std::filesystem::path resolved = to.is_absolute() ? to : nativePath(path).parent_path() / to;
+    std::error_code unknown;
+    std::error_code failed;
+    if (std::filesystem::is_directory(resolved, unknown))
+        std::filesystem::create_directory_symlink(to, nativePath(path), failed);
+    else
+        std::filesystem::create_symlink(to, nativePath(path), failed);
+    if (failed) {
+        return Result<void>::failure(codeForSystemError(failed),
+            QStringLiteral("Cannot point %1 at %2: %3")
+                .arg(path, target, QString::fromStdString(failed.message())));
+    }
     return {};
 }
 

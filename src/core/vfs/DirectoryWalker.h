@@ -7,14 +7,21 @@
 namespace mole {
 
 /// Depth-first traversal over any backend. Shared by the indexer, the live
-/// search and (later) duplicate detection, so the awkward parts -- cancellation,
-/// unreadable directories, symlink loops -- are solved once.
+/// search and duplicate detection, so the awkward parts -- cancellation,
+/// unreadable directories, links -- are solved once.
+///
+/// **A link is reported and never descended into.** Not an option: it is the
+/// rule for the whole application, written down in ADR-0092, and following one
+/// is what turns a directory loop into a walk that ends when the kernel refuses
+/// a path. There used to be a followSymlinks option here, with a seen-set that
+/// was keyed on the uri -- so every pass through a loop produced a new uri and
+/// the guard caught nothing. No caller ever set it, which is the only reason
+/// that never cost anybody a scan.
 class DirectoryWalker
 {
 public:
     struct Options
     {
-        bool followSymlinks = false;
         bool includeHidden = true;
         /// -1 means unlimited. 0 lists only the root's direct children.
         int maxDepth = -1;

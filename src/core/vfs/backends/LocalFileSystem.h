@@ -50,6 +50,8 @@ public:
     Result<FileEntry> stat(const VfsUri& target) override;
 
     Result<void> makeDirectory(const VfsUri& target) override;
+    Result<QString> readLink(const VfsUri& link) override;
+    Result<void> makeLink(const VfsUri& link, const QString& target) override;
     Result<void> remove(const VfsUri& target, bool recursive) override;
     Result<void> rename(const VfsUri& from, const VfsUri& to) override;
 

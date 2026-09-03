@@ -65,6 +65,9 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-03 #MOLE-335 A symbolic link is copied and moved as a link, instead of arriving as an empty folder or as a second copy of the file it points at
+2026-09-03 #MOLE-335 A drive that cannot hold a link says which file it refused and why, instead of putting something else there
+2026-09-03 #MOLE-335 Syncing a folder that contains a link back to itself finishes, instead of planning folders until the paths get too long
 2026-09-03 #MOLE-351 A tab restored before its drive is connected keeps its place and comes back when the drive does
 2026-09-03 #MOLE-351 Going back into an archive after leaving it opens it again, instead of showing an empty folder
 2026-09-03 #MOLE-350 A session survives a launch where a plugin failed to load, and `mole --plugins` leaves it alone instead of rewriting it

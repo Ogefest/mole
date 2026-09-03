@@ -47,6 +47,9 @@ protected:
 
 private:
     bool copyOne(const SyncPlan::Step& step);
+    /// Puts a link at the far end pointing where the source one points, or fails
+    /// the step by name on a drive that cannot hold one. See ADR-0092.
+    bool linkOne(const SyncPlan::Step& step);
 
     /// Whether what is about to be removed is still what the plan recorded.
     ///

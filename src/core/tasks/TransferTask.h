@@ -63,11 +63,16 @@ protected:
     void run() override;
 
 private:
+    /// What one job puts at the far end. A link is neither of the other two:
+    /// there are no bytes to stream and nothing to make a directory of, and the
+    /// whole fault ADR-0092 records was a link arriving as one of them.
+    enum class Kind { File, Directory, Link };
+
     struct Job
     {
         VfsUri source;
         VfsUri target;
-        bool isDirectory = false;
+        Kind kind = Kind::File;
         /// Known from the plan, so progress can be counted in bytes rather than
         /// in files -- one very large file otherwise sits at 0% then jumps.
         qint64 size = 0;
@@ -118,6 +123,10 @@ private:
     /// no failures, and the tree relabelled underneath itself. See ADR-0029 and
     /// MOLE-275.
     std::optional<VfsError> refusalFor(const VfsUri& source, bool sourceIsDirectory) const;
+    /// Puts the link `job` describes at the far end: reads what the source one
+    /// points at and makes one there pointing at the same text. `replacing` is
+    /// what resolveConflict() decided about the name being occupied.
+    bool linkOne(const Job& job, bool replacing);
 
     /// The name one source arrives under. Written once because three places ask
     /// it and the fourth would have been the copy that drifted.

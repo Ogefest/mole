@@ -30,6 +30,8 @@ public:
     Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) override;
     Result<FileEntry> stat(const VfsUri& target) override;
     Result<void> makeDirectory(const VfsUri& target) override;
+    Result<QString> readLink(const VfsUri& link) override;
+    Result<void> makeLink(const VfsUri& link, const QString& target) override;
     Result<void> remove(const VfsUri& target, bool recursive) override;
     Result<void> rename(const VfsUri& from, const VfsUri& to) override;
     Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override;
@@ -62,6 +64,9 @@ public:
     /// files. Neither changes what the entry contains: a shortcut really is an
     /// ordinary file, and what a link points at is a question nothing asks yet.
     void markAsSymlink(const QString& path);
+    /// Puts a symbolic link at `path` pointing at `target`, which is stored as
+    /// given: a link to nothing is a link, and the fixtures need one.
+    void addSymlink(const QString& path, const QString& target);
     void markAsShortcut(const QString& path);
 
     /// Refuses the names a real volume of that kind would refuse, so what a
@@ -140,6 +145,9 @@ private:
         // a braced list and these are set afterwards rather than at creation.
         bool isSymlink = false;
         bool isShortcut = false;
+        /// What a link points at, stored as it was given. Only ever read for a
+        /// node that is one.
+        QString linkTarget;
     };
 
     static QString normalise(const QString& path);

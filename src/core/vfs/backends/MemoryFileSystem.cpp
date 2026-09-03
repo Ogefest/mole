@@ -18,7 +18,8 @@ MemoryFileSystem::MemoryFileSystem()
 VfsCapabilities MemoryFileSystem::capabilities() const
 {
     return VfsCapability::Read | VfsCapability::Write | VfsCapability::Create | VfsCapability::Delete
-        | VfsCapability::Rename | VfsCapability::MakeDirectory | VfsCapability::RandomAccessRead;
+        | VfsCapability::Rename | VfsCapability::MakeDirectory | VfsCapability::RandomAccessRead
+        | VfsCapability::Symlink;
 }
 
 QString MemoryFileSystem::normalise(const QString& path)
@@ -118,6 +119,18 @@ void MemoryFileSystem::markAsSymlink(const QString& path)
     const auto node = m_nodes.find(resolve(normalise(path)));
     if (node != m_nodes.end())
         node->isSymlink = true;
+}
+
+void MemoryFileSystem::addSymlink(const QString& path, const QString& target)
+{
+    const QString normalised = normalise(path);
+    QMutexLocker lock(&m_mutex);
+    if (!m_nodes.contains(normalised))
+        touchParent(normalised);
+    Node node { false, QByteArray(), QDateTime::currentDateTime() };
+    node.isSymlink = true;
+    node.linkTarget = target;
+    m_nodes.insert(normalised, node);
 }
 
 void MemoryFileSystem::markAsShortcut(const QString& path)
@@ -283,6 +296,39 @@ Result<void> MemoryFileSystem::makeDirectory(const VfsUri& target)
                 VfsError::AlreadyExists, QStringLiteral("Already exists: %1").arg(target.path()));
     }
     addDirectory(target.path());
+    return {};
+}
+
+Result<QString> MemoryFileSystem::readLink(const VfsUri& link)
+{
+    checkNotOnTheDrawingThread("readLink");
+    waitAsASlowDriveWould();
+    QMutexLocker lock(&m_mutex);
+    const QString path = resolve(link.path());
+    if (Result<void> fault = faultFor(path); !fault.ok())
+        return fault.error();
+
+    const auto node = m_nodes.constFind(path);
+    if (node == m_nodes.constEnd())
+        return VfsError::make(VfsError::NotFound, QStringLiteral("No such path: %1").arg(link.path()));
+    if (!node->isSymlink)
+        return VfsError::make(VfsError::NotALink, QStringLiteral("Not a symbolic link: %1").arg(path));
+    return node->linkTarget;
+}
+
+Result<void> MemoryFileSystem::makeLink(const VfsUri& link, const QString& target)
+{
+    checkNotOnTheDrawingThread("makeLink");
+    waitAsASlowDriveWould();
+    {
+        QMutexLocker lock(&m_mutex);
+        if (Result<void> fault = faultFor(link.path()); !fault.ok())
+            return fault;
+        if (m_nodes.contains(resolve(link.path())))
+            return Result<void>::failure(
+                VfsError::AlreadyExists, QStringLiteral("Already exists: %1").arg(link.path()));
+    }
+    addSymlink(link.path(), target);
     return {};
 }
 

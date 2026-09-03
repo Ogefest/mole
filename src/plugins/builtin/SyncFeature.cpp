@@ -237,8 +237,11 @@ QString SyncController::planSummary() const
     const int replaces = m_plan.countOf(SyncPlan::Action::Overwrite);
     const int deletes = m_plan.countOf(SyncPlan::Action::Delete);
     const int folders = m_plan.countOf(SyncPlan::Action::CreateDirectory);
+    // Counted here as well, or a run whose only work is a link would say
+    // "already in step" and then write something. See ADR-0092.
+    const int links = m_plan.countOf(SyncPlan::Action::Link);
 
-    if (copies + replaces + deletes + folders == 0)
+    if (copies + replaces + deletes + folders + links == 0)
         return QStringLiteral("already in step");
 
     QStringList parts;
@@ -246,6 +249,8 @@ QString SyncController::planSummary() const
         parts.append(QStringLiteral("%1 new folders").arg(folders));
     if (copies > 0)
         parts.append(QStringLiteral("%1 to copy").arg(copies));
+    if (links > 0)
+        parts.append(QStringLiteral("%1 to link").arg(links));
     if (replaces > 0)
         parts.append(QStringLiteral("%1 to replace").arg(replaces));
     if (deletes > 0)

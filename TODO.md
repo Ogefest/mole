@@ -60,6 +60,18 @@ project, and a contributor should never hit a wall of text they cannot read.
   its own call. Worth deciding deliberately rather than adding on the way past,
   which is why it is here and not in the code.
 
+- **Links are copied, never compared, and a sync leaves one that is already at the
+  destination alone.** ADR-0092 settled what a copy, a move and a sync do with a
+  symbolic link: the link travels, nothing is followed into one, and a drive that
+  cannot hold one refuses it by name. What is deliberately not answered is what a
+  *changed* link should do. A sync that finds a link already at the far end plans a
+  skip with a reason, because "the same name, pointing somewhere else" would mean
+  reading both targets and calling a difference in text a difference in content --
+  which is defensible and is nobody's request yet. The failure it avoids is the
+  worse one: replacing a link at the destination on a guess. **What it would take:**
+  `readLink()` on both sides in `differenceBetween()`, and a decision about what a
+  link pointing at a path that only exists on one of the two machines means.
+
 - **Two drives cannot honour ADR-0020's rule about a destination that appeared
   while a write was in flight, and that is a fact about them rather than a gap
   waiting to be filled.** The rule needs a working name to finish from: a write

@@ -49,8 +49,8 @@ private slots:
 
     void twoNamesThatLookAlikeStayTwoFiles();
     void aSymlinkLoopDoesNotTrapTheWalk();
-    void aBrokenSymlinkIsReportedAndTheRestOfTheJobGoesOn();
-    void aMoveLeavesABrokenSymlinkWhereItIs();
+    void aBrokenSymlinkIsCopiedAsALinkRatherThanReadThrough();
+    void aMoveOfABrokenSymlinkTakesTheLinkWithIt();
     void aFifoIsRefusedRatherThanHungOn();
     void aMoveLeavesAFifoWhereItIs();
     void aFileNobodyMayReadIsReportedAndTheCountIsHonest();
@@ -286,16 +286,25 @@ void TestAwkwardNames::aSymlinkLoopDoesNotTrapTheWalk()
     TransferTask* task = copyEverythingFromSource();
     QVERIFY2(task != nullptr, "a copy of a tree with a loop in it has to finish");
     QVERIFY(QFile::exists(m_tree->absolute(QStringLiteral("arrived/source/inner/real.txt"))));
-    // Whatever the link became, the descent stopped: nothing four levels down.
-    QVERIFY2(!QFile::exists(m_tree->absolute(QStringLiteral("arrived/source/inner/loop/inner/loop"))),
-        "the walk followed the link round again");
+
+    // The link arrived as a link, so the descent stopped at it. Asked with
+    // isSymbolicLink() rather than with exists() on a path underneath it: this
+    // link points at the source tree, and everything under it therefore exists
+    // when resolved through it -- which is what a faithful copy of a link means
+    // and what makes exists() the wrong question. See ADR-0092.
+    const QFileInfo arrived(m_tree->absolute(QStringLiteral("arrived/source/inner/loop")));
+    QVERIFY2(arrived.isSymbolicLink(), "the link must arrive as a link, not as a copy of the tree");
+    QCOMPARE(arrived.symLinkTarget(), m_tree->absolute(QStringLiteral("source")));
+    QVERIFY2(task->failures().isEmpty(), qPrintable(task->failures().join(QStringLiteral("; "))));
 }
 
-void TestAwkwardNames::aBrokenSymlinkIsReportedAndTheRestOfTheJobGoesOn()
+void TestAwkwardNames::aBrokenSymlinkIsCopiedAsALinkRatherThanReadThrough()
 {
-    // A link to something that is not there. It is a name in the directory and
-    // it cannot be read, which is a reason to report it -- and not a reason to
-    // abandon the other files.
+    // A link to something that is not there. Nothing is read through it, so
+    // there is nothing to fail: the name arrives pointing where it pointed, and
+    // whether the target is there is a fact about the target. It used to be
+    // refused as "a link to nothing", which was the right answer while a copy
+    // meant reading the bytes behind the link. See ADR-0092.
     QVERIFY(m_tree->writeFile(QStringLiteral("source/good.txt"), QByteArray("fine")));
     QVERIFY(QFile::link(m_tree->absolute(QStringLiteral("source/not-there.txt")),
         m_tree->absolute(QStringLiteral("source/dangling"))));
@@ -306,22 +315,21 @@ void TestAwkwardNames::aBrokenSymlinkIsReportedAndTheRestOfTheJobGoesOn()
     QVERIFY2(good.open(QIODevice::ReadOnly), "the file beside the broken link still had to arrive");
     QCOMPARE(good.readAll(), QByteArray("fine"));
 
-    // Reported, which is what the name of this case has always claimed. The
-    // link was invisible to the listing until MOLE-333, so the copy passed over
-    // an entry it never saw and said nothing about it.
-    QCOMPARE(task->failedCount(), 1);
-    const QString failure = task->failures().first();
-    QVERIFY2(failure.contains(QStringLiteral("dangling")), qPrintable(failure));
-    QVERIFY2(failure.contains(QStringLiteral("link")), qPrintable(failure));
+    QVERIFY2(task->failures().isEmpty(), qPrintable(task->failures().join(QStringLiteral("; "))));
+    const QFileInfo arrived(m_tree->absolute(QStringLiteral("arrived/source/dangling")));
+    QVERIFY(arrived.isSymbolicLink());
+    QCOMPARE(arrived.symLinkTarget(), m_tree->absolute(QStringLiteral("source/not-there.txt")));
 }
 
-/// The reason being reported matters: what is not copied must not be deleted.
+/// The link is what moves, and it has to arrive before the source name goes.
 ///
 /// A move removes the source tree once its jobs have arrived. An entry that no
 /// listing ever mentioned is an entry nothing tried to copy, nothing counted as
 /// failed, and `QDir::removeRecursively()` then removed along with everything
 /// else -- so the link was gone from the source and had never arrived anywhere.
-void TestAwkwardNames::aMoveLeavesABrokenSymlinkWhereItIs()
+/// That was MOLE-333; this asserts the other half of it, now that a link is
+/// something a copy can actually carry.
+void TestAwkwardNames::aMoveOfABrokenSymlinkTakesTheLinkWithIt()
 {
     QVERIFY(m_tree->writeFile(QStringLiteral("source/good.txt"), QByteArray("fine")));
     QVERIFY(QFile::link(m_tree->absolute(QStringLiteral("source/not-there.txt")),
@@ -329,10 +337,12 @@ void TestAwkwardNames::aMoveLeavesABrokenSymlinkWhereItIs()
 
     TransferTask* task = moveEverythingFromSource();
     QVERIFY(task != nullptr);
-    QCOMPARE(task->failedCount(), 1);
+    QVERIFY2(task->failures().isEmpty(), qPrintable(task->failures().join(QStringLiteral("; "))));
 
-    QVERIFY2(QFileInfo(m_tree->absolute(QStringLiteral("source/dangling"))).isSymbolicLink(),
-        "a move deleted a link it never copied");
+    QVERIFY2(QFileInfo(m_tree->absolute(QStringLiteral("arrived/source/dangling"))).isSymbolicLink(),
+        "the link had to arrive as a link");
+    QVERIFY2(!QFileInfo(m_tree->absolute(QStringLiteral("source/dangling"))).isSymbolicLink(),
+        "and the name it was moved from is gone");
 }
 
 void TestAwkwardNames::aFifoIsRefusedRatherThanHungOn()

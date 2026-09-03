@@ -1049,6 +1049,15 @@ void TestArchiveFileSystem::aLinkInsideAnArchiveIsShownAsOneAndAHardLinkReadsIts
     QVERIFY2(byName.value(QStringLiteral("soft")).isSymlink, "a symbolic link must be shown as one");
     QVERIFY2(!byName.value(QStringLiteral("target.txt")).isSymlink, "and an ordinary file must not be");
 
+    // And what it points at can be read, as the archive stores it, so extracting
+    // a tree of links puts links on the disk rather than empty files. Relative
+    // stays relative: resolving it here would pin the extraction to where it
+    // happened. See ADR-0092.
+    const Result<QString> points = fs->readLink(byName.value(QStringLiteral("soft")).uri);
+    QVERIFY2(points.ok(), qPrintable(points.error().message));
+    QCOMPARE(points.value(), QStringLiteral("target.txt"));
+    QCOMPARE(fs->readLink(byName.value(QStringLiteral("target.txt")).uri).error().code, VfsError::NotALink);
+
     // A hard link is the same file under another name, so it is the target's
     // length that is promised and the target's bytes that arrive.
     QCOMPARE(byName.value(QStringLiteral("hard")).size, static_cast<qint64>(contents.size()));

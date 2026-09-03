@@ -1,7 +1,5 @@
 #include "core/vfs/DirectoryWalker.h"
 
-#include <QSet>
-
 namespace mole {
 
 DirectoryWalker::DirectoryWalker(FileSystemPtr fileSystem)
@@ -37,21 +35,12 @@ Result<void> DirectoryWalker::walk(const VfsUri& root, const CancelToken& cancel
     };
 
     QList<Pending> stack { { root, 0 } };
-    // Guards against symlink cycles when the caller opts into following them.
-    QSet<QString> seen;
 
     while (!stack.isEmpty()) {
         if (cancel.isCancelled())
             return Result<void>::failure(VfsError::Cancelled, QStringLiteral("Walk cancelled"));
 
         const Pending current = stack.takeLast();
-
-        if (m_options.followSymlinks) {
-            const QString key = current.uri.toString();
-            if (seen.contains(key))
-                continue;
-            seen.insert(key);
-        }
 
         Result<FileEntryList> listing = m_fileSystem->list(current.uri, cancel);
         if (!listing.ok()) {
@@ -77,7 +66,10 @@ Result<void> DirectoryWalker::walk(const VfsUri& root, const CancelToken& cancel
 
             if (!entry.isDir || action == Action::SkipSubtree)
                 continue;
-            if (entry.isSymlink && !m_options.followSymlinks)
+            // Reported by the visitor above and not entered: what a link points
+            // at is somewhere else's business, and a link into a parent is a
+            // walk that never ends. See ADR-0092.
+            if (entry.isSymlink)
                 continue;
             if (m_options.maxDepth >= 0 && current.depth >= m_options.maxDepth)
                 continue;

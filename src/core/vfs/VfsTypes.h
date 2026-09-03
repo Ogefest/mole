@@ -22,6 +22,7 @@ struct VfsError
         NotSupported,
         NotADirectory,
         IsADirectory,
+        NotALink, ///< asked what a name points at, and it is not a link
         AlreadyExists,
         NotEmpty,
         IoError,
@@ -65,6 +66,7 @@ enum class VfsCapability : quint32 {
     ReportsSpace = 1u << 9, ///< backend knows its own capacity
     ReportsAccess = 1u << 10, ///< backend can say who may do what here
     ReportsLeftovers = 1u << 11, ///< backend can find work it left behind
+    Symlink = 1u << 12, ///< backend can read and make symbolic links
 };
 Q_DECLARE_FLAGS(VfsCapabilities, VfsCapability)
 Q_DECLARE_OPERATORS_FOR_FLAGS(VfsCapabilities)

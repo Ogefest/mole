@@ -545,7 +545,10 @@ QString ArchiveFileSystem::archivePathFromAuthority(const QString& authority)
 
 VfsCapabilities ArchiveFileSystem::capabilities() const
 {
-    return VfsCapability::Read | VfsCapability::RandomAccessRead;
+    // Symlink without Write: a member that is a link can be read as one, and
+    // nothing in an archive can be made. A copy asks the *destination* whether it
+    // holds links, so advertising it here only says that readLink() answers.
+    return VfsCapability::Read | VfsCapability::RandomAccessRead | VfsCapability::Symlink;
 }
 
 Result<void> ArchiveFileSystem::ensureIndexed()
@@ -718,6 +721,26 @@ Result<FileEntry> ArchiveFileSystem::stat(const VfsUri& target)
             VfsError::NotFound, QStringLiteral("No such entry in archive: %1").arg(target.path()));
 
     return entryFor(target, target.fileName(), *node);
+}
+
+Result<QString> ArchiveFileSystem::readLink(const VfsUri& link)
+{
+    QMutexLocker lock(&m_mutex);
+    if (Result<void> indexed = ensureIndexed(); !indexed.ok())
+        return indexed.error();
+
+    // Keyed the way stat() keys it: the paths in m_nodes are already normalised.
+    const auto node = m_nodes.constFind(link.path());
+    if (node == m_nodes.constEnd())
+        return VfsError::make(
+            VfsError::NotFound, QStringLiteral("No such entry in archive: %1").arg(link.path()));
+    if (!node->isSymlink || node->linkTarget.isEmpty()) {
+        return VfsError::make(VfsError::NotALink, QStringLiteral("Not a symbolic link: %1").arg(link.path()));
+    }
+    // The stored text, not resolvedLinkTarget(): what is copied out is what the
+    // archive says, and resolving it against the member's own directory would
+    // turn a relative link into one pinned to where it was extracted.
+    return node->linkTarget;
 }
 
 FileEntry ArchiveFileSystem::entryFor(const VfsUri& uri, const QString& name, const Node& node) const
