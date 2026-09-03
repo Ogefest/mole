@@ -24,6 +24,21 @@ struct ScanOptions
     /// Records what lives inside a file that is a container, so a zip of
     /// years-old projects can be searched without being opened.
     bool archives = false;
+
+    /// What the index dialog opens on, and the answer for anything that has to
+    /// guess.
+    ///
+    /// Three callers start a scan and each carried its own idea of the default:
+    /// the search form opened with archives on, the indexes tab guessed the
+    /// same for a volume from before the options were recorded, and a schedule
+    /// rule written before `archives` existed got *off* -- so a nightly rule
+    /// made by an earlier version rebuilt the volume every night as a poorer
+    /// scan than the one that created it. That is the drift ADR-0057 was
+    /// written against, and one function is the answer to it.
+    static constexpr ScanOptions dialogDefaults()
+    {
+        return ScanOptions { /*incremental=*/true, /*metadata=*/false, /*archives=*/true };
+    }
 };
 
 } // namespace mole

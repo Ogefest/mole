@@ -11,6 +11,7 @@
 namespace mole {
 
 class ScanTask;
+class Task;
 
 /// The two readers that turn a bare walk of a tree into a complete scan, and
 /// the one call that installs them.
@@ -46,5 +47,16 @@ std::function<QList<IndexedFile>(const FileEntry&, bool*)> containerReaderFor(
 /// third -- which is the fault this exists to stop coming back.
 void applyScanOptions(ScanTask& task, const ScanOptions& options, const PluginServices& services,
     const FileSystemPtr& fileSystem, const VfsUri& root);
+
+/// The scan already running over `root`, or nothing.
+///
+/// **One scan per volume at a time.** Two at once have the second one's
+/// generation swap drop the first one's rows, so the second is not a slower
+/// answer -- it is a wrong one. The indexes tab asked this before starting a
+/// rescan and the other two callers did not, so a nightly rule firing while a
+/// manual scan was running started a second walk of the same volume. Asked here
+/// because all three can reach here, which is the same reason applyScanOptions()
+/// is here. See MOLE-340.
+Task* scanRunningOn(const PluginServices& services, const VfsUri& root);
 
 } // namespace mole

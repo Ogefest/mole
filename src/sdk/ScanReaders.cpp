@@ -4,6 +4,7 @@
 
 #include "core/data/FileType.h"
 #include "core/index/ScanTask.h"
+#include "core/tasks/TaskManager.h"
 #include "core/vfs/DirectoryWalker.h"
 #include "core/vfs/IFileSystemFactory.h"
 #include "core/vfs/VfsManager.h"
@@ -104,6 +105,25 @@ std::function<QList<IndexedFile>(const FileEntry&, bool*)> containerReaderFor(
         if (!inside)
             return {}; // corrupt, encrypted, or nothing this build can open
 
+        // Where a member sits *on the volume*, which is inside the container's
+        // own path. The row used to carry the path within the archive --
+        // /2019/img.jpg -- and every prefix question in the index is asked on
+        // that column: carrying an unchanged folder forward copies rows whose
+        // path is under it, and a member's was not, so an incremental scan
+        // dropped the contents of every archive in a folder it did not re-walk.
+        // The other way round is worse: a member whose inner path happens to
+        // begin with a real folder's was carried under *that* folder. See
+        // MOLE-340.
+        //
+        // The separator says which half is which. A '/' would make a member
+        // indistinguishable from a file in a directory of the same name, and
+        // that ambiguity is what a prefix query would then act on.
+        const QString containerPath = entry.uri.path();
+        const auto insideContainer = [&containerPath](const QString& innerPath) {
+            return innerPath == QLatin1String("/") ? containerPath
+                                                   : containerPath + QLatin1Char('!') + innerPath;
+        };
+
         QList<IndexedFile> rows;
         bool cut = false;
         DirectoryWalker walker(inside);
@@ -115,8 +135,8 @@ std::function<QList<IndexedFile>(const FileEntry&, bool*)> containerReaderFor(
                 }
                 IndexedFile row;
                 row.name = member.name;
-                row.path = member.uri.path();
-                row.parentPath = member.uri.parent().path();
+                row.path = insideContainer(member.uri.path());
+                row.parentPath = insideContainer(member.uri.parent().path());
                 row.extension = member.uri.suffix();
                 row.isDir = member.isDir;
                 row.size = member.size;
@@ -137,6 +157,21 @@ std::function<QList<IndexedFile>(const FileEntry&, bool*)> containerReaderFor(
             *truncatedOut = cut;
         return rows;
     };
+}
+
+Task* scanRunningOn(const PluginServices& services, const VfsUri& root)
+{
+    if (!services.tasks)
+        return nullptr;
+
+    const QList<Task*> running = services.tasks->tasks();
+    for (Task* task : running) {
+        if (!qobject_cast<ScanTask*>(task) || task->isFinished())
+            continue;
+        if (task->touching().contains(root))
+            return task;
+    }
+    return nullptr;
 }
 
 void applyScanOptions(ScanTask& task, const ScanOptions& options, const PluginServices& services,

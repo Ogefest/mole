@@ -111,11 +111,18 @@ void ScanTask::run()
                 ++m_filesIndexed;
                 if (!flush()) // the carry has to land after the folder's own row
                     return DirectoryWalker::Action::Stop;
-                if (Result<qint64> carried = m_index->carryForward(volumeId, generation, entry.uri.path());
-                    carried.ok()) {
-                    m_carried += carried.value();
-                    m_filesIndexed += carried.value();
+                const Result<qint64> carried = m_index->carryForward(volumeId, generation, entry.uri.path());
+                if (!carried.ok()) {
+                    // The subtree is neither carried nor walked, so committing
+                    // now would swap in a generation it is missing from -- and
+                    // the task used to report that as a success. A carry is a
+                    // write, and a write that failed stops the scan like any
+                    // other. See MOLE-340.
+                    writeError = carried.error();
+                    return DirectoryWalker::Action::Stop;
                 }
+                m_carried += carried.value();
+                m_filesIndexed += carried.value();
                 return DirectoryWalker::Action::SkipSubtree;
             }
         }

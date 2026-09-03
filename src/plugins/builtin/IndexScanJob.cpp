@@ -2,6 +2,7 @@
 
 #include "sdk/ScanReaders.h"
 
+#include "core/diagnostics/Diagnostics.h"
 #include "core/events/EventBus.h"
 #include "core/index/ScanTask.h"
 #include "core/tasks/TaskManager.h"
@@ -19,12 +20,18 @@ IndexScanJob::IndexScanJob(PluginServices services, QObject* parent)
 
 ScanOptions IndexScanJob::optionsFor(const ScheduleRule& rule)
 {
+    // What is missing from the rule gets what the dialog would have asked for,
+    // not what this function happened to think. A rule written before
+    // archivesParameter() existed defaulted to *off* here and to on everywhere
+    // else, so the nightly run rebuilt the volume as a poorer scan than the one
+    // that created it -- the drift ADR-0057 was written against, one version
+    // later. Incremental stays true whatever else changes, which is the whole
+    // point of running this every night rather than once a quarter.
+    constexpr ScanOptions fallback = ScanOptions::dialogDefaults();
     ScanOptions options;
-    // Incremental unless the rule says otherwise, which is the whole point of
-    // running this every night rather than once a quarter.
-    options.incremental = rule.parameters.value(incrementalParameter(), true).toBool();
-    options.metadata = rule.parameters.value(metadataParameter(), false).toBool();
-    options.archives = rule.parameters.value(archivesParameter(), false).toBool();
+    options.incremental = rule.parameters.value(incrementalParameter(), fallback.incremental).toBool();
+    options.metadata = rule.parameters.value(metadataParameter(), fallback.metadata).toBool();
+    options.archives = rule.parameters.value(archivesParameter(), fallback.archives).toBool();
     return options;
 }
 
@@ -84,6 +91,18 @@ bool IndexScanJob::start(const ScheduleRule& rule, std::function<void(bool, QStr
         // Not a failure of the job so much as of the world: an unplugged drive
         // reads as "could not run", which the scheduler records rather than
         // counting as a failure of the rule.
+        return false;
+    }
+
+    // One scan per volume at a time. A rule firing while somebody is rescanning
+    // by hand used to start a second walk of the same volume, and the second
+    // one's generation swap drops the first one's rows -- so this is not a
+    // slower answer but a wrong one. "Could not run", like the drive above,
+    // rather than a failure of the rule; said out loud because nothing else
+    // about tonight would explain the gap.
+    if (scanRunningOn(m_services, root)) {
+        qCWarning(taskLog, "%s is already being scanned, so the scheduled scan was not started",
+            qPrintable(rootUri));
         return false;
     }
 

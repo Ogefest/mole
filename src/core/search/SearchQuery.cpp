@@ -51,15 +51,23 @@ namespace {
             // one criterion the index answers that a walk has to open a file
             // for, which is the whole reason it is indexed at all.
             return true;
+        case SearchPredicate::Field::Under:
+            // On the path column, which is the one thing that says where a row
+            // really sits -- a member of an archive included, since its path is
+            // written under its container. Asked in memory it was answered
+            // against the uri, and a member's uri is on the archive's own
+            // authority, so a folder-scoped search over the index could never
+            // return one. Not negatable: "not under here" over a prefix is a
+            // different question and the clause below does not answer it.
+            // See MOLE-340.
+            return !predicate.negate;
         case SearchPredicate::Field::Hidden:
         case SearchPredicate::Field::TypeClass:
         case SearchPredicate::Field::Content:
         case SearchPredicate::Field::Path:
-        case SearchPredicate::Field::Under:
-            // Rows hold the path inside their volume rather than the whole uri,
-            // nothing records what a file is, and the contents are deliberately
-            // not indexed at all -- a full-text index over a disk of files at
-            // scale is a second disk.
+            // Nothing records what a file is, the whole uri is not a column, and
+            // the contents are deliberately not indexed at all -- a full-text
+            // index over a disk of files at scale is a second disk.
             return false;
         }
         return false;
@@ -440,7 +448,7 @@ SearchPredicate SearchPredicate::underPath(const QString& uri)
     predicate.field = Field::Under;
     predicate.match = Match::Contains;
     predicate.text = uri;
-    predicate.cost = PredicateCost::Cheap;
+    predicate.cost = PredicateCost::PushedDown;
     return predicate;
 }
 
@@ -702,11 +710,18 @@ PredicateCost SearchPredicate::costOf(Field field)
     switch (field) {
     case Field::Path:
     case Field::Hidden:
-    case Field::Under:
         // Answerable from the entry a listing already handed over, and not
         // from any source's own query: a uri prefix and a hidden flag are
         // ours to check.
         return PredicateCost::Cheap;
+    case Field::Under:
+        // A source's own question where the source has one. The index answers
+        // it on the path column -- the walk, which has no query, has the plan
+        // demote it back to a check over the entries it listed, which is what
+        // PushedDown means. It was Cheap, and being Cheap is what kept it out
+        // of the index's query and out of reach of every archive member. See
+        // MOLE-340.
+        return PredicateCost::PushedDown;
     case Field::TypeClass:
         // What is *in* the file decides its class, so an unscanned volume
         // pays for a bounded read.

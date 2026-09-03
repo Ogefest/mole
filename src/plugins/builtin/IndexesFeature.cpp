@@ -90,18 +90,9 @@ void IndexesController::watch(Task* task)
 
 Task* IndexesController::scanOf(const QString& rootUri) const
 {
-    if (!m_services.tasks)
-        return nullptr;
-
-    const VfsUri root = VfsUri::fromString(rootUri);
-    const QList<Task*> tasks = m_services.tasks->tasks();
-    for (Task* task : tasks) {
-        if (!qobject_cast<ScanTask*>(task) || task->isFinished())
-            continue;
-        if (task->touching().contains(root))
-            return task;
-    }
-    return nullptr;
+    // The shared one, so the tab and the two other callers that start a scan
+    // cannot come to different answers about whether one is already running.
+    return scanRunningOn(m_services, VfsUri::fromString(rootUri));
 }
 
 std::optional<IndexVolume> IndexesController::volumeWithId(qint64 volumeId) const
@@ -118,7 +109,7 @@ ScanOptions IndexesController::optionsFor(const IndexVolume& volume, bool full) 
     // What it records, so a rescan repeats the scan that built it rather than a
     // poorer one. A volume from before the options were recorded gets what the
     // index dialog opens on, which is the honest guess and is said in the tab.
-    ScanOptions options = volume.scan.value_or(ScanOptions { true, false, true });
+    ScanOptions options = volume.scan.value_or(ScanOptions::dialogDefaults());
     // Nothing kept and everything walked, which is what "full" means here and in
     // the dialog.
     options.incremental = !full;

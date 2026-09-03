@@ -232,6 +232,15 @@ void LiveSearchController::scanDirectory(const QString& uri, const QString& labe
         return;
     }
 
+    // One scan per volume at a time -- the second one's generation swap drops
+    // the first one's rows, so starting it would undo work in progress rather
+    // than repeat it. Said in the status line, because from here the button
+    // simply appearing to do nothing is the alternative.
+    if (scanRunningOn(m_services, root)) {
+        setStatusText(QStringLiteral("%1 is already being indexed").arg(uri));
+        return;
+    }
+
     auto* task = new ScanTask(fs, root, label.isEmpty() ? uri : label, m_services.index);
     applyScanOptions(*task, scanOptions(!full), m_services, fs, root);
 

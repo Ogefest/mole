@@ -357,8 +357,8 @@ private:
     QString m_contentText;
     bool m_contentRegex = false;
     bool m_searchBinary = false;
-    bool m_scanReadsMetadata = false;
-    bool m_scanOpensArchives = true;
+    bool m_scanReadsMetadata = ScanOptions::dialogDefaults().metadata;
+    bool m_scanOpensArchives = ScanOptions::dialogDefaults().archives;
     QVariantMap m_factCriteria;
     QString m_blockedReason;
     QString m_queryLine;

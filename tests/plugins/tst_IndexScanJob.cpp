@@ -6,6 +6,7 @@
 #include "core/automation/ScheduleStore.h"
 #include "core/events/EventBus.h"
 #include "core/index/IndexDatabase.h"
+#include "core/index/ScanTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/VfsManager.h"
 #include "core/vfs/backends/LocalFileSystem.h"
@@ -97,6 +98,9 @@ private slots:
     void aRuleAskingForMetadataAndArchivesGetsThem();
     void aRuleAskingForNeitherWritesWhatItAlwaysWrote();
     void aRuleCarriesTheOptionsItWasMadeWith();
+    void aRuleFromBeforeAnOptionExistedGetsWhatTheDialogWouldHaveAsked();
+    void anArchiveInAnUnchangedFolderKeepsItsMembersAcrossARescan();
+    void aSecondScanOfAVolumeAlreadyBeingScannedIsRefused();
 
 private:
     /// Runs the job for `rule` and returns once its scan has finished.
@@ -232,14 +236,80 @@ void TestIndexScanJob::aRuleCarriesTheOptionsItWasMadeWith()
     QVERIFY(asked.metadata);
     QVERIFY(!asked.archives);
 
-    // A rule written before any of this existed asks for a walk and no more,
-    // which is what it used to get.
+    // What a rule that does not say gets is the next case: it used to be "a walk
+    // and no more", asserted here, and that was the disagreement -- every other
+    // caller opens with archives on.
+}
+
+/// A rule written before an option existed.
+///
+/// Every parameter is read with a default, and the defaults here disagreed with
+/// every other caller: `archives` was off, and the index dialog and the search
+/// form both open with it on. So a nightly rule made by a version that had no
+/// archive parameter rebuilt the volume every night as a poorer scan than the
+/// one that created it -- exactly the drift ADR-0057 was written against, one
+/// version later. There is one set of defaults now.
+void TestIndexScanJob::aRuleFromBeforeAnOptionExistedGetsWhatTheDialogWouldHaveAsked()
+{
     ScheduleRule old;
-    old.parameters = { { IndexScanJob::rootUriParameter(), QStringLiteral("file:///anywhere") } };
-    const ScanOptions legacy = IndexScanJob::optionsFor(old);
-    QVERIFY(legacy.incremental);
-    QVERIFY(!legacy.metadata);
-    QVERIFY(!legacy.archives);
+    old.id = QStringLiteral("nightly");
+    old.jobKind = IndexScanJob::kind();
+    old.intervalSeconds = 24 * 3600;
+    // Only what the earlier version wrote: the folder and the incremental flag.
+    old.parameters = { { IndexScanJob::rootUriParameter(), m_tree->rootUri().toString() },
+        { IndexScanJob::incrementalParameter(), true } };
+
+    const ScanOptions options = IndexScanJob::optionsFor(old);
+
+    QCOMPARE(options.archives, ScanOptions::dialogDefaults().archives);
+    QCOMPARE(options.metadata, ScanOptions::dialogDefaults().metadata);
+    QVERIFY2(options.incremental, "a nightly rule stays incremental whatever else it does not say");
+}
+
+/// The fault ADR-0056's machinery was built to stop, coming back through the
+/// column the machinery works on.
+///
+/// A member's row used to carry the path *inside* the archive. Every prefix
+/// question the index asks is asked on that column -- carrying an unchanged
+/// folder forward copies the rows whose path is under it -- so a member's row
+/// was not among them, and the subtree is skipped, so nothing re-walked it
+/// either. A nightly re-index quietly dropped the contents of every archive in
+/// a folder that had not changed, which is most of them.
+void TestIndexScanJob::anArchiveInAnUnchangedFolderKeepsItsMembersAcrossARescan()
+{
+    // Settled, so the second scan has something it is allowed to trust.
+    const QDateTime before = QDateTime::currentDateTime().addSecs(-3600);
+    QVERIFY(setModifiedTime(m_tree->absolute(QStringLiteral("archives/holder.bag")), before));
+    QVERIFY(setModifiedTime(m_tree->absolute(QStringLiteral("archives")), before));
+    QVERIFY(setModifiedTime(m_tree->absolute(QStringLiteral("photos")), before));
+    QVERIFY(setModifiedTime(m_tree->path(), before));
+
+    QVERIFY(run(ruleFor(false, true)));
+    QCOMPARE(rowsNamed(QStringLiteral("packed.txt")), 1);
+
+    // Nothing has changed, so the second run carries everything rather than
+    // walking it -- which is the path the member has to survive.
+    QVERIFY(run(ruleFor(false, true)));
+
+    QCOMPARE(rowsNamed(QStringLiteral("packed.txt")), 1);
+}
+
+void TestIndexScanJob::aSecondScanOfAVolumeAlreadyBeingScannedIsRefused()
+{
+    // One scan per volume at a time: two at once have the second one's
+    // generation swap drop the first one's rows, so a rule firing while
+    // somebody is rescanning by hand is not a slower answer but a wrong one.
+    auto* first = new ScanTask(
+        m_vfs->resolve(m_tree->rootUri()), m_tree->rootUri(), QStringLiteral("by hand"), m_index.get());
+    m_tasks->submit(first);
+
+    CapturedWarnings logged;
+    IndexScanJob job(m_services);
+    const bool started = job.start(ruleFor(false, false), [](bool, QString) {});
+
+    QVERIFY(waitForTask(first, 30000));
+    QVERIFY2(!started, "a second scan of a volume already being scanned had to be refused");
+    QVERIFY2(logged.contains(QStringLiteral("already being scanned")), qPrintable(logged.joined()));
 }
 
 MOLE_TEST_MAIN(TestIndexScanJob)

@@ -811,8 +811,39 @@ Result<QList<IndexSearchHit>> IndexDatabase::search(const SearchQuery& query) co
         case SearchPredicate::Field::Accessed:
         case SearchPredicate::Field::Hidden:
         case SearchPredicate::Field::TypeClass:
+        case SearchPredicate::Field::Under: {
+            // Answered on f.path, which holds where a row sits within its
+            // volume -- including a member of an archive, whose path is written
+            // under its container as <container>!<inside>. The uri column cannot
+            // answer it: a member's uri is on the archive's own authority.
+            //
+            // instr(x, y) = 1 rather than LIKE, for the same reason the name
+            // clause uses it: no wildcard escaping to get wrong. The volume is
+            // asked as well, because two drives can hold the same path and a
+            // uri names one of them.
+            //
+            // Two arms, because a folder and a volume can contain each other
+            // either way round. A volume that *is* the folder or sits inside it
+            // -- somebody scanned one subtree and is searching the tree above it
+            // -- answers with all of its rows and no path test at all. A volume
+            // that contains the folder answers with the rows whose path is
+            // under it.
+            const QString folder = VfsUri::fromString(predicate.text).path();
+            sql += QStringLiteral(" AND ((v.root_uri = ? OR instr(v.root_uri, ?) = 1)"
+                                  " OR (instr(?, v.root_uri) = 1"
+                                  " AND (f.path = ? OR instr(f.path, ?) = 1 OR instr(f.path, ?) = 1)))");
+            bindings.append(predicate.text);
+            bindings.append(predicate.text + QLatin1Char('/'));
+            bindings.append(predicate.text);
+            bindings.append(folder);
+            bindings.append(folder + QLatin1Char('/'));
+            // A folder-scoped search whose folder *is* an archive: its members
+            // are under it by the same reading, spelled with the separator that
+            // says "inside this container".
+            bindings.append(folder + QLatin1Char('!'));
+            break;
+        }
         case SearchPredicate::Field::Path:
-        case SearchPredicate::Field::Under:
             // Never pushed down; the planner does not hand these over.
             break;
         }

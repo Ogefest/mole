@@ -48,6 +48,8 @@ private slots:
     void anIndexWrittenBeforeGenerationsStaysVisible();
     void whatAFileSaysAboutItselfIsStoredAndAskedFor();
     void aRowInsideAContainerKeepsItsOwnAddress();
+    void aFolderScopedSearchFindsWhatIsInsideAnArchiveInThatFolder();
+    void carryingASubtreeForwardIntoALockedIndexSaysSoRatherThanCarryingNothing();
     void anIndexWrittenBeforeFactsMigratesWithoutLosingARow();
     void aVolumeRemembersWhatKindOfScanBuiltIt();
     void anAbandonedScanLeavesTheRecordedOptionsAlone();
@@ -705,6 +707,83 @@ void TestIndexDatabase::aRowInsideAContainerKeepsItsOwnAddress()
     QCOMPARE(uris.size(), 2);
     QCOMPARE(uris.at(0), QStringLiteral("archive://%2Fdata%2Fbackup.zip/inside.txt"));
     QCOMPARE(uris.at(1), QStringLiteral("file:///data/notes.txt"));
+}
+
+/// A member is somewhere, and where it is is inside the folder holding its
+/// container.
+///
+/// The `Under` criterion used to be answered nowhere near the index: it was
+/// evaluated in memory against the row's uri, and a member's uri is on the
+/// archive's own authority -- `archive://%2Fdata%2Fbackup.zip/inside.txt` is
+/// under nothing at all as far as a string prefix is concerned. So searching a
+/// folder could never return anything inside an archive in it, however
+/// thoroughly the scan had recorded it. It is answered on the path column now,
+/// which is the one column that says where a row really sits.
+void TestIndexDatabase::aFolderScopedSearchFindsWhatIsInsideAnArchiveInThatFolder()
+{
+    Result<qint64> volume
+        = m_db->upsertVolume(VfsUri::fromString(QStringLiteral("file:///data")), QStringLiteral("vol"));
+    QVERIFY(volume.ok());
+
+    IndexedFile here = makeFile(QStringLiteral("/data/reports/loose.txt"));
+    IndexedFile member = makeFile(QStringLiteral("/data/reports/backup.zip!/inside.txt"));
+    member.name = QStringLiteral("inside.txt");
+    member.parentPath = QStringLiteral("/data/reports/backup.zip");
+    member.uri = QStringLiteral("archive://%2Fdata%2Freports%2Fbackup.zip/inside.txt");
+    IndexedFile elsewhere = makeFile(QStringLiteral("/data/other/loose.txt"));
+
+    QVERIFY(rescan(volume.value(), { here, member, elsewhere }));
+
+    const auto namesUnder = [this](const QString& folder) {
+        SearchQuery query;
+        query.add(SearchPredicate::underPath(folder));
+        const Result<QList<IndexSearchHit>> found = m_db->search(query);
+        QStringList names;
+        if (!found.ok())
+            return names;
+        for (const IndexSearchHit& hit : found.value())
+            names.append(hit.name);
+        names.sort();
+        return names;
+    };
+
+    QCOMPARE(namesUnder(QStringLiteral("file:///data/reports")),
+        QStringList({ QStringLiteral("inside.txt"), QStringLiteral("loose.txt") }));
+    // And the scope still means something: the other folder's file is not in it.
+    QCOMPARE(namesUnder(QStringLiteral("file:///data/other")), QStringList { QStringLiteral("loose.txt") });
+    // The archive itself is a folder to look in as much as any other name is.
+    QCOMPARE(namesUnder(QStringLiteral("file:///data/reports/backup.zip")),
+        QStringList { QStringLiteral("inside.txt") });
+}
+
+/// A carry that could not be written has to say so, because the caller acts on
+/// the answer.
+///
+/// ScanTask reads this result to decide whether the subtree it just skipped is
+/// safely in the new generation. A failure reported as a count of zero would be
+/// indistinguishable from an empty folder -- and the scan would go on to commit
+/// a generation the subtree is missing from.
+void TestIndexDatabase::carryingASubtreeForwardIntoALockedIndexSaysSoRatherThanCarryingNothing()
+{
+    const QString path = QDir(m_dir->path()).filePath(QStringLiteral("index.sqlite"));
+    const qint64 volume = seedVolume(QStringLiteral("file:///data"),
+        { QStringLiteral("/data/steady"), QStringLiteral("/data/steady/kept.txt") });
+    QVERIFY(volume >= 0);
+
+    QSqlDatabase writing = sqlite::connectionOn(path);
+    QVERIFY2(writing.isValid(), "the index's connection has to be findable, or this case tests nothing");
+    QVERIFY(sqlite::stopWaitingForLocks(writing));
+
+    const Result<qint64> generation = m_db->beginScan(volume);
+    QVERIFY(generation.ok());
+
+    sqlite::WriteLock held(path);
+    QVERIFY2(held.isHeld(), "the lock has to be taken, or the carry below is unhindered");
+
+    const Result<qint64> carried
+        = m_db->carryForward(volume, generation.value(), QStringLiteral("/data/steady"));
+
+    QVERIFY2(!carried.ok(), "a carry into a locked index was reported as a carry of nothing");
 }
 
 /// The migration every user takes, from the schema the generations arrived in.

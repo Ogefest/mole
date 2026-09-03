@@ -65,6 +65,10 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-03 #MOLE-340 A nightly re-index keeps what is inside the archives in folders it did not have to re-walk, instead of dropping every member of them
+2026-09-03 #MOLE-340 Searching a folder finds what is inside an archive in it, which the index knew about all along and could never be asked for
+2026-09-03 #MOLE-340 A re-index that could not carry a folder forward reports it instead of finishing green with the folder missing
+2026-09-03 #MOLE-340 A scheduled re-index waits rather than starting a second walk of a volume somebody is already scanning, and a rule made before archives could be asked for gets what the dialog would have asked
 2026-09-03 #MOLE-338 An archive is refused rather than written with a member padded out with zeros when a file could not be read whole, so "remove the originals" can no longer delete the only good copy
 2026-09-03 #MOLE-337 A mirror carries out the plan the confirmation showed, so a file that left the source between comparing and applying is no longer deleted at the far end without anybody being told
 2026-09-03 #MOLE-337 A sync weighs what arrived at the destination, so a server that acknowledges bytes and stores fewer fails the run instead of leaving two trees that look like a backup

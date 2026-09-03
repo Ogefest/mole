@@ -57,6 +57,7 @@ private slots:
     void theIndexTakesWhatSqlCanState();
     void aWalkPushesNothingDownBecauseItHasNowhereToPushIt();
     void whatCannotBePushedDownIsEvaluatedRatherThanDropped();
+    void aFolderScopeGoesIntoTheIndexsQueryAndStaysOutOfAWalks();
     void theExpensiveCriterionIsEvaluatedLast();
     void criteriaOfOneCostKeepTheOrderTheyWereWrittenIn();
 
@@ -454,10 +455,11 @@ void TestSearchQuery::whatCannotBePushedDownIsEvaluatedRatherThanDropped()
 {
     SearchQuery query;
     query.add(SearchPredicate::name(QStringLiteral("report")));
-    query.add(SearchPredicate::underPath(QStringLiteral("mem:///projects")));
+    query.add(SearchPredicate::pathContains(QStringLiteral("projects")));
 
     const SearchPlan plan = planSearch(query, SearchSource::Index);
-    // The name is a column; the path prefix is a uri no row stores whole.
+    // The name is a column; a substring of the whole uri is not one, and rows
+    // hold a path within a volume rather than the address anybody typed.
     QCOMPARE(plan.pushedDown().size(), 1);
     QCOMPARE(plan.remainder().size(), 1);
     QVERIFY2(!plan.pushedDownEverything(), "the query has to admit it was not answered whole");
@@ -465,6 +467,31 @@ void TestSearchQuery::whatCannotBePushedDownIsEvaluatedRatherThanDropped()
     // And what was left over is applied, not lost.
     QVERIFY(plan.matches(entryFor(QStringLiteral("mem:///projects/report.pdf"))));
     QVERIFY(!plan.matches(entryFor(QStringLiteral("mem:///archive/report.pdf"))));
+}
+
+/// Where a folder scope is answered, and why it moved.
+///
+/// It used to be Cheap -- ours to check over the entries a source handed back --
+/// and that reading was what put every archive member out of reach: a member's
+/// uri is on the archive's own authority, so a prefix comparison against the
+/// folder could never match one however completely the scan had recorded it. The
+/// index answers it on the path column now; a walk still has no query of its
+/// own, so the plan demotes it back to a check over what was listed. See
+/// MOLE-340.
+void TestSearchQuery::aFolderScopeGoesIntoTheIndexsQueryAndStaysOutOfAWalks()
+{
+    SearchQuery query;
+    query.add(SearchPredicate::underPath(QStringLiteral("mem:///projects")));
+
+    const SearchPlan onIndex = planSearch(query, SearchSource::Index);
+    QCOMPARE(onIndex.pushedDown().size(), 1);
+    QVERIFY(onIndex.pushedDownEverything());
+
+    const SearchPlan onWalk = planSearch(query, SearchSource::Walk);
+    QVERIFY(onWalk.pushedDown().isEmpty());
+    QCOMPARE(onWalk.remainder().size(), 1);
+    QVERIFY(onWalk.matches(entryFor(QStringLiteral("mem:///projects/report.pdf"))));
+    QVERIFY(!onWalk.matches(entryFor(QStringLiteral("mem:///archive/report.pdf"))));
 }
 
 void TestSearchQuery::theExpensiveCriterionIsEvaluatedLast()
@@ -480,7 +507,7 @@ void TestSearchQuery::theExpensiveCriterionIsEvaluatedLast()
     SearchQuery query;
     query.add(inside);
     query.add(header);
-    query.add(SearchPredicate::underPath(QStringLiteral("mem:///photos")));
+    query.add(SearchPredicate::pathContains(QStringLiteral("photos")));
     query.add(SearchPredicate::extensions({ QStringLiteral("pdf") }));
 
     const SearchPlan plan = planSearch(query, SearchSource::Index);
@@ -491,7 +518,7 @@ void TestSearchQuery::theExpensiveCriterionIsEvaluatedLast()
 
     const QList<SearchPredicate> order = plan.remainder();
     QCOMPARE(order.size(), 3);
-    QCOMPARE(order.at(0).field, SearchPredicate::Field::Under); // a string comparison
+    QCOMPARE(order.at(0).field, SearchPredicate::Field::Path); // a string comparison
     QCOMPARE(order.at(1).cost, PredicateCost::Metadata); // a small read
     QCOMPARE(order.at(2).cost, PredicateCost::Content); // the whole file
 }
