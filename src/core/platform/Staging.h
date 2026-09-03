@@ -1,8 +1,12 @@
 #pragma once
 
+#include "core/vfs/VfsTypes.h"
+
 #include <QString>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
+
+class QIODevice;
 
 #include <memory>
 
@@ -41,5 +45,28 @@ bool openFile(QTemporaryFile& file, QString* why = nullptr);
 
 /// A scratch directory inside directory(), or nothing with a reason.
 std::unique_ptr<QTemporaryDir> makeDirectory(QString* why = nullptr);
+
+/// Writes `bytes` to `path`, whole or not at all.
+///
+/// Two callers did this in eight lines apiece and neither looked at the result:
+/// `FileLauncher`, extracting a file so an external program can open it, and
+/// `LocalCopyProvider`, extracting one so a viewer can. A short write -- a
+/// scratch directory on a full /tmp -- was invisible, and what was handed on was
+/// a truncated file under the name somebody asked for. The image viewer then
+/// declined it with "this build's image plugins could not decode it" and the
+/// file walked down the ladder for a disk-space problem. Every other writer in
+/// the tree checks: the thumbnail cache, the PDF render, both copy engines, the
+/// S3 uploader, the curl sink. See MOLE-406.
+///
+/// Through QSaveFile, so a failure leaves nothing at `path` rather than half a
+/// file: the same reason a transfer writes under a working name (ADR-0020).
+Result<void> writeWhole(const QString& path, const QByteArray& bytes);
+
+/// The half of writeWhole() that is about the bytes rather than about the file.
+///
+/// Separate because a short write is the failure worth testing and a real
+/// filesystem will not produce one on demand -- a full disk is not something a
+/// test can arrange. `name` appears in the message; the device is already open.
+Result<void> writeWholeTo(QIODevice& file, const QByteArray& bytes, const QString& name);
 
 } // namespace mole::staging

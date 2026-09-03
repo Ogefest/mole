@@ -137,22 +137,17 @@ void FileLauncher::open(const VfsUri& uri)
     }
 
     // Reading happens on a worker thread like everything else, so opening a
-    // 200 MB file out of a zip does not stall the window.
+    // 200 MB file out of a zip does not stall the window -- and so does writing
+    // the copy, which used to happen here in the finished handler, on the thread
+    // that draws, with the result unchecked. A scratch directory on a full /tmp
+    // handed the program a truncated file under the right name. See MOLE-406.
     auto* task = new ReadFileTask(std::move(fs), uri);
+    task->landAt(scratch);
     connect(task, &Task::finished, this, [this, task, uri, scratch] {
         if (task->state() != Task::State::Succeeded) {
             emit failed(uri.toString(), task->error().message);
             return;
         }
-
-        QFile file(scratch);
-        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-            emit failed(uri.toString(), QStringLiteral("Cannot write the extracted copy"));
-            return;
-        }
-        file.write(task->contents());
-        file.close();
-
         launch(scratch, uri);
     });
 

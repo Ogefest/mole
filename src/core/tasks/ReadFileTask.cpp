@@ -1,5 +1,7 @@
 #include "core/tasks/ReadFileTask.h"
 
+#include "core/platform/Staging.h"
+
 namespace mole {
 
 ReadFileTask::ReadFileTask(FileSystemPtr fileSystem, VfsUri target, qint64 maxBytes, QObject* parent)
@@ -33,6 +35,16 @@ void ReadFileTask::run()
         m_truncated = !stream->atEnd();
     }
     stream->close();
+
+    // On this thread, and checked. Both were the point of MOLE-406: a truncated
+    // copy handed on as if it were the file is worse than a failure, because the
+    // program it is handed to has no way to tell.
+    if (!m_landAt.isEmpty()) {
+        if (Result<void> landed = staging::writeWhole(m_landAt, m_contents); !landed.ok()) {
+            fail(landed.error());
+            return;
+        }
+    }
 
     setProgress(100);
     setStatusText(QStringLiteral("%1 bytes").arg(m_contents.size()));

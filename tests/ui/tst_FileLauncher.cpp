@@ -10,6 +10,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 
@@ -35,6 +36,7 @@ private slots:
     void aStagedCopyIsAlwaysInsideTheScratchDirectory_data();
     void aStagedCopyIsAlwaysInsideTheScratchDirectory();
     void theSamePathOnTwoServersIsTwoStagedFiles();
+    void aScratchDirectoryThatCannotHoldTheFileFailsRatherThanHandingOverHalfOfIt();
 
 private:
     FileLauncher* makeLauncher();
@@ -246,6 +248,57 @@ void TestFileLauncher::refusedByDesktopReportsFailure()
 
     QCOMPARE(failed.count(), 1);
     QVERIFY(!failed.first().at(1).toString().isEmpty());
+}
+
+/// A truncated copy is worse than a failure, because the program it is handed to
+/// has no way to tell.
+///
+/// The read was on a worker "so that opening a 200 MB file out of a zip does not
+/// stall the window"; the write of the same bytes was in the finished handler on
+/// the thread that draws, and nothing looked at whether it worked. A scratch
+/// directory on a full /tmp handed the desktop a file of the right name and the
+/// wrong length. See MOLE-406.
+///
+/// A directory nothing may write into stands for the full disk here: the failure
+/// is the same one and it can be arranged.
+void TestFileLauncher::aScratchDirectoryThatCannotHoldTheFileFailsRatherThanHandingOverHalfOfIt()
+{
+    m_mem->addFile(QStringLiteral("/docs/second.txt"), QByteArray("also inside the drive"));
+
+    FileLauncher* launcher = makeLauncher();
+    // One that works, to find out where the scratch directory is.
+    launcher->open(VfsUri::fromString(QStringLiteral("mem:///docs/manual.txt")));
+    QVERIFY(waitFor([this] { return !m_opened.isEmpty(); }));
+    const QString folder = QFileInfo(m_opened.first()).absolutePath();
+
+    if (!QFile::setPermissions(folder, QFileDevice::ReadOwner | QFileDevice::ExeOwner))
+        QSKIP("this platform will not take a read-only directory");
+    {
+        // Root writes into a directory with no write bit, so there is nothing
+        // to prove on an account that can.
+        QFile probe(QDir(folder).filePath(QStringLiteral("probe")));
+        if (probe.open(QIODevice::WriteOnly)) {
+            probe.close();
+            QFile::remove(probe.fileName());
+            QFile::setPermissions(
+                folder, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+            QSKIP("this account can write into a directory with no write permission");
+        }
+    }
+
+    QSignalSpy failures(launcher, &FileLauncher::failed);
+    launcher->open(VfsUri::fromString(QStringLiteral("mem:///docs/second.txt")));
+    QVERIFY(waitFor([&failures] { return !failures.isEmpty(); }));
+
+    // Put back, so the temporary directory can still be removed.
+    QFile::setPermissions(folder, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+
+    // Nothing was handed to the desktop, and the failure says which file.
+    QCOMPARE(m_opened.size(), 1);
+    const QString reason = failures.first().at(1).toString();
+    QVERIFY2(reason.contains(QStringLiteral("second.txt")), qPrintable(reason));
+    QVERIFY2(!QFile::exists(QDir(folder).filePath(QStringLiteral("second.txt"))),
+        "half a file was left under the name the desktop would have been given");
 }
 
 MOLE_TEST_MAIN(TestFileLauncher)

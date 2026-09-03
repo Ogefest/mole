@@ -233,7 +233,13 @@ void LocalCopyProvider::request(const VfsUri& uri, qint64 maxBytes)
     // The name is kept so the image loader can still pick a decoder by suffix.
     const QString target = QDir(m_scratch->path()).filePath(uri.fileName());
 
+    // The copy is written on the task's own thread, and its failure is the
+    // task's failure. It used to be written here in the finished handler -- on
+    // the thread that draws, with the result unchecked -- so a scratch directory
+    // that could not hold the file gave the viewer a truncated one, which it
+    // declined as something its plugins could not decode. See MOLE-406.
     auto* task = new ReadFileTask(std::move(fs), uri, maxBytes);
+    task->landAt(target);
     m_task = task;
     connect(task, &Task::finished, this, [this, task, target] {
         if (m_task != task)
@@ -244,14 +250,6 @@ void LocalCopyProvider::request(const VfsUri& uri, qint64 maxBytes)
             emit failed(task->error().message);
             return;
         }
-
-        QFile file(target);
-        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-            emit failed(QStringLiteral("Cannot write the extracted copy"));
-            return;
-        }
-        file.write(task->contents());
-        file.close();
 
         emit ready(QUrl::fromLocalFile(target).toString());
     });

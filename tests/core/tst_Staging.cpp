@@ -10,6 +10,8 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <algorithm>
+
 using namespace mole;
 using namespace mole::test;
 
@@ -43,10 +45,51 @@ private slots:
     void aScratchDirectoryIsMadeInsideItAndRefusedWhenItIsGone();
     void nothingStagesAnywhereElse();
 
+    void aWriteThatGoesShortIsAFailureAndNotAFile();
+    void aWriteThatCannotStartLeavesWhatWasThere();
+    void aWholeWriteLandsUnderTheNameItWasAskedFor();
+
 private:
     std::unique_ptr<QTemporaryDir> m_own;
     QByteArray m_previous;
 };
+
+namespace {
+
+/// A device that takes some of what it is given and reports the rest as gone.
+///
+/// A full disk is not something a test can arrange, and it is the failure worth
+/// asserting: a short write leaves a file that is the wrong length under the
+/// right name, and everything downstream reads it as the file. So the seam is
+/// the device rather than the filesystem. See MOLE-406.
+class DeviceThatGoesShort final : public QIODevice
+{
+public:
+    explicit DeviceThatGoesShort(qint64 accepts)
+        : m_accepts(accepts)
+    {
+    }
+
+    QByteArray taken() const { return m_taken; }
+
+protected:
+    qint64 readData(char*, qint64) override { return -1; }
+    qint64 writeData(const char* data, qint64 size) override
+    {
+        const qint64 room = std::max<qint64>(0, m_accepts - m_taken.size());
+        const qint64 taking = std::min(room, size);
+        m_taken.append(data, static_cast<int>(taking));
+        if (taking < size)
+            setErrorString(QStringLiteral("no space left on device"));
+        return taking;
+    }
+
+private:
+    qint64 m_accepts = 0;
+    QByteArray m_taken;
+};
+
+} // namespace
 
 void TestStaging::init()
 {
@@ -181,6 +224,72 @@ void TestStaging::nothingStagesAnywhereElse()
         }
     }
     QVERIFY2(offenders.isEmpty(), qPrintable(offenders.join(QStringLiteral("; "))));
+}
+
+/// The fault, at the point where it can be produced.
+void TestStaging::aWriteThatGoesShortIsAFailureAndNotAFile()
+{
+    const QByteArray payload(4096, 'x');
+    DeviceThatGoesShort device(1000);
+    QVERIFY(device.open(QIODevice::WriteOnly));
+
+    const Result<void> written = staging::writeWholeTo(device, payload, QStringLiteral("report.pdf"));
+    QVERIFY2(!written.ok(), "a write that took a thousand of four thousand bytes was called a success");
+    QCOMPARE(written.error().code, VfsError::IoError);
+    // The message says how much of it, because "could not write" and "wrote a
+    // quarter of it" call for different things to be done next.
+    QVERIFY2(written.error().message.contains(QStringLiteral("1000 of 4096")),
+        qPrintable(written.error().message));
+    QVERIFY2(
+        written.error().message.contains(QStringLiteral("report.pdf")), qPrintable(written.error().message));
+}
+
+/// And a write that cannot start at all leaves whatever was at the name.
+///
+/// Through QSaveFile, so this is not merely "the open failed": a write that gets
+/// part way and then cannot finish leaves the previous contents rather than the
+/// wreckage of the new ones.
+void TestStaging::aWriteThatCannotStartLeavesWhatWasThere()
+{
+    QTemporaryDir room;
+    QVERIFY(room.isValid());
+    const QString standing = QDir(room.path()).filePath(QStringLiteral("report.pdf"));
+    {
+        QFile file(standing);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QCOMPARE(file.write(QByteArrayLiteral("the old one")), 11);
+    }
+
+    // A directory where the file should go: nothing can be written over one.
+    const QString impossible = QDir(room.path()).filePath(QStringLiteral("folder"));
+    QVERIFY(QDir().mkpath(impossible));
+    const Result<void> refused = staging::writeWhole(impossible, QByteArrayLiteral("bytes"));
+    QVERIFY2(!refused.ok(), "a write onto a directory was called a success");
+
+    // And the ordinary name is untouched by any of it.
+    QFile still(standing);
+    QVERIFY(still.open(QIODevice::ReadOnly));
+    QCOMPARE(still.readAll(), QByteArrayLiteral("the old one"));
+}
+
+void TestStaging::aWholeWriteLandsUnderTheNameItWasAskedFor()
+{
+    QTemporaryDir room;
+    QVERIFY(room.isValid());
+    const QString target = QDir(room.path()).filePath(QStringLiteral("extracted.bin"));
+
+    QByteArray payload(200 * 1024, Qt::Uninitialized);
+    for (int i = 0; i < payload.size(); ++i)
+        payload[i] = static_cast<char>(i & 0xff);
+
+    QVERIFY(staging::writeWhole(target, payload).ok());
+
+    QFile landed(target);
+    QVERIFY(landed.open(QIODevice::ReadOnly));
+    QCOMPARE(landed.readAll(), payload);
+    // Nothing beside it: the working name is gone once the bytes are under the
+    // real one.
+    QCOMPARE(QDir(room.path()).entryList(QDir::Files | QDir::Hidden).size(), 1);
 }
 
 MOLE_TEST_MAIN(TestStaging)

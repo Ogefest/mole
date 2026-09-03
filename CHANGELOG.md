@@ -65,6 +65,8 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-406 Opening a file from an archive on a full disk says so, instead of opening half of it
+2026-09-04 #MOLE-406 Extracting a large file for a viewer or an external program no longer freezes the window while it is written
 2026-09-04 #MOLE-356 An index interrupted while upgrading its schema opens again next time, instead of failing for ever
 2026-09-04 #MOLE-356 An index written by a newer Mole says so, instead of being opened and written to
 2026-09-04 #MOLE-356 Two previews of one .sqlite file no longer blank each other out when either is closed

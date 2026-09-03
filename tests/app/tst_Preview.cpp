@@ -319,6 +319,7 @@ private slots:
     void aVideoIsClaimedByTheVideoViewer();
     void aSuffixNoFormatKnowsFallsThroughToTheInformationViewer();
     void aVideoOnADriveThatCannotBePlayedFromIsCopiedLocally();
+    void aLocalCopyThatCannotBeWrittenIsAFailureAndNotAHalfFile();
     void aVideoThatCannotBeDecodedFallsBackToWhatIsKnownAboutIt();
     void aRefusalWithNothingToSayStillSaysWhichViewerGaveUp();
     void anImageThisBuildCannotDecodeFallsBackToTheFacts();
@@ -3853,6 +3854,82 @@ void TestPreview::aVideoOnADriveThatCannotBePlayedFromIsCopiedLocally()
     const QString source = viewer->property("source").toString();
     QVERIFY2(source.startsWith(QStringLiteral("file:")), qPrintable(source));
     QVERIFY(QFile::exists(QUrl(source).toLocalFile()));
+}
+
+/// A copy that could not be written must not reach the viewer.
+///
+/// The write of the extracted copy used to happen in the finished handler on the
+/// thread that draws, with the result unchecked -- so a scratch directory that
+/// could not hold the file handed the viewer a truncated one. The image viewer
+/// then declined it with "this build's image plugins could not decode it", and
+/// the file walked down the ladder for a disk-space problem, which is a
+/// diagnosis nobody could correct. See MOLE-406.
+///
+/// A staging directory nothing may write into stands for the full disk: the
+/// failure is the same one and it can be arranged. The short write itself is
+/// asserted where it can be produced -- tst_Staging, against a device.
+void TestPreview::aLocalCopyThatCannotBeWrittenIsAFailureAndNotAHalfFile()
+{
+    QTemporaryDir nowhere;
+    QVERIFY(nowhere.isValid());
+    if (!QFile::setPermissions(nowhere.path(), QFileDevice::ReadOwner | QFileDevice::ExeOwner))
+        QSKIP("this platform will not take a read-only directory");
+    {
+        QFile probe(QDir(nowhere.path()).filePath(QStringLiteral("probe")));
+        if (probe.open(QIODevice::WriteOnly)) {
+            probe.close();
+            QFile::remove(probe.fileName());
+            QFile::setPermissions(
+                nowhere.path(), QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+            QSKIP("this account can write into a directory with no write permission");
+        }
+    }
+
+    const QByteArray previous = qgetenv("MOLE_STAGING_DIR");
+    qputenv("MOLE_STAGING_DIR", nowhere.path().toLocal8Bit());
+
+    // A one-pixel PNG on a drive with no local path, so a viewer that needs a
+    // file has to be given a copy of it.
+    auto memory = std::make_shared<MemoryFileSystem>();
+    QImage pixel(1, 1, QImage::Format_RGB32);
+    pixel.fill(Qt::red);
+    QByteArray png;
+    {
+        QBuffer buffer(&png);
+        QVERIFY(buffer.open(QIODevice::WriteOnly));
+        QVERIFY(pixel.save(&buffer, "PNG"));
+    }
+    memory->addFile(QStringLiteral("/photo.png"), png);
+
+    Mount mount;
+    mount.id = QStringLiteral("unwritable");
+    mount.displayName = QStringLiteral("unwritable");
+    mount.root = VfsUri::fromString(QStringLiteral("mem://unwritable/"));
+    mount.fileSystem = memory;
+    m_app->services().vfs->addMount(mount);
+
+    m_app->previewFile(QStringLiteral("mem://unwritable/photo.png"));
+    auto* preview = qobject_cast<PreviewTabController*>(m_app->tabs()->currentController());
+    QVERIFY(preview);
+    QVERIFY(waitFor([preview] { return preview->viewer() != nullptr; }, 5000));
+
+    QObject* viewer = preview->viewer();
+    QVERIFY(viewer);
+    // It says what went wrong rather than handing over a source it could not
+    // write. Waiting on the message, never on a clock.
+    QVERIFY2(waitFor([viewer] { return !viewer->property("errorText").toString().isEmpty(); }, 10000),
+        "a copy that could not be written was not reported at all");
+    const QString reason = viewer->property("errorText").toString();
+    QVERIFY2(!reason.contains(QStringLiteral("decode")), qPrintable(reason));
+    QVERIFY2(
+        viewer->property("source").toString().isEmpty(), qPrintable(viewer->property("source").toString()));
+
+    QFile::setPermissions(
+        nowhere.path(), QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    if (previous.isEmpty())
+        qunsetenv("MOLE_STAGING_DIR");
+    else
+        qputenv("MOLE_STAGING_DIR", previous);
 }
 
 void TestPreview::aVideoThatCannotBeDecodedFallsBackToWhatIsKnownAboutIt()

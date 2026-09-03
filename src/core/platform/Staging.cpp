@@ -2,6 +2,7 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QSaveFile>
 
 namespace mole::staging {
 
@@ -84,6 +85,47 @@ std::unique_ptr<QTemporaryDir> makeDirectory(QString* why)
                    .arg(where, directory->errorString());
     }
     return nullptr;
+}
+
+Result<void> writeWholeTo(QIODevice& file, const QByteArray& bytes, const QString& name)
+{
+    const qint64 written = file.write(bytes);
+    if (written != bytes.size()) {
+        return Result<void>::failure(VfsError::IoError,
+            QStringLiteral("Only %1 of %2 bytes of %3 could be written: %4")
+                .arg(written)
+                .arg(bytes.size())
+                .arg(name,
+                    file.errorString().isEmpty() ? QStringLiteral("there is no room") : file.errorString()));
+    }
+    return {};
+}
+
+Result<void> writeWhole(const QString& path, const QByteArray& bytes)
+{
+    // QSaveFile: the bytes go under a working name and are moved into place when
+    // they are all there, so a failure leaves nothing at `path` rather than half
+    // a file under the name somebody asked for. The same reason a transfer does
+    // it -- see ADR-0020.
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        return Result<void>::failure(
+            VfsError::IoError, QStringLiteral("Cannot write %1: %2").arg(path, file.errorString()));
+    }
+
+    if (Result<void> written = writeWholeTo(file, bytes, path); !written.ok()) {
+        file.cancelWriting();
+        return written;
+    }
+
+    // Where a buffered write reports the failure it could not report earlier,
+    // and where the working name becomes the real one. Both are the same call,
+    // and not looking at it is the whole of the fault above.
+    if (!file.commit()) {
+        return Result<void>::failure(
+            VfsError::IoError, QStringLiteral("Cannot finish writing %1: %2").arg(path, file.errorString()));
+    }
+    return {};
 }
 
 } // namespace mole::staging
