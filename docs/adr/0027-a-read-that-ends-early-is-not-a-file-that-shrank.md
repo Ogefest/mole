@@ -71,5 +71,9 @@ that without changing what the guard decides.
   which of the two cases it was without anyone having to reproduce it.
 - A move whose copy was cut short keeps its source, since a move deletes nothing
   while anything in the transfer failed.
-- Sync has its own copy loop and does not yet ask this question. It is recorded
-  in TODO.md.
+- Sync has its own copy loop, and it asks the same question: MOLE-98 gave it the
+  short-read guard above, and MOLE-337 added the arrival check of
+  [ADR-0016](0016-a-copy-is-weighed-at-the-destination.md) beside it. The pair
+  matters more there than anywhere else -- a sync runs unattended and then
+  reports the two trees as matching, and the next run sees a size it wrote
+  itself and copies nothing.

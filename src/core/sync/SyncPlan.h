@@ -3,6 +3,7 @@
 #include "core/sync/SyncOptions.h"
 #include "core/vfs/IFileSystem.h"
 
+#include <QDateTime>
 #include <QList>
 #include <QStringList>
 
@@ -34,6 +35,18 @@ public:
         /// Why, in words: "newer at the destination", "size differs". Shown in
         /// the preview, because a list of file names explains nothing.
         QString reason;
+        /// What stood at the destination when the plan was made, for a step
+        /// that will remove it. A plan is agreed to and then carried out, and
+        /// between those two moments the destination can gain a file -- under
+        /// the very name that is going, or inside the folder about to be removed
+        /// with everything in it. A deletion is the one step here that cannot be
+        /// undone, so it is the one step that asks again before acting. Invalid
+        /// where the drive does not report a time, which is answer enough: the
+        /// check then rests on the size alone.
+        ///
+        /// Last in the struct on purpose: every step is built by aggregate
+        /// initialisation, and only a deletion has anything to say here.
+        QDateTime targetModified;
     };
 
     /// Compares the two trees. Both sides are read through the VFS, so this

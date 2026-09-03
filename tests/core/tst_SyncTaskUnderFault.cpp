@@ -50,6 +50,8 @@ private slots:
     void aDestinationThatFillsUpSaysWhy();
     void aFileThatFailedIsNotCountedAsAppliedAndIsRetriedNextRun();
     void theByteCountIsTheWorkersOwnAndNotTheWindowsCopyOfIt();
+    void aDestinationThatAcknowledgesAndLosesFailsASyncAsItFailsATransfer();
+    void aDeletionIsNotCarriedOutOnADestinationThatChangedSinceThePlan();
 
 private:
     SyncTask* run();
@@ -219,6 +221,66 @@ void TestSyncTaskUnderFault::aFileThatFailedIsNotCountedAsAppliedAndIsRetriedNex
     QVERIFY2(second->failures().isEmpty(), qPrintable(second->failures().join(QLatin1Char(' '))));
     QCOMPARE(second->appliedCount(), 1);
     QCOMPARE(QFileInfo(m_tree->absolute(QStringLiteral("dest/payload.bin"))).size(), kPayload);
+}
+
+/// The forgetful destination, which a transfer catches and a sync did not.
+///
+/// Every byte is accepted, every close succeeds, and a quarter of the file is
+/// what is actually stored. Nothing inside the copy loop can know that, which is
+/// why TransferTask weighs the result at the destination afterwards (ADR-0016) --
+/// and sync, which is the one that runs unattended every night and then reports
+/// the two trees as matching, went without the check entirely. The next run sees
+/// a size it wrote itself and copies nothing.
+void TestSyncTaskUnderFault::aDestinationThatAcknowledgesAndLosesFailsASyncAsItFailsATransfer()
+{
+    m_target->writeKeepsEveryNth(4);
+
+    SyncTask* task = run();
+    QVERIFY(task);
+
+    QCOMPARE(task->failures().size(), 1);
+    QVERIFY2(task->failures().first().contains(QStringLiteral("4000 bytes were sent but 1000 arrived")),
+        qPrintable(task->failures().first()));
+    QVERIFY2(task->failures().first().contains(QStringLiteral("payload.bin")),
+        qPrintable(task->failures().first()));
+}
+
+/// A plan is agreed to and then carried out, and the disk does not stop in
+/// between.
+///
+/// The plan says to remove a file the source does not have. By the time the
+/// mirror gets there somebody has written to it -- so what would be destroyed is
+/// not what anybody was shown. It is the one step here that cannot be undone,
+/// so it is the one step that asks again.
+void TestSyncTaskUnderFault::aDeletionIsNotCarriedOutOnADestinationThatChangedSinceThePlan()
+{
+    QVERIFY(m_tree->writeFile(QStringLiteral("dest/stale.txt"), QByteArray("was going to go")));
+
+    SyncOptions options;
+    options.dryRun = true;
+    options.mode = SyncOptions::Mode::Mirror;
+    auto* preview = new SyncTask(m_source, VfsUri::fromString(QStringLiteral("mem:///src")), m_target,
+        m_tree->rootUri().child(QStringLiteral("dest")), options);
+    m_tasks->submit(preview);
+    QVERIFY(waitForTask(preview));
+    const SyncPlan plan = preview->plan();
+    QCOMPARE(plan.countOf(SyncPlan::Action::Delete), 1);
+
+    // Somebody puts something in it after the plan was agreed to. A different
+    // length, so the check does not rest on a filesystem's timestamp resolution.
+    QVERIFY(m_tree->writeFile(QStringLiteral("dest/stale.txt"), QByteArray("and then somebody edited it")));
+
+    options.dryRun = false;
+    auto* apply = new SyncTask(m_source, VfsUri::fromString(QStringLiteral("mem:///src")), m_target,
+        m_tree->rootUri().child(QStringLiteral("dest")), options, plan);
+    m_tasks->submit(apply);
+    QVERIFY(waitForTask(apply));
+
+    QVERIFY2(QFile::exists(m_tree->absolute(QStringLiteral("dest/stale.txt"))),
+        "a mirror deleted a file that had changed since the plan it was carrying out");
+    QCOMPARE(apply->failures().size(), 1);
+    QVERIFY2(apply->failures().first().contains(QStringLiteral("not deleted")),
+        qPrintable(apply->failures().first()));
 }
 
 MOLE_TEST_MAIN(TestSyncTaskUnderFault)

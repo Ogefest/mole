@@ -140,6 +140,7 @@ void SyncController::setSkipNewer(bool skip)
     m_hasPlan = false;
     emit optionsChanged();
     emit planChanged();
+    emit stateChanged();
 }
 
 void SyncController::setRecursive(bool recursive)
@@ -150,6 +151,7 @@ void SyncController::setRecursive(bool recursive)
     m_hasPlan = false;
     emit optionsChanged();
     emit planChanged();
+    emit stateChanged();
 }
 
 void SyncController::setIncludeHidden(bool include)
@@ -160,6 +162,7 @@ void SyncController::setIncludeHidden(bool include)
     m_hasPlan = false;
     emit optionsChanged();
     emit planChanged();
+    emit stateChanged();
 }
 
 void SyncController::setIncludePatterns(const QString& patterns)
@@ -171,6 +174,7 @@ void SyncController::setIncludePatterns(const QString& patterns)
     m_hasPlan = false;
     emit optionsChanged();
     emit planChanged();
+    emit stateChanged();
 }
 
 void SyncController::setExcludePatterns(const QString& patterns)
@@ -182,6 +186,7 @@ void SyncController::setExcludePatterns(const QString& patterns)
     m_hasPlan = false;
     emit optionsChanged();
     emit planChanged();
+    emit stateChanged();
 }
 
 int SyncController::deleteCount() const
@@ -270,7 +275,13 @@ void SyncController::start(bool dryRun)
     options.dryRun = dryRun;
     m_lastWasDryRun = dryRun;
 
-    auto* task = new SyncTask(std::move(sourceFs), source, std::move(targetFs), target, options);
+    // A run that writes carries out the plan that was shown and agreed to, not
+    // whatever a second walk would find now. That second walk is what put
+    // deletions nobody was ever offered into the one operation here that
+    // destroys things. A preview builds a fresh plan, which is its whole job.
+    auto* task = dryRun
+        ? new SyncTask(std::move(sourceFs), source, std::move(targetFs), target, options)
+        : new SyncTask(std::move(sourceFs), source, std::move(targetFs), target, options, m_plan);
     m_task = task;
     setBusy(true);
     m_hasPlan = false;
@@ -297,8 +308,14 @@ void SyncController::start(bool dryRun)
             m_errorText = task->failures().join(QLatin1String("; "));
 
         // Whoever is showing the destination should see the result.
-        if (m_services.events && !m_lastWasDryRun)
+        if (m_services.events && !m_lastWasDryRun) {
             m_services.events->postDirectoryChanged(target);
+            // A plan that has been carried out is history, not an offer. The
+            // steps stay on screen to be read; applying again has to start from
+            // a fresh comparison, because the trees are not what the plan
+            // described any more -- this run is what changed them.
+            m_hasPlan = false;
+        }
 
         emit planChanged();
     });
@@ -315,6 +332,14 @@ void SyncController::preview()
 
 void SyncController::apply()
 {
+    // Nothing is written without a plan somebody has seen. The view already
+    // binds its button to hasPlan, but a view is not a guard: this is the entry
+    // point a script, a restored tab or a later caller reaches too.
+    if (!m_hasPlan) {
+        m_errorText = QStringLiteral("Nothing has been compared yet, so there is no plan to carry out");
+        emit planChanged();
+        return;
+    }
     m_errorText.clear();
     start(false);
 }
@@ -336,9 +361,11 @@ QVariantMap SyncController::saveState() const
 void SyncController::restoreState(const QVariantMap& state)
 {
     m_options = SyncOptions::fromJson(QJsonObject::fromVariantMap(state));
-    // Never restored as anything but a dry run: an application that reopened
-    // into a live mirror would be one bad restore away from deleting a tree.
-    m_options.dryRun = true;
+    // A restored tab has no plan, and apply() refuses without one -- so a
+    // reopened window never runs anything until somebody presses Compare. The
+    // line that used to be here set options.dryRun instead, which start()
+    // overwrites from its argument on every run: it protected nothing and read
+    // as though it did.
     setSourceUri(state.value(QStringLiteral("source")).toString());
     setTargetUri(state.value(QStringLiteral("target")).toString());
     emit optionsChanged();

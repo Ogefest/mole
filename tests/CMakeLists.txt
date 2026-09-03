@@ -488,6 +488,11 @@ mole_add_test(tst_IndexOffTheDrawingThread SOURCES app/tst_IndexOffTheDrawingThr
 mole_add_test(tst_Automation        SOURCES app/tst_Automation.cpp      LIBS mole_builtin)
 mole_add_test(tst_FileSets          SOURCES app/tst_FileSets.cpp        LIBS mole_builtin)
 
+# Mirror is the one operation here that deletes things nobody asked it to touch,
+# and the guard is a list shown before it runs. This holds the two moments to
+# being the same plan.
+mole_add_test(tst_SyncTab           SOURCES app/tst_SyncTab.cpp         LIBS mole_builtin)
+
 # The Sets tab under the keyboard: a set is somewhere to work, which means a
 # cursor, arrows, Enter and F3 -- not a list to point at.
 mole_add_test(tst_SetsTab           SOURCES app/tst_SetsTab.cpp         LIBS mole_qml_harness mole_builtin)

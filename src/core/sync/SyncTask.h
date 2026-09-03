@@ -18,6 +18,20 @@ public:
     SyncTask(FileSystemPtr sourceFs, VfsUri source, FileSystemPtr targetFs, VfsUri target,
         SyncOptions options, QObject* parent = nullptr);
 
+    /// Carries out a plan that has already been built and shown.
+    ///
+    /// The confirmed plan and the executed plan have to be the same plan. Every
+    /// run used to walk both trees afresh, so what the confirmation listed --
+    /// the deletions of the dry run -- was not what apply() then carried out: a
+    /// file that left the source in between became a mirror deletion nobody was
+    /// shown, and this is the one operation in the application that deletes
+    /// things nobody asked it to touch. See MOLE-337.
+    ///
+    /// The plan is still checked against the destination as it goes, step by
+    /// step, because agreeing to a plan is not the same as freezing the disk.
+    SyncTask(FileSystemPtr sourceFs, VfsUri source, FileSystemPtr targetFs, VfsUri target,
+        SyncOptions options, SyncPlan plan, QObject* parent = nullptr);
+
     /// Valid once finished.
     SyncPlan plan() const { return m_plan; }
     int appliedCount() const { return m_applied; }
@@ -33,6 +47,28 @@ protected:
 
 private:
     bool copyOne(const SyncPlan::Step& step);
+
+    /// Whether what is about to be removed is still what the plan recorded.
+    ///
+    /// A deletion is the only step here that cannot be undone, so it is the only
+    /// one that asks again: between the plan being agreed to and this moment the
+    /// destination may have gained the very file that is going, or gained one
+    /// inside the folder that is about to go with everything in it.
+    bool stillWhatThePlanSaw(const SyncPlan::Step& step, QString* changed) const;
+
+    /// Weighs every copied file on the destination and fails the ones that do
+    /// not match what was sent. One listing per directory, not one stat per
+    /// file -- the same check TransferTask has had since ADR-0016, which a sync
+    /// went without: a destination that acknowledges bytes and stores fewer
+    /// failed a transfer and passed a sync.
+    void verifyArrivals();
+
+    /// One file that was written, and how many bytes went into it.
+    struct Arrival
+    {
+        VfsUri target;
+        qint64 bytes = 0;
+    };
 
     FileSystemPtr m_sourceFs;
     VfsUri m_source;
@@ -51,6 +87,10 @@ private:
     qint64 m_bytesCopied = 0;
 
     SyncPlan m_plan;
+    /// True when the plan came from the caller rather than from this run. The
+    /// comparison is then not done again, because doing it again is the fault.
+    bool m_planWasGiven = false;
+    QList<Arrival> m_arrivals;
     int m_applied = 0;
     QStringList m_failures;
 };

@@ -1,5 +1,6 @@
 #include "core/sync/SyncTask.h"
 
+#include <QHash>
 #include <QLocale>
 
 namespace mole {
@@ -23,6 +24,48 @@ SyncTask::SyncTask(FileSystemPtr sourceFs, VfsUri source, FileSystemPtr targetFs
     // Both trees, like a copy: a sync between two drives is work on two drives.
     noteTouching(m_source);
     noteTouching(m_target);
+}
+
+SyncTask::SyncTask(FileSystemPtr sourceFs, VfsUri source, FileSystemPtr targetFs, VfsUri target,
+    SyncOptions options, SyncPlan plan, QObject* parent)
+    : SyncTask(std::move(sourceFs), std::move(source), std::move(targetFs), std::move(target),
+          std::move(options), parent)
+{
+    m_plan = std::move(plan);
+    m_planWasGiven = true;
+}
+
+bool SyncTask::stillWhatThePlanSaw(const SyncPlan::Step& step, QString* changed) const
+{
+    const Result<FileEntry> now = m_targetFs->stat(step.target);
+    if (!now.ok()) {
+        // Already gone is not a change to refuse over: the outcome the step
+        // wanted is the outcome there is. Anything else -- a drive that has gone
+        // away, a folder nobody may read -- is not an answer about the file, and
+        // removing on the strength of it would be acting on a guess.
+        if (now.error().code == VfsError::NotFound)
+            return true;
+        *changed = now.error().message;
+        return false;
+    }
+
+    if (now.value().size != step.bytes) {
+        *changed = QStringLiteral("it is %1 bytes now and was %2 when the plan was made")
+                       .arg(now.value().size)
+                       .arg(step.bytes);
+        return false;
+    }
+
+    // Only when both sides have one. A drive that reports no time says nothing
+    // either way, and treating "no answer" as "it changed" would stop every
+    // mirror to such a drive from ever deleting anything.
+    if (step.targetModified.isValid() && now.value().modified.isValid()
+        && now.value().modified != step.targetModified) {
+        *changed = QStringLiteral("it was written at %1, after the plan was made")
+                       .arg(now.value().modified.toString(Qt::ISODate));
+        return false;
+    }
+    return true;
 }
 
 bool SyncTask::copyOne(const SyncPlan::Step& step)
@@ -123,7 +166,55 @@ bool SyncTask::copyOne(const SyncPlan::Step& step)
     // more arrived than did.
     m_bytesCopied += written;
     setBytesDone(m_bytesCopied);
+    m_arrivals.append(Arrival { step.target, written });
     return true;
+}
+
+void SyncTask::verifyArrivals()
+{
+    if (m_arrivals.isEmpty())
+        return;
+
+    // By directory rather than by file: asking about one file at a time is a
+    // round trip each, and on SFTP a stat *is* a listing of the parent. One
+    // listing per directory answers for everything that landed in it.
+    QHash<QString, QList<const Arrival*>> byDirectory;
+    for (const Arrival& arrival : std::as_const(m_arrivals))
+        byDirectory[arrival.target.parent().toString()].append(&arrival);
+
+    for (auto it = byDirectory.constBegin(); it != byDirectory.constEnd(); ++it) {
+        if (isCancelRequested())
+            return;
+
+        const Result<FileEntryList> listing = m_targetFs->list(VfsUri::fromString(it.key()), cancelToken());
+        if (!listing.ok()) {
+            // Not being able to look is not the same as finding something wrong.
+            // Calling a sync failed because the check could not run would be its
+            // own kind of lie.
+            continue;
+        }
+
+        QHash<QString, qint64> sizes;
+        for (const FileEntry& entry : listing.value()) {
+            if (!entry.isDir)
+                sizes.insert(entry.name, entry.size);
+        }
+
+        for (const Arrival* arrival : it.value()) {
+            const QString name = arrival->target.fileName();
+            if (!sizes.contains(name)) {
+                m_failures.append(
+                    QStringLiteral("%1: was copied but is not there afterwards").arg(arrival->target.path()));
+                continue;
+            }
+            if (sizes.value(name) != arrival->bytes) {
+                m_failures.append(QStringLiteral("%1: %2 bytes were sent but %3 arrived")
+                                      .arg(arrival->target.path())
+                                      .arg(arrival->bytes)
+                                      .arg(sizes.value(name)));
+            }
+        }
+    }
 }
 
 void SyncTask::run()
@@ -133,9 +224,14 @@ void SyncTask::run()
         return;
     }
 
-    setStatusText(QStringLiteral("comparing…"));
-    m_plan
-        = SyncPlan::build(m_sourceFs.get(), m_source, m_targetFs.get(), m_target, m_options, cancelToken());
+    // A plan handed in is the plan somebody agreed to, and comparing again here
+    // is the fault this constructor exists for -- the second walk sees a source
+    // that has moved on and produces deletions the confirmation never listed.
+    if (!m_planWasGiven) {
+        setStatusText(QStringLiteral("comparing…"));
+        m_plan = SyncPlan::build(
+            m_sourceFs.get(), m_source, m_targetFs.get(), m_target, m_options, cancelToken());
+    }
     if (isCancelRequested())
         return;
 
@@ -189,13 +285,22 @@ void SyncTask::run()
             if (copyOne(step))
                 ++m_applied;
             break;
-        case SyncPlan::Action::Delete:
+        case SyncPlan::Action::Delete: {
+            // Asked again, because this is the step that cannot be undone and
+            // the plan may be minutes old. A destination that has changed under
+            // it keeps what it has, and the run says which one and why.
+            QString changed;
+            if (!stillWhatThePlanSaw(step, &changed)) {
+                m_failures.append(QStringLiteral("%1: not deleted -- %2").arg(step.relativePath, changed));
+                break;
+            }
             if (Result<void> removed = m_targetFs->remove(step.target, true); !removed.ok()) {
                 m_failures.append(QStringLiteral("%1: %2").arg(step.relativePath, removed.error().message));
             } else {
                 ++m_applied;
             }
             break;
+        }
         }
 
         setStatusText(step.relativePath);
@@ -205,6 +310,12 @@ void SyncTask::run()
                 static_cast<double>(m_failures.size()), 40);
         }
     }
+
+    // What the destination says it now holds, against what was sent to it. A
+    // server that acknowledges bytes and stores fewer is caught by a transfer
+    // and used to pass a sync -- and a sync is the one that runs unattended and
+    // then reports the two trees as matching. See ADR-0016.
+    verifyArrivals();
 
     setProgress(100);
     setStatusText(m_failures.isEmpty()

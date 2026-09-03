@@ -216,7 +216,7 @@ namespace {
 
             const QString path = relative.isEmpty() ? it.key() : relative + QLatin1Char('/') + it.key();
             steps.append(SyncPlan::Step { SyncPlan::Action::Delete, VfsUri {}, it.value().uri, path,
-                it.value().size, QStringLiteral("not in the source") });
+                it.value().size, QStringLiteral("not in the source"), it.value().modified });
         }
     }
 

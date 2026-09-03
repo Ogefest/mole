@@ -65,6 +65,9 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-03 #MOLE-337 A mirror carries out the plan the confirmation showed, so a file that left the source between comparing and applying is no longer deleted at the far end without anybody being told
+2026-09-03 #MOLE-337 A sync weighs what arrived at the destination, so a server that acknowledges bytes and stores fewer fails the run instead of leaving two trees that look like a backup
+2026-09-03 #MOLE-337 A sync tab's patterns and switches reach the session file as they are typed, rather than only on a clean exit
 2026-09-03 #MOLE-332 Moving a folder onto a folder of the same name merges the two and finishes the move, instead of copying the files and leaving the original where it was
 2026-09-03 #MOLE-332 Moving a folder onto a folder of the same name within one drive no longer deletes what the destination folder held and the source does not
 2026-09-03 #MOLE-333 A folder this account may not read is reported as unreadable instead of shown empty, so a mirror no longer empties the far end to match it

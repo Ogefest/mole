@@ -434,10 +434,15 @@ project, and a contributor should never hit a wall of text they cannot read.
   before a worker thread does, and nothing here ever changes `TZ`. If it is ever worth
   closing, the fix is to touch the timezone once at startup rather than to lock
   anything.
-- **Sync does not ask whether a read ended early**, the question
-  [ADR-0027](docs/adr/0027-a-read-that-ends-early-is-not-a-file-that-shrank.md)
-  added to `TransferTask`. Its copy loop has a worse version of the same fault
-  and is tracked as MOLE-98.
+- **A sync between two drives asks both of ADR-0027's questions now**, and it
+  asks the second one differently from a transfer. MOLE-98 gave its copy loop the
+  short-read guard; MOLE-337 gave it the arrival check, but per directory over
+  what the run itself wrote rather than over a plan -- a sync's plan says what
+  *should* change, and half of it is deletions, so weighing the plan would be
+  weighing the wrong list. What is not checked either way is a file the sync
+  decided not to touch: two trees that match by size and date are taken at their
+  word, which is what makes a second run cheap and is the whole bargain of the
+  compare mode you chose.
 
 - **Mole has only ever been built and run on Linux.** It is written to be portable
   and most of it is, but the claim that nothing in the codebase is Linux-specific
