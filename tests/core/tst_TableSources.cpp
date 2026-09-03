@@ -44,6 +44,7 @@ private slots:
     void opensReadOnly();
     void twoViewsOfOneDatabaseDoNotShareAConnection();
     void aDatabaseWithNoTablesCanBeOpenedAgain();
+    void aViewOverADroppedTableCountsAsUnknownRatherThanAsEmpty();
 
     // ---- Parquet ----
     void readsAParquetFile();
@@ -286,6 +287,63 @@ void TestTableSources::opensReadOnly()
 /// objects ended up on the second's connection, and whichever closed first took
 /// the other's away -- a blank grid, for the rest of that tab's life, with no
 /// error anywhere. See MOLE-356.
+/// A count that could not be taken is not a count of nought.
+///
+/// A view whose table has been dropped is the cheapest way to arrange a query
+/// that fails against a database that opens perfectly well -- and it is a real
+/// one: `sqlite_master` still lists the view, so the picker offers it. Both
+/// counters answered 0, so the footer said "0 rows" and the picker listed the
+/// table as empty, which is the same sentence a table with nothing in it gets.
+/// The interface already understands -1 as "not known", leaves the figure blank
+/// and asks again, and `DelimitedStore` has answered that all along. ADR-0030;
+/// see MOLE-353.
+void TestTableSources::aViewOverADroppedTableCountsAsUnknownRatherThanAsEmpty()
+{
+    const QString path = QDir(m_dir->path()).filePath(QStringLiteral("broken.sqlite"));
+    const QString name = QStringLiteral("tst-broken-db");
+    {
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), name);
+        db.setDatabaseName(path);
+        QVERIFY(db.open());
+        QSqlQuery query(db);
+        QVERIFY(query.exec(QStringLiteral("CREATE TABLE kept (id INTEGER, name TEXT)")));
+        QVERIFY(query.exec(QStringLiteral("INSERT INTO kept VALUES (1, 'Ada'), (2, 'Grace')")));
+        QVERIFY(query.exec(QStringLiteral("CREATE TABLE gone (id INTEGER)")));
+        QVERIFY(query.exec(QStringLiteral("CREATE VIEW orphan AS SELECT * FROM gone")));
+        QVERIFY(query.exec(QStringLiteral("DROP TABLE gone")));
+        db.close();
+    }
+    QSqlDatabase::removeDatabase(name);
+
+    SqliteTable table(path);
+    QVERIFY(table.open());
+    // The view is still listed, because sqlite_master still has it.
+    QVERIFY2(table.tableNames().contains(QStringLiteral("orphan")),
+        qPrintable(table.tableNames().join(QLatin1Char(' '))));
+
+    QCOMPARE(table.rowCountOf(QStringLiteral("orphan")), SqliteTable::kRowsNotCounted);
+    // The table beside it still counts, so this is not "the file is broken".
+    QCOMPARE(table.rowCountOf(QStringLiteral("kept")), 2);
+
+    // The filtered count is the other half of the same claim, and it needs a
+    // query that fails against a table that was there when it was selected --
+    // which is another process writing, and what a read-only preview of a live
+    // database meets.
+    QVERIFY(table.setCurrentTable(QStringLiteral("kept")));
+    QCOMPARE(table.matchingRows(QStringLiteral("Ada")), 1);
+    {
+        const QString writer = QStringLiteral("tst-broken-db-writer");
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), writer);
+        db.setDatabaseName(path);
+        QVERIFY(db.open());
+        QSqlQuery query(db);
+        QVERIFY(query.exec(QStringLiteral("DROP TABLE kept")));
+        db.close();
+        QSqlDatabase::removeDatabase(writer);
+    }
+    QCOMPARE(table.matchingRows(QStringLiteral("Ada")), SqliteTable::kRowsNotCounted);
+}
+
 void TestTableSources::twoViewsOfOneDatabaseDoNotShareAConnection()
 {
     buildDatabase();

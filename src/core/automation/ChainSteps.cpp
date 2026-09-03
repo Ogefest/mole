@@ -28,8 +28,8 @@ bool FilterStep::readsFileContents(const ChainStep& step) const
     return planSearch(*query, SearchSource::Walk).needsFile();
 }
 
-QStringList FilterStep::keep(
-    const ChainStep& step, const QStringList& incoming, const StepContext& context, QString* whyOut) const
+QStringList FilterStep::keep(const ChainStep& step, const QStringList& incoming, const StepContext& context,
+    QString* whyOut, bool* incomplete) const
 {
     const std::optional<SearchQuery> query = queryFrom(step.parameters, queryKey());
     if (!query) {
@@ -50,13 +50,28 @@ QStringList FilterStep::keep(
             return kept;
         const VfsUri target = VfsUri::fromString(uri);
         FileSystemPtr drive = m_resolve ? m_resolve(target) : nullptr;
-        if (!drive)
-            continue;
+        // A row nobody can read is not a row that does not match. Continuing
+        // past it made a filter over a list whose drive went away mid-chain
+        // answer "none of them match", which reads exactly like a filter that
+        // worked -- and the step after it acts on the difference. ADR-0030's
+        // rule; see MOLE-353.
+        if (!drive) {
+            if (incomplete)
+                *incomplete = true;
+            if (whyOut)
+                *whyOut = QStringLiteral("Nothing is mounted for %1").arg(uri);
+            return {};
+        }
         // The entry has to be asked for: a uri carries a name and nothing else,
         // and a criterion about a size or a date needs the rest of it.
         const Result<FileEntry> entry = drive->stat(target);
-        if (!entry.ok())
-            continue;
+        if (!entry.ok()) {
+            if (incomplete)
+                *incomplete = true;
+            if (whyOut)
+                *whyOut = QStringLiteral("%1 could not be read: %2").arg(uri, entry.error().message);
+            return {};
+        }
         // **The reader, and only when a criterion needs one.** Without it a content
         // criterion does not match, so this step answered "nothing matches" for a
         // query with matches -- while the same criteria fused into the place before
@@ -74,7 +89,10 @@ QStringList FilterStep::keep(
 StepOutcome FilterStep::run(const ChainStep& step, const QStringList& incoming, const StepContext& context)
 {
     QString why;
-    const QStringList kept = keep(step, incoming, context, &why);
+    bool incomplete = false;
+    const QStringList kept = keep(step, incoming, context, &why, &incomplete);
+    if (incomplete)
+        return StepOutcome::failed(why);
     if (kept.isEmpty())
         return StepOutcome::nothing(why);
     return StepOutcome::produced(kept);
@@ -84,7 +102,10 @@ StepPreview FilterStep::preview(
     const ChainStep& step, const QStringList& incoming, const StepContext& context)
 {
     QString why;
-    const QStringList kept = keep(step, incoming, context, &why);
+    bool incomplete = false;
+    const QStringList kept = keep(step, incoming, context, &why, &incomplete);
+    if (incomplete)
+        return StepPreview::cannotSay(why);
     if (kept.isEmpty())
         return StepPreview::nothing(why.isEmpty() ? QStringLiteral("nothing matches") : why);
     return StepPreview::would(kept, QStringLiteral("keep %1 of %2").arg(kept.size()).arg(incoming.size()));

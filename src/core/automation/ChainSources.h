@@ -61,7 +61,11 @@ public:
 private:
     /// The walk, or the set's members, with whatever criteria were absorbed
     /// applied as the listing hands each entry over.
-    QStringList collect(const ChainStep& step, const StepContext& context, QString* whyOut) const;
+    /// `incomplete` is set when part of the tree could not be read, which is a
+    /// different thing from finding nothing and is not allowed to look like it.
+    /// See MOLE-353 and ADR-0030.
+    QStringList collect(
+        const ChainStep& step, const StepContext& context, QString* whyOut, bool* incomplete) const;
 
     DriveResolver m_resolve;
     const FileSetStore* m_sets = nullptr;
@@ -122,7 +126,9 @@ public:
         const ChainStep& step, const QStringList& incoming, const StepContext& context) override;
 
 private:
-    QStringList search(const ChainStep& step, const StepContext& context, QString* whyOut) const;
+    /// `incomplete` as for PlaceSource::collect().
+    QStringList search(
+        const ChainStep& step, const StepContext& context, QString* whyOut, bool* incomplete) const;
 
     DriveResolver m_resolve;
 };

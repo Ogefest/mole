@@ -137,8 +137,14 @@ qint64 SqliteTable::rowCountOf(const QString& table) const
         return *known;
 
     QSqlQuery query(connection());
+    // A count that could not be taken is not a count of nought. A view over a
+    // table that has been dropped, a locked database, a corrupt page: all of
+    // them answered 0, so the footer said "0 rows" and the picker listed the
+    // table as empty. kRowsNotCounted is what the interface already understands
+    // -- it leaves the figure blank and asks again -- and it is what
+    // DelimitedStore has answered all along. ADR-0030; see MOLE-353.
     if (!query.exec(QStringLiteral("SELECT COUNT(*) FROM %1").arg(quoted(table))) || !query.next())
-        return 0;
+        return kRowsNotCounted;
 
     const qint64 rows = query.value(0).toLongLong();
     m_rowCounts.insert(table, rows);
@@ -201,8 +207,11 @@ qint64 SqliteTable::matchingRows(const QString& filter) const
     QSqlQuery query(connection());
     query.prepare(QStringLiteral("SELECT COUNT(*) FROM %1%2").arg(quoted(m_table), whereClause(filter)));
     bindFilter(query, filter);
+    // As above: not known, rather than none. The interface's own header says
+    // matchingRows answers "-1 on the same terms as totalRows()", and this was
+    // the one of the two implementations that did not.
     if (!query.exec() || !query.next())
-        return 0;
+        return kRowsNotCounted;
     return query.value(0).toLongLong();
 }
 

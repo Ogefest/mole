@@ -54,8 +54,11 @@ public:
         const ChainStep& step, const QStringList& incoming, const StepContext& context) override;
 
 private:
+    /// `incomplete` is set when a row could not be read at all -- a drive that is
+    /// not mounted, a stat that failed -- which is a different thing from a row
+    /// that did not match and must not look like one. See MOLE-353.
     QStringList keep(const ChainStep& step, const QStringList& incoming, const StepContext& context,
-        QString* whyOut) const;
+        QString* whyOut, bool* incomplete) const;
 
     DriveResolver m_resolve;
 };

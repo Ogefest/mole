@@ -65,6 +65,8 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-353 A chain says when its source could not be read, instead of finishing with nothing to do
+2026-09-04 #MOLE-353 A table whose row count could not be taken shows a blank, instead of claiming to be empty
 2026-09-04 #MOLE-406 Opening a file from an archive on a full disk says so, instead of opening half of it
 2026-09-04 #MOLE-406 Extracting a large file for a viewer or an external program no longer freezes the window while it is written
 2026-09-04 #MOLE-356 An index interrupted while upgrading its schema opens again next time, instead of failing for ever

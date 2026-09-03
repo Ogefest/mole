@@ -80,6 +80,12 @@ private slots:
     void aChainStartedFromWhatIsSelectedUsesIt();
     void aChainStartedFromNothingSaysSoRatherThanActingOnEverything();
 
+    void aSourceWhoseRootCannotBeReadFailsRatherThanFindingNothing_data();
+    void aSourceWhoseRootCannotBeReadFailsRatherThanFindingNothing();
+    void aSourceThatCouldNotReadOneFolderHandsOnNothingAndSaysHowMany_data();
+    void aSourceThatCouldNotReadOneFolderHandsOnNothingAndSaysHowMany();
+    void aFilterWhoseDriveIsGoneFailsRatherThanQuietlyDroppingTheRow();
+
 private:
     std::unique_ptr<QTemporaryDir> m_dir;
     std::unique_ptr<TaskManager> m_tasks;
@@ -401,6 +407,96 @@ void TestChainSources::aChainStartedFromNothingSaysSoRatherThanActingOnEverythin
     QVERIFY(task->ending() == ChainTask::Ending::StoppedEmpty);
     QVERIFY2(task->endedBecause().contains(QStringLiteral("Nothing was selected")),
         qPrintable(task->endedBecause()));
+}
+
+/// A root nobody can read is not a root with nothing in it.
+///
+/// ADR-0030's rule, at the three places in the chain that did not follow it.
+/// `QuerySource::search()` discarded `walk()`'s result and never read
+/// `errors()`, so an unreadable or unmounted root gave an empty list, `run()`
+/// turned it into `StepOutcome::nothing`, and the chain ended "Run a search
+/// found nothing, so the chain stopped there" -- a chain that could not look,
+/// reported as a chain that looked and found nothing. See MOLE-353.
+void TestChainSources::aSourceWhoseRootCannotBeReadFailsRatherThanFindingNothing_data()
+{
+    QTest::addColumn<QString>("kind");
+
+    QTest::newRow("a place") << PlaceSource::stepKind();
+    QTest::newRow("a search") << QuerySource::stepKind();
+}
+
+void TestChainSources::aSourceWhoseRootCannotBeReadFailsRatherThanFindingNothing()
+{
+    QFETCH(QString, kind);
+
+    m_memory->setFault(QStringLiteral("/reports"), VfsError::AccessDenied);
+
+    ChainStep source = stepOf(kind);
+    source.parameters = { { PlaceSource::whereKey(), QStringLiteral("mem:///reports") } };
+    if (kind == QuerySource::stepKind())
+        putQuery(source.parameters, QuerySource::queryKey(), onlyText());
+
+    ChainTask* task = run({ source, stepOf(QStringLiteral("passthrough")) });
+    QVERIFY(task);
+    QCOMPARE(task->state(), Task::State::Failed);
+    QVERIFY2(task->ending() == ChainTask::Ending::Failed,
+        "a root that could not be read ended the chain "
+        "as though it had been read and was empty");
+    QVERIFY2(
+        !task->endedBecause().contains(QStringLiteral("found nothing")), qPrintable(task->endedBecause()));
+}
+
+/// And a tree only *part* of which could be read is not a smaller tree.
+///
+/// This is the worse half. The root lists, so there is a list to hand on -- and
+/// handing a partial list to a step that moves or deletes is the outcome
+/// ChainTask's own header rules out: "a step that did not fully succeed hands
+/// nothing on ... nothing downstream can tell that from a complete list".
+void TestChainSources::aSourceThatCouldNotReadOneFolderHandsOnNothingAndSaysHowMany_data()
+{
+    aSourceWhoseRootCannotBeReadFailsRatherThanFindingNothing_data();
+}
+
+void TestChainSources::aSourceThatCouldNotReadOneFolderHandsOnNothingAndSaysHowMany()
+{
+    QFETCH(QString, kind);
+
+    m_memory->setFault(QStringLiteral("/reports/deep"), VfsError::AccessDenied);
+
+    ChainStep source = stepOf(kind);
+    source.parameters = { { PlaceSource::whereKey(), QStringLiteral("mem:///reports") } };
+    if (kind == QuerySource::stepKind())
+        putQuery(source.parameters, QuerySource::queryKey(), onlyText());
+
+    ChainTask* task = run({ source, stepOf(QStringLiteral("passthrough")) });
+    QVERIFY(task);
+    QCOMPARE(task->state(), Task::State::Failed);
+    QVERIFY2(task->produced().isEmpty(), "a partial list was handed on as a complete one");
+    // How many, because "some of it could not be read" is not something anybody
+    // can act on and "1 folder could not be read" is.
+    QVERIFY2(
+        task->endedBecause().contains(QStringLiteral("could not be read")), qPrintable(task->endedBecause()));
+}
+
+/// A filter whose drive has gone under it drops the row in silence.
+///
+/// `FilterStep::keep()` continued past a uri whose drive is not mounted and past
+/// one whose stat() failed, so a filter over a list from a drive that went away
+/// mid-chain answered "none of them match" -- which reads exactly like a filter
+/// that worked.
+void TestChainSources::aFilterWhoseDriveIsGoneFailsRatherThanQuietlyDroppingTheRow()
+{
+    const QStringList selected { QStringLiteral("mem:///reports/a.txt"),
+        QStringLiteral("nowhere:///reports/b.txt") };
+
+    ChainTask* task = run(
+        { stepOf(ListingSource::stepKind()), filterOn(onlyText()), stepOf(QStringLiteral("passthrough")) },
+        selected);
+    QVERIFY(task);
+    QCOMPARE(task->state(), Task::State::Failed);
+    QVERIFY2(task->ending() == ChainTask::Ending::Failed,
+        "a row nobody could read was reported as a row that did not match");
+    QVERIFY2(task->endedBecause().contains(QStringLiteral("nowhere")), qPrintable(task->endedBecause()));
 }
 
 MOLE_TEST_MAIN(TestChainSources)

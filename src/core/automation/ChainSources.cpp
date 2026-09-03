@@ -92,7 +92,43 @@ QList<StepParameter> PlaceSource::parameters() const
     return { where, depth, set };
 }
 
-QStringList PlaceSource::collect(const ChainStep& step, const StepContext& context, QString* whyOut) const
+namespace {
+
+    /// What a walk that could not read everything has to say, or nothing when it
+    /// read the lot.
+    ///
+    /// ADR-0030's rule at the chain: an unreadable source is not an empty one. A
+    /// root that could not be listed at all gave an empty list, which `run()` turned
+    /// into `StepOutcome::nothing` and the chain reported as "found nothing, so the
+    /// chain stopped there" -- a chain that could not look, told as a chain that
+    /// looked. A tree only *part* of which could be read is the worse half: there is
+    /// a list to hand on, and handing a partial one to a step that moves or deletes
+    /// is exactly what ChainTask's header rules out -- "a step that did not fully
+    /// succeed hands nothing on ... nothing downstream can tell that from a complete
+    /// list".
+    ///
+    /// So both are failures rather than one being a warning. The ticket left the
+    /// choice open -- fail when a sink follows, warn otherwise -- and a source cannot
+    /// see what follows it; ChainTask had already made the decision for the whole
+    /// chain, once, rather than per step. See MOLE-353.
+    QString whatCouldNotBeRead(const Result<void>& walked, const QList<VfsError>& errors)
+    {
+        if (!walked.ok())
+            return walked.error().message;
+        if (errors.isEmpty())
+            return {};
+        // How many, and one of them by name. "Some of it could not be read" is
+        // not something anybody can act on; "1 folder could not be read" with
+        // that folder named is where to start looking.
+        return QStringLiteral("%1 folder(s) could not be read, starting with: %2")
+            .arg(errors.size())
+            .arg(errors.first().message);
+    }
+
+} // namespace
+
+QStringList PlaceSource::collect(
+    const ChainStep& step, const StepContext& context, QString* whyOut, bool* incomplete) const
 {
     const QString setId = step.parameters.value(setKey()).toString();
     if (!setId.isEmpty()) {
@@ -138,15 +174,24 @@ QStringList PlaceSource::collect(const ChainStep& step, const StepContext& conte
             found.append(entry.uri.toString());
         return DirectoryWalker::Action::Continue;
     });
-    if (!walked.ok() && found.isEmpty() && whyOut)
-        *whyOut = walked.error().message;
+
+    if (const QString unread = whatCouldNotBeRead(walked, walker.errors()); !unread.isEmpty()) {
+        if (incomplete)
+            *incomplete = true;
+        if (whyOut)
+            *whyOut = unread;
+        return {};
+    }
     return found;
 }
 
 StepOutcome PlaceSource::run(const ChainStep& step, const QStringList&, const StepContext& context)
 {
     QString why;
-    const QStringList found = collect(step, context, &why);
+    bool incomplete = false;
+    const QStringList found = collect(step, context, &why, &incomplete);
+    if (incomplete)
+        return StepOutcome::failed(why);
     if (found.isEmpty())
         return StepOutcome::nothing(why);
     return StepOutcome::produced(found);
@@ -155,7 +200,10 @@ StepOutcome PlaceSource::run(const ChainStep& step, const QStringList&, const St
 StepPreview PlaceSource::preview(const ChainStep& step, const QStringList&, const StepContext& context)
 {
     QString why;
-    const QStringList found = collect(step, context, &why);
+    bool incomplete = false;
+    const QStringList found = collect(step, context, &why, &incomplete);
+    if (incomplete)
+        return StepPreview::cannotSay(why);
     const QString where = step.parameters.value(setKey()).toString().isEmpty()
         ? step.parameters.value(whereKey()).toString()
         : QStringLiteral("the file set %1").arg(step.parameters.value(setKey()).toString());
@@ -229,7 +277,8 @@ QList<StepParameter> QuerySource::parameters() const
     return { where, query };
 }
 
-QStringList QuerySource::search(const ChainStep& step, const StepContext& context, QString* whyOut) const
+QStringList QuerySource::search(
+    const ChainStep& step, const StepContext& context, QString* whyOut, bool* incomplete) const
 {
     const std::optional<SearchQuery> query = queryFrom(step.parameters, queryKey());
     if (!query) {
@@ -265,7 +314,7 @@ QStringList QuerySource::search(const ChainStep& step, const StepContext& contex
     DirectoryWalker walker(drive, options);
 
     QStringList found;
-    walker.walk(where, context.cancel, [&](const FileEntry& entry, int) {
+    const Result<void> walked = walker.walk(where, context.cancel, [&](const FileEntry& entry, int) {
         if (query->isExcluded(entry.name) && entry.isDir)
             return DirectoryWalker::Action::SkipSubtree;
         if (plan.matches(entry, io))
@@ -273,13 +322,24 @@ QStringList QuerySource::search(const ChainStep& step, const StepContext& contex
         return found.size() >= query->limit ? DirectoryWalker::Action::Stop
                                             : DirectoryWalker::Action::Continue;
     });
+
+    if (const QString unread = whatCouldNotBeRead(walked, walker.errors()); !unread.isEmpty()) {
+        if (incomplete)
+            *incomplete = true;
+        if (whyOut)
+            *whyOut = unread;
+        return {};
+    }
     return found;
 }
 
 StepOutcome QuerySource::run(const ChainStep& step, const QStringList&, const StepContext& context)
 {
     QString why;
-    const QStringList found = search(step, context, &why);
+    bool incomplete = false;
+    const QStringList found = search(step, context, &why, &incomplete);
+    if (incomplete)
+        return StepOutcome::failed(why);
     if (found.isEmpty())
         return StepOutcome::nothing(why);
     return StepOutcome::produced(found);
@@ -288,7 +348,10 @@ StepOutcome QuerySource::run(const ChainStep& step, const QStringList&, const St
 StepPreview QuerySource::preview(const ChainStep& step, const QStringList&, const StepContext& context)
 {
     QString why;
-    const QStringList found = search(step, context, &why);
+    bool incomplete = false;
+    const QStringList found = search(step, context, &why, &incomplete);
+    if (incomplete)
+        return StepPreview::cannotSay(why);
     if (found.isEmpty())
         return StepPreview::nothing(why.isEmpty() ? QStringLiteral("the search finds nothing") : why);
     return StepPreview::would(found, QStringLiteral("run the search again"));
