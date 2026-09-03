@@ -182,6 +182,13 @@ public:
     Q_INVOKABLE QString nameAt(int row) const;
     Q_INVOKABLE bool isDirAt(int row) const;
     Q_INVOKABLE int rowOfUri(const QString& uri) const;
+    /// What the listing says this row is.
+    ///
+    /// Public because a caller that has to know a file's size or date without
+    /// asking the drive has nowhere else to get it: the rows in front of the
+    /// user came from a listing, and a drag is not required to be more up to
+    /// date than the folder it is dragging out of. See MOLE-360.
+    const FileEntry& entryAt(int row) const { return m_all.at(m_visible.at(row)); }
 
     /// Where a tile asks for this row's picture, at `size` pixels on its longest
     /// edge. Empty for a directory and for a row that has no uri.
@@ -234,9 +241,6 @@ signals:
 
 private:
     void rebuildVisible();
-    /// What a row is showing. Rows are offsets into m_all, so every reader goes
-    /// through here rather than remembering which list it is holding.
-    const FileEntry& entryAt(int row) const { return m_all.at(m_visible.at(row)); }
     int annotationFor(const QString& uri) const { return m_annotations.value(uri, NoAnnotation); }
     bool lessThan(const FileEntry& a, const FileEntry& b) const;
 

@@ -80,6 +80,15 @@ public:
     /// The same for openRead(), because the honest way to test what a view does
     /// while a file is slow to arrive is to have one that is.
     void setReadDelayMs(int ms) { m_readDelayMs = ms; }
+    /// Sleeps this long inside *every* operation that goes to storage: stat,
+    /// makeDirectory, remove, rename, and the two openers as well as list.
+    ///
+    /// For the other kind of claim about a slow drive -- not "the view says so
+    /// while it waits" but "the window did not wait at all". A gesture that takes
+    /// a second on a share that takes a second is a gesture made on the thread
+    /// that draws, and that is what tst_DrivesOffTheDrawingThread measures. See
+    /// MOLE-360.
+    void setOperationDelayMs(int ms) { m_operationDelayMs = ms; }
     /// Hands the bytes over at a pace: no more than `bytesPerRead` per read, and
     /// `delayMs` before each one.
     ///
@@ -143,6 +152,8 @@ private:
     void touchParent(const QString& path);
     VfsUri uriFor(const QString& path) const;
     Result<void> faultFor(const QString& path) const;
+    /// Sleeps setOperationDelayMs(), in steps.
+    void waitAsASlowDriveWould() const;
 
     mutable QMutex m_mutex;
     Qt::CaseSensitivity m_caseSensitivity = Qt::CaseSensitive;
@@ -151,6 +162,7 @@ private:
     QHash<QString, VfsError::Code> m_faults;
     int m_listDelayMs = 0;
     int m_readDelayMs = 0;
+    int m_operationDelayMs = 0;
     qint64 m_throttleBytes = 0;
     int m_throttleDelayMs = 0;
     mutable int m_listCalls = 0;

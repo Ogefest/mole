@@ -1,5 +1,6 @@
 #include "plugins/builtin/previews/PdfPreview.h"
 
+#include "plugins/builtin/previews/OpenPdfDocumentTask.h"
 #include "plugins/builtin/previews/PreviewProviders.h"
 
 #include "core/platform/Staging.h"
@@ -40,7 +41,9 @@ PdfPreviewController::~PdfPreviewController()
 
 int PdfPreviewController::pageCount() const
 {
-    return m_document ? m_document->pageCount() : 0;
+    // From what the open recorded rather than from a document held here: see
+    // openLocalFile() and MOLE-360.
+    return static_cast<int>(m_pageSizes.size());
 }
 
 void PdfPreviewController::setCurrentPage(int page)
@@ -63,19 +66,18 @@ QString PdfPreviewController::positionText() const
 
 QString PdfPreviewController::title() const
 {
-    if (!m_document)
+    if (m_pageSizes.isEmpty())
         return {};
     // A PDF's own title where it has one, since it is usually more use than the
     // file name; the file name when it does not.
-    const QString embedded = m_document->metaData(QPdfDocument::MetaDataField::Title).toString().trimmed();
-    return embedded.isEmpty() ? m_fileName : embedded;
+    return m_title.isEmpty() ? m_fileName : m_title;
 }
 
 double PdfPreviewController::pageAspect(int page) const
 {
-    if (!m_document || page < 0 || page >= pageCount())
+    if (page < 0 || page >= pageCount())
         return 1.414; // A4 upright, a reasonable guess for a document
-    const QSizeF size = m_document->pagePointSize(page);
+    const QSizeF size = m_pageSizes.at(page);
     if (size.width() <= 0 || size.height() <= 0)
         return 1.414;
     return size.height() / size.width();
@@ -100,7 +102,7 @@ QString PdfPreviewController::targetFor(int page, int width)
 
 QString PdfPreviewController::pageImage(int page, int width)
 {
-    if (!m_document || page < 0 || page >= pageCount() || width <= 0)
+    if (page < 0 || page >= pageCount() || width <= 0)
         return {};
 
     const QString target = targetFor(page, width);
@@ -206,15 +208,42 @@ QString PdfPreviewController::renderNote() const
 
 void PdfPreviewController::openLocalFile(const QString& path)
 {
-    // Kept, because every render opens this file for itself rather than sharing
-    // the document below.
+    // Kept, because every render opens this file for itself.
     m_documentPath = path;
-    m_document = std::make_unique<QPdfDocument>();
-    const QPdfDocument::Error error = m_document->load(path);
+
+    // The open is a task. QPdfDocument::load() parses the cross-reference table,
+    // which for a large document is real work, and this ran on the thread that
+    // draws -- on a path that may be a kernel-mounted share, since a local uri is
+    // answered synchronously. MOLE-286 moved the render off this thread and left
+    // the open on it. See MOLE-360.
+    //
+    // What comes back is numbers rather than a document, and nothing here holds
+    // one any more: the controller used to read page sizes off its own while a
+    // render read another, and QPdfDocument is not documented as thread-safe.
+    if (!m_services.tasks) {
+        setLoading(false);
+        setErrorText(QStringLiteral("The document could not be opened"));
+        emit documentChanged();
+        return;
+    }
+
+    auto* task = new OpenPdfDocumentTask(path);
+    connect(task, &OpenPdfDocumentTask::opened, this,
+        [this, path](const OpenPdfDocumentTask::Contents& contents) {
+            if (m_documentPath == path)
+                documentOpened(contents);
+        });
+    m_services.tasks->submit(task);
+}
+
+void PdfPreviewController::documentOpened(const OpenPdfDocumentTask::Contents& contents)
+{
     setLoading(false);
 
+    const QPdfDocument::Error error = contents.error;
     if (error != QPdfDocument::Error::None) {
-        m_document.reset();
+        m_pageSizes.clear();
+        m_title.clear();
         m_documentPath.clear();
         // Said plainly rather than as an enum: a reader wants to know whether the
         // file is broken or simply locked.
@@ -239,6 +268,8 @@ void PdfPreviewController::openLocalFile(const QString& path)
         return;
     }
 
+    m_pageSizes = contents.pageSizes;
+    m_title = contents.title;
     m_currentPage = 0;
     emit documentChanged();
     emit currentPageChanged();
@@ -249,7 +280,6 @@ void PdfPreviewController::load(const FileEntry& entry)
     // What is in flight goes first, before the document and the directory it was
     // rendering into are let go of.
     abandonRenders();
-    m_document.reset();
     m_scratch.reset();
     m_documentPath.clear();
     m_unrenderable.clear();

@@ -23,6 +23,8 @@ class QQuickTextDocument;
 
 namespace mole {
 
+class Task;
+
 /// Turns a uri into something the desktop can point at.
 ///
 /// Local files are used where they are; anything on a remote or archive drive
@@ -563,11 +565,17 @@ private:
     /// Reads the local copy's header -- no decode -- and works out whether Qt
     /// would allow a full-size one, so 1:1 is offered only where it can work.
     void examineHeader(const QString& path);
+    /// What the header turned out to say, once the task has read it.
+    void judgeHeader(QSize pixels, int bitsPerPixel);
     void withdrawActualSize(const QString& reason);
 
     QString m_source;
     bool m_actualSizeAvailable = true;
     QString m_actualSizeReason;
+    /// The header read in flight, cancelled when another image is loaded.
+    QPointer<Task> m_header;
+    /// Kept for the task manager: reading a header is a task since MOLE-360.
+    PluginServices m_services;
     LocalCopyProvider* m_copy = nullptr;
 };
 

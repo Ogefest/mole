@@ -2,6 +2,7 @@
 
 #include "sdk/PluginServices.h"
 
+#include "core/vfs/FileEntry.h"
 #include "core/vfs/VfsUri.h"
 
 #include <QDateTime>
@@ -54,7 +55,16 @@ public:
 
     /// Hands `rows` to the desktop, in the order they were given. Rows that are
     /// not on disk are fetched instead, and nothing is dragged that time.
-    void start(const QList<VfsUri>& rows);
+    /// Starts a drag of these rows.
+    ///
+    /// `known` is what the listing in front of the user says each row is -- size
+    /// and modification time, by uri. It is how a staged copy is told from a
+    /// stale one *without asking the drive*, which is the whole point: this used
+    /// to stat() every row on the thread that draws, at drag start and again per
+    /// staged row afterwards. A listing is what the window is showing anyway, so
+    /// a drag is no more out of date than the rows being dragged. Empty is
+    /// allowed, and then a staged copy is never reused. See MOLE-360.
+    void start(const QList<VfsUri>& rows, const QHash<QString, FileEntry>& known = {});
 
 signals:
     /// Handed over: `count` rows went, as a copy.
@@ -77,12 +87,12 @@ private:
     /// scheme `FileLauncher` stages a remote file it has been asked to open under.
     QString stagedPathFor(const VfsUri& uri);
     /// Whether the copy already staged for `source` can be handed over as it is.
-    bool stagedCopyIsFresh(const VfsUri& source) const;
+    bool stagedCopyIsFresh(const VfsUri& source, const QHash<QString, FileEntry>& known) const;
     /// Queues the fetch for `rows` and says so. Nothing is dragged.
-    void stage(const QList<VfsUri>& rows);
+    void stage(const QList<VfsUri>& rows, const QHash<QString, FileEntry>& known);
     /// Notes what a source looked like at the moment its copy was made, so a
     /// later drag can tell whether the copy is still the file.
-    void remember(const VfsUri& source, const QString& stagedPath);
+    void remember(const VfsUri& source, const QString& stagedPath, const FileEntry& known);
 
     /// What was staged for one source, and what the source was when it was.
     struct Staged

@@ -82,6 +82,10 @@ add_library(mole_core STATIC
     tasks/QuerySpaceTask.cpp
     tasks/QueryAccessTask.h
     tasks/QueryAccessTask.cpp
+    tasks/MakeDirectoryTask.h
+    tasks/MakeDirectoryTask.cpp
+    tasks/StatTask.h
+    tasks/StatTask.cpp
     tasks/ReadRangeTask.h
     tasks/ReadRangeTask.cpp
     tasks/TransferTask.h

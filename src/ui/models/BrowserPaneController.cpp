@@ -5,8 +5,10 @@
 #include "core/alerts/AlertStore.h"
 #include "core/analysis/AnalysisStore.h"
 #include "core/events/EventBus.h"
+#include "core/rename/RenameTask.h"
 #include "core/tasks/InvokeFileActionTask.h"
 #include "core/tasks/ListDirectoryTask.h"
+#include "core/tasks/MakeDirectoryTask.h"
 #include "core/tasks/ProbeDriveTask.h"
 #include "core/tasks/QueryFileActionsTask.h"
 #include "core/tasks/QueryFolderActionsTask.h"
@@ -514,8 +516,7 @@ QVariantList BrowserPaneController::targetDetails() const
             // rows is the thing that must then delete exactly *these* rows --
             // not whatever the cursor and the selection say a second later. See
             // deleteTargets() and MOLE-339.
-            { QStringLiteral("uri"), entry.uri.toString() },
-            { QStringLiteral("isDir"), entry.isDir },
+            { QStringLiteral("uri"), entry.uri.toString() }, { QStringLiteral("isDir"), entry.isDir },
             // A folder's own size says nothing about what is inside it, and a
             // dialog that showed "4 kB" next to a tree of ten thousand files
             // would be worse than showing nothing.
@@ -535,16 +536,22 @@ void BrowserPaneController::createDirectory(const QString& name)
         return;
     }
 
+    // On a task, because makeDirectory() goes to storage. On a share that has
+    // stopped answering it blocks for as long as the mount takes to give up, and
+    // this used to make the call from the thread that draws -- so pressing F7
+    // stopped the whole window, dialog and all. deleteTargets() two functions
+    // down has always done it this way. See ARCHITECTURE.md's first rule and
+    // MOLE-360.
     const VfsUri target = m_current.child(name.trimmed());
-    Result<void> created = fs->makeDirectory(target);
-    if (!created.ok()) {
-        emit operationFailed(created.error().message);
-        return;
-    }
-
-    // Announce rather than refresh directly: a second pane on the same folder
-    // has to see it too.
-    m_services.events->postEntryCreated(target);
+    auto* task = new MakeDirectoryTask(std::move(fs), target);
+    connect(task, &MakeDirectoryTask::created, this, [this](const VfsUri& made) {
+        // Announced rather than refreshed directly: a second pane on the same
+        // folder has to see it too.
+        m_services.events->postEntryCreated(made);
+    });
+    connect(task, &MakeDirectoryTask::refused, this,
+        [this](const QString& reason) { emit operationFailed(reason); });
+    m_services.tasks->submit(task);
 }
 
 void BrowserPaneController::renameCurrent(const QString& newName)
@@ -563,14 +570,25 @@ void BrowserPaneController::renameCurrent(const QString& newName)
         return;
     }
 
+    // Through the batch renamer's own task, which handles one entry as readily as
+    // two hundred -- and off this thread, for the reason createDirectory() gives.
+    // F2 on a stalled mount used to stop the window with the rename box still
+    // open on it. See MOLE-360.
     const VfsUri target = source.parent().child(trimmed);
-    Result<void> renamed = fs->rename(source, target);
-    if (!renamed.ok()) {
-        emit operationFailed(renamed.error().message);
-        return;
-    }
+    RenamePlan::Entry entry;
+    entry.source = source;
+    entry.originalName = source.fileName();
+    entry.newName = trimmed;
 
-    m_services.events->postEntryRenamed(source, target);
+    auto* task = new RenameTask(m_services.vfs, { entry });
+    connect(task, &Task::finished, this, [this, task, source, target] {
+        if (!task->failures().isEmpty()) {
+            emit operationFailed(task->failures().join(QLatin1String("; ")));
+            return;
+        }
+        m_services.events->postEntryRenamed(source, target);
+    });
+    m_services.tasks->submit(task);
 }
 
 void BrowserPaneController::deleteTargets(const QStringList& uris)
@@ -666,22 +684,35 @@ QVariantMap BrowserPaneController::dropPlan(const QStringList& urls) const
         existing.insert(m_files->nameAt(row));
 
     QStringList collisions;
-    qint64 bytes = 0;
     for (const VfsUri& row : rows) {
         if (existing.contains(row.fileName()))
             collisions.append(row.fileName());
-
-        // A dropped url is a local path by construction, which is what makes
-        // this cheap enough to answer mid-gesture. A folder claims nothing: its
-        // own size says nothing about what is inside it, and walking it to find
-        // out is exactly what must not happen while the pointer is moving.
-        const QFileInfo info(row.toLocalPath());
-        if (info.isFile())
-            bytes += info.size();
     }
-
     plan.insert(QStringLiteral("collisions"), collisions);
-    plan.insert(QStringLiteral("sizeText"), QLocale().formattedDataSize(bytes));
+
+    // How much, but only while asking is cheap.
+    //
+    // A dropped url is a local path by construction, and a stat on a local path
+    // is nothing -- except that "local" includes a kernel-mounted NFS or SMB
+    // path, where it is a round trip, and this runs on the thread that draws
+    // when a drag enters the pane. Two hundred files dragged off a share was two
+    // hundred round trips before the banner could say anything. Past a few dozen
+    // the total is dropped and the banner says the count alone, which is the
+    // part that matters anyway. A folder claims nothing either way: its own size
+    // says nothing about what is inside it, and walking it to find out is
+    // exactly what must not happen mid-gesture. See MOLE-360.
+    constexpr int kSizesWorthAsking = 32;
+    if (rows.size() <= kSizesWorthAsking) {
+        qint64 bytes = 0;
+        for (const VfsUri& row : rows) {
+            const QFileInfo info(row.toLocalPath());
+            if (info.isFile())
+                bytes += info.size();
+        }
+        plan.insert(QStringLiteral("sizeText"), QLocale().formattedDataSize(bytes));
+    } else {
+        plan.insert(QStringLiteral("sizeText"), QString());
+    }
     return plan;
 }
 

@@ -13,6 +13,7 @@
 #include "ui/SessionStore.h"
 #include "ui/models/CommandPaletteModel.h"
 #include "ui/models/DriveListModel.h"
+#include "ui/models/FileListModel.h"
 #include "ui/models/TabsModel.h"
 #include "ui/models/TaskListModel.h"
 
@@ -240,6 +241,7 @@ AppController::~AppController()
     if (m_index)
         m_index->doNotQueryFrom(nullptr);
     m_index.reset();
+    IFileSystem::doNotCallFrom(nullptr);
 }
 
 bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, QString* errorOut)
@@ -330,6 +332,10 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     // From here on a read of the index from this thread is a fault and says so.
     // Set after open(), which legitimately runs here.
     m_index->doNotQueryFrom(QThread::currentThread());
+    // And the same for a drive, which is the other thing the interface must not
+    // touch: ARCHITECTURE.md's first rule, and seven places were breaking it.
+    // See IFileSystem::doNotCallFrom() and MOLE-360.
+    IFileSystem::doNotCallFrom(QThread::currentThread());
     m_indexSummary->refresh();
 
     // The mount table is the source of truth; the bus just broadcasts it so
@@ -2936,7 +2942,24 @@ void AppController::startDrag(const QStringList& uris)
     rows.reserve(uris.size());
     for (const QString& uri : uris)
         rows.append(VfsUri::fromString(uri));
-    m_dragSource->start(rows);
+
+    // What the listing in front of the user says these rows are. The drag needs
+    // it to tell a staged copy from a stale one, and taking it from the model
+    // rather than asking the drive is what keeps a stat() off this thread -- a
+    // drag of a row on a share that had stopped answering used to freeze the
+    // window at the moment somebody picked the file up. See MOLE-360.
+    QHash<QString, FileEntry> known;
+    QObject* pane = currentTabProperty("activePane").value<QObject*>();
+    if (auto* files
+        = pane ? qobject_cast<FileListModel*>(pane->property("files").value<QObject*>()) : nullptr) {
+        for (const QString& uri : uris) {
+            const int row = files->rowOfUri(uri);
+            if (row >= 0)
+                known.insert(uri, files->entryAt(row));
+        }
+    }
+
+    m_dragSource->start(rows, known);
 }
 
 void AppController::queueScan(const QString& uri, const QString& label)

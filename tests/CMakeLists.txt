@@ -490,6 +490,12 @@ mole_add_test(tst_IndexesTab        SOURCES app/tst_IndexesTab.cpp     LIBS mole
 mole_add_test(tst_IndexOffTheDrawingThread SOURCES app/tst_IndexOffTheDrawingThread.cpp
                                            LIBS mole_builtin)
 
+# The same rule for drives: nothing the interface does may touch storage on the
+# thread that draws it. Enforced by IFileSystem rather than remembered, and this
+# walks the routes -- see MOLE-360.
+mole_add_test(tst_DrivesOffTheDrawingThread SOURCES app/tst_DrivesOffTheDrawingThread.cpp
+                                            LIBS mole_builtin)
+
 mole_add_test(tst_Automation        SOURCES app/tst_Automation.cpp      LIBS mole_builtin)
 mole_add_test(tst_FileSets          SOURCES app/tst_FileSets.cpp        LIBS mole_builtin)
 

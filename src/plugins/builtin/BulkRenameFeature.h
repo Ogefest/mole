@@ -82,6 +82,10 @@ private:
     /// What is already in each directory involved, so a rename onto an existing
     /// name is caught in the preview rather than by the filesystem.
     QHash<QString, QStringList> m_existing;
+    /// The listings in flight. Cancelled when the selection changes, so an
+    /// answer about a folder nobody is looking at any more cannot arrive over
+    /// the top of the next one. See MOLE-360.
+    QList<QPointer<Task>> m_pendingListings;
     /// What the drive underneath does about case and about names, read when the
     /// targets are set.
     Qt::CaseSensitivity m_caseSensitivity = Qt::CaseSensitive;

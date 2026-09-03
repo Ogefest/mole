@@ -2,6 +2,7 @@
 
 #include "core/events/EventBus.h"
 #include "core/rename/RenameTask.h"
+#include "core/tasks/ListDirectoryTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/VfsManager.h"
 
@@ -50,6 +51,13 @@ void BulkRenameController::setTargets(const QStringList& uris)
 void BulkRenameController::refreshDirectoryContents()
 {
     m_existing.clear();
+    // A listing for a selection nobody is looking at any more is an answer that
+    // would arrive over the top of the next one.
+    for (const QPointer<Task>& pending : std::as_const(m_pendingListings)) {
+        if (pending)
+            pending->requestCancel();
+    }
+    m_pendingListings.clear();
     if (!m_services.isValid())
         return;
 
@@ -72,15 +80,35 @@ void BulkRenameController::refreshDirectoryContents()
         FileSystemPtr fs = m_services.vfs->resolve(uri);
         if (!fs)
             continue;
+        // Two questions the drive answers without going anywhere -- they are
+        // properties of the backend, not of the folder -- so they stay here.
         if (fs->pathCaseSensitivity() == Qt::CaseInsensitive)
             m_caseSensitivity = Qt::CaseInsensitive;
         m_nameRules = fs->nameRules();
-        if (Result<FileEntryList> listed = fs->list(uri, CancelToken()); listed.ok()) {
-            QStringList names;
-            for (const FileEntry& entry : listed.value())
-                names.append(entry.name);
-            m_existing.insert(directory, names);
-        }
+
+        // The listing is the part that goes to storage, and it used to be made
+        // from the thread that draws -- once per distinct parent folder, every
+        // time the selection changed. Selecting two hundred files across four
+        // folders on a share that has stopped answering stopped the window four
+        // times over. See ARCHITECTURE.md's first rule and MOLE-360.
+        if (!m_services.tasks)
+            continue;
+        auto* task = new ListDirectoryTask(fs, uri);
+        connect(task, &ListDirectoryTask::listed, this,
+            [this, directory](const mole::VfsUri&, const mole::FileEntryList& entries) {
+                QStringList names;
+                names.reserve(entries.size());
+                for (const FileEntry& entry : entries)
+                    names.append(entry.name);
+                m_existing.insert(directory, names);
+                // The preview is what the names are for: a collision this
+                // listing reveals has to appear in it, so it is worked out again
+                // now the answer is here.
+                rebuildPreview();
+                emit stateChanged();
+            });
+        m_pendingListings.append(task);
+        m_services.tasks->submit(task);
     }
 }
 

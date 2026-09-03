@@ -9,6 +9,7 @@
 #include <QIODevice>
 #include <QMutex>
 #include <QString>
+#include <QThread>
 
 #include <chrono>
 #include <memory>
@@ -228,8 +229,36 @@ public:
     /// never anybody's error: whoever opened the folder asked for a listing.
     virtual void probe(const VfsUri& target, const CancelToken& cancel);
 
+    /// Names the thread that draws the window, so that a call arriving from it
+    /// says so instead of being noticed by somebody with a slow drive.
+    ///
+    /// ARCHITECTURE.md's first rule is that the interface never touches storage,
+    /// and the header of this class says every method is called from a worker
+    /// thread. Seven places did it anyway (MOLE-360): F2, F7, F3, a drag, bulk
+    /// rename's listing, an archive open and two image headers. Each one is a
+    /// window that stops for as long as a stalled mount takes to give up, and
+    /// none of them was visible on a local disk.
+    ///
+    /// The same mechanism as IndexDatabase::doNotQueryFrom(), for the same reason
+    /// (ADR-0066): it **warns rather than refusing**, because the answer such a
+    /// call gives is correct and turning a slow window into a broken one is not
+    /// an improvement -- and a test can then hold every route the interface has
+    /// to silence. Pass nullptr to stop guarding.
+    ///
+    /// Static, and one per process: a backend is built per mount, while the
+    /// thread that draws is the same one for all of them.
+    static void doNotCallFrom(QThread* thread);
+
 protected:
     static Result<void> notSupported(const char* what);
+
+    /// Warns when the caller is the thread doNotCallFrom() named.
+    ///
+    /// Called by a backend at the top of each method that goes to storage. Not
+    /// every backend does it, and it does not have to: what it buys is a test
+    /// that can walk the interface's routes, so the backend the tests are driven
+    /// against is the one that has to ask. MemoryFileSystem does.
+    static void checkNotOnTheDrawingThread(const char* what);
 
     /// What this drive can offer at `target`, asked of the drive itself.
     ///

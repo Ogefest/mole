@@ -40,6 +40,8 @@ add_library(mole_builtin STATIC
     builtin/previews/MarkdownStyle.cpp
     builtin/previews/PreviewProviders.h
     builtin/previews/PreviewProviders.cpp
+    builtin/previews/ReadImageHeaderTask.h
+    builtin/previews/ReadImageHeaderTask.cpp
     builtin/previews/MetadataReaders.h
     builtin/previews/MetadataReaders.cpp
     builtin/previews/ImageMetadata.h
@@ -54,6 +56,8 @@ add_library(mole_builtin STATIC
     builtin/previews/PdfPreview.cpp
     builtin/previews/RenderPdfPageTask.h
     builtin/previews/RenderPdfPageTask.cpp
+    builtin/previews/OpenPdfDocumentTask.h
+    builtin/previews/OpenPdfDocumentTask.cpp
     builtin/previews/VideoPreview.h
     builtin/previews/VideoPreview.cpp
 

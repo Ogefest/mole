@@ -342,6 +342,13 @@ private:
     /// `name`, with what else there is already known.
     PreviewTabController* previewOnOfferingDrive(const QString& name);
     PreviewTabController* openPreview(const QString& relativePath);
+    /// Waits for a tab to settle on the file it has just been pointed at.
+    ///
+    /// The drive is asked about a file on a task since MOLE-360 -- F3 on a
+    /// stalled mount used to stop the window -- so a tab that has been given a
+    /// uri has not settled on it yet. Waited for on *this* uri and not merely on
+    /// there being one: a tab already showing another file has one all along.
+    static bool settleOn(PreviewTabController* preview, const QString& uri);
     /// Registers the backend that can open an archive, or answers false where
     /// this build has none -- which is itself one of the cases under test.
     bool withArchiveBackend();
@@ -451,10 +458,12 @@ PreviewTabController* TestPreview::previewOnOfferingDrive(const QString& name)
     if (m_app->services().vfs->addMount(mount).isEmpty())
         return nullptr;
 
-    m_app->previewFile(QStringLiteral("mem://offering/") + name);
+    const QString uri = QStringLiteral("mem://offering/") + name;
+    m_app->previewFile(uri);
     auto* preview = qobject_cast<PreviewTabController*>(m_app->tabs()->currentController());
     if (!preview)
         return nullptr;
+    settleOn(preview, uri);
     waitFor([preview] { return preview->viewer() != nullptr || !preview->isIdentifying(); });
     // What else there is of this file is asked for on a worker, so the chooser
     // knows whether there is anything to choose before anybody opens it.
@@ -471,17 +480,32 @@ IPreviewProvider* TestPreview::providerFor(const QString& relativePath) const
     return m_app->previews()->providerFor(entry);
 }
 
+bool TestPreview::settleOn(PreviewTabController* preview, const QString& uri)
+{
+    return preview && waitFor([preview, uri] { return preview->currentUri() == uri; });
+}
+
 PreviewTabController* TestPreview::openPreview(const QString& relativePath)
 {
-    m_app->previewFile(m_tree->rootUri().child(relativePath).toString());
+    const QString uri = m_tree->rootUri().child(relativePath).toString();
+    m_app->previewFile(uri);
     auto* preview = qobject_cast<PreviewTabController*>(m_app->tabs()->currentController());
+    if (!preview)
+        return preview;
+
+    // The drive is asked about the file on a task since MOLE-360, so a tab that
+    // has just been pointed at a file has not settled on it yet -- and every
+    // assertion below is about what it settled on. Waited for on *this* uri and
+    // not merely on there being one: a tab already showing another file has one
+    // all along, and the condition after this would then be satisfied by the
+    // viewer the previous file left behind.
+    settleOn(preview, uri);
 
     // A file whose name got no further than the fallback tier is identified from
     // its first page before a viewer is chosen, so there is a moment with no
     // viewer at all. Waited for on the condition rather than for a duration: the
     // read is off the UI thread and how long it takes is the machine's business.
-    if (preview)
-        waitFor([preview] { return preview->viewer() != nullptr || !preview->isIdentifying(); });
+    waitFor([preview] { return preview->viewer() != nullptr || !preview->isIdentifying(); });
     return preview;
 }
 
@@ -834,7 +858,9 @@ void TestPreview::steppingToTheNextFileCancelsAReaderInFlight()
     // not.
     QVERIFY(preview->isDetailsLoading());
 
-    preview->open(m_tree->rootUri().child(QStringLiteral("config.json")).toString());
+    const QString json = m_tree->rootUri().child(QStringLiteral("config.json")).toString();
+    preview->open(json);
+    QVERIFY(settleOn(preview, json));
     QVERIFY2(!preview->isDetailsLoading(), "the tab lets go of a reader the moment the file changes");
     gate->release();
 
@@ -3504,7 +3530,9 @@ void TestPreview::survivesAFileThatVanished()
     QVERIFY(QFile::remove(m_tree->absolute(QStringLiteral("notes.txt"))));
 
     // Opening something that is no longer there must report, not crash.
-    preview->open(m_tree->rootUri().child(QStringLiteral("gone.txt")).toString());
+    const QString gone = m_tree->rootUri().child(QStringLiteral("gone.txt")).toString();
+    preview->open(gone);
+    QVERIFY(settleOn(preview, gone));
     QCOMPARE(preview->fileName(), QStringLiteral("gone.txt"));
     QVERIFY(preview->viewer() != nullptr); // the fallback still describes it
 }
@@ -3530,7 +3558,9 @@ void TestPreview::remembersItsFileAcrossRestart()
             restored = candidate;
     }
     QVERIFY2(restored, "the preview tab must come back");
-    QCOMPARE(restored->currentUri(), expected);
+    // The restored tab asks the drive about the file on a task since MOLE-360,
+    // so it settles a moment after it is built.
+    QVERIFY(settleOn(restored, expected));
 }
 
 // ---- F3 on a file compressed on its own ---------------------------------
@@ -3580,6 +3610,11 @@ void TestPreview::f3OnAFileCompressedOnItsOwnShowsWhatIsInside()
 
     PreviewTabController* preview = openPreview(memberName + QStringLiteral(".gz"));
     QVERIFY(preview);
+    // The container is opened and listed on a task since MOLE-360 -- for a gzip
+    // the length is in the trailer, so listing one reads the whole file -- so the
+    // member arrives a moment after the tab does. The title is what says which.
+    QVERIFY(waitFor([preview, memberName] { return preview->title() == memberName; }));
+    QVERIFY(waitFor([preview] { return preview->viewer() != nullptr || !preview->isIdentifying(); }));
     QCOMPARE(preview->viewerName(), viewerName);
     // The viewer names the member, not the wrapper, so it is clear what is being
     // read -- while the arrows and the session still work on the file in the
@@ -3632,9 +3667,12 @@ void TestPreview::aFileNamedGzThatIsNotGzipKeepsTodaysBehaviour()
 
     PreviewTabController* preview = openPreview(QStringLiteral("pretending.gz"));
     QVERIFY(preview);
+    // Looking inside is a task since MOLE-360, and this file's answer is "there
+    // is nothing to substitute" -- which still has to arrive before the viewer
+    // it leaves standing can be asserted about.
+    QVERIFY(waitFor([preview] { return !preview->viewerName().isEmpty(); }));
     QCOMPARE(preview->title(), QStringLiteral("pretending.gz"));
     QCOMPARE(internalMounts(), 0);
-    QVERIFY2(!preview->viewerName().isEmpty(), "a file that is not an archive still gets a viewer");
 }
 
 void TestPreview::steppingOnReleasesTheSubstitutedMember()
@@ -3647,17 +3685,19 @@ void TestPreview::steppingOnReleasesTheSubstitutedMember()
 
     PreviewTabController* preview = openPreview(QStringLiteral("aaa.txt.gz"));
     QVERIFY(preview);
-    QCOMPARE(internalMounts(), 1);
+    // The wrapper is mounted when the task that opened it comes back.
+    QVERIFY(waitFor([this] { return internalMounts() == 1; }));
 
     // The arrows work on the folder, so the siblings have to have arrived before
     // stepping means anything. Waited on the condition, not on a duration.
     QVERIFY(waitFor([preview] { return preview->position() > 0; }, 5000));
     preview->next();
+    QVERIFY(waitFor([preview] { return !preview->title().endsWith(QStringLiteral(".txt.gz")); }, 5000));
     QVERIFY(waitFor([preview] { return preview->viewer() != nullptr || !preview->isIdentifying(); }, 5000));
 
     // The wrapper goes with the file it belonged to: a walk along a folder of
     // two hundred of these must not leave two hundred mounts behind.
-    QCOMPARE(internalMounts(), 0);
+    QVERIFY(waitFor([this] { return internalMounts() == 0; }));
     QVERIFY2(!preview->title().endsWith(QStringLiteral(".txt.gz")), "the tab is still showing the wrapper");
     QVERIFY2(preview->title() != QStringLiteral("aaa.txt"),
         "the tab is still showing the member of the file that was stepped off");
@@ -3907,7 +3947,11 @@ void TestPreview::anImageTooLargeToDecodeWholeIsNotOfferedAtFullSize()
     // Full size is not offered, and the reason carries the size -- a greyed
     // button with no explanation reads as the application being broken rather
     // than as the picture being larger than this build will hold at once.
-    QVERIFY2(!viewer->actualSizeAvailable(), "full size was offered for an image Qt will not allocate");
+    //
+    // Waited for: the header is read on a task since MOLE-360, because for an
+    // SVG reading it parses the whole document and the file may be on a share.
+    QVERIFY2(waitFor([viewer] { return !viewer->actualSizeAvailable(); }, 5000),
+        "full size was offered for an image Qt will not allocate");
     QVERIFY2(viewer->actualSizeReason().contains(QStringLiteral("2000 × 2000")),
         qPrintable(viewer->actualSizeReason()));
     QVERIFY2(viewer->actualSizeReason().contains(QStringLiteral("full size")),
@@ -4101,6 +4145,7 @@ void TestPreview::aDriveWithNothingOlderOffersNoChoiceAtAll()
     QVERIFY(preview);
 
     preview->open(QStringLiteral("mem://offering/plain.txt"));
+    QVERIFY(settleOn(preview, QStringLiteral("mem://offering/plain.txt")));
     waitFor([preview] { return preview->viewer() != nullptr || !preview->isIdentifying(); });
     drainEvents();
     QVERIFY2(!preview->hasOtherVersions(), "a file with nothing older must offer no chooser");
@@ -4158,8 +4203,11 @@ void TestPreview::theScreenSaysWhichVersionIsOnThroughout()
     const QVariantList versions = preview->otherVersions();
     for (const QVariant& entry : versions) {
         const QVariantMap version = entry.toMap();
+        const QString label = version.value(QStringLiteral("label")).toString();
         preview->showVersion(version.value(QStringLiteral("uri")).toString());
-        QCOMPARE(preview->showingVersion(), version.value(QStringLiteral("label")).toString());
+        // The drive is asked about the state being shown on a task since
+        // MOLE-360, so the label arrives when the answer does.
+        QVERIFY(waitFor([preview, label] { return preview->showingVersion() == label; }));
     }
 }
 
@@ -4174,12 +4222,12 @@ void TestPreview::goingBackToTheCurrentFileWorks()
 
     const QString earlier = preview->otherVersions().first().toMap().value(QStringLiteral("uri")).toString();
     preview->showVersion(earlier);
-    QCOMPARE(preview->showingVersion(), QStringLiteral("v1"));
+    QVERIFY(waitFor([preview] { return preview->showingVersion() == QStringLiteral("v1"); }));
     QCOMPARE(preview->currentUri(), QStringLiteral("mem://offering/report.txt"));
 
     preview->showVersion(QString());
+    QVERIFY(waitFor([preview] { return preview->showingVersion().isEmpty(); }));
     waitFor([preview] { return preview->viewer() != nullptr || !preview->isIdentifying(); });
-    QVERIFY(preview->showingVersion().isEmpty());
 
     auto* text = qobject_cast<TextPreviewController*>(preview->viewer());
     QVERIFY(text);
@@ -4206,14 +4254,19 @@ void TestPreview::everyViewerWorksOnAnEarlierVersion()
     m_app->previewFile(QStringLiteral("mem://offering/prices.csv"));
     auto* preview = qobject_cast<PreviewTabController*>(m_app->tabs()->currentController());
     QVERIFY(preview);
+    QVERIFY(settleOn(preview, QStringLiteral("mem://offering/prices.csv")));
     waitFor([preview] { return preview->viewer() != nullptr || !preview->isIdentifying(); });
     const QString viewerNow = preview->viewerName();
+    QVERIFY2(!viewerNow.isEmpty(), "the current file has to have a viewer before its earlier state can");
 
     QVERIFY(waitFor([preview] { return preview->hasOtherVersions(); }));
     preview->requestVersions();
     QVERIFY(waitFor([preview] { return preview->otherVersions().size() == 1; }));
 
     preview->showVersion(preview->otherVersions().first().toMap().value(QStringLiteral("uri")).toString());
+    // Settled on the state being shown, which is what tells the tab apart from
+    // the one it was a moment ago: the drive is asked on a task since MOLE-360.
+    QVERIFY(waitFor([preview] { return !preview->showingVersion().isEmpty(); }));
     waitFor([preview] { return preview->viewer() != nullptr || !preview->isIdentifying(); });
 
     QCOMPARE(preview->viewerName(), viewerNow);
@@ -4228,12 +4281,14 @@ void TestPreview::anEarlierVersionIsReadInPartsLikeAnyOtherFile()
     QVERIFY(preview);
 
     preview->open(QStringLiteral("mem://offering/big.txt"));
+    QVERIFY(settleOn(preview, QStringLiteral("mem://offering/big.txt")));
     waitFor([preview] { return preview->viewer() != nullptr || !preview->isIdentifying(); });
     QVERIFY(waitFor([preview] { return preview->hasOtherVersions(); }));
     preview->requestVersions();
     QVERIFY(waitFor([preview] { return preview->otherVersions().size() == 1; }));
 
     preview->showVersion(preview->otherVersions().first().toMap().value(QStringLiteral("uri")).toString());
+    QVERIFY(waitFor([preview] { return !preview->showingVersion().isEmpty(); }));
     waitFor([preview] { return preview->viewer() != nullptr || !preview->isIdentifying(); });
 
     auto* text = qobject_cast<TextPreviewController*>(preview->viewer());

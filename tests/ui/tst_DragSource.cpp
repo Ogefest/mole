@@ -47,6 +47,9 @@ private slots:
 
 private:
     DragSource* makeSource();
+    /// The rows as a listing would report them, for a drag that has to tell a
+    /// staged copy from a stale one without asking the drive.
+    QHash<QString, FileEntry> asTheListingSaysThey(const QList<VfsUri>& rows) const;
     int queuedSoFar() const { return static_cast<int>(m_tasks->tasks().size()); }
 
     std::unique_ptr<QTemporaryDir> m_dir;
@@ -109,6 +112,21 @@ void TestDragSource::cleanup()
     m_index.reset();
     m_drive.reset();
     m_dir.reset();
+}
+
+QHash<QString, FileEntry> TestDragSource::asTheListingSaysThey(const QList<VfsUri>& rows) const
+{
+    // What a pane would be showing. Since MOLE-360 a drag is told what the rows
+    // are rather than asking the drive itself -- the listing in front of the
+    // user is where a window gets a size and a date from, and asking the drive
+    // meant a stat() on the thread that draws. This stands in for that listing,
+    // and reads the drive on purpose: the test is the one place that may.
+    QHash<QString, FileEntry> known;
+    for (const VfsUri& row : rows) {
+        if (const Result<FileEntry> entry = m_drive->stat(row); entry.ok())
+            known.insert(row.toString(), entry.value());
+    }
+    return known;
 }
 
 DragSource* TestDragSource::makeSource()
@@ -293,11 +311,11 @@ void TestDragSource::theSecondDragCarriesTheFetchedCopyByteForByte()
     DragSource* source = makeSource();
     const VfsUri row = VfsUri::fromString(QStringLiteral("mem:///docs/manual.txt"));
 
-    source->start({ row });
+    source->start({ row }, asTheListingSaysThey({ row }));
     QVERIFY(waitFor([this] { return m_tasks->activeCount() == 0; }));
 
     QSignalSpy staging(source, &DragSource::staging);
-    source->start({ row });
+    source->start({ row }, asTheListingSaysThey({ row }));
 
     QCOMPARE(staging.count(), 0);
     QCOMPARE(m_handovers, 1);
@@ -339,13 +357,13 @@ void TestDragSource::theSecondDragOfAnUnchangedFileFetchesNothingAgain()
     DragSource* source = makeSource();
     const VfsUri row = VfsUri::fromString(QStringLiteral("mem:///docs/manual.txt"));
 
-    source->start({ row });
+    source->start({ row }, asTheListingSaysThey({ row }));
     QVERIFY(waitFor([this] { return m_tasks->activeCount() == 0; }));
     const int queued = queuedSoFar();
 
-    source->start({ row });
+    source->start({ row }, asTheListingSaysThey({ row }));
     QCOMPARE(m_handovers, 1);
-    source->start({ row });
+    source->start({ row }, asTheListingSaysThey({ row }));
     QCOMPARE(m_handovers, 2);
 
     // Dragging the same file twice fetches it once. Nothing else in here would
@@ -356,13 +374,14 @@ void TestDragSource::theSecondDragOfAnUnchangedFileFetchesNothingAgain()
     // Until the source moves on, and then the copy is not the file any more.
     m_drive->addFile(QStringLiteral("/docs/manual.txt"), QByteArray("rewritten, and longer than before"));
     QSignalSpy staging(source, &DragSource::staging);
-    source->start({ row });
+    // The listing has caught up, which is how a window notices at all.
+    source->start({ row }, asTheListingSaysThey({ row }));
     QCOMPARE(staging.count(), 1);
     QCOMPARE(m_handovers, 2);
     QCOMPARE(queuedSoFar(), queued + 1);
 
     QVERIFY(waitFor([this] { return m_tasks->activeCount() == 0; }));
-    source->start({ row });
+    source->start({ row }, asTheListingSaysThey({ row }));
     QCOMPARE(m_handovers, 3);
     QFile copy(m_urls.first().toLocalFile());
     QVERIFY(copy.open(QIODevice::ReadOnly));

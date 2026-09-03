@@ -10,6 +10,7 @@
 #include <QUrl>
 #include <QVariantList>
 
+#include <functional>
 #include <optional>
 
 namespace mole {
@@ -195,7 +196,19 @@ private:
     ///
     /// Mounts the wrapper internally, because a viewer reads by resolving a uri.
     /// The mount goes when the file being shown does -- see releaseMemberMount().
-    FileEntry singleCompressedMember(const FileEntry& entry);
+    /// Whether this file is worth opening as a container at all, asked of its
+    /// name and its mount and never of its bytes.
+    bool looksLikeASingleCompressedStream(const FileEntry& entry) const;
+    /// Opens the container on a task, mounts what it found, and then shows.
+    void lookInsideThenShow(const FileEntry& entry);
+    /// The rest of showContents(), once what is being shown is settled.
+    void showWhatIsThere();
+
+    /// Asks the drive about `target` and hands the answer to `then`, on this
+    /// thread. Calls `then` with a name-and-uri entry when the drive cannot say
+    /// or there is no drive at all -- which is what the direct stat() this
+    /// replaced did, minus the wait. See MOLE-360.
+    void askAbout(const VfsUri& target, std::function<void(const FileEntry&)> then);
     /// Unmounts the wrapper a substituted member was read through, if there is
     /// one. Called before every file change and on the way out, so a walk along a
     /// folder of `.gz` files leaves nothing behind.
@@ -223,6 +236,10 @@ private:
     /// facts.
     FileEntry m_showing;
     /// The internal mount a substituted member is read through, or empty.
+    /// The container being opened, cancelled when another file is shown first.
+    QPointer<Task> m_lookInside;
+    /// The stat in flight, cancelled when another file is opened first.
+    QPointer<Task> m_statPending;
     QString m_memberMountId;
     /// Who to give it back to. Held as a QPointer and not as the raw pointer in
     /// PluginServices because an application shutting down destroys the manager

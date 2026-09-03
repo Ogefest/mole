@@ -9,10 +9,12 @@
 #include "core/tasks/ListDirectoryTask.h"
 #include "core/tasks/QueryFileActionsTask.h"
 #include "core/tasks/ReadRangeTask.h"
+#include "core/tasks/StatTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/VfsManager.h"
 
 #include <QClipboard>
+#include <QFileInfo>
 #include <QGuiApplication>
 
 #include <algorithm>
@@ -83,19 +85,50 @@ void PreviewTabController::open(const QString& uri)
         return;
     }
 
-    // stat() is on a worker thread everywhere else, but here the entry is
-    // usually already known and the neighbours load asynchronously anyway.
-    Result<FileEntry> stat = fs->stat(target);
-    FileEntry entry;
-    if (stat.ok()) {
-        entry = stat.value();
-    } else {
-        entry.name = target.fileName();
-        entry.uri = target;
+    // On a task. The comment that used to be here said the entry was "usually
+    // already known", which is true of a local disk and of nothing else: on a
+    // share that has stopped answering, stat() blocks for as long as the mount
+    // takes to give up, and this ran on the thread that draws for every F3. See
+    // ARCHITECTURE.md's first rule and MOLE-360.
+    //
+    // The name and the uri are enough to open the tab with, so the tab opens at
+    // once and fills in when the drive answers -- which is what every other slow
+    // step here already does. A drive that cannot say leaves the fallback
+    // standing, exactly as the direct call did.
+    setTitle(target.fileName());
+    askAbout(target, [this, target](const FileEntry& entry) {
+        showEntry(entry);
+        loadSiblings(target.parent(), target);
+    });
+}
+
+void PreviewTabController::askAbout(const VfsUri& target, std::function<void(const FileEntry&)> then)
+{
+    FileEntry fallback;
+    fallback.name = target.fileName();
+    fallback.uri = target;
+
+    FileSystemPtr fs = m_services.vfs ? m_services.vfs->resolve(target) : nullptr;
+    if (!fs || !m_services.tasks) {
+        then(fallback);
+        return;
     }
 
-    showEntry(entry);
-    loadSiblings(target.parent(), target);
+    // Cancelled when another file is opened before this one has answered, so a
+    // slow drive cannot deliver a stale entry over the file somebody has since
+    // moved on to.
+    if (m_statPending)
+        m_statPending->requestCancel();
+
+    auto* task = new StatTask(std::move(fs), target);
+    m_statPending = task;
+    connect(task, &StatTask::entryReady, this,
+        [this, task, fallback, then = std::move(then)](const VfsUri&, bool found, const FileEntry& entry) {
+            if (m_statPending == task)
+                m_statPending.clear();
+            then(found ? entry : fallback);
+        });
+    m_services.tasks->submit(task);
 }
 
 void PreviewTabController::showEntry(const FileEntry& entry)
@@ -147,9 +180,30 @@ void PreviewTabController::showContents(const FileEntry& entry)
     // A file compressed on its own is a wrapper, and what a reader wanted to see
     // is the member. Everything from here on asks about m_showing, which is the
     // member when there was one and the file itself otherwise.
+    //
+    // Finding out costs opening the container and listing it -- libarchive, on a
+    // file that may be a gzip whose length is only in its trailer, so listing it
+    // reads the whole thing. That ran on the thread that draws. It happens on a
+    // task now, and what follows is the rest of this function once the answer is
+    // in. See MOLE-360.
     m_showing = entry;
-    if (const FileEntry member = singleCompressedMember(entry); member.uri.isValid())
-        m_showing = member;
+    if (looksLikeASingleCompressedStream(entry)) {
+        lookInsideThenShow(entry);
+        return;
+    }
+    showWhatIsThere();
+}
+
+bool PreviewTabController::looksLikeASingleCompressedStream(const FileEntry& entry) const
+{
+    // The cheap tests, all of which are about the name and the mount rather than
+    // about the bytes: everything that needs the container opened is in the task.
+    return !entry.isDir && FileType::namesSingleCompressedStream(entry.name) && m_services.vfs
+        && m_services.tasks && !entry.uri.toLocalPath().isEmpty();
+}
+
+void PreviewTabController::showWhatIsThere()
+{
     setTitle(m_showing.name.isEmpty() ? QStringLiteral("Preview") : m_showing.name);
     // Worth persisting -- the session remembers which file a preview was on --
     // and it is how the shell learns this tab has moved to another drive.
@@ -258,23 +312,20 @@ void PreviewTabController::showVersion(const QString& uri)
     if (target == m_showing.uri)
         return;
 
-    FileEntry entry;
-    // stat() on this thread, for the reason open() gives about itself: it is one
-    // call about one file that the drive has just listed for us.
-    if (FileSystemPtr fs = m_services.vfs ? m_services.vfs->resolve(target) : nullptr) {
-        if (const Result<FileEntry> stat = fs->stat(target); stat.ok())
-            entry = stat.value();
-    }
-    if (!entry.uri.isValid()) {
-        entry.name = m_current.name;
-        entry.uri = target;
-    }
-
-    // Contents only. The tab goes on being about the file it is about, so the
-    // arrows still step through the folder and the session still records the
-    // file rather than a state of it that may not be there next time.
-    showContents(entry);
-    emit currentChanged();
+    // On a task, for the reason open() gives: one call about one file is still a
+    // call to storage. See MOLE-360.
+    askAbout(target, [this, target](const FileEntry& answered) {
+        FileEntry entry = answered;
+        if (!entry.uri.isValid() || entry.name.isEmpty()) {
+            entry.name = m_current.name;
+            entry.uri = target;
+        }
+        // Contents only. The tab goes on being about the file it is about, so the
+        // arrows still step through the folder and the session still records the
+        // file rather than a state of it that may not be there next time.
+        showContents(entry);
+        emit currentChanged();
+    });
 }
 
 void PreviewTabController::identifyThenShow()
@@ -313,22 +364,70 @@ void PreviewTabController::identifyThenShow()
     emit currentChanged();
 }
 
-FileEntry PreviewTabController::singleCompressedMember(const FileEntry& entry)
+namespace {
+
+    /// Opens a container and lists it, off the thread that draws.
+    ///
+    /// The work is libarchive's: a `.gz` keeps its uncompressed length in its
+    /// trailer, so listing one reads the whole file. That is a task's business
+    /// and not the window's -- and the mount that follows is added on the UI
+    /// thread by whoever asked, because a mount table is the shell's. See
+    /// MOLE-360.
+    class LookInsideTask final : public Task
+    {
+        Q_OBJECT
+
+    public:
+        LookInsideTask(IFileSystemFactory* opener, QString localPath, QObject* parent = nullptr)
+            : Task(QStringLiteral("Look inside %1").arg(QFileInfo(localPath).fileName()), parent)
+            , m_opener(opener)
+            , m_localPath(std::move(localPath))
+        {
+            setBackground(true);
+        }
+
+    signals:
+        /// Emitted on the UI thread, once. `inside` is null when there is nothing
+        /// to show: a container of many members, something this build cannot
+        /// open, or a `.gz` that is not gzip at all. All of those keep the
+        /// behaviour the file had before anybody looked.
+        void looked(mole::FileSystemPtr inside, mole::VfsUri root, mole::FileEntry member);
+
+    protected:
+        void run() override
+        {
+            if (!m_opener) {
+                emit looked(nullptr, VfsUri {}, FileEntry {});
+                return;
+            }
+
+            QString error;
+            FileSystemPtr inside = m_opener->create(m_opener->configForFile(m_localPath), &error);
+            if (!inside) {
+                emit looked(nullptr, VfsUri {}, FileEntry {});
+                return;
+            }
+
+            const VfsUri root = m_opener->rootUriForFile(m_localPath);
+            const Result<FileEntryList> listed = inside->list(root, cancelToken());
+            // Exactly one member, and a file: anything else is a container, or a
+            // `.gz` that is not gzip at all, and both keep today's behaviour.
+            if (!listed.ok() || listed.value().size() != 1 || listed.value().first().isDir) {
+                emit looked(nullptr, VfsUri {}, FileEntry {});
+                return;
+            }
+            emit looked(std::move(inside), root, listed.value().first());
+        }
+
+    private:
+        IFileSystemFactory* m_opener = nullptr;
+        QString m_localPath;
+    };
+
+} // namespace
+
+void PreviewTabController::lookInsideThenShow(const FileEntry& entry)
 {
-    // The cheap test first, and it is also the one that keeps a tarball out: a
-    // container has many members and F3 on it goes on doing what it always did.
-    // Confirming one member costs a header read, so it must not be run on
-    // something the name has already ruled out.
-    if (entry.isDir || !FileType::namesSingleCompressedStream(entry.name))
-        return {};
-    if (!m_services.vfs)
-        return {};
-
-    // Only a local file, which is the same limit opening one as a drive has.
-    const QString localPath = entry.uri.toLocalPath();
-    if (localPath.isEmpty())
-        return {};
-
     // Whichever backend claims this kind of file, which is a plugin's business
     // and not this one's. A build without the archive plugin has no factory that
     // does, and then this whole feature is quietly absent rather than broken.
@@ -340,35 +439,45 @@ FileEntry PreviewTabController::singleCompressedMember(const FileEntry& entry)
             break;
         }
     }
-    if (!opener)
-        return {};
+    if (!opener) {
+        showWhatIsThere();
+        return;
+    }
 
-    QString error;
-    FileSystemPtr inside = opener->create(opener->configForFile(localPath), &error);
-    if (!inside)
-        return {}; // corrupt, encrypted, or nothing this build can open
+    if (m_lookInside)
+        m_lookInside->requestCancel();
 
-    const VfsUri root = opener->rootUriForFile(localPath);
-    const Result<FileEntryList> listed = inside->list(root, CancelToken {});
-    // Exactly one member, and a file: anything else is a container, or a `.gz`
-    // that is not gzip at all, and both keep today's behaviour.
-    if (!listed.ok() || listed.value().size() != 1 || listed.value().first().isDir)
-        return {};
+    auto* task = new LookInsideTask(opener, entry.uri.toLocalPath());
+    m_lookInside = task;
+    connect(task, &LookInsideTask::looked, this,
+        [this, task, entry](FileSystemPtr inside, const VfsUri& root, const FileEntry& member) {
+            if (m_lookInside == task)
+                m_lookInside.clear();
+            // The file may have changed under this while the container was being
+            // read; then the answer is about a file nobody is looking at.
+            if (m_showing.uri != entry.uri)
+                return;
 
-    // A viewer reads by resolving a uri, so the wrapper has to be mounted -- and
-    // it must not become a drive in the sidebar for the length of a preview.
-    Mount mount;
-    mount.id = QStringLiteral("preview-member:") + root.authority();
-    mount.displayName = entry.name;
-    mount.root = root;
-    mount.fileSystem = std::move(inside);
-    mount.internal = true;
-    m_memberMountId = m_services.vfs->addMount(mount);
-    if (m_memberMountId.isEmpty())
-        return {};
-    m_memberMountOwner = m_services.vfs;
-
-    return listed.value().first();
+            if (inside) {
+                // A viewer reads by resolving a uri, so the wrapper has to be
+                // mounted -- and it must not become a drive in the sidebar for
+                // the length of a preview. Added here, on the thread that owns
+                // the mount table.
+                Mount mount;
+                mount.id = QStringLiteral("preview-member:") + root.authority();
+                mount.displayName = entry.name;
+                mount.root = root;
+                mount.fileSystem = std::move(inside);
+                mount.internal = true;
+                m_memberMountId = m_services.vfs->addMount(mount);
+                if (!m_memberMountId.isEmpty()) {
+                    m_memberMountOwner = m_services.vfs;
+                    m_showing = member;
+                }
+            }
+            showWhatIsThere();
+        });
+    m_services.tasks->submit(task);
 }
 
 void PreviewTabController::releaseMemberMount()
@@ -747,3 +856,7 @@ FeatureController* PreviewFeature::createController(QObject* parent)
 }
 
 } // namespace mole
+
+// The task above declares Q_OBJECT in this file, the way IndexSummary's helper
+// does: a class nothing outside this feature has any use for stays in it.
+#include "PreviewFeature.moc"

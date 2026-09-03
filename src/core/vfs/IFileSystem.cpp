@@ -2,7 +2,37 @@
 
 #include "core/diagnostics/Diagnostics.h"
 
+#include <atomic>
+
 namespace mole {
+
+namespace {
+
+    /// The thread the interface draws on, or null when nothing is guarding.
+    ///
+    /// A plain atomic pointer, and never dereferenced: it is compared with the
+    /// current thread and nothing else, so a thread that has ended cannot be
+    /// followed.
+    std::atomic<QThread*> theDrawingThread { nullptr };
+
+} // namespace
+
+void IFileSystem::doNotCallFrom(QThread* thread)
+{
+    theDrawingThread.store(thread);
+}
+
+void IFileSystem::checkNotOnTheDrawingThread(const char* what)
+{
+    if (theDrawingThread.load() != QThread::currentThread())
+        return;
+    // Not qCWarning: this is a programming fault rather than an operational
+    // fact, and it should be visible without anybody turning a category on --
+    // the same choice IndexDatabase makes about the same kind of mistake.
+    qWarning("Drive call on the thread that draws the window: %s. Ask through a task -- "
+             "see ARCHITECTURE.md and MOLE-360.",
+        what);
+}
 
 Result<void> IFileSystem::notSupported(const char* what)
 {

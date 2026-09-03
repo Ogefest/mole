@@ -44,6 +44,16 @@ VfsUri MemoryFileSystem::uriFor(const QString& path) const
     return VfsUri(QStringLiteral("mem"), QString(), path);
 }
 
+void MemoryFileSystem::waitAsASlowDriveWould() const
+{
+    // In steps, so a cancelled operation does not have to sit out the whole of
+    // it -- and read once: the value is set before a case starts and not while
+    // one is running.
+    const int total = m_operationDelayMs;
+    for (int slept = 0; slept < total; slept += 10)
+        QThread::msleep(10);
+}
+
 Result<void> MemoryFileSystem::faultFor(const QString& path) const
 {
     const auto it = m_faults.constFind(path);
@@ -177,6 +187,8 @@ Result<QStringList> MemoryFileSystem::askWhatIsOffered(const VfsUri&, const Canc
 
 Result<FileEntryList> MemoryFileSystem::list(const VfsUri& dir, const CancelToken& cancel)
 {
+    checkNotOnTheDrawingThread("list");
+    waitAsASlowDriveWould();
     if (m_listDelayMs > 0) {
         // Chunked so a cancelled task does not have to wait out the full delay.
         for (int slept = 0; slept < m_listDelayMs && !cancel.isCancelled(); slept += 10)
@@ -228,6 +240,8 @@ Result<FileEntryList> MemoryFileSystem::list(const VfsUri& dir, const CancelToke
 
 Result<FileEntry> MemoryFileSystem::stat(const VfsUri& target)
 {
+    checkNotOnTheDrawingThread("stat");
+    waitAsASlowDriveWould();
     QMutexLocker lock(&m_mutex);
     // The stored spelling, not the one asked for: a case-insensitive volume
     // finds the file however it is typed and then reports the name it holds.
@@ -258,6 +272,8 @@ Result<FileEntry> MemoryFileSystem::stat(const VfsUri& target)
 
 Result<void> MemoryFileSystem::makeDirectory(const VfsUri& target)
 {
+    checkNotOnTheDrawingThread("makeDirectory");
+    waitAsASlowDriveWould();
     {
         QMutexLocker lock(&m_mutex);
         if (Result<void> fault = faultFor(target.path()); !fault.ok())
@@ -272,6 +288,8 @@ Result<void> MemoryFileSystem::makeDirectory(const VfsUri& target)
 
 Result<void> MemoryFileSystem::remove(const VfsUri& target, bool recursive)
 {
+    checkNotOnTheDrawingThread("remove");
+    waitAsASlowDriveWould();
     QMutexLocker lock(&m_mutex);
     const QString path = resolve(target.path());
     if (Result<void> fault = faultFor(path); !fault.ok())
@@ -306,6 +324,8 @@ Result<void> MemoryFileSystem::remove(const VfsUri& target, bool recursive)
 
 Result<void> MemoryFileSystem::rename(const VfsUri& from, const VfsUri& to)
 {
+    checkNotOnTheDrawingThread("rename");
+    waitAsASlowDriveWould();
     QMutexLocker lock(&m_mutex);
     const QString src = resolve(from.path());
     const QString dst = to.path();
@@ -376,6 +396,8 @@ namespace {
 
 Result<std::unique_ptr<QIODevice>> MemoryFileSystem::openRead(const VfsUri& target, qint64)
 {
+    checkNotOnTheDrawingThread("openRead");
+    waitAsASlowDriveWould();
     // Slept before the lock is taken, so a delayed read does not block every
     // other caller of this drive for the duration.
     if (m_readDelayMs > 0)
@@ -454,6 +476,8 @@ namespace {
 
 Result<std::unique_ptr<QIODevice>> MemoryFileSystem::openWrite(const VfsUri& target, qint64)
 {
+    checkNotOnTheDrawingThread("openWrite");
+    waitAsASlowDriveWould();
     // A stack-allocated MemoryFileSystem has no owning shared_ptr, and a device
     // that outlives its filesystem would be a dangling write.
     std::weak_ptr<MemoryFileSystem> owner = weak_from_this();

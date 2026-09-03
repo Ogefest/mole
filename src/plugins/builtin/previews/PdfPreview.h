@@ -10,6 +10,7 @@
 #include <memory>
 
 #ifdef MOLE_HAVE_QTPDF
+#include "plugins/builtin/previews/OpenPdfDocumentTask.h"
 #include "plugins/builtin/previews/RenderPdfPageTask.h"
 
 #include <QPdfDocument>
@@ -90,6 +91,8 @@ signals:
 
 private:
     void openLocalFile(const QString& path);
+    /// What the open found, once the task has read it.
+    void documentOpened(const OpenPdfDocumentTask::Contents& contents);
     /// Queues `page` at `width` unless it is already asked for, and starts it if
     /// nothing else is rendering.
     void requestRender(int page, int width);
@@ -114,7 +117,13 @@ private:
 
     PluginServices m_services;
     std::unique_ptr<LocalCopyProvider> m_copy;
-    std::unique_ptr<QPdfDocument> m_document;
+    /// One entry per page, in points, as the open recorded them -- and no
+    /// document at all. QPdfDocument is not documented as thread-safe and the
+    /// renders open their own; holding one here to read page sizes off while a
+    /// render read another was a race waiting to be noticed. See MOLE-360.
+    QList<QSizeF> m_pageSizes;
+    /// The document's own title, empty when it has none.
+    QString m_title;
     /// Where rendered pages go. One directory per preview, gone when it closes --
     /// or when the last render writing into it finishes, whichever is later, which
     /// is why this is shared rather than owned outright. See MOLE-290 for the fault

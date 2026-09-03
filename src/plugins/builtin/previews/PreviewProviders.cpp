@@ -1,5 +1,7 @@
 #include "plugins/builtin/previews/PreviewProviders.h"
 
+#include "plugins/builtin/previews/ReadImageHeaderTask.h"
+
 #include "core/platform/Staging.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/VfsManager.h"
@@ -1161,13 +1163,17 @@ PreviewController* HexPreviewProvider::createController(QObject* parent)
 ImagePreviewController::ImagePreviewController(PluginServices services, QObject* parent)
     : PreviewController(parent)
     , m_copy(new LocalCopyProvider(services, this))
+    , m_services(services)
 {
     connect(m_copy, &LocalCopyProvider::ready, this, [this](const QString& url) {
         setLoading(false);
         m_source = url;
         emit sourceChanged();
-        // Before the view has a source, so the button is already right the first
-        // time it is drawn rather than being corrected after a failed attempt.
+        // Asked before the view has a source, so the button is right the first
+        // time it is drawn rather than being corrected after a failed attempt --
+        // and asked on a task, because reading the header is a parse of the whole
+        // document for an SVG and the path may be a kernel-mounted share. See
+        // MOLE-360.
         examineHeader(QUrl(url).toLocalFile());
     });
     connect(m_copy, &LocalCopyProvider::failed, this, [this](const QString& reason) {
@@ -1190,12 +1196,30 @@ void ImagePreviewController::load(const FileEntry& entry)
 
 void ImagePreviewController::examineHeader(const QString& path)
 {
-    // The header and nothing else: QImageReader::size() is read out of it
-    // without decoding a pixel, and allocationLimit() is what this build of Qt
-    // will let a handler allocate. The file is already on local disk by the time
-    // this runs, so it costs an open and a few dozen bytes.
-    QImageReader reader(path);
-    const QSize pixels = reader.size();
+    // The header and nothing else -- QImageReader::size() decodes no pixels --
+    // but "nothing else" is a JPEG's few dozen bytes and an SVG's entire
+    // document, and the file may be a kernel-mounted share. So the read is a
+    // task and the answer arrives at judgeHeader(). See MOLE-360.
+    if (!m_services.tasks) {
+        // No task manager is a test or a headless tool. Then 1:1 stays offered,
+        // and an attempt that fails is caught where it fails.
+        return;
+    }
+    if (m_header)
+        m_header->requestCancel();
+
+    auto* task = new ReadImageHeaderTask(path);
+    m_header = task;
+    connect(task, &ReadImageHeaderTask::headerRead, this, [this, task](QSize pixels, int bitsPerPixel) {
+        if (m_header == task)
+            m_header.clear();
+        judgeHeader(pixels, bitsPerPixel);
+    });
+    m_services.tasks->submit(task);
+}
+
+void ImagePreviewController::judgeHeader(QSize pixels, int bitsPerPixel)
+{
     const int limitMiB = QImageReader::allocationLimit();
 
     // A handler that will not say how large the image is, or a build with the
@@ -1204,15 +1228,7 @@ void ImagePreviewController::examineHeader(const QString& path)
     if (!pixels.isValid() || limitMiB <= 0)
         return;
 
-    // What the decode would ask for, in the format the handler says it would
-    // produce. One that will not say is assumed to want the widest, because
-    // guessing low here is what shows an empty frame.
-    int bits = 32;
-    const QImage::Format format = reader.imageFormat();
-    if (format != QImage::Format_Invalid)
-        bits = qMax(1, int(QImage::toPixelFormat(format).bitsPerPixel()));
-
-    const qint64 bytes = qint64(pixels.width()) * pixels.height() * bits / 8;
+    const qint64 bytes = qint64(pixels.width()) * pixels.height() * bitsPerPixel / 8;
     if (bytes <= qint64(limitMiB) * 1024 * 1024)
         return;
 

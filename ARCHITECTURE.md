@@ -49,6 +49,18 @@ plumbing at all.
 `Task` object itself lives on the UI thread and marshals progress back through
 queued invocations. Subclasses touch only their own private data inside `run()`.
 
+**And the rule is enforced rather than remembered.** `IFileSystem::doNotCallFrom()`
+names the thread that draws, and a drive call arriving from it warns — the same
+mechanism `IndexDatabase` has had since [ADR-0066](docs/adr/0066-the-interface-reads-the-index-from-a-snapshot.md),
+and for the same reason: seven places were breaking this rule at once (MOLE-360),
+none of them visible on a local disk, and a list somebody maintains is not a rule.
+It warns rather than refusing, because the answer such a call gives is correct and
+turning a slow window into a broken one is not an improvement.
+`tests/app/tst_DrivesOffTheDrawingThread.cpp` walks the interface's routes and holds
+them to silence — and measures the other half with a drive that takes its time,
+because a gesture that costs a second on a drive that costs a second is a gesture
+made on the wrong thread.
+
 Two consequences worth remembering:
 
 - `QSqlDatabase` connections belong to the thread that opened them, so

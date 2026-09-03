@@ -400,6 +400,7 @@ Result<AccessInfo> LocalFileSystem::access(const VfsUri& target)
 
 Result<FileEntryList> LocalFileSystem::list(const VfsUri& dir, const CancelToken& cancel)
 {
+    checkNotOnTheDrawingThread("list");
     const QString path = localPathFor(dir);
     if (path.isEmpty())
         return VfsError::make(VfsError::NotSupported, QStringLiteral("Not a local uri"));
@@ -447,6 +448,7 @@ Result<FileEntryList> LocalFileSystem::list(const VfsUri& dir, const CancelToken
 
 Result<FileEntry> LocalFileSystem::stat(const VfsUri& target)
 {
+    checkNotOnTheDrawingThread("stat");
     const QString path = localPathFor(target);
     if (path.isEmpty())
         return VfsError::make(VfsError::NotSupported, QStringLiteral("Not a local uri"));
@@ -460,6 +462,7 @@ Result<FileEntry> LocalFileSystem::stat(const VfsUri& target)
 
 Result<void> LocalFileSystem::makeDirectory(const VfsUri& target)
 {
+    checkNotOnTheDrawingThread("makeDirectory");
     if (Result<void> older = refuseWritingToAVersion(target); !older.ok())
         return older;
     const QString path = target.toLocalPath();
@@ -474,6 +477,7 @@ Result<void> LocalFileSystem::makeDirectory(const VfsUri& target)
 
 Result<void> LocalFileSystem::remove(const VfsUri& target, bool recursive)
 {
+    checkNotOnTheDrawingThread("remove");
     if (Result<void> older = refuseWritingToAVersion(target); !older.ok())
         return older;
     const QString path = target.toLocalPath();
@@ -516,6 +520,7 @@ Result<void> LocalFileSystem::remove(const VfsUri& target, bool recursive)
 
 Result<void> LocalFileSystem::rename(const VfsUri& from, const VfsUri& to)
 {
+    checkNotOnTheDrawingThread("rename");
     if (Result<void> older = refuseWritingToAVersion(from); !older.ok())
         return older;
     if (Result<void> older = refuseWritingToAVersion(to); !older.ok())
@@ -584,6 +589,7 @@ Result<void> LocalFileSystem::replace(const VfsUri& from, const VfsUri& to)
 
 Result<std::unique_ptr<QIODevice>> LocalFileSystem::openRead(const VfsUri& target, qint64)
 {
+    checkNotOnTheDrawingThread("openRead");
     const QString path = localPathFor(target);
 
     // Not everything with a name is a stream of bytes. Opening a named pipe for
@@ -606,6 +612,7 @@ Result<std::unique_ptr<QIODevice>> LocalFileSystem::openRead(const VfsUri& targe
 
 Result<std::unique_ptr<QIODevice>> LocalFileSystem::openWrite(const VfsUri& target, qint64)
 {
+    checkNotOnTheDrawingThread("openWrite");
     if (Result<void> older = refuseWritingToAVersion(target); !older.ok())
         return older.error();
 

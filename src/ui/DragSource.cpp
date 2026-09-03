@@ -41,47 +41,48 @@ QString DragSource::stagedPathFor(const VfsUri& uri)
     return QDir(m_scratch->path()).filePath(relative);
 }
 
-bool DragSource::stagedCopyIsFresh(const VfsUri& source) const
+bool DragSource::stagedCopyIsFresh(const VfsUri& source, const QHash<QString, FileEntry>& known) const
 {
-    const Staged known = m_staged.value(source.toString());
-    if (known.path.isEmpty())
+    const Staged staged = m_staged.value(source.toString());
+    if (staged.path.isEmpty())
         return false;
 
-    const QFileInfo staged(known.path);
-    if (!staged.exists())
+    const QFileInfo copy(staged.path);
+    if (!copy.exists())
         return false;
-    if (known.size < 0)
-        return staged.isDir();
+    if (staged.size < 0)
+        return copy.isDir();
 
-    // The source, as it is now. One stat, and only on a drag that already has a
-    // copy to reuse -- the first drag of a row never pays for it.
-    FileSystemPtr fs = m_services.isValid() ? m_services.vfs->resolve(source) : nullptr;
-    if (!fs)
+    // What the listing says the source is *now*, rather than what the drive says.
+    //
+    // This used to be a stat() from the thread that draws, on every drag of a row
+    // that already had a copy -- so a share that had stopped answering froze the
+    // window at the moment somebody picked a file up. The rows in front of the
+    // user came from a listing, and a drag is not required to be more up to date
+    // than the folder it is dragging out of. Nothing known means nothing to
+    // compare, and then the copy is fetched again rather than trusted. See
+    // MOLE-360.
+    const auto it = known.constFind(source.toString());
+    if (it == known.constEnd() || !it->modified.isValid())
         return false;
-    const Result<FileEntry> now = fs->stat(source);
-    if (!now.ok())
-        return false;
-    return now.value().size == known.size && now.value().modified == known.modified;
+    return it->size == staged.size && it->modified == staged.modified;
 }
 
-void DragSource::remember(const VfsUri& source, const QString& stagedPath)
+void DragSource::remember(const VfsUri& source, const QString& stagedPath, const FileEntry& known)
 {
     Staged staged;
     staged.path = stagedPath;
 
-    FileSystemPtr fs = m_services.isValid() ? m_services.vfs->resolve(source) : nullptr;
-    if (fs) {
-        const Result<FileEntry> entry = fs->stat(source);
-        // A directory keeps the -1: what it looked like is a question about a tree.
-        if (entry.ok() && !entry.value().isDir) {
-            staged.size = entry.value().size;
-            staged.modified = entry.value().modified;
-        }
+    // From the listing, for the reason above -- and a directory keeps the -1:
+    // what a tree looked like is a question about the tree.
+    if (!known.isDir && known.modified.isValid()) {
+        staged.size = known.size;
+        staged.modified = known.modified;
     }
     m_staged.insert(source.toString(), staged);
 }
 
-void DragSource::stage(const QList<VfsUri>& rows)
+void DragSource::stage(const QList<VfsUri>& rows, const QHash<QString, FileEntry>& known)
 {
     if (!m_services.isValid()) {
         emit refused(QStringLiteral("Application services are not available"));
@@ -136,13 +137,13 @@ void DragSource::stage(const QList<VfsUri>& rows)
         request.onConflict = TransferTask::Conflict::Overwrite;
 
         auto* task = new TransferTask(request);
-        connect(task, &Task::finished, this, [this, task, sources] {
+        connect(task, &Task::finished, this, [this, task, sources, known] {
             if (!task->failures().isEmpty()) {
                 emit refused(task->failures().join(QLatin1String("; ")));
                 return;
             }
             for (const VfsUri& source : sources)
-                remember(source, stagedPathFor(source));
+                remember(source, stagedPathFor(source), known.value(source.toString()));
         });
 
         m_services.tasks->submit(task);
@@ -155,7 +156,7 @@ void DragSource::stage(const QList<VfsUri>& rows)
         emit refused(problems.join(QLatin1String("; ")));
 }
 
-void DragSource::start(const QList<VfsUri>& rows)
+void DragSource::start(const QList<VfsUri>& rows, const QHash<QString, FileEntry>& known)
 {
     if (rows.isEmpty()) {
         emit refused(QStringLiteral("Nothing is selected"));
@@ -176,7 +177,7 @@ void DragSource::start(const QList<VfsUri>& rows)
         }
 
         // Fetched by an earlier drag, and the source has not moved on since.
-        if (stagedCopyIsFresh(row)) {
+        if (stagedCopyIsFresh(row, known)) {
             urls.append(QUrl::fromLocalFile(m_staged.value(row.toString()).path));
             continue;
         }
@@ -196,7 +197,7 @@ void DragSource::start(const QList<VfsUri>& rows)
     // started once the button is up. So the gesture is answered with a task and a
     // sentence, and the next one carries the files.
     if (!toFetch.isEmpty()) {
-        stage(toFetch);
+        stage(toFetch, known);
         return;
     }
 

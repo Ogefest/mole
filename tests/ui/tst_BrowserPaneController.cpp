@@ -845,6 +845,10 @@ void TestBrowserPaneController::createDirectoryAnnouncesItself()
     QSignalSpy created(m_events, &EventBus::entryCreated);
     pane->createDirectory(QStringLiteral("brand-new"));
 
+    // On a task since MOLE-360 -- makeDirectory() goes to storage, and this used
+    // to make the call on the thread that draws -- so the answer is waited for
+    // on the announcement rather than assumed to have happened by now.
+    QVERIFY(created.wait(30000));
     QVERIFY(m_fs->stat(VfsUri::fromString(QStringLiteral("mem:///docs/brand-new"))).ok());
     // Announcing rather than refreshing directly is what makes a second pane
     // on the same folder notice.
@@ -852,6 +856,7 @@ void TestBrowserPaneController::createDirectoryAnnouncesItself()
 
     QSignalSpy failed(pane, &BrowserPaneController::operationFailed);
     pane->createDirectory(QStringLiteral("brand-new"));
+    QVERIFY2(failed.wait(30000), "a name already taken has to come back as a refusal");
     QCOMPARE(failed.count(), 1);
 
     pane->createDirectory(QStringLiteral("   "));
@@ -871,6 +876,8 @@ void TestBrowserPaneController::renameMovesTheEntry()
     QSignalSpy renamed(m_events, &EventBus::entryRenamed);
     pane->renameCurrent(QStringLiteral("renamed.txt"));
 
+    // On a task since MOLE-360, for the same reason as the folder above.
+    QVERIFY(renamed.wait(30000));
     QCOMPARE(renamed.count(), 1);
     QVERIFY(m_fs->stat(VfsUri::fromString(QStringLiteral("mem:///docs/renamed.txt"))).ok());
     QVERIFY(!m_fs->stat(VfsUri::fromString(QStringLiteral("mem:///docs/a.txt"))).ok());

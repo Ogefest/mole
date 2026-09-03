@@ -217,7 +217,12 @@ private:
     /// The viewer of an open preview, once there is one. A file whose name says
     /// nothing is identified from its first page before a viewer is chosen, so
     /// asking for the viewer in the same breath as opening the file is a race.
-    QObject* viewerOf(PreviewTabController* preview);
+    ///
+    /// `uri` is the file the tab was just pointed at, where the caller knows it.
+    /// Since MOLE-360 the drive is asked about a file on a task, so a tab that
+    /// already had one keeps its old viewer for a moment -- and handing that back
+    /// gives a test an object the tab is about to destroy under it.
+    QObject* viewerOf(PreviewTabController* preview, const QString& uri = {});
     /// Puts the cursor on a folder in the current listing and opens it with
     /// Return. Named rather than assumed: these tests used to press Return on
     /// whatever row 0 happened to be, which was "documents" only for as long as
@@ -518,10 +523,12 @@ PreviewTabController* TestWalkthrough::previewOf(const QString& relativePath)
     return qobject_cast<PreviewTabController*>(m_harness->app()->tabs()->currentController());
 }
 
-QObject* TestWalkthrough::viewerOf(PreviewTabController* preview)
+QObject* TestWalkthrough::viewerOf(PreviewTabController* preview, const QString& uri)
 {
     if (!preview)
         return nullptr;
+    if (!uri.isEmpty())
+        m_harness->until([preview, uri] { return preview->currentUri() == uri; });
     m_harness->until([preview] { return preview->viewer() != nullptr; });
     return preview->viewer();
 }
@@ -1022,12 +1029,13 @@ void TestWalkthrough::aFileOfJsonRecordsOpensAsAGridAndCanBeReadAsSource()
         QByteArray("{\"when\":\"09:12\",\"what\":\"opened\",\"who\":{\"id\":7}}\n"
                    "{\"when\":\"09:14\",\"what\":\"closed\",\"who\":{\"id\":7}}\n")));
 
-    m_harness->app()->previewFile(m_harness->fixtureUri() + QStringLiteral("/documents/events.jsonl"));
+    const QString jsonl = m_harness->fixtureUri() + QStringLiteral("/documents/events.jsonl");
+    m_harness->app()->previewFile(jsonl);
     auto* preview = qobject_cast<PreviewTabController*>(m_harness->app()->tabs()->currentController());
     QVERIFY(preview);
-    QCOMPARE(preview->providerId(), QStringLiteral("mole.preview.jsonlines"));
 
-    auto* viewer = qobject_cast<JsonLinesPreviewController*>(viewerOf(preview));
+    auto* viewer = qobject_cast<JsonLinesPreviewController*>(viewerOf(preview, jsonl));
+    QCOMPARE(preview->providerId(), QStringLiteral("mole.preview.jsonlines"));
     QVERIFY(viewer);
     QVERIFY(m_harness->until([viewer] { return viewer->table()->rowCount() == 2; }));
     m_harness->settle(8);
@@ -1102,7 +1110,8 @@ void TestWalkthrough::aSlowTableSaysSoAndThenFillsAsItReads()
     m_harness->app()->previewFile(QStringLiteral("mem://slowtable/export.csv"));
     auto* preview = qobject_cast<PreviewTabController*>(m_harness->app()->tabs()->currentController());
     QVERIFY(preview);
-    auto* table = qobject_cast<TablePreviewController*>(viewerOf(preview));
+    auto* table = qobject_cast<TablePreviewController*>(
+        viewerOf(preview, QStringLiteral("mem://slowtable/export.csv")));
     QVERIFY(table);
 
     // Both panes of a preview exist even when one is hidden, so the visible one
@@ -1403,12 +1412,13 @@ void TestWalkthrough::aPdfOpensAsPages()
         painter.drawText(QRect(0, 0, 6000, 1000), Qt::AlignCenter, QStringLiteral("Page two"));
     }
 
-    m_harness->app()->previewFile(m_harness->fixtureUri() + QStringLiteral("/manual.pdf"));
+    const QString pdf = m_harness->fixtureUri() + QStringLiteral("/manual.pdf");
+    m_harness->app()->previewFile(pdf);
     auto* preview = qobject_cast<PreviewTabController*>(m_harness->app()->tabs()->currentController());
     QVERIFY(preview);
-    QCOMPARE(preview->viewerName(), QStringLiteral("Document"));
 
-    auto* viewer = qobject_cast<PdfPreviewController*>(viewerOf(preview));
+    auto* viewer = qobject_cast<PdfPreviewController*>(viewerOf(preview, pdf));
+    QCOMPARE(preview->viewerName(), QStringLiteral("Document"));
     QVERIFY(viewer);
     QVERIFY(m_harness->until([viewer] { return viewer->pageCount() == 2; }, 10000));
     m_harness->settle(10);
