@@ -667,6 +667,22 @@ void AppController::mountDefaultDrives()
 
     // Then whatever the operating system has mounted -- the real disks, USB
     // sticks and network shares, not the sixty pseudo filesystems next to them.
+    //
+    // Asked here, on the startup path, and that is now safe where it was not:
+    // enumerate() reads the mount table as text and touches none of the
+    // filesystems in it. It used to construct a QStorageInfo per entry -- a
+    // statvfs apiece, including on the mount that had stopped answering -- so
+    // one stale share meant Mole starting with no window and no message for as
+    // long as the kernel took. Twenty-four lines above recordStartup(), whose
+    // comment says a synchronous storage read does not belong here. See
+    // MOLE-361.
+    //
+    // A task was tried instead and taken out again: mounting the drives as the
+    // answer arrived left eleven suites failing or timing out, because a drive
+    // list that is empty for the first instant of a run is a different
+    // application from the one they were written against -- and the benefit
+    // would only reach the platforms without a mount table, which are the ones
+    // this checkout cannot measure. TODO.md records that half.
     for (const SystemVolume& volume : SystemVolumes::enumerate()) {
         // The volume carrying home is in that list now, and it was not before:
         // on a machine where /home is its own dataset it is a real disk holding

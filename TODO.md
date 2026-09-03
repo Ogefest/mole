@@ -29,6 +29,22 @@ project, and a contributor should never hit a wall of text they cannot read.
 
 ## Notes
 
+- **Finding the drives is a text read on Linux and a `statvfs` per mount
+  everywhere else, and the second of those can still hang a start-up.**
+  `SystemVolumes::enumerate()` reads `/proc/self/mounts`, which touches none of the
+  filesystems it lists, so a stale NFS or SMB mount cannot stall Mole here any more
+  (MOLE-361). Where there is no such table -- macOS, Windows -- the answer still
+  comes from `QStorageInfo::mountedVolumes()`, which constructs one `QStorageInfo`
+  per entry, and each of those is a `statvfs` that blocks for the kernel's timeout
+  on a mount that has stopped answering.
+  **What it would take:** the platform's own call (`getmntinfo` on macOS,
+  `GetLogicalDriveStrings` plus `GetVolumeInformation` on Windows), or the whole
+  enumeration on a task. The task was tried and taken out again: mounting the
+  drives as the answer arrived left eleven suites failing or timing out, because a
+  drive list that is empty for the first instant of a run is a different
+  application from the one they were written against. Neither half can be measured
+  from this checkout -- see `needs-windows` in CLAUDE.md and MOLE-253.
+
 - **Two names for one inode are still reported as duplicates of each other, and
   the "could be freed" of such a group is a fiction.** A duplicate scan now leaves
   symbolic links out and never compares a file with itself (MOLE-341), but a *hard*

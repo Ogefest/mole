@@ -8,11 +8,13 @@
 #include "core/tasks/QuerySpaceTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/RemoteRegistry.h"
+#include "core/vfs/SystemVolumes.h"
 #include "core/vfs/backends/LocalFileSystem.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
 #include <QAbstractItemModelTester>
 #include <QDir>
+#include <QScopeGuard>
 #include <QSemaphore>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -99,6 +101,7 @@ private slots:
     void hidingEverythingLeavesNothingToShow();
     void aMountNobodyConfiguredIsIdleLikeAnythingNobodyIsUsing();
 
+    void theMountTableIsReadOncePerRebuildAndNotOncePerRow();
     void aDriveIsConnectingUntilSomethingHasActuallyAsked();
     void aDriveThatCannotBeReachedKeepsItsMountAndSaysWhy();
     void aFailedOperationMovesAConnectedDriveToUnreachable();
@@ -474,6 +477,72 @@ void TestDriveListModel::aMountNobodyConfiguredIsIdleLikeAnythingNobodyIsUsing()
 /// off is mounted exactly as successfully as one that works. A dot that means
 /// "we have an object" while looking like it means "the server answered" is
 /// worse than no dot, because it is believed.
+/// The mount table, once.
+///
+/// keyFor() needs the device behind a detected volume, and it enumerated the
+/// system's volumes to find it -- reached from isShown(), from data() for two
+/// roles and from every rebuild, so once per row per read. Each enumeration was
+/// a QStorageInfo per entry in the mount table, which is a statvfs apiece, so a
+/// sidebar of eight rows on a machine with sixty mounts was hundreds of statvfs
+/// calls on the thread that draws -- and one of them on a mount that has stopped
+/// answering blocks for the kernel's timeout. See MOLE-361.
+void TestDriveListModel::theMountTableIsReadOncePerRebuildAndNotOncePerRow()
+{
+    int asked = 0;
+    // A machine of this test's own, so the count means something wherever this
+    // runs -- and one of them a network mount, which is the entry that hangs.
+    SystemVolumes::setEnumerator([&asked] {
+        ++asked;
+        QList<SystemVolume> volumes;
+        SystemVolume root;
+        root.name = QStringLiteral("Root");
+        root.rootPath = QStringLiteral("/");
+        root.device = QStringLiteral("/dev/sda2");
+        root.isRoot = true;
+        volumes.append(root);
+        SystemVolume share;
+        share.name = QStringLiteral("nas");
+        share.rootPath = QStringLiteral("/mnt/nas");
+        share.device = QStringLiteral("fileserver:/export");
+        share.fileSystemType = QStringLiteral("nfs4");
+        volumes.append(share);
+        return volumes;
+    });
+    const auto restore = qScopeGuard([] { SystemVolumes::setEnumerator(nullptr); });
+
+    // A rebuild -- which is what mounting something is -- and then every row
+    // read the way a view reads it.
+    Mount local;
+    local.id = QStringLiteral("root");
+    local.displayName = QStringLiteral("Root");
+    local.root = VfsUri::fromLocalPath(QStringLiteral("/"));
+    local.fileSystem = std::make_shared<LocalFileSystem>();
+    m_vfs->addMount(local);
+    QVERIFY(m_model->rowCount() > 0);
+    asked = 0;
+
+    for (int row = 0; row < m_model->rowCount(); ++row) {
+        const QModelIndex at = m_model->index(row, 0);
+        QVERIFY(!m_model->data(at, DriveListModel::VisibilityKeyRole).toString().isEmpty());
+        m_model->data(at, DriveListModel::ShownRole);
+        m_model->data(at, DriveListModel::DisplayNameRole);
+    }
+    QCOMPARE(m_model->shownCount(), m_model->rowCount());
+
+    QVERIFY2(asked == 0,
+        qPrintable(QStringLiteral("reading the rows asked the operating system %1 times").arg(asked)));
+
+    // And a rebuild asks once, because a stick that has just been plugged in has
+    // to be found somewhere.
+    Mount second;
+    second.id = QStringLiteral("scratch");
+    second.displayName = QStringLiteral("Scratch");
+    second.root = VfsUri::fromString(QStringLiteral("mem:///"));
+    second.fileSystem = std::make_shared<MemoryFileSystem>();
+    m_vfs->addMount(second);
+    QCOMPARE(asked, 1);
+}
+
 void TestDriveListModel::aDriveIsConnectingUntilSomethingHasActuallyAsked()
 {
     const QString id = configure(QStringLiteral("Office NAS"));

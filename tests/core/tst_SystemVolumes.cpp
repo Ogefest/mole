@@ -33,6 +33,8 @@ private slots:
     void aDiskOutsideEveryConventionIsStillADisk_data();
     void aDiskOutsideEveryConventionIsStillADisk();
     void networkSharesAreDrivesWhereverTheyAreMounted();
+    void aMountTableIsReadWithoutTouchingAnyOfTheFilesystemsInIt();
+    void nothingIsAskedAboutCapacityWhileTheDrivesAreBeingFound();
     void aNameIsNeverEmpty();
 };
 
@@ -280,6 +282,98 @@ void TestSystemVolumes::aNameIsNeverEmpty()
         QVERIFY(!SystemVolumes::displayName(
             QStringLiteral("/some/mount"), none, QStringLiteral("/dev/sdz1"), platform)
                      .isEmpty());
+    }
+}
+
+/// The table, read as text -- which is the whole of the fix.
+///
+/// The list used to come from QStorageInfo::mountedVolumes(), which constructs
+/// one QStorageInfo per entry, and every one of those is a statvfs. On the mount
+/// that has stopped answering -- the stale NFS or SMB mount the network plugin
+/// exists so nobody needs -- a statvfs blocks for the kernel's timeout. So Mole
+/// hung at startup with no window and no message, and again on every sidebar
+/// refresh. Reading the table tells us everything the sidebar needs and touches
+/// none of the filesystems in it. See MOLE-361.
+///
+/// The fixture is a machine nobody here has: a ZFS root whose device is a
+/// dataset, a mount point with a space in its name, a snap loopback, and the
+/// dead share.
+void TestSystemVolumes::aMountTableIsReadWithoutTouchingAnyOfTheFilesystemsInIt()
+{
+    const QByteArray table = "rpool/ROOT/ubuntu / zfs rw,relatime,xattr 0 0\n"
+                             "/dev/nvme0n1p1 /boot/efi vfat ro,relatime,fmask=0077 0 0\n"
+                             "/dev/sdb1 /media/alice/My\\040Backup ext4 rw,relatime 0 0\n"
+                             "/dev/loop14 /snap/firefox/4793 squashfs ro,nodev,relatime 0 0\n"
+                             "fileserver:/export /mnt/nas nfs4 rw,relatime,hard 0 0\n"
+                             "tmpfs /run/user/1000 tmpfs rw,nosuid,nodev,size=3223996k 0 0\n";
+
+    const QList<SystemVolume> read = SystemVolumes::parseMountTable(table);
+    QCOMPARE(read.size(), 6);
+
+    QHash<QString, SystemVolume> byRoot;
+    for (const SystemVolume& volume : read)
+        byRoot.insert(volume.rootPath, volume);
+
+    // A space in a mount point arrives as \040, and a reader that did not put it
+    // back would answer with a path no file has -- which for a disk called "My
+    // Backup" is the whole drive missing.
+    QVERIFY2(byRoot.contains(QStringLiteral("/media/alice/My Backup")),
+        "a mount point with a space in it is one path");
+    QCOMPARE(byRoot.value(QStringLiteral("/media/alice/My Backup")).device, QStringLiteral("/dev/sdb1"));
+    QVERIFY(!byRoot.value(QStringLiteral("/media/alice/My Backup")).isReadOnly);
+
+    // The root of a ZFS machine: the device is a dataset name and not a node
+    // under /dev, which is the distinction that keeps the rest of the pile out.
+    QCOMPARE(byRoot.value(QStringLiteral("/")).fileSystemType, QStringLiteral("zfs"));
+    QCOMPARE(byRoot.value(QStringLiteral("/")).device, QStringLiteral("rpool/ROOT/ubuntu"));
+
+    // Read-only comes from the options, because nothing else here may be asked.
+    QVERIFY(byRoot.value(QStringLiteral("/boot/efi")).isReadOnly);
+    QVERIFY(byRoot.value(QStringLiteral("/snap/firefox/4793")).isReadOnly);
+
+    // And nothing carries a capacity: reading the table cannot know one, and
+    // that is the point rather than an omission.
+    for (const SystemVolume& volume : read) {
+        QCOMPARE(volume.totalBytes, qint64(0));
+        QCOMPARE(volume.freeBytes, qint64(0));
+    }
+
+    // The rules already tested above then filter it, and the filtering is what
+    // the sidebar shows: the root, the backup disk and the share.
+    QStringList drives;
+    for (const SystemVolume& volume : read) {
+        if (SystemVolumes::isInteresting(volume.rootPath, volume.fileSystemType, volume.device,
+                HostPlatform::Posix, QStringLiteral("/home/alice")))
+            drives.append(volume.rootPath);
+    }
+    drives.sort();
+    QCOMPARE(drives,
+        QStringList(
+            { QStringLiteral("/"), QStringLiteral("/media/alice/My Backup"), QStringLiteral("/mnt/nas") }));
+}
+
+/// Capacity is QuerySpaceTask's, and enumerating must not go looking for it.
+///
+/// ARCHITECTURE.md's "Capacity" section says why that task exists: QStorageInfo
+/// blocks on an unreachable mount, so asking from the interface would freeze the
+/// window. Enumerating the volumes asked anyway -- bytesTotal() and
+/// bytesAvailable() per entry -- and then threw the answers away, which is the
+/// worst of both. Asserted on the real machine, because the claim is about what
+/// this code does rather than about what any particular disk holds. See
+/// MOLE-361.
+void TestSystemVolumes::nothingIsAskedAboutCapacityWhileTheDrivesAreBeingFound()
+{
+    const QList<SystemVolume> volumes = SystemVolumes::enumerate();
+    QVERIFY2(!volumes.isEmpty(), "every machine has at least a root filesystem");
+
+    for (const SystemVolume& volume : volumes) {
+        QVERIFY2(volume.totalBytes == 0,
+            qPrintable(QStringLiteral("%1 came back with a capacity").arg(volume.rootPath)));
+        QVERIFY2(volume.freeBytes == 0,
+            qPrintable(QStringLiteral("%1 came back with a free figure").arg(volume.rootPath)));
+        // And what it does answer is still there.
+        QVERIFY(!volume.rootPath.isEmpty());
+        QVERIFY(!volume.name.isEmpty());
     }
 }
 

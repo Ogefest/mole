@@ -1,9 +1,12 @@
 #include "core/vfs/SystemVolumes.h"
 
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QSet>
 #include <QStorageInfo>
+
+#include <algorithm>
 
 namespace mole {
 namespace {
@@ -80,7 +83,99 @@ namespace {
         return trimmed;
     }
 
+    /// What a test has put in place of the operating system, or nothing.
+    SystemVolumes::Enumerator& injected()
+    {
+        static SystemVolumes::Enumerator hook;
+        return hook;
+    }
+
+    /// One line of /proc/self/mounts, with the octal escapes undone.
+    ///
+    /// A mount point with a space in it is written `\040`, and a tab, a newline
+    /// and a backslash go the same way. A reader that did not undo them would
+    /// answer with a path no file has, which for a mounted disk called
+    /// "My Backup" is the whole drive missing.
+    QString unescapeMountField(const QString& field)
+    {
+        QString out;
+        out.reserve(field.size());
+        for (int at = 0; at < field.size(); ++at) {
+            if (field.at(at) == QLatin1Char('\\') && at + 3 < field.size()) {
+                bool ok = false;
+                const int value = field.mid(at + 1, 3).toInt(&ok, 8);
+                if (ok) {
+                    out.append(QChar(value));
+                    at += 3;
+                    continue;
+                }
+            }
+            out.append(field.at(at));
+        }
+        return out;
+    }
+
+    /// The mount table, read as text.
+    ///
+    /// Linux only, and it is the whole point: QStorageInfo::mountedVolumes()
+    /// constructs a QStorageInfo per entry, and each of those is a statvfs --
+    /// including on the mount that has stopped answering. Reading the table
+    /// tells us the name, the device, the type and whether it is read-only
+    /// without touching any of the filesystems in it. See MOLE-361.
+    QList<SystemVolume> volumesFromProc(bool* readIt)
+    {
+        *readIt = false;
+
+        QFile table(QStringLiteral("/proc/self/mounts"));
+        if (!table.open(QIODevice::ReadOnly | QIODevice::Text))
+            return {};
+        *readIt = true;
+
+        // Read whole rather than line by line against atEnd(): a file under
+        // /proc reports a size of zero, so QFileDevice::atEnd() -- which compares
+        // the position with the size -- is true before a byte has been read. A
+        // loop on it ran zero times, the table came back empty, and every drive
+        // vanished from the sidebar. Found by a test that says every machine has
+        // a root filesystem.
+        QByteArray text;
+        for (;;) {
+            const QByteArray line = table.readLine();
+            if (line.isEmpty())
+                break;
+            text.append(line);
+        }
+        return SystemVolumes::parseMountTable(text);
+    }
+
 } // namespace
+
+void SystemVolumes::setEnumerator(Enumerator enumerator)
+{
+    injected() = std::move(enumerator);
+}
+
+QList<SystemVolume> SystemVolumes::parseMountTable(const QByteArray& text)
+{
+    QList<SystemVolume> out;
+    for (const QByteArray& raw : text.split('\n')) {
+        const QString line = QString::fromUtf8(raw).trimmed();
+        // device, mount point, type, options, and two numbers nothing here
+        // needs. Split on spaces, which is what the format is; a space inside a
+        // field arrives as \040 and is put back by unescapeMountField().
+        const QStringList fields = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+        if (fields.size() < 4)
+            continue;
+
+        SystemVolume volume;
+        volume.device = unescapeMountField(fields.at(0));
+        volume.rootPath = unescapeMountField(fields.at(1));
+        volume.fileSystemType = fields.at(2);
+        // The first option is `ro` or `rw`; the rest are the filesystem's own.
+        volume.isReadOnly = fields.at(3).split(QLatin1Char(',')).contains(QLatin1String("ro"));
+        out.append(volume);
+    }
+    return out;
+}
 
 /// Network shares are drives wherever they happen to be mounted.
 bool SystemVolumes::isNetworkFileSystem(const QString& fileSystemType)
@@ -232,35 +327,49 @@ QString SystemVolumes::displayName(
 
 QList<SystemVolume> SystemVolumes::enumerate()
 {
+    if (injected())
+        return injected()();
+
     QList<SystemVolume> out;
     QSet<QString> seenRoots;
 
     const QString home = QDir::homePath();
 
-    const QList<QStorageInfo> mounted = QStorageInfo::mountedVolumes();
-    for (const QStorageInfo& storage : mounted) {
-        if (!storage.isValid() || !storage.isReady())
-            continue;
+    // The mount table where there is one to read, and QStorageInfo only where
+    // there is not. Reading the table costs one file; mountedVolumes() costs a
+    // statvfs per mount, and a statvfs on a mount that has stopped answering
+    // blocks for the kernel's timeout -- which is the fault. macOS and Windows
+    // keep the old path, and are the platforms this cannot be measured on; the
+    // callers do not wait for either any more, which is the other half. See
+    // MOLE-361.
+    bool readTheTable = false;
+    QList<SystemVolume> candidates = volumesFromProc(&readTheTable);
+    if (!readTheTable) {
+        for (const QStorageInfo& storage : QStorageInfo::mountedVolumes()) {
+            if (!storage.isValid() || !storage.isReady())
+                continue;
+            SystemVolume volume;
+            volume.name = storage.name();
+            volume.rootPath = storage.rootPath();
+            volume.device = QString::fromLatin1(storage.device());
+            volume.fileSystemType = QString::fromLatin1(storage.fileSystemType());
+            volume.isReadOnly = storage.isReadOnly();
+            candidates.append(volume);
+        }
+    }
 
-        const QString rootPath = storage.rootPath();
-        const QString type = QString::fromLatin1(storage.fileSystemType());
-        const QString device = QString::fromLatin1(storage.device());
-
-        if (!isInteresting(rootPath, type, device, hostPlatform(), home))
+    for (SystemVolume& volume : candidates) {
+        if (!isInteresting(volume.rootPath, volume.fileSystemType, volume.device, hostPlatform(), home))
             continue;
         // Bind mounts and overlays can report the same root twice.
-        if (seenRoots.contains(rootPath))
+        if (seenRoots.contains(volume.rootPath))
             continue;
-        seenRoots.insert(rootPath);
+        seenRoots.insert(volume.rootPath);
 
-        SystemVolume volume;
-        volume.name = displayName(rootPath, storage.name(), device);
-        volume.rootPath = rootPath;
-        volume.device = device;
-        volume.fileSystemType = type;
-        volume.totalBytes = storage.bytesTotal();
-        volume.freeBytes = storage.bytesAvailable();
-        volume.isReadOnly = storage.isReadOnly();
+        // The label the disk carries is not in the mount table, so the name is
+        // derived from the mount point -- which for /media/user/BACKUP is the
+        // label anyway, because that is where the automounter puts it.
+        volume.name = displayName(volume.rootPath, volume.name, volume.device);
         out.append(volume);
     }
 

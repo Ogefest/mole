@@ -325,6 +325,10 @@ private:
     /// Keyed by mount id, so a drive keeps its figure across a reload of the
     /// table and the bar does not flicker away every time a mount is added.
     QHash<QString, SpaceInfo> m_space;
+    /// The device behind each local mount point, as the last rebuild found
+    /// them. keyFor() reads it; enumerating per row was O(rows x mounts) and
+    /// each enumeration used to be a statvfs apiece. See MOLE-361.
+    QHash<QString, QString> m_devicesByRoot;
     /// Keyed by configured drive id, and kept across a reload of the mount
     /// table: what a check found does not stop being true because something
     /// else was mounted.

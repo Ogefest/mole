@@ -98,6 +98,19 @@ void DriveListModel::reload()
     for (const RemoteDrive& drive : drives)
         rows.append(Row { mountsByDriveId.value(drive.id), drive });
 
+    // The mount table, once, rather than once per row. keyFor() needs a device
+    // for a detected volume, and it used to enumerate the volumes for every
+    // row -- reached from isShown(), from data() for two roles, and from every
+    // rebuild, so O(rows x mounts). Each of those enumerations was a statvfs per
+    // mount before MOLE-361 changed what enumerate() reads; it is a file read
+    // now, and once is still the right number of times. Kept until the next
+    // rebuild, which is also when a stick that has been plugged in appears.
+    m_devicesByRoot.clear();
+    for (const SystemVolume& volume : SystemVolumes::enumerate()) {
+        if (!volume.device.isEmpty())
+            m_devicesByRoot.insert(volume.rootPath, volume.device);
+    }
+
     beginResetModel();
     m_rows = std::move(rows);
     endResetModel();
@@ -552,10 +565,10 @@ QString DriveListModel::keyFor(const Row& row) const
     // out why. See MOLE-311.
     const QString localPath = row.mount.root.toLocalPath();
     if (!localPath.isEmpty()) {
-        for (const SystemVolume& volume : SystemVolumes::enumerate()) {
-            if (volume.rootPath == localPath && !volume.device.isEmpty())
-                return QStringLiteral("device:") + volume.device;
-        }
+        // From the map the last rebuild made. See reload().
+        const QString device = m_devicesByRoot.value(localPath);
+        if (!device.isEmpty())
+            return QStringLiteral("device:") + device;
         return QStringLiteral("path:") + localPath;
     }
     // Anything else -- a bucket, a share, a scratch drive -- by the root it is

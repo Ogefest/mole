@@ -65,6 +65,7 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-03 #MOLE-361 A dead network mount on the machine no longer stalls Mole at startup or when the sidebar refreshes
 2026-09-03 #MOLE-360 Renaming, creating a folder, previewing a file, dragging a row and setting up a bulk rename no longer stop the window while a slow drive answers
 2026-09-03 #MOLE-349 An FTP drive works on an account whose home is not the server root, instead of listing one place and deleting from another
 2026-09-03 #MOLE-349 An FTP listing a server writes in its own format is read where possible and reported where not, instead of showing an empty folder

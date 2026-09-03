@@ -5,6 +5,8 @@
 #include <QList>
 #include <QString>
 
+#include <functional>
+
 namespace mole {
 
 /// One filesystem the operating system currently has mounted.
@@ -32,7 +34,36 @@ struct SystemVolume
 class SystemVolumes
 {
 public:
+    /// What is mounted, filtered.
+    ///
+    /// **No capacity.** totalBytes and freeBytes are left at zero and the space
+    /// a drive has is QuerySpaceTask's business, which is what it exists for --
+    /// see ARCHITECTURE.md's "Capacity". Asking here meant a statvfs per mount,
+    /// and a statvfs on a stale NFS or SMB mount blocks for the kernel's
+    /// timeout: one dead mount anywhere in the table hung Mole at startup with
+    /// no window and no message, and again on every sidebar refresh. See
+    /// MOLE-361.
     static QList<SystemVolume> enumerate();
+
+    /// Replaces what enumerate() reads, for a test that needs a machine it does
+    /// not have -- a hung mount, a ZFS pile, a Windows drive letter.
+    ///
+    /// A seam rather than a mock of the operating system: the rules above are
+    /// pure and already tested directly, and what this covers is how often the
+    /// list is asked for and on which thread. Pass nullptr to go back to the
+    /// real one.
+    using Enumerator = std::function<QList<SystemVolume>()>;
+    static void setEnumerator(Enumerator enumerator);
+
+    /// Reads a mount table -- the text of /proc/self/mounts -- into volumes,
+    /// unfiltered.
+    ///
+    /// Reachable so the reading can be tested against a machine nobody here has:
+    /// a mount point with a space in its name, a ZFS root whose device is a
+    /// dataset, a snap loopback, and the stale NFS mount that is the whole
+    /// reason this is read as text rather than asked of QStorageInfo. Every
+    /// field is taken from the line and none of the filesystems is touched.
+    static QList<SystemVolume> parseMountTable(const QByteArray& text);
 
     /// Whether a mount point is worth showing. Exposed so the rule itself can
     /// be tested without needing a machine that has such a mount.
