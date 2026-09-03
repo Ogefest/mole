@@ -80,7 +80,22 @@ private:
     /// Skipped is distinct from Transferred on purpose: a skipped conflict is
     /// a success, but it did not copy anything and must not be counted as if
     /// it had.
-    enum class Outcome { Transferred, Skipped, Failed };
+    ///
+    /// Merged is distinct from both. A directory arriving where a directory of
+    /// the same name stands is the expected thing rather than a clash, and it
+    /// used to be reported as a skip -- which under ADR-0029's rule marked the
+    /// whole source unfinished, so a move of a folder onto a folder of the same
+    /// name copied the files and then deleted nothing. Nothing was copied for
+    /// the directory itself either, so it is not Transferred.
+    enum class Outcome { Transferred, Merged, Skipped, Failed };
+
+    /// What the conflict policy says about one arrival.
+    enum class Verdict {
+        Proceed, ///< nothing in the way, or what is there is to be replaced
+        Merge, ///< a directory that is already there; its children still arrive
+        Skip, ///< leave what is there alone
+        Failed, ///< recorded as a failure, and this entry does not happen
+    };
 
     /// One file that was copied, and how many bytes went into it.
     struct Arrival
@@ -104,6 +119,21 @@ private:
     /// MOLE-275.
     std::optional<VfsError> refusalFor(const VfsUri& source, bool sourceIsDirectory) const;
 
+    /// The name one source arrives under. Written once because three places ask
+    /// it and the fourth would have been the copy that drifted.
+    QString arrivalNameFor(const VfsUri& source) const;
+
+    /// Whether the whole request can be done by renaming, and what each source
+    /// is. Both answers come out of the same stat, and the shortcut needs both.
+    ///
+    /// A directory landing on a directory of the same name is a merge, which a
+    /// rename cannot do: it would have to treat it as a clash instead, and
+    /// Overwrite then deletes everything the destination folder holds that the
+    /// source does not. The *whole* request goes to the generic path rather than
+    /// that one source, because the plan is built from the request -- a source
+    /// already renamed would be planned a second time and reported missing.
+    bool everySourceCanBeRenamed(QList<bool>* sourceIsDirectory) const;
+
     /// Whether the plan would accept every source as it stands.
     ///
     /// The same-backend move shortcut does not build a plan, and the plan is
@@ -121,6 +151,14 @@ private:
 
     /// Expands directories into the full list of entries to create and copy.
     bool planJobs(QList<Job>& jobsOut);
+
+    /// Deletes what really did arrive, for a source that only partly did.
+    ///
+    /// The whole source is removed in one call when every job under it was
+    /// transferred, which is the ordinary case. This is the other one: a merge
+    /// where a child was skipped, where removing the tree would take the skipped
+    /// file with it and leaving the tree would mean nothing moved at all.
+    void removeWhatArrivedUnder(int sourceIndex, const QList<Job>& jobs, const QList<Outcome>& outcomes);
     Outcome transferOne(const Job& job);
     /// `expectedSize` is what the plan was told the file is, and is used for the
     /// log rather than for a decision -- a listing can be out of date, and the
@@ -130,15 +168,14 @@ private:
     /// Bytes already accounted for by completed jobs. The chunk loop adds its
     /// own progress on top, so a large file advances while it is copying.
     qint64 m_bytesCompleted = 0;
-    /// Applies the conflict policy to one arrival. False means the entry
-    /// failed and was recorded; `skip` means it is to be passed over.
+    /// Applies the conflict policy to one arrival.
     ///
     /// `replacing`, when asked for, says the policy was Overwrite and the file
     /// in the way was deliberately **left standing**: whatever puts the arrival
     /// in place is the thing that replaces it, so a transfer that fails part way
     /// leaves the file it was replacing alone. A caller that renames rather than
     /// writes has to say replace() instead of rename() when it is set.
-    bool resolveConflict(const VfsUri& target, bool isDirectory, bool* skip, bool* replacing = nullptr);
+    Verdict resolveConflict(const VfsUri& target, bool isDirectory, bool* replacing = nullptr);
     void recordFailure(const VfsUri& uri, const VfsError& error);
 
     Request m_request;

@@ -142,6 +142,10 @@ private slots:
     void aDestinationThatDiffersOnlyInCaseIsStillInsideTheSource();
     void onACaseSensitiveVolumeTheSamePairIsTwoPlaces();
 
+    void aFolderMovedOntoAFolderOfTheSameNameMergesAndFinishes();
+    void aMergeThatSkippedAChildLeavesThatChildAndTakesTheRest();
+    void aMergeWithinOneDriveKeepsWhatTheDestinationAlreadyHad();
+
     void movingASymlinkDoesNotFollowIt();
 
 private:
@@ -593,6 +597,92 @@ void TestMoveIsPermanent::aRenameWithinOneBackendStillAsksWhetherTheNameWillBeAc
         = m_memory->openRead(VfsUri::fromString(QStringLiteral("mem:///work/report")));
     QVERIFY(open.ok());
     QCOMPARE(open.value()->readAll(), QByteArray("keep me"));
+}
+
+/// A folder arriving where a folder of the same name stands is a merge.
+///
+/// ARCHITECTURE.md has said so all along and the copy path does it. The move did
+/// not finish: every job under the source ended `Skipped` -- the merge used the
+/// same outcome as a real skip -- so ADR-0029's rule marked the source
+/// unfinished and the source folder was never deleted. It was reported as
+/// "N files transferred", with no failures, having behaved as a copy.
+void TestMoveIsPermanent::aFolderMovedOntoAFolderOfTheSameNameMergesAndFinishes()
+{
+    auto destination = std::make_shared<MemoryFileSystem>();
+    m_memory->addFile(QStringLiteral("/source/A/x.txt"), QByteArray("ex"));
+    m_memory->addFile(QStringLiteral("/source/A/y.txt"), QByteArray("why"));
+    destination->addDirectory(QStringLiteral("/arrived/A"));
+
+    TransferTask* task = run(moveOf(m_memory, VfsUri::fromString(QStringLiteral("mem:///source/A")),
+        destination, VfsUri::fromString(QStringLiteral("mem:///arrived"))));
+    QVERIFY(task != nullptr);
+    QVERIFY2(task->failures().isEmpty(), qPrintable(task->failures().join(QStringLiteral("; "))));
+
+    QVERIFY(destination->stat(VfsUri::fromString(QStringLiteral("mem:///arrived/A/x.txt"))).ok());
+    QVERIFY(destination->stat(VfsUri::fromString(QStringLiteral("mem:///arrived/A/y.txt"))).ok());
+    QVERIFY2(!m_memory->stat(VfsUri::fromString(QStringLiteral("mem:///source/A"))).ok(),
+        "a move that merged and reported no failures still has to be a move");
+}
+
+/// And a merge is a move of the children, so a skipped child is what stays.
+///
+/// The same sentence ADR-0029 already applies to a selection of files, applied
+/// to the selection a merge really is: the one that was not moved is kept,
+/// because the file now standing under its name at the far end is a different
+/// file, and the ones that did arrive are gone from the source.
+void TestMoveIsPermanent::aMergeThatSkippedAChildLeavesThatChildAndTakesTheRest()
+{
+    auto destination = std::make_shared<MemoryFileSystem>();
+    m_memory->addFile(QStringLiteral("/source/A/x.txt"), QByteArray("mine"));
+    m_memory->addFile(QStringLiteral("/source/A/y.txt"), QByteArray("why"));
+    destination->addFile(QStringLiteral("/arrived/A/x.txt"), QByteArray("theirs"));
+
+    TransferTask::Request request = moveOf(m_memory, VfsUri::fromString(QStringLiteral("mem:///source/A")),
+        destination, VfsUri::fromString(QStringLiteral("mem:///arrived")));
+    request.onConflict = TransferTask::Conflict::Skip;
+    TransferTask* task = run(request);
+    QVERIFY(task != nullptr);
+    QVERIFY2(task->failures().isEmpty(), qPrintable(task->failures().join(QStringLiteral("; "))));
+    QCOMPARE(task->skippedCount(), 1);
+
+    // Theirs, untouched, and ours still where it was: nothing about "skip" says
+    // "discard".
+    const Result<std::unique_ptr<QIODevice>> theirs
+        = destination->openRead(VfsUri::fromString(QStringLiteral("mem:///arrived/A/x.txt")));
+    QVERIFY(theirs.ok());
+    QCOMPARE(theirs.value()->readAll(), QByteArray("theirs"));
+    QVERIFY2(m_memory->stat(VfsUri::fromString(QStringLiteral("mem:///source/A/x.txt"))).ok(),
+        "the file that was skipped is the only copy of itself");
+
+    // The one that did arrive is a finished move.
+    QVERIFY(destination->stat(VfsUri::fromString(QStringLiteral("mem:///arrived/A/y.txt"))).ok());
+    QVERIFY2(!m_memory->stat(VfsUri::fromString(QStringLiteral("mem:///source/A/y.txt"))).ok(),
+        "a child that arrived is a child that was moved");
+}
+
+/// The same merge on the path that does not copy anything.
+///
+/// Within one drive a move is a rename, and a rename cannot merge: it treated
+/// the existing folder as a clash, so `Overwrite` recursively deleted the whole
+/// destination folder -- including everything in it the source does not have --
+/// and renamed the source onto the name. Which of the two happened depended on
+/// whether both ends shared a FileSystemPtr, which nobody can see.
+void TestMoveIsPermanent::aMergeWithinOneDriveKeepsWhatTheDestinationAlreadyHad()
+{
+    m_memory->addFile(QStringLiteral("/source/A/x.txt"), QByteArray("ex"));
+    m_memory->addFile(QStringLiteral("/arrived/A/keep.txt"), QByteArray("not yours to delete"));
+
+    TransferTask::Request request = moveOf(m_memory, VfsUri::fromString(QStringLiteral("mem:///source/A")),
+        m_memory, VfsUri::fromString(QStringLiteral("mem:///arrived")));
+    request.onConflict = TransferTask::Conflict::Overwrite;
+    TransferTask* task = run(request);
+    QVERIFY(task != nullptr);
+    QVERIFY2(task->failures().isEmpty(), qPrintable(task->failures().join(QStringLiteral("; "))));
+
+    QVERIFY2(m_memory->stat(VfsUri::fromString(QStringLiteral("mem:///arrived/A/keep.txt"))).ok(),
+        "a merge deleted a file at the destination that the source knows nothing about");
+    QVERIFY(m_memory->stat(VfsUri::fromString(QStringLiteral("mem:///arrived/A/x.txt"))).ok());
+    QVERIFY(!m_memory->stat(VfsUri::fromString(QStringLiteral("mem:///source/A"))).ok());
 }
 
 void TestMoveIsPermanent::movingASymlinkDoesNotFollowIt()

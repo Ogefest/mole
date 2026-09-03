@@ -6,6 +6,8 @@
 #include <QElapsedTimer>
 #include <QLocale>
 
+#include <algorithm>
+
 namespace mole {
 namespace {
 
@@ -64,6 +66,35 @@ std::optional<VfsError> TransferTask::refusalFor(const VfsUri& source, bool sour
     return std::nullopt;
 }
 
+QString TransferTask::arrivalNameFor(const VfsUri& source) const
+{
+    return (m_request.sources.size() == 1 && !m_request.targetName.isEmpty()) ? m_request.targetName
+                                                                              : source.fileName();
+}
+
+bool TransferTask::everySourceCanBeRenamed(QList<bool>* sourceIsDirectory) const
+{
+    sourceIsDirectory->clear();
+    sourceIsDirectory->reserve(m_request.sources.size());
+
+    bool renameable = true;
+    for (const VfsUri& source : m_request.sources) {
+        const Result<FileEntry> stat = m_request.sourceFileSystem->stat(source);
+        const bool isDirectory = stat.ok() && stat.value().isDir;
+        sourceIsDirectory->append(isDirectory);
+        if (!isDirectory)
+            continue;
+
+        // One stat of the destination, and only for a directory: a bulk move of
+        // files pays a stat of the source apiece and nothing more.
+        const Result<FileEntry> standing
+            = m_request.targetFileSystem->stat(m_request.targetDirectory.child(arrivalNameFor(source)));
+        if (standing.ok() && standing.value().isDir)
+            renameable = false;
+    }
+    return renameable;
+}
+
 bool TransferTask::nothingToRefuse() const
 {
     for (const VfsUri& source : m_request.sources) {
@@ -80,10 +111,7 @@ bool TransferTask::nothingToRefuse() const
 
         // And the name the destination would have to accept, which the shortcut
         // never asked about either. See MOLE-243.
-        const QString arrivalName = (m_request.sources.size() == 1 && !m_request.targetName.isEmpty())
-            ? m_request.targetName
-            : source.fileName();
-        if (checkName(arrivalName, m_request.targetFileSystem->nameRules()).isRejected())
+        if (checkName(arrivalNameFor(source), m_request.targetFileSystem->nameRules()).isRejected())
             return false;
     }
     return true;
@@ -120,9 +148,7 @@ bool TransferTask::planJobs(QList<Job>& jobsOut)
             continue;
         }
 
-        const QString arrivalName = (m_request.sources.size() == 1 && !m_request.targetName.isEmpty())
-            ? m_request.targetName
-            : source.fileName();
+        const QString arrivalName = arrivalNameFor(source);
 
         // Asked before a byte moves, and asked of the destination, because the
         // destination is what knows. This is the code that names the output of
@@ -208,27 +234,27 @@ bool TransferTask::planJobs(QList<Job>& jobsOut)
     return true;
 }
 
-bool TransferTask::resolveConflict(const VfsUri& target, bool isDirectory, bool* skip, bool* replacing)
+TransferTask::Verdict TransferTask::resolveConflict(const VfsUri& target, bool isDirectory, bool* replacing)
 {
-    *skip = false;
     if (replacing)
         *replacing = false;
 
     Result<FileEntry> existing = m_request.targetFileSystem->stat(target);
     if (!existing.ok())
-        return true; // nothing there, carry on
+        return Verdict::Proceed; // nothing there, carry on
 
     // Merging into an existing directory is the expected behaviour, not a clash.
-    if (isDirectory && existing.value().isDir) {
-        *skip = true;
-        return true;
-    }
+    // Its own answer rather than a skip: nothing is copied for the directory
+    // itself, but everything inside it still arrives, and a source whose only
+    // "skip" was this was never deleted -- so a move of a folder onto a folder
+    // of the same name behaved as a copy. See MOLE-332.
+    if (isDirectory && existing.value().isDir)
+        return Verdict::Merge;
 
     switch (m_request.onConflict) {
     case Conflict::Skip:
-        *skip = true;
         ++m_skipped;
-        return true;
+        return Verdict::Skip;
     case Conflict::Overwrite: {
         // A file going over a file is left standing until the replacement is
         // whole. This used to remove it here, before the write was even opened,
@@ -241,7 +267,7 @@ bool TransferTask::resolveConflict(const VfsUri& target, bool isDirectory, bool*
         if (!isDirectory && !existing.value().isDir) {
             if (replacing)
                 *replacing = true;
-            return true;
+            return Verdict::Proceed;
         }
 
         // Different kinds, so there is nothing the arrival can be put over: a
@@ -251,15 +277,15 @@ bool TransferTask::resolveConflict(const VfsUri& target, bool isDirectory, bool*
         Result<void> removed = m_request.targetFileSystem->remove(target, true);
         if (!removed.ok()) {
             recordFailure(target, removed.error());
-            return false;
+            return Verdict::Failed;
         }
-        return true;
+        return Verdict::Proceed;
     }
     case Conflict::Fail:
         recordFailure(target, VfsError::make(VfsError::AlreadyExists, QStringLiteral("already exists")));
-        return false;
+        return Verdict::Failed;
     }
-    return false;
+    return Verdict::Failed;
 }
 
 bool TransferTask::copyStream(const VfsUri& from, const VfsUri& to, qint64 expectedSize)
@@ -440,11 +466,16 @@ void TransferTask::verifyArrivals()
 
 TransferTask::Outcome TransferTask::transferOne(const Job& job)
 {
-    bool skip = false;
-    if (!resolveConflict(job.target, job.isDirectory, &skip))
+    switch (resolveConflict(job.target, job.isDirectory)) {
+    case Verdict::Failed:
         return Outcome::Failed;
-    if (skip)
+    case Verdict::Skip:
         return Outcome::Skipped;
+    case Verdict::Merge:
+        return Outcome::Merged;
+    case Verdict::Proceed:
+        break;
+    }
 
     if (job.isDirectory) {
         Result<void> created = m_request.targetFileSystem->makeDirectory(job.target);
@@ -456,6 +487,41 @@ TransferTask::Outcome TransferTask::transferOne(const Job& job)
     }
 
     return copyStream(job.source, job.target, job.size) ? Outcome::Transferred : Outcome::Failed;
+}
+
+void TransferTask::removeWhatArrivedUnder(
+    int sourceIndex, const QList<Job>& jobs, const QList<Outcome>& outcomes)
+{
+    // Only a skip can bring us here: any failure at all stops the whole delete
+    // step before this is reached, and a cancel returns earlier still. So what
+    // is left under this source is a file somebody asked to leave alone, and
+    // everything else did arrive.
+    //
+    // Deepest first, so a directory is only tried once whatever was under it has
+    // gone -- and non-recursively, so one that still holds a skipped file keeps
+    // it. That is the same sentence ADR-0029 already applies to a selection of
+    // files, applied to the selection a merge really is.
+    QList<int> arrived;
+    for (int at = 0; at < jobs.size(); ++at) {
+        if (jobs.at(at).sourceIndex != sourceIndex)
+            continue;
+        if (outcomes.at(at) == Outcome::Transferred || outcomes.at(at) == Outcome::Merged)
+            arrived.append(at);
+    }
+    std::sort(arrived.begin(), arrived.end(), [&jobs](int first, int second) {
+        return jobs.at(first).source.path().size() > jobs.at(second).source.path().size();
+    });
+
+    for (const int at : std::as_const(arrived)) {
+        if (isCancelRequested())
+            return;
+        const Job& job = jobs.at(at);
+        const Result<void> removed = m_request.sourceFileSystem->remove(job.source, false);
+        // A directory that is not empty is one holding what was skipped, which
+        // is the outcome asked for rather than a failure to report.
+        if (!removed.ok() && !(job.isDirectory && removed.error().code == VfsError::NotEmpty))
+            recordFailure(job.source, removed.error());
+    }
 }
 
 void TransferTask::run()
@@ -479,20 +545,27 @@ void TransferTask::run()
     // moved with no failures. Local disk was saved only by the kernel, which
     // answers EINVAL; MemoryFileSystem, which is a scratch drive somebody can
     // mount, relabelled the whole subtree. See MOLE-275 and ADR-0029.
+    //
+    // And only when a rename can express what was asked. A folder landing on a
+    // folder of the same name is a merge, which a rename cannot do: the
+    // shortcut used to pass isDirectory=false for every source, so the merge
+    // branch was unreachable there and Overwrite recursively deleted the whole
+    // destination folder before renaming the source onto its name. Which of the
+    // two happened depended on whether both ends shared a FileSystemPtr, which
+    // the user cannot see. See MOLE-332.
     const bool sameBackend = m_request.sourceFileSystem == m_request.targetFileSystem;
-    if (m_request.mode == Mode::Move && sameBackend && nothingToRefuse()) {
+    QList<bool> sourceIsDirectory;
+    if (m_request.mode == Mode::Move && sameBackend && nothingToRefuse()
+        && everySourceCanBeRenamed(&sourceIsDirectory)) {
         int index = 0;
         for (const VfsUri& source : std::as_const(m_request.sources)) {
             if (isCancelRequested())
                 return;
 
-            const QString arrivalName = (m_request.sources.size() == 1 && !m_request.targetName.isEmpty())
-                ? m_request.targetName
-                : source.fileName();
-            const VfsUri target = m_request.targetDirectory.child(arrivalName);
-            bool skip = false;
+            const VfsUri target = m_request.targetDirectory.child(arrivalNameFor(source));
             bool replacing = false;
-            if (!resolveConflict(target, false, &skip, &replacing) || skip) {
+            const Verdict verdict = resolveConflict(target, sourceIsDirectory.at(index), &replacing);
+            if (verdict != Verdict::Proceed) {
                 ++index;
                 continue;
             }
@@ -533,19 +606,27 @@ void TransferTask::run()
 
     int done = 0;
     int files = 0;
+    // Kept beside the jobs rather than inside them, because the delete step is
+    // the only thing that reads it and it is one byte per job.
+    QList<Outcome> outcomes;
+    outcomes.reserve(jobs.size());
     for (const Job& job : std::as_const(jobs)) {
         if (isCancelRequested())
             return;
 
         // Directories are structure, not payload: only files count as copied.
         const Outcome outcome = transferOne(job);
+        outcomes.append(outcome);
         if (outcome == Outcome::Transferred && !job.isDirectory)
             ++m_copied;
         // Anything that did not arrive means this source has not been moved,
         // whatever the reason. A skipped file records no failure -- skipping is
         // a success -- and deleting the source of one is a file thrown away for
         // a file that was already there under the same name.
-        if (outcome != Outcome::Transferred)
+        //
+        // A merge is not one of those. The directory was already there, which is
+        // what was expected, and everything inside it still had its own answer.
+        if (outcome != Outcome::Transferred && outcome != Outcome::Merged)
             m_unfinishedSources.insert(job.sourceIndex);
 
         // Whatever the outcome, this job is no longer in flight, so its bytes
@@ -586,11 +667,13 @@ void TransferTask::run()
         for (int index = 0; index < m_request.sources.size(); ++index) {
             if (isCancelRequested())
                 return;
-            if (m_unfinishedSources.contains(index))
+            if (!m_unfinishedSources.contains(index)) {
+                Result<void> removed = m_request.sourceFileSystem->remove(m_request.sources.at(index), true);
+                if (!removed.ok())
+                    recordFailure(m_request.sources.at(index), removed.error());
                 continue;
-            Result<void> removed = m_request.sourceFileSystem->remove(m_request.sources.at(index), true);
-            if (!removed.ok())
-                recordFailure(m_request.sources.at(index), removed.error());
+            }
+            removeWhatArrivedUnder(index, jobs, outcomes);
         }
     }
 
