@@ -426,6 +426,31 @@ void runFileSystemConformance(const ConformanceContext& context)
                                .arg(entry.name)));
     }
 
+    // --- a directory that cannot be listed ---------------------------------
+    //
+    // "I could not read it" and "there is nothing in it" are the same sentence
+    // to everything above this layer, and one of them is a lie that costs data:
+    // a mirror plans the destination folder empty on the strength of it, a
+    // folder-size report says zero, and a move copies an empty directory and
+    // then removes the source. An error is the only answer that cannot be
+    // mistaken for a fact about the contents.
+    if (context.whileUnlistable) {
+        const VfsUri locked = context.root.child(QStringLiteral("locked-away"));
+        QVERIFY2(fs.makeDirectory(locked).ok(), "makeDirectory must succeed on a free name");
+        QVERIFY2(context.seedFile(QStringLiteral("locked-away/inside.txt"), QByteArrayLiteral("hidden")),
+            "seeding failed");
+
+        const bool ran = context.whileUnlistable(QStringLiteral("locked-away"), [&] {
+            const Result<FileEntryList> listing = fs.list(locked, noCancel);
+            QVERIFY2(!listing.ok(), "a directory this account cannot read must not list as empty");
+            QCOMPARE(listing.error().code, VfsError::AccessDenied);
+        });
+        if (!ran)
+            qInfo("skipped: this account can list a directory it has no permissions on");
+
+        QVERIFY(fs.remove(locked, true).ok());
+    }
+
     // --- a directory with nothing in it -----------------------------------
     //
     // Worth its own case because on S3 a directory is not a thing: an empty one

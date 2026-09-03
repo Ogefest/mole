@@ -9,6 +9,47 @@
 
 namespace mole {
 
+/// What an entry is, where it is neither an ordinary file nor a directory.
+///
+/// A listing that leaves these out is not a shorter listing, it is a wrong one.
+/// A move copies what it was shown and then removes the source tree, so an entry
+/// no listing ever mentioned is one nothing tried to copy, nothing counted as
+/// failed, and `removeRecursively()` took away with everything else -- gone from
+/// the source and never arrived. See MOLE-333.
+///
+/// Named rather than reduced to one flag, because a refusal has to say why: "a
+/// link to nothing" and "a named pipe" are different things to be told, and the
+/// second is not a fault at all -- opening a pipe for reading waits for a writer,
+/// which for a copy means for ever.
+enum class SpecialKind : quint8 {
+    None, ///< an ordinary file or a directory
+    DanglingLink, ///< a symbolic link whose target is not there
+    Pipe, ///< a named pipe -- reading one waits for whoever writes to it
+    Socket, ///< a unix-domain socket
+    Device, ///< a block or character device node
+    Other, ///< something this platform has that this list does not name
+};
+
+/// The phrase a refusal uses, in the shape of the rest of a failure line.
+inline QString describe(SpecialKind kind)
+{
+    switch (kind) {
+    case SpecialKind::None:
+        return {};
+    case SpecialKind::DanglingLink:
+        return QStringLiteral("a link to nothing");
+    case SpecialKind::Pipe:
+        return QStringLiteral("a named pipe");
+    case SpecialKind::Socket:
+        return QStringLiteral("a socket");
+    case SpecialKind::Device:
+        return QStringLiteral("a device");
+    case SpecialKind::Other:
+        return QStringLiteral("neither a file nor a folder");
+    }
+    return {};
+}
+
 /// One directory entry, as reported by a backend. Deliberately flat and
 /// copyable so it can be shipped across threads inside a QList.
 struct FileEntry
@@ -35,6 +76,10 @@ public:
     /// gets treated as one; what it points at is a question nothing asks yet.
     bool isShortcut = false;
     bool isHidden = false;
+    /// Set where this entry is not something a copy can stream. Everything above
+    /// the backend can then refuse it by name and with a reason, instead of the
+    /// backend leaving it out of the listing and nothing knowing it was there.
+    SpecialKind special = SpecialKind::None;
     bool isReadable = true;
     bool isWritable = false;
     qint64 size = 0;

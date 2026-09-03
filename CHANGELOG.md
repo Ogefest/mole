@@ -65,6 +65,8 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-03 #MOLE-333 A folder this account may not read is reported as unreadable instead of shown empty, so a mirror no longer empties the far end to match it
+2026-09-03 #MOLE-333 A broken link, a named pipe, a socket and a device node appear in the listing, and a copy that cannot take one says so rather than passing over it in silence — a move that used to delete them without copying them now leaves them where they are
 2026-09-03 #MOLE-331 A copy or move that overwrites a file and then fails part way through — a dropped connection, a full disk, a cancel — leaves the file it was replacing whole, instead of leaving neither it nor the replacement
 
 ## 0.1.2 — released 2026-09-02

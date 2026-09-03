@@ -50,11 +50,16 @@ private slots:
     void twoNamesThatLookAlikeStayTwoFiles();
     void aSymlinkLoopDoesNotTrapTheWalk();
     void aBrokenSymlinkIsReportedAndTheRestOfTheJobGoesOn();
+    void aMoveLeavesABrokenSymlinkWhereItIs();
     void aFifoIsRefusedRatherThanHungOn();
+    void aMoveLeavesAFifoWhereItIs();
     void aFileNobodyMayReadIsReportedAndTheCountIsHonest();
 
 private:
     TransferTask* copyEverythingFromSource();
+    /// The same run as a move, which is where an entry nobody listed is lost
+    /// rather than merely not copied.
+    TransferTask* moveEverythingFromSource();
 
     /// How many of the table's names were really put through a copy. Counted
     /// because the interesting failure of a suite that skips per row is a table
@@ -110,6 +115,25 @@ TransferTask* TestAwkwardNames::copyEverythingFromSource()
     request.targetFileSystem = m_disk;
     request.sources = { m_tree->rootUri().child(QStringLiteral("source")) };
     request.targetDirectory = m_tree->rootUri().child(QStringLiteral("arrived"));
+
+    auto* task = new TransferTask(request);
+    m_tasks->submit(task);
+    return waitForTask(task, 30000) ? task : nullptr;
+}
+
+TransferTask* TestAwkwardNames::moveEverythingFromSource()
+{
+    // A second backend object over the same disk, so this is the copy-then-
+    // delete path rather than the rename shortcut. That is where an entry
+    // nothing listed is lost: a rename moves a pipe or a link along with
+    // everything else and never has to understand it, while a copy that never
+    // saw one still removes the source tree it was in.
+    TransferTask::Request request;
+    request.sourceFileSystem = m_disk;
+    request.targetFileSystem = std::make_shared<LocalFileSystem>();
+    request.sources = { m_tree->rootUri().child(QStringLiteral("source")) };
+    request.targetDirectory = m_tree->rootUri().child(QStringLiteral("arrived"));
+    request.mode = TransferTask::Mode::Move;
 
     auto* task = new TransferTask(request);
     m_tasks->submit(task);
@@ -281,6 +305,34 @@ void TestAwkwardNames::aBrokenSymlinkIsReportedAndTheRestOfTheJobGoesOn()
     QFile good(m_tree->absolute(QStringLiteral("arrived/source/good.txt")));
     QVERIFY2(good.open(QIODevice::ReadOnly), "the file beside the broken link still had to arrive");
     QCOMPARE(good.readAll(), QByteArray("fine"));
+
+    // Reported, which is what the name of this case has always claimed. The
+    // link was invisible to the listing until MOLE-333, so the copy passed over
+    // an entry it never saw and said nothing about it.
+    QCOMPARE(task->failedCount(), 1);
+    const QString failure = task->failures().first();
+    QVERIFY2(failure.contains(QStringLiteral("dangling")), qPrintable(failure));
+    QVERIFY2(failure.contains(QStringLiteral("link")), qPrintable(failure));
+}
+
+/// The reason being reported matters: what is not copied must not be deleted.
+///
+/// A move removes the source tree once its jobs have arrived. An entry that no
+/// listing ever mentioned is an entry nothing tried to copy, nothing counted as
+/// failed, and `QDir::removeRecursively()` then removed along with everything
+/// else -- so the link was gone from the source and had never arrived anywhere.
+void TestAwkwardNames::aMoveLeavesABrokenSymlinkWhereItIs()
+{
+    QVERIFY(m_tree->writeFile(QStringLiteral("source/good.txt"), QByteArray("fine")));
+    QVERIFY(QFile::link(m_tree->absolute(QStringLiteral("source/not-there.txt")),
+        m_tree->absolute(QStringLiteral("source/dangling"))));
+
+    TransferTask* task = moveEverythingFromSource();
+    QVERIFY(task != nullptr);
+    QCOMPARE(task->failedCount(), 1);
+
+    QVERIFY2(QFileInfo(m_tree->absolute(QStringLiteral("source/dangling"))).isSymbolicLink(),
+        "a move deleted a link it never copied");
 }
 
 void TestAwkwardNames::aFifoIsRefusedRatherThanHungOn()
@@ -302,6 +354,34 @@ void TestAwkwardNames::aFifoIsRefusedRatherThanHungOn()
     QFile ordinary(m_tree->absolute(QStringLiteral("arrived/source/ordinary.txt")));
     QVERIFY2(ordinary.open(QIODevice::ReadOnly), "the ordinary file beside it still had to arrive");
     QCOMPARE(ordinary.readAll(), QByteArray("fine"));
+
+    // Refused, and said so. Without this the case could not tell a fifo that was
+    // turned down from one the listing never mentioned, which is what it was
+    // really passing on.
+    QCOMPARE(task->failedCount(), 1);
+    const QString failure = task->failures().first();
+    QVERIFY2(failure.contains(QStringLiteral("pipe")), qPrintable(failure));
+    QVERIFY2(!QFile::exists(m_tree->absolute(QStringLiteral("arrived/source/pipe"))),
+        "nothing may be created at the far end for a fifo");
+#endif
+}
+
+void TestAwkwardNames::aMoveLeavesAFifoWhereItIs()
+{
+#ifndef Q_OS_UNIX
+    QSKIP("no fifos on this platform");
+#else
+    QVERIFY(m_tree->writeFile(QStringLiteral("source/ordinary.txt"), QByteArray("fine")));
+    const QByteArray fifoPath = m_tree->absolute(QStringLiteral("source/pipe")).toLocal8Bit();
+    if (mkfifo(fifoPath.constData(), 0644) != 0)
+        QSKIP("could not create a fifo here");
+
+    TransferTask* task = moveEverythingFromSource();
+    QVERIFY(task != nullptr);
+    QCOMPARE(task->failedCount(), 1);
+
+    QVERIFY2(QFile::exists(m_tree->absolute(QStringLiteral("source/pipe"))),
+        "a move deleted a fifo it never copied");
 #endif
 }
 

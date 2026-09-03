@@ -90,6 +90,50 @@ namespace {
         bool m_committed = false;
     };
 
+    /// A path in the form the platform's own calls take.
+    ///
+    /// std::filesystem::path is char on POSIX and wchar_t on Windows, and
+    /// handing it the wrong one either mangles a non-ASCII name or does not
+    /// compile. QFile::encodeName is what Qt itself uses for the first, which is
+    /// UTF-8 on every system Mole builds for.
+    std::filesystem::path nativePath(const QString& path)
+    {
+#ifdef Q_OS_WIN
+        return std::filesystem::path(path.toStdWString());
+#else
+        return std::filesystem::path(QFile::encodeName(path).toStdString());
+#endif
+    }
+
+    /// What an entry is, when Qt says it is neither a file nor a directory.
+    ///
+    /// Asked of the platform only for the entries Qt has already said are
+    /// neither, which is none of them in an ordinary folder -- a listing of five
+    /// thousand files pays for this on zero of them. symlink_status() rather
+    /// than status(), because a link is to be reported as a link rather than as
+    /// whatever it fails to point at.
+    SpecialKind specialKindOf(const QString& path)
+    {
+        std::error_code failed;
+        const std::filesystem::file_status status = std::filesystem::symlink_status(nativePath(path), failed);
+        if (failed)
+            return SpecialKind::Other;
+
+        switch (status.type()) {
+        case std::filesystem::file_type::symlink:
+            return SpecialKind::DanglingLink;
+        case std::filesystem::file_type::fifo:
+            return SpecialKind::Pipe;
+        case std::filesystem::file_type::socket:
+            return SpecialKind::Socket;
+        case std::filesystem::file_type::block:
+        case std::filesystem::file_type::character:
+            return SpecialKind::Device;
+        default:
+            return SpecialKind::Other;
+        }
+    }
+
     FileEntry entryFromInfo(const QFileInfo& info, const VfsUri& uri)
     {
         FileEntry e;
@@ -104,6 +148,12 @@ namespace {
         e.isSymlink = info.isSymbolicLink() || info.isJunction();
         e.isShortcut = info.isShortcut();
         e.isHidden = info.isHidden();
+        // Neither a file nor a directory: a link whose target is not there, a
+        // named pipe, a socket, a device node. Qt has no question for which of
+        // those it is, so the platform is asked -- and only here, where the two
+        // cheap questions have already ruled out everything ordinary.
+        if (!info.isFile() && !info.isDir())
+            e.special = specialKindOf(info.absoluteFilePath());
         e.isReadable = info.isReadable();
         e.isWritable = info.isWritable();
         e.size = info.isDir() ? 0 : info.size();
@@ -154,21 +204,6 @@ namespace {
             return {};
         return Result<void>::failure(VfsError::NotSupported,
             QStringLiteral("An earlier version of a file can be read and copied, not written"));
-    }
-
-    /// A path in the form the platform's own calls take.
-    ///
-    /// std::filesystem::path is char on POSIX and wchar_t on Windows, and
-    /// handing it the wrong one either mangles a non-ASCII name or does not
-    /// compile. QFile::encodeName is what Qt itself uses for the first, which is
-    /// UTF-8 on every system Mole builds for.
-    std::filesystem::path nativePath(const QString& path)
-    {
-#ifdef Q_OS_WIN
-        return std::filesystem::path(path.toStdWString());
-#else
-        return std::filesystem::path(QFile::encodeName(path).toStdString());
-#endif
     }
 
     /// What the interface calls the reason the system gave.
@@ -375,9 +410,25 @@ Result<FileEntryList> LocalFileSystem::list(const VfsUri& dir, const CancelToken
     if (!dirInfo.isDir())
         return VfsError::make(VfsError::NotADirectory, QStringLiteral("Not a directory: %1").arg(path));
 
+    // A directory that cannot be opened is not an empty directory, and the only
+    // moment at which the two can be told apart is before the walk: QDirIterator
+    // yields nothing either way and reports nothing either way. "There is
+    // nothing in it" is what a mirror empties the far end on the strength of
+    // (ADR-0030), what a folder-size report puts at zero, and what a move copies
+    // before removing the source. Both bits, because they are two refusals: with
+    // no r the names cannot be read, and with no x nothing inside can be reached
+    // even when they can.
+    if (!dirInfo.isReadable() || !dirInfo.isExecutable())
+        return VfsError::make(VfsError::AccessDenied, QStringLiteral("Access denied: %1").arg(path));
+
     FileEntryList out;
-    QDirIterator it(
-        path, QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot, QDirIterator::NoIteratorFlags);
+    // QDir::System is what makes a named pipe, a socket, a device node and a
+    // symbolic link to something that is not there appear at all. Without it Qt
+    // drops them, and an entry nothing listed is an entry a move deletes without
+    // ever having copied it. What to do about one is the caller's decision; not
+    // being told is not a decision. See MOLE-333.
+    QDirIterator it(path, QDir::AllEntries | QDir::System | QDir::Hidden | QDir::NoDotAndDotDot,
+        QDirIterator::NoIteratorFlags);
     while (it.hasNext()) {
         if (cancel.isCancelled())
             return VfsError::make(VfsError::Cancelled, QStringLiteral("Listing cancelled"));
@@ -534,6 +585,19 @@ Result<void> LocalFileSystem::replace(const VfsUri& from, const VfsUri& to)
 Result<std::unique_ptr<QIODevice>> LocalFileSystem::openRead(const VfsUri& target, qint64)
 {
     const QString path = localPathFor(target);
+
+    // Not everything with a name is a stream of bytes. Opening a named pipe for
+    // reading waits for whoever is going to write to it -- which for a search, a
+    // hash or a copy is for ever -- and a device node hands back something that
+    // is not a file at all. The listing has shown these since MOLE-333, so this
+    // is the first point at which anything can reach one, and one refusal here
+    // covers every reader above rather than each of them learning the lesson.
+    const QFileInfo info(path);
+    if (info.exists() && !info.isFile() && !info.isDir()) {
+        return VfsError::make(VfsError::NotSupported,
+            QStringLiteral("%1 is %2 and cannot be read as a file").arg(path, describe(specialKindOf(path))));
+    }
+
     auto file = std::make_unique<QFile>(path);
     if (!file->open(QIODevice::ReadOnly))
         return errorForPath(path);

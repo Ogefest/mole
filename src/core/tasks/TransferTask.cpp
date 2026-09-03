@@ -103,6 +103,23 @@ bool TransferTask::planJobs(QList<Job>& jobsOut)
             continue;
         }
 
+        // Neither a file nor a folder: a named pipe, a socket, a device node, a
+        // link to something that is not there. There is nothing to stream and
+        // nothing sensible to make at the far end, so it is refused by name --
+        // and a move, which deletes nothing while anything failed, then leaves
+        // it where it is. It used not to be listed at all, so it was passed over
+        // in silence and then removed with the rest of the tree. See MOLE-333.
+        //
+        // The same-backend shortcut is deliberately not held to this: a rename
+        // really does move a pipe or a link, and refusing what the drive can do
+        // would be a worse answer than the one the two paths give apart.
+        if (stat.value().special != SpecialKind::None) {
+            recordFailure(source,
+                VfsError::make(VfsError::NotSupported,
+                    QStringLiteral("%1, so it was not copied").arg(describe(stat.value().special))));
+            continue;
+        }
+
         const QString arrivalName = (m_request.sources.size() == 1 && !m_request.targetName.isEmpty())
             ? m_request.targetName
             : source.fileName();
@@ -147,6 +164,16 @@ bool TransferTask::planJobs(QList<Job>& jobsOut)
 
         DirectoryWalker walker(m_request.sourceFileSystem);
         Result<void> walked = walker.walk(source, cancelToken(), [&](const FileEntry& entry, int) {
+            // The same refusal as above, one level in. This is where it is met in
+            // practice: nobody selects a socket and presses copy, and every tree
+            // under /run and /tmp has one in it.
+            if (entry.special != SpecialKind::None) {
+                recordFailure(entry.uri,
+                    VfsError::make(VfsError::NotSupported,
+                        QStringLiteral("%1, so it was not copied").arg(describe(entry.special))));
+                return DirectoryWalker::Action::Continue;
+            }
+
             // Every child gets the same question as the top-level name, and for
             // the same reason: the offending file is somewhere inside a tree
             // copied off a drive with looser rules, and it is one file's failure

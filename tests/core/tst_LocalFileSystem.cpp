@@ -42,6 +42,17 @@ void TestLocalFileSystem::conformance()
     context.seedFile
         = [&tree](const QString& path, const QByteArray& data) { return tree.writeFile(path, data); };
     context.seedDir = [&tree](const QString& path) { return tree.makeDirs(path); };
+    context.whileUnlistable = [&tree](const QString& path, const std::function<void()>& check) {
+        const QString absolute = tree.absolute(path);
+        if (!madeUnreadable(absolute))
+            return false;
+        check();
+        // Put back whatever the assertion did, so the temporary tree can still
+        // be deleted -- a directory nobody may read takes the whole tree with it.
+        QFile::setPermissions(
+            absolute, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+        return true;
+    };
 
     runFileSystemConformance(context);
 }

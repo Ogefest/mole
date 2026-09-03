@@ -42,6 +42,7 @@ private slots:
 
     void aSourceThatCannotBeListedDeletesNothing();
     void oneUnreadableDirectoryDeletesNothingInsideIt();
+    void oneUnreadableDirectoryOnTheDiskDeletesNothingInsideItEither();
     void aSecondRunOverTheSameTreesDoesNothingAtAll();
     void sameSizeAndDifferentContentIsSeenOnlyWhereItCanBe_data();
     void sameSizeAndDifferentContentIsSeenOnlyWhereItCanBe();
@@ -488,6 +489,47 @@ void TestSync::oneUnreadableDirectoryDeletesNothingInsideIt()
     QVERIFY(memory->stat(VfsUri::fromString(QStringLiteral("mem:///dest/open/fine.txt"))).ok());
     QVERIFY(!memory->stat(VfsUri::fromString(QStringLiteral("mem:///dest/open/stale.txt"))).ok());
     QCOMPARE(task->plan().unreadable(), QStringList { QStringLiteral("/src/locked") });
+}
+
+/// The same claim against the disk, which is where it was not true.
+///
+/// The memory drive above answers a fault for a directory nobody may read, and
+/// every "unreadable directory" case in the tree was written against it. The
+/// local backend answered an empty, successful listing instead -- QDirIterator
+/// on a directory it cannot open yields nothing, and nothing came back as
+/// "there is nothing in it". A mirror believes that: the folder at the far end
+/// is emptied to match a source folder that was never read. See MOLE-333.
+void TestSync::oneUnreadableDirectoryOnTheDiskDeletesNothingInsideItEither()
+{
+#ifndef Q_OS_UNIX
+    QSKIP("permissions work differently on this platform");
+#else
+    QVERIFY(m_tree->writeFile(QStringLiteral("src/open/fine.txt"), QByteArray("copy me")));
+    QVERIFY(m_tree->writeFile(QStringLiteral("src/locked/hidden.txt"), QByteArray("cannot see")));
+    QVERIFY(m_tree->writeFile(QStringLiteral("dest/open/stale.txt"), QByteArray("should go")));
+    QVERIFY(m_tree->writeFile(QStringLiteral("dest/locked/precious.txt"), QByteArray("must stay")));
+    if (!madeUnreadable(m_tree->absolute(QStringLiteral("src/locked"))))
+        QSKIP("this account can list a directory with no permissions at all");
+
+    SyncOptions options;
+    options.mode = SyncOptions::Mode::Mirror;
+    options.dryRun = false;
+
+    SyncTask* task = run(options);
+    // Put back before any assertion, so a failure still leaves a tree that can
+    // be deleted.
+    QFile::setPermissions(m_tree->absolute(QStringLiteral("src/locked")),
+        QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    QVERIFY(task);
+
+    QVERIFY2(exists(QStringLiteral("dest/locked/precious.txt")),
+        "nothing inside a directory the source could not show may be deleted");
+    QVERIFY(exists(QStringLiteral("dest/open/fine.txt")));
+    QVERIFY(!exists(QStringLiteral("dest/open/stale.txt")));
+    QCOMPARE(task->plan().unreadable().size(), 1);
+    QVERIFY2(task->plan().unreadable().first().endsWith(QStringLiteral("/src/locked")),
+        qPrintable(task->plan().unreadable().first()));
+#endif
 }
 
 void TestSync::aSecondRunOverTheSameTreesDoesNothingAtAll()

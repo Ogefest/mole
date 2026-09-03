@@ -29,6 +29,17 @@ struct ConformanceContext
 
     /// Set to false for read-only backends; the mutating sections are skipped.
     bool expectsWriteSupport = true;
+
+    /// Runs `check` with the directory at `relativePath` made unlistable by this
+    /// account, and puts it back afterwards. False means it could not be done
+    /// and the case is skipped -- root reads a directory with no permissions at
+    /// all, and a server may not let a test change a mode.
+    ///
+    /// Setting up and undoing it belongs to whoever built the context, because
+    /// only they know what this drive is: a chmod, an injected fault, or nothing
+    /// available at all. Leaving a directory nobody can read behind would take
+    /// the temporary tree with it.
+    std::function<bool(const QString& relativePath, const std::function<void()>& check)> whileUnlistable;
 };
 
 /// Runs the shared suite. Failures are reported through QTest, so call this

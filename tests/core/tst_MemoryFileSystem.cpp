@@ -38,6 +38,15 @@ void TestMemoryFileSystem::conformance()
         fs->addDirectory(QLatin1Char('/') + path);
         return true;
     };
+    // A scratch drive has no permissions, so the refusal is injected. It is the
+    // same claim either way: the backend that cannot read a directory says so
+    // rather than answering with an empty one.
+    context.whileUnlistable = [fs](const QString& path, const std::function<void()>& check) {
+        fs->setFault(QLatin1Char('/') + path, VfsError::AccessDenied);
+        check();
+        fs->clearFaults();
+        return true;
+    };
 
     runFileSystemConformance(context);
 }
@@ -86,6 +95,15 @@ void TestMemoryFileSystem::conformanceOnACaseInsensitiveVolume()
     };
     context.seedDir = [fs](const QString& path) {
         fs->addDirectory(QLatin1Char('/') + path);
+        return true;
+    };
+    // A scratch drive has no permissions, so the refusal is injected. It is the
+    // same claim either way: the backend that cannot read a directory says so
+    // rather than answering with an empty one.
+    context.whileUnlistable = [fs](const QString& path, const std::function<void()>& check) {
+        fs->setFault(QLatin1Char('/') + path, VfsError::AccessDenied);
+        check();
+        fs->clearFaults();
         return true;
     };
 
