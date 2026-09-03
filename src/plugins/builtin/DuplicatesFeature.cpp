@@ -332,8 +332,9 @@ QString DuplicatesController::buildSetFromTicked(const QString& name)
                                        : QStringLiteral("%1 folders").arg(m_roots.size()))
         : name.trimmed();
 
+    // create() writes the file itself; the second save() here wrote the same
+    // list again.
     const FileSet built = m_services.sets->create(chosen, uris);
-    m_services.sets->save();
     return built.id;
 }
 

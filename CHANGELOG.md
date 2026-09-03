@@ -65,6 +65,8 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-03 #MOLE-342 A setting, bookmark, set, schedule, alert rule, drive or session that could not be written says so, instead of showing the change on screen and losing it at the next start
+2026-09-03 #MOLE-342 A settings file that has been damaged is kept beside itself rather than replaced by an empty one, so a stray comma in the drive list no longer costs every configured drive
 2026-09-03 #MOLE-340 A nightly re-index keeps what is inside the archives in folders it did not have to re-walk, instead of dropping every member of them
 2026-09-03 #MOLE-340 Searching a folder finds what is inside an archive in it, which the index knew about all along and could never be asked for
 2026-09-03 #MOLE-340 A re-index that could not carry a folder forward reports it instead of finishing green with the folder missing

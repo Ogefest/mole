@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/data/JsonFileStore.h"
 #include "core/sets/FileSet.h"
 
 #include <QObject>
@@ -7,7 +8,7 @@
 namespace mole {
 
 /// Where the sets live. One file, written whole.
-class FileSetStore : public QObject
+class FileSetStore : public JsonFileStore
 {
     Q_OBJECT
 
@@ -17,8 +18,10 @@ public:
     /// Honours MOLE_SETS_PATH so tests never touch the user's own sets.
     static QString defaultPath();
 
+    /// False when the file is there and could not be read: it has been kept
+    /// beside itself and this store will not write over it. A set is something somebody built by hand.
     bool load();
-    bool save() const;
+    [[nodiscard]] bool save();
 
     QList<FileSet> sets() const { return m_sets; }
     FileSet set(const QString& id) const;
@@ -41,7 +44,6 @@ signals:
     void setsChanged();
 
 private:
-    QString m_path;
     QList<FileSet> m_sets;
 };
 

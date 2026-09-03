@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/credentials/SecretStore.h"
+#include "core/data/JsonFileStore.h"
 #include "core/vfs/VfsUri.h"
 
 #include <QObject>
@@ -42,7 +43,7 @@ struct RemoteDrive
 
 /// The configured drives, and the only place that puts credentials back into a
 /// configuration.
-class RemoteRegistry : public QObject
+class RemoteRegistry : public JsonFileStore
 {
     Q_OBJECT
 
@@ -52,8 +53,12 @@ public:
     /// Honours MOLE_REMOTES_PATH so tests never touch the user's own drives.
     static QString defaultPath();
 
+    /// False when the file is there and could not be read, in which case it has
+    /// been kept and this store will not write over it. This is the file whose
+    /// loss orphans every credential in the secret store, since the ids that
+    /// name them live here and nowhere else.
     bool load();
-    bool save() const;
+    [[nodiscard]] bool save();
 
     QList<RemoteDrive> drives() const { return m_drives; }
     RemoteDrive drive(const QString& id) const;
@@ -90,7 +95,6 @@ signals:
     void drivesChanged();
 
 private:
-    QString m_path;
     SecretStore* m_secrets = nullptr;
     QList<RemoteDrive> m_drives;
 };

@@ -89,10 +89,12 @@ void AnalysisTarget::refresh()
             return;
         // Filed before it is shown: a report the user can see but not compare
         // against later would defeat the point of keeping history.
-        if (m_store) {
-            m_store->save(report);
+        // The report is shown either way -- it is on screen and correct -- and
+        // a filing that did not happen is a history that will not have it. The
+        // store has said why in the log; the tab's own history list is what
+        // shows the gap.
+        if (m_store && m_store->save(report))
             m_store->prune(m_rootUri, kHistoryKept);
-        }
         setReport(report);
         emit historyChanged();
     });

@@ -11,36 +11,30 @@
 namespace mole {
 
 ChainStore::ChainStore(QString path, QObject* parent)
-    : QObject(parent)
-    , m_path(std::move(path))
+    : JsonFileStore(std::move(path), parent)
 {
 }
 
 QString ChainStore::defaultPath()
 {
-    const QByteArray override = qgetenv("MOLE_CHAINS_PATH");
-    if (!override.isEmpty())
-        return QString::fromLocal8Bit(override);
-
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    return QDir(dir).filePath(QStringLiteral("chains.json"));
+    return pathFor("MOLE_CHAINS_PATH", QStringLiteral("chains.json"));
 }
 
 bool ChainStore::load()
 {
+    QJsonObject root;
+    const Read read = readRoot(&root);
+    if (read == Read::Damaged)
+        return false; // kept, and nothing is written over it until somebody says
+
     m_chains.clear();
     m_unreadable = 0;
+    if (read == Read::Missing) {
+        emit chainsChanged();
+        return true; // nothing saved yet is the ordinary first run
+    }
 
-    QFile file(m_path);
-    if (!file.open(QIODevice::ReadOnly))
-        return false; // no chains yet is not an error
-
-    QJsonParseError error {};
-    const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &error);
-    if (error.error != QJsonParseError::NoError || !document.isObject())
-        return false;
-
-    const QJsonArray stored = document.object().value(QStringLiteral("chains")).toArray();
+    const QJsonArray stored = root.value(QStringLiteral("chains")).toArray();
     for (const QJsonValue& value : stored) {
         const std::optional<Chain> chain = Chain::fromJson(value.toObject());
         if (!chain || chain->id.isEmpty()) {
@@ -53,12 +47,8 @@ bool ChainStore::load()
     return true;
 }
 
-bool ChainStore::save() const
+bool ChainStore::save()
 {
-    const QFileInfo info(m_path);
-    if (!info.dir().exists() && !QDir().mkpath(info.dir().absolutePath()))
-        return false;
-
     QJsonArray stored;
     for (const Chain& chain : m_chains)
         stored.append(chain.toJson());
@@ -67,11 +57,7 @@ bool ChainStore::save() const
     root[QStringLiteral("version")] = 1;
     root[QStringLiteral("chains")] = stored;
 
-    QSaveFile file(m_path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
-        return false;
-    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
-    return file.commit();
+    return writeRoot(root);
 }
 
 Chain ChainStore::chain(const QString& id) const

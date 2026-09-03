@@ -11,6 +11,7 @@
 #include "ui/models/TerminalController.h"
 
 #include "core/automation/Scheduler.h"
+#include "core/data/JsonFileStore.h"
 
 #include <QObject>
 #include <QStringList>
@@ -598,6 +599,15 @@ private slots:
     void watchActivePane();
 
 private:
+    /// Turns a store's "that did not reach the disk" into something the user
+    /// sees, and its "I could not read this and kept it" into the same.
+    ///
+    /// One place for all of them: every store used to call save() as a
+    /// statement, so a full disk or a read-only configuration directory left the
+    /// model changed, the window showing the change, and the file as it was. See
+    /// ADR-0089.
+    void watchStore(JsonFileStore* store);
+
     void mountDefaultDrives();
     void registerShellActions();
 

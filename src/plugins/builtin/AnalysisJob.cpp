@@ -43,7 +43,11 @@ bool AnalysisJob::start(const ScheduleRule& rule, std::function<void(bool, QStri
 
     connect(task, &AnalyseDirectoryTask::reportReady, this,
         [this, stored, rootUri](const AnalysisReport& report) {
-            m_store->save(report);
+            // A report that did not reach the disk is not a run that finished:
+            // the whole point of a scheduled report is that it is there in the
+            // morning. AnalysisStore has already said why in the log.
+            if (!m_store->save(report))
+                return;
             m_store->prune(rootUri, m_historyKept);
             *stored = true;
             emit reportStored(rootUri);

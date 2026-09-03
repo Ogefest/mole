@@ -30,20 +30,18 @@ namespace {
 
 QString BookmarkModel::defaultFilePath()
 {
-    const QByteArray override = qgetenv("MOLE_BOOKMARKS_PATH");
-    if (!override.isEmpty())
-        return QString::fromLocal8Bit(override);
-
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    return QDir(dir).filePath(QStringLiteral("bookmarks.json"));
+    return JsonFile::pathFor("MOLE_BOOKMARKS_PATH", QStringLiteral("bookmarks.json"));
 }
 
 BookmarkModel::BookmarkModel(QString filePath, FileSetStore* sets, QObject* parent)
     : QAbstractListModel(parent)
-    , m_filePath(std::move(filePath))
+    , m_file(std::move(filePath))
     , m_sets(sets)
 {
-    load();
+    // The answer is deliberately not acted on here: a bookmarks file that could
+    // not be read has been kept, this model will refuse to write over it, and
+    // the window is not up yet to be told anything. See ADR-0089.
+    (void)load();
     if (m_sets)
         connect(m_sets, &FileSetStore::setsChanged, this, &BookmarkModel::setsChanged);
 }
@@ -97,8 +95,10 @@ void BookmarkModel::setsChanged()
         const QModelIndex at = index(row, 0);
         emit dataChanged(at, at, { NameRole, Qt::DisplayRole, DeadRole });
     }
+    // A set renamed elsewhere; the row follows it whether or not the file takes
+    // the new name, and saveFailed() is what says the file did not.
     if (renamed)
-        save();
+        (void)save();
 }
 
 int BookmarkModel::rowCount(const QModelIndex& parent) const
@@ -163,8 +163,7 @@ bool BookmarkModel::add(Bookmark bookmark)
     endInsertRows();
 
     emit countChanged();
-    save();
-    return true;
+    return save();
 }
 
 bool BookmarkModel::add(const QString& uri, const QString& name)
@@ -212,7 +211,7 @@ void BookmarkModel::removeAt(int row)
     endRemoveRows();
 
     emit countChanged();
-    save();
+    (void)save();
 }
 
 bool BookmarkModel::rename(int row, const QString& name)
@@ -223,8 +222,7 @@ bool BookmarkModel::rename(int row, const QString& name)
     m_bookmarks[row].name = name.trimmed();
     const QModelIndex idx = index(row, 0);
     emit dataChanged(idx, idx, { NameRole, Qt::DisplayRole });
-    save();
-    return true;
+    return save();
 }
 
 QString BookmarkModel::uriAt(int row) const
@@ -252,18 +250,14 @@ QString BookmarkModel::kindAt(int row) const
 
 bool BookmarkModel::load()
 {
-    QFile file(m_filePath);
-    if (!file.open(QIODevice::ReadOnly))
-        return false;
-
-    QJsonParseError error {};
-    const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &error);
-    if (error.error != QJsonParseError::NoError || !document.isArray())
-        return false;
+    QJsonArray stored;
+    const JsonFile::Read read = m_file.readArray(&stored);
+    if (read == JsonFile::Read::Damaged)
+        return false; // kept, and nothing is written over it until somebody says
 
     beginResetModel();
     m_bookmarks.clear();
-    for (const QJsonValue& value : document.array()) {
+    for (const QJsonValue& value : stored) {
         if (!value.isObject())
             continue;
         const QJsonObject entry = value.toObject();
@@ -297,12 +291,8 @@ bool BookmarkModel::load()
     return true;
 }
 
-bool BookmarkModel::save() const
+bool BookmarkModel::save()
 {
-    const QFileInfo info(m_filePath);
-    if (!info.dir().exists() && !QDir().mkpath(info.dir().absolutePath()))
-        return false;
-
     QJsonArray array;
     for (const Bookmark& bookmark : m_bookmarks) {
         QJsonObject entry;
@@ -321,12 +311,14 @@ bool BookmarkModel::save() const
     }
 
     // Same reasoning as the session file: a crash mid-write must not cost the
-    // user their saved places.
-    QSaveFile file(m_filePath);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
-        return false;
-    file.write(QJsonDocument(array).toJson(QJsonDocument::Indented));
-    return file.commit();
+    // user their saved places, so it goes through QSaveFile like every other
+    // store -- and a write that did not land says so rather than being dropped
+    // by a caller who used save() as a statement.
+    QString reason;
+    if (m_file.write(QJsonDocument(array), &reason))
+        return true;
+    emit saveFailed(reason);
+    return false;
 }
 
 } // namespace mole

@@ -335,6 +335,11 @@ mole_add_test(tst_MoveIsPermanent   SOURCES core/tst_MoveIsPermanent.cpp)
 mole_add_test(tst_TransferTaskUnderFault SOURCES core/tst_TransferTaskUnderFault.cpp)
 mole_add_test(tst_FolderSizesTask   SOURCES core/tst_FolderSizesTask.cpp)
 mole_add_test(tst_Preferences       SOURCES core/tst_Preferences.cpp)
+
+# What every store on disk does with a file: a write that did not land says so,
+# and a file that cannot be parsed is kept rather than replaced.
+mole_add_test(tst_JsonFileStore     SOURCES core/tst_JsonFileStore.cpp)
+mole_add_test(tst_FileSetStore      SOURCES core/tst_FileSetStore.cpp)
 mole_add_test(tst_ReadRangeTask     SOURCES core/tst_ReadRangeTask.cpp)
 
 # What a file is, from a page of it: the sniff every preview goes through when

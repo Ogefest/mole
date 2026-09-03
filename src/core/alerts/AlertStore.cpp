@@ -13,36 +13,30 @@
 namespace mole {
 
 AlertStore::AlertStore(QString path, QObject* parent)
-    : QObject(parent)
-    , m_path(std::move(path))
+    : JsonFileStore(std::move(path), parent)
 {
 }
 
 QString AlertStore::defaultPath()
 {
-    const QByteArray override = qgetenv("MOLE_ALERTS_PATH");
-    if (!override.isEmpty())
-        return QString::fromLocal8Bit(override);
-
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    return QDir(dir).filePath(QStringLiteral("alerts.json"));
+    return pathFor("MOLE_ALERTS_PATH", QStringLiteral("alerts.json"));
 }
 
 bool AlertStore::load()
 {
+    QJsonObject root;
+    const Read read = readRoot(&root);
+    if (read == Read::Damaged)
+        return false; // kept, and nothing is written over it until somebody says
+
     m_rules.clear();
     m_history.clear();
+    if (read == Read::Missing) {
+        emit rulesChanged();
+        emit historyChanged();
+        return true; // nothing saved yet is the ordinary first run
+    }
 
-    QFile file(m_path);
-    if (!file.open(QIODevice::ReadOnly))
-        return false; // no alerts yet is not an error
-
-    QJsonParseError error {};
-    const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &error);
-    if (error.error != QJsonParseError::NoError || !document.isObject())
-        return false;
-
-    const QJsonObject root = document.object();
     const QJsonArray rules = root.value(QStringLiteral("rules")).toArray();
     for (const QJsonValue& value : rules) {
         const AlertRule rule = AlertRule::fromJson(value.toObject());
@@ -60,12 +54,8 @@ bool AlertStore::load()
     return true;
 }
 
-bool AlertStore::save() const
+bool AlertStore::save()
 {
-    const QFileInfo info(m_path);
-    if (!info.dir().exists() && !QDir().mkpath(info.dir().absolutePath()))
-        return false;
-
     QJsonArray rules;
     for (const AlertRule& rule : m_rules)
         rules.append(rule.toJson());
@@ -79,11 +69,7 @@ bool AlertStore::save() const
     root[QStringLiteral("rules")] = rules;
     root[QStringLiteral("history")] = history;
 
-    QSaveFile file(m_path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
-        return false;
-    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
-    return file.commit();
+    return writeRoot(root);
 }
 
 AlertRule AlertStore::rule(const QString& id) const
@@ -108,22 +94,22 @@ bool AlertStore::put(const AlertRule& rule)
         // already triggered on every check would train the user to ignore it.
         const AlertState before = m_rules.at(i).state;
         m_rules[i] = rule;
-        save();
+        const bool written = save();
         emit rulesChanged();
 
         if (before != AlertState::Triggered && rule.state == AlertState::Triggered)
             emit alertRaised(rule);
         else if (before == AlertState::Triggered && rule.state == AlertState::Ok)
             emit alertCleared(rule);
-        return true;
+        return written;
     }
 
     m_rules.append(rule);
-    save();
+    const bool written = save();
     emit rulesChanged();
     if (rule.state == AlertState::Triggered)
         emit alertRaised(rule);
-    return true;
+    return written;
 }
 
 bool AlertStore::remove(const QString& id)
@@ -134,9 +120,9 @@ bool AlertStore::remove(const QString& id)
         return false;
 
     m_rules.erase(position);
-    save();
+    const bool written = save();
     emit rulesChanged();
-    return true;
+    return written;
 }
 
 QList<AlertEvent> AlertStore::history(const QString& ruleId, int limit) const
@@ -150,21 +136,23 @@ QList<AlertEvent> AlertStore::history(const QString& ruleId, int limit) const
     return out;
 }
 
-void AlertStore::record(const AlertEvent& event)
+bool AlertStore::record(const AlertEvent& event)
 {
     m_history.append(event);
     trimHistory();
-    save();
+    const bool written = save();
     emit historyChanged();
+    return written;
 }
 
-void AlertStore::clearHistory()
+bool AlertStore::clearHistory()
 {
     if (m_history.isEmpty())
-        return;
+        return true;
     m_history.clear();
-    save();
+    const bool written = save();
     emit historyChanged();
+    return written;
 }
 
 int AlertStore::triggeredCount() const

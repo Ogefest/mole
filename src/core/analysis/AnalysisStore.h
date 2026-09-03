@@ -35,7 +35,10 @@ public:
 
     const QString& directory() const { return m_directory; }
 
-    bool save(const AnalysisReport& report) const;
+    /// False when the report did not reach the disk. It used to be called as a
+    /// statement by both callers, so a report a user waited for was announced as
+    /// finished and was not there at the next start. See ADR-0089.
+    [[nodiscard]] bool save(const AnalysisReport& report) const;
 
     /// Newest first. Missing or unreadable files are skipped rather than
     /// failing the whole listing.

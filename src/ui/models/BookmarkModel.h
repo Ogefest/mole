@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/data/JsonFileStore.h"
+
 #include <QAbstractListModel>
 #include <QString>
 
@@ -86,11 +88,20 @@ public:
 
     QList<Bookmark> bookmarks() const { return m_bookmarks; }
 
+    /// False when the file is there and could not be read: it has been kept
+    /// beside itself and this model will not write over it.
     bool load();
-    bool save() const;
+    [[nodiscard]] bool save();
+
+    /// Where a file that could not be read was kept, or empty.
+    QString damagedCopyPath() const { return m_file.damagedCopyPath(); }
 
 signals:
     void countChanged();
+    /// A write that did not land, with the reason in words and no path in it.
+    /// The same signal JsonFileStore has: the bookmarks are a list model and
+    /// cannot derive from it, so they hold the file instead. See ADR-0089.
+    void saveFailed(const QString& reason);
 
 private:
     /// "photos" out of "file:///home/user/photos"; the scheme for a root.
@@ -106,7 +117,7 @@ private:
     /// and tells the views, so the sidebar follows with nothing polling.
     void setsChanged();
 
-    QString m_filePath;
+    JsonFile m_file;
     FileSetStore* m_sets = nullptr;
     QList<Bookmark> m_bookmarks;
 };

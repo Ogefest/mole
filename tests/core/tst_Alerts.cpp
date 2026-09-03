@@ -206,10 +206,8 @@ void TestAlerts::readsFromASavedReport()
     auto fs = std::make_shared<LocalFileSystem>();
     auto* task = new AnalyseDirectoryTask(fs, m_tree->rootUri(), QStringLiteral("fixture"));
     bool stored = false;
-    connect(task, &AnalyseDirectoryTask::reportReady, this, [this, &stored](const AnalysisReport& report) {
-        m_analysis->save(report);
-        stored = true;
-    });
+    connect(task, &AnalyseDirectoryTask::reportReady, this,
+        [this, &stored](const AnalysisReport& report) { stored = m_analysis->save(report); });
     m_tasks->submit(task);
     QVERIFY(waitFor([&stored] { return stored; }, 20000));
 

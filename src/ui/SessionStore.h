@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/data/JsonFileStore.h"
+
 #include <QList>
 #include <QString>
 #include <QVariantMap>
@@ -67,11 +69,17 @@ public:
     /// user's real session.
     static QString defaultFilePath();
 
-    const QString& filePath() const { return m_filePath; }
+    QString filePath() const { return m_file.path(); }
 
     /// Writes atomically -- a crash mid-write must not leave a truncated file
     /// that loses every tab.
-    bool save(const Session& session) const;
+    ///
+    /// False when nothing landed, with the reason in `reasonOut` for whoever
+    /// can say it out loud. Not a signal, because this is not a QObject and the
+    /// one caller is the shell. It used to be called as a statement on the way
+    /// out of the application, so a session that could not be written was a
+    /// window that came back wrong with nothing said at any point. See ADR-0089.
+    [[nodiscard]] bool save(const Session& session, QString* reasonOut = nullptr);
 
     /// Returns an empty session when the file is missing, unreadable or not
     /// what we expect. Never throws and never reports an error: a broken
@@ -81,7 +89,12 @@ public:
     void clear() const;
 
 private:
-    QString m_filePath;
+    /// The same writer every other store uses: atomic, and one warning when it
+    /// could not. The *reading* here stays as it was -- a session file that
+    /// cannot be parsed degrades to "start fresh", which ARCHITECTURE.md decided
+    /// and which is right for a file the user rebuilds by using the application.
+    /// A drive list or a schedule is not that, which is why they keep theirs.
+    JsonFile m_file;
 };
 
 } // namespace mole

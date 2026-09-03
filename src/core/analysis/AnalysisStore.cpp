@@ -1,5 +1,7 @@
 #include "core/analysis/AnalysisStore.h"
 
+#include "core/data/JsonFileStore.h"
+#include "core/diagnostics/Diagnostics.h"
 #include "core/vfs/VfsUri.h"
 
 #include <QCryptographicHash>
@@ -61,15 +63,17 @@ bool AnalysisStore::save(const AnalysisReport& report) const
     if (!report.isValid())
         return false;
 
+    // One file per report rather than one file holding them all, so this keeps
+    // its own writer -- but it says the same thing when it cannot write, through
+    // the same log. See ADR-0089.
     const QString folder = folderFor(report.rootUri);
-    if (!QDir().mkpath(folder))
+    if (!QDir().mkpath(folder)) {
+        qCWarning(storeLog, "there is nowhere to write the report for this folder");
         return false;
+    }
 
-    QSaveFile file(QDir(folder).filePath(report.id + QStringLiteral(".json")));
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
-        return false;
-    file.write(QJsonDocument(report.toJson()).toJson(QJsonDocument::Indented));
-    return file.commit();
+    JsonFile file(QDir(folder).filePath(report.id + QStringLiteral(".json")));
+    return file.write(QJsonDocument(report.toJson()), nullptr);
 }
 
 QList<ReportSummary> AnalysisStore::history(const QString& rootUri) const

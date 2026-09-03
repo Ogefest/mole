@@ -4,6 +4,7 @@
 #include "core/automation/ScheduleStore.h"
 #include "core/automation/Scheduler.h"
 
+#include <QFile>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 
@@ -93,6 +94,8 @@ private slots:
     void survivesARestart();
     void aRunInterruptedByAQuitComesBackAsFailed();
     void historyIsCappedAndNewestFirst();
+
+    void aScheduleThatCannotBeParsedIsKeptRatherThanReplaced();
 
 private:
     std::unique_ptr<QTemporaryDir> m_dir;
@@ -401,6 +404,38 @@ void TestScheduler::historyIsCappedAndNewestFirst()
         QStringLiteral("nope") });
     QCOMPARE(store.history(QStringLiteral("a")).size(), 4);
     QCOMPARE(store.history(QStringLiteral("b")).size(), 1);
+}
+
+/// A schedule is data somebody built, one rule at a time.
+///
+/// load() used to clear the list, fail to parse, return false and keep nothing,
+/// and the first put() afterwards wrote the empty list over the file. Every
+/// scheduled job the user had set up would simply stop, which is
+/// ARCHITECTURE.md's "a job that quietly never runs is the one failure nobody
+/// can diagnose" arriving through the front door. See ADR-0089.
+void TestScheduler::aScheduleThatCannotBeParsedIsKeptRatherThanReplaced()
+{
+    const QByteArray typedByHand("{ \"rules\": [ { \"id\": \"nightly\", } ] }");
+    {
+        QFile file(m_path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(typedByHand);
+    }
+
+    ScheduleStore store(m_path);
+    QVERIFY2(!store.load(), "a file that could not be parsed is not a load that succeeded");
+
+    const QString kept = store.damagedCopyPath();
+    QVERIFY2(!kept.isEmpty(), "the unreadable schedule has to be somewhere");
+    QFile keptFile(kept);
+    QVERIFY(keptFile.open(QIODevice::ReadOnly));
+    QCOMPARE(keptFile.readAll(), typedByHand);
+
+    // And it goes on working: the rules somebody adds after this reach the file.
+    QVERIFY(store.put(makeRule(QStringLiteral("a"))));
+    ScheduleStore reopened(m_path);
+    QVERIFY(reopened.load());
+    QCOMPARE(reopened.rules().size(), 1);
 }
 
 MOLE_TEST_MAIN(TestScheduler)

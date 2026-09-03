@@ -167,9 +167,9 @@ void TestKilledOutright::preferencesKilledMidSaveAreTheOldOnesRatherThanHalfOfTh
         Preferences preferences(Victim::instruction());
         preferences.load();
         for (int round = 0; round < 100000; ++round) {
-            preferences.setValue(QStringLiteral("theme"), QStringLiteral("dark-%1").arg(round));
-            preferences.setValue(QStringLiteral("padding"), round);
-            preferences.save();
+            (void)preferences.setValue(QStringLiteral("theme"), QStringLiteral("dark-%1").arg(round));
+            (void)preferences.setValue(QStringLiteral("padding"), round);
+            (void)preferences.save();
         }
         return;
     }

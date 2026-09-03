@@ -161,6 +161,8 @@ add_library(mole_core STATIC
 
     data/FileType.h
     data/FileType.cpp
+    data/JsonFileStore.h
+    data/JsonFileStore.cpp
     data/SqliteError.h
     data/SqliteError.cpp
     data/ITableSource.h

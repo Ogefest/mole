@@ -51,10 +51,11 @@ QString IndexScanJob::schedule(ScheduleStore& store, const QString& rootUri, qin
     ScheduleRule rule = ruleFor(store, rootUri);
 
     if (seconds <= 0) {
-        if (rule.isValid()) {
-            store.remove(rule.id);
-            store.save();
-        }
+        // remove() writes the file itself, and says so through the store's
+        // saveFailed() if it could not -- the second save() here was a second
+        // write of the same list.
+        if (rule.isValid())
+            (void)store.remove(rule.id);
         return {};
     }
 
@@ -71,8 +72,7 @@ QString IndexScanJob::schedule(ScheduleStore& store, const QString& rootUri, qin
     // that already had one used to do nothing at all.
     rule.intervalSeconds = seconds;
     rule.enabled = true;
-    store.put(rule);
-    store.save();
+    (void)store.put(rule);
     return rule.id;
 }
 

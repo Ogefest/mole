@@ -14,36 +14,30 @@
 namespace mole {
 
 ScheduleStore::ScheduleStore(QString path, QObject* parent)
-    : QObject(parent)
-    , m_path(std::move(path))
+    : JsonFileStore(std::move(path), parent)
 {
 }
 
 QString ScheduleStore::defaultPath()
 {
-    const QByteArray override = qgetenv("MOLE_SCHEDULE_PATH");
-    if (!override.isEmpty())
-        return QString::fromLocal8Bit(override);
-
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    return QDir(dir).filePath(QStringLiteral("schedule.json"));
+    return pathFor("MOLE_SCHEDULE_PATH", QStringLiteral("schedule.json"));
 }
 
 bool ScheduleStore::load()
 {
+    QJsonObject root;
+    const Read read = readRoot(&root);
+    if (read == Read::Damaged)
+        return false; // kept, and nothing is written over it until somebody says
+
     m_rules.clear();
     m_history.clear();
+    if (read == Read::Missing) {
+        emit rulesChanged();
+        emit historyChanged();
+        return true; // nothing saved yet is the ordinary first run
+    }
 
-    QFile file(m_path);
-    if (!file.open(QIODevice::ReadOnly))
-        return false; // no schedule yet is not an error
-
-    QJsonParseError error {};
-    const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &error);
-    if (error.error != QJsonParseError::NoError || !document.isObject())
-        return false;
-
-    const QJsonObject root = document.object();
     const QJsonArray rules = root.value(QStringLiteral("rules")).toArray();
     for (const QJsonValue& value : rules) {
         const ScheduleRule rule = ScheduleRule::fromJson(value.toObject());
@@ -61,12 +55,8 @@ bool ScheduleStore::load()
     return true;
 }
 
-bool ScheduleStore::save() const
+bool ScheduleStore::save()
 {
-    const QFileInfo info(m_path);
-    if (!info.dir().exists() && !QDir().mkpath(info.dir().absolutePath()))
-        return false;
-
     QJsonArray rules;
     for (const ScheduleRule& rule : m_rules)
         rules.append(rule.toJson());
@@ -80,11 +70,7 @@ bool ScheduleStore::save() const
     root[QStringLiteral("rules")] = rules;
     root[QStringLiteral("history")] = history;
 
-    QSaveFile file(m_path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
-        return false;
-    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
-    return file.commit();
+    return writeRoot(root);
 }
 
 ScheduleRule ScheduleStore::rule(const QString& id) const
@@ -104,16 +90,16 @@ bool ScheduleStore::put(const ScheduleRule& rule)
     for (int i = 0; i < m_rules.size(); ++i) {
         if (m_rules.at(i).id == rule.id) {
             m_rules[i] = rule;
-            save();
+            const bool written = save();
             emit rulesChanged();
-            return true;
+            return written;
         }
     }
 
     m_rules.append(rule);
-    save();
+    const bool written = save();
     emit rulesChanged();
-    return true;
+    return written;
 }
 
 bool ScheduleStore::remove(const QString& id)
@@ -124,9 +110,9 @@ bool ScheduleStore::remove(const QString& id)
         return false;
 
     m_rules.erase(position);
-    save();
+    const bool written = save();
     emit rulesChanged();
-    return true;
+    return written;
 }
 
 QList<RunRecord> ScheduleStore::history(const QString& ruleId, int limit) const
@@ -140,21 +126,23 @@ QList<RunRecord> ScheduleStore::history(const QString& ruleId, int limit) const
     return out;
 }
 
-void ScheduleStore::record(const RunRecord& record)
+bool ScheduleStore::record(const RunRecord& record)
 {
     m_history.append(record);
     trimHistory();
-    save();
+    const bool written = save();
     emit historyChanged();
+    return written;
 }
 
-void ScheduleStore::clearHistory()
+bool ScheduleStore::clearHistory()
 {
     if (m_history.isEmpty())
-        return;
+        return true;
     m_history.clear();
-    save();
+    const bool written = save();
     emit historyChanged();
+    return written;
 }
 
 void ScheduleStore::trimHistory()

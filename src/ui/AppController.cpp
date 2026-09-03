@@ -104,6 +104,25 @@ bool AppController::restoreSession()
     return restored > 0;
 }
 
+void AppController::watchStore(JsonFileStore* store)
+{
+    // A change the interface has already shown and the disk has not taken is the
+    // failure nobody can see. Every store says so the same way, through one
+    // place, rather than each caller of save() deciding for itself -- which is
+    // what "nothing at all" turned out to mean. See ADR-0089.
+    connect(store, &JsonFileStore::saveFailed, this, [this](const QString& reason) {
+        emit notification(static_cast<int>(EventBus::Severity::Warning), QStringLiteral("Not saved"), reason);
+    });
+    // Named by file rather than by path: this goes on a screen and into the
+    // session log, and neither may carry a directory off somebody's machine.
+    connect(store, &JsonFileStore::loadFoundDamage, this, [this](const QString& kept) {
+        emit notification(static_cast<int>(EventBus::Severity::Warning),
+            QStringLiteral("A settings file could not be read"),
+            QStringLiteral("It was kept as %1, and nothing has been written over it.")
+                .arg(QFileInfo(kept).fileName()));
+    });
+}
+
 void AppController::saveSessionNow()
 {
     if (!m_session || !m_tabs || m_restoring)
@@ -111,7 +130,13 @@ void AppController::saveSessionNow()
 
     Session session = m_tabs->captureSession();
     session.window = m_window;
-    m_session->save(session);
+    QString reason;
+    if (!m_session->save(session, &reason)) {
+        // Said out loud. This runs on the way out as well as during a run, and a
+        // session that did not reach the disk is a window that comes back wrong
+        // with nothing having been said at any point.
+        emit notification(static_cast<int>(EventBus::Severity::Warning), QStringLiteral("Not saved"), reason);
+    }
 }
 
 bool AppController::geometryIsOnScreen(int x, int y, int width, int height)
@@ -234,14 +259,17 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     }
 
     m_schedules = new ScheduleStore(ScheduleStore::defaultPath(), this);
+    watchStore(m_schedules);
     m_schedules->load();
     m_scheduler = new Scheduler(m_schedules, this);
 
     m_reports = std::make_unique<AnalysisStore>(AnalysisStore::defaultDirectory());
 
     m_sets = new FileSetStore(FileSetStore::defaultPath(), this);
-    m_preferences = new Preferences(Preferences::defaultPath(), this);
+    watchStore(m_sets);
     m_sets->load();
+    m_preferences = new Preferences(Preferences::defaultPath(), this);
+    watchStore(m_preferences);
 
     // What the window is painted in, from the last time somebody chose. Applied
     // here rather than in the constructor because that is where the preferences
@@ -265,9 +293,11 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     connect(m_secrets, &SecretStore::unlockedChanged, this, &AppController::credentialsChanged);
 
     m_remotes = new RemoteRegistry(RemoteRegistry::defaultPath(), m_secrets, this);
+    watchStore(m_remotes);
     m_remotes->load();
 
     m_alerts = new AlertStore(AlertStore::defaultPath(), this);
+    watchStore(m_alerts);
     m_alerts->load();
     // An alert nobody is told about is not an alert. Only transitions are
     // announced -- the store takes care of not repeating itself.
@@ -322,6 +352,14 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     // read from it rather than copied. The store exists by now -- see above. See
     // ADR-0061.
     m_bookmarks = new BookmarkModel(BookmarkModel::defaultFilePath(), m_sets, this);
+    // The bookmarks are a list model and cannot derive from JsonFileStore, so
+    // they carry the same signal by hand. The loading happens in their
+    // constructor, which is before anything could hear about damage -- a
+    // bookmarks file that could not be read is in the session log and will not
+    // be written over, which is the half that matters.
+    connect(m_bookmarks, &BookmarkModel::saveFailed, this, [this](const QString& reason) {
+        emit notification(static_cast<int>(EventBus::Severity::Warning), QStringLiteral("Not saved"), reason);
+    });
     connect(m_bookmarks, &BookmarkModel::countChanged, this, &AppController::refreshBookmarkActions);
     // A set bookmark's name comes from the store, so renaming a set changes what
     // the Bookmarks menu should say without any bookmark being added or removed.

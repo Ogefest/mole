@@ -205,10 +205,8 @@ void LiveSearchController::unscheduleScan(const QString& uri)
 {
     if (!m_services.isValid() || !m_services.scheduler->store())
         return;
-    if (const QString id = scheduledScanId(uri); !id.isEmpty()) {
-        m_services.scheduler->store()->remove(id);
-        m_services.scheduler->store()->save();
-    }
+    if (const QString id = scheduledScanId(uri); !id.isEmpty())
+        (void)m_services.scheduler->store()->remove(id);
 }
 
 ScanOptions LiveSearchController::scanOptions(bool incremental) const
@@ -1233,8 +1231,9 @@ QString LiveSearchController::buildSetFromResults(const QString& name)
         ? QStringLiteral("Search: %1").arg(m_queryText.isEmpty() ? m_rootUri : m_queryText)
         : name.trimmed();
 
+    // create() writes the file itself; the second save() here wrote the same
+    // list again.
     const FileSet built = m_services.sets->create(chosen, uris);
-    m_services.sets->save();
     return built.id;
 }
 

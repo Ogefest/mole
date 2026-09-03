@@ -25,6 +25,14 @@ Q_DECLARE_LOGGING_CATEGORY(networkLog)
 /// it stopped sending".
 Q_DECLARE_LOGGING_CATEGORY(curlLog)
 
+/// What every store on disk could not do. A configuration file that could not be
+/// written, and one that could not be read and was kept rather than replaced.
+///
+/// Warnings only, in practice: a store saying nothing is the ordinary case, and
+/// a store saying something is a change the user has already been shown and the
+/// disk has not taken. See ADR-0089.
+Q_DECLARE_LOGGING_CATEGORY(storeLog)
+
 /// The one request Mole makes on its own account: whether a newer release
 /// exists. Everything that check decides is written here and nowhere else,
 /// because the whole of its design is that it never says anything out loud --

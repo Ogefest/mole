@@ -40,7 +40,7 @@ namespace {
 } // namespace
 
 SessionStore::SessionStore(QString filePath)
-    : m_filePath(std::move(filePath))
+    : m_file(std::move(filePath))
 {
 }
 
@@ -54,12 +54,8 @@ QString SessionStore::defaultFilePath()
     return QDir(dir).filePath(QStringLiteral("session.json"));
 }
 
-bool SessionStore::save(const Session& session) const
+bool SessionStore::save(const Session& session, QString* reasonOut)
 {
-    const QFileInfo info(m_filePath);
-    if (!info.dir().exists() && !QDir().mkpath(info.dir().absolutePath()))
-        return false;
-
     QJsonArray tabs;
     for (const TabSession& tab : session.tabs) {
         QJsonObject entry;
@@ -83,16 +79,12 @@ bool SessionStore::save(const Session& session) const
 
     // QSaveFile writes to a temporary and renames, so a crash half way through
     // leaves the previous session intact rather than an empty file.
-    QSaveFile file(m_filePath);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
-        return false;
-    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
-    return file.commit();
+    return m_file.write(QJsonDocument(root), reasonOut);
 }
 
 Session SessionStore::load() const
 {
-    QFile file(m_filePath);
+    QFile file(m_file.path());
     if (!file.open(QIODevice::ReadOnly))
         return {};
 
@@ -144,7 +136,7 @@ Session SessionStore::load() const
 
 void SessionStore::clear() const
 {
-    QFile::remove(m_filePath);
+    QFile::remove(m_file.path());
 }
 
 } // namespace mole

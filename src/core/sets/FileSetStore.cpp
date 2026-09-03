@@ -14,35 +14,29 @@
 namespace mole {
 
 FileSetStore::FileSetStore(QString path, QObject* parent)
-    : QObject(parent)
-    , m_path(std::move(path))
+    : JsonFileStore(std::move(path), parent)
 {
 }
 
 QString FileSetStore::defaultPath()
 {
-    const QByteArray override = qgetenv("MOLE_SETS_PATH");
-    if (!override.isEmpty())
-        return QString::fromLocal8Bit(override);
-
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    return QDir(dir).filePath(QStringLiteral("sets.json"));
+    return pathFor("MOLE_SETS_PATH", QStringLiteral("sets.json"));
 }
 
 bool FileSetStore::load()
 {
+    QJsonObject root;
+    const Read read = readRoot(&root);
+    if (read == Read::Damaged)
+        return false; // kept, and nothing is written over it until somebody says
+
     m_sets.clear();
+    if (read == Read::Missing) {
+        emit setsChanged();
+        return true; // nothing saved yet is the ordinary first run
+    }
 
-    QFile file(m_path);
-    if (!file.open(QIODevice::ReadOnly))
-        return false; // no sets yet is not an error
-
-    QJsonParseError error {};
-    const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &error);
-    if (error.error != QJsonParseError::NoError || !document.isObject())
-        return false;
-
-    const QJsonArray sets = document.object().value(QStringLiteral("sets")).toArray();
+    const QJsonArray sets = root.value(QStringLiteral("sets")).toArray();
     for (const QJsonValue& value : sets) {
         const FileSet set = FileSet::fromJson(value.toObject());
         if (set.isValid())
@@ -53,12 +47,8 @@ bool FileSetStore::load()
     return true;
 }
 
-bool FileSetStore::save() const
+bool FileSetStore::save()
 {
-    const QFileInfo info(m_path);
-    if (!info.dir().exists() && !QDir().mkpath(info.dir().absolutePath()))
-        return false;
-
     QJsonArray sets;
     for (const FileSet& set : m_sets)
         sets.append(set.toJson());
@@ -67,11 +57,7 @@ bool FileSetStore::save() const
     root[QStringLiteral("version")] = 1;
     root[QStringLiteral("sets")] = sets;
 
-    QSaveFile file(m_path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
-        return false;
-    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
-    return file.commit();
+    return writeRoot(root);
 }
 
 FileSet FileSetStore::set(const QString& id) const
@@ -99,7 +85,10 @@ FileSet FileSetStore::create(const QString& name, const QList<QString>& uris)
     }
 
     m_sets.append(set);
-    save();
+    // The set exists whether or not the file took it; a caller that needs to
+    // know goes through put(), and the failure is reported once by
+    // JsonFileStore::saveFailed() either way. See ADR-0089.
+    (void)save();
     emit setsChanged();
     return set;
 }
@@ -114,15 +103,15 @@ bool FileSetStore::put(const FileSet& set)
             continue;
         m_sets[i] = set;
         m_sets[i].updatedAt = QDateTime::currentDateTime();
-        save();
+        const bool written = save();
         emit setsChanged();
-        return true;
+        return written;
     }
 
     m_sets.append(set);
-    save();
+    const bool written = save();
     emit setsChanged();
-    return true;
+    return written;
 }
 
 bool FileSetStore::remove(const QString& id)
@@ -133,9 +122,9 @@ bool FileSetStore::remove(const QString& id)
         return false;
 
     m_sets.erase(position);
-    save();
+    const bool written = save();
     emit setsChanged();
-    return true;
+    return written;
 }
 
 bool FileSetStore::rename(const QString& id, const QString& name)
@@ -166,7 +155,7 @@ int FileSetStore::addTo(const QString& id, const QList<QString>& uris)
     }
 
     if (added > 0)
-        put(target);
+        (void)put(target);
     return added;
 }
 
@@ -181,7 +170,7 @@ int FileSetStore::removeFrom(const QString& id, const QList<QString>& uris)
         removed += static_cast<int>(target.uris.removeAll(uri));
 
     if (removed > 0)
-        put(target);
+        (void)put(target);
     return removed;
 }
 

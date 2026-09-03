@@ -42,8 +42,7 @@ QString RemoteDrive::secretKeyFor(const QString& field) const
 }
 
 RemoteRegistry::RemoteRegistry(QString path, SecretStore* secrets, QObject* parent)
-    : QObject(parent)
-    , m_path(std::move(path))
+    : JsonFileStore(std::move(path), parent)
     , m_secrets(secrets)
 {
     // Opening or shutting the credential store does not change a drive, but it
@@ -56,28 +55,23 @@ RemoteRegistry::RemoteRegistry(QString path, SecretStore* secrets, QObject* pare
 
 QString RemoteRegistry::defaultPath()
 {
-    const QByteArray override = qgetenv("MOLE_REMOTES_PATH");
-    if (!override.isEmpty())
-        return QString::fromLocal8Bit(override);
-
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    return QDir(dir).filePath(QStringLiteral("drives.json"));
+    return pathFor("MOLE_REMOTES_PATH", QStringLiteral("drives.json"));
 }
 
 bool RemoteRegistry::load()
 {
+    QJsonObject root;
+    const Read read = readRoot(&root);
+    if (read == Read::Damaged)
+        return false; // kept, and nothing is written over it until somebody says
+
     m_drives.clear();
+    if (read == Read::Missing) {
+        emit drivesChanged();
+        return true; // no drives configured yet is not an error
+    }
 
-    QFile file(m_path);
-    if (!file.open(QIODevice::ReadOnly))
-        return false; // no drives configured yet is not an error
-
-    QJsonParseError error {};
-    const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &error);
-    if (error.error != QJsonParseError::NoError || !document.isObject())
-        return false;
-
-    const QJsonArray drives = document.object().value(QStringLiteral("drives")).toArray();
+    const QJsonArray drives = root.value(QStringLiteral("drives")).toArray();
     for (const QJsonValue& value : drives) {
         const QJsonObject object = value.toObject();
 
@@ -102,12 +96,8 @@ bool RemoteRegistry::load()
     return true;
 }
 
-bool RemoteRegistry::save() const
+bool RemoteRegistry::save()
 {
-    const QFileInfo info(m_path);
-    if (!info.dir().exists() && !QDir().mkpath(info.dir().absolutePath()))
-        return false;
-
     QJsonArray drives;
     for (const RemoteDrive& drive : m_drives) {
         QJsonArray secretFields;
@@ -132,11 +122,7 @@ bool RemoteRegistry::save() const
     root[QStringLiteral("version")] = 1;
     root[QStringLiteral("drives")] = drives;
 
-    QSaveFile file(m_path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
-        return false;
-    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
-    return file.commit();
+    return writeRoot(root);
 }
 
 RemoteDrive RemoteRegistry::drive(const QString& id) const
@@ -237,9 +223,13 @@ bool RemoteRegistry::remove(const QString& id)
         m_secrets->removeSecretsWithPrefix(QStringLiteral("drive/%1/").arg(id));
 
     m_drives.erase(position);
-    save();
+    const bool written = save();
     emit drivesChanged();
-    return true;
+    // The drive is gone from the model either way -- its credentials have
+    // already been removed and there is no putting that back -- but a removal
+    // the file did not take is one that comes back at the next start, and
+    // saying so is the difference between a puzzle and a message.
+    return written;
 }
 
 QVariantMap RemoteRegistry::configFor(const RemoteDrive& drive, QString* errorOut) const

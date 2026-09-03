@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/automation/Chain.h"
+#include "core/data/JsonFileStore.h"
 
 #include <QList>
 #include <QObject>
@@ -18,7 +19,7 @@ namespace mole {
 /// one -- but a chain that silently disappears is a scheduled job that stops
 /// happening with nothing to read about it, so the count is available to whoever
 /// wants to say so.
-class ChainStore : public QObject
+class ChainStore : public JsonFileStore
 {
     Q_OBJECT
 
@@ -30,7 +31,7 @@ public:
     static QString defaultPath();
 
     bool load();
-    [[nodiscard]] bool save() const;
+    [[nodiscard]] bool save();
 
     [[nodiscard]] QList<Chain> chains() const { return m_chains; }
     [[nodiscard]] Chain chain(const QString& id) const;
@@ -47,7 +48,6 @@ signals:
     void chainsChanged();
 
 private:
-    QString m_path;
     QList<Chain> m_chains;
     int m_unreadable = 0;
 };
