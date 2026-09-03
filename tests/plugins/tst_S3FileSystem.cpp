@@ -2,14 +2,18 @@
 #include "plugins/network/S3Listing.h"
 #include "support/FileSystemConformance.h"
 #include "support/MoleTestMain.h"
+#include "support/ScriptedHttpServer.h"
 #include "support/TestSupport.h"
 #include "support/Victim.h"
 
+#include <QRegularExpression>
+#include <QThread>
 #include <QUrl>
 
 #include <algorithm>
 #include <cstring>
 #include <curl/curl.h>
+#include <functional>
 
 using namespace mole;
 using namespace mole::test;
@@ -264,6 +268,52 @@ private:
     Account m_account;
 };
 
+/// A drive pointed at a scripted server rather than at a bucket.
+///
+/// Every case that uses one is a case a real bucket cannot be asked for: an
+/// object the fixture declares at six gigabytes without storing one, a HEAD that
+/// answers 403 for a key that is there, a key with an empty segment in it. They
+/// run offline in milliseconds, which is what makes them run on every change.
+S3Settings againstScript(const ScriptedHttpServer& server)
+{
+    S3Settings settings;
+    settings.accessKeyId = QStringLiteral("key");
+    settings.secretAccessKey = QStringLiteral("secret");
+    settings.endpoint = server.url().mid(QStringLiteral("http://").size());
+    settings.bucket = QStringLiteral("bucket");
+    settings.pathStyleAddressing = true;
+    settings.useHttps = false;
+    return settings;
+}
+
+/// A ListObjectsV2 answer with exactly these keys and child prefixes in it.
+QByteArray listingOf(const QStringList& keys, const QStringList& prefixes)
+{
+    QByteArray xml = R"(<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated>)";
+    for (const QString& key : keys) {
+        xml += "<Contents><Key>" + key.toUtf8()
+            + "</Key><LastModified>2026-08-09T08:54:12.000Z</LastModified><Size>7</Size></Contents>";
+    }
+    for (const QString& prefix : prefixes)
+        xml += "<CommonPrefixes><Prefix>" + prefix.toUtf8() + "</Prefix></CommonPrefixes>";
+    xml += "</ListBucketResult>";
+    return xml;
+}
+
+/// Waits for something the server has been sent, rather than for a clock: the
+/// upload runs on the stream's own thread and nothing here knows when it got
+/// there. Answers false if it never arrives.
+bool until(const std::function<bool()>& done)
+{
+    for (int waited = 0; waited < 10000; ++waited) {
+        if (done())
+            return true;
+        QThread::msleep(1);
+    }
+    return false;
+}
+
 } // namespace
 
 class TestS3FileSystem : public QObject
@@ -289,6 +339,13 @@ private slots:
 
     void aContainerThatKeepsEarlierObjectsOffersThem();
     void aContainerWithoutItContributesNothing();
+
+    void aCancelledUploadIsAbandonedRatherThanLeftBeingPaidFor();
+    void anObjectTooBigForOneCopyRequestIsCopiedInRanges();
+    void theTimeAnObjectWasLastChangedIsRead();
+    void aKeyWithAnEmptySegmentIsNotShownAsAChildOfItself();
+    void aRefusedHeadIsARefusalRatherThanAMissingFile();
+    void aContainerThatWouldNotSayStillSaysWhy();
 };
 
 void TestS3FileSystem::anEndpointIsDerivedFromTheRegionWhenNotGiven()
@@ -896,6 +953,303 @@ void TestS3FileSystem::aContainerWithoutItContributesNothing()
     QCOMPARE(listing.value().first().name, QStringLiteral("report.txt"));
 
     raw.removeTree(prefix + QStringLiteral("/"));
+}
+
+/// The cancel that costs money.
+///
+/// A multipart upload that is begun and never completed leaves its parts in the
+/// bucket, and S3 **charges for them** until something removes them (ADR-0015).
+/// abandonMultipart() was called only where uploadPart() or completeMultipart()
+/// answered with a failure -- so the one case that costs money, the caller
+/// giving up, was the one that leaked: a cancelled copy destroys the stream,
+/// StreamingUpload's destructor cancels its token, the read answers -1 and the
+/// upload was simply forgotten with the parts still up there. MOLE-96's sweep is
+/// for a process that was killed; this one is alive and can tidy up after
+/// itself. See MOLE-347.
+void TestS3FileSystem::aCancelledUploadIsAbandonedRatherThanLeftBeingPaidFor()
+{
+    ScriptedHttpServer server([](const ScriptedHttpServer::Request& request) {
+        ScriptedHttpServer::Reply reply;
+        if (request.method == "POST" && request.path.contains("uploads")) {
+            reply.headers.append("Content-Type: application/xml");
+            reply.body = "<InitiateMultipartUploadResult><UploadId>the-upload</UploadId>"
+                         "</InitiateMultipartUploadResult>";
+            return reply;
+        }
+        if (request.method == "PUT")
+            reply.headers.append("ETag: \"deadbeef\"");
+        return reply;
+    });
+    QVERIFY2(server.start(), "the scripted server could not take a port");
+
+    auto fileSystem = std::make_shared<S3FileSystem>(QStringLiteral("s3"), againstScript(server));
+    const VfsUri target(QStringLiteral("s3"), QString(), QStringLiteral("/big.bin"));
+
+    // No expected size, so this goes the multipart way. One whole part, which is
+    // what it takes to have an upload id in flight at all -- there is nothing to
+    // abandon before the first part has gone up.
+    Result<std::unique_ptr<QIODevice>> stream = fileSystem->openWrite(target);
+    QVERIFY2(stream.ok(), qPrintable(stream.error().message));
+
+    const QByteArray block(1024 * 1024, 'p');
+    for (int written = 0; written < 64; ++written)
+        QCOMPARE(stream.value()->write(block), static_cast<qint64>(block.size()));
+
+    const auto sawPartOne = [&server] {
+        for (const ScriptedHttpServer::Request& request : server.received()) {
+            if (request.method == "PUT" && request.path.contains("partNumber=1"))
+                return true;
+        }
+        return false;
+    };
+    QVERIFY2(until(sawPartOne), "the first part never went up, so there was nothing to abandon");
+
+    // Dropped rather than closed, which is what a cancelled copy does.
+    stream.value().reset();
+
+    const auto sawTheAbandon = [&server] {
+        for (const ScriptedHttpServer::Request& request : server.received()) {
+            if (request.method == "DELETE" && request.path.contains("uploadId=the-upload"))
+                return true;
+        }
+        return false;
+    };
+    QVERIFY2(
+        until(sawTheAbandon), "a cancelled upload left its parts in the bucket, where they are charged for");
+}
+
+/// A rename of anything large could not happen at all.
+///
+/// copyObject() was one PUT carrying x-amz-copy-source, which S3, B2 and MinIO
+/// all refuse above 5 GB -- and rename() used it for an object and for every key
+/// under a prefix, so a folder rename stopped at the first large object with half
+/// its keys already copied under the new prefix. The files ADR-0014 keeps citing
+/// are exactly the ones this could not move. See MOLE-347.
+void TestS3FileSystem::anObjectTooBigForOneCopyRequestIsCopiedInRanges()
+{
+    constexpr qint64 kSixGigabytes = 6LL * 1024 * 1024 * 1024;
+
+    ScriptedHttpServer server([](const ScriptedHttpServer::Request& request) {
+        ScriptedHttpServer::Reply reply;
+        if (request.method == "HEAD") {
+            // The source is there and is six gigabytes; nothing is at the
+            // destination.
+            if (request.path.contains("backup.tar")) {
+                reply.headers.append("Content-Length: " + QByteArray::number(kSixGigabytes));
+                reply.headers.append("Last-Modified: Wed, 12 Oct 2022 10:00:00 GMT");
+                return reply;
+            }
+            reply.status = 404;
+            reply.reason = "Not Found";
+            return reply;
+        }
+        if (request.method == "GET") {
+            reply.headers.append("Content-Type: application/xml");
+            reply.body = listingOf({}, {});
+            return reply;
+        }
+        if (request.method == "POST" && request.path.contains("uploads")) {
+            reply.body = "<InitiateMultipartUploadResult><UploadId>the-copy</UploadId>"
+                         "</InitiateMultipartUploadResult>";
+            return reply;
+        }
+        if (request.method == "POST") {
+            reply.body = "<CompleteMultipartUploadResult><ETag>\"whole\"</ETag>"
+                         "</CompleteMultipartUploadResult>";
+            return reply;
+        }
+        if (request.method == "PUT") {
+            // The ETag of a copied part is in the body, which is the one way it
+            // differs from a part that was uploaded.
+            reply.body = "<CopyPartResult><ETag>\"part\"</ETag></CopyPartResult>";
+            return reply;
+        }
+        return reply;
+    });
+    QVERIFY2(server.start(), "the scripted server could not take a port");
+
+    auto fileSystem = std::make_shared<S3FileSystem>(QStringLiteral("s3"), againstScript(server));
+    const VfsUri from(QStringLiteral("s3"), QString(), QStringLiteral("/backup.tar"));
+    const VfsUri to(QStringLiteral("s3"), QString(), QStringLiteral("/archive.tar"));
+
+    const Result<void> renamed = fileSystem->rename(from, to);
+    QVERIFY2(renamed.ok(), qPrintable(renamed.error().message));
+
+    // Six ranges of a gibibyte, inclusive at both ends and covering every byte
+    // exactly once. The last one stops at the end of the object rather than at
+    // the end of a part.
+    QList<QByteArray> ranges;
+    QList<QByteArray> parts;
+    for (const ScriptedHttpServer::Request& request : server.received()) {
+        const QByteArray range = request.header("x-amz-copy-source-range");
+        if (request.method != "PUT" || range.isEmpty())
+            continue;
+        ranges.append(range);
+        QVERIFY2(request.path.contains("uploadId=the-copy"), qPrintable(QString::fromUtf8(request.path)));
+        QVERIFY2(!request.header("x-amz-copy-source").isEmpty(), "a part copy names its source");
+        parts.append(request.path);
+    }
+
+    QCOMPARE(ranges.size(), 6);
+    QCOMPARE(ranges.first(), QByteArray("bytes=0-1073741823"));
+    QCOMPARE(ranges.at(1), QByteArray("bytes=1073741824-2147483647"));
+    QCOMPARE(ranges.last(), QByteArray("bytes=5368709120-6442450943"));
+    QVERIFY2(parts.at(0).contains("partNumber=1"), "the parts are numbered from one");
+    QVERIFY2(parts.at(5).contains("partNumber=6"), "and in order");
+
+    // And the original is gone, which is what makes it a rename.
+    bool deleted = false;
+    for (const ScriptedHttpServer::Request& request : server.received()) {
+        if (request.method == "DELETE" && request.path.contains("backup.tar"))
+            deleted = true;
+    }
+    QVERIFY2(deleted, "the source of a rename must not be left behind");
+}
+
+/// Every object in every bucket had no timestamp.
+///
+/// stat() parsed Last-Modified with a bare Qt::RFC2822Date, and Qt's reader
+/// accepts a numeric offset and nothing else -- while every HTTP date ends in
+/// "GMT". So the parse failed for every object there has ever been, and a
+/// listing that showed a date got it from the XML instead. WebDAV had worked
+/// around the same thing in its own parser for months, which is why the reader
+/// is now shared. See MOLE-347.
+void TestS3FileSystem::theTimeAnObjectWasLastChangedIsRead()
+{
+    ScriptedHttpServer server([](const ScriptedHttpServer::Request&) {
+        ScriptedHttpServer::Reply reply;
+        reply.headers.append("Content-Length: 12");
+        reply.headers.append("Last-Modified: Wed, 12 Oct 2022 10:00:00 GMT");
+        return reply;
+    });
+    QVERIFY2(server.start(), "the scripted server could not take a port");
+
+    auto fileSystem = std::make_shared<S3FileSystem>(QStringLiteral("s3"), againstScript(server));
+    const Result<FileEntry> what
+        = fileSystem->stat(VfsUri(QStringLiteral("s3"), QString(), QStringLiteral("/notes.txt")));
+
+    QVERIFY2(what.ok(), qPrintable(what.error().message));
+    QVERIFY2(what.value().modified.isValid(), "an object that says when it changed must be believed");
+    QCOMPARE(what.value().modified.toUTC(), QDateTime(QDate(2022, 10, 12), QTime(10, 0), Qt::UTC));
+    QCOMPARE(what.value().size, qint64(12));
+}
+
+/// A key nothing stops anybody writing, and it produced a folder inside itself.
+///
+/// `a//b` is a perfectly good key and so is a leading `/` at the root. The name
+/// of a row was worked out by trimming the end of the key, which chops *all*
+/// trailing slashes -- so the common prefix `a//` that S3 returns for `a//b` came
+/// back as "a", a child of `a/` named after its own parent, and browsing into it
+/// went round again. The empty-name guard was on objects only, so a prefix with
+/// nothing in it reached the model as a row with no text. See MOLE-347.
+void TestS3FileSystem::aKeyWithAnEmptySegmentIsNotShownAsAChildOfItself()
+{
+    ScriptedHttpServer server([](const ScriptedHttpServer::Request& request) {
+        ScriptedHttpServer::Reply reply;
+        reply.headers.append("Content-Type: application/xml");
+        if (request.path.contains("prefix=a%2F")) {
+            reply.body = listingOf({ QStringLiteral("a/real.txt") }, { QStringLiteral("a//") });
+            return reply;
+        }
+        // The root: an object whose key begins with a separator, and the child
+        // prefix that goes with it.
+        reply.body = listingOf({ QStringLiteral("/x"), QStringLiteral("ok.txt") },
+            { QStringLiteral("/"), QStringLiteral("folder/") });
+        return reply;
+    });
+    QVERIFY2(server.start(), "the scripted server could not take a port");
+
+    auto fileSystem = std::make_shared<S3FileSystem>(QStringLiteral("s3"), againstScript(server));
+
+    const VfsUri root(QStringLiteral("s3"), QString(), QStringLiteral("/"));
+    Result<FileEntryList> listing = fileSystem->list(root, CancelToken());
+    QVERIFY2(listing.ok(), qPrintable(listing.error().message));
+    QStringList names;
+    for (const FileEntry& entry : listing.value()) {
+        QVERIFY2(!entry.name.isEmpty(), "a row with no name in it is not a file anybody can open");
+        names.append(entry.name);
+    }
+    names.sort();
+    QCOMPARE(names, QStringList({ QStringLiteral("folder"), QStringLiteral("ok.txt") }));
+
+    const VfsUri inside(QStringLiteral("s3"), QString(), QStringLiteral("/a"));
+    listing = fileSystem->list(inside, CancelToken());
+    QVERIFY2(listing.ok(), qPrintable(listing.error().message));
+    names.clear();
+    for (const FileEntry& entry : listing.value())
+        names.append(entry.name);
+    QVERIFY2(!names.contains(QStringLiteral("a")),
+        "a key with an empty segment produced a folder inside itself, and browsing it recursed");
+    QCOMPARE(names, QStringList { QStringLiteral("real.txt") });
+}
+
+/// "You may not read this" arriving as "this does not exist".
+///
+/// A HEAD answered 403 was treated exactly like a 404: the code went on to probe
+/// for a directory and, finding none, answered NotFound. So a policy that denies
+/// one key sent the user looking for a missing file instead of for a permission,
+/// where the other five backends all say AccessDenied. The directory probe is
+/// still worth making -- a bucket that denies ListBucket answers 403 for a key
+/// that is simply not there -- but it must not *end* as NotFound. See MOLE-347.
+void TestS3FileSystem::aRefusedHeadIsARefusalRatherThanAMissingFile()
+{
+    ScriptedHttpServer server([](const ScriptedHttpServer::Request& request) {
+        ScriptedHttpServer::Reply reply;
+        if (request.method == "HEAD") {
+            reply.status = 403;
+            reply.reason = "Forbidden";
+            return reply;
+        }
+        // The listing works, so this account can see the bucket: the refusal is
+        // about this one key and nothing else.
+        reply.headers.append("Content-Type: application/xml");
+        reply.body = listingOf({}, {});
+        return reply;
+    });
+    QVERIFY2(server.start(), "the scripted server could not take a port");
+
+    auto fileSystem = std::make_shared<S3FileSystem>(QStringLiteral("s3"), againstScript(server));
+    const Result<FileEntry> what
+        = fileSystem->stat(VfsUri(QStringLiteral("s3"), QString(), QStringLiteral("/private.txt")));
+
+    QVERIFY(!what.ok());
+    QCOMPARE(what.error().code, VfsError::AccessDenied);
+}
+
+/// A warning with the reason taken out of it.
+///
+/// askWhatIsOffered() replaced whatever the container had answered with "The
+/// container would not say", which IFileSystem::probe() then logs at warning
+/// level -- so the log said that asking had failed and nothing about why, which
+/// is a warning nobody can act on. See ADR-0076 and MOLE-347.
+void TestS3FileSystem::aContainerThatWouldNotSayStillSaysWhy()
+{
+    ScriptedHttpServer server([](const ScriptedHttpServer::Request&) {
+        ScriptedHttpServer::Reply reply;
+        reply.status = 403;
+        reply.reason = "Forbidden";
+        reply.headers.append("Content-Type: application/xml");
+        reply.body = "<Error><Code>AccessDenied</Code>"
+                     "<Message>Not authorized to perform GetBucketVersioning</Message></Error>";
+        return reply;
+    });
+    QVERIFY2(server.start(), "the scripted server could not take a port");
+
+    auto fileSystem = std::make_shared<S3FileSystem>(QStringLiteral("s3"), againstScript(server));
+    const VfsUri root(QStringLiteral("s3"), QString(), QStringLiteral("/"));
+
+    // Asserted on the warning itself, because that is the only place the reason
+    // goes: probe() records that the asking failed and nothing more, which is
+    // the right shape -- a drive whose probe failed goes on working (ADR-0076).
+    // The reason is for whoever reads the log, so the log line is the claim.
+    // ignoreMessage fails the case if the message never arrives, which is what
+    // makes this an assertion rather than a filter.
+    QTest::ignoreMessage(QtWarningMsg,
+        QRegularExpression(QStringLiteral("probe of .* failed:.*Not authorized to perform "
+                                          "GetBucketVersioning")));
+    fileSystem->probe(root, CancelToken());
+
+    QVERIFY2(!fileSystem->offers().isKnown(), "a container that would not say has nothing to offer");
 }
 
 MOLE_TEST_MAIN(TestS3FileSystem)

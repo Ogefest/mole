@@ -47,6 +47,15 @@ QStringList parseBucketList(const QByteArray& xml);
 /// document is not one, which is how an error document arrives.
 QString parseMultipartUploadId(const QByteArray& xml);
 
+/// The ETag out of an UploadPartCopy answer.
+///
+/// In the body rather than in a header, which is the one way a part copied from
+/// another object differs from a part that was uploaded -- and the reason a
+/// server-side copy cannot simply reuse uploadPart()'s reading of it. Empty when
+/// the document is not one: S3 answers this request 200 and puts the failure in
+/// the body, so an empty answer here is a failure however good the status was.
+QString parseCopyPartETag(const QByteArray& xml);
+
 /// One upload that was started and never finished or abandoned.
 struct S3Upload
 {

@@ -65,6 +65,10 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-03 #MOLE-347 Cancelling an upload to an object store now removes the parts it had already sent, instead of leaving them in the bucket being charged for
+2026-09-03 #MOLE-347 An object or a folder over 5 GB on an object store can be renamed, instead of failing part way with keys copied under both names
+2026-09-03 #MOLE-347 An object store says when an object last changed, and a key refused by a policy says so rather than reporting the file as missing
+2026-09-03 #MOLE-347 A key with an empty segment in it no longer shows up as a folder inside itself, or as a row with no name
 2026-09-03 #MOLE-346 An upload to a Windows share or an NFS export no longer overwrites a file that appeared while it was running
 2026-09-03 #MOLE-343 A credential store survives a change of the cost its keys are derived at, instead of being orphaned by its own next write and reporting a wrong passphrase for ever
 2026-09-03 #MOLE-343 A credential store that has been truncated or tampered with is refused rather than opened empty under any passphrase at all

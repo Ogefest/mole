@@ -743,4 +743,36 @@ QByteArray encodePath(const QString& path)
     return out;
 }
 
+QDateTime httpDate(const QString& text)
+{
+    QString normalised = text.trimmed();
+
+    // The weekday goes first. It carries no information -- the date is fully
+    // specified without it -- and Qt *validates* it, so a server whose
+    // arithmetic disagrees by a day has its timestamp rejected outright rather
+    // than being off by a little. Dropping it cannot lose anything.
+    const int comma = normalised.indexOf(QLatin1Char(','));
+    if (comma >= 0 && comma <= 4)
+        normalised = normalised.mid(comma + 1).trimmed();
+
+    // The zone spelled out as a name, turned into the offset Qt will read.
+    if (normalised.endsWith(QLatin1String("GMT"), Qt::CaseInsensitive)
+        || normalised.endsWith(QLatin1String("UTC"), Qt::CaseInsensitive)) {
+        normalised.chop(3);
+        normalised = normalised.trimmed() + QStringLiteral(" +0000");
+    }
+
+    QDateTime stamp = QDateTime::fromString(normalised, Qt::RFC2822Date);
+    // And the two other shapes a server may answer with: ISO 8601, which is
+    // what WebDAV's creationdate and S3's listings use, with and without
+    // fractional seconds.
+    if (!stamp.isValid())
+        stamp = QDateTime::fromString(text, Qt::RFC2822Date);
+    if (!stamp.isValid())
+        stamp = QDateTime::fromString(text, Qt::ISODateWithMs);
+    if (!stamp.isValid())
+        stamp = QDateTime::fromString(text, Qt::ISODate);
+    return stamp;
+}
+
 } // namespace mole::net

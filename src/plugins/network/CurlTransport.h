@@ -3,6 +3,7 @@
 #include "core/vfs/VfsTypes.h"
 
 #include <QByteArray>
+#include <QDateTime>
 #include <QIODevice>
 #include <QList>
 #include <QPair>
@@ -300,5 +301,17 @@ QByteArray encodeSegment(const QString& segment);
 
 /// Encodes a whole '/'-separated path, segment by segment, keeping the slashes.
 QByteArray encodePath(const QString& path);
+
+/// Reads a date the way HTTP writes one, and the two other ways servers do.
+///
+/// One function rather than one per protocol, because the awkward part is the
+/// same everywhere and getting it wrong looks like a server that keeps no
+/// timestamps: **Qt's RFC 2822 reader accepts a numeric offset and nothing
+/// else**, while every HTTP date ends in "GMT" -- so the bare parse returns an
+/// invalid QDateTime for `Wed, 12 Oct 2022 10:00:00 GMT`, which is the
+/// `Last-Modified` of every object in every bucket. WebDAV had worked around it
+/// in its own listing parser for months while S3's stat() had not, which is
+/// what made this shared. See MOLE-347.
+QDateTime httpDate(const QString& text);
 
 } // namespace mole::net

@@ -1,5 +1,7 @@
 #include "plugins/network/WebdavListing.h"
 
+#include "plugins/network/CurlTransport.h"
+
 #include <QUrl>
 #include <QXmlStreamReader>
 
@@ -17,39 +19,6 @@ namespace {
                 return value;
         }
         return 0;
-    }
-
-    /// WebDAV dates are RFC 1123 in getlastmodified and ISO 8601 in creationdate.
-    ///
-    /// The "GMT" is spelled out first, because Qt's RFC 2822 reader accepts a
-    /// numeric offset and nothing else -- and every HTTP date ends in "GMT", so
-    /// without this every WebDAV timestamp would come back empty.
-    QDateTime parseDate(const QString& text)
-    {
-        QString normalised = text.trimmed();
-
-        // The weekday goes first. It carries no information -- the date is fully
-        // specified without it -- and Qt *validates* it, so a server whose
-        // arithmetic disagrees by a day has its timestamp rejected outright
-        // rather than being off by a little. Dropping it cannot lose anything.
-        const int comma = normalised.indexOf(QLatin1Char(','));
-        if (comma >= 0 && comma <= 4)
-            normalised = normalised.mid(comma + 1).trimmed();
-
-        if (normalised.endsWith(QLatin1String("GMT"), Qt::CaseInsensitive)
-            || normalised.endsWith(QLatin1String("UTC"), Qt::CaseInsensitive)) {
-            normalised.chop(3);
-            normalised = normalised.trimmed() + QStringLiteral(" +0000");
-        }
-
-        QDateTime stamp = QDateTime::fromString(normalised, Qt::RFC2822Date);
-        if (!stamp.isValid())
-            stamp = QDateTime::fromString(text, Qt::RFC2822Date);
-        if (!stamp.isValid())
-            stamp = QDateTime::fromString(text, Qt::ISODateWithMs);
-        if (!stamp.isValid())
-            stamp = QDateTime::fromString(text, Qt::ISODate);
-        return stamp;
     }
 
 } // namespace
@@ -119,7 +88,7 @@ bool parseMultistatus(const QByteArray& xml, QList<WebdavEntry>* entries, QStrin
             } else if (name == QLatin1String("getcontentlength")) {
                 entry.size = reader.readElementText().toLongLong();
             } else if (name == QLatin1String("getlastmodified")) {
-                entry.modified = parseDate(reader.readElementText());
+                entry.modified = httpDate(reader.readElementText());
             } else if (name == QLatin1String("status")) {
                 const int status = statusFromLine(reader.readElementText());
                 // A propstat for properties the server could not supply carries

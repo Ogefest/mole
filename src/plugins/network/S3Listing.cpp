@@ -304,4 +304,24 @@ QString parseMultipartUploadId(const QByteArray& xml)
     return {};
 }
 
+QString parseCopyPartETag(const QByteArray& xml)
+{
+    QXmlStreamReader reader(xml);
+    bool inside = false;
+    while (!reader.atEnd()) {
+        if (reader.readNext() != QXmlStreamReader::StartElement)
+            continue;
+        // Only the one inside CopyPartResult. An error document has no ETag at
+        // all, and reading the first one anywhere would be reading whatever a
+        // future answer happens to carry.
+        if (reader.name() == QLatin1String("CopyPartResult")) {
+            inside = true;
+            continue;
+        }
+        if (inside && reader.name() == QLatin1String("ETag"))
+            return reader.readElementText();
+    }
+    return {};
+}
+
 } // namespace mole::net

@@ -27,19 +27,41 @@ namespace {
     /// enough to be beneath notice.
     constexpr qint64 kPartBytes = 64LL * 1024 * 1024;
 
+    /// The most one PUT carrying x-amz-copy-source will copy. S3's own limit,
+    /// and B2 and MinIO hold to it as well; above it the request is refused
+    /// outright rather than truncated.
+    constexpr qint64 kCopyInOneRequestLimit = 5LL * 1024 * 1024 * 1024;
+
+    /// How much of a large object each server-side part copy takes. A gibibyte
+    /// rather than kPartBytes, because nothing travels to this machine for a
+    /// copy -- what a part costs here is one request, and 64 MiB parts would
+    /// mean fifteen hundred of them for a 94 GB object. Ten thousand parts is
+    /// the ceiling either way, so this also carries objects up to 10 TB.
+    constexpr qint64 kCopyPartBytes = 1024LL * 1024 * 1024;
+
     QString withTrailingSlash(const QString& key)
     {
         return key.endsWith(kSeparator) ? key : key + kSeparator;
     }
 
-    /// The last segment of a key, which is what a listing shows as a name.
-    QString lastSegment(const QString& key)
+    /// What a key or a common prefix is called *inside* `prefix`: the text
+    /// between the two, up to the next separator.
+    ///
+    /// Read relative to the prefix rather than by trimming the end of the key,
+    /// which is what this replaced. Nothing stops a key having an empty segment
+    /// -- `a//b` is a perfectly good key, and so is a leading `/` at the root --
+    /// and trimming *all* trailing slashes turned the common prefix `a//` that
+    /// S3 returns for it into "a": a phantom child of `a/` named after its own
+    /// parent, which recursed. An empty answer means there is no name here, and
+    /// the caller skips the row rather than showing one with no text in it. See
+    /// MOLE-347.
+    QString nameInside(const QString& prefix, const QString& key)
     {
-        QString trimmed = key;
-        while (trimmed.endsWith(kSeparator))
-            trimmed.chop(1);
-        const int slash = trimmed.lastIndexOf(kSeparator);
-        return slash < 0 ? trimmed : trimmed.mid(slash + 1);
+        if (!key.startsWith(prefix))
+            return QString();
+        const QString relative = key.mid(prefix.size());
+        const int slash = relative.indexOf(kSeparator);
+        return slash < 0 ? relative : relative.left(slash);
     }
 
 } // namespace
@@ -205,11 +227,15 @@ Result<QStringList> S3FileSystem::askWhatIsOffered(const VfsUri&, const CancelTo
     call.query.append({ QStringLiteral("versioning"), QString() });
 
     const net::Response response = send(call, cancel);
-    if (errorFor(response, QStringLiteral("Asking what this container keeps")).isError()) {
+    const VfsError said = errorFor(response, QStringLiteral("Asking what this container keeps"));
+    if (said.isError()) {
         // A container that will not say is not a container that said no. The
         // probe records that the asking failed and the drive goes on working --
-        // see ADR-0076.
-        return VfsError::make(VfsError::NetworkError, QStringLiteral("The container would not say"));
+        // see ADR-0076. What it records is what the container actually answered:
+        // this used to replace it with "The container would not say", which
+        // IFileSystem::probe() then logged at warning level with no reason in it,
+        // and a warning with the reason removed is a warning nobody can act on.
+        return said;
     }
 
     if (!net::parseVersioningEnabled(response.body))
@@ -498,7 +524,12 @@ Result<FileEntryList> S3FileSystem::list(const VfsUri& dir, const CancelToken& c
 
         for (const QString& childPrefix : page.value().commonPrefixes) {
             FileEntry entry;
-            entry.name = lastSegment(childPrefix);
+            entry.name = nameInside(prefix, childPrefix);
+            // A prefix with nothing between the separators names nothing. The
+            // guard used to be on objects only, so such a prefix reached the
+            // model as a row with an empty name.
+            if (entry.name.isEmpty())
+                continue;
             entry.uri = dir.child(entry.name);
             entry.isDir = true;
             entry.isWritable = true;
@@ -510,7 +541,7 @@ Result<FileEntryList> S3FileSystem::list(const VfsUri& dir, const CancelToken& c
             if (object.key == prefix)
                 continue;
             FileEntry entry;
-            entry.name = lastSegment(object.key);
+            entry.name = nameInside(prefix, object.key);
             if (entry.name.isEmpty())
                 continue;
             entry.uri = dir.child(entry.name);
@@ -581,8 +612,10 @@ Result<FileEntry> S3FileSystem::stat(const VfsUri& target)
         entry.uri = target;
         entry.isDir = false;
         entry.size = response.header("content-length").toLongLong();
-        entry.modified
-            = QDateTime::fromString(QString::fromUtf8(response.header("last-modified")), Qt::RFC2822Date);
+        // Through the shared reader, not a bare RFC 2822 parse: every HTTP date
+        // ends in "GMT" and Qt's reader will not have it, so every stat() on
+        // every object came back with no timestamp at all. See MOLE-347.
+        entry.modified = net::httpDate(QString::fromUtf8(response.header("last-modified")));
         entry.isWritable = true;
         return Result<FileEntry>(entry);
     }
@@ -591,6 +624,15 @@ Result<FileEntry> S3FileSystem::stat(const VfsUri& target)
     if (response.status != 404 && response.status != 403) {
         return Result<FileEntry>(errorFor(response, QStringLiteral("Reading %1").arg(target.path())));
     }
+
+    // A 403 is still worth the directory probe below -- a bucket that denies
+    // ListBucket answers 403 for a key that is simply not there, so the refusal
+    // and the absence arrive in the same envelope -- but it must not *end* as
+    // NotFound. A per-key denial reported as "does not exist" is the one answer
+    // that sends somebody looking for a file rather than for a policy, and the
+    // other five backends all say AccessDenied. So the refusal is remembered and
+    // used when the probe finds nothing. See MOLE-347.
+    const bool refused = response.status == 403;
 
     // Otherwise it may be a directory: either an explicit marker, or a prefix
     // that something else wrote keys under without one.
@@ -616,11 +658,16 @@ Result<FileEntry> S3FileSystem::stat(const VfsUri& target)
         return Result<FileEntry>(entry);
     }
 
+    if (refused) {
+        return Result<FileEntry>::failure(
+            VfsError::AccessDenied, QStringLiteral("Reading %1: the bucket refused it").arg(target.path()));
+    }
     return Result<FileEntry>::failure(
         VfsError::NotFound, QStringLiteral("%1 does not exist").arg(target.path()));
 }
 
-Result<void> S3FileSystem::putObject(const QString& key, QIODevice* body, qint64 size)
+Result<void> S3FileSystem::putObject(
+    const QString& key, QIODevice* body, qint64 size, const CancelToken& cancel)
 {
     Call call;
     call.method = "PUT";
@@ -636,7 +683,7 @@ Result<void> S3FileSystem::putObject(const QString& key, QIODevice* body, qint64
         call.bodySize = 0;
     }
 
-    const net::Response response = send(call, CancelToken());
+    const net::Response response = send(call, cancel);
     const VfsError error = errorFor(response, QStringLiteral("Writing %1").arg(key));
     if (error.isError())
         return Result<void>(error);
@@ -655,21 +702,104 @@ Result<void> S3FileSystem::deleteObject(const QString& key)
     return {};
 }
 
-Result<void> S3FileSystem::copyObject(const QString& fromKey, const QString& toKey)
+QByteArray S3FileSystem::copySourceFor(const QString& key) const
 {
+    // The source is a header, and it carries the bucket -- which is why it is
+    // built here rather than by the addressing-style logic.
+    const QString source = QLatin1Char('/') + m_settings.bucket + kSeparator + key;
+    return net::uriEncode(source.toUtf8(), true);
+}
+
+Result<void> S3FileSystem::copyObject(const QString& fromKey, const QString& toKey, qint64 size)
+{
+    // Above the single-request limit this has to be a server-side multipart copy
+    // instead. One PUT carrying x-amz-copy-source is refused over 5 GB by S3, by
+    // B2 and by MinIO, so a rename of one of the files ADR-0014 keeps citing --
+    // a 20 GB backup, a 94 GB image -- could not be done at all, and a folder
+    // rename stopped at the first large object with half its keys already copied
+    // under the new prefix. See MOLE-347.
+    if (size >= kCopyInOneRequestLimit)
+        return copyObjectInParts(fromKey, toKey, size);
+
     Call call;
     call.method = "PUT";
     call.key = toKey;
-    // The source is a header, and it carries the bucket -- which is why it is
-    // built here rather than by the addressing-style logic.
-    const QString source = QLatin1Char('/') + m_settings.bucket + kSeparator + fromKey;
-    call.headers.append({ QByteArray("x-amz-copy-source"), net::uriEncode(source.toUtf8(), true) });
+    call.headers.append({ QByteArray("x-amz-copy-source"), copySourceFor(fromKey) });
 
     const net::Response response = send(call, CancelToken());
     const VfsError error = errorFor(response, QStringLiteral("Copying %1").arg(fromKey));
     if (error.isError())
         return Result<void>(error);
+
+    // Answered 200 with the failure in the body, the same way completeMultipart
+    // is: a CopyObject that reports SlowDown or an expired token this way would
+    // otherwise be read as a copy that happened.
+    const QString said = net::parseS3Error(response.body);
+    if (!said.isEmpty())
+        return Result<void>::failure(VfsError::IoError, QStringLiteral("Copying %1: %2").arg(fromKey, said));
     return {};
+}
+
+Result<void> S3FileSystem::copyObjectInParts(const QString& fromKey, const QString& toKey, qint64 size)
+{
+    const Result<QString> begun = beginMultipart(toKey);
+    if (!begun.ok())
+        return Result<void>(begun.error());
+    const QString uploadId = begun.value();
+
+    QList<QByteArray> tags;
+    for (qint64 at = 0; at < size; at += kCopyPartBytes) {
+        const qint64 last = std::min(at + kCopyPartBytes, size) - 1;
+        const Result<QByteArray> tag
+            = copyPart(fromKey, toKey, uploadId, static_cast<int>(tags.size()) + 1, at, last);
+        if (!tag.ok()) {
+            abandonMultipart(toKey, uploadId);
+            return Result<void>(tag.error());
+        }
+        tags.append(tag.value());
+    }
+
+    const Result<void> finished = completeMultipart(toKey, uploadId, tags);
+    if (!finished.ok()) {
+        abandonMultipart(toKey, uploadId);
+        return finished;
+    }
+    return {};
+}
+
+Result<QByteArray> S3FileSystem::copyPart(const QString& fromKey, const QString& toKey,
+    const QString& uploadId, int partNumber, qint64 first, qint64 last)
+{
+    Call call;
+    call.method = "PUT";
+    call.key = toKey;
+    call.query.append({ QStringLiteral("partNumber"), QString::number(partNumber) });
+    call.query.append({ QStringLiteral("uploadId"), uploadId });
+    call.headers.append({ QByteArray("x-amz-copy-source"), copySourceFor(fromKey) });
+    // Inclusive at both ends, which is what the header means and not what a
+    // half-open range would be -- an off-by-one here duplicates or drops a byte
+    // at every part boundary and the object still arrives at the right size.
+    call.headers.append({ QByteArray("x-amz-copy-source-range"),
+        QByteArray("bytes=") + QByteArray::number(first) + '-' + QByteArray::number(last) });
+
+    const net::Response response = send(call, CancelToken());
+    const VfsError error = errorFor(
+        response, QStringLiteral("Copying bytes %1 to %2 of %3").arg(first).arg(last).arg(fromKey));
+    if (error.isError())
+        return Result<QByteArray>(error);
+
+    const QString tag = net::parseCopyPartETag(response.body);
+    if (tag.isEmpty()) {
+        // 200 with no CopyPartResult in it is a failure the status did not
+        // mention, which is how S3 reports one for this request.
+        const QString said = net::parseS3Error(response.body);
+        return Result<QByteArray>::failure(VfsError::IoError,
+            QStringLiteral("Copying bytes %1 to %2 of %3: %4")
+                .arg(first)
+                .arg(last)
+                .arg(fromKey, said.isEmpty() ? QStringLiteral("the server did not acknowledge it") : said));
+    }
+    return Result<QByteArray>(tag.toUtf8());
 }
 
 Result<void> S3FileSystem::makeDirectory(const VfsUri& target)
@@ -736,8 +866,9 @@ Result<void> S3FileSystem::rename(const VfsUri& from, const VfsUri& to)
 
     if (!source.value().isDir) {
         // Copy-then-delete, because S3 has no rename. A failed copy leaves the
-        // original alone, which is the right way round.
-        const Result<void> copied = copyObject(fromKey, toKey);
+        // original alone, which is the right way round. The size comes from the
+        // stat above and decides whether one request can carry it.
+        const Result<void> copied = copyObject(fromKey, toKey, source.value().size);
         if (!copied.ok())
             return copied;
         return deleteObject(fromKey);
@@ -751,11 +882,16 @@ Result<void> S3FileSystem::rename(const VfsUri& from, const VfsUri& to)
 
     for (const net::S3Object& object : under.value()) {
         const QString target = toPrefix + object.key.mid(fromPrefix.size());
-        const Result<void> copied = copyObject(object.key, target);
+        // The size the listing gave, so an object too big for one copy request
+        // goes part by part rather than failing the whole rename at it.
+        const Result<void> copied = copyObject(object.key, target, object.size);
         if (!copied.ok())
             return copied;
-    }
-    for (const net::S3Object& object : under.value()) {
+        // Removed here rather than in a second pass over the whole list. A
+        // folder rename is not atomic on a bucket and cannot be made one; what
+        // can be decided is what a failure half way through leaves, and one key
+        // in two places is a better place to be interrupted than every key
+        // copied so far still sitting under the old prefix as well.
         const Result<void> removed = deleteObject(object.key);
         if (!removed.ok())
             return removed;
@@ -813,8 +949,8 @@ Result<QString> S3FileSystem::beginMultipart(const QString& key)
     return Result<QString>(uploadId);
 }
 
-Result<QByteArray> S3FileSystem::uploadPart(
-    const QString& key, const QString& uploadId, int partNumber, QIODevice& body, qint64 size)
+Result<QByteArray> S3FileSystem::uploadPart(const QString& key, const QString& uploadId, int partNumber,
+    QIODevice& body, qint64 size, const CancelToken& cancel)
 {
     Call call;
     call.method = "PUT";
@@ -824,7 +960,10 @@ Result<QByteArray> S3FileSystem::uploadPart(
     call.body = &body;
     call.bodySize = size;
 
-    const net::Response response = send(call, CancelToken());
+    // With the token, not without it: a part is up to 64 MiB, and a cancel that
+    // is only noticed once the request in flight has finished is a cancel the
+    // user waits a minute for. See MOLE-347.
+    const net::Response response = send(call, cancel);
     const VfsError error
         = errorFor(response, QStringLiteral("Writing part %1 of %2").arg(partNumber).arg(key));
     if (error.isError())
@@ -1015,14 +1154,44 @@ Result<std::unique_ptr<QIODevice>> S3FileSystem::openWrite(const VfsUri& target,
     // can be measured and signed -- S3 signs a payload hash, and there is no
     // getting round knowing the length of what is being signed -- but only one
     // part is ever staged, so the cost is the part size and not the object.
+    //
+    // The upload's own lifetime is what abandons it. A cancelled copy destroys
+    // the stream, which destroys the lambda below and with it the last reference
+    // to this -- and an upload begun and never completed is parts sitting in the
+    // bucket **being charged for** until something removes them (ADR-0015). It
+    // used to be abandoned only where uploadPart() or completeMultipart()
+    // answered with a failure, so the one case that costs money -- the caller
+    // giving up, which is what a cancelled copy is -- was the case that leaked.
+    // MOLE-96's sweep is for a process that was killed and never got to tidy up;
+    // this is a live cancel, which the code is there to handle itself.
     struct Upload
     {
+        Upload(S3FileSystem& drive, QString forKey)
+            : fs(&drive)
+            , key(std::move(forKey))
+        {
+        }
+        ~Upload()
+        {
+            // A blocking DELETE from a destructor, and worth it: the alternative
+            // is a bill for parts nothing will ever list.
+            if (!uploadId.isEmpty() && !settled)
+                fs->abandonMultipart(key, uploadId);
+        }
+        Upload(const Upload&) = delete;
+        Upload& operator=(const Upload&) = delete;
+
+        S3FileSystem* fs;
+        QString key;
         QString uploadId;
         QList<QByteArray> tags;
+        /// Set once the upload has been completed or abandoned deliberately,
+        /// which is what disarms the destructor.
+        bool settled = false;
     };
-    auto upload = std::make_shared<Upload>();
+    auto upload = std::make_shared<Upload>(*this, key);
 
-    auto send = [this, key, upload](QIODevice& source, qint64 span, bool append, const CancelToken&) {
+    auto send = [this, key, upload](QIODevice& source, qint64 span, bool append, const CancelToken& cancel) {
         QTemporaryFile part;
         QString staging;
         if (!staging::openFile(part, &staging)) {
@@ -1033,6 +1202,11 @@ Result<std::unique_ptr<QIODevice>> S3FileSystem::openWrite(const VfsUri& target,
         QByteArray buffer(256 * 1024, Qt::Uninitialized);
         qint64 staged = 0;
         while (staged < span) {
+            // Said as a cancellation rather than as an I/O failure. The reader
+            // answers -1 for both, and "Writing x: the writer went away" is what
+            // a cancelled copy used to be reported as.
+            if (cancel.isCancelled())
+                return VfsError::make(VfsError::Cancelled, QStringLiteral("Writing %1: cancelled").arg(key));
             const qint64 got = source.read(buffer.data(), std::min<qint64>(buffer.size(), span - staged));
             if (got < 0)
                 return VfsError::make(
@@ -1051,7 +1225,7 @@ Result<std::unique_ptr<QIODevice>> S3FileSystem::openWrite(const VfsUri& target,
         // It all fitted in the first part after all, so it never needed to be a
         // multipart upload. Whoever asked simply did not know how much there was.
         if (!append && last) {
-            const Result<void> put = putObject(key, &part, staged);
+            const Result<void> put = putObject(key, &part, staged, cancel);
             return put.ok() ? VfsError::ok() : put.error();
         }
 
@@ -1063,10 +1237,13 @@ Result<std::unique_ptr<QIODevice>> S3FileSystem::openWrite(const VfsUri& target,
         }
 
         if (staged > 0) {
-            const Result<QByteArray> tag
-                = uploadPart(key, upload->uploadId, static_cast<int>(upload->tags.size()) + 1, part, staged);
+            const Result<QByteArray> tag = uploadPart(
+                key, upload->uploadId, static_cast<int>(upload->tags.size()) + 1, part, staged, cancel);
             if (!tag.ok()) {
+                // At once rather than when the stream is dropped, which may be a
+                // while: the guard above is the backstop, not the plan.
                 abandonMultipart(key, upload->uploadId);
+                upload->settled = true;
                 return tag.error();
             }
             upload->tags.append(tag.value());
@@ -1076,8 +1253,10 @@ Result<std::unique_ptr<QIODevice>> S3FileSystem::openWrite(const VfsUri& target,
             const Result<void> finished = completeMultipart(key, upload->uploadId, upload->tags);
             if (!finished.ok()) {
                 abandonMultipart(key, upload->uploadId);
+                upload->settled = true;
                 return finished.error();
             }
+            upload->settled = true;
         }
         return VfsError::ok();
     };

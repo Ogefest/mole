@@ -148,7 +148,8 @@ private:
     /// Sends one part, and returns the tag the server gives it -- completing the
     /// upload means handing all of them back in order.
     Result<QByteArray> uploadPart(
-        const QString& key, const QString& uploadId, int partNumber, QIODevice& body, qint64 size);
+        const QString& key, const QString& uploadId, int partNumber, QIODevice& body, qint64 size,
+        const CancelToken& cancel = CancelToken());
     /// Assembles the parts into the object.
     Result<void> completeMultipart(
         const QString& key, const QString& uploadId, const QList<QByteArray>& tags);
@@ -175,8 +176,26 @@ private:
     /// Every key under a prefix, following the continuation tokens.
     Result<QList<net::S3Object>> allKeysUnder(const QString& prefix, const CancelToken& cancel);
 
-    Result<void> putObject(const QString& key, QIODevice* body, qint64 size);
-    Result<void> copyObject(const QString& fromKey, const QString& toKey);
+    Result<void> putObject(
+        const QString& key, QIODevice* body, qint64 size, const CancelToken& cancel = CancelToken());
+    /// Copies one object to another key.
+    ///
+    /// `size` is what the source is known to hold, or -1 when it is not known.
+    /// It decides *how*: a single PUT carrying x-amz-copy-source is refused by
+    /// S3, B2 and MinIO alike above 5 GB, so anything at or over that is copied
+    /// part by part instead. Passing -1 for something large is therefore a
+    /// rename that fails, which is why every caller that has just listed or
+    /// stat()ed the source passes what it was told. See MOLE-347.
+    Result<void> copyObject(const QString& fromKey, const QString& toKey, qint64 size = -1);
+    /// The above, for a source too big for one request: begin an upload, copy a
+    /// range into each part, complete it.
+    Result<void> copyObjectInParts(const QString& fromKey, const QString& toKey, qint64 size);
+    /// One UploadPartCopy: bytes `first` to `last` of `fromKey`, as part
+    /// `partNumber` of the upload `toKey` has open. Answers with its ETag.
+    Result<QByteArray> copyPart(const QString& fromKey, const QString& toKey, const QString& uploadId,
+        int partNumber, qint64 first, qint64 last);
+    /// The value x-amz-copy-source takes to name `key` in this bucket.
+    QByteArray copySourceFor(const QString& key) const;
     Result<void> deleteObject(const QString& key);
     /// True when a key exists exactly as given.
     bool objectExists(const QString& key);
