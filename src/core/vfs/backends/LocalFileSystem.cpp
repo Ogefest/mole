@@ -722,6 +722,16 @@ Result<std::unique_ptr<QIODevice>> LocalFileSystem::openWrite(const VfsUri& targ
     if (Result<void> older = refuseWritingToAVersion(target); !older.ok())
         return older.error();
 
+    // A folder is not an old version of a file, and nothing below can tell the
+    // two apart: PartialFile reads QFileInfo::exists() as "the caller is
+    // overwriting something it knew about", and the commit then removed the
+    // directory -- which succeeds when it is empty -- and renamed the file into
+    // its place. A non-empty one failed with NotEmpty and a message about rmdir.
+    // A link is left to the commit path, which replaces the name rather than
+    // writing through it (ADR-0092). See MOLE-336.
+    if (VfsError standing = refuseWritingOntoAFolder(*this, target); standing.isError())
+        return standing;
+
     // Under a working name until it is finished, and renamed into place at the
     // end. See ADR-0021.
     //

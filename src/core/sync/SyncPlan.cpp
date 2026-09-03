@@ -179,7 +179,19 @@ namespace {
             if (entry.isDir) {
                 if (!options.recursive)
                     continue;
-                if (!there.contains(entry.name)) {
+                const auto standing = there.constFind(entry.name);
+                // The two sides disagree about what this name is. Walking into it
+                // planned a Copy for every child against a destination "directory"
+                // that is a file -- listing one answers NotADirectory, which reads
+                // as empty -- and every one of them failed at openWrite. Nothing
+                // here can be carried out, so nothing here is planned, and the
+                // plan says why. See MOLE-336.
+                if (standing != there.constEnd() && !standing->isDir) {
+                    steps.append(SyncPlan::Step { SyncPlan::Action::Skip, entry.uri, target.child(entry.name),
+                        path, 0, QStringLiteral("a folder in the source and a file at the destination") });
+                    continue;
+                }
+                if (standing == there.constEnd()) {
                     steps.append(SyncPlan::Step { SyncPlan::Action::CreateDirectory, entry.uri,
                         target.child(entry.name), path, 0, QStringLiteral("not there") });
                 }
@@ -196,11 +208,29 @@ namespace {
                 continue;
             }
 
+            const FileEntry& existing = there.value(entry.name);
+
+            // The other direction of the same disagreement, and the one that used
+            // to destroy something. A folder measures 0, so the comparison said
+            // "size differs" and asked for an Overwrite -- and the commit removed
+            // the folder, which succeeds when it is empty, and put the file in its
+            // place. Asked before the mode is consulted, because every mode has
+            // to say this rather than pass over it in silence.
+            //
+            // A mirror does not resolve it by deleting either, tempting as that
+            // is in the one mode that has a deletion to hand: the plan is sorted
+            // with deletions last, so that a mirror never removes a file it is
+            // about to be given back, and a delete-then-copy pair for one name
+            // would be carried out the wrong way round.
+            if (existing.isDir) {
+                steps.append(SyncPlan::Step { SyncPlan::Action::Skip, entry.uri, destination, path,
+                    entry.size, QStringLiteral("a file in the source and a folder at the destination") });
+                continue;
+            }
+
             if (options.mode == SyncOptions::Mode::FillGaps) {
                 continue; // already there; this mode never looks further
             }
-
-            const FileEntry& existing = there.value(entry.name);
 
             // A destination newer than its source is usually work done at the far
             // end, and overwriting it is the mistake this guard exists for.

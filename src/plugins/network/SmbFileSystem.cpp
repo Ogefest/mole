@@ -606,12 +606,16 @@ Result<std::unique_ptr<QIODevice>> SmbFileSystem::openRead(const VfsUri& target,
 
 Result<std::unique_ptr<QIODevice>> SmbFileSystem::openWrite(const VfsUri& target, qint64)
 {
-    // Asked before a byte is written, because only an answer from before the
-    // write began tells an overwrite -- which is what was asked for -- from a
-    // file that turned up while this one was going onto the share. Before the
-    // session below rather than after it: stat() takes one of its own, and the
-    // lock is not recursive.
-    const bool replacing = stat(target).ok();
+    // A folder standing at the destination is refused before a byte goes over
+    // the wire: it is not an old version of the file and there is nothing to
+    // weigh up. The same call answers whether this is an overwrite, which only
+    // an answer from before the write began can tell from a file that turned up
+    // while this one was in flight. See MOLE-336. Before the session below rather
+    // than after it: the call takes a stat of its own, and the lock is not
+    // recursive.
+    bool replacing = false;
+    if (VfsError folder = refuseWritingOntoAFolder(*this, target, &replacing); folder.isError())
+        return folder;
 
     const Session session(*this);
     if (!session.ok()) {

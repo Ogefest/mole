@@ -65,6 +65,8 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-336 A sync says when a name is a file on one side and a folder on the other, instead of replacing one with the other or failing once per file inside it
+2026-09-04 #MOLE-336 Writing a file where a folder stands is refused on every drive, instead of the folder being removed to make room
 2026-09-04 #MOLE-334 A move to another disk goes through the guarded copy, instead of an unchecked block copy that could leave a truncated file under the final name
 2026-09-04 #MOLE-334 A folder can be moved to another disk at all, instead of failing with "Cannot rename"
 2026-09-03 #MOLE-335 A symbolic link is copied and moved as a link, instead of arriving as an empty folder or as a second copy of the file it points at

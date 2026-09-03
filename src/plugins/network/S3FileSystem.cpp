@@ -1139,6 +1139,14 @@ Result<std::unique_ptr<QIODevice>> S3FileSystem::openWrite(const VfsUri& target,
 {
     const QString key = keyFor(target);
 
+    // A bucket has no directories, so nothing here can be destroyed by writing
+    // over one -- but the listing shows folder markers as folders, and a key
+    // written next to its own marker gives the user two entries with one name
+    // and no way to tell them apart. One HEAD per upload buys the same answer
+    // every other drive gives. See MOLE-336.
+    if (VfsError folder = refuseWritingOntoAFolder(*this, target); folder.isError())
+        return folder;
+
     // Small and measured: one signed PUT, which is cheaper than three requests
     // and is what most writes are.
     if (expectedSize >= 0 && expectedSize <= kPartBytes) {

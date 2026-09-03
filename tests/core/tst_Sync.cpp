@@ -53,6 +53,10 @@ private slots:
     void sameSizeAndDifferentContentIsSeenOnlyWhereItCanBe();
     void aRenameIsNeverADeleteBeforeItIsACopy();
 
+    void aNameThatIsAFileOnOneSideAndAFolderOnTheOtherIsSkipped_data();
+    void aNameThatIsAFileOnOneSideAndAFolderOnTheOtherIsSkipped();
+    void aTypeMismatchIsSkippedByAMirrorToo();
+
     void aDirectoryLoopIsAFinitePlanThatNamesTheLink();
     void aLinkIsPlannedAsALinkAndNotWalkedIntoAtAll();
 
@@ -635,6 +639,105 @@ void TestSync::aRenameIsNeverADeleteBeforeItIsACopy()
 }
 
 // ------------------------------------------------------------------- links
+
+/// The two sides disagreeing about what a name *is*.
+///
+/// Neither direction used to be noticed. A source file `x` against a destination
+/// folder `x` was compared by size -- a folder measures 0 -- so the plan said
+/// "size differs" and asked for an Overwrite; the local backend then removed the
+/// folder, which succeeds when it is empty, and put the file in its place. The
+/// other way round, a source folder `x` against a destination file `x` planned
+/// no CreateDirectory because the name was taken, listed a file as a directory
+/// (NotADirectory, read as empty), planned every child as a Copy, and every one
+/// of them failed at openWrite. Either way the dry run did not predict the run,
+/// which is the one thing a dry run is for.
+void TestSync::aNameThatIsAFileOnOneSideAndAFolderOnTheOtherIsSkipped_data()
+{
+    QTest::addColumn<bool>("sourceIsTheFolder");
+    QTest::addColumn<bool>("dryRun");
+    QTest::addColumn<QString>("reason");
+
+    const QString folderThere = QStringLiteral("a file in the source and a folder at the destination");
+    const QString fileThere = QStringLiteral("a folder in the source and a file at the destination");
+
+    QTest::newRow("a file onto a folder") << false << false << folderThere;
+    QTest::newRow("a file onto a folder, dry run") << false << true << folderThere;
+    QTest::newRow("a folder onto a file") << true << false << fileThere;
+    QTest::newRow("a folder onto a file, dry run") << true << true << fileThere;
+}
+
+void TestSync::aNameThatIsAFileOnOneSideAndAFolderOnTheOtherIsSkipped()
+{
+    QFETCH(bool, sourceIsTheFolder);
+    QFETCH(bool, dryRun);
+    QFETCH(QString, reason);
+
+    if (sourceIsTheFolder) {
+        QVERIFY(m_tree->writeFile(QStringLiteral("src/report/page.txt"), QByteArray("in the folder")));
+        QVERIFY(m_tree->writeFile(QStringLiteral("dest/report"), QByteArray("a file at the far end")));
+    } else {
+        QVERIFY(m_tree->writeFile(QStringLiteral("src/report"), QByteArray("a file in the source")));
+        QVERIFY(m_tree->writeFile(QStringLiteral("dest/report/page.txt"), QByteArray("in the folder")));
+    }
+    // A neighbour that has nothing wrong with it, so the assertion is that the
+    // mismatch was skipped rather than that the whole run gave up.
+    QVERIFY(m_tree->writeFile(QStringLiteral("src/notes.txt"), QByteArray("ordinary")));
+
+    SyncOptions options;
+    options.mode = SyncOptions::Mode::Update;
+    options.dryRun = dryRun;
+
+    SyncTask* task = run(options);
+    QVERIFY(task);
+    QVERIFY2(task->failures().isEmpty(), qPrintable(task->failures().join(QStringLiteral("; "))));
+
+    QCOMPARE(reasonFor(task->plan(), QStringLiteral("report")), reason);
+    QCOMPARE(task->plan().countOf(SyncPlan::Action::Overwrite), 0);
+    QCOMPARE(task->plan().countOf(SyncPlan::Action::CreateDirectory), 0);
+    // The folder's children are not planned either: walking into a name that is
+    // a file at the other end is what produced a copy per child that could not
+    // land anywhere.
+    QCOMPARE(reasonFor(task->plan(), QStringLiteral("report/page.txt")), QString());
+
+    // Both sides are exactly as they were, in a live run as much as in a dry one.
+    if (sourceIsTheFolder) {
+        QCOMPARE(contentsOf(QStringLiteral("dest/report")), QByteArray("a file at the far end"));
+        QVERIFY(exists(QStringLiteral("src/report/page.txt")));
+    } else {
+        QCOMPARE(contentsOf(QStringLiteral("dest/report/page.txt")), QByteArray("in the folder"));
+        QVERIFY(QFileInfo(m_tree->absolute(QStringLiteral("dest/report"))).isDir());
+    }
+
+    // And the neighbour went, unless nothing was meant to go anywhere.
+    QCOMPARE(exists(QStringLiteral("dest/notes.txt")), !dryRun);
+}
+
+/// A mirror does not get to resolve it by deleting either.
+///
+/// It is the mode with a deletion already in hand, so it is the one where
+/// "delete what is there and copy over it" looks like the obvious answer. It is
+/// not: a plan is sorted with deletions last, so that a mirror never removes a
+/// file it is about to be given back, and a delete-then-copy pair for one name
+/// would be carried out in the wrong order. The name is left alone and the plan
+/// says why -- which the run then reports, rather than a failure per child.
+void TestSync::aTypeMismatchIsSkippedByAMirrorToo()
+{
+    QVERIFY(m_tree->writeFile(QStringLiteral("src/report"), QByteArray("a file in the source")));
+    QVERIFY(m_tree->writeFile(QStringLiteral("dest/report/page.txt"), QByteArray("keep me")));
+
+    SyncOptions options;
+    options.mode = SyncOptions::Mode::Mirror;
+
+    SyncTask* task = run(options);
+    QVERIFY(task);
+    QVERIFY2(task->failures().isEmpty(), qPrintable(task->failures().join(QStringLiteral("; "))));
+
+    QCOMPARE(task->plan().countOf(SyncPlan::Action::Delete), 0);
+    QCOMPARE(task->plan().countOf(SyncPlan::Action::Overwrite), 0);
+    QCOMPARE(reasonFor(task->plan(), QStringLiteral("report")),
+        QStringLiteral("a file in the source and a folder at the destination"));
+    QCOMPARE(contentsOf(QStringLiteral("dest/report/page.txt")), QByteArray("keep me"));
+}
 
 void TestSync::aDirectoryLoopIsAFinitePlanThatNamesTheLink()
 {

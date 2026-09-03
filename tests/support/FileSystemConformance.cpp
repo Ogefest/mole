@@ -577,6 +577,49 @@ void runFileSystemConformance(const ConformanceContext& context)
         QCOMPARE(again.error().code, VfsError::AlreadyExists);
     }
 
+    // --- a write onto a name that is a directory ---------------------------
+    //
+    // Three backends had three answers, and one of them destroyed the folder.
+    // The local disk saw QFileInfo::exists() say true, took that as "the caller
+    // is overwriting a file it knew about", and at close() removed the target
+    // -- which succeeds for an *empty* directory -- and renamed the file into
+    // its place. A non-empty one failed with NotEmpty and a message about
+    // rmdir, which says nothing about the real cause. The in-memory drive
+    // refused up front with IsADirectory. Nothing here had ever asked, so the
+    // disagreement stood.
+    //
+    // Refusing is the only answer that is safe on every drive: a folder is not
+    // an old version of a file, and there is nothing to weigh up. See MOLE-336.
+    {
+        const VfsUri standing = context.root.child(QStringLiteral("a-folder-not-a-file"));
+        QVERIFY2(fs.makeDirectory(standing).ok(), "makeDirectory must succeed on a free name");
+        QVERIFY2(context.seedFile(QStringLiteral("a-folder-not-a-file/inside.txt"),
+                     QByteArrayLiteral("the folder is not empty")),
+            "seeding failed");
+
+        Result<std::unique_ptr<QIODevice>> writer = fs.openWrite(standing, 4);
+        QVERIFY2(!writer.ok(), "openWrite onto a directory must be refused");
+        QCOMPARE(writer.error().code, VfsError::IsADirectory);
+
+        const Result<FileEntry> after = fs.stat(standing);
+        QVERIFY2(after.ok(), "the directory must still be there");
+        QVERIFY2(after.value().isDir, "and must still be a directory");
+        QVERIFY2(
+            fs.stat(standing.child(QStringLiteral("inside.txt"))).ok(), "and must still hold what it held");
+
+        // An empty one is the dangerous half: it is the one a non-recursive
+        // remove would have taken away without complaining.
+        const VfsUri hollow = context.root.child(QStringLiteral("an-empty-folder"));
+        QVERIFY2(fs.makeDirectory(hollow).ok(), "makeDirectory must succeed on a free name");
+        Result<std::unique_ptr<QIODevice>> onto = fs.openWrite(hollow, 4);
+        QVERIFY2(!onto.ok(), "openWrite onto an empty directory must be refused too");
+        QCOMPARE(onto.error().code, VfsError::IsADirectory);
+        QVERIFY2(fs.stat(hollow).value().isDir, "the empty directory must still be a directory");
+
+        QVERIFY(fs.remove(hollow, false).ok());
+        QVERIFY(fs.remove(standing, true).ok());
+    }
+
     // --- rename -----------------------------------------------------------
     {
         const VfsUri from = context.root.child(QStringLiteral("beta.log"));

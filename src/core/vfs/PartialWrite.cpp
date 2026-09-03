@@ -31,6 +31,16 @@ VfsError commitPartialWrite(IFileSystem& fs, const VfsUri& staging, const VfsUri
     // touch, and a rename that quietly replaced it would destroy it.
     const Result<FileEntry> occupied = fs.stat(target);
     if (occupied.ok()) {
+        // A folder standing where the file was meant to land. openWrite() refuses
+        // this before a byte is written, so getting here means one arrived during
+        // the write -- and replace() would take it away, with everything in it if
+        // the drive's remove is recursive. Nothing this write was asked to do
+        // includes that.
+        if (occupied.value().isDir && !occupied.value().isSymlink) {
+            fs.remove(staging, false);
+            return VfsError::make(VfsError::IsADirectory,
+                QStringLiteral("%1 is a folder, and a file cannot be put in its place").arg(target.path()));
+        }
         if (!mayReplace) {
             fs.remove(staging, false);
             return VfsError::make(VfsError::AlreadyExists,
@@ -64,6 +74,18 @@ VfsError commitPartialWrite(IFileSystem& fs, const VfsUri& staging, const VfsUri
     if (!renamed.ok()) {
         fs.remove(staging, false);
         return renamed.error();
+    }
+    return VfsError::ok();
+}
+
+VfsError refuseWritingOntoAFolder(IFileSystem& fs, const VfsUri& target, bool* replacing)
+{
+    const Result<FileEntry> standing = fs.stat(target);
+    if (replacing)
+        *replacing = standing.ok();
+    if (standing.ok() && standing.value().isDir && !standing.value().isSymlink) {
+        return VfsError::make(
+            VfsError::IsADirectory, QStringLiteral("%1 is a folder, not a file").arg(target.path()));
     }
     return VfsError::ok();
 }

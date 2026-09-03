@@ -47,4 +47,24 @@ bool isPartialWrite(const QString& name);
 VfsError commitPartialWrite(
     IFileSystem& fs, const VfsUri& staging, const VfsUri& target, bool mayReplace = false);
 
+/// What `openWrite()` has to ask before it opens anything, and the one stat both
+/// answers come out of.
+///
+/// A folder is not an old version of a file. The local disk used to read
+/// `QFileInfo::exists()` as "the caller is overwriting something it knew about",
+/// and the commit then removed the directory — which *succeeds* for an empty one
+/// — and renamed the file into its place. A non-empty one failed with `NotEmpty`
+/// and a message about `rmdir`, which says nothing about what really happened.
+/// The in-memory drive refused up front, so two backends disagreed about it for
+/// as long as nothing asked. See MOLE-336.
+///
+/// `replacing`, where a caller wants it, says whether the destination was
+/// already there **when the write began** — see `commitPartialWrite()` for why
+/// only an answer from before the first byte will do.
+///
+/// A symbolic link is not a folder here, whatever it points at: it is the name
+/// that is being replaced, and the commit removes the name rather than writing
+/// through it. See ADR-0092.
+VfsError refuseWritingOntoAFolder(IFileSystem& fs, const VfsUri& target, bool* replacing = nullptr);
+
 } // namespace mole

@@ -740,10 +740,14 @@ Result<std::unique_ptr<QIODevice>> NfsFileSystem::openWrite(const VfsUri& target
     const VfsUri staging = partialWriteOf(target);
     const QString stagingPath = pathFor(staging);
     const QByteArray path = stagingPath.toUtf8();
-    // Asked before a byte is written, because only an answer from before the
-    // write began tells an overwrite -- which is what was asked for -- from a
-    // file that turned up while this one was going onto the export.
-    const bool replacing = stat(target).ok();
+    // A folder standing at the destination is refused before a byte goes over
+    // the wire: it is not an old version of the file and there is nothing to
+    // weigh up. The same call answers whether this is an overwrite, which only
+    // an answer from before the write began can tell from a file that turned up
+    // while this one was in flight. See MOLE-336.
+    bool replacing = false;
+    if (VfsError folder = refuseWritingOntoAFolder(*this, target, &replacing); folder.isError())
+        return folder;
 
     struct nfsfh* handle = nullptr;
     int rc = nfs_open2(mount.context(), path.constData(), O_WRONLY | O_CREAT | O_TRUNC, 0644, &handle);

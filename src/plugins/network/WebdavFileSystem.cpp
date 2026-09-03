@@ -367,10 +367,14 @@ Result<std::unique_ptr<QIODevice>> WebdavFileSystem::openWrite(const VfsUri& tar
     // ruling out; WebDAV's MOVE with `Overwrite: F` is exactly the operation
     // this needs. See ADR-0020.
     const VfsUri staging = partialWriteOf(target);
-    // Asked before the transfer, not after it: only an answer from before
-    // the write began can tell an overwrite from a file that turned up while
-    // this one was going over the wire.
-    const bool replacing = stat(target).ok();
+    // A folder standing at the destination is refused before a byte goes over
+    // the wire: it is not an old version of the file and there is nothing to
+    // weigh up. The same call answers whether this is an overwrite, which only
+    // an answer from before the write began can tell from a file that turned up
+    // while this one was in flight. See MOLE-336.
+    bool replacing = false;
+    if (VfsError folder = refuseWritingOntoAFolder(*this, target, &replacing); folder.isError())
+        return folder;
     auto commit = [this, staging, target, replacing] {
         return commitPartialWrite(*this, staging, target, replacing);
     };
