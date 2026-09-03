@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/vfs/FileEntry.h"
+
 #include <QByteArray>
 #include <QDateTime>
 #include <QList>
@@ -11,7 +13,9 @@ namespace mole::net {
 struct S3Object
 {
     QString key;
-    qint64 size = 0;
+    /// kUnknownSize where the document carried no Size, or one that is not a
+    /// number. Amazon always sends one; the compatible stores do not all agree.
+    qint64 size = kUnknownSize;
     QDateTime modified;
     QString etag;
 };

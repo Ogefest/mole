@@ -393,7 +393,15 @@ bool TransferTask::copyStream(const VfsUri& from, const VfsUri& to, qint64 expec
     // Before the destination is closed, because closing is what puts it in
     // place: a copy that is about to be called a failure must not first be
     // renamed into the name somebody asked for.
-    if (expectedSize > 0 && written < expectedSize) {
+    if (expectedSize == kUnknownSize) {
+        // Nothing to hold the read to. Said rather than passed over: a copy with
+        // no short-read check is a copy that cannot tell a dropped connection
+        // from the end of the file, and the reason is the listing rather than
+        // anything that happened here. ADR-0016's weighing at the destination
+        // still runs, because it compares what was written with what arrived.
+        qCDebug(taskLog, "%s: the listing gave no size, so the read was not held to one",
+            qPrintable(from.toString()));
+    } else if (written < expectedSize) {
         const Result<FileEntry> now = m_request.sourceFileSystem->stat(from);
         if (!now.ok() || now.value().size != written) {
             recordFailure(from,
@@ -423,7 +431,7 @@ bool TransferTask::copyStream(const VfsUri& from, const VfsUri& to, qint64 expec
     // enforced: everything it had when it was opened arrived, which is all a
     // copy can promise. What the destination now holds is checked separately,
     // once everything has been written -- see verifyArrivals().
-    if (expectedSize > 0 && written > expectedSize) {
+    if (expectedSize > kUnknownSize && written > expectedSize) {
         qCWarning(taskLog, "%s: copied %lld bytes where the listing said %lld", qPrintable(from.toString()),
             static_cast<long long>(written), static_cast<long long>(expectedSize));
     }
@@ -476,6 +484,15 @@ void TransferTask::verifyArrivals()
                 continue;
             }
             const qint64 landed = sizes.value(name);
+            if (landed == kUnknownSize) {
+                // The destination will not say how big it is -- a WebDAV server
+                // that omits getcontentlength, a store whose Size is not a
+                // number. As above, not being able to look is not the same as
+                // finding something wrong. See MOLE-344.
+                qCWarning(taskLog, "%s arrived, but the drive would not say how big it is",
+                    qPrintable(arrival->target.toString()));
+                continue;
+            }
             if (landed != arrival->bytes) {
                 recordFailure(arrival->target,
                     VfsError::make(VfsError::IoError,

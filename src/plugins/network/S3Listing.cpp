@@ -57,7 +57,7 @@ bool parseListObjectsV2(const QByteArray& xml, S3ListPage* page, QString* errorO
                 if (field == QLatin1String("Key"))
                     object.key = reader.readElementText();
                 else if (field == QLatin1String("Size"))
-                    object.size = reader.readElementText().toLongLong();
+                    object.size = sizeFromListing(reader.readElementText());
                 else if (field == QLatin1String("LastModified"))
                     object.modified = parseTimestamp(reader.readElementText());
                 else if (field == QLatin1String("ETag"))
@@ -139,7 +139,7 @@ bool parseListObjectVersions(const QByteArray& xml, S3VersionPage* page, QString
                 else if (field == QLatin1String("IsLatest"))
                     version.latest = reader.readElementText().trimmed() == QLatin1String("true");
                 else if (field == QLatin1String("Size"))
-                    version.size = reader.readElementText().toLongLong();
+                    version.size = sizeFromListing(reader.readElementText());
                 else if (field == QLatin1String("LastModified"))
                     version.modified = parseTimestamp(reader.readElementText());
             }

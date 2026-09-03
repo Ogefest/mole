@@ -109,6 +109,7 @@ struct FaultyFileSystem::Policy
             readSizes[stream] += bytes;
     }
     qint64 listingSizeDelta = 0;
+    std::atomic_bool listingWithoutSizes { false };
     /// Directories whose listing stalls until release().
     QStringList listStallPaths;
     std::atomic_bool noRandomAccess { false };
@@ -542,6 +543,12 @@ FaultyFileSystem& FaultyFileSystem::listingOverstatesSizeBy(qint64 bytes)
     return *this;
 }
 
+FaultyFileSystem& FaultyFileSystem::listingGivesNoSize()
+{
+    m_policy->listingWithoutSizes.store(true);
+    return *this;
+}
+
 FaultyFileSystem& FaultyFileSystem::cannotSeek()
 {
     m_policy->noRandomAccess.store(true);
@@ -667,13 +674,15 @@ Result<FileEntryList> FaultyFileSystem::list(const VfsUri& dir, const CancelToke
         QMutexLocker lock(&m_policy->mutex);
         delta = m_policy->listingSizeDelta;
     }
-    if (!listed.ok() || delta == 0)
+    const bool silent = m_policy->listingWithoutSizes.load();
+    if (!listed.ok() || (delta == 0 && !silent))
         return listed;
 
     FileEntryList entries = listed.value();
     for (FileEntry& entry : entries) {
-        if (!entry.isDir)
-            entry.size += delta;
+        if (entry.isDir)
+            continue;
+        entry.size = silent ? kUnknownSize : entry.size + delta;
     }
     return Result<FileEntryList>(entries);
 }
@@ -690,11 +699,14 @@ Result<FileEntry> FaultyFileSystem::stat(const VfsUri& target)
         QMutexLocker lock(&m_policy->mutex);
         delta = m_policy->listingSizeDelta;
     }
-    if (!entry.ok() || delta == 0 || entry.value().isDir)
+    const bool silent = m_policy->listingWithoutSizes.load();
+    if (!entry.ok() || (delta == 0 && !silent) || entry.value().isDir)
         return entry;
 
     FileEntry lying = entry.value();
-    lying.size += delta;
+    // A drive that does not report sizes does not report them to the short-read
+    // guard's follow-up question either.
+    lying.size = silent ? kUnknownSize : lying.size + delta;
     return Result<FileEntry>(lying);
 }
 

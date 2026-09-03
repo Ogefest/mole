@@ -137,6 +137,7 @@ private slots:
     void anyNamespacePrefixIsAccepted();
     void aFileAnswersWithOnlyItself();
     void aFailedPropstatDoesNotHideAGoodOne();
+    void aSizeTheServerDidNotGiveIsUnknownAndNotZero();
     void anAbsoluteUrlHrefIsReducedToItsPath();
     void anEncodedHrefIsDecoded();
     void somethingThatIsNotAMultistatusIsRejected();
@@ -292,6 +293,43 @@ void TestWebdavFileSystem::aFailedPropstatDoesNotHideAGoodOne()
     QCOMPARE(entries.size(), 1);
     QCOMPARE(entries.first().status, 200);
     QCOMPARE(entries.first().size, 3);
+}
+
+/// A size that is absent, empty or not a number is *unknown*, and zero is a
+/// file of nought bytes.
+///
+/// getcontentlength is optional in RFC 4918 and servers leave it out for
+/// generated resources. Reading it with a bare toLongLong() gave 0 for all
+/// three, and 0 is what switches TransferTask's short-read guard off -- so the
+/// files whose length the server would not state were exactly the ones copied
+/// with no check that the whole of them arrived. See MOLE-344.
+void TestWebdavFileSystem::aSizeTheServerDidNotGiveIsUnknownAndNotZero()
+{
+    const QByteArray xml = R"(<?xml version="1.0"?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/dav/generated.csv</d:href>
+    <d:propstat><d:prop><d:resourcetype/></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat>
+  </d:response>
+  <d:response>
+    <d:href>/dav/nonsense.bin</d:href>
+    <d:propstat><d:prop><d:getcontentlength>n/a</d:getcontentlength></d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status></d:propstat>
+  </d:response>
+  <d:response>
+    <d:href>/dav/empty.txt</d:href>
+    <d:propstat><d:prop><d:getcontentlength>0</d:getcontentlength></d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status></d:propstat>
+  </d:response>
+</d:multistatus>)";
+
+    QList<WebdavEntry> entries;
+    QString error;
+    QVERIFY2(parseMultistatus(xml, &entries, &error), qPrintable(error));
+    QCOMPARE(entries.size(), 3);
+    QCOMPARE(entries.at(0).size, kUnknownSize);
+    QCOMPARE(entries.at(1).size, kUnknownSize);
+    QCOMPARE(entries.at(2).size, 0);
 }
 
 void TestWebdavFileSystem::anAbsoluteUrlHrefIsReducedToItsPath()

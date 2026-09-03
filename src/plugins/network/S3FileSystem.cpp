@@ -546,7 +546,9 @@ Result<FileEntryList> S3FileSystem::list(const VfsUri& dir, const CancelToken& c
                 continue;
             entry.uri = dir.child(entry.name);
             entry.isDir = object.key.endsWith(kSeparator);
-            entry.size = object.size;
+            // A folder marker is a zero-byte key, and nought is what every other
+            // drive reports for a folder -- not the unknown a missing Size means.
+            entry.size = entry.isDir ? 0 : object.size;
             entry.modified = object.modified;
             entry.isHidden = entry.name.startsWith(QLatin1Char('.'));
             entry.isWritable = true;
@@ -611,7 +613,11 @@ Result<FileEntry> S3FileSystem::stat(const VfsUri& target)
         entry.name = target.fileName();
         entry.uri = target;
         entry.isDir = false;
-        entry.size = response.header("content-length").toLongLong();
+        // A HEAD without a Content-Length is unusual and not impossible -- a
+        // proxy in the way, a store that answers chunked. Unknown rather than
+        // nought: nought is a real size and the one that turns the short-read
+        // guard off. See MOLE-344.
+        entry.size = sizeFromListing(QString::fromUtf8(response.header("content-length")));
         // Through the shared reader, not a bare RFC 2822 parse: every HTTP date
         // ends in "GMT" and Qt's reader will not have it, so every stat() on
         // every object came back with no timestamp at all. See MOLE-347.

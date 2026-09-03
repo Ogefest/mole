@@ -86,7 +86,7 @@ bool parseMultistatus(const QByteArray& xml, QList<WebdavEntry>* entries, QStrin
             } else if (name == QLatin1String("collection")) {
                 entry.isCollection = true;
             } else if (name == QLatin1String("getcontentlength")) {
-                entry.size = reader.readElementText().toLongLong();
+                entry.size = sizeFromListing(reader.readElementText());
             } else if (name == QLatin1String("getlastmodified")) {
                 entry.modified = httpDate(reader.readElementText());
             } else if (name == QLatin1String("status")) {

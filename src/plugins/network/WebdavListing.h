@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/vfs/FileEntry.h"
+
 #include <QByteArray>
 #include <QDateTime>
 #include <QList>
@@ -15,7 +17,9 @@ struct WebdavEntry
     /// is kept.
     QString path;
     bool isCollection = false;
-    qint64 size = 0;
+    /// kUnknownSize when the server sent no getcontentlength, which RFC 4918
+    /// allows and servers do for generated resources.
+    qint64 size = kUnknownSize;
     QDateTime modified;
     /// Status from the propstat, 200 when the properties came back usable.
     int status = 0;

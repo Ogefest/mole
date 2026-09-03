@@ -145,6 +145,16 @@ public:
     /// listing is built from a claim.
     FaultyFileSystem& listingOverstatesSizeBy(qint64 bytes);
 
+    /// The drive says nothing at all about how big anything is: kUnknownSize in
+    /// a listing and in a stat.
+    ///
+    /// Not an exotic drive. A WebDAV server omits getcontentlength for a
+    /// generated resource, an S3-compatible store can answer a Size that is not
+    /// a number, and an `ls -l` of a device node has two numbers where the size
+    /// goes. Every one of those used to arrive here as 0, which is a size, and
+    /// 0 is the value that switched the short-read guard off. See MOLE-344.
+    FaultyFileSystem& listingGivesNoSize();
+
     /// The drive stops advertising RandomAccessRead: it can be read from the
     /// beginning and nowhere else. Not an exotic fault -- it is what a backend
     /// streaming over a socket really is, and every caller that asks for a window

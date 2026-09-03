@@ -50,6 +50,35 @@ inline QString describe(SpecialKind kind)
     return {};
 }
 
+/// Nothing at all is known about the size, as against a size of nought.
+///
+/// `openRead(expectedSize)` has spelled this -1 all along; the listing side
+/// could not, so five network parsers wrote 0 for a size the server did not
+/// give or gave in a form they could not read -- and 0 is a size a file can
+/// have. Both of `TransferTask`'s guards on ADR-0027's short-read check are
+/// `expectedSize > 0`, so exactly the files whose size was unknown were the ones
+/// copied with no short-read detection at all: a WebDAV server that omits
+/// `getcontentlength` for a generated resource, an S3-compatible store whose
+/// `Size` is not a number. See MOLE-344.
+///
+/// A reader that only wants to display it needs no special case -- a negative
+/// size formats as an empty cell already. A reader that is about to *decide*
+/// something has to tell -1 from 0.
+inline constexpr qint64 kUnknownSize = -1;
+
+/// A size out of a listing, or `kUnknownSize` where there is not one to be had.
+///
+/// One reader rather than one per protocol, because the mistake is the same
+/// every time: `toLongLong()` answers 0 for an absent element, an empty one and
+/// "n/a" alike, and none of those is a file of nought bytes. A negative number
+/// is not a size either, whatever the server meant by it.
+inline qint64 sizeFromListing(const QString& text)
+{
+    bool ok = false;
+    const qint64 size = text.trimmed().toLongLong(&ok);
+    return ok && size >= 0 ? size : kUnknownSize;
+}
+
 /// One directory entry, as reported by a backend. Deliberately flat and
 /// copyable so it can be shipped across threads inside a QList.
 struct FileEntry
@@ -82,6 +111,8 @@ public:
     SpecialKind special = SpecialKind::None;
     bool isReadable = true;
     bool isWritable = false;
+    /// `kUnknownSize` where the drive did not say. Zero means a file of nought
+    /// bytes, which is a different thing and a real answer.
     qint64 size = 0;
     QDateTime modified;
     /// When the drive says the file was made, and when it was last read.

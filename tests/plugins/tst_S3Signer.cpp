@@ -72,6 +72,7 @@ private slots:
     void aListingIsRead();
     void aTruncatedListingCarriesItsToken();
     void anErrorDocumentIsNotMistakenForAListing();
+    void aSizeThatIsNotANumberIsUnknownAndNotZero();
     void anErrorMessageIsPulledOut();
     void bucketNamesAreRead();
 
@@ -337,6 +338,30 @@ void TestS3Signer::aTruncatedListingCarriesItsToken()
     QVERIFY2(parseListObjectsV2(xml, &page, &error), qPrintable(error));
     QVERIFY(page.truncated);
     QCOMPARE(page.nextContinuationToken, QStringLiteral("1ueGcxLPRx1Tr"));
+}
+
+/// A Size element that is missing or is not a number is *unknown*.
+///
+/// Amazon always sends one; the S3-compatible stores do not all agree about
+/// that, and a bare toLongLong() turned every disagreement into a file of
+/// nought bytes -- which is the value that switches the short-read guard off in
+/// TransferTask. See MOLE-344.
+void TestS3Signer::aSizeThatIsNotANumberIsUnknownAndNotZero()
+{
+    const QByteArray xml = R"(<?xml version="1.0"?>
+<ListBucketResult>
+  <Contents><Key>no-size.bin</Key></Contents>
+  <Contents><Key>odd-size.bin</Key><Size>unknown</Size></Contents>
+  <Contents><Key>really-empty.bin</Key><Size>0</Size></Contents>
+</ListBucketResult>)";
+
+    S3ListPage page;
+    QString error;
+    QVERIFY2(parseListObjectsV2(xml, &page, &error), qPrintable(error));
+    QCOMPARE(page.objects.size(), 3);
+    QCOMPARE(page.objects.at(0).size, kUnknownSize);
+    QCOMPARE(page.objects.at(1).size, kUnknownSize);
+    QCOMPARE(page.objects.at(2).size, 0);
 }
 
 void TestS3Signer::anErrorDocumentIsNotMistakenForAListing()

@@ -33,6 +33,8 @@ private slots:
     void dotEntriesAreKeptSoCallersCanReadThem();
     void aFileListedAsADirectoryIsRecognisable();
     void whatLibcurlProducesForSftpIsUnderstood();
+    void aSizeColumnThatIsNotANumberIsUnknownAndNotZero();
+    void anMlsdRowWithNoSizeFactIsUnknownAndNotZero();
 };
 
 void TestUnixListing::aFileLineIsRead()
@@ -177,6 +179,49 @@ void TestUnixListing::whatLibcurlProducesForSftpIsUnderstood()
     QVERIFY(rows.at(1).isDir);
     QCOMPARE(rows.at(1).name, QStringLiteral("Shared"));
     QCOMPARE(rows.at(1).permissions, QStringLiteral("rw-------"));
+}
+
+/// A size column that is not a number is *unknown*, and nought is a real size.
+///
+/// The column is not always a size: an `ls -l` of a device node has a major and
+/// a minor number there, and a few servers write "-" for something they cannot
+/// measure. The parser asked toLongLong() for an &ok and then set 0 anyway --
+/// and 0 is what switches TransferTask's short-read guard off, so the entries
+/// whose length was never known were the ones copied without a check. See
+/// MOLE-344.
+void TestUnixListing::aSizeColumnThatIsNotANumberIsUnknownAndNotZero()
+{
+    const ListingRow odd = parseListingLine(
+        QStringLiteral("-rw-r--r--   1 lukasz  staff      - Sep 16  2021 measured.dat"), referenceNow());
+    QVERIFY(odd.valid);
+    QCOMPARE(odd.size, kUnknownSize);
+
+    const ListingRow empty = parseListingLine(
+        QStringLiteral("-rw-r--r--   1 lukasz  staff      0 Sep 16  2021 nothing.txt"), referenceNow());
+    QVERIFY(empty.valid);
+    QCOMPARE(empty.size, 0);
+}
+
+/// The machine-readable listing says the same thing by leaving the fact out.
+///
+/// `size` is optional in RFC 3659 and a server may answer a row without one.
+/// It was clamped to 0 with std::max, which threw the distinction away at the
+/// last step -- the parser had carried -1 that far and then lost it.
+void TestUnixListing::anMlsdRowWithNoSizeFactIsUnknownAndNotZero()
+{
+    const QList<ListingRow> rows
+        = parseMlsdListing("type=file;modify=20260809101500; generated.csv\r\n"
+                           "type=file;size=oops;modify=20260809101500; nonsense.bin\r\n"
+                           "type=file;size=0;modify=20260809101500; empty.txt\r\n"
+                           "type=dir;modify=20260809101500; folder\r\n",
+            referenceNow());
+
+    QCOMPARE(rows.size(), 4);
+    QCOMPARE(rows.at(0).size, kUnknownSize);
+    QCOMPARE(rows.at(1).size, kUnknownSize);
+    QCOMPARE(rows.at(2).size, 0);
+    QVERIFY2(rows.at(3).isDir, "the fourth row is the directory");
+    QCOMPARE(rows.at(3).size, 0);
 }
 
 MOLE_TEST_MAIN(TestUnixListing)

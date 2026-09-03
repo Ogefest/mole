@@ -188,7 +188,10 @@ Result<FileEntryList> WebdavFileSystem::list(const VfsUri& dir, const CancelToke
             continue;
         out.uri = dir.child(out.name);
         out.isDir = entry.isCollection;
-        out.size = entry.size;
+        // A collection has no getcontentlength and never did; nought is what
+        // every other drive reports for a folder, and it is an answer rather
+        // than the absence of one.
+        out.size = entry.isCollection ? 0 : entry.size;
         out.modified = entry.modified;
         out.isHidden = out.name.startsWith(QLatin1Char('.'));
         out.isWritable = true;
@@ -217,7 +220,7 @@ Result<FileEntry> WebdavFileSystem::stat(const VfsUri& target)
     entry.name = target.isRoot() ? QString() : target.fileName();
     entry.uri = target;
     entry.isDir = found.isCollection;
-    entry.size = found.size;
+    entry.size = found.isCollection ? 0 : found.size;
     entry.modified = found.modified;
     entry.isWritable = true;
     return Result<FileEntry>(entry);

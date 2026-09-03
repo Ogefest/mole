@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/vfs/FileEntry.h"
+
 #include <QByteArray>
 #include <QDateTime>
 #include <QList>
@@ -18,7 +20,9 @@ struct ListingRow
     QString name;
     bool isDir = false;
     bool isSymlink = false;
-    qint64 size = 0;
+    /// kUnknownSize where the listing gave no size, or gave something that is
+    /// not one -- an `ls -l` of a device node has two numbers in that column.
+    qint64 size = kUnknownSize;
     QDateTime modified;
     /// "rwxr-xr--", without the leading type character.
     QString permissions;

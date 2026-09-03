@@ -52,6 +52,8 @@ private slots:
     void aSourceTruncatedMidCopyCopiesWhatIsLeft();
     void aSourceThatClaimsMoreThanItGivesFails();
     void aSourceThatGrewSinceTheListingIsCopiedAsItNowIs();
+    void aListingThatGaveNoSizeStillHasTheArrivalWeighed();
+    void aFileTheListingCalledEmptyIsHeldToThatSizeRatherThanTreatedAsUnknown();
     void aSourceWhosePermissionIsWithdrawnMidCopyLeavesNothingBehind();
     void theFileBeingWrittenIsRemovedMidWrite();
     void anUploadWhoseConnectionDiesMidFileLeavesNothingUnderItsName();
@@ -245,6 +247,74 @@ void TestTransferTaskUnderFault::aSourceThatGrewSinceTheListingIsCopiedAsItNowIs
     // All of it, not the 3000 the plan expected -- and the arrival check, which
     // weighs what was sent rather than what was planned, is content with that.
     QCOMPARE(destinationSize(QStringLiteral("payload.bin")), kPayload);
+}
+
+/// A drive that will not say how big anything is, and the check that still runs.
+///
+/// ADR-0027's short-read guard has nothing to hold the read to here -- it can
+/// only compare what arrived with what the listing claimed, and there was no
+/// claim. That is not a reason to stop checking: ADR-0016's weighing at the
+/// destination compares what was *written* with what the far end now holds, and
+/// it needs no size from the source at all. So the drive that lost half the
+/// bytes is still caught, and this is the case that says so.
+///
+/// It went the other way before MOLE-344 for a different reason: an unknown size
+/// arrived as 0, so the short-read guard was off *and* nothing said why.
+void TestTransferTaskUnderFault::aListingThatGaveNoSizeStillHasTheArrivalWeighed()
+{
+    m_source->listingGivesNoSize();
+    // The destination acknowledges every byte and keeps every other one -- a
+    // server that says yes and loses, which is the failure a backup is made of.
+    m_target->writeKeepsEveryNth(2);
+
+    TransferTask* task = run(request());
+    QVERIFY(task);
+
+    QCOMPARE(task->failedCount(), 1);
+    const QString failure = task->failures().first();
+    QVERIFY2(failure.contains(QStringLiteral("payload.bin")), qPrintable(failure));
+    QVERIFY2(failure.contains(QStringLiteral("arrived")), qPrintable(failure));
+}
+
+/// The same drive with nothing else wrong: the copy is whole.
+///
+/// The half above proves the check that remains; this one proves nothing was
+/// broken to get it. A file whose size the listing would not give is copied,
+/// every byte of it, and reported as copied.
+void TestTransferTaskUnderFault::aFileTheListingCalledEmptyIsHeldToThatSizeRatherThanTreatedAsUnknown()
+{
+    // Two claims in one test, because they are the two halves of the same
+    // distinction. First: a size of nought is a size. The listing is made to say
+    // 0 for a file that has four thousand bytes, and the copy says so -- where
+    // before MOLE-344 a 0 was indistinguishable from "the server did not say"
+    // and both guards were skipped in silence.
+    {
+        CapturedWarnings warnings;
+        m_source->listingOverstatesSizeBy(-kPayload);
+
+        TransferTask* task = run(request());
+        QVERIFY(task);
+        QVERIFY2(task->failures().isEmpty(), qPrintable(task->failures().join(QLatin1Char(' '))));
+        QCOMPARE(task->copiedCount(), 1);
+        QCOMPARE(destinationSize(QStringLiteral("payload.bin")), kPayload);
+        QVERIFY2(warnings.contains(QStringLiteral("the listing said 0")), qPrintable(warnings.joined()));
+    }
+
+    // And second: an unknown size is not a fault. Nothing is held to a size,
+    // nothing is warned about, and every byte still arrives.
+    QVERIFY(QFile::remove(m_tree->absolute(QStringLiteral("payload.bin"))));
+    {
+        CapturedWarnings warnings;
+        m_source->listingOverstatesSizeBy(0);
+        m_source->listingGivesNoSize();
+
+        TransferTask* task = run(request());
+        QVERIFY(task);
+        QVERIFY2(task->failures().isEmpty(), qPrintable(task->failures().join(QLatin1Char(' '))));
+        QCOMPARE(task->copiedCount(), 1);
+        QCOMPARE(destinationSize(QStringLiteral("payload.bin")), kPayload);
+        QVERIFY2(warnings.messages().isEmpty(), qPrintable(warnings.joined()));
+    }
 }
 
 void TestTransferTaskUnderFault::aSourceWhosePermissionIsWithdrawnMidCopyLeavesNothingBehind()

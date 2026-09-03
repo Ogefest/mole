@@ -99,10 +99,11 @@ ListingRow parseListingLine(const QString& line, const QDateTime& now)
     row.owner = columns.at(2);
     row.group = columns.at(3);
 
-    bool sizeOk = false;
-    row.size = columns.at(4).toLongLong(&sizeOk);
-    if (!sizeOk)
-        row.size = 0;
+    // Not always a size: an `ls -l` of a device node has a major and a minor
+    // number in that column, and a server that cannot measure something writes a
+    // dash. Unknown rather than nought, because nought is a size a file has and
+    // it is the value that switches the short-read guard off. See MOLE-344.
+    row.size = sizeFromListing(columns.at(4));
 
     row.modified = resolveTimestamp(monthFromName(columns.at(5)), columns.at(6).toInt(), columns.at(7), now);
 
@@ -156,7 +157,7 @@ QList<ListingRow> parseMlsdListing(const QByteArray& text, const QDateTime& now)
             continue;
 
         QString type;
-        qint64 size = -1;
+        qint64 size = kUnknownSize;
         for (const QString& fact : line.left(space).split(QLatin1Char(';'), Qt::SkipEmptyParts)) {
             const int equals = fact.indexOf(QLatin1Char('='));
             if (equals <= 0)
@@ -204,7 +205,10 @@ QList<ListingRow> parseMlsdListing(const QByteArray& text, const QDateTime& now)
         row.isDir
             = type == QLatin1String("dir") || type == QLatin1String("cdir") || type == QLatin1String("pdir");
         row.isSymlink = type.startsWith(QLatin1String("os.unix=slink"));
-        row.size = row.isDir ? 0 : std::max<qint64>(0, size);
+        // A directory measures nothing here by convention; a file with no size
+        // fact -- which RFC 3659 allows -- keeps the unknown it was read with,
+        // rather than being clamped to nought at the last step.
+        row.size = row.isDir ? 0 : size;
         row.valid = true;
         rows.append(row);
     }
