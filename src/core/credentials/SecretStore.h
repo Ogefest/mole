@@ -2,6 +2,7 @@
 
 #include <QByteArray>
 #include <QHash>
+#include <QMutex>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -50,6 +51,16 @@ namespace mole {
 /// tested on a machine nobody has buys very little over saying plainly what is
 /// there. LocalFileSystem handles the same Qt limitation the same way, clearing
 /// the permission string on Windows rather than showing something synthesised.
+///
+/// THREADING
+/// ---------
+/// Every public method takes the store's own lock, so it is safe to use from any
+/// thread. That is not decoration: deriving a key is a noticeable fraction of a
+/// second by design, and the only place to put it is a worker thread while the
+/// window stays live -- which means the window is free to ask this object
+/// questions while the derivation is running. See ADR-0090.
+///
+/// Recursive, because changePassphrase() is unlock() followed by a write.
 class SecretStore : public QObject
 {
     Q_OBJECT
@@ -68,11 +79,39 @@ public:
     /// the interface asks the user to choose a passphrase rather than for one
     /// they have not set.
     bool exists() const;
-    bool isUnlocked() const { return m_unlocked; }
+    /// Under the lock like everything else, and not because reading a bool is
+    /// slow: unlock() sets it on whichever thread derived the key, and this is
+    /// read from the window and from RemoteRegistry while that is running.
+    bool isUnlocked() const
+    {
+        QMutexLocker held(&m_lock);
+        return m_unlocked;
+    }
+
+    /// What deriving a key from a passphrase costs.
+    ///
+    /// Written into the file rather than assumed, so a later build can raise it
+    /// without orphaning the stores earlier ones wrote -- which is what the
+    /// numbers being in the header has always been for. A store is read with the
+    /// cost *its own header* names, whatever this build would choose now.
+    ///
+    /// The defaults are this build's choice: N = 2^15 with r = 8 is a noticeable
+    /// fraction of a second and about 32 MB of memory, which is the point.
+    struct Cost
+    {
+        quint32 n = 32768;
+        quint32 r = 8;
+        quint32 p = 1;
+    };
 
     /// Creates a new store. Fails if one is already there -- overwriting would
     /// destroy every credential without asking.
+    ///
+    /// `cost` is a parameter and not a constant for one reason: the promise that
+    /// a store survives a change of it cannot be tested without writing a store
+    /// at a different one. See ADR-0090.
     bool create(const QString& passphrase, QString* errorOut = nullptr);
+    bool create(const QString& passphrase, QString* errorOut, Cost cost);
     /// Opens an existing one. A wrong passphrase fails; it cannot half-open.
     bool unlock(const QString& passphrase, QString* errorOut = nullptr);
     /// Forgets the key and the contents. The file is untouched.
@@ -103,6 +142,23 @@ private:
 
     bool writeTo(const QString& path, const QByteArray& key, QString* errorOut) const;
 
+    /// Everything a failed write has to be able to put back.
+    ///
+    /// A mutator changes the object, writes, and undoes the change when the
+    /// write did not land -- so the object and the file never disagree. They
+    /// used to: a secret kept in memory after a failed write was an answer the
+    /// file had never held, and a passphrase changed but not written locked the
+    /// user out of their own store. See MOLE-343.
+    struct Rollback
+    {
+        QHash<QString, QString> secrets;
+        QByteArray key;
+        QByteArray salt;
+        Cost cost;
+    };
+    Rollback take() const;
+    void restore(const Rollback& previous);
+
     QString m_path;
     /// The derived key, held only while unlocked. Wiped on lock.
     QByteArray m_key;
@@ -111,8 +167,19 @@ private:
     /// contrast, is fresh on every write -- reusing one with the same key is the
     /// classic way to break GCM outright.
     QByteArray m_salt;
+    /// What the key in m_key was actually derived with, which is what the next
+    /// write has to put back in the header. Read from the file on unlock and
+    /// chosen by this build only where a key is *made* -- create() and a change
+    /// of passphrase. Writing the constants back instead is what turned a raised
+    /// cost into every credential lost, with a message saying the passphrase was
+    /// wrong. See ADR-0090.
+    Cost m_cost;
     QHash<QString, QString> m_secrets;
     bool m_unlocked = false;
+    /// Taken by every public method. Recursive because changePassphrase() is
+    /// unlock() and then a write, and splitting that in two to avoid one lock
+    /// would be two ways of opening a store.
+    mutable QRecursiveMutex m_lock;
 };
 
 } // namespace mole

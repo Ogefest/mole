@@ -198,7 +198,11 @@ DriveListModel::State TestSidebar::stateOfDrive(const QString& name) const
 
 bool TestSidebar::configureLockedDrive(const QString& name)
 {
-    if (!m_harness->app()->unlockCredentials(QStringLiteral("a passphrase")))
+    // Asynchronous since MOLE-343: the derivation runs on a task so the window
+    // stays live, and the answer arrives as a signal.
+    QSignalSpy opened(m_harness->app(), &AppController::credentialsAttempted);
+    m_harness->app()->unlockCredentials(QStringLiteral("a passphrase"));
+    if (!opened.wait(30000) || !m_harness->app()->credentialsUnlocked())
         return false;
 
     // A field the SFTP backend declares as secret, so the value goes to the
@@ -319,9 +323,12 @@ void TestSidebar::aWrongPassphraseSaysSoAndConnectsNothing()
     QVERIFY(m_harness->until([this] { return unlockDialogIsUp(); }));
     answerUnlockDialog(QStringLiteral("not the passphrase"));
 
+    // The derivation runs on a task, so the refusal arrives when it arrives --
+    // waited for on the answer rather than on a clock. See MOLE-343.
     QQuickItem* error = m_harness->item(QStringLiteral("unlockError"));
     QVERIFY(error);
-    QVERIFY2(!error->property("text").toString().isEmpty(), "a refused passphrase has to say so");
+    QVERIFY2(m_harness->until([error] { return !error->property("text").toString().isEmpty(); }),
+        "a refused passphrase has to say so");
     QVERIFY2(unlockDialogIsUp(), "and it has to say so where it was asked, so the dialog stays up");
     QCOMPARE(stateOfDrive(QStringLiteral("Locked NAS")), DriveListModel::State::Locked);
     QVERIFY(m_harness->app()->credentialsNeeded());

@@ -2978,7 +2978,10 @@ void TestWalkthrough::theTerminalTakesTheKeyboardAndCtrlDEndsIt()
 /// right row. See MOLE-224.
 void TestWalkthrough::theKindPickerFollowsTheDriveYouSelect()
 {
-    QVERIFY(m_harness->app()->unlockCredentials(QStringLiteral("test-passphrase")));
+    QSignalSpy opened(m_harness->app(), &AppController::credentialsAttempted);
+    m_harness->app()->unlockCredentials(QStringLiteral("test-passphrase"));
+    QVERIFY(opened.wait(30000));
+    QVERIFY(m_harness->app()->credentialsUnlocked());
 
     // Whichever two kinds this build really has. The fault is about following the
     // selection, so any two that differ will show it, and asking the application
@@ -3092,7 +3095,10 @@ void TestWalkthrough::theDrivesDialogOffersBackendsAndAForm()
     // the dialog appears and its completion resets the form.
     QVERIFY(m_harness->until([dialog] { return dialog->property("opened").toBool(); }));
 
-    QVERIFY(m_harness->app()->unlockCredentials(QStringLiteral("test-passphrase")));
+    QSignalSpy opened(m_harness->app(), &AppController::credentialsAttempted);
+    m_harness->app()->unlockCredentials(QStringLiteral("test-passphrase"));
+    QVERIFY(opened.wait(30000));
+    QVERIFY(m_harness->app()->credentialsUnlocked());
 
     // The list of backends has to reach the picker. An empty picker leaves a
     // dialog that looks finished and can do nothing.
@@ -3248,7 +3254,10 @@ void TestWalkthrough::everyBackendBuildsAFormWithoutComplaint()
 /// about the case every real remote is.
 void TestWalkthrough::aDriveWithAPasswordSavesAndConnects()
 {
-    QVERIFY(m_harness->app()->unlockCredentials(QStringLiteral("test-passphrase")));
+    QSignalSpy opened(m_harness->app(), &AppController::credentialsAttempted);
+    m_harness->app()->unlockCredentials(QStringLiteral("test-passphrase"));
+    QVERIFY(opened.wait(30000));
+    QVERIFY(m_harness->app()->credentialsUnlocked());
 
     const QVariantList kinds = m_harness->app()->driveKinds();
     QString factory;
@@ -3306,7 +3315,10 @@ void TestWalkthrough::aDriveWithAPasswordSavesAndConnects()
 /// worth reading.
 void TestWalkthrough::savingThroughTheFormShowsWhatTheCheckFound()
 {
-    QVERIFY(m_harness->app()->unlockCredentials(QStringLiteral("test-passphrase")));
+    QSignalSpy opened(m_harness->app(), &AppController::credentialsAttempted);
+    m_harness->app()->unlockCredentials(QStringLiteral("test-passphrase"));
+    QVERIFY(opened.wait(30000));
+    QVERIFY(m_harness->app()->credentialsUnlocked());
 
     m_harness->app()->triggerAction(QStringLiteral("mole.file.drives"));
     QObject* dialog = m_harness->object(QStringLiteral("drivesDialog"));
@@ -3355,7 +3367,10 @@ void TestWalkthrough::savingThroughTheFormShowsWhatTheCheckFound()
 /// can rebuild, and destroy the very delegate whose handler is still running.
 void TestWalkthrough::connectingFromTheListSurvivesTheListRebuilding()
 {
-    QVERIFY(m_harness->app()->unlockCredentials(QStringLiteral("test-passphrase")));
+    QSignalSpy opened(m_harness->app(), &AppController::credentialsAttempted);
+    m_harness->app()->unlockCredentials(QStringLiteral("test-passphrase"));
+    QVERIFY(opened.wait(30000));
+    QVERIFY(m_harness->app()->credentialsUnlocked());
     QVERIFY(m_harness->app()->saveDrive(QString(), QStringLiteral("Scratch"), QStringLiteral("sftp"),
         QStringLiteral("memory"), QString(), QVariantMap()));
 
@@ -3467,7 +3482,10 @@ void TestWalkthrough::openingALockedDriveAsksForThePassphraseAndThenGoesThere()
     if (!m_harness->app()->credentialsAvailable())
         QSKIP("this build cannot encrypt");
 
-    QVERIFY(m_harness->app()->unlockCredentials(QStringLiteral("test-passphrase")));
+    QSignalSpy opened(m_harness->app(), &AppController::credentialsAttempted);
+    m_harness->app()->unlockCredentials(QStringLiteral("test-passphrase"));
+    QVERIFY(opened.wait(30000));
+    QVERIFY(m_harness->app()->credentialsUnlocked());
     QVariantMap values;
     values.insert(QStringLiteral("host"), QStringLiteral("nas.local"));
     // Every field the backend insists on, so building it succeeds and the drive

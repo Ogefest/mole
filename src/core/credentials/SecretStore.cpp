@@ -7,6 +7,7 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMutexLocker>
 #include <QRandomGenerator>
 #include <QSaveFile>
 #include <QStandardPaths>
@@ -32,13 +33,9 @@ namespace {
     constexpr int kTagSize = 16;
     constexpr int kKeySize = 32;
 
-    /// scrypt cost. 2^15 with r=8 needs about 32 MB and takes a noticeable fraction
-    /// of a second -- deliberately, because the whole point is that guessing a
-    /// passphrase should be expensive. Stored in the file so a future build can
-    /// raise them without orphaning existing stores.
-    constexpr quint32 kScryptN = 32768;
-    constexpr quint32 kScryptR = 8;
-    constexpr quint32 kScryptP = 1;
+    // No scrypt cost here any more: it lives on SecretStore::Cost, so a store can
+    // be read with the numbers its own header names rather than with this build's.
+    // What this build chooses for a *new* key is that struct's defaults. ADR-0090.
 
     /// The header, authenticated alongside the contents. Without this an attacker
     /// could rewrite the cost parameters down to nothing and the file would happily
@@ -267,11 +264,13 @@ bool SecretStore::isAvailable()
 
 bool SecretStore::exists() const
 {
+    QMutexLocker lock(&m_lock);
     return QFileInfo::exists(m_path);
 }
 
 void SecretStore::lock()
 {
+    QMutexLocker locked(&m_lock);
     if (!wipe())
         return;
     emit unlockedChanged();
@@ -295,6 +294,12 @@ bool SecretStore::wipe()
 
 bool SecretStore::create(const QString& passphrase, QString* errorOut)
 {
+    return create(passphrase, errorOut, Cost {});
+}
+
+bool SecretStore::create(const QString& passphrase, QString* errorOut, Cost cost)
+{
+    QMutexLocker held(&m_lock);
     const auto fail = [errorOut](const QString& message) {
         if (errorOut)
             *errorOut = message;
@@ -310,7 +315,8 @@ bool SecretStore::create(const QString& passphrase, QString* errorOut)
 
 #ifdef MOLE_HAVE_OPENSSL
     m_salt = randomBytes(kSaltSize);
-    m_key = deriveKey(passphrase, m_salt, kScryptN, kScryptR, kScryptP);
+    m_cost = cost;
+    m_key = deriveKey(passphrase, m_salt, m_cost.n, m_cost.r, m_cost.p);
     if (m_key.isEmpty())
         return fail(QStringLiteral("Could not derive a key"));
 
@@ -329,6 +335,7 @@ bool SecretStore::create(const QString& passphrase, QString* errorOut)
 
 bool SecretStore::unlock(const QString& passphrase, QString* errorOut)
 {
+    QMutexLocker held(&m_lock);
     const auto fail = [errorOut](const QString& message) {
         if (errorOut)
             *errorOut = message;
@@ -367,6 +374,17 @@ bool SecretStore::unlock(const QString& passphrase, QString* errorOut)
     if (key.isEmpty())
         return fail(QStringLiteral("Could not derive a key"));
 
+    // Shorter than a tag is not a store this code ever wrote: even an empty one
+    // seals to sixteen bytes. decrypt() answers empty for it, and the test below
+    // reads that as "there was nothing to decrypt" -- so a file cut back to its
+    // header opened as unlocked and empty under any passphrase at all, with no
+    // tag ever checked, and the next write re-keyed it under whatever had been
+    // typed. See MOLE-343.
+    if (sealed.size() < kTagSize) {
+        key.fill('\0');
+        return fail(QStringLiteral("Wrong passphrase, or the file has been altered"));
+    }
+
     const QByteArray plaintext = decrypt(key, nonce, header, sealed);
     if (plaintext.isEmpty() && !sealed.isEmpty()) {
         key.fill('\0');
@@ -389,12 +407,31 @@ bool SecretStore::unlock(const QString& passphrase, QString* errorOut)
 
     m_key = key;
     m_salt = salt;
+    // What the key was actually derived with, so the next write puts it back
+    // rather than this build's constants. See ADR-0090.
+    m_cost = Cost { n, r, p };
     m_unlocked = true;
     emit unlockedChanged();
     return true;
 #else
     return fail(QStringLiteral("This build cannot decrypt credentials"));
 #endif
+}
+
+SecretStore::Rollback SecretStore::take() const
+{
+    return Rollback { m_secrets, m_key, m_salt, m_cost };
+}
+
+void SecretStore::restore(const Rollback& previous)
+{
+    // The key first and by hand, because the one being dropped is a derived key
+    // sitting in ordinary memory and the whole class is careful about that.
+    m_key.fill('\0');
+    m_secrets = previous.secrets;
+    m_key = previous.key;
+    m_salt = previous.salt;
+    m_cost = previous.cost;
 }
 
 bool SecretStore::writeTo(const QString& path, const QByteArray& key, QString* errorOut) const
@@ -415,7 +452,7 @@ bool SecretStore::writeTo(const QString& path, const QByteArray& key, QString* e
     // passphrase here to derive another. The nonce is fresh every time, which is
     // the part that actually has to be.
     const QByteArray nonce = randomBytes(kNonceSize);
-    const QByteArray header = buildHeader(m_salt, nonce, kScryptN, kScryptR, kScryptP);
+    const QByteArray header = buildHeader(m_salt, nonce, m_cost.n, m_cost.r, m_cost.p);
     const QByteArray sealed = encrypt(key, nonce, header, plaintext);
     if (sealed.isEmpty() && !plaintext.isEmpty())
         return fail(QStringLiteral("Could not encrypt the store"));
@@ -429,22 +466,31 @@ bool SecretStore::writeTo(const QString& path, const QByteArray& key, QString* e
         return fail(QStringLiteral("Could not write the credential store"));
     file.write(header);
     file.write(sealed);
-    if (!file.commit())
-        return fail(QStringLiteral("Could not commit the credential store"));
 
-    // Readable only by its owner, where that means something. The contents are
-    // encrypted, but there is no reason to hand the ciphertext to every process
-    // on the machine either.
+    // Readable only by its owner, where that means something -- and set *before*
+    // the commit, on the temporary, so the file is never in place with any other
+    // mode. QSaveFile widens its temporary to 0666 & ~umask when the target does
+    // not exist, so a store created on a machine with a permissive umask spent
+    // the instant between the rename and this call world-readable. The contents
+    // are encrypted, but there is no reason to hand the ciphertext to every
+    // process on the machine either, and the answer is checked rather than
+    // dropped: a mode that could not be set is a promise this class makes on its
+    // own page and would not be keeping.
     //
-    // Not called on Windows, because it does nothing there and returns success.
-    // Qt maps its permission flags onto the read-only attribute and cannot
-    // express "only this account", so the file keeps whatever ACL it inherited
-    // from its directory -- and code that reads as though the file were
-    // mode-protected everywhere is how a security property that differs by
+    // Not attempted on Windows, because it does nothing there and returns
+    // success. Qt maps its permission flags onto the read-only attribute and
+    // cannot express "only this account", so the file keeps whatever ACL it
+    // inherited from its directory -- and code that reads as though the file
+    // were mode-protected everywhere is how a security property that differs by
     // platform turns into a surprise. What protects it there is the encryption,
     // plus the profile directory's own ACL; see the note on the class.
-    if (hostPlatform() != HostPlatform::Windows)
-        QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner);
+    if (hostPlatform() != HostPlatform::Windows
+        && !file.setPermissions(QFile::ReadOwner | QFile::WriteOwner)) {
+        return fail(QStringLiteral("Could not make the credential store readable only by you"));
+    }
+
+    if (!file.commit())
+        return fail(QStringLiteral("Could not commit the credential store"));
     return true;
 #else
     Q_UNUSED(path)
@@ -455,51 +501,67 @@ bool SecretStore::writeTo(const QString& path, const QByteArray& key, QString* e
 
 QString SecretStore::secret(const QString& key) const
 {
+    QMutexLocker lock(&m_lock);
     return m_unlocked ? m_secrets.value(key) : QString();
 }
 
 bool SecretStore::setSecret(const QString& key, const QString& value, QString* errorOut)
 {
+    QMutexLocker lock(&m_lock);
     if (!m_unlocked) {
         if (errorOut)
             *errorOut = QStringLiteral("The credential store is locked");
         return false;
     }
+    // Written before it is believed: a change kept in memory after a write that
+    // did not land is an answer from secret() that the file has never held, and
+    // the next successful write puts it there without anybody asking again.
+    const Rollback previous = take();
     m_secrets.insert(key, value);
-    if (!writeTo(m_path, m_key, errorOut))
+    if (!writeTo(m_path, m_key, errorOut)) {
+        restore(previous);
         return false;
+    }
     emit changed();
     return true;
 }
 
 bool SecretStore::removeSecret(const QString& key, QString* errorOut)
 {
+    QMutexLocker lock(&m_lock);
     if (!m_unlocked) {
         if (errorOut)
             *errorOut = QStringLiteral("The credential store is locked");
         return false;
     }
+    const Rollback previous = take();
     if (m_secrets.remove(key) == 0)
         return true;
-    if (!writeTo(m_path, m_key, errorOut))
+    if (!writeTo(m_path, m_key, errorOut)) {
+        restore(previous);
         return false;
+    }
     emit changed();
     return true;
 }
 
 int SecretStore::removeSecretsWithPrefix(const QString& prefix, QString* errorOut)
 {
+    QMutexLocker lock(&m_lock);
     if (!m_unlocked || prefix.isEmpty())
         return 0;
 
+    const Rollback previous = take();
     int removed = 0;
     for (const QString& key : m_secrets.keys()) {
         if (key.startsWith(prefix))
             removed += static_cast<int>(m_secrets.remove(key));
     }
     if (removed > 0) {
-        if (!writeTo(m_path, m_key, errorOut))
+        if (!writeTo(m_path, m_key, errorOut)) {
+            restore(previous);
             return 0;
+        }
         emit changed();
     }
     return removed;
@@ -507,6 +569,7 @@ int SecretStore::removeSecretsWithPrefix(const QString& prefix, QString* errorOu
 
 QStringList SecretStore::keys() const
 {
+    QMutexLocker lock(&m_lock);
     if (!m_unlocked)
         return {};
     QStringList out = m_secrets.keys();
@@ -517,6 +580,7 @@ QStringList SecretStore::keys() const
 bool SecretStore::changePassphrase(
     const QString& oldPassphrase, const QString& newPassphrase, QString* errorOut)
 {
+    QMutexLocker held(&m_lock);
     if (!unlock(oldPassphrase, errorOut))
         return false;
     if (newPassphrase.isEmpty()) {
@@ -526,19 +590,31 @@ bool SecretStore::changePassphrase(
     }
 
 #ifdef MOLE_HAVE_OPENSSL
-    const QHash<QString, QString> kept = m_secrets;
-    m_salt = randomBytes(kSaltSize);
-    QByteArray key = deriveKey(newPassphrase, m_salt, kScryptN, kScryptR, kScryptP);
+    // The one place a key is *made* rather than read, so the one place this
+    // build's own cost applies -- raising it here is what upgrades a store, and
+    // it is the only moment the passphrase is in hand to re-derive with.
+    const QByteArray salt = randomBytes(kSaltSize);
+    const Cost cost;
+    QByteArray key = deriveKey(newPassphrase, salt, cost.n, cost.r, cost.p);
     if (key.isEmpty()) {
         if (errorOut)
             *errorOut = QStringLiteral("Could not derive a key");
         return false;
     }
 
-    m_key.fill('\0');
+    // Written before any of it is believed. Assigning first and writing after
+    // left the file carrying the old passphrase while the object encrypted with
+    // the new one, so the next successful write produced a file that only the
+    // passphrase the user had been told was rejected would open. See MOLE-343.
+    const Rollback previous = take();
+    m_salt = salt;
+    m_cost = cost;
     m_key = key;
-    m_secrets = kept;
-    return writeTo(m_path, m_key, errorOut);
+    if (!writeTo(m_path, m_key, errorOut)) {
+        restore(previous);
+        return false;
+    }
+    return true;
 #else
     return false;
 #endif

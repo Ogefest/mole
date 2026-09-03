@@ -126,6 +126,11 @@ class AppController : public QObject
     Q_PROPERTY(bool credentialsExist READ credentialsExist NOTIFY credentialsChanged)
     Q_PROPERTY(bool credentialsUnlocked READ credentialsUnlocked NOTIFY credentialsChanged)
     Q_PROPERTY(bool credentialsNeeded READ credentialsNeeded NOTIFY credentialsChanged)
+    /// True while a passphrase is being turned into a key. scrypt at this cost
+    /// takes a noticeable fraction of a second *by design*, and it used to run
+    /// in the dialog's button handler -- a window that stops, with nothing
+    /// saying it is working. See ADR-0090.
+    Q_PROPERTY(bool credentialsBusy READ credentialsBusy NOTIFY credentialsChanged)
     /// Properties, not plain callable methods. A method call in a QML binding
     /// is evaluated once and never again -- there is no signal to tell the
     /// binding it went stale -- so a drive saved through this dialog would
@@ -209,8 +214,11 @@ public:
     bool credentialsNeeded() const;
 
     /// Creates the store with this passphrase, or opens an existing one.
-    Q_INVOKABLE bool unlockCredentials(const QString& passphrase);
+    /// Starts opening the store, or creating one. The answer arrives as
+    /// `credentialsAttempted`, because the derivation happens on a task.
+    Q_INVOKABLE void unlockCredentials(const QString& passphrase);
     Q_INVOKABLE QString credentialsError() const { return m_credentialsError; }
+    bool credentialsBusy() const { return m_credentialsBusy; }
 
     // ---- configured drives ----------------------------------------------
 
@@ -548,6 +556,9 @@ public:
 
 signals:
     void credentialsChanged();
+    /// The answer to unlockCredentials(), once the derivation has finished.
+    /// False leaves the reason in credentialsError().
+    void credentialsAttempted(bool ok);
     void drivesChanged();
     /// A checkDrive() finished. `message` is ready to show as it stands: what was
     /// found, or why the drive could not be reached.
@@ -607,6 +618,9 @@ private:
     /// model changed, the window showing the change, and the file as it was. See
     /// ADR-0089.
     void watchStore(JsonFileStore* store);
+    /// The half of unlockCredentials() that runs once the derivation is done,
+    /// back on the thread that owns everything it touches.
+    void finishUnlock(bool ok);
 
     void mountDefaultDrives();
     void registerShellActions();
@@ -684,6 +698,7 @@ private:
     SecretStore* m_secrets = nullptr;
     RemoteRegistry* m_remotes = nullptr;
     QString m_credentialsError;
+    bool m_credentialsBusy = false;
     /// Where goTo() was heading when it found the store shut, so unlocking can
     /// finish the journey rather than leaving the user to ask twice.
     QString m_pendingNavigation;

@@ -65,6 +65,10 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-03 #MOLE-343 A credential store survives a change of the cost its keys are derived at, instead of being orphaned by its own next write and reporting a wrong passphrase for ever
+2026-09-03 #MOLE-343 A credential store that has been truncated or tampered with is refused rather than opened empty under any passphrase at all
+2026-09-03 #MOLE-343 A credential that could not be written leaves the store exactly as the file has it, and a passphrase change that could not be written leaves the old passphrase working
+2026-09-03 #MOLE-343 Typing the passphrase no longer stops the window while the key is worked out: the field says it is working and the button waits
 2026-09-03 #MOLE-342 A setting, bookmark, set, schedule, alert rule, drive or session that could not be written says so, instead of showing the change on screen and losing it at the next start
 2026-09-03 #MOLE-342 A settings file that has been damaged is kept beside itself rather than replaced by an empty one, so a stray comma in the drive list no longer costs every configured drive
 2026-09-03 #MOLE-340 A nightly re-index keeps what is inside the archives in folders it did not have to re-walk, instead of dropping every member of them

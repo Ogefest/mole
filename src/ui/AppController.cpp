@@ -47,6 +47,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QFontDatabase>
+#include <QFutureWatcher>
 #include <QGuiApplication>
 #include <QRegularExpression>
 #include <QScreen>
@@ -56,6 +57,7 @@
 #include <QThread>
 #include <QTimer>
 #include <QWindow>
+#include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
 #include <utility>
@@ -691,18 +693,45 @@ bool AppController::credentialsNeeded() const
     return m_remotes && m_remotes->needsUnlocking();
 }
 
-bool AppController::unlockCredentials(const QString& passphrase)
+void AppController::unlockCredentials(const QString& passphrase)
 {
-    if (!m_secrets)
-        return false;
+    if (!m_secrets || m_credentialsBusy)
+        return;
 
     m_credentialsError.clear();
-    const bool ok = m_secrets->exists() ? m_secrets->unlock(passphrase, &m_credentialsError)
-                                        : m_secrets->create(passphrase, &m_credentialsError);
+    m_credentialsBusy = true;
+    emit credentialsChanged();
+
+    // On a task, because scrypt at this cost is a noticeable fraction of a
+    // second and this used to be a button handler on the thread that draws --
+    // the window stopped, with nothing saying it was working. The store takes
+    // its own lock, so the window is free to go on asking it questions in the
+    // meantime. See ADR-0090.
+    SecretStore* secrets = m_secrets;
+    const bool creating = !secrets->exists();
+
+    auto* watcher = new QFutureWatcher<QPair<bool, QString>>(this);
+    connect(watcher, &QFutureWatcher<QPair<bool, QString>>::finished, this, [this, watcher] {
+        const QPair<bool, QString> answer = watcher->result();
+        watcher->deleteLater();
+        m_credentialsBusy = false;
+        m_credentialsError = answer.second;
+        finishUnlock(answer.first);
+    });
+    watcher->setFuture(QtConcurrent::run([secrets, passphrase, creating] {
+        QString error;
+        const bool ok = creating ? secrets->create(passphrase, &error) : secrets->unlock(passphrase, &error);
+        return QPair<bool, QString> { ok, error };
+    }));
+}
+
+void AppController::finishUnlock(bool ok)
+{
     if (!ok) {
         emit credentialsChanged();
         emit drivesChanged();
-        return false;
+        emit credentialsAttempted(false);
+        return;
     }
 
     // Everything that was waiting for a password can connect now. Typing the
@@ -722,7 +751,7 @@ bool AppController::unlockCredentials(const QString& passphrase)
         const QString waiting = std::exchange(m_pendingNavigation, QString());
         goTo(waiting);
     }
-    return true;
+    emit credentialsAttempted(true);
 }
 
 QVariantList AppController::driveKinds() const

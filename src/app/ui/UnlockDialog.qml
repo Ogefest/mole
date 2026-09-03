@@ -39,7 +39,10 @@ Dialog {
     // is the only place that can say so.
     footer: ConfirmButtons {
         acceptText: App.credentialsExist ? "Unlock" : "Set"
-        acceptEnabled: passphraseField.text.length > 0
+        // Nothing to press while the key is being derived: it takes a
+        // noticeable fraction of a second by design, and pressing again would
+        // start a second one.
+        acceptEnabled: passphraseField.text.length > 0 && !App.credentialsBusy
         actWithoutClosing: true
         keyboardOn: "none"
     }
@@ -50,16 +53,26 @@ Dialog {
         passphraseField.forceActiveFocus()
     }
 
-    onApplied: {
-        if (App.unlockCredentials(passphraseField.text)) {
-            // Whatever was waiting on the store — including the drive somebody
-            // opened to get here — is the controller's business now.
-            passphraseField.text = ""
-            unlockError.text = ""
-            close()
-        } else {
-            unlockError.text = App.credentialsError()
-            passphraseField.selectAll()
+    // Started, not done. The derivation runs on a task so the window stays live,
+    // and the answer comes back on credentialsAttempted. See ADR-0090.
+    onApplied: App.unlockCredentials(passphraseField.text)
+
+    Connections {
+        target: App
+        function onCredentialsAttempted(ok) {
+            if (!dialog.visible)
+                return
+            if (ok) {
+                // Whatever was waiting on the store — including the drive
+                // somebody opened to get here — is the controller's business now.
+                passphraseField.text = ""
+                unlockError.text = ""
+                dialog.close()
+            } else {
+                unlockError.text = App.credentialsError()
+                passphraseField.selectAll()
+                passphraseField.forceActiveFocus()
+            }
         }
     }
 
@@ -85,14 +98,30 @@ Dialog {
                     + "install."
         }
 
-        TextField {
-            id: passphraseField
-            objectName: "passphraseField"
+        RowLayout {
             Layout.fillWidth: true
-            echoMode: TextInput.Password
-            placeholderText: App.credentialsExist ? "Passphrase" : "Choose a passphrase"
-            // The keyboard is in here, so Return has to answer from here.
-            onAccepted: if (text.length > 0) dialog.applied()
+            spacing: 8
+
+            TextField {
+                id: passphraseField
+                objectName: "passphraseField"
+                Layout.fillWidth: true
+                enabled: !App.credentialsBusy
+                echoMode: TextInput.Password
+                placeholderText: App.credentialsExist ? "Passphrase" : "Choose a passphrase"
+                // The keyboard is in here, so Return has to answer from here.
+                onAccepted: if (text.length > 0 && !App.credentialsBusy) dialog.applied()
+            }
+
+            // Said rather than implied. A window that has gone still for half a
+            // second with nothing moving reads as a window that has stopped.
+            BusyIndicator {
+                objectName: "unlockBusy"
+                running: App.credentialsBusy
+                visible: running
+                implicitWidth: 24
+                implicitHeight: 24
+            }
         }
 
         Label {

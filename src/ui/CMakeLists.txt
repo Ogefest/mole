@@ -59,4 +59,6 @@ target_include_directories(mole_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 # and every headless tool do not acquire an HTTP stack for a window's benefit.
 target_link_libraries(mole_ui
     PUBLIC mole_host Qt6::Gui
-    PRIVATE mole_flags Qt6::Network)
+    # Concurrent for the one thing here that must not run on the thread that
+    # draws and is not a Task: deriving the credential key. See ADR-0090.
+    PRIVATE mole_flags Qt6::Network Qt6::Concurrent)

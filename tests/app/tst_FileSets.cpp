@@ -588,7 +588,15 @@ void TestFileSets::savingADriveChecksItStraightAway()
     values.insert(QStringLiteral("host"), QStringLiteral("nothing.invalid"));
     values.insert(QStringLiteral("user"), QStringLiteral("someone"));
     values.insert(QStringLiteral("password"), QStringLiteral("whatever"));
-    QVERIFY(m_app->unlockCredentials(QStringLiteral("a passphrase")));
+    // Asynchronous since MOLE-343: the derivation runs on a task so the window
+    // stays live, and the answer arrives as a signal. Waited for on the signal
+    // and not on credentialsUnlocked(), which the store sets on the worker
+    // thread -- everything the controller then does about it, connecting the
+    // drives that were waiting included, happens after that.
+    QSignalSpy opened(m_app.get(), &AppController::credentialsAttempted);
+    m_app->unlockCredentials(QStringLiteral("a passphrase"));
+    QVERIFY(opened.wait(30000));
+    QVERIFY(m_app->credentialsUnlocked());
     QVERIFY(m_app->saveDrive({}, QStringLiteral("Nowhere"), factory, variant, {}, values));
 
     // Saving succeeds regardless -- a failed check must not throw away what was
@@ -623,7 +631,15 @@ void TestFileSets::aSavedPasswordIsNeverInTheSettingsFile()
     if (factory.isEmpty())
         QSKIP("no sftp backend in this build; the network plugin was not built");
 
-    QVERIFY(m_app->unlockCredentials(QStringLiteral("a passphrase")));
+    // Asynchronous since MOLE-343: the derivation runs on a task so the window
+    // stays live, and the answer arrives as a signal. Waited for on the signal
+    // and not on credentialsUnlocked(), which the store sets on the worker
+    // thread -- everything the controller then does about it, connecting the
+    // drives that were waiting included, happens after that.
+    QSignalSpy opened(m_app.get(), &AppController::credentialsAttempted);
+    m_app->unlockCredentials(QStringLiteral("a passphrase"));
+    QVERIFY(opened.wait(30000));
+    QVERIFY(m_app->credentialsUnlocked());
 
     // The field names are the backend's own: "password" is what the SFTP form
     // declares, and using anything else would be testing a form nobody offers.
