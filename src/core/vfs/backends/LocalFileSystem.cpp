@@ -235,6 +235,12 @@ namespace {
             return VfsError::NotADirectory;
         if (failed == std::errc::file_exists)
             return VfsError::AlreadyExists;
+        // EXDEV is not a fault. It is the kernel saying this particular call
+        // cannot express the operation -- which is exactly what NotSupported
+        // means everywhere else in the VFS, and what every caller with a slower
+        // way round is already watching for.
+        if (failed == std::errc::cross_device_link)
+            return VfsError::NotSupported;
         return VfsError::IoError;
     }
 
@@ -622,9 +628,26 @@ Result<void> LocalFileSystem::rename(const VfsUri& from, const VfsUri& to)
     // nobody mentioned.
     if (QFileInfo::exists(dst) && !namesTheSameNode(src, dst))
         return Result<void>::failure(VfsError::AlreadyExists, QStringLiteral("Already exists: %1").arg(dst));
-    if (!QFile::rename(src, dst))
-        return Result<void>::failure(
-            VfsError::IoError, QStringLiteral("Cannot rename %1 to %2").arg(src, dst));
+    // Not QFile::rename, which does not fail when the two ends are on different
+    // filesystems: for a regular file it opens the destination truncating, copies
+    // it in 4 KiB blocks and removes the source. A move onto another mount -- a
+    // tmpfs /tmp, a bind mount, a USB stick, any volume SystemVolumes did not
+    // list as a drive of its own -- would then be a transfer with no working name
+    // (ADR-0020, ADR-0021), no arrival weighing (ADR-0016), no short-read guard
+    // (ADR-0027), no cancellation and no progress, leaving a truncated file under
+    // the final name if the process died half way. A directory got no copy at all
+    // and simply failed, as IoError, which reads as a fault rather than as an
+    // answer.
+    //
+    // rename(2) says EXDEV for both, which becomes NotSupported -- the one kind
+    // TransferTask's rename shortcut already stands down for. See MOLE-334.
+    std::error_code failed;
+    std::filesystem::rename(nativePath(src), nativePath(dst), failed);
+    if (failed) {
+        return Result<void>::failure(codeForSystemError(failed),
+            QStringLiteral("Cannot rename %1 to %2: %3")
+                .arg(src, dst, QString::fromStdString(failed.message())));
+    }
     return {};
 }
 

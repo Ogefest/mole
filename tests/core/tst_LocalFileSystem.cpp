@@ -7,6 +7,8 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QStorageInfo>
+#include <QTemporaryDir>
 
 using namespace mole;
 using namespace mole::test;
@@ -25,6 +27,9 @@ private slots:
     void factoryProducesUsableBackend();
     void theListingAndTheDetailsAgreeAboutModeStrings();
     void aPlatformWithoutModesReportsNoneRatherThanSynthesisingOne();
+
+    void aRenameOntoAnotherDeviceIsRefusedRatherThanQuietlyCopied();
+    void aFolderRenamedOntoAnotherDeviceIsRefusedWithTheSameKind();
 
     void replaceLeavesTheDestinationHoldingTheNewBytes();
     void replaceWithAWorkingFileThatIsGoneKeepsTheDestination();
@@ -137,6 +142,72 @@ void TestLocalFileSystem::aPlatformWithoutModesReportsNoneRatherThanSynthesising
 /// this class until MOLE-331 -- has to remove the destination and then rename,
 /// and the gap between those two calls is a window in which the file being
 /// replaced is already gone and the replacement is not there yet.
+/// A move that crosses a mount point, from down here.
+///
+/// QFile::rename does not fail on EXDEV: for a regular file it opens the
+/// destination truncating, copies it in 4 KiB blocks and removes the source. So
+/// the one call that is supposed to be instant and atomic silently becomes a
+/// transfer with no working name, no arrival weighing, no short-read guard, no
+/// cancellation and no progress -- and a file truncated under its final name if
+/// the process dies half way. Refusing is what lets the copy path, which has all
+/// of those, take the work instead.
+///
+/// /dev/shm is tmpfs wherever this runs and the temporary directory is usually
+/// the real disk, but a machine where both are one filesystem has no
+/// cross-device case to offer and the test says so rather than passing on
+/// nothing.
+void TestLocalFileSystem::aRenameOntoAnotherDeviceIsRefusedRatherThanQuietlyCopied()
+{
+    TempTree tree;
+    QVERIFY(tree.isValid());
+    QVERIFY(tree.writeFile(QStringLiteral("report.txt"), QByteArrayLiteral("the only copy")));
+
+    QTemporaryDir elsewhere(QStringLiteral("/dev/shm/mole-other-device-XXXXXX"));
+    if (!elsewhere.isValid())
+        QSKIP("no second filesystem on this machine to move onto");
+    if (QStorageInfo(tree.path()).device() == QStorageInfo(elsewhere.path()).device())
+        QSKIP("the temporary directory and /dev/shm are the same filesystem");
+
+    LocalFileSystem fs;
+    const QString destination = elsewhere.filePath(QStringLiteral("report.txt"));
+    const Result<void> renamed
+        = fs.rename(tree.rootUri().child(QStringLiteral("report.txt")), VfsUri::fromLocalPath(destination));
+
+    QVERIFY2(!renamed.ok(), "a rename across a device boundary is a copy, and has to be refused as one");
+    QCOMPARE(renamed.error().code, VfsError::NotSupported);
+    QVERIFY2(!QFile::exists(destination), "the destination was written by an unguarded block copy");
+    QVERIFY2(QFile::exists(tree.absolute(QStringLiteral("report.txt"))), "the source was removed anyway");
+}
+
+/// The same boundary for a directory, which is the half that failed outright.
+///
+/// QFile::rename has no copy to fall back on for a folder, so it returns false
+/// and the backend used to map that to IoError -- which the transfer task reads
+/// as a real failure rather than as "ask somebody else". The kind is the whole
+/// fix: both halves have to answer NotSupported for the fallback to engage.
+void TestLocalFileSystem::aFolderRenamedOntoAnotherDeviceIsRefusedWithTheSameKind()
+{
+    TempTree tree;
+    QVERIFY(tree.isValid());
+    QVERIFY(tree.writeFile(QStringLiteral("work/notes.txt"), QByteArrayLiteral("keep me")));
+
+    QTemporaryDir elsewhere(QStringLiteral("/dev/shm/mole-other-device-XXXXXX"));
+    if (!elsewhere.isValid())
+        QSKIP("no second filesystem on this machine to move onto");
+    if (QStorageInfo(tree.path()).device() == QStorageInfo(elsewhere.path()).device())
+        QSKIP("the temporary directory and /dev/shm are the same filesystem");
+
+    LocalFileSystem fs;
+    const QString destination = elsewhere.filePath(QStringLiteral("work"));
+    const Result<void> renamed
+        = fs.rename(tree.rootUri().child(QStringLiteral("work")), VfsUri::fromLocalPath(destination));
+
+    QVERIFY2(!renamed.ok(), "no filesystem renames a directory across a mount point");
+    QCOMPARE(renamed.error().code, VfsError::NotSupported);
+    QVERIFY(!QFile::exists(destination));
+    QVERIFY(QFile::exists(tree.absolute(QStringLiteral("work/notes.txt"))));
+}
+
 void TestLocalFileSystem::replaceLeavesTheDestinationHoldingTheNewBytes()
 {
     TempTree tree;

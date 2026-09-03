@@ -223,7 +223,9 @@ deliberate.
 NAS-to-S3 are the same code path. Three rules it will not bend:
 
 - A move within one backend is short-circuited to `rename()`. Never stream
-  bytes when the filesystem can just relabel them.
+  bytes when the filesystem can just relabel them — and where it cannot,
+  because the two ends are on different mounts, the backend answers
+  `NotSupported` and the guarded copy path takes the work back.
 - A move deletes the source only when *every* entry arrived. Losing data to
   tidy up after a half-failed copy is not a trade worth making.
 - An overwrite does not begin by deleting. The file being replaced stands

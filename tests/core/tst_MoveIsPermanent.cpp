@@ -5,12 +5,17 @@
 #include "core/tasks/TaskManager.h"
 #include "core/tasks/TransferTask.h"
 #include "core/vfs/NameRules.h"
+#include "core/vfs/PartialWrite.h"
 #include "core/vfs/backends/LocalFileSystem.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
 #include <QDir>
 #include <QFile>
+#include <QStorageInfo>
+#include <QTemporaryDir>
 #include <QTest>
+
+#include <atomic>
 
 using namespace mole;
 using namespace mole::test;
@@ -132,6 +137,7 @@ private slots:
     void aMoveOntoSomethingThatExists();
     void aRenameWithinOneBackendMovesNothingAcrossTheWire();
     void aBackendThatCannotRenameFallsBackToCopyingAndDeleting();
+    void aFolderMovedOntoAnotherDeviceArrivesThroughTheGuardedCopy();
 
     void aDirectoryMovedIntoItsOwnSubdirectoryIsRefused();
     void aDirectoryMovedIntoItsOwnSubdirectoryOnOneDriveIsRefused();
@@ -398,6 +404,60 @@ void TestMoveIsPermanent::aBackendThatCannotRenameFallsBackToCopyingAndDeleting(
         = m_memory->openRead(VfsUri::fromString(QStringLiteral("mem:///arrived/report.txt")));
     QVERIFY2(moved.ok(), qPrintable(moved.error().message));
     QCOMPARE(moved.value()->readAll(), payload);
+}
+
+/// The same case as the one above, with the real backend rather than a model of
+/// it.
+///
+/// `DriveThatCannotRename` answers NotSupported because it was written to; until
+/// MOLE-334 the local backend never did. `QFile::rename` across a mount point
+/// copies a regular file in 4 KiB blocks with none of the guarantees the copy
+/// path carries, and fails outright for a directory -- and the failure arrived
+/// as IoError, which the task records rather than falls back from. So the
+/// assertion is both halves at once: the folder arrives, and it arrives through
+/// the path that writes under a working name.
+void TestMoveIsPermanent::aFolderMovedOntoAnotherDeviceArrivesThroughTheGuardedCopy()
+{
+    QTemporaryDir elsewhere(QStringLiteral("/dev/shm/mole-other-device-XXXXXX"));
+    if (!elsewhere.isValid())
+        QSKIP("no second filesystem on this machine to move onto");
+    if (QStorageInfo(m_tree->path()).device() == QStorageInfo(elsewhere.path()).device())
+        QSKIP("the temporary directory and /dev/shm are the same filesystem");
+
+    const QByteArray payload = payloadOf(64 * 1024);
+    QVERIFY(m_tree->writeFile(QStringLiteral("work/big.bin"), payload));
+    QVERIFY(m_tree->writeFile(QStringLiteral("work/inner/notes.txt"), QByteArrayLiteral("keep me")));
+
+    // One wrapper standing for both ends, so the same-backend shortcut is still
+    // taken and it is the real backend's answer to a cross-device rename that
+    // decides what happens next.
+    auto drive = std::make_shared<FaultyFileSystem>(m_disk);
+    const VfsUri into = VfsUri::fromLocalPath(elsewhere.path());
+    const VfsUri arriving = into.child(QStringLiteral("work")).child(QStringLiteral("big.bin"));
+    const QString staging = partialWriteOf(arriving).toLocalPath();
+
+    // Only the large file ever reaches this offset, so there is no need to name
+    // it: notes.txt is seven bytes.
+    std::atomic_bool underTheWorkingName { false };
+    std::atomic_bool underTheFinalName { false };
+    const QString finalName = arriving.toLocalPath();
+    drive->whenWriteReaches(16 * 1024, [&underTheWorkingName, &underTheFinalName, staging, finalName] {
+        underTheWorkingName = QFile::exists(staging);
+        underTheFinalName = QFile::exists(finalName);
+    });
+
+    TransferTask* task = run(moveOf(drive, m_tree->rootUri().child(QStringLiteral("work")), drive, into));
+    QVERIFY(task != nullptr);
+    QVERIFY2(task->failures().isEmpty(), qPrintable(task->failures().join(QStringLiteral("; "))));
+
+    QVERIFY2(underTheWorkingName.load(), "the bytes were not going under a working name");
+    QVERIFY2(!underTheFinalName.load(), "a half-written file was sitting under the name somebody asked for");
+
+    QFile landed(elsewhere.filePath(QStringLiteral("work/big.bin")));
+    QVERIFY2(landed.open(QIODevice::ReadOnly), "the folder did not arrive on the other device");
+    QCOMPARE(landed.readAll(), payload);
+    QVERIFY(QFile::exists(elsewhere.filePath(QStringLiteral("work/inner/notes.txt"))));
+    QVERIFY2(!QFile::exists(m_tree->absolute(QStringLiteral("work"))), "a move left the source behind");
 }
 
 void TestMoveIsPermanent::aDirectoryMovedIntoItsOwnSubdirectoryIsRefused()
