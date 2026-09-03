@@ -1,5 +1,6 @@
 #include "plugins/archive/ArchiveFileSystem.h"
 #include "plugins/archive/CompressTask.h"
+#include "support/FaultyFileSystem.h"
 #include "support/MoleTestMain.h"
 #include "support/TestSupport.h"
 
@@ -38,6 +39,9 @@ private slots:
     void sevenZipCannotCarryAPasswordAndSaysSo();
     void theOriginalsGoOnlyWhenAskedAndOnlyAfterTheArchiveIsWritten();
     void theOriginalsAreKeptWhenAnythingCouldNotBeRead();
+    void aReadThatStopsShortRefusesTheArchiveRatherThanPaddingIt();
+    void aSourceLongerThanTheListingSaidIsRefusedRatherThanTruncated();
+    void aReadThatFailsMidEntryRefusesTheArchive();
     void theSourceHoldingTheArchiveIsNeverDeleted();
     void anArchiveWrittenIntoTheTreeItIsArchivingDoesNotIncludeItself();
 
@@ -515,6 +519,98 @@ void TestCompressTask::theOriginalsAreKeptWhenAnythingCouldNotBeRead()
 // Packing the folder you are standing in writes the archive inside it. Deleting that
 // source would take the archive with it -- turning "keep the archive, drop the files"
 // into keeping nothing at all.
+/// The one case where an archive can be structurally perfect and wrong.
+///
+/// The header declares how many bytes the entry has, taken from the planning
+/// stat. If the source then hands over fewer -- a remote read that stops, which
+/// is ADR-0027's exact case -- libarchive pads the member out to the declared
+/// size with zeros. The archive opens, lists, and extracts a file of the right
+/// length whose tail is nulls, nothing is recorded as a failure, and with
+/// "remove sources" ticked the original is then deleted on the strength of it.
+void TestCompressTask::aReadThatStopsShortRefusesTheArchiveRatherThanPaddingIt()
+{
+    auto lying = std::make_shared<FaultyFileSystem>(m_fs);
+    // The listing claims 500 bytes more than the file has, so the read ends at
+    // the real end and the entry is 500 bytes short of its own header.
+    lying->listingOverstatesSizeBy(500);
+
+    CompressTask::Request request;
+    request.sourceFileSystem = lying;
+    request.targetFileSystem = m_fs;
+    request.sources.append(m_tree->rootUri().child(QStringLiteral("notes.txt")));
+    request.target = m_tree->rootUri().child(QStringLiteral("short.zip"));
+    request.removeSourcesWhenDone = true;
+
+    auto* task = new CompressTask(request);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task, 30000));
+
+    QCOMPARE(task->state(), Task::State::Failed);
+    QVERIFY2(!task->failures().isEmpty(), "the entry that could not be read whole has to be named");
+    QVERIFY2(
+        task->failures().first().contains(QStringLiteral("notes.txt")), qPrintable(task->failures().first()));
+
+    QVERIFY2(!QFile::exists(QDir(m_tree->path()).filePath(QStringLiteral("short.zip"))),
+        "an archive holding a padded member is not an archive worth keeping");
+    QVERIFY2(QFile::exists(QDir(m_tree->path()).filePath(QStringLiteral("notes.txt"))),
+        "the original may not go for a member that is not a copy of it");
+    QVERIFY(task->removedSources().isEmpty());
+}
+
+/// And the other direction, which is silent truncation.
+///
+/// A file that grew between the stat and the read -- a log being written to --
+/// fills the declared size and the loop stops there, leaving the rest out. The
+/// member is the right length for its header and the wrong length for the file.
+void TestCompressTask::aSourceLongerThanTheListingSaidIsRefusedRatherThanTruncated()
+{
+    auto lying = std::make_shared<FaultyFileSystem>(m_fs);
+    lying->listingOverstatesSizeBy(-4);
+
+    CompressTask::Request request;
+    request.sourceFileSystem = lying;
+    request.targetFileSystem = m_fs;
+    request.sources.append(m_tree->rootUri().child(QStringLiteral("notes.txt")));
+    request.target = m_tree->rootUri().child(QStringLiteral("grown.zip"));
+
+    auto* task = new CompressTask(request);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task, 30000));
+
+    QCOMPARE(task->state(), Task::State::Failed);
+    QVERIFY2(
+        task->failures().first().contains(QStringLiteral("notes.txt")), qPrintable(task->failures().first()));
+    QVERIFY(!QFile::exists(QDir(m_tree->path()).filePath(QStringLiteral("grown.zip"))));
+}
+
+void TestCompressTask::aReadThatFailsMidEntryRefusesTheArchive()
+{
+    // A dropped connection five bytes in. QIODevice answers a failed read and
+    // the end of a file with the same empty QByteArray, which is why the loop
+    // reads into a buffer and asks how many bytes came back.
+    m_tree->writeFile(QStringLiteral("big.bin"), QByteArray(40000, 'x'));
+    auto failing = std::make_shared<FaultyFileSystem>(m_fs);
+    failing->readFailsAt(5000);
+
+    CompressTask::Request request;
+    request.sourceFileSystem = failing;
+    request.targetFileSystem = m_fs;
+    request.sources.append(m_tree->rootUri().child(QStringLiteral("big.bin")));
+    request.target = m_tree->rootUri().child(QStringLiteral("died.zip"));
+    request.removeSourcesWhenDone = true;
+
+    auto* task = new CompressTask(request);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task, 30000));
+
+    QCOMPARE(task->state(), Task::State::Failed);
+    QVERIFY2(
+        task->failures().first().contains(QStringLiteral("big.bin")), qPrintable(task->failures().first()));
+    QVERIFY(!QFile::exists(QDir(m_tree->path()).filePath(QStringLiteral("died.zip"))));
+    QVERIFY(QFile::exists(QDir(m_tree->path()).filePath(QStringLiteral("big.bin"))));
+    QVERIFY(task->removedSources().isEmpty());
+}
+
 void TestCompressTask::theSourceHoldingTheArchiveIsNeverDeleted()
 {
     CompressTask::Request request;

@@ -339,21 +339,71 @@ void CompressTask::run()
             continue;
         }
 
+        // The header above has already promised exactly item.size bytes, and
+        // libarchive keeps that promise whatever arrives: an entry that comes up
+        // short is padded to the declared size with zeros, and one that would
+        // run over is cut off at it. Either way the archive is structurally
+        // perfect and the member is not the file -- and this is the operation
+        // that then offers to delete the original. So every byte is accounted
+        // for, and anything else abandons the whole archive rather than closing
+        // one that cannot be trusted. See MOLE-338 and ADR-0027.
+        //
+        // Read into a buffer rather than through the QByteArray overload,
+        // because that one answers "the file ended" and "the read failed" with
+        // the same empty result -- which is the difference between a source that
+        // shrank and a connection that died.
         qint64 remaining = item.size;
-        while (remaining > 0 && !in->atEnd()) {
+        chunk.resize(kChunkBytes);
+        while (remaining > 0) {
             if (isCancelRequested()) {
                 abandon(VfsError::make(VfsError::Cancelled, QStringLiteral("Cancelled")));
                 return;
             }
-            chunk = in->read(std::min<qint64>(kChunkBytes, remaining));
-            if (chunk.isEmpty())
+            const qint64 got = in->read(chunk.data(), std::min<qint64>(kChunkBytes, remaining));
+            if (got < 0) {
+                const QString why = QStringLiteral("%1: the source stopped after %2 bytes: %3")
+                                        .arg(item.archivePath)
+                                        .arg(item.size - remaining)
+                                        .arg(in->errorString());
+                m_failures.append(why);
+                abandon(VfsError::make(VfsError::IoError, why));
+                return;
+            }
+            if (got == 0)
                 break;
-            if (archive_write_data(writer, chunk.constData(), static_cast<size_t>(chunk.size())) < 0) {
+            if (archive_write_data(writer, chunk.constData(), static_cast<size_t>(got)) < 0) {
                 const QString reason = QString::fromLocal8Bit(archive_error_string(writer));
                 abandon(VfsError::make(VfsError::IoError, reason));
                 return;
             }
-            remaining -= chunk.size();
+            remaining -= got;
+        }
+
+        if (remaining != 0) {
+            // Not asked of the source the way ADR-0027 asks it. A transfer can
+            // accept a file that really did shrink, because it writes what
+            // arrived; here the size is already in the stream and cannot be
+            // taken back, so both readings of a short read have the same answer.
+            const QString why = QStringLiteral("%1: the listing said %2 bytes and %3 arrived")
+                                    .arg(item.archivePath)
+                                    .arg(item.size)
+                                    .arg(item.size - remaining);
+            m_failures.append(why);
+            abandon(VfsError::make(VfsError::IoError, why));
+            return;
+        }
+
+        // And the other direction, which is silent truncation: a log written to
+        // between the stat and the read has more to give than the header allows.
+        char beyond = 0;
+        if (in->read(&beyond, 1) > 0) {
+            const QString why = QStringLiteral("%1: it is longer than the %2 bytes the listing said, "
+                                               "so it would have been packed short")
+                                    .arg(item.archivePath)
+                                    .arg(item.size);
+            m_failures.append(why);
+            abandon(VfsError::make(VfsError::IoError, why));
+            return;
         }
 
         ++m_packed;

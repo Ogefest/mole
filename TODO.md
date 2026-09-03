@@ -434,6 +434,13 @@ project, and a contributor should never hit a wall of text they cannot read.
   before a worker thread does, and nothing here ever changes `TZ`. If it is ever worth
   closing, the fix is to touch the timezone once at startup rather than to lock
   anything.
+- **Compression asks ADR-0027's question too, and answers it more bluntly.** A
+  member's header declares its length before a byte of it is read, so libarchive
+  pads a short entry with zeros and cuts a long one off -- there is no "the file
+  really did shrink" reading available, because the size is already in the
+  stream. Any mismatch abandons the whole archive rather than closing one that
+  cannot be trusted, which matters here more than anywhere: this is the operation
+  that then offers to delete its own input. See MOLE-338.
 - **A sync between two drives asks both of ADR-0027's questions now**, and it
   asks the second one differently from a transfer. MOLE-98 gave its copy loop the
   short-read guard; MOLE-337 gave it the arrival check, but per directory over
