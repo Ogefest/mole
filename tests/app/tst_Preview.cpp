@@ -861,8 +861,15 @@ void TestPreview::steppingToTheNextFileCancelsAReaderInFlight()
     const QString json = m_tree->rootUri().child(QStringLiteral("config.json")).toString();
     preview->open(json);
     QVERIFY(settleOn(preview, json));
-    QVERIFY2(!preview->isDetailsLoading(), "the tab lets go of a reader the moment the file changes");
     gate->release();
+
+    // The claim is asserted below, on the reader itself, and deliberately not
+    // here as !isDetailsLoading(). The tab does drop the old read as the file
+    // changes -- but the file stepped *to* starts a read of its own as soon as
+    // its head arrives, so "nothing is loading" is a fact about the old read for
+    // exactly as long as it takes the new one to begin: true in a debug run,
+    // false under asan, which is the definition of a case that passes on one
+    // machine and fails on another. See MOLE-409.
 
     // Waited on the reader having noticed, rather than on the tab having let go:
     // the two happen on different threads and only the first one is the claim.
@@ -4134,9 +4141,14 @@ void TestPreview::aPreviewShowsTheFileAsItIsAndSaysSo()
     QVERIFY(preview);
 
     QVERIFY(preview->showingVersion().isEmpty());
-    auto* text = qobject_cast<TextPreviewController*>(preview->viewer());
-    QVERIFY(text);
-    QVERIFY(waitFor([text] { return text->text().contains(QStringLiteral("third")); }));
+    // The viewer is fetched inside the wait rather than held across it: since
+    // MOLE-360 the tab installs one when the drive answers, and it replaces
+    // whatever was there -- so a pointer taken beforehand can be to a controller
+    // that has since been deleted. See MOLE-409.
+    QVERIFY(waitFor([preview] {
+        auto* shown = qobject_cast<TextPreviewController*>(preview->viewer());
+        return shown && shown->text().contains(QStringLiteral("third"));
+    }));
 }
 
 void TestPreview::aDriveWithNothingOlderOffersNoChoiceAtAll()
@@ -4184,9 +4196,19 @@ void TestPreview::movingToAnEarlierVersionShowsThatVersionsContents()
     preview->showVersion(first);
     waitFor([preview] { return preview->viewer() != nullptr || !preview->isIdentifying(); });
 
+    // The viewer is fetched inside the wait rather than held across it. Showing a
+    // version installs a new controller and deletes the one that was there, and
+    // since MOLE-360 that happens when the drive answers rather than inside
+    // showVersion() -- so a pointer taken beforehand is dangling by the time the
+    // text arrives. The debug tier read the freed string and passed; asan named
+    // it a heap-use-after-free. See MOLE-409.
+    QVERIFY(waitFor([preview] {
+        auto* shown = qobject_cast<TextPreviewController*>(preview->viewer());
+        return shown && shown->text().contains(QStringLiteral("first"));
+    }));
+
     auto* text = qobject_cast<TextPreviewController*>(preview->viewer());
     QVERIFY2(text, "an earlier version is an ordinary file and reaches the same viewer");
-    QVERIFY(waitFor([text] { return text->text().contains(QStringLiteral("first")); }));
     QVERIFY2(!text->text().contains(QStringLiteral("third")),
         "the current file's contents shown as an earlier version is the failure this avoids");
 }
@@ -4229,9 +4251,11 @@ void TestPreview::goingBackToTheCurrentFileWorks()
     QVERIFY(waitFor([preview] { return preview->showingVersion().isEmpty(); }));
     waitFor([preview] { return preview->viewer() != nullptr || !preview->isIdentifying(); });
 
-    auto* text = qobject_cast<TextPreviewController*>(preview->viewer());
-    QVERIFY(text);
-    QVERIFY(waitFor([text] { return text->text().contains(QStringLiteral("third")); }));
+    // Fetched inside the wait, for the reason the version case above gives.
+    QVERIFY(waitFor([preview] {
+        auto* shown = qobject_cast<TextPreviewController*>(preview->viewer());
+        return shown && shown->text().contains(QStringLiteral("third"));
+    }));
 }
 
 /// Every viewer works on one, because it is a uri and nothing below the preview
@@ -4291,9 +4315,14 @@ void TestPreview::anEarlierVersionIsReadInPartsLikeAnyOtherFile()
     QVERIFY(waitFor([preview] { return !preview->showingVersion().isEmpty(); }));
     waitFor([preview] { return preview->viewer() != nullptr || !preview->isIdentifying(); });
 
+    // Fetched inside the wait, for the reason the version case above gives.
+    QVERIFY(waitFor([preview] {
+        auto* shown = qobject_cast<TextPreviewController*>(preview->viewer());
+        return shown && shown->fileSize() > 0;
+    }));
+
     auto* text = qobject_cast<TextPreviewController*>(preview->viewer());
     QVERIFY(text);
-    QVERIFY(waitFor([text] { return text->fileSize() > 0; }));
     QCOMPARE(text->fileSize(), qint64(4 * 1024 * 1024));
     QVERIFY2(text->isPaged(), "four megabytes must be shown a window at a time");
     QVERIFY2(
