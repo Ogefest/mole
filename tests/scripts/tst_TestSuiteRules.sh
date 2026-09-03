@@ -148,6 +148,43 @@ if [ -s "$SHELLTEST_TMP/unbuildable" ]; then
     sed 's/^/    /' "$SHELLTEST_TMP/unbuildable"
 fi
 
+begin "every directory that reads a plugin's availability is added after src/plugins"
+# **A cache variable one directory writes and another reads is order-dependent,
+# and CMake will not say so.** src/plugins writes MOLE_HAVE_ARCHIVE_PLUGIN and
+# MOLE_HAVE_NETWORK_PLUGIN with `set(... CACHE INTERNAL "")`, because
+# find_package results do not cross between sibling directories. A directory
+# added *above* it therefore reads nothing on a fresh configure and the cached ON
+# on every configure after that.
+#
+# src/tools was above it, so `mole-tasks compress` said "this build has no
+# archive support (libarchive was not found)" in every published artefact -- every
+# CI job, every packaging container, `make deb` -- and worked in a developer's
+# frequently reconfigured tree. The suite was green either way, because tests/ is
+# configured after src/plugins. See MOLE-386.
+readers=$(grep -rlE 'MOLE_HAVE_(ARCHIVE|NETWORK)_PLUGIN' --include=CMakeLists.txt src \
+          | sed 's|/CMakeLists.txt$||' | sed 's|^src/||' | sort -u)
+[ -n "$readers" ] || fail "no directory reads a plugin's availability -- has the variable been renamed?"
+
+pluginsAt=$(grep -n '^ *add_subdirectory(src/plugins)' CMakeLists.txt | head -1 | cut -d: -f1)
+[ -n "$pluginsAt" ] || fail "cannot find where the root file adds src/plugins"
+
+for reader in $readers; do
+    # src/plugins reads its own variables, which is where they are written.
+    [ "$reader" = "plugins" ] && continue
+    at=$(grep -n "^ *add_subdirectory(src/$reader)" CMakeLists.txt | head -1 | cut -d: -f1)
+    if [ -z "$at" ]; then
+        # Added from somewhere else, or not at all: worth saying rather than
+        # passing over.
+        fail "src/$reader reads a plugin's availability and the root file does not add it"
+        continue
+    fi
+    if [ "$at" -lt "$pluginsAt" ]; then
+        fail "src/$reader is added at line $at, above src/plugins at line $pluginsAt, so it reads MOLE_HAVE_*_PLUGIN before anything sets it"
+    else
+        pass_note "src/$reader is added after src/plugins"
+    fi
+done
+
 begin "no suite includes a POSIX header outside a guard"
 # A suite that cannot be *built* stops a whole tier, where a case that cannot run
 # costs one line of output -- and the difference is what a Windows build turns on.

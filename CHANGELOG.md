@@ -65,6 +65,7 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-03 #MOLE-386 The console runner can create archives in the released builds, instead of reporting that libarchive was not found
 2026-09-03 #MOLE-371 An indexed search filtered by date is answered by the index itself, and one that stopped at the row limit says so instead of reading as complete
 2026-09-03 #MOLE-361 A dead network mount on the machine no longer stalls Mole at startup or when the sidebar refreshes
 2026-09-03 #MOLE-360 Renaming, creating a folder, previewing a file, dragging a row and setting up a bulk rename no longer stop the window while a slow drive answers

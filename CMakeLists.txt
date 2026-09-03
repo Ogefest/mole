@@ -105,13 +105,29 @@ add_subdirectory(src/core)
 add_subdirectory(src/sdk)
 add_subdirectory(src/host)
 add_subdirectory(src/ui)
-add_subdirectory(src/tools)
 # The two that need Qml, Quick, Pdf or Multimedia, and so the two a qtbase-only
 # Qt cannot build. Everything above needs nothing outside qtbase.
 if(NOT MOLE_CORE_ONLY)
     add_subdirectory(src/plugins)
     add_subdirectory(src/app)
 endif()
+
+# **Below the plugins, and that is not a matter of taste.** The console runner
+# links the archive writer and depends on the plugin targets, and it decides both
+# on MOLE_HAVE_ARCHIVE_PLUGIN and MOLE_HAVE_NETWORK_PLUGIN -- which src/plugins
+# writes into the cache, because find_package results do not cross between
+# sibling directories.
+#
+# Added above them, as it was, those variables are undefined on a *fresh*
+# configure and defined on every one after it: so a developer's frequently
+# reconfigured tree could pack an archive and every published artefact -- every
+# CI job, every packaging container, `make deb` -- shipped a mole-tasks whose
+# `compress` said "this build has no archive support (libarchive was not
+# found)". Untrue, and configure-count dependent, which is the worst kind of
+# untrue. The suite was green either way because tests/ is configured after
+# src/plugins. See MOLE-386, and tests/scripts/tst_TestSuiteRules.sh, which holds
+# this order rather than trusting it.
+add_subdirectory(src/tools)
 
 if(MOLE_BUILD_TESTS)
     # Test alone here now. Network used to be found only for the suites -- Mole

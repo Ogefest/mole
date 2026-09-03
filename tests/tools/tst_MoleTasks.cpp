@@ -5,8 +5,10 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QProcess>
 #include <QProcessEnvironment>
+#include <QStandardPaths>
 
 using namespace mole;
 using namespace mole::test;
@@ -57,6 +59,7 @@ private slots:
     void syncAppliesWhenAsked();
     void renamePreviewsThenApplies();
     void duplicatesReportsWhatCouldBeFreed();
+    void compressPacksWhatItWasGiven();
     void verifyAnswersForADriveThatIsThere();
 
     void aMountSpecCarriesItsSecretInTheEnvironment();
@@ -289,6 +292,56 @@ void TestMoleTasks::duplicatesReportsWhatCouldBeFreed()
     QVERIFY2(result.out.contains(QStringLiteral("one.txt")), qPrintable(result.both()));
     QVERIFY2(result.out.contains(QStringLiteral("two.txt")), qPrintable(result.both()));
     QVERIFY2(!result.out.contains(QStringLiteral("three.txt")), qPrintable(result.both()));
+}
+
+/// The command the released builds could not run.
+///
+/// `compress` is compiled behind MOLE_HAVE_ARCHIVE, which src/tools/CMakeLists.txt
+/// sets from MOLE_HAVE_ARCHIVE_PLUGIN -- a cache variable src/plugins writes. On a
+/// *fresh* configure, src/tools used to be processed first, so the variable was
+/// undefined and the runner was compiled without it: every CI job, every
+/// packaging container and `make deb` shipped a mole-tasks whose compress said
+/// "this build has no archive support (libarchive was not found)". On the second
+/// configure of the same directory the cached value was ON and it worked, so a
+/// developer's tree could pack and no artefact could.
+///
+/// Nothing noticed because tests/ is configured after src/plugins -- the suite
+/// links the writer whatever the runner does -- and no case ran the command. This
+/// is that case. See MOLE-386.
+void TestMoleTasks::compressPacksWhatItWasGiven()
+{
+#ifndef MOLE_HAVE_ARCHIVE
+    QSKIP("this build was made without libarchive");
+#else
+    QVERIFY(write(QStringLiteral("src/one.txt"), QByteArray("the first file")));
+    QVERIFY(write(QStringLiteral("src/two.txt"), QByteArray("the second file")));
+
+    const Run result
+        = run({ QStringLiteral("compress"), QStringLiteral("--from"), uriFor(QStringLiteral("src/one.txt")),
+            QStringLiteral("--from"), uriFor(QStringLiteral("src/two.txt")), QStringLiteral("--to"),
+            uriFor(QStringLiteral("bundle.zip")) });
+
+    QCOMPARE(result.code, Ok);
+    QVERIFY2(result.out.contains(QStringLiteral("2 packed")), qPrintable(result.both()));
+
+    // The archive is there and holds both files. Read with unzip rather than
+    // through Mole's own archive backend: what is in question is what was
+    // written, and an outside reader is the better witness for that.
+    const QString archive = m_tree->absolute(QStringLiteral("bundle.zip"));
+    QVERIFY2(QFileInfo(archive).size() > 0, "the archive was never written");
+
+    const QString unzip = QStandardPaths::findExecutable(QStringLiteral("unzip"));
+    if (unzip.isEmpty())
+        QSKIP("unzip is not available to read the archive back");
+
+    QProcess reader;
+    reader.start(unzip, { QStringLiteral("-Z1"), archive });
+    QVERIFY(reader.waitForFinished(30000));
+    QStringList packed
+        = QString::fromUtf8(reader.readAllStandardOutput()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    packed.sort();
+    QCOMPARE(packed, QStringList({ QStringLiteral("one.txt"), QStringLiteral("two.txt") }));
+#endif
 }
 
 void TestMoleTasks::verifyAnswersForADriveThatIsThere()
