@@ -710,6 +710,14 @@ private:
     QTimer* m_sessionSaveTimer = nullptr;
     /// Restoring opens tabs, which would immediately mark the session dirty.
     bool m_restoring = false;
+    /// Whether anything has changed the session since it was read.
+    ///
+    /// The destructor saves only when it has. `mole --plugins` and
+    /// `mole --diagnostics` build this controller, initialise it and return, and
+    /// the save on the way out used to rewrite the user's session from a run that
+    /// opened no window -- without the tabs of any plugin that had failed to load.
+    /// See MOLE-350.
+    bool m_sessionTouched = false;
     const bool m_stillPictures = !qEnvironmentVariableIsEmpty("MOLE_STILL_PICTURES");
     TabsModel* m_tabs = nullptr;
     Palette* m_colour = nullptr;

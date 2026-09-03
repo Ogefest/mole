@@ -109,6 +109,17 @@ private:
 
     FeatureRegistry* m_registry = nullptr;
     QList<Tab> m_tabs;
+    /// A tab the session held that this run could not open, and where it sat.
+    ///
+    /// A plugin that did not load takes its tabs with it, and the save on the way
+    /// out used to write the session without them -- so one bad launch removed them
+    /// for good. See MOLE-350.
+    struct Carried
+    {
+        int index = 0;
+        TabSession tab;
+    };
+    QList<Carried> m_carried;
     int m_currentIndex = -1;
     int m_nextTabId = 1;
 };

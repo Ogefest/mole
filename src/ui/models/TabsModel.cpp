@@ -3,6 +3,8 @@
 #include "host/FeatureRegistry.h"
 #include "sdk/FeatureController.h"
 
+#include <algorithm>
+
 namespace mole {
 
 TabsModel::TabsModel(FeatureRegistry* registry, QObject* parent)
@@ -165,19 +167,42 @@ Session TabsModel::captureSession() const
         session.tabs.append(
             TabSession { tab.featureId, tab.controller ? tab.controller->saveState() : QVariantMap {} });
     }
+
+    // And back in go the tabs this run could not open.
+    //
+    // A launch where a plugin did not load -- a missing library, a half-finished
+    // upgrade, a binary from another build -- skips its tabs on the way in, and
+    // the save on the way out used to write the session without them. So one bad
+    // launch removed them for good, and the next healthy one had nothing left to
+    // bring back. They are kept exactly as they were read, at the position they
+    // were read from, so a session file survives a run that could not understand
+    // half of it. See ARCHITECTURE.md on skipping a tab whose feature is gone,
+    // and MOLE-350.
+    for (const Carried& carried : m_carried) {
+        const int at = std::min<int>(carried.index, static_cast<int>(session.tabs.size()));
+        session.tabs.insert(at, carried.tab);
+    }
     return session;
 }
 
 int TabsModel::restoreSession(const Session& session)
 {
+    m_carried.clear();
     int restored = 0;
+    int at = -1;
     for (const TabSession& tab : session.tabs) {
+        ++at;
         // A feature merged into another leaves its id in every session written
         // before the merge. Those tabs reopen as their successor; only a tab
         // whose feature nobody provides at all is skipped.
         const int row = openTab(m_registry ? m_registry->currentIdFor(tab.featureId) : tab.featureId);
-        if (row < 0)
-            continue; // the plugin that provided this tab is gone
+        if (row < 0) {
+            // The plugin that provided this tab is gone -- this time. Kept, so
+            // the next save puts it back rather than writing it out of the file;
+            // see captureSession() and MOLE-350.
+            m_carried.append(Carried { at, tab });
+            continue;
+        }
         if (auto* controller = m_tabs.at(row).controller)
             controller->restoreState(tab.state);
         ++restored;

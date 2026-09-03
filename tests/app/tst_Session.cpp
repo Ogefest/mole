@@ -12,6 +12,7 @@
 #include <QDir>
 #include <QFile>
 #include <QGuiApplication>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
@@ -53,6 +54,8 @@ private slots:
     void currentTabIsRemembered();
     void everyCriterionSurvivesARestart();
     void tabsFromAnUninstalledPluginAreSkipped();
+    void aTabWhosePluginDidNotLoadIsKeptRatherThanWrittenOutOfTheFile();
+    void aRunThatOpenedNoWindowLeavesTheSessionExactlyAsItWas();
     void aTabOfTheRetiredIndexSearchComesBackAsTheOneSearch();
     void unreachableFolderStillRestoresTheTab();
 
@@ -467,6 +470,96 @@ void TestSession::tabsFromAnUninstalledPluginAreSkipped()
     QCOMPARE(m_app->tabs()->rowCount(), 1);
     QCOMPARE(
         m_app->tabs()->index(0, 0).data(TabsModel::FeatureIdRole).toString(), QStringLiteral("mole.browser"));
+}
+
+/// One bad launch used to remove a plugin's tabs for good.
+///
+/// A tab whose feature nobody provides is skipped on the way in, which is right:
+/// the rest still come back. The save on the way out then wrote the session
+/// *without* it -- so a launch where a plugin failed to load (a missing library,
+/// a half-finished upgrade, a binary from another build) took its tabs with it,
+/// and the next healthy launch had nothing left to restore. See MOLE-350.
+void TestSession::aTabWhosePluginDidNotLoadIsKeptRatherThanWrittenOutOfTheFile()
+{
+    QFile file(sessionPath());
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(R"({"version": 1, "currentIndex": 0, "tabs": [
+                    {"featureId": "mole.browser", "state": {}},
+                    {"featureId": "org.plugin.absent", "state": {"remembered": "something"}}]})");
+    file.close();
+
+    startApp();
+    QCOMPARE(m_app->tabs()->rowCount(), 1);
+
+    // Something happens, so the session is written the way an ordinary run
+    // writes it -- opening a tab is what a user does.
+    m_app->openFeatureTab(QStringLiteral("core.duplicates"));
+    m_app->saveSessionNow();
+    m_app.reset();
+    drainEvents();
+
+    // The tab that could not be opened is still in the file, with its state.
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QJsonDocument written = QJsonDocument::fromJson(file.readAll());
+    file.close();
+
+    const QJsonArray tabs = written.object().value(QStringLiteral("tabs")).toArray();
+    QJsonObject absent;
+    for (const QJsonValue& tab : tabs) {
+        if (tab.toObject().value(QStringLiteral("featureId")).toString()
+            == QStringLiteral("org.plugin.absent")) {
+            absent = tab.toObject();
+        }
+    }
+    QVERIFY2(!absent.isEmpty(), "a tab whose plugin did not load this time was written out of the file");
+    QCOMPARE(absent.value(QStringLiteral("state")).toObject().value(QStringLiteral("remembered")).toString(),
+        QStringLiteral("something"));
+
+    // And it comes back the moment its feature is there again, which is the
+    // whole point of keeping it.
+    startApp();
+    QStringList features;
+    for (int row = 0; row < m_app->tabs()->rowCount(); ++row) {
+        features.append(m_app->tabs()->index(row, 0).data(TabsModel::FeatureIdRole).toString());
+    }
+    QVERIFY2(features.contains(QStringLiteral("core.duplicates")), qPrintable(features.join(QChar(' '))));
+}
+
+/// `mole --plugins` wrote the user's session.
+///
+/// It builds the controller, initialises it, prints what it was asked for and
+/// returns -- and the destructor saved on the way out. Harmless while the file
+/// came back whole, and not harmless at all with a plugin missing: the person
+/// typing `mole --plugins` to find out why a plugin will not load is exactly the
+/// person whose tabs it would take. Restoring is not a change, and nothing else
+/// happens in such a run. See MOLE-350.
+void TestSession::aRunThatOpenedNoWindowLeavesTheSessionExactlyAsItWas()
+{
+    // A session with a tab in it that this build cannot open, which is the state
+    // the fault costs the most in.
+    QFile file(sessionPath());
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(R"({"version": 1, "currentIndex": 0, "tabs": [
+                    {"featureId": "mole.browser", "state": {}},
+                    {"featureId": "org.plugin.absent", "state": {}}]})");
+    file.close();
+
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QByteArray before = file.readAll();
+    file.close();
+
+    // What --plugins does: initialise, ask, and go. No window, no navigation, no
+    // tab opened by anybody.
+    startApp();
+    QVERIFY(!m_app->pluginSummary().isEmpty());
+    m_app.reset();
+    drainEvents();
+
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QByteArray after = file.readAll();
+    file.close();
+
+    QCOMPARE(after, before);
 }
 
 /// A feature merged into another is not a feature nobody provides.

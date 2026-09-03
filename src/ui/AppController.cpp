@@ -223,15 +223,28 @@ void AppController::rememberWindowGeometry(int x, int y, int width, int height, 
     }
 
     m_window = updated;
-    if (!m_restoring && m_sessionSaveTimer)
+    if (!m_restoring && m_sessionSaveTimer) {
+        m_sessionTouched = true;
         m_sessionSaveTimer->start();
+    }
 }
 
 AppController::~AppController()
 {
     // The debounce may still be pending; losing the last few seconds of
     // navigation because the user quit quickly would be its own small bug.
-    saveSessionNow();
+    //
+    // Only when something actually changed, though. `mole --plugins` and
+    // `mole --diagnostics` build this controller, initialise it, print what they
+    // were asked for and return -- and this destructor then wrote the user's
+    // session from a run that opened no window. Harmless while the file came back
+    // whole; not harmless at all with a plugin missing, and the person typing
+    // `mole --plugins` to find out why a plugin will not load is exactly the
+    // person whose tabs it would have taken. Restoring does not count as a
+    // change: it sets m_restoring, which is what suppresses the marker below.
+    // See MOLE-350.
+    if (m_sessionTouched)
+        saveSessionNow();
 
     // Order matters: running tasks may still be writing to the index, so the
     // task manager (which joins its pool) has to go first. Leaving this to the
@@ -534,8 +547,10 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     m_sessionSaveTimer->setInterval(1500);
     connect(m_sessionSaveTimer, &QTimer::timeout, this, &AppController::saveSessionNow);
     connect(m_tabs, &TabsModel::sessionDirty, this, [this] {
-        if (!m_restoring)
+        if (!m_restoring) {
+            m_sessionTouched = true;
             m_sessionSaveTimer->start();
+        }
         // The same signal answers a second question: a tab that moved may have
         // moved onto or off a drive, and the sidebar's dot says which drives are
         // in use. Nothing is polled and no drive is contacted -- see
