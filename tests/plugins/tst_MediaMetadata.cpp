@@ -5,6 +5,8 @@
 #include "core/vfs/VfsManager.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
+#include <QThread>
+
 #include <cstring>
 
 using namespace mole;
@@ -213,6 +215,8 @@ private slots:
     void aWebmReportsTheSameSet();
     void anAviReportsTheSameSet();
     void aBoxClaimingFourGigabytesIsRefused();
+    void aSixtyFourBitBoxSizeCannotOverflowTheCheckThatRefusesIt();
+    void aChainOfNestedContainersIsNotWalkedToTheBottomOfTheStack();
     void rubbishCostsItsOwnRowsAndNothingElse();
     void anUnknownCodecIsShownAsItself();
     void noVideoIsReadWholeToBeDescribed();
@@ -292,6 +296,91 @@ void TestMediaMetadata::aBoxClaimingFourGigabytesIsRefused()
     QByteArray mixed = mp4(true) + be32(0xffffffffu) + QByteArrayLiteral("free");
     QCOMPARE(factNamed(VideoMetadataReader::factsFor(mixed), QStringLiteral("Picture")),
         QStringLiteral("1920 × 1080"));
+}
+
+/// The check that refuses an impossible box, overflowed.
+///
+/// aBoxClaimingFourGigabytesIsRefused above uses the 32-bit form, which cannot
+/// overflow a qint64 addition. The 64-bit form can: `at + box.size > end` with a
+/// size near INT64_MAX is signed overflow -- undefined, and negative in practice
+/// -- so the comparison passed and a box larger than the universe was appended
+/// for a caller to slice with. AudioMetadata's ilst reader sliced with it
+/// directly and read off the end until it faulted. Green under `make asan` is
+/// the other half of this case. See MOLE-357.
+void TestMediaMetadata::aSixtyFourBitBoxSizeCannotOverflowTheCheckThatRefusesIt()
+{
+    // Size 1 means "the real size is the next eight bytes", and the next eight
+    // bytes say very nearly as much as a qint64 can hold.
+    const QByteArray huge = be32(1) + QByteArrayLiteral("moov") + be32(0x7fffffffu) + be32(0xfffffff0u);
+    QByteArray hostile = box("ftyp", QByteArrayLiteral("isom")) + huge + QByteArray(64, '\0');
+
+    const QList<FileFact> facts = VideoMetadataReader::factsFor(hostile);
+    QVERIFY2(facts.isEmpty(), "a box whose declared size cannot fit in the buffer is not walked");
+
+    // The same number one bit lower, and as a negative after the conversion --
+    // both are the same lie told differently.
+    QByteArray signBit = box("ftyp", QByteArrayLiteral("isom")) + be32(1) + QByteArrayLiteral("moov")
+        + be32(0xffffffffu) + be32(0xffffffffu) + QByteArray(64, '\0');
+    QVERIFY(VideoMetadataReader::factsFor(signBit).isEmpty());
+
+    // And a real file with one of those after its index still reports the index,
+    // which is what "the walk stops there and what was found stands" means.
+    QByteArray mixed = mp4(true) + huge;
+    QCOMPARE(factNamed(VideoMetadataReader::factsFor(mixed), QStringLiteral("Picture")),
+        QStringLiteral("1920 × 1080"));
+}
+
+/// A container nested inside itself, five bytes at a time.
+///
+/// Both walkers recursed with no depth bound. A Matroska file nesting Segment
+/// inside Segment costs five bytes a level, so a 64 kB prefix buys about thirteen
+/// thousand frames -- each carrying a std::function call. That is survivable on
+/// an 8 MB Linux stack and not on a 1 MB Windows one, and these bytes come off a
+/// remote drive. So the assertion is made on a thread with a Windows-sized stack,
+/// which is the only way to hold it on this machine. The real structures are four
+/// levels deep. See MOLE-357.
+void TestMediaMetadata::aChainOfNestedContainersIsNotWalkedToTheBottomOfTheStack()
+{
+    // Segment, holding a Segment, holding a Segment... each one claiming to run
+    // to the end of what is left, which is the shape a walker cannot refuse on
+    // the strength of the length alone.
+    const QByteArray segmentId = QByteArrayLiteral("\x18\x53\x80\x67");
+    QByteArray nest;
+    constexpr int kLevels = 12000;
+    for (int level = 0; level < kLevels; ++level)
+        nest += segmentId + QByteArrayLiteral("\xff"); // the unknown-size form
+    const QByteArray matroska
+        = QByteArrayLiteral("\x1a\x45\xdf\xa3") + ebmlSize(4) + QByteArray(4, '\0') + nest;
+
+    // The AVI shape of the same file: LIST inside LIST, twelve bytes a level.
+    QByteArray lists;
+    for (int level = 0; level < 5000; ++level)
+        lists += QByteArrayLiteral("LIST") + le32(quint32(60000 - level * 12)) + QByteArrayLiteral("hdrl");
+    const QByteArray avi
+        = QByteArrayLiteral("RIFF") + le32(quint32(lists.size() + 4)) + QByteArrayLiteral("AVI ") + lists;
+
+    // A megabyte, which is what a thread gets on Windows. On this machine the
+    // main thread has eight and the fault would not show at all.
+    struct Reader : QThread
+    {
+        QByteArray one;
+        QByteArray two;
+        bool finished = false;
+        void run() override
+        {
+            VideoMetadataReader::factsFor(one);
+            VideoMetadataReader::factsFor(two);
+            finished = true;
+        }
+    };
+
+    Reader reader;
+    reader.one = matroska;
+    reader.two = avi;
+    reader.setStackSize(1024 * 1024);
+    reader.start();
+    QVERIFY2(reader.wait(30000), "reading a deeply nested file never came back");
+    QVERIFY2(reader.finished, "reading a deeply nested file took the thread's stack with it");
 }
 
 void TestMediaMetadata::rubbishCostsItsOwnRowsAndNothingElse()

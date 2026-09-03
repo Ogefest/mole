@@ -7,6 +7,9 @@
 #include <QImageWriter>
 #include <QPainter>
 
+#include <cstring>
+#include <memory>
+
 using namespace mole;
 using namespace mole::test;
 
@@ -59,6 +62,7 @@ private slots:
     void anOffsetPastTheEndCostsThatTagAndNothingElse();
     void aPhotographWithNoExifStillHasDimensions();
     void aTruncatedFileReportsWhatIsThereAndInventsNothing();
+    void aPrefixEndingInsideTheExifMarkerIsNotReadPast();
     void pngAndFriendsReportDimensionsAndDepth_data();
     void pngAndFriendsReportDimensionsAndDepth();
     void aHeaderIsEnoughHoweverLargeTheFile();
@@ -165,6 +169,62 @@ void TestImageMetadata::aTruncatedFileReportsWhatIsThereAndInventsNothing()
     // Nothing recognisable at all is no facts rather than invented ones.
     QVERIFY(ImageMetadataReader::factsFor(QByteArray(2000, '\x01'), QStringLiteral("x.jpg")).isEmpty());
     QVERIFY(ImageMetadataReader::factsFor(QByteArray(), QStringLiteral("x.jpg")).isEmpty());
+}
+
+/// A prefix that ends in the middle of the six bytes that name the EXIF block.
+///
+/// The segment walk guarantees the marker and its length are present, and then
+/// the EXIF test compared six bytes at the payload without checking that six
+/// bytes are *there*: the length it had was the segment's own declared length,
+/// which says nothing about where the prefix ends. QByteArrayView::sliced() only
+/// asserts, so a release build read one to five bytes past the buffer -- and a
+/// metadata reader is handed a bounded prefix of a file on a remote drive, so the
+/// buffer ends exactly where the read stopped. A JPEG whose APP1 marker sits at
+/// 4091 hits this by accident; a hostile file does it on purpose.
+///
+/// It cannot fail without a sanitizer, which is what `make asan` is in the gate
+/// for -- so the case walks every cut rather than one, to give the read
+/// somewhere to land. See ADR-0010 and MOLE-357.
+void TestImageMetadata::aPrefixEndingInsideTheExifMarkerIsNotReadPast()
+{
+    const QByteArray whole = jpegWithExif(QSize(64, 48), fullExif(false));
+
+    // Where the APP1 payload starts: FF E1, then two length bytes.
+    qsizetype app1 = -1;
+    for (qsizetype at = 2; at + 4 <= whole.size(); ++at) {
+        if (static_cast<unsigned char>(whole.at(at)) == 0xff
+            && static_cast<unsigned char>(whole.at(at + 1)) == 0xe1) {
+            app1 = at;
+            break;
+        }
+    }
+    QVERIFY2(app1 >= 0, "the fixture has to carry an APP1 segment for this to be about anything");
+
+    // Every cut from "the length is complete and nothing follows" to "one byte
+    // of the marker is missing". The middle of those is the fault: six bytes are
+    // compared where fewer than six exist.
+    //
+    // Over a buffer of exactly the right size, and that is the whole trick.
+    // `whole.left(n)` is a QByteArray, and Qt allocates it room for a terminator
+    // and usually more -- so a five-byte over-read lands inside the block and no
+    // sanitizer says a word. A view over an exactly-sized allocation puts the
+    // end of the buffer where the end of the data is, which is also what a
+    // reader gets when the bytes came off a drive into a sized buffer.
+    for (qsizetype missing = 6; missing >= 0; --missing) {
+        const qsizetype size = app1 + 4 + (6 - missing);
+        auto exact = std::make_unique<char[]>(size_t(size));
+        std::memcpy(exact.get(), whole.constData(), size_t(size));
+        const QByteArrayView cut(exact.get(), size);
+
+        const QList<FileFact> facts = ImageMetadataReader::factsFor(cut, QStringLiteral("cut.jpg"));
+        // Nothing is claimed about what it finds -- there is nothing to find. The
+        // claim is that asking does not read past the end of the buffer, and it
+        // is the sanitizer that holds it.
+        for (const FileFact& fact : facts)
+            QVERIFY2(!fact.value.isEmpty(), qPrintable(fact.label));
+        // And the embedded-thumbnail path takes the same block.
+        QVERIFY(ImageMetadataReader::embeddedThumbnail(cut).isEmpty());
+    }
 }
 
 void TestImageMetadata::pngAndFriendsReportDimensionsAndDepth_data()

@@ -428,6 +428,14 @@ namespace {
                     = isoBoxNamed(head, item.payloadOffset(), item.payloadBytes(), "data");
                 if (!data || data->payloadBytes() <= 8)
                     continue;
+                // Asked of the buffer, not of the box. The box walk refuses one
+                // that runs past the buffer, so this is belt as well as braces --
+                // and it is the braces that broke: a 64-bit size near INT64_MAX
+                // overflowed the walk's own check, and a view claiming 2^63 bytes
+                // read off the end until it faulted. A reader that slices on a
+                // number out of a file checks the number. See MOLE-357.
+                if (!fits(head, data->payloadOffset() + 8, data->payloadBytes() - 8))
+                    continue;
                 const QByteArrayView value = head.sliced(data->payloadOffset() + 8, data->payloadBytes() - 8);
                 const QString text = QString::fromUtf8(value.toByteArray()).trimmed();
 

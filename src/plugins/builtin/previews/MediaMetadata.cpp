@@ -5,6 +5,7 @@
 #include <QHash>
 #include <QLocale>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <functional>
@@ -256,11 +257,23 @@ namespace {
         return Variable { value, length };
     }
 
+    /// How deep a container walk will go before it stops.
+    ///
+    /// The real structures are four levels deep. A file that nests Segment inside
+    /// Segment costs five bytes a level, so a 64 kB prefix buys about thirteen
+    /// thousand frames of recursion, each one carrying a std::function call --
+    /// survivable on an 8 MB Linux stack and not on a 1 MB Windows one, and this
+    /// runs on bytes off a remote drive. A depth nothing real reaches is not a
+    /// limitation. See MOLE-357.
+    constexpr int kMaxContainerDepth = 8;
+
     /// Calls `visit` for every element directly inside a range. `visit` returns
     /// true to descend into that element.
     void ebmlWalk(QByteArrayView bytes, qint64 offset, qint64 length,
-        const std::function<bool(quint64, qint64, qint64)>& visit)
+        const std::function<bool(quint64, qint64, qint64)>& visit, int depth = 0)
     {
+        if (depth >= kMaxContainerDepth)
+            return;
         qint64 at = offset;
         const qint64 end = offset + length;
         while (at < end) {
@@ -281,7 +294,7 @@ namespace {
                 return;
 
             if (visit(id->value, payload, payloadBytes))
-                ebmlWalk(bytes, payload, payloadBytes, visit);
+                ebmlWalk(bytes, payload, payloadBytes, visit, depth + 1);
             at = payload + payloadBytes;
         }
     }
@@ -393,7 +406,9 @@ namespace {
         int streams = 0;
         QStringList codecs;
 
-        const std::function<void(qint64, qint64)> walk = [&](qint64 offset, qint64 end) {
+        const std::function<void(qint64, qint64, int)> walk = [&](qint64 offset, qint64 end, int depth) {
+            if (depth >= kMaxContainerDepth)
+                return;
             qint64 at = offset;
             while (at + 8 <= end) {
                 const QByteArray type = fourCharacters(bytes, at);
@@ -407,7 +422,7 @@ namespace {
                 const qint64 available = std::min<qint64>(payloadBytes, bytes.size() - payload);
 
                 if (type == QByteArrayLiteral("LIST") || type == QByteArrayLiteral("RIFF")) {
-                    walk(payload + 4, payload + available);
+                    walk(payload + 4, payload + available, depth + 1);
                 } else if (type == QByteArrayLiteral("avih") && available >= 40) {
                     const std::optional<quint32> microseconds = leU32(bytes, payload);
                     const std::optional<quint32> frames = leU32(bytes, payload + 16);
@@ -434,7 +449,7 @@ namespace {
                 at = payload + payloadBytes + (payloadBytes % 2);
             }
         };
-        walk(0, bytes.size());
+        walk(0, bytes.size(), 0);
 
         appendIf(facts, QStringLiteral("Duration"), durationText(seconds));
         if (width > 0 && height > 0)
@@ -513,7 +528,14 @@ namespace {
 QList<IsoBox> isoBoxesIn(QByteArrayView bytes, qint64 offset, qint64 length)
 {
     QList<IsoBox> boxes;
-    const qint64 end = std::min<qint64>(bytes.size(), offset + std::max<qint64>(0, length));
+    if (offset < 0 || offset > bytes.size())
+        return boxes;
+    // The length is clamped to what is there *before* it is added to the offset,
+    // rather than added and then clamped. A caller passes payloadBytes() of a box
+    // that has already been read out of the file, so it is a claim like any other
+    // and can be near INT64_MAX -- and `offset + length` on that is signed
+    // overflow, which is undefined and in practice negative. See MOLE-357.
+    const qint64 end = offset + std::clamp<qint64>(length, 0, bytes.size() - offset);
 
     qint64 at = offset;
     while (at + 8 <= end) {
@@ -543,7 +565,15 @@ QList<IsoBox> isoBoxesIn(QByteArrayView bytes, qint64 offset, qint64 length)
 
         // A box shorter than its own header, or one running past the buffer, is
         // where the walk stops. What was found before it stands.
-        if (box.size < box.headerBytes || at + box.size > end)
+        //
+        // Written as a subtraction rather than `at + box.size > end`: the 64-bit
+        // form takes its size straight from the file, so a box claiming
+        // 0x7FFFFFFFFFFFFFF0 made that addition overflow, the comparison passed,
+        // and a box larger than the universe was appended for a caller to slice
+        // with. `end - at` cannot overflow -- the loop condition has just
+        // established that `at + 8 <= end`. A size that came back negative from
+        // the conversion is caught by the first half. See MOLE-357.
+        if (box.size < box.headerBytes || box.size > end - at)
             return boxes;
 
         boxes.append(box);

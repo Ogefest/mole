@@ -212,6 +212,7 @@ private slots:
     void anM4aReportsItsIlstTags();
     void anUntaggedFileReportsTheStreamAndNoTagRows();
     void aFrameThatOverrunsTheBlockIsNotFollowed();
+    void anIlstDataBoxClaimingTheWholeAddressSpaceIsRefused();
 };
 
 void TestAudioMetadata::anMp3WithId3v2_data()
@@ -312,6 +313,44 @@ void TestAudioMetadata::anM4aReportsItsIlstTags()
     QCOMPARE(factNamed(facts, QStringLiteral("Album")), QStringLiteral("Brotherhood"));
     QCOMPARE(factNamed(facts, QStringLiteral("Year")), QStringLiteral("1986"));
     QCOMPARE(factNamed(facts, QStringLiteral("Track")), QStringLiteral("4"));
+    QCOMPARE(factNamed(facts, QStringLiteral("Duration")), QStringLiteral("3:35"));
+}
+
+/// The box the ilst reader sliced with, claiming very nearly 2^63 bytes.
+///
+/// A `data` box in the 64-bit form -- size 1, then eight bytes of size -- with a
+/// value near INT64_MAX overflowed the box walk's own `at + size > end` check, so
+/// the box was accepted, and this reader then sliced with it directly. A
+/// QByteArrayView claiming that many bytes reads off the end until it faults, on
+/// the details panel of a file somebody merely selected. Green under `make asan`
+/// is the other half of this case. See MOLE-357.
+void TestAudioMetadata::anIlstDataBoxClaimingTheWholeAddressSpaceIsRefused()
+{
+    // The same shape as the real fixture, with the one box lying about its size.
+    const QByteArray huge = be32(1) + QByteArrayLiteral("data") + be32(0x7fffffffu) + be32(0xfffffff0u)
+        + be32(1) + be32(0) + QByteArrayLiteral("this text is nowhere near that long");
+    QByteArray ilst = box("\xa9"
+                          "nam",
+        huge);
+    // And a well-formed one after it, so "the walk stops and what was read
+    // stands" is asserted rather than assumed.
+    ilst += box("\xa9"
+                "ART",
+        dataBox(QByteArrayLiteral("New Order")));
+
+    const QByteArray meta = box("meta", box("hdlr", QByteArray(24, '\0')) + box("ilst", ilst));
+    const QByteArray moov = box("moov",
+        box("mvhd", be32(0) + be32(0) + be32(0) + be32(1000) + be32(215000) + QByteArray(80, '\0'))
+            + box("udta", meta));
+    const QByteArray file
+        = box("ftyp", QByteArrayLiteral("M4A ") + be32(0) + QByteArrayLiteral("M4A mp42isom")) + moov
+        + box("mdat", QByteArray(64, 'a'));
+
+    const QList<FileFact> facts = AudioMetadataReader::factsFor(file, {}, file.size());
+
+    // Nothing was read out of the lying box, and the file is still described.
+    QVERIFY2(factNamed(facts, QStringLiteral("Title")).isEmpty(),
+        "a box claiming more than the buffer holds has nothing to say");
     QCOMPARE(factNamed(facts, QStringLiteral("Duration")), QStringLiteral("3:35"));
 }
 
