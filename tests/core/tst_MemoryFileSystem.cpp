@@ -48,6 +48,11 @@ void TestMemoryFileSystem::conformance()
         return true;
     };
 
+    // The in-memory drive writes straight into its map: there is no working
+    // name and so no moment at which it could tell an overwrite from a file that
+    // arrived. See ConformanceContext::stagesWrites and TODO.md.
+    context.stagesWrites = false;
+
     runFileSystemConformance(context);
 }
 
@@ -106,6 +111,11 @@ void TestMemoryFileSystem::conformanceOnACaseInsensitiveVolume()
         fs->clearFaults();
         return true;
     };
+
+    // The in-memory drive writes straight into its map: there is no working
+    // name and so no moment at which it could tell an overwrite from a file that
+    // arrived. See ConformanceContext::stagesWrites and TODO.md.
+    context.stagesWrites = false;
 
     runFileSystemConformance(context);
 }

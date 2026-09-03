@@ -65,6 +65,7 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-03 #MOLE-346 An upload to a Windows share or an NFS export no longer overwrites a file that appeared while it was running
 2026-09-03 #MOLE-343 A credential store survives a change of the cost its keys are derived at, instead of being orphaned by its own next write and reporting a wrong passphrase for ever
 2026-09-03 #MOLE-343 A credential store that has been truncated or tampered with is refused rather than opened empty under any passphrase at all
 2026-09-03 #MOLE-343 A credential that could not be written leaves the store exactly as the file has it, and a passphrase change that could not be written leaves the old passphrase working

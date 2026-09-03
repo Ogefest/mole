@@ -65,7 +65,7 @@ namespace {
     class SmbFile final : public QIODevice, public ICommitsOnClose
     {
     public:
-        SmbFile(const SmbFileSystem& drive, int handle, qint64 size, QString what)
+        SmbFile(SmbFileSystem& drive, int handle, qint64 size, QString what)
             : m_drive(&drive)
             , m_handle(handle)
             , m_size(size)
@@ -78,10 +78,14 @@ namespace {
         /// that gave up -- leaves a partial file under the name somebody asked
         /// for, indistinguishable from a file that is simply that size. Same rule
         /// as the local disk: ADR-0020 and ADR-0021.
-        void commitOnCloseTo(VfsUri staging, VfsUri target)
+        /// `replacing` is whether the destination was already there when the
+        /// write began, which is the one thing the commit cannot work out for
+        /// itself. See commitPartialWrite().
+        void commitOnCloseTo(VfsUri staging, VfsUri target, bool replacing)
         {
             m_staging = std::move(staging);
             m_target = std::move(target);
+            m_replacing = replacing;
             m_commits = true;
         }
 
@@ -170,26 +174,24 @@ namespace {
         }
 
         /// Puts the finished bytes under the name that was asked for.
+        ///
+        /// Through the shared helper, which is the whole point: this used to
+        /// unlink the destination and rename onto it, whatever was there. A
+        /// destination that appeared *while the write was in flight* is data
+        /// nobody asked this write to touch, and it was being destroyed -- on a
+        /// share, where two people writing the same name is the ordinary case
+        /// rather than the exotic one. The removal an overwrite still needs is
+        /// the default replace(), which is exactly the unlink-then-rename that
+        /// was here: a share refuses to rename onto a name that exists, where a
+        /// POSIX rename would replace it. See ADR-0020, ADR-0087 and MOLE-346.
+        ///
+        /// No Session held here. Every call the helper makes takes its own, and
+        /// the session lock is not recursive -- holding one across them is the
+        /// trap remove() documents.
         void commit()
         {
             m_committed = true;
-            const SmbFileSystem::Session session(*m_drive);
-            if (!session.ok()) {
-                m_commitFailure = VfsError::make(
-                    VfsError::IoError, QStringLiteral("%1: no SMB session to finish with").arg(m_what));
-                return;
-            }
-            const QByteArray from = m_drive->urlFor(m_staging).toUtf8();
-            const QByteArray to = m_drive->urlFor(m_target).toUtf8();
-            // Removed first: a share refuses to rename onto a name that exists,
-            // where a POSIX rename would replace it. An overwrite is ordinary --
-            // it is what a re-run of a failed copy does -- so this is the
-            // difference between "supported" and "refused every second time".
-            smbc_unlink(to.constData());
-            if (smbc_rename(from.constData(), to.constData()) != 0) {
-                m_commitFailure = errorFromErrno(errno, m_what);
-                smbc_unlink(from.constData());
-            }
+            m_commitFailure = commitPartialWrite(*m_drive, m_staging, m_target, m_replacing);
         }
 
         void discardStaging()
@@ -201,13 +203,14 @@ namespace {
             smbc_unlink(m_drive->urlFor(m_staging).toUtf8().constData());
         }
 
-        const SmbFileSystem* m_drive = nullptr;
+        SmbFileSystem* m_drive = nullptr;
         int m_handle = -1;
         qint64 m_size = -1;
         QString m_what;
         VfsError m_failure;
         bool m_commits = false;
         bool m_committed = false;
+        bool m_replacing = false;
         VfsUri m_staging;
         VfsUri m_target;
         VfsError m_commitFailure;
@@ -533,8 +536,9 @@ Result<void> SmbFileSystem::rename(const VfsUri& from, const VfsUri& to)
     // Refused rather than allowed to replace, which is what every other backend
     // here does and what the conformance suite requires: a rename that silently
     // overwrites is how a bulk rename destroys a file nobody mentioned. Samba's
-    // rename will overwrite if it is let, so the check is ours to make -- the
-    // commit of a finished write does not come through here, and says why.
+    // rename will overwrite if it is let, so the check is ours to make.
+    // Somebody who means to replace calls replace(), whose default is the
+    // unlink-then-rename a share needs.
     struct stat already
     {
     };
@@ -602,6 +606,13 @@ Result<std::unique_ptr<QIODevice>> SmbFileSystem::openRead(const VfsUri& target,
 
 Result<std::unique_ptr<QIODevice>> SmbFileSystem::openWrite(const VfsUri& target, qint64)
 {
+    // Asked before a byte is written, because only an answer from before the
+    // write began tells an overwrite -- which is what was asked for -- from a
+    // file that turned up while this one was going onto the share. Before the
+    // session below rather than after it: stat() takes one of its own, and the
+    // lock is not recursive.
+    const bool replacing = stat(target).ok();
+
     const Session session(*this);
     if (!session.ok()) {
         return Result<std::unique_ptr<QIODevice>>::failure(
@@ -616,7 +627,7 @@ Result<std::unique_ptr<QIODevice>> SmbFileSystem::openWrite(const VfsUri& target
         return Result<std::unique_ptr<QIODevice>>(errorFromErrno(errno, what));
 
     auto file = std::make_unique<SmbFile>(*this, handle, -1, what);
-    file->commitOnCloseTo(staging, target);
+    file->commitOnCloseTo(staging, target, replacing);
     if (!file->open(QIODevice::WriteOnly)) {
         return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, file->errorString());
     }

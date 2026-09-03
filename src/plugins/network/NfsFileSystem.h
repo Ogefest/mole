@@ -107,6 +107,10 @@ public:
     Result<void> makeDirectory(const VfsUri& target) override;
     Result<void> remove(const VfsUri& target, bool recursive) override;
     Result<void> rename(const VfsUri& from, const VfsUri& to) override;
+    /// One nfs_rename(), because a POSIX rename replaces atomically -- the
+    /// default's remove-then-rename would open a window this protocol does
+    /// not need. See ADR-0087.
+    Result<void> replace(const VfsUri& from, const VfsUri& to) override;
 
     Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override;
     Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1) override;

@@ -426,6 +426,56 @@ void runFileSystemConformance(const ConformanceContext& context)
                                .arg(entry.name)));
     }
 
+    // --- a destination that appeared while the write was in flight ---------
+    //
+    // Not the same thing as an overwrite, and the difference is the whole of
+    // ADR-0020: a destination that was already there when the write began is
+    // what the write was for, while one that turned up while the bytes were
+    // going over the wire is somebody else's file. Two windows copying the same
+    // name onto one share is all it takes, and the second upload to finish
+    // destroyed the first. The commit is refused, what arrived is left exactly
+    // as it is, and the working name is not left behind either.
+    //
+    // Skipped for a backend that puts bytes at the destination as it goes; see
+    // stagesWrites, which says why that is a fact about the protocol rather than
+    // a case nobody got round to.
+    if (context.stagesWrites && fs.capabilities().testFlag(VfsCapability::Rename)) {
+        const VfsUri contested = context.root.child(QStringLiteral("contested.bin"));
+        Result<std::unique_ptr<QIODevice>> out = fs.openWrite(contested, 64);
+        QVERIFY2(out.ok(), qPrintable(out.error().message));
+        QCOMPARE(out.value()->write(QByteArray(64, 'm')), qint64(64));
+
+        // Somebody else's file, arriving while that write is still open. Seeded
+        // under another name and renamed on, because a backend with no second
+        // client to seed with -- NFS has none, libnfs being the only one this
+        // process has -- seeds through itself, and would write straight over
+        // this write's own working name.
+        const QByteArray theirs = QByteArrayLiteral("what somebody else put there");
+        QVERIFY2(context.seedFile(QStringLiteral("theirs.bin"), theirs), "seeding failed");
+        QVERIFY2(fs.rename(context.root.child(QStringLiteral("theirs.bin")), contested).ok(),
+            "renaming onto a free name must succeed");
+
+        const Result<void> closed = closeAndReport(*out.value());
+        QVERIFY2(!closed.ok(), "a file that appeared during the write was destroyed by it");
+        QCOMPARE(closed.error().code, VfsError::AlreadyExists);
+
+        Result<std::unique_ptr<QIODevice>> back = fs.openRead(contested);
+        QVERIFY2(back.ok(), qPrintable(back.error().message));
+        QCOMPARE(back.value()->readAll(), theirs);
+        // Let go before removing, for the reason the write case above gives: a
+        // share will not unlink a file somebody has open.
+        back.value().reset();
+
+        Result<FileEntryList> after = fs.list(context.root, noCancel);
+        QVERIFY2(after.ok(), qPrintable(after.error().message));
+        for (const FileEntry& entry : after.value()) {
+            QVERIFY2(!isPartialWrite(entry.name),
+                qPrintable(QStringLiteral("a refused commit left %1 behind").arg(entry.name)));
+        }
+
+        QVERIFY2(fs.remove(contested, false).ok(), "removing what this suite renamed must succeed");
+    }
+
     // --- a directory that cannot be listed ---------------------------------
     //
     // "I could not read it" and "there is nothing in it" are the same sentence

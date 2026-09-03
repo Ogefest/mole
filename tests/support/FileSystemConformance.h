@@ -30,6 +30,18 @@ struct ConformanceContext
     /// Set to false for read-only backends; the mutating sections are skipped.
     bool expectsWriteSupport = true;
 
+    /// Whether a write to this backend goes under a working name and is put in
+    /// place at the end (ADR-0020), which is what lets it tell an overwrite from
+    /// a file that arrived while the write was running.
+    ///
+    /// True by default, because that is the contract and a new backend should
+    /// have to say why not: two of six drives were exempt from it for months
+    /// without anybody having decided so (MOLE-346). Set false only for a
+    /// backend that puts bytes at the destination as it goes -- a bucket PUT
+    /// lands on the key, and the in-memory drive writes straight into its map --
+    /// which has no moment at which it could look. See TODO.md.
+    bool stagesWrites = true;
+
     /// Runs `check` with the directory at `relativePath` made unlistable by this
     /// account, and puts it back afterwards. False means it could not be done
     /// and the case is skipped -- root reads a directory with no permissions at

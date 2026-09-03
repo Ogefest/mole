@@ -672,6 +672,12 @@ void TestS3FileSystem::itSatisfiesTheConformanceSuite()
         return raw.put(prefix + QLatin1Char('/') + relative + QLatin1Char('/'), QByteArray());
     };
 
+    // A PUT lands on the key. There is no working name to finish from, so the
+    // bucket cannot tell an overwrite from an object that appeared while the
+    // upload ran -- a fact about S3 rather than a gap here. See
+    // ConformanceContext::stagesWrites and TODO.md.
+    context.stagesWrites = false;
+
     runFileSystemConformance(context);
 
     raw.removeTree(prefix + QStringLiteral("/"));

@@ -29,6 +29,19 @@ project, and a contributor should never hit a wall of text they cannot read.
 
 ## Notes
 
+- **Two drives cannot honour ADR-0020's rule about a destination that appeared
+  while a write was in flight, and that is a fact about them rather than a gap
+  waiting to be filled.** The rule needs a working name to finish from: a write
+  goes under `.mole-partial`, and the commit compares what is at the destination
+  now against what was there when the write began. `s3://` has none — a PUT lands
+  on the key, so an object that appeared during the upload is overwritten with no
+  moment at which the backend could have looked — and neither does `mem://`, which
+  writes straight into its map. Both say so by setting
+  `ConformanceContext::stagesWrites` to false, and the shared suite skips that one
+  case for them rather than being quietly weakened for everybody. Every other
+  drive is held to it: NFS and SMB were exempt for months because their commits
+  were private copies that always replaced, which is what MOLE-346 was.
+
 - **`v0.1.1` is a tag with no release behind it, and the gap in the version numbers
   is deliberate.** The 0.1.1 cut passed all three tiers, wrote its commit and pushed
   its tag, and then `release.yml` refused it six steps before `Publish`: the AppImage

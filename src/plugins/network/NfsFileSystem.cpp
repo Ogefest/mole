@@ -296,10 +296,19 @@ namespace {
         /// that gave up -- leaves a partial file under the name somebody asked
         /// for, indistinguishable from a file that is simply that size. Same rule
         /// as the local disk: ADR-0020 and ADR-0021.
-        void commitOnCloseTo(QString staging, QString target)
+        /// `replacing` is whether the destination was already there when the
+        /// write began, which is the one thing the commit cannot work out for
+        /// itself. See commitPartialWrite().
+        void commitOnCloseTo(NfsFileSystem& owner, VfsUri staging, VfsUri target, bool replacing)
         {
+            m_owner = &owner;
             m_staging = std::move(staging);
             m_target = std::move(target);
+            // Kept as well as the uri, because the destructor unlinks the
+            // working name on its own connection: an abandoned write has to tidy
+            // up without reaching for a drive that may already be going away.
+            m_stagingPath = owner.pathFor(m_staging);
+            m_replacing = replacing;
             m_commits = true;
         }
 
@@ -388,6 +397,13 @@ namespace {
         }
 
         /// Puts the finished bytes under the name that was asked for.
+        ///
+        /// Through the shared helper, which is the whole point: this used to
+        /// call nfs_rename() straight away, and an NFS rename replaces what is
+        /// there. A destination that appeared *while the write was in flight* is
+        /// data nobody asked this write to touch, and it was being destroyed --
+        /// on an export, where two people writing the same name is the
+        /// ordinary case rather than the exotic one. See ADR-0020 and MOLE-346.
         void commit()
         {
             m_committed = true;
@@ -396,23 +412,14 @@ namespace {
                     VfsError::IoError, QStringLiteral("%1: the connection was lost").arg(m_what));
                 return;
             }
-            // Nothing is removed first. An NFS rename replaces what is there, the
-            // way a POSIX one does, so unlike a share (ADR-0048) an overwrite
-            // needs no window in which the destination does not exist.
-            const QByteArray from = m_staging.toUtf8();
-            const QByteArray to = m_target.toUtf8();
-            const int rc = nfs_rename(m_mount.context(), from.constData(), to.constData());
-            if (rc < 0) {
-                m_commitFailure = errorFromNfs(rc, m_mount.context(), m_what);
-                nfs_unlink(m_mount.context(), from.constData());
-            }
+            m_commitFailure = commitPartialWrite(*m_owner, m_staging, m_target, m_replacing);
         }
 
         void discardStaging()
         {
             m_committed = true;
             if (m_mount.ok())
-                nfs_unlink(m_mount.context(), m_staging.toUtf8().constData());
+                nfs_unlink(m_mount.context(), m_stagingPath.toUtf8().constData());
         }
 
         NfsFileSystem::Mount m_mount;
@@ -422,8 +429,11 @@ namespace {
         VfsError m_failure;
         bool m_commits = false;
         bool m_committed = false;
-        QString m_staging;
-        QString m_target;
+        bool m_replacing = false;
+        NfsFileSystem* m_owner = nullptr;
+        VfsUri m_staging;
+        VfsUri m_target;
+        QString m_stagingPath;
         VfsError m_commitFailure;
     };
 
@@ -631,8 +641,8 @@ Result<void> NfsFileSystem::rename(const VfsUri& from, const VfsUri& to)
     // Refused rather than allowed to replace, which is what every other backend
     // here does and what the conformance suite requires: a rename that silently
     // overwrites is how a bulk rename destroys a file nobody mentioned. NFS,
-    // being POSIX, will replace if it is let -- so the check is ours to make. The
-    // commit of a finished write does not come through here, and says why.
+    // being POSIX, will replace if it is let -- so the check is ours to make.
+    // Somebody who means to replace calls replace(), just below.
     struct nfs_stat_64 already
     {
     };
@@ -648,6 +658,29 @@ Result<void> NfsFileSystem::rename(const VfsUri& from, const VfsUri& to)
             mount.abandon();
         return errorFromNfs(
             rc, mount.context(), QStringLiteral("Renaming %1 to %2").arg(from.path(), to.fileName()));
+    }
+    return {};
+}
+
+Result<void> NfsFileSystem::replace(const VfsUri& from, const VfsUri& to)
+{
+    // One call, and no window in which the name has nothing at it. The default
+    // is remove-then-rename, which is all a protocol without an atomic replace
+    // can offer -- and NFS, being POSIX, has one: a rename over an existing name
+    // replaces it outright. So this override is not an optimisation, it is the
+    // instant between the two calls not existing. See ADR-0087.
+    Mount mount(m_settings);
+    if (!mount.ok())
+        return VfsError::make(VfsError::NetworkError, mount.failure());
+
+    const QByteArray fromPath = pathFor(from).toUtf8();
+    const QByteArray toPath = pathFor(to).toUtf8();
+    const int rc = nfs_rename(mount.context(), fromPath.constData(), toPath.constData());
+    if (rc < 0) {
+        if (!isAnAnswerRatherThanABrokenConnection(-rc))
+            mount.abandon();
+        return errorFromNfs(
+            rc, mount.context(), QStringLiteral("Replacing %1 with %2").arg(to.path(), from.fileName()));
     }
     return {};
 }
@@ -707,6 +740,10 @@ Result<std::unique_ptr<QIODevice>> NfsFileSystem::openWrite(const VfsUri& target
     const VfsUri staging = partialWriteOf(target);
     const QString stagingPath = pathFor(staging);
     const QByteArray path = stagingPath.toUtf8();
+    // Asked before a byte is written, because only an answer from before the
+    // write began tells an overwrite -- which is what was asked for -- from a
+    // file that turned up while this one was going onto the export.
+    const bool replacing = stat(target).ok();
 
     struct nfsfh* handle = nullptr;
     int rc = nfs_open2(mount.context(), path.constData(), O_WRONLY | O_CREAT | O_TRUNC, 0644, &handle);
@@ -724,7 +761,7 @@ Result<std::unique_ptr<QIODevice>> NfsFileSystem::openWrite(const VfsUri& target
     }
 
     auto file = std::make_unique<NfsFile>(std::move(mount), handle, -1, what);
-    file->commitOnCloseTo(stagingPath, pathFor(target));
+    file->commitOnCloseTo(*this, staging, target, replacing);
     if (!file->open(QIODevice::WriteOnly))
         return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, file->errorString());
     return Result<std::unique_ptr<QIODevice>>(std::unique_ptr<QIODevice>(file.release()));
