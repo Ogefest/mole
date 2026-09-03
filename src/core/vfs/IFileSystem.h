@@ -78,6 +78,29 @@ public:
     virtual Result<void> remove(const VfsUri& target, bool recursive);
     virtual Result<void> rename(const VfsUri& from, const VfsUri& to);
 
+    /// Puts `from` at `to`, replacing whatever is already there.
+    ///
+    /// The difference from rename() is the whole reason there are two of them.
+    /// rename() refuses an occupied destination, and has to: a rename that
+    /// silently destroyed a file nobody mentioned is how the only copy of
+    /// something goes. This is the call for the case where the caller has
+    /// already established that replacing is exactly what was asked for -- a
+    /// finished write going over the file it was written to replace -- and says
+    /// so by calling a different method rather than by passing a flag nobody
+    /// reads.
+    ///
+    /// The default is what every caller used to do by hand: remove the
+    /// destination, then rename onto the free name. It is all a protocol that
+    /// has no atomic replace can offer, and between those two calls there is an
+    /// instant at which the name has nothing at it. A backend that can do
+    /// better overrides this -- on a local disk rename(2) replaces in one step,
+    /// so the instant does not exist. See ADR-0087.
+    ///
+    /// The destination is removed non-recursively, so a directory with things
+    /// in it is refused rather than emptied: throwing away a tree is a decision
+    /// for a caller that means it, not a side effect of putting a file down.
+    virtual Result<void> replace(const VfsUri& from, const VfsUri& to);
+
     /// Opens a stream for reading. Caller owns the device and must close it.
     ///
     /// `expectedSize` is how many bytes the caller believes the file has, or -1

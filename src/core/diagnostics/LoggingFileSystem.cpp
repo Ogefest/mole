@@ -112,6 +112,12 @@ Result<void> LoggingFileSystem::rename(const VfsUri& from, const VfsUri& to)
     return watch(m_name, "rename", subject, [&] { return m_inner->rename(from, to); });
 }
 
+Result<void> LoggingFileSystem::replace(const VfsUri& from, const VfsUri& to)
+{
+    const QString subject = from.toString() + QStringLiteral(" -> ") + to.toString();
+    return watch(m_name, "replace", subject, [&] { return m_inner->replace(from, to); });
+}
+
 Result<std::unique_ptr<QIODevice>> LoggingFileSystem::openRead(const VfsUri& target, qint64 expectedSize)
 {
     return watch(m_name, "read", target.toString(), [&] { return m_inner->openRead(target, expectedSize); });

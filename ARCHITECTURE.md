@@ -208,12 +208,15 @@ deliberate.
 ## File operations
 
 `TransferTask` copies and moves through `IFileSystem`, so local-to-local and
-NAS-to-S3 are the same code path. Two rules it will not bend:
+NAS-to-S3 are the same code path. Three rules it will not bend:
 
 - A move within one backend is short-circuited to `rename()`. Never stream
   bytes when the filesystem can just relabel them.
 - A move deletes the source only when *every* entry arrived. Losing data to
   tidy up after a half-failed copy is not a trade worth making.
+- An overwrite does not begin by deleting. The file being replaced stands
+  until the replacement is whole, and `replace()` puts one over the other —
+  in one step where the drive has one. See ADR-0021 and ADR-0087.
 
 Directories are expanded through `DirectoryWalker` into a flat job list, parent
 first, so children always have somewhere to land. An existing target directory

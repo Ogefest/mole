@@ -25,6 +25,20 @@ Result<void> IFileSystem::rename(const VfsUri&, const VfsUri&)
     return notSupported("rename");
 }
 
+Result<void> IFileSystem::replace(const VfsUri& from, const VfsUri& to)
+{
+    // Asked before anything is removed. A backend that cannot rename would
+    // remove the destination and then discover it has nothing to put there,
+    // which is the two-step's worst outcome reached for no gain at all.
+    if (!capabilities().testFlag(VfsCapability::Rename))
+        return notSupported("replace");
+
+    const Result<void> cleared = remove(to, false);
+    if (!cleared.ok() && cleared.error().code != VfsError::NotFound)
+        return cleared;
+    return rename(from, to);
+}
+
 Result<std::unique_ptr<QIODevice>> IFileSystem::openRead(const VfsUri&, qint64)
 {
     return VfsError::make(VfsError::NotSupported, QStringLiteral("openRead not supported"));

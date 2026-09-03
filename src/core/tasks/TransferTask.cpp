@@ -181,9 +181,11 @@ bool TransferTask::planJobs(QList<Job>& jobsOut)
     return true;
 }
 
-bool TransferTask::resolveConflict(const VfsUri& target, bool isDirectory, bool* skip)
+bool TransferTask::resolveConflict(const VfsUri& target, bool isDirectory, bool* skip, bool* replacing)
 {
     *skip = false;
+    if (replacing)
+        *replacing = false;
 
     Result<FileEntry> existing = m_request.targetFileSystem->stat(target);
     if (!existing.ok())
@@ -201,6 +203,24 @@ bool TransferTask::resolveConflict(const VfsUri& target, bool isDirectory, bool*
         ++m_skipped;
         return true;
     case Conflict::Overwrite: {
+        // A file going over a file is left standing until the replacement is
+        // whole. This used to remove it here, before the write was even opened,
+        // so a copy that then failed half way -- a dropped connection, a full
+        // disk, a cancel -- left neither the old file nor the new one. The
+        // protection against exactly that has been in the backends since
+        // ADR-0021: a write goes under a working name and is put in place at the
+        // very end. Handing it a destination that had already been deleted was
+        // what stopped it engaging. See ADR-0087 and MOLE-331.
+        if (!isDirectory && !existing.value().isDir) {
+            if (replacing)
+                *replacing = true;
+            return true;
+        }
+
+        // Different kinds, so there is nothing the arrival can be put over: a
+        // directory standing where a file is going, or a file where a directory
+        // is. That one has to go first, and there is no moment at which both
+        // could exist anyway.
         Result<void> removed = m_request.targetFileSystem->remove(target, true);
         if (!removed.ok()) {
             recordFailure(target, removed.error());
@@ -444,12 +464,17 @@ void TransferTask::run()
                 : source.fileName();
             const VfsUri target = m_request.targetDirectory.child(arrivalName);
             bool skip = false;
-            if (!resolveConflict(target, false, &skip) || skip) {
+            bool replacing = false;
+            if (!resolveConflict(target, false, &skip, &replacing) || skip) {
                 ++index;
                 continue;
             }
 
-            Result<void> renamed = m_request.sourceFileSystem->rename(source, target);
+            // Nothing was cleared out of the way, so the rename is the one that
+            // is allowed to replace what is standing there. rename() refuses an
+            // occupied name, and has to.
+            Result<void> renamed = replacing ? m_request.sourceFileSystem->replace(source, target)
+                                             : m_request.sourceFileSystem->rename(source, target);
             if (renamed.ok())
                 ++m_copied;
             else if (renamed.error().code == VfsError::NotSupported)

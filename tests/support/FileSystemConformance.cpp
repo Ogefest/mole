@@ -512,6 +512,58 @@ void runFileSystemConformance(const ConformanceContext& context)
         QVERIFY2(fs.rename(to, from).ok(), "renaming the case back must succeed too");
     }
 
+    // --- replace ------------------------------------------------------------
+    //
+    // The other rename, and the difference between the two is the whole reason
+    // there are two. rename() refuses an occupied destination, because a rename
+    // that silently destroyed a file nobody mentioned is how the only copy of
+    // something goes. replace() is the call for when the caller has already
+    // established that replacing is exactly what was asked for -- a finished
+    // write going over the file it was written to replace.
+    //
+    // What is asserted here is the outcome, not how it was reached: a backend
+    // that can do it in one step and one that has to remove and then rename are
+    // both correct, and only one of them is available over a protocol. See
+    // ADR-0087.
+    {
+        const VfsUri arriving = context.root.child(QStringLiteral("replacement.bin"));
+        const VfsUri standing = context.root.child(QStringLiteral("replaced.bin"));
+        const QByteArray fresh = QByteArrayLiteral("the bytes that are arriving");
+
+        const auto put = [&fs](const VfsUri& where, const QByteArray& what) {
+            Result<std::unique_ptr<QIODevice>> out = fs.openWrite(where, what.size());
+            if (!out.ok())
+                return out.error();
+            if (out.value()->write(what) != what.size())
+                return VfsError::make(VfsError::IoError, QStringLiteral("short write"));
+            const Result<void> closed = closeAndReport(*out.value());
+            return closed.ok() ? VfsError::ok() : closed.error();
+        };
+
+        QVERIFY2(!put(standing, QByteArrayLiteral("the bytes that are there")).isError(), "seeding failed");
+        QVERIFY2(!put(arriving, fresh).isError(), "seeding failed");
+
+        const Result<void> replaced = fs.replace(arriving, standing);
+        QVERIFY2(replaced.ok(),
+            qPrintable(QStringLiteral("replace onto an occupied name must succeed: %1")
+                           .arg(replaced.error().message)));
+        QVERIFY2(!fs.stat(arriving).ok(), "the name replace() moved out of must be gone");
+
+        Result<std::unique_ptr<QIODevice>> back = fs.openRead(standing, fresh.size());
+        QVERIFY2(back.ok(), qPrintable(back.error().message));
+        QCOMPARE(back.value()->readAll(), fresh);
+        back.value().reset();
+
+        // And onto a free name, which is an ordinary rename. A backend that only
+        // handled the occupied case would fail here rather than where a caller
+        // could see why.
+        const VfsUri onward = context.root.child(QStringLiteral("replaced-again.bin"));
+        QVERIFY2(fs.replace(standing, onward).ok(), "replace onto a free name is a rename");
+        QVERIFY2(fs.stat(onward).ok(), "the new name must exist afterwards");
+
+        QVERIFY(fs.remove(onward, false).ok());
+    }
+
     // --- remove -----------------------------------------------------------
     {
         const VfsUri file = context.root.child(QStringLiteral("beta-renamed.log"));

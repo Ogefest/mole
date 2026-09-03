@@ -91,6 +91,7 @@ public:
     Result<void> makeDirectory(const VfsUri& target) override;
     Result<void> remove(const VfsUri& target, bool recursive) override;
     Result<void> rename(const VfsUri& from, const VfsUri& to) override;
+    Result<void> replace(const VfsUri& from, const VfsUri& to) override;
     Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override;
     Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1) override;
 

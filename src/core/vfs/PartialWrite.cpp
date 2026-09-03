@@ -37,17 +37,22 @@ VfsError commitPartialWrite(IFileSystem& fs, const VfsUri& staging, const VfsUri
                 QStringLiteral("%1 appeared while it was being written, so the result was not put in place")
                     .arg(target.path()));
         }
-        // An overwrite, which is what was asked for. Cleared first because a
-        // rename onto an existing name is refused outright by SFTP and by
-        // WebDAV's MOVE, and silently does the wrong thing on one or two FTP
-        // servers -- so the one behaviour is spelled out rather than left to
-        // each protocol's opinion.
-        const Result<void> cleared = fs.remove(target, false);
-        if (!cleared.ok()) {
+        // An overwrite, which is what was asked for -- and the drive is asked to
+        // do it rather than told how. A rename onto an existing name is refused
+        // outright by SFTP and by WebDAV's MOVE and does the wrong thing on one
+        // or two FTP servers, so those get the clear-then-rename that is all a
+        // protocol can offer; a local disk does it in one step, and the instant
+        // between the two calls -- in which the file being replaced is already
+        // gone and the replacement is not there yet -- does not exist for it.
+        // See ADR-0087.
+        const Result<void> replaced = fs.replace(staging, target);
+        if (!replaced.ok()) {
             fs.remove(staging, false);
-            return cleared.error();
+            return replaced.error();
         }
-    } else if (occupied.error().code != VfsError::NotFound) {
+        return VfsError::ok();
+    }
+    if (occupied.error().code != VfsError::NotFound) {
         // Not there is one answer; could not find out is another, and only the
         // first of them makes a rename safe. Guessing here is guessing about
         // whether somebody else's file is about to be replaced.

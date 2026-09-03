@@ -58,6 +58,9 @@ private slots:
     void aDestinationThatFillsUpSaysWhy();
     void aLinkThatKeepsGoingShortStillDeliversEveryByte();
 
+    void anOverwriteWhoseReadDiesKeepsTheFileItWasReplacing();
+    void anOverwriteCancelledMidCopyKeepsTheFileItWasReplacing();
+
     void cancellingBeforeTheFirstByteLeavesNothing();
     void cancellingMidFileLeavesNothing();
     void cancellingBetweenFilesKeepsWhatLanded();
@@ -72,6 +75,8 @@ private:
     /// A copy of `names` from the faulty source into the temporary directory.
     TransferTask::Request request(const QStringList& names = { QStringLiteral("payload.bin") },
         TransferTask::Mode mode = TransferTask::Mode::Copy) const;
+    /// The bytes under `name` in the destination directory, or empty.
+    QByteArray destinationContents(const QString& name) const;
     /// Submits and waits for the end.
     TransferTask* run(const TransferTask::Request& request);
 
@@ -140,6 +145,12 @@ QStringList TestTransferTaskUnderFault::destinationEntries() const
 qint64 TestTransferTaskUnderFault::destinationSize(const QString& name) const
 {
     return QFileInfo(m_tree->absolute(name)).size();
+}
+
+QByteArray TestTransferTaskUnderFault::destinationContents(const QString& name) const
+{
+    QFile file(m_tree->absolute(name));
+    return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
 }
 
 void TestTransferTaskUnderFault::aSourceRenamedMidCopyFails()
@@ -387,6 +398,63 @@ void TestTransferTaskUnderFault::aLinkThatKeepsGoingShortStillDeliversEveryByte(
     QFile landed(QDir(m_tree->path()).filePath(QStringLiteral("lossy.bin")));
     QVERIFY(landed.open(QIODevice::ReadOnly));
     QCOMPARE(landed.readAll(), patterned);
+}
+
+/// The case ADR-0021 was written against, from the other end.
+///
+/// A copy onto a file of the same name **is** what a re-run of a failed copy is,
+/// and the file it is aiming at is the one most likely to be the only copy left.
+/// The backend has done its half of this since ADR-0021 -- the bytes go under a
+/// working name and the destination is not touched until they are all there --
+/// but the transfer removed the destination before opening the write, so the
+/// protection was handed a name with nothing at it and never engaged. An
+/// interrupted overwrite left neither file.
+void TestTransferTaskUnderFault::anOverwriteWhoseReadDiesKeepsTheFileItWasReplacing()
+{
+    const QByteArray standing("the version that is already there");
+    QVERIFY(m_tree->writeFile(QStringLiteral("payload.bin"), standing));
+
+    m_source->readFailsAt(kThirty);
+
+    TransferTask::Request overwriting = request();
+    overwriting.onConflict = TransferTask::Conflict::Overwrite;
+    TransferTask* task = run(overwriting);
+    QVERIFY(task);
+
+    QCOMPARE(task->copiedCount(), 0);
+    QCOMPARE(task->failedCount(), 1);
+
+    // The one that was there is still there, whole. Not a shorter version of
+    // it, and not a file of the right length with the wrong bytes in it.
+    QCOMPARE(destinationEntries(), QStringList { QStringLiteral("payload.bin") });
+    QCOMPARE(destinationContents(QStringLiteral("payload.bin")), standing);
+}
+
+void TestTransferTaskUnderFault::anOverwriteCancelledMidCopyKeepsTheFileItWasReplacing()
+{
+    // Cancelling is the same shape of interruption and reaches the destination
+    // through a different door: the read stops because the task was called off
+    // rather than because the drive said no, and the write stream is destroyed
+    // instead of closed.
+    const QByteArray standing("the version that is already there");
+    QVERIFY(m_tree->writeFile(QStringLiteral("payload.bin"), standing));
+
+    m_source->readStallsAt(kSixty);
+
+    TransferTask::Request overwriting = request();
+    overwriting.onConflict = TransferTask::Conflict::Overwrite;
+    auto* task = new TransferTask(overwriting);
+    m_tasks->submit(task);
+    QVERIFY(waitFor([this] { return m_source->isStalled(); }));
+
+    task->requestCancel();
+    m_source->release();
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(task->state(), Task::State::Cancelled);
+    QCOMPARE(task->copiedCount(), 0);
+    QCOMPARE(destinationEntries(), QStringList { QStringLiteral("payload.bin") });
+    QCOMPARE(destinationContents(QStringLiteral("payload.bin")), standing);
 }
 
 void TestTransferTaskUnderFault::cancellingBeforeTheFirstByteLeavesNothing()

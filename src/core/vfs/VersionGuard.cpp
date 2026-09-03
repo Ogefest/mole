@@ -86,6 +86,15 @@ Result<void> VersionGuard::rename(const VfsUri& from, const VfsUri& to)
     return m_inner->rename(from, to);
 }
 
+Result<void> VersionGuard::replace(const VfsUri& from, const VfsUri& to)
+{
+    if (!passes(from))
+        return Result<void>(refusal(from));
+    if (!passes(to))
+        return Result<void>(refusal(to));
+    return m_inner->replace(from, to);
+}
+
 Result<std::unique_ptr<QIODevice>> VersionGuard::openRead(const VfsUri& target, qint64 expectedSize)
 {
     if (!passes(target))

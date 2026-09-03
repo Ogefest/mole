@@ -708,6 +708,13 @@ Result<void> FaultyFileSystem::rename(const VfsUri& from, const VfsUri& to)
     return m_inner->rename(from, to);
 }
 
+Result<void> FaultyFileSystem::replace(const VfsUri& from, const VfsUri& to)
+{
+    if (m_policy->revoked.load())
+        return revokedError();
+    return m_inner->replace(from, to);
+}
+
 Result<std::unique_ptr<QIODevice>> FaultyFileSystem::openRead(const VfsUri& target, qint64 expectedSize)
 {
     if (m_policy->revoked.load())

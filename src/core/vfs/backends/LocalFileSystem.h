@@ -53,6 +53,12 @@ public:
     Result<void> remove(const VfsUri& target, bool recursive) override;
     Result<void> rename(const VfsUri& from, const VfsUri& to) override;
 
+    /// One step where the platform has one: rename(2) puts a file over a file
+    /// with no instant in between at which the name has nothing at it. Across
+    /// two kinds -- a directory arriving over a file -- no filesystem can, and
+    /// it falls back to the interface's remove-then-rename. See ADR-0087.
+    Result<void> replace(const VfsUri& from, const VfsUri& to) override;
+
     Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override;
     Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1) override;
 

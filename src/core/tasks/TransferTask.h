@@ -130,8 +130,15 @@ private:
     /// Bytes already accounted for by completed jobs. The chunk loop adds its
     /// own progress on top, so a large file advances while it is copying.
     qint64 m_bytesCompleted = 0;
-    /// Returns false when the entry should be skipped entirely.
-    bool resolveConflict(const VfsUri& target, bool isDirectory, bool* skip);
+    /// Applies the conflict policy to one arrival. False means the entry
+    /// failed and was recorded; `skip` means it is to be passed over.
+    ///
+    /// `replacing`, when asked for, says the policy was Overwrite and the file
+    /// in the way was deliberately **left standing**: whatever puts the arrival
+    /// in place is the thing that replaces it, so a transfer that fails part way
+    /// leaves the file it was replacing alone. A caller that renames rather than
+    /// writes has to say replace() instead of rename() when it is set.
+    bool resolveConflict(const VfsUri& target, bool isDirectory, bool* skip, bool* replacing = nullptr);
     void recordFailure(const VfsUri& uri, const VfsError& error);
 
     Request m_request;

@@ -65,6 +65,8 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-03 #MOLE-331 A copy or move that overwrites a file and then fails part way through — a dropped connection, a full disk, a cancel — leaves the file it was replacing whole, instead of leaving neither it nor the replacement
+
 ## 0.1.2 — released 2026-09-02
 
 2026-09-01 #MOLE-325 Mole says when a newer version has been released, once per version, with a button that opens its page — and Help → Check for new versions stops it looking at all

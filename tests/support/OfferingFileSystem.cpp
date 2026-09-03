@@ -122,6 +122,11 @@ Result<void> OfferingFileSystem::rename(const VfsUri& from, const VfsUri& to)
     return m_inner->rename(from, to);
 }
 
+Result<void> OfferingFileSystem::replace(const VfsUri& from, const VfsUri& to)
+{
+    return m_inner->replace(from, to);
+}
+
 Result<std::unique_ptr<QIODevice>> OfferingFileSystem::openRead(const VfsUri& target, qint64 expectedSize)
 {
     if (!target.hasVersion())

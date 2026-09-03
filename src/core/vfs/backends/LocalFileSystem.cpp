@@ -9,6 +9,9 @@
 #include <QSet>
 #include <QStorageInfo>
 
+#include <filesystem>
+#include <system_error>
+
 namespace mole {
 namespace {
 
@@ -151,6 +154,42 @@ namespace {
             return {};
         return Result<void>::failure(VfsError::NotSupported,
             QStringLiteral("An earlier version of a file can be read and copied, not written"));
+    }
+
+    /// A path in the form the platform's own calls take.
+    ///
+    /// std::filesystem::path is char on POSIX and wchar_t on Windows, and
+    /// handing it the wrong one either mangles a non-ASCII name or does not
+    /// compile. QFile::encodeName is what Qt itself uses for the first, which is
+    /// UTF-8 on every system Mole builds for.
+    std::filesystem::path nativePath(const QString& path)
+    {
+#ifdef Q_OS_WIN
+        return std::filesystem::path(path.toStdWString());
+#else
+        return std::filesystem::path(QFile::encodeName(path).toStdString());
+#endif
+    }
+
+    /// What the interface calls the reason the system gave.
+    ///
+    /// Only the few that a caller acts on differently; everything else is an I/O
+    /// error, which is what it is.
+    VfsError::Code codeForSystemError(const std::error_code& failed)
+    {
+        if (failed == std::errc::no_such_file_or_directory)
+            return VfsError::NotFound;
+        if (failed == std::errc::permission_denied || failed == std::errc::operation_not_permitted)
+            return VfsError::AccessDenied;
+        if (failed == std::errc::directory_not_empty)
+            return VfsError::NotEmpty;
+        if (failed == std::errc::is_a_directory)
+            return VfsError::IsADirectory;
+        if (failed == std::errc::not_a_directory)
+            return VfsError::NotADirectory;
+        if (failed == std::errc::file_exists)
+            return VfsError::AlreadyExists;
+        return VfsError::IoError;
     }
 
     VfsError errorForPath(const QString& path)
@@ -447,6 +486,48 @@ Result<void> LocalFileSystem::rename(const VfsUri& from, const VfsUri& to)
     if (!QFile::rename(src, dst))
         return Result<void>::failure(
             VfsError::IoError, QStringLiteral("Cannot rename %1 to %2").arg(src, dst));
+    return {};
+}
+
+Result<void> LocalFileSystem::replace(const VfsUri& from, const VfsUri& to)
+{
+    if (Result<void> older = refuseWritingToAVersion(from); !older.ok())
+        return older;
+    if (Result<void> older = refuseWritingToAVersion(to); !older.ok())
+        return older;
+    const QString src = from.toLocalPath();
+    const QString dst = to.toLocalPath();
+    if (src.isEmpty() || dst.isEmpty())
+        return Result<void>::failure(VfsError::NotSupported, QStringLiteral("Not a local uri"));
+
+    // One step is only on offer between two things of the same kind: no
+    // filesystem puts a directory over a file, or a file over a directory, in a
+    // single operation. Asked here rather than read out of an errno afterwards,
+    // because the answer differs by platform and a wrong guess would fall back
+    // in a case that had really failed. Where one step is not available there is
+    // no atomicity to lose, so it gets the two-step every protocol backend uses.
+    const QFileInfo arriving(src);
+    const QFileInfo standing(dst);
+    if (standing.exists() && arriving.isDir() != standing.isDir())
+        return IFileSystem::replace(from, to);
+
+    // rename(2) replaces the destination with no instant in between at which the
+    // name has nothing at it, which is the entire point of this method existing.
+    // std::filesystem::rename is required to behave that way, and on Windows the
+    // standard library is the one on the hook for it -- so there is no #ifdef
+    // here beyond the path encoding, which is wide characters there and bytes
+    // everywhere else. See ADR-0087.
+    std::error_code failed;
+    std::filesystem::rename(nativePath(src), nativePath(dst), failed);
+    if (failed) {
+        // Nothing was moved and nothing was removed, so the destination is
+        // whatever it was before this was called. That is the difference the
+        // method exists for, and it is worth the message saying which two names
+        // it was about.
+        return Result<void>::failure(codeForSystemError(failed),
+            QStringLiteral("Cannot put %1 in place of %2: %3")
+                .arg(src, dst, QString::fromStdString(failed.message())));
+    }
     return {};
 }
 

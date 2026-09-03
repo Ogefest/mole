@@ -101,6 +101,16 @@ public:
         return Result<void>::failure(VfsError::IsADirectory, QStringLiteral("rename was here"));
     }
 
+    /// Not the default either, and the default is the one that would pass for an
+    /// answer: it removes the destination and renames onto it, so a wrapper that
+    /// lost this one would go on working -- against a drive that was never asked
+    /// whether it could do better, and through two calls where the drive offers
+    /// one. See ADR-0087.
+    Result<void> replace(const VfsUri&, const VfsUri&) override
+    {
+        return Result<void>::failure(VfsError::NotEmpty, QStringLiteral("replace was here"));
+    }
+
     Result<std::unique_ptr<QIODevice>> openRead(const VfsUri&, qint64 expectedSize) override
     {
         // The hint comes back in the bytes, so a wrapper that dropped it or
@@ -255,6 +265,7 @@ QStringList fingerprint(IFileSystem& fs, const OpinionatedFileSystem& drive)
     lines << said("makeDirectory", outcome(fs.makeDirectory(target)));
     lines << said("remove", outcome(fs.remove(target, true)));
     lines << said("rename", outcome(fs.rename(target, other)));
+    lines << said("replace", outcome(fs.replace(target, other)));
 
     // The hint is passed explicitly and then left out, because leaving it out is
     // the mistake the interface warns about: a default argument binds to the
