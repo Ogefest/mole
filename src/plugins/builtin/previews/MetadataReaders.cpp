@@ -1,6 +1,7 @@
 #include "plugins/builtin/previews/MetadataReaders.h"
 
 #include "core/data/FileType.h"
+#include "core/diagnostics/Diagnostics.h"
 
 #include <QLocale>
 #include <QMimeDatabase>
@@ -84,9 +85,12 @@ void ReadMetadataTask::run()
                 m_facts.append(said);
             }
         } catch (const std::exception& error) {
-            qWarning("metadata reader %s failed: %s", qPrintable(reader->id()), error.what());
+            // On the log's subject for a job, like every other line about one:
+            // this runs inside a Task, and a bare qWarning is a line MOLE_LOG=task
+            // does not show and a log filtered by subject loses. See ADR-0012.
+            qCWarning(taskLog, "metadata reader %s failed: %s", qPrintable(reader->id()), error.what());
         } catch (...) {
-            qWarning("metadata reader %s failed", qPrintable(reader->id()));
+            qCWarning(taskLog, "metadata reader %s failed", qPrintable(reader->id()));
         }
     }
 

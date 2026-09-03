@@ -294,10 +294,17 @@ void TestAppIntegration::theLogSaysWhatThisRunStartedWith()
     QVERIFY2(log.contains(QStringLiteral("files")),
         qPrintable(QStringLiteral("the index line carries no count: %1").arg(log.joined())));
 
-    // And nothing in it may be a credential or a uri: a log is a file people send to
-    // other people. Only the scheme is written, never the root.
-    QVERIFY2(!log.contains(m_tree->rootUri().toString()),
-        qPrintable(QStringLiteral("a drive's uri reached the log: %1").arg(log.joined())));
+    // And each drive is named by its root, not by its scheme. The log is read
+    // when something has gone wrong, and "sftp" says nothing about which of two
+    // servers stopped answering. What stays out of it is credentials, which the
+    // curl trace redacts -- see ADR-0012's amendment of 2026-09-04, which also
+    // states plainly that the log is therefore not a file to hand over without
+    // reading it.
+    //
+    // Asserted as a root and not as a particular one: which volumes this machine
+    // has is not this suite's business, and every machine has one at `file:///`.
+    QVERIFY2(log.contains(QStringLiteral("(file:///")),
+        qPrintable(QStringLiteral("a drive is named by its scheme alone: %1").arg(log.joined())));
 }
 
 /// A drive that appears an hour later is the same fact arriving late.
@@ -314,8 +321,8 @@ void TestAppIntegration::aDriveThatArrivesLaterSaysSoToo()
 
     QVERIFY2(log.contains(QStringLiteral("Drive added: a drive from nowhere")),
         qPrintable(QStringLiteral("a mount arrived silently: %1").arg(log.joined())));
-    QVERIFY2(log.contains(QStringLiteral("(mem)")),
-        qPrintable(QStringLiteral("the scheme is not in the line: %1").arg(log.joined())));
+    QVERIFY2(log.contains(QStringLiteral("mem:///")),
+        qPrintable(QStringLiteral("the drive's root is not in the line: %1").arg(log.joined())));
 
     m_app->services().vfs->removeMount(id);
     QVERIFY2(log.contains(QStringLiteral("Drive removed")),

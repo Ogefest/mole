@@ -40,6 +40,7 @@
 #include <QImage>
 #include <QImageReader>
 #include <QImageWriter>
+#include <QLoggingCategory>
 #include <QPageSize>
 #include <QPainter>
 #include <QPdfWriter>
@@ -206,6 +207,7 @@ private slots:
     void aValueCanBeCopiedOutOfTheDetails();
     void steppingToTheNextFileCancelsAReaderInFlight();
     void aReaderThatFailsCostsOnlyItsOwnRows();
+    void aReaderThatThrowsIsLoggedOnTheSubjectOfJobs();
     void aPhotographShowsThePictureAndWhatTheCameraWrote();
     void aDocumentNamesItsAuthorWithoutBeingReadWhole();
 
@@ -912,6 +914,50 @@ void TestPreview::aReaderThatFailsCostsOnlyItsOwnRows()
     // The viewer is untouched by any of it.
     QVERIFY(waitFor([viewer] { return !viewer->text().isEmpty(); }, 5000));
     QVERIFY(viewer->errorText().isEmpty());
+}
+
+/// And it is logged where every other line about a job is.
+///
+/// It was a bare qWarning from inside a Task::run(), so MOLE_LOG=task did not
+/// show it and a log filtered by subject lost it altogether. Asserted by turning
+/// that subject off: an uncategorised warning would come through the filter
+/// untouched, which is what makes the absence the proof. See MOLE-407.
+void TestPreview::aReaderThatThrowsIsLoggedOnTheSubjectOfJobs()
+{
+    auto failing = std::make_unique<FakeMetadataReader>(QStringLiteral("test.broken"),
+        QList<FileFact> { { QStringLiteral("Never"), QStringLiteral("shown") } }, 20);
+    failing->failInstead();
+    m_app->metadata()->addReader(std::move(failing));
+
+    {
+        CapturedWarnings log;
+        PreviewTabController* preview = openPreview(QStringLiteral("notes.txt"));
+        QVERIFY(preview);
+        preview->setDetailsOpen(true);
+        QVERIFY(waitFor([preview] { return !preview->isDetailsLoading(); }, 5000));
+        QVERIFY2(log.contains(QStringLiteral("test.broken")),
+            qPrintable(QStringLiteral("a reader that threw said nothing: %1").arg(log.joined())));
+    }
+
+    // The same reader again, on another file, with the subject silenced. The
+    // rules are put back before
+    // anything is asserted, so a failure here does not leave the rest of the
+    // suite running with mole.task switched off.
+    QLoggingCategory::setFilterRules(QStringLiteral("mole.task.warning=false"));
+    bool quiet = false;
+    QString saidAnyway;
+    {
+        CapturedWarnings log;
+        PreviewTabController* second = openPreview(QStringLiteral("config.json"));
+        if (second) {
+            second->setDetailsOpen(true);
+            waitFor([second] { return !second->isDetailsLoading(); }, 5000);
+        }
+        quiet = !log.contains(QStringLiteral("test.broken"));
+        saidAnyway = log.joined();
+    }
+    QLoggingCategory::setFilterRules(QString());
+    QVERIFY2(quiet, qPrintable(QStringLiteral("the line is not on mole.task: %1").arg(saidAnyway)));
 }
 
 void TestPreview::aPhotographShowsThePictureAndWhatTheCameraWrote()

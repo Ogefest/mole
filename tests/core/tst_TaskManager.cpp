@@ -42,6 +42,7 @@ private slots:
     void elapsedTimeStopsWhenTheTaskDoes();
 
     void aCancelledTaskIsNotLoggedAsAFailure();
+    void aTransferThatEndedShortIsOneLineWithBothNumbersAndTheTitle();
     void aFailedTaskIsStillLoggedAsOne();
     void durationAndRateComeFromAClockThatCannotGoBackwards();
 
@@ -503,6 +504,37 @@ void TestTaskManager::aTaskThatSaysNothingAboutItselfIsLoud()
         qPrintable(QStringLiteral("no start line: %1").arg(log.joined())));
     QVERIFY2(log.contains(QStringLiteral("Whatever gets written next")),
         qPrintable(QStringLiteral("a task that said nothing was silent: %1").arg(log.joined())));
+}
+
+/// One event, one line, and the line that survives is this one.
+///
+/// A download that ended short of the length the server announced used to be
+/// warned about twice: once by the network transfer and once by the task that
+/// failed with the error the transfer produced. Both carried the same two
+/// numbers, so a reader had to compare them to work out it was one fault. The
+/// transfer's line is a debug line now, and this is the one that is always
+/// written -- so it has to carry both numbers *and* say which job it was about.
+/// See MOLE-407 and ADR-0012's amendment.
+///
+/// Asserted here, on a scripted task carrying the error a real short transfer
+/// produces, because the transport's own branch needs an SFTP channel that drops
+/// while reporting a clean end of file -- which no offline case can arrange.
+void TestTaskManager::aTransferThatEndedShortIsOneLineWithBothNumbersAndTheTitle()
+{
+    TaskManager manager;
+    auto* task = new ScriptedTask(QStringLiteral("Read report.txt"), [](ScriptedTask& self) {
+        self.fail(VfsError::make(
+            VfsError::IoError, QStringLiteral("the transfer stopped after 4000 of 4500 bytes")));
+    });
+
+    CapturedWarnings log;
+    manager.submit(task);
+    QVERIFY(waitForTask(task));
+
+    const QStringList aboutIt = log.messages().filter(QStringLiteral("4500"));
+    QCOMPARE(aboutIt.size(), 1);
+    QVERIFY2(aboutIt.first().contains(QStringLiteral("4000")), qPrintable(log.joined()));
+    QVERIFY2(aboutIt.first().contains(QStringLiteral("report.txt")), qPrintable(log.joined()));
 }
 
 void TestTaskManager::aCancelledTaskIsNotLoggedAsAFailure()

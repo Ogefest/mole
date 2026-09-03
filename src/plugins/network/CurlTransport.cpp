@@ -610,11 +610,19 @@ Response CurlPool::perform(const Lease& lease, const CancelToken& cancel, QIODev
         response.status, connects > 0 ? "new connection" : "connection reused",
         response.code == CURLE_OK ? "" : ", ", qPrintable(response.detail));
 
+    // Debug, not a warning: errorFor() below turns exactly this condition into an
+    // IoError carrying both numbers, the task fails with it, and Task::execute()
+    // writes that as a warning with the job's title on it. Warning here as well
+    // made one short download look like two faults, and a reader had to notice
+    // the numbers were the same to know it was one. The line stays for
+    // MOLE_LOG=net, where it says which transfer of the run it was. See MOLE-407
+    // and ADR-0012's amendment of 2026-09-04.
+    //
     // Gated on `sink` for the same reason the error is: a HEAD is told the length
     // and asks for none of it, so without this every stat on an object store
     // announces a truncated download that never happened.
     if (sink && response.code == CURLE_OK && announced > 0 && received < announced) {
-        qCWarning(networkLog, "#%llu %s ended after %lld of the %lld bytes it was promised",
+        qCDebug(networkLog, "#%llu %s ended after %lld of the %lld bytes it was promised",
             static_cast<unsigned long long>(id), lease.url().constData(), static_cast<long long>(received),
             static_cast<long long>(announced));
     }

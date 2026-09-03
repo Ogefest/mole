@@ -2,6 +2,7 @@
 
 - **Date:** 2026-08-09
 - **Status:** Accepted
+- **Amended:** 2026-09-04 — what a log line may name. See *Amendment* at the end.
 
 ## Context
 
@@ -95,3 +96,49 @@ different question and does not help someone sending a report.
   hint and every backend but SFTP ignores it; see
   [ADR-0013](0013-a-large-sftp-read-arrives-in-spans.md) for what
   forced it.
+
+## Amendment, 2026-09-04 (MOLE-407)
+
+The decision above is unchanged. What it never said is whether a log line may
+name the thing it is about, and the code had two answers.
+
+**A log line may name a uri: scheme, host, path and file name.** The log is read
+when something has gone wrong, and a failure with no subject cannot be
+diagnosed — "a transfer failed" against a folder nobody can name costs the
+reader the diagnosis the file was opened for, and "sftp" does not say which of
+two servers stopped answering. So the five always-on lines that already carry
+one stay as they are: `TransferTask`'s "copied N bytes where the listing said M"
+and "could not check what arrived in …", `CurlPool::perform`'s per-transfer
+line, `IFileSystem::probe`'s "probe of … failed", and `Task`'s "… failed: …",
+where nearly every `VfsError::message` in the tree is built from a path. The
+startup block now names each drive by its root rather than by its scheme, and so
+does the line for a drive that arrives later.
+
+**What stays out is credentials.** The `mole.curl` trace redacts
+`Authorization`, `Proxy-Authorization`, `X-Amz-Security-Token` and FTP's `PASS`
+and `ACCT`, and nothing else writes one. A uri may carry a user name — an SFTP
+root does — and that is accepted rather than redacted, because a report about a
+drive that will not connect is about that account.
+
+**The trade being accepted, stated plainly: the session log is not a file to
+hand over without reading it.** It names the drives a person has, the folders
+they were working in and the files that failed. That was already true of the
+error messages before this was written down; what changes is that it is written
+down.
+
+**One event is one line.** `CurlPool::perform` warned that a download had ended
+short of its announced length, and `net::errorFor` turned the same condition into
+an error carrying the same two numbers, which the task then failed with and
+`Task::execute` wrote as a warning of its own. One fault, two apparent faults,
+and the reader had to notice the numbers matched to tell. The transport's line is
+`qCDebug` now — it stays for `MOLE_LOG=net`, where it says which transfer of the
+run it was — and the line that is always written is the task's, which carries
+both numbers and the job's title. The Consequences above asked for both; the
+second made the first redundant.
+
+**A line about a job goes on `mole.task`, wherever it is written from.** The
+metadata reader panel logged a plugin reader that threw with a bare `qWarning`
+from inside a `Task::run()`, so `MOLE_LOG=task` did not show it and a log
+filtered by subject lost it. The four categories are the whole point of this
+ADR; a line that belongs to a subject and is written without one is outside the
+scheme rather than an exception to it.

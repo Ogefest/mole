@@ -570,12 +570,16 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     connect(m_tabs, &TabsModel::countChanged, this, &AppController::pruneBrowsingMounts);
     connect(m_vfs, &VfsManager::mountsChanged, this, &AppController::refreshOpenDrives);
     // A drive that appears an hour later is the same fact arriving late, and a
-    // report about "the drive was there a minute ago" needs it. Scheme only, never
-    // the uri: an sftp root carries an account name and a log gets sent to people.
+    // report about "the drive was there a minute ago" needs it. Named by its root
+    // rather than by its scheme: the log is read when something has gone wrong,
+    // and "sftp" does not say which of two servers it was. See ADR-0012's
+    // amendment of 2026-09-04, which settles that a log line may carry a uri and
+    // that credentials are what stays out.
     connect(m_vfs, &VfsManager::mountAdded, this, [this](const QString& id) {
         const Mount mount = m_vfs->mount(id);
-        if (mount.isValid() && !mount.internal && !mount.unlisted)
-            qInfo("Drive added: %s (%s)", qPrintable(mount.displayName), qPrintable(mount.root.scheme()));
+        if (mount.isValid() && !mount.internal && !mount.unlisted) {
+            qInfo("Drive added: %s (%s)", qPrintable(mount.displayName), qPrintable(mount.root.toString()));
+        }
     });
     connect(m_vfs, &VfsManager::mountRemoved, this,
         [](const QString& id) { qInfo("Drive removed: %s", qPrintable(id)); });
@@ -1439,14 +1443,16 @@ void AppController::recordStartup() const
         for (int row = 0; row < m_drives->rowCount(); ++row) {
             const QModelIndex at = m_drives->index(row, 0);
             const QString name = at.data(DriveListModel::DisplayNameRole).toString();
-            const QString scheme = at.data(DriveListModel::SchemeRole).toString();
+            // The root rather than the scheme, for the reason the mountAdded line
+            // above gives: which drive it was is the fact a report needs.
+            const QString root = at.data(DriveListModel::RootUriRole).toString();
             const QString state = at.data(DriveListModel::StateTextRole).toString();
             // Space is left out on purpose: it arrives from QuerySpaceTask, which
             // has not run yet at this point, and asking the filesystem here would
             // put a synchronous storage read on the startup path -- the shape of
             // fault MOLE-264 is about. A drive reading "Not connected" or "Locked"
             // is the operational fact wanted anyway.
-            described.append(QStringLiteral("%1 (%2) %3").arg(name, scheme, state));
+            described.append(QStringLiteral("%1 (%2) %3").arg(name, root, state));
         }
         qInfo("Drives: %s",
             qPrintable(described.isEmpty() ? QStringLiteral("none") : described.join(QStringLiteral(" | "))));
