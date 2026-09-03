@@ -14,7 +14,9 @@
 #include <QClipboard>
 #include <QDir>
 #include <QGuiApplication>
+#include <QProcess>
 #include <QSignalSpy>
+#include <QStandardPaths>
 #include <QTest>
 
 using namespace mole;
@@ -38,6 +40,8 @@ private slots:
 
     void aSetNamesItsTargetsTheSameWayAPaneDoes();
     void anOperationTakesASetWithoutKnowingWhatOneIs();
+    void aFilteredSetNamesTheRowsTheFilterLeft();
+    void compressingAFilteredSetPacksWhatWasOnScreen();
     void addToSetTakesWhateverTheCurrentTabIsAimedAt();
     void addToSetTwiceLeavesOneSetsTab();
     void twoBrowsersAreStillTwoBrowsersAndTwoSearchesTwoSearches();
@@ -234,6 +238,99 @@ void TestFileSets::anOperationTakesASetWithoutKnowingWhatOneIs()
         },
         30000));
     QCOMPARE(analysis->current()->headline().value(QStringLiteral("files")).toLongLong(), 1);
+}
+
+/// The filter is part of choosing, not only a way of looking.
+///
+/// A set of five hundred, narrowed to three by typing ".log" into the filter
+/// box: targetUris() answered all five hundred, so compressing produced an
+/// archive of five hundred, a bulk rename renamed five hundred, and "remove the
+/// sources afterwards" deleted five hundred. Nothing said so. The search tab has
+/// always answered with the rows on screen -- "the rows in front of the user are
+/// what 'these results' means" -- and the two tabs answering the same question
+/// disagreed. Settled in ARCHITECTURE.md's "Acting on a list of things". See
+/// MOLE-408.
+void TestFileSets::aFilteredSetNamesTheRowsTheFilterLeft()
+{
+    FileSetsController* sets = openSets();
+    QVERIFY(sets);
+    sets->createSet(QStringLiteral("Mixed"));
+
+    QStringList all;
+    for (const QString& name : { QStringLiteral("one.log"), QStringLiteral("two.log"),
+             QStringLiteral("three.txt"), QStringLiteral("four.txt"), QStringLiteral("five.txt") }) {
+        QVERIFY(m_tree->writeFile(name));
+        all.append(m_tree->rootUri().child(name).toString());
+    }
+    sets->addUris(all);
+    QCOMPARE(sets->targetUris().size(), 5);
+
+    sets->setFilter(QStringLiteral(".log"));
+
+    // The rows on screen, and the targets, are the same two.
+    QStringList shown;
+    for (const QVariant& row : sets->members())
+        shown.append(row.toMap().value(QStringLiteral("uri")).toString());
+    QCOMPARE(shown.size(), 2);
+    QCOMPARE(sets->targetUris(), shown);
+    QCOMPARE(sets->targetCount(), 2);
+    QCOMPARE(sets->targets().size(), 2);
+
+    // And the shell, which asks the tab by name, gets the same answer.
+    QCOMPARE(m_app->currentTargets(), shown);
+
+    // The set itself still holds everything: filtering is a way of choosing what
+    // to act on, not a way of editing what is in the set.
+    QCOMPARE(sets->memberCount(), 5);
+    sets->setFilter(QString());
+    QCOMPARE(sets->targetUris().size(), 5);
+}
+
+/// The same rule, through the operation the fault was found with.
+void TestFileSets::compressingAFilteredSetPacksWhatWasOnScreen()
+{
+    if (!m_app->canCompress())
+        QSKIP("this build was made without libarchive");
+
+    FileSetsController* sets = openSets();
+    QVERIFY(sets);
+    sets->createSet(QStringLiteral("Logs and the rest"));
+
+    QStringList all;
+    for (const QString& name : { QStringLiteral("keep.log"), QStringLiteral("leave-a.txt"),
+             QStringLiteral("leave-b.txt"), QStringLiteral("leave-c.txt") }) {
+        QVERIFY(m_tree->writeFile(name, name.toUtf8()));
+        all.append(m_tree->rootUri().child(name).toString());
+    }
+    sets->addUris(all);
+    sets->setFilter(QStringLiteral(".log"));
+
+    // What the dialog would say it is about to pack, which is the same list.
+    QCOMPARE(m_app->compressionTargets().size(), 1);
+
+    m_app->compressSelection(QStringLiteral("filtered.zip"), QStringLiteral("zip"));
+
+    const QString archive = m_tree->absolute(QStringLiteral("filtered.zip"));
+    QVERIFY2(
+        waitFor([archive] { return QFileInfo::exists(archive) && QFileInfo(archive).size() > 0; }, 30000),
+        "the archive was never written");
+    QVERIFY(waitFor([this] { return m_app->tasks()->finishedCount() > 0; }, 30000));
+
+    // Read with unzip rather than through Mole's own archive backend, which is a
+    // loadable plugin this suite does not link: what is in question is what was
+    // written, and an outside reader is the better witness for that anyway.
+    const QString unzip = QStandardPaths::findExecutable(QStringLiteral("unzip"));
+    if (unzip.isEmpty())
+        QSKIP("unzip is not available to read the archive back");
+
+    QProcess reader;
+    reader.start(unzip, { QStringLiteral("-Z1"), archive });
+    QVERIFY(reader.waitForFinished(30000));
+    const QStringList packed
+        = QString::fromUtf8(reader.readAllStandardOutput()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+
+    // One member, and it is the one that was on screen.
+    QCOMPARE(packed, QStringList { QStringLiteral("keep.log") });
 }
 
 void TestFileSets::addToSetTakesWhateverTheCurrentTabIsAimedAt()

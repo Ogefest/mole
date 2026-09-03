@@ -53,9 +53,17 @@ public:
 
     /// What an operation should act on. The same shape a pane's selection has,
     /// deliberately and by the same name.
+    /// What an operation invoked here acts on: the members the filter left.
+    ///
+    /// Filtered, not the whole set -- see the definition, and ARCHITECTURE.md's
+    /// "Acting on a list of things" for the rule this follows.
     QList<VfsUri> targets() const;
     Q_INVOKABLE QStringList targetUris() const;
-    Q_INVOKABLE int targetCount() const { return memberCount(); }
+    /// How many an operation invoked here would act on, which is how many
+    /// targets() answers -- not how many the set holds. The two differ the
+    /// moment the filter box has anything in it, and a count that disagreed with
+    /// the list was the same fault in miniature. See MOLE-408.
+    Q_INVOKABLE int targetCount() const { return static_cast<int>(targets().size()); }
 
     Q_INVOKABLE QString createSet(const QString& name);
     Q_INVOKABLE bool renameSet(const QString& id, const QString& name);
@@ -84,6 +92,10 @@ signals:
     void filterChanged();
 
 private:
+    /// Whether this member survives the filter. One place, so the rows on
+    /// screen and the targets of an operation cannot come apart.
+    bool matchesFilter(const QString& uri) const;
+
     void refresh();
 
     PluginServices m_services;

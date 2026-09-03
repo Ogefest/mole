@@ -2355,6 +2355,14 @@ QStringList AppController::currentTargets() const
         }
     }
 
+    // The pane's own selection, for a tab that has a pane and did not answer
+    // above. It is asked of the *current* controller, so a tab with no pane -- a
+    // set, a duplicate scan, a list of results -- answers nothing here rather
+    // than borrowing a browser's selection: currentTabProperty() reads the
+    // property off the controller in front of the user, and a controller without
+    // an activePane property gives an invalid QVariant. Written down because it
+    // reads like a fallback to "whatever the file manager last had", and is not.
+    // See ARCHITECTURE.md, "Acting on a list of things", and MOLE-408.
     QObject* pane = currentTabProperty("activePane").value<QObject*>();
     if (!pane)
         return {};

@@ -324,6 +324,26 @@ third for search results, and adding a fourth kind of source becomes a project.
 The rule to keep: a new kind of thing that can be acted on implements
 `targetUris()`. It never gets its own accessor.
 
+**And what it answers is what is on screen.** Two rules, because a tab has two
+ways of showing less than it holds:
+
+- **A narrowing filter narrows what an operation acts on.** Type `.log` into a
+  set of five hundred, see three rows, and compressing produces an archive of
+  three. The filter is part of choosing and not only a way of looking. This is
+  the reading whose risk falls the safe way round: acting on three files when
+  five hundred were meant is noticed the moment the archive appears, and acting
+  on five hundred while looking at three is not noticed at all.
+- **A tab with nothing ticked answers what it shows**, or the one thing a cursor
+  is on where it has one. A browser pane offers the row under the cursor, because
+  that is what a commander-style manager has always done; a tab with no cursor —
+  a set, a list of results — offers its visible rows.
+
+Both were decided after a set of five hundred was filtered to three and
+compressed into an archive of five hundred (MOLE-408). The two tabs that already
+answered `targetUris()` disagreed about it, which is the sort of disagreement
+this section exists to prevent: the search tab filtered and the sets tab did not.
+A new tab kind follows the paragraph rather than choosing for itself.
+
 ## Virtual drives
 
 A drive is a plugin. `IFileSystemFactory` has always been the seam; it now also

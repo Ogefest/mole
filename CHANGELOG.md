@@ -65,6 +65,7 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-03 #MOLE-408 An operation on a filtered set acts on the rows the filter left, instead of on every member the set holds
 2026-09-03 #MOLE-339 A delete removes exactly the files the confirmation listed, even if the folder changed or a tick moved while the question was on screen
 2026-09-03 #MOLE-339 Removing a configured drive asks first, in red, instead of happening on the first click
 2026-09-03 #MOLE-341 A duplicate scan no longer offers a link as a duplicate of the file it points at, and no longer pairs a file with itself when one search folder sits inside another

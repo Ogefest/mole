@@ -72,7 +72,40 @@ QString FileSetsController::currentName() const
 
 QList<VfsUri> FileSetsController::targets() const
 {
-    return m_store ? m_store->set(m_currentId).targets() : QList<VfsUri> {};
+    if (!m_store)
+        return {};
+    // What the filter left, which is what is on screen -- not everything the set
+    // holds.
+    //
+    // A set of five hundred, narrowed to three by typing ".log" in the filter
+    // box, then compressed: the archive used to hold five hundred, a bulk rename
+    // used to rename five hundred, and "remove the sources afterwards" used to
+    // delete five hundred. Nothing said so, and the archive was where anybody
+    // found out.
+    //
+    // The filter is part of choosing and not only a way of looking, which is
+    // what the search tab already does -- "the rows in front of the user are
+    // what 'these results' means" -- and it is the reading whose risk falls the
+    // safe way round: acting on three files when five hundred were wanted is
+    // noticed at once, and acting on five hundred while looking at three is not.
+    // See ARCHITECTURE.md, "Acting on a list of things", and MOLE-408.
+    QList<VfsUri> kept;
+    for (const QString& uri : m_store->set(m_currentId).uris) {
+        if (!matchesFilter(uri))
+            continue;
+        const VfsUri parsed = VfsUri::fromString(uri);
+        if (parsed.isValid())
+            kept.append(parsed);
+    }
+    return kept;
+}
+
+bool FileSetsController::matchesFilter(const QString& uri) const
+{
+    // One place, because the rows on screen and the targets of an operation have
+    // to be the same list. They were worked out separately, and that is how they
+    // came to disagree.
+    return m_filter.isEmpty() || uri.contains(m_filter, Qt::CaseInsensitive);
 }
 
 QStringList FileSetsController::targetUris() const
@@ -129,7 +162,7 @@ QVariantList FileSetsController::members() const
     const FileSet set = m_store->set(m_currentId);
     for (const QString& uri : set.uris) {
         const VfsUri parsed = VfsUri::fromString(uri);
-        if (!m_filter.isEmpty() && !uri.contains(m_filter, Qt::CaseInsensitive))
+        if (!matchesFilter(uri))
             continue;
 
         const bool checked = m_present.contains(uri);
