@@ -3,6 +3,7 @@
 #include "plugins/network/WebdavListing.h"
 #include "support/FileSystemConformance.h"
 #include "support/MoleTestMain.h"
+#include "support/ScriptedHttpServer.h"
 
 #include <QUrl>
 
@@ -137,6 +138,9 @@ private slots:
     void anyNamespacePrefixIsAccepted();
     void aFileAnswersWithOnlyItself();
     void aFailedPropstatDoesNotHideAGoodOne();
+    void aDeleteTheServerOnlyHalfDidIsAFailureThatNamesTheMember();
+    void aMoveRefusedWithA409IsAMissingParentAndNotANameClash();
+    void aCollectionAnsweringUnderAnAliasDoesNotListItselfAsItsOwnChild();
     void aSizeTheServerDidNotGiveIsUnknownAndNotZero();
     void anAbsoluteUrlHrefIsReducedToItsPath();
     void anEncodedHrefIsDecoded();
@@ -330,6 +334,145 @@ void TestWebdavFileSystem::aSizeTheServerDidNotGiveIsUnknownAndNotZero()
     QCOMPARE(entries.at(0).size, kUnknownSize);
     QCOMPARE(entries.at(1).size, kUnknownSize);
     QCOMPARE(entries.at(2).size, 0);
+}
+
+/// Settings pointing at a scripted server, for the three cases below.
+static WebdavSettings against(const ScriptedHttpServer& server)
+{
+    WebdavSettings settings;
+    settings.baseUrl = server.url() + QStringLiteral("/dav");
+    settings.username = QStringLiteral("someone");
+    settings.password = QStringLiteral("secret");
+    return settings;
+}
+
+/// A depth-0 answer saying the path is a collection, which is what stat() wants
+/// before a delete or a move gets as far as sending anything.
+static QByteArray aCollectionAt(const QByteArray& href)
+{
+    return "<?xml version=\"1.0\"?>\n"
+           "<d:multistatus xmlns:d=\"DAV:\">\n"
+           "  <d:response><d:href>"
+        + href
+        + "</d:href><d:propstat><d:prop>\n"
+          "    <d:resourcetype><d:collection/></d:resourcetype>\n"
+          "  </d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>\n"
+          "</d:multistatus>";
+}
+
+/// 207 is success for PROPFIND and the opposite for DELETE.
+///
+/// RFC 4918 §9.6.1: a DELETE that could not finish for some members of a
+/// collection answers 207 with a <response> per member that failed, and a
+/// complete one answers 204. The status went to errorFor(), where 207 is
+/// unconditional success, and the body was never read -- so remove(dir, true)
+/// answered ok with files still on the server. A move built on it then believes
+/// it has deleted a source tree it did not delete. Nextcloud locks files while
+/// it syncs, so this is the ordinary case rather than an exotic one.
+void TestWebdavFileSystem::aDeleteTheServerOnlyHalfDidIsAFailureThatNamesTheMember()
+{
+    ScriptedHttpServer server([](const ScriptedHttpServer::Request& request) {
+        ScriptedHttpServer::Reply reply;
+        if (request.method == "PROPFIND") {
+            reply.status = 207;
+            reply.reason = "Multi-Status";
+            reply.headers.append("Content-Type: application/xml; charset=utf-8");
+            reply.body = aCollectionAt("/dav/work/");
+            return reply;
+        }
+        // The delete: everything but one file went, and that one is locked.
+        reply.status = 207;
+        reply.reason = "Multi-Status";
+        reply.headers.append("Content-Type: application/xml; charset=utf-8");
+        reply.body = "<?xml version=\"1.0\"?>\n"
+                     "<d:multistatus xmlns:d=\"DAV:\">\n"
+                     "  <d:response><d:href>/dav/work/ledger.ods</d:href>\n"
+                     "    <d:status>HTTP/1.1 423 Locked</d:status></d:response>\n"
+                     "</d:multistatus>";
+        return reply;
+    });
+    QVERIFY(server.start());
+
+    WebdavFileSystem fileSystem(QStringLiteral("webdav"), against(server));
+    const Result<void> removed
+        = fileSystem.remove(VfsUri(QStringLiteral("webdav"), QString(), QStringLiteral("/work")), true);
+
+    QVERIFY2(!removed.ok(), "a delete the server said it did not finish was reported as done");
+    QVERIFY2(
+        removed.error().message.contains(QStringLiteral("ledger.ods")), qPrintable(removed.error().message));
+    QCOMPARE(removed.error().code, VfsError::AccessDenied);
+}
+
+/// 409 on MOVE is a missing parent, not an occupied name.
+///
+/// rename() mapped 412 and 409 alike to AlreadyExists. 412 really is the name
+/// being taken -- it is what `Overwrite: F` answers -- but RFC 4918 §9.9.4 gives
+/// 409 for a destination whose parent collection does not exist. errorFor()
+/// already says NotFound for a 409 on MKCOL and PUT, so the backend was
+/// disagreeing with its own transport, and a rename into a folder somebody had
+/// deleted came back as "already exists".
+void TestWebdavFileSystem::aMoveRefusedWithA409IsAMissingParentAndNotANameClash()
+{
+    ScriptedHttpServer server([](const ScriptedHttpServer::Request& request) {
+        ScriptedHttpServer::Reply reply;
+        if (request.method == "PROPFIND") {
+            reply.status = 207;
+            reply.reason = "Multi-Status";
+            reply.headers.append("Content-Type: application/xml; charset=utf-8");
+            reply.body = aCollectionAt("/dav/notes.txt");
+            return reply;
+        }
+        reply.status = 409;
+        reply.reason = "Conflict";
+        return reply;
+    });
+    QVERIFY(server.start());
+
+    WebdavFileSystem fileSystem(QStringLiteral("webdav"), against(server));
+    const Result<void> renamed
+        = fileSystem.rename(VfsUri(QStringLiteral("webdav"), QString(), QStringLiteral("/notes.txt")),
+            VfsUri(QStringLiteral("webdav"), QString(), QStringLiteral("/gone/notes.txt")));
+
+    QVERIFY(!renamed.ok());
+    QCOMPARE(renamed.error().code, VfsError::NotFound);
+}
+
+/// The folder that listed itself as its own child.
+///
+/// Depth 1 answers with the collection and its members, and the collection was
+/// recognised by comparing its href with the path we asked about. A server
+/// answering under another name -- a reverse proxy rewrite, or Nextcloud's
+/// /remote.php/dav/files/<user> where the request went to /remote.php/webdav --
+/// never matches, so the folder appears inside itself and going into it goes
+/// nowhere.
+void TestWebdavFileSystem::aCollectionAnsweringUnderAnAliasDoesNotListItselfAsItsOwnChild()
+{
+    ScriptedHttpServer server([](const ScriptedHttpServer::Request&) {
+        ScriptedHttpServer::Reply reply;
+        reply.status = 207;
+        reply.reason = "Multi-Status";
+        reply.headers.append("Content-Type: application/xml; charset=utf-8");
+        // Asked about /dav/work; answered about /remote.php/dav/files/someone/work.
+        reply.body = "<?xml version=\"1.0\"?>\n"
+                     "<d:multistatus xmlns:d=\"DAV:\">\n"
+                     "  <d:response><d:href>/remote.php/dav/files/someone/work/</d:href>\n"
+                     "    <d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop>\n"
+                     "    <d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>\n"
+                     "  <d:response><d:href>/remote.php/dav/files/someone/work/ledger.ods</d:href>\n"
+                     "    <d:propstat><d:prop><d:resourcetype/><d:getcontentlength>12</d:getcontentlength>\n"
+                     "    </d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>\n"
+                     "</d:multistatus>";
+        return reply;
+    });
+    QVERIFY(server.start());
+
+    WebdavFileSystem fileSystem(QStringLiteral("webdav"), against(server));
+    const Result<FileEntryList> listing = fileSystem.list(
+        VfsUri(QStringLiteral("webdav"), QString(), QStringLiteral("/work")), CancelToken());
+
+    QVERIFY2(listing.ok(), qPrintable(listing.error().message));
+    QCOMPARE(listing.value().size(), 1);
+    QCOMPARE(listing.value().first().name, QStringLiteral("ledger.ods"));
 }
 
 void TestWebdavFileSystem::anAbsoluteUrlHrefIsReducedToItsPath()

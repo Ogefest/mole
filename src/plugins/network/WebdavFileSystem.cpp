@@ -29,6 +29,97 @@ namespace {
   </prop>
 </propfind>)";
 
+    /// What a 207 to DELETE or MOVE is really saying.
+    ///
+    /// COPY answers the same way and this backend does not send one yet; when it
+    /// does, it goes through here too.
+    ///
+    /// 207 is unconditional success in errorFor(), which is right for PROPFIND
+    /// and the opposite here. RFC 4918 §9.6.1 and §9.9.4: an operation that
+    /// could not finish for some members of a collection answers 207 with a
+    /// `<response>` per member that failed, and one that finished answers 204 or
+    /// 201. So the body is the list of things that did *not* happen, and it was
+    /// never read -- remove(dir, true) answered ok with files still on the
+    /// server, and a move built on it believed it had deleted a source tree it
+    /// had not. Nextcloud locks files while it syncs, so this is ordinary rather
+    /// than exotic. See MOLE-345.
+    ///
+    /// A member that came back 2xx is left alone rather than the whole 207 being
+    /// failed: servers do exist that answer 207 with every member succeeding
+    /// where the RFC would have them send 204, and refusing those would be
+    /// trading one wrong answer for another.
+    VfsError whatTheMultiStatusRefused(const net::Response& response, const QString& what)
+    {
+        if (response.code != CURLE_OK || response.status != 207)
+            return VfsError::ok();
+
+        QList<net::WebdavEntry> members;
+        QString parseError;
+        if (!net::parseMultistatus(response.body, &members, &parseError)) {
+            // A 207 nobody can read is not a success either. The server had
+            // something to say about what it did not do, and this is the one
+            // status where saying nothing back would be inventing an answer.
+            return VfsError::make(VfsError::IoError,
+                QStringLiteral("%1: the server answered 207 and its reply could not be read: %2")
+                    .arg(what, parseError));
+        }
+
+        for (const net::WebdavEntry& member : members) {
+            if (member.status == 0 || (member.status >= 200 && member.status < 300))
+                continue;
+
+            // Through the same table every other status goes through, so a
+            // locked member reads the way a locked file reads anywhere else.
+            net::Response asItsOwn;
+            asItsOwn.status = member.status;
+            const VfsError failed
+                = net::errorFor(asItsOwn, QStringLiteral("%1: %2").arg(what, net::nameFromPath(member.path)));
+            if (failed.isError())
+                return failed;
+        }
+        return VfsError::ok();
+    }
+
+    /// Which response in a depth-1 answer is the collection itself.
+    ///
+    /// Comparing the href with the path that was asked about is right until the
+    /// server answers under another name -- a reverse proxy rewrite, or
+    /// Nextcloud's /remote.php/dav/files/<user> where the request went to
+    /// /remote.php/webdav. Then nothing matches, the collection is taken for a
+    /// member, and the folder lists itself as its own child for ever.
+    ///
+    /// So the name is tried first, and behind it stands the shape of the answer
+    /// rather than its spelling: a member's href is the collection's plus one
+    /// segment, so the one entry every other sits under is the collection,
+    /// whatever it is called. An answer that is not that shape gets no self row
+    /// at all, which is the same as saying nothing rather than guessing.
+    int indexOfSelf(const QList<net::WebdavEntry>& entries, const QString& asked)
+    {
+        for (int i = 0; i < entries.size(); ++i) {
+            if (net::withoutTrailingSlash(entries.at(i).path) == asked)
+                return i;
+        }
+
+        int shortest = -1;
+        for (int i = 0; i < entries.size(); ++i) {
+            if (shortest < 0
+                || net::withoutTrailingSlash(entries.at(i).path).size()
+                    < net::withoutTrailingSlash(entries.at(shortest).path).size())
+                shortest = i;
+        }
+        if (shortest < 0)
+            return -1;
+
+        const QString parent = net::withoutTrailingSlash(entries.at(shortest).path);
+        for (int i = 0; i < entries.size(); ++i) {
+            if (i == shortest)
+                continue;
+            if (!net::withoutTrailingSlash(entries.at(i).path).startsWith(parent + QLatin1Char('/')))
+                return -1;
+        }
+        return shortest;
+    }
+
 } // namespace
 
 QString WebdavSettings::origin() const
@@ -165,18 +256,19 @@ Result<FileEntryList> WebdavFileSystem::list(const VfsUri& dir, const CancelToke
     if (!answer.ok())
         return Result<FileEntryList>(answer.error());
 
-    const QString self = net::withoutTrailingSlash(remotePath(dir));
-
     // Depth 1 includes the collection itself. Finding it is also the only way to
     // learn that the target is a file: a PROPFIND on a file answers with exactly
     // one entry, itself, which would otherwise read as an empty directory.
+    const QList<net::WebdavEntry>& responses = answer.value();
+    const int self = indexOfSelf(responses, net::withoutTrailingSlash(remotePath(dir)));
+
     bool selfIsCollection = false;
     bool sawSelf = false;
     FileEntryList entries;
 
-    for (const net::WebdavEntry& entry : answer.value()) {
-        const QString path = net::withoutTrailingSlash(entry.path);
-        if (path == self) {
+    for (int i = 0; i < responses.size(); ++i) {
+        const net::WebdavEntry& entry = responses.at(i);
+        if (i == self) {
             sawSelf = true;
             selfIsCollection = entry.isCollection;
             continue;
@@ -273,7 +365,10 @@ Result<void> WebdavFileSystem::remove(const VfsUri& target, bool recursive)
     call.method = "DELETE";
     call.url = urlFor(target);
     const net::Response response = send(call, CancelToken());
-    const VfsError error = net::errorFor(response, QStringLiteral("Deleting %1").arg(target.path()));
+    const QString deleting = QStringLiteral("Deleting %1").arg(target.path());
+    if (const VfsError refused = whatTheMultiStatusRefused(response, deleting); refused.isError())
+        return Result<void>(refused);
+    const VfsError error = net::errorFor(response, deleting);
     if (error.isError())
         return Result<void>(error);
     return {};
@@ -293,12 +388,22 @@ Result<void> WebdavFileSystem::rename(const VfsUri& from, const VfsUri& to)
     call.headers.append({ QByteArray("Overwrite"), QByteArray("F") });
 
     const net::Response response = send(call, CancelToken());
-    if (response.code == CURLE_OK && (response.status == 412 || response.status == 409)) {
+    // 412 is the name being taken: it is what `Overwrite: F` answers, and there
+    // is nothing else it can mean here. 409 used to be treated the same way and
+    // is not the same thing -- RFC 4918 §9.9.4 gives it for a destination whose
+    // parent collection does not exist, which is what errorFor() already says
+    // for a 409 on MKCOL and PUT. So a rename into a folder somebody had deleted
+    // came back as "already exists" from the one method that disagreed with its
+    // own transport. See MOLE-345.
+    if (response.code == CURLE_OK && response.status == 412) {
         return Result<void>::failure(
             VfsError::AlreadyExists, QStringLiteral("%1 already exists").arg(to.path()));
     }
 
-    const VfsError error = net::errorFor(response, QStringLiteral("Renaming %1").arg(from.path()));
+    const QString what = QStringLiteral("Renaming %1").arg(from.path());
+    if (const VfsError refused = whatTheMultiStatusRefused(response, what); refused.isError())
+        return Result<void>(refused);
+    const VfsError error = net::errorFor(response, what);
     if (error.isError())
         return Result<void>(error);
     return {};

@@ -65,6 +65,9 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-345 A WebDAV delete or move that the server only half did is reported as such, instead of as done
+2026-09-04 #MOLE-345 Renaming into a folder that is not there says so, instead of "already exists"
+2026-09-04 #MOLE-345 A WebDAV folder whose server answers under another address no longer lists itself as its own child
 2026-09-04 #MOLE-348 A streamed download notices when the file changed underneath it, instead of handing back the first half of one file and the second half of another
 2026-09-04 #MOLE-336 A sync says when a name is a file on one side and a folder on the other, instead of replacing one with the other or failing once per file inside it
 2026-09-04 #MOLE-336 Writing a file where a folder stands is refused on every drive, instead of the folder being removed to make room
