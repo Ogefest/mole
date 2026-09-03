@@ -354,6 +354,10 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     // The mount table is the source of truth; the bus just broadcasts it so
     // views do not have to know about VfsManager.
     connect(m_vfs, &VfsManager::mountsChanged, this, [this] { m_events->postMountsChanged(); });
+    // And the question that comes back the other way: somewhere in the window is
+    // pointed at a drive that is not mounted, and connecting one is this object's
+    // job rather than a pane's.
+    connect(m_events, &EventBus::driveNeeded, this, &AppController::arrangeDriveFor);
 
     PluginManager::Destinations destinations;
     destinations.vfs = m_vfs;
@@ -781,6 +785,13 @@ void AppController::finishUnlock(bool ok)
 
     emit credentialsChanged();
     emit drivesChanged();
+
+    // A tab restored onto a drive whose secret was in the store asked for it while
+    // the store was shut, and now it can be built. Nothing is navigated: the pane
+    // kept where it meant to be and comes back on the mount appearing, which is
+    // also what brings a second pane on the same drive back.
+    for (const QString& wanted : std::exchange(m_drivesWanted, QStringList()))
+        prepareDriveFor(wanted);
 
     // And whoever opened a drive to get here is taken there, which is the whole
     // point of asking at that moment rather than at startup.
@@ -1329,6 +1340,28 @@ AppController::DriveReadiness AppController::prepareDriveFor(const QString& uri)
         return DriveReadiness::Failed;
     }
     return DriveReadiness::Ready;
+}
+
+void AppController::arrangeDriveFor(const VfsUri& target)
+{
+    const QString uri = target.toString();
+    switch (prepareDriveFor(uri)) {
+    case DriveReadiness::Ready:
+        // Connected, or there was never a configured drive here -- a mount that
+        // has gone for good, a folder deleted. Either way whoever asked finds out
+        // from the mount table.
+        break;
+    case DriveReadiness::Waiting:
+        // Asked for once, however many tabs are waiting on however many drives:
+        // the store is one store, and every drive behind it comes up together.
+        if (!m_drivesWanted.contains(uri))
+            m_drivesWanted.append(uri);
+        emit credentialsRequested();
+        break;
+    case DriveReadiness::Failed:
+        // prepareDriveFor() has already said so out loud.
+        break;
+    }
 }
 
 bool AppController::goTo(const QString& uri)

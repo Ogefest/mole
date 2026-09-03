@@ -637,6 +637,14 @@ private:
     /// "ask for the passphrase" and "it is broken" is how an unconnected drive
     /// came to look like an empty folder.
     DriveReadiness prepareDriveFor(const QString& uri);
+    /// Arranges a drive for somewhere in the window that is pointed at one and
+    /// found nothing mounted -- a tab restored before its drive was connected.
+    ///
+    /// The same readiness step goTo() uses, and deliberately no navigation:
+    /// whoever asked is waiting on the mount table, not on being taken anywhere,
+    /// and a background tab must not be able to drag the foreground one to its
+    /// own folder. See MOLE-351.
+    void arrangeDriveFor(const VfsUri& target);
     /// The row of the browser tab a tab with no browsing of its own should send
     /// somebody to: the one it opened before, or a new one. Returns -1 when a
     /// browser tab cannot be opened at all.
@@ -702,6 +710,9 @@ private:
     /// Where goTo() was heading when it found the store shut, so unlocking can
     /// finish the journey rather than leaving the user to ask twice.
     QString m_pendingNavigation;
+    /// Drives something in the window is waiting for and could not have, because
+    /// their secrets are in a store that was still shut. Connected once it opens.
+    QStringList m_drivesWanted;
     BookmarkModel* m_bookmarks = nullptr;
     CommandPaletteModel* m_commands = nullptr;
     WindowGeometry m_window;

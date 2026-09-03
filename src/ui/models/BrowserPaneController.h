@@ -195,6 +195,14 @@ private:
     QList<VfsUri> droppedRows(const QStringList& urls, int* alreadyHereOut = nullptr) const;
 
     void load(const VfsUri& uri, bool recordHistory);
+    /// Tries the location again, if the pane is sitting on one no drive answered
+    /// for and a drive now does.
+    ///
+    /// **This is what makes a tab restored before its drive was connected come
+    /// back by itself.** Nothing navigates it: the pane kept where it meant to
+    /// be, and the mount appearing -- from the sidebar, from an unlocked store,
+    /// from another pane -- is the event that retries it. See MOLE-351.
+    void retryIfADriveArrived();
     /// Asks the drive what it can do to the row under the cursor, on a worker.
     /// Cheap to call: a drive that has nothing to offer answers with nothing,
     /// and an answer for a row the cursor has already left is dropped.
@@ -272,6 +280,9 @@ private:
     FileListModel* m_files = nullptr;
     RepositoryInfo* m_repository = nullptr;
     VfsUri m_current;
+    /// Where the pane is pointed but could not list, because nothing is mounted
+    /// for it. Invalid whenever the location did resolve.
+    VfsUri m_waitingForADrive;
     QStringList m_history;
     int m_historyIndex = -1;
     int m_currentIndex = -1;

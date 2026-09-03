@@ -40,6 +40,15 @@ public:
 
     /// The set of mounted drives changed.
     void postMountsChanged();
+    /// Somewhere in the window is pointed at `target` and no drive is mounted for
+    /// it.
+    ///
+    /// The question rather than the answer: whoever can arrange a mount for it --
+    /// connect a configured drive, ask for the passphrase its secret is behind --
+    /// answers, and whoever was waiting finds out the ordinary way, by the mount
+    /// table changing. A pane restored before its drive was connected is the case
+    /// this exists for. See MOLE-351.
+    void postDriveNeeded(const VfsUri& target);
     /// The contents of `directory` changed and open views should refresh.
     void postDirectoryChanged(const VfsUri& directory);
     /// A file or directory was created, removed or renamed.
@@ -65,6 +74,7 @@ public:
 
 signals:
     void mountsChanged();
+    void driveNeeded(const mole::VfsUri& target);
     void directoryChanged(const mole::VfsUri& directory);
     void entryCreated(const mole::VfsUri& entry);
     void entryRemoved(const mole::VfsUri& entry);

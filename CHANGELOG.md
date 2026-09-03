@@ -65,6 +65,8 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-03 #MOLE-351 A tab restored before its drive is connected keeps its place and comes back when the drive does
+2026-09-03 #MOLE-351 Going back into an archive after leaving it opens it again, instead of showing an empty folder
 2026-09-03 #MOLE-350 A session survives a launch where a plugin failed to load, and `mole --plugins` leaves it alone instead of rewriting it
 2026-09-03 #MOLE-386 The console runner can create archives in the released builds, instead of reporting that libarchive was not found
 2026-09-03 #MOLE-371 An indexed search filtered by date is answered by the index itself, and one that stopped at the row limit says so instead of reading as complete

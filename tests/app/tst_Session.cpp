@@ -8,6 +8,8 @@
 #include "ui/models/TabsModel.h"
 
 #include "core/CoreMetaTypes.h"
+#include "core/vfs/VfsManager.h"
+#include "core/vfs/backends/MemoryFileSystem.h"
 
 #include <QDir>
 #include <QFile>
@@ -58,6 +60,7 @@ private slots:
     void aRunThatOpenedNoWindowLeavesTheSessionExactlyAsItWas();
     void aTabOfTheRetiredIndexSearchComesBackAsTheOneSearch();
     void unreachableFolderStillRestoresTheTab();
+    void aTabRestoredBeforeItsDriveIsUpKeepsItsFolder();
 
     void windowSizeIsRemembered();
     void maximisedStateIsRemembered();
@@ -612,6 +615,47 @@ void TestSession::unreachableFolderStillRestoresTheTab()
     BrowserController* restored = browserAt(0);
     QVERIFY(restored);
     QVERIFY(waitFor([restored] { return !restored->activePane()->errorText().isEmpty(); }, 10000));
+}
+
+void TestSession::aTabRestoredBeforeItsDriveIsUpKeepsItsFolder()
+{
+    // Written by hand, because what matters is a session naming a drive that is
+    // not mounted when the tab comes back -- which is what a remote drive whose
+    // secret store is still shut looks like at startup.
+    const QString folder = QStringLiteral("mem://vault/papers");
+    SessionStore store(sessionPath());
+    Session written;
+    written.tabs.append(TabSession { QStringLiteral("mole.browser"),
+        { { QStringLiteral("left"), folder }, { QStringLiteral("right"), folder } } });
+    written.currentIndex = 0;
+    QVERIFY(store.save(written));
+
+    startApp();
+    BrowserController* browser = browserAt(0);
+    QVERIFY(browser);
+    QVERIFY(waitFor([browser] { return !browser->activePane()->errorText().isEmpty(); }));
+
+    // No listing, but the pane knows where it meant to be -- so this is what gets
+    // written back out rather than an empty string.
+    QCOMPARE(browser->activePane()->currentUri(), folder);
+    m_app->saveSessionNow();
+
+    // The drive arrives: somebody unlocked the store, or connected it from the
+    // sidebar. The tab comes back on its own.
+    auto vault = std::make_shared<MemoryFileSystem>();
+    vault->addFile(QStringLiteral("/papers/deed.txt"), QByteArray("kept"));
+    Mount mount;
+    mount.displayName = QStringLiteral("vault");
+    mount.root = VfsUri::fromString(QStringLiteral("mem://vault/"));
+    mount.fileSystem = vault;
+    QVERIFY(!m_app->services().vfs->addMount(mount).isEmpty());
+    QVERIFY(waitFor([browser] { return browser->activePane()->files()->rowCount() == 1; }));
+
+    restartApp();
+
+    QCOMPARE(m_app->tabs()->rowCount(), 1);
+    QVERIFY(browserAt(0));
+    QCOMPARE(browserAt(0)->activePane()->currentUri(), folder);
 }
 
 void TestSession::windowSizeIsRemembered()

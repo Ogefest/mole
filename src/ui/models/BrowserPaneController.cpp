@@ -55,6 +55,14 @@ BrowserPaneController::BrowserPaneController(PluginServices services, QObject* p
     connect(
         m_gitWatcher, &QFileSystemWatcher::fileChanged, this, [this](const QString&) { invalidateStatus(); });
 
+    // Straight from the mount table rather than through the EventBus: mounts are
+    // added and removed on this thread, and a pane whose drive has just arrived
+    // should be listing it in the same turn the sidebar starts showing it.
+    if (m_services.vfs) {
+        connect(
+            m_services.vfs, &VfsManager::mountsChanged, this, &BrowserPaneController::retryIfADriveArrived);
+    }
+
     // Every write Mole performs already says so here, including its own copies and
     // deletes, so there is one place to listen rather than a hook per operation.
     if (m_services.events) {
@@ -68,6 +76,17 @@ BrowserPaneController::BrowserPaneController(PluginServices services, QObject* p
                 noteWrittenInto(to);
             });
     }
+}
+
+void BrowserPaneController::retryIfADriveArrived()
+{
+    if (!m_waitingForADrive.isValid() || m_waitingForADrive != m_current)
+        return;
+    // Some other drive's mount changed. Asked rather than attempted, so a pane
+    // waiting on a drive nobody is connecting does not re-list on every mount.
+    if (!m_services.vfs || !m_services.vfs->resolve(m_waitingForADrive))
+        return;
+    load(m_current, false);
 }
 
 void BrowserPaneController::noteWrittenInto(const VfsUri& path)
@@ -350,13 +369,6 @@ void BrowserPaneController::navigateTo(const QString& uri)
         setErrorText(QStringLiteral("Not a valid location: %1").arg(uri));
         return;
     }
-    // Every way into a place goes through here -- a back step, a bookmark, a
-    // breadcrumb, a restored tab -- so this is where an archive whose mount went
-    // away while nobody was inside it comes back. A no-op for anything that still
-    // has a mount, and for every backend whose root cannot rebuild itself. See
-    // Mount::unlisted and MOLE-310.
-    if (m_services.vfs)
-        m_services.vfs->remountFor(target);
     load(target, true);
 }
 
@@ -868,13 +880,19 @@ void BrowserPaneController::load(const VfsUri& uri, bool recordHistory)
     if (m_pending)
         m_pending->requestCancel();
 
-    FileSystemPtr fs = m_services.vfs->resolve(uri);
-    if (!fs) {
-        setErrorText(QStringLiteral("No drive is mounted for %1").arg(uri.toString()));
-        m_files->clear();
-        return;
-    }
+    // Cleared before the mount is rebuilt below: rebuilding one announces itself,
+    // and a pane that is still marked as waiting would answer that announcement by
+    // starting this load a second time from inside itself.
+    m_waitingForADrive = VfsUri();
 
+    // Where the pane means to be, recorded before a drive is asked anything.
+    //
+    // **A location no drive answers for is still the pane's location.** It is what
+    // the path bar shows, what Refresh retries, and what the session file keeps --
+    // and a pane that forgot it instead had no way back: a tab restored before its
+    // drive was connected went to the start folder, saved that over the remembered
+    // one on the next debounce, and connecting the drive afterwards brought nothing
+    // back. See MOLE-351.
     m_current = uri;
     // What the drive said about the folder being left says nothing about the one
     // arriving, and a re-listing of this one has to ask again rather than draw
@@ -895,6 +913,31 @@ void BrowserPaneController::load(const VfsUri& uri, bool recordHistory)
     // handful of reference reads, and a folder with fifty thousand files in it
     // should not hold the one fact that is already known.
     readRepository();
+
+    // Every way into a place comes through here -- a back step, a bookmark, a
+    // breadcrumb, a restored tab, Refresh -- so this is where an archive whose
+    // mount went away while nobody was inside it comes back. A no-op for anything
+    // that still has a mount, and for every backend whose root cannot rebuild
+    // itself. It sits here rather than in navigateTo() because goBack(),
+    // goForward(), goUp() and refresh() call load() directly, and a back step is
+    // one of the three things the rebuild exists for. See Mount::unlisted,
+    // ADR-0083 and MOLE-310.
+    if (m_services.vfs)
+        m_services.vfs->remountFor(uri);
+
+    FileSystemPtr fs = m_services.vfs->resolve(uri);
+    if (!fs) {
+        setErrorText(QStringLiteral("No drive is mounted for %1").arg(uri.toString()));
+        m_files->clear();
+        // Nobody else knows this pane wanted a drive. Said out loud so whoever can
+        // arrange one does -- connecting a configured drive is AppController's job
+        // and asking for a passphrase is the user's -- and remembered so the pane
+        // retries by itself when a mount appears, whoever caused it.
+        m_waitingForADrive = uri;
+        if (m_services.events)
+            m_services.events->postDriveNeeded(uri);
+        return;
+    }
 
     setErrorText({});
     setLoading(true);

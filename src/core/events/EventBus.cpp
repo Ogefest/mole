@@ -28,6 +28,11 @@ void EventBus::postMountsChanged()
     dispatch([this] { emit mountsChanged(); });
 }
 
+void EventBus::postDriveNeeded(const VfsUri& target)
+{
+    dispatch([this, target] { emit driveNeeded(target); });
+}
+
 void EventBus::postDirectoryChanged(const VfsUri& directory)
 {
     dispatch([this, directory] { emit directoryChanged(directory); });

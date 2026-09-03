@@ -11,6 +11,7 @@
 #include "core/vcs/ReadRepositoryTask.h"
 #include "core/vcs/ReadStatusTask.h"
 #include "core/vcs/Repository.h"
+#include "core/vfs/IFileSystemFactory.h"
 #include "core/vfs/VfsManager.h"
 #include "core/vfs/backends/LocalFileSystem.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
@@ -24,6 +25,39 @@
 
 using namespace mole;
 using namespace mole::test;
+
+namespace {
+
+/// A drive whose root uri carries everything needed to build it again, the way a
+/// mounted archive's does: the authority stands in for the file's path.
+///
+/// Registered so remountFor() has something to rebuild here, without this suite
+/// needing libarchive -- what is under test is that a back step asks for the
+/// rebuild at all, and the factory seam is exactly where it asks.
+class PouchFactory final : public IFileSystemFactory
+{
+public:
+    QString scheme() const override { return QStringLiteral("pouch"); }
+    QString displayName() const override { return QStringLiteral("Pouch"); }
+
+    FileSystemPtr create(const QVariantMap& config, QString* errorOut) override
+    {
+        Q_UNUSED(config)
+        Q_UNUSED(errorOut)
+        auto inside = std::make_shared<MemoryFileSystem>();
+        inside->addFile(QStringLiteral("/packed.txt"), QByteArray("still here"));
+        return inside;
+    }
+
+    QVariantMap configForRoot(const VfsUri& root) const override
+    {
+        return root.scheme() == QLatin1String("pouch")
+            ? QVariantMap { { QStringLiteral("authority"), root.authority() } }
+            : QVariantMap {};
+    }
+};
+
+} // namespace
 
 class TestBrowserPaneController : public QObject
 {
@@ -108,6 +142,10 @@ private slots:
     void goingUpLandsOnTheFolderJustLeft();
     void goingBackRestoresTheCursor();
     void aForgottenEntryFallsBackToTheFirstRow();
+
+    void aLocationWithNoDriveKeepsItsPathAndRefreshRetriesIt();
+    void aPaneWaitingForADriveComesBackWhenItArrives();
+    void goingBackIntoADriveWhoseMountWasPrunedRebuildsIt();
 
 private:
     BrowserPaneController* makePane();
@@ -1989,6 +2027,88 @@ void TestBrowserPaneController::aForgottenEntryFallsBackToTheFirstRow()
     QVERIFY(waitFor([pane] { return pane->currentUri() == QStringLiteral("mem:///docs"); }));
     QVERIFY(waitFor([pane] { return pane->files()->rowCount() == 1; }));
     QCOMPARE(pane->currentIndex(), 0);
+}
+
+// ------------------------------------------------- a drive that is not there yet
+
+void TestBrowserPaneController::aLocationWithNoDriveKeepsItsPathAndRefreshRetriesIt()
+{
+    BrowserPaneController* pane = makePane();
+    // A tab restored before its drive was connected: nothing is mounted for this
+    // authority, so no listing can happen.
+    pane->navigateTo(QStringLiteral("mem://later/docs"));
+    QVERIFY(!pane->errorText().isEmpty());
+
+    // The pane still knows where it meant to be. That is what keeps the folder in
+    // the session file, and what gives Refresh something to retry.
+    QCOMPARE(pane->currentUri(), QStringLiteral("mem://later/docs"));
+    QCOMPARE(pane->files()->rowCount(), 0);
+
+    auto late = std::make_shared<MemoryFileSystem>();
+    late->addFile(QStringLiteral("/docs/late.txt"), QByteArray("here now"));
+    Mount mount;
+    mount.displayName = QStringLiteral("later");
+    mount.root = VfsUri::fromString(QStringLiteral("mem://later/"));
+    mount.fileSystem = late;
+    QVERIFY(!m_vfs->addMount(mount).isEmpty());
+
+    pane->refresh();
+    QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() == 1; }));
+    QVERIFY(pane->errorText().isEmpty());
+    QCOMPARE(pane->currentUri(), QStringLiteral("mem://later/docs"));
+}
+
+void TestBrowserPaneController::aPaneWaitingForADriveComesBackWhenItArrives()
+{
+    BrowserPaneController* pane = makePane();
+    pane->navigateTo(QStringLiteral("mem://later/docs"));
+    QVERIFY(!pane->errorText().isEmpty());
+
+    // Nobody tells the pane to try again: the drive arriving is what does it,
+    // which is what makes connecting it from the sidebar bring the tab back.
+    auto late = std::make_shared<MemoryFileSystem>();
+    late->addFile(QStringLiteral("/docs/late.txt"), QByteArray("here now"));
+    Mount mount;
+    mount.displayName = QStringLiteral("later");
+    mount.root = VfsUri::fromString(QStringLiteral("mem://later/"));
+    mount.fileSystem = late;
+    QVERIFY(!m_vfs->addMount(mount).isEmpty());
+
+    QVERIFY(waitFor([pane] { return pane->files()->rowCount() == 1; }));
+    QVERIFY(pane->errorText().isEmpty());
+}
+
+void TestBrowserPaneController::goingBackIntoADriveWhoseMountWasPrunedRebuildsIt()
+{
+    m_vfs->registerFactory(std::make_unique<PouchFactory>());
+
+    // Mounted the way activating an archive mounts one: unlisted, and pruned when
+    // the last reader leaves it.
+    PouchFactory factory;
+    Mount mount;
+    mount.displayName = QStringLiteral("reports");
+    mount.root = VfsUri::fromString(QStringLiteral("pouch://reports/"));
+    mount.fileSystem = factory.create({}, nullptr);
+    mount.unlisted = true;
+    const QString id = m_vfs->addMount(mount);
+    QVERIFY(!id.isEmpty());
+
+    BrowserPaneController* pane = paneOn(QStringLiteral("pouch://reports/"));
+    QVERIFY(pane);
+    QCOMPARE(pane->files()->rowCount(), 1);
+    const QString inside = pane->currentUri();
+
+    pane->navigateTo(QStringLiteral("mem:///docs"));
+    QVERIFY(waitFor([pane] { return pane->currentUri() == QStringLiteral("mem:///docs"); }));
+    m_vfs->removeMount(id);
+    QVERIFY(!m_vfs->resolve(VfsUri::fromString(inside)));
+
+    // A back step is one of the three things remountFor() exists for -- see
+    // ADR-0083 -- and goBack() does not go through navigateTo().
+    pane->goBack();
+    QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() == 1; }));
+    QCOMPARE(pane->currentUri(), inside);
+    QVERIFY(pane->errorText().isEmpty());
 }
 
 MOLE_TEST_MAIN(TestBrowserPaneController)
