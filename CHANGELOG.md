@@ -65,6 +65,9 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-03 #MOLE-349 An FTP drive works on an account whose home is not the server root, instead of listing one place and deleting from another
+2026-09-03 #MOLE-349 An FTP listing a server writes in its own format is read where possible and reported where not, instead of showing an empty folder
+2026-09-03 #MOLE-349 An FTP password no longer appears in the session log when curl tracing is turned on, and TLS verification can be set from the drive form
 2026-09-03 #MOLE-357 A damaged or hostile image, video or audio file cannot crash the details panel by lying about a length
 2026-09-03 #MOLE-408 An operation on a filtered set acts on the rows the filter left, instead of on every member the set holds
 2026-09-03 #MOLE-339 A delete removes exactly the files the confirmation listed, even if the folder changed or a tick moved while the question was on screen

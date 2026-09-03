@@ -74,7 +74,21 @@ QByteArray FtpFileSystem::urlFor(const VfsUri& uri, bool asDirectory) const
     url += m_settings.host.toUtf8();
     url += ':';
     url += QByteArray::number(m_settings.port);
-    url += net::encodePath(remotePath(uri));
+
+    // `/%2F` first, because libcurl implements RFC 1738 for FTP: a path in the
+    // URL is a sequence of CWDs **relative to the login directory**, and an
+    // absolute path has to be spelled with an escaped slash. The QUOTE commands
+    // beside these urls -- MKD, DELE, RMD, RNFR/RNTO -- carry the absolute path,
+    // so the two agreed only while the login directory happened to be "/". That
+    // is true of the chrooted account the live suite uses and false of an
+    // ordinary one whose home is /home/alice: the listing showed
+    // /home/alice/notes.txt, `DELE /notes.txt` went for the root's, and
+    // commitPartialWrite()'s rename failed at the end of every upload -- so every
+    // upload was removed as litter. See MOLE-349.
+    const QString path = remotePath(uri);
+    url += "/%2F";
+    if (path.size() > 1)
+        url += net::encodePath(path.mid(1));
     if (asDirectory && !url.endsWith('/'))
         url += '/';
     return url;
@@ -101,27 +115,86 @@ void FtpFileSystem::applySettings(const net::CurlPool::Lease& lease) const
     curl_easy_setopt(handle, CURLOPT_FTP_CREATE_MISSING_DIRS, 0L);
 }
 
-Result<FileEntryList> FtpFileSystem::listRaw(const VfsUri& dir, const CancelToken& cancel)
+net::Response FtpFileSystem::fetchListing(const VfsUri& dir, const CancelToken& cancel, bool machineReadable)
 {
     auto lease = m_pool->take();
     if (!lease) {
-        return Result<FileEntryList>::failure(
-            VfsError::IoError, QStringLiteral("Could not start an FTP transfer"));
+        net::Response failed;
+        failed.code = CURLE_FAILED_INIT;
+        failed.detail = QStringLiteral("could not start an FTP transfer");
+        return failed;
     }
 
-    const QByteArray url = urlFor(dir, true);
-    lease.setUrl(url);
+    lease.setUrl(urlFor(dir, true));
+    // MLSD instead of LIST. A server that does not know it answers 500 or 502,
+    // which is a reply and not a broken connection, so the caller can try the
+    // human format instead.
+    if (machineReadable)
+        curl_easy_setopt(lease.get(), CURLOPT_CUSTOMREQUEST, "MLSD");
     applySettings(lease);
 
-    const net::Response response = m_pool->perform(lease, cancel);
-    const VfsError error = net::errorFor(
+    net::Response response = m_pool->perform(lease, cancel);
+    if (machineReadable)
+        curl_easy_setopt(lease.get(), CURLOPT_CUSTOMREQUEST, nullptr);
+    return response;
+}
+
+Result<QList<net::ListingRow>> FtpFileSystem::rowsFrom(
+    const QByteArray& body, bool machineReadable, const QDateTime& now)
+{
+    const QList<net::ListingRow> rows
+        = machineReadable ? net::parseMlsdListing(body, now) : net::parseUnixListing(body, now);
+
+    // A body that said something and parsed to nothing is a format this build
+    // does not understand, and the one answer it must not be turned into is "the
+    // directory is empty". That sentence is what a mirror deletes against, and it
+    // is what an IIS server in its default mode -- or any appliance printing its
+    // own thing -- used to produce. An empty body is a different matter: that
+    // really is an empty directory. See MOLE-349.
+    if (rows.isEmpty() && !body.trimmed().isEmpty()) {
+        return Result<QList<net::ListingRow>>::failure(
+            VfsError::IoError, QStringLiteral("the listing format is not understood"));
+    }
+    return Result<QList<net::ListingRow>>(rows);
+}
+
+bool FtpFileSystem::commandIsSendable(const QByteArray& command)
+{
+    return !command.contains('\r') && !command.contains('\n');
+}
+
+Result<FileEntryList> FtpFileSystem::listRaw(const VfsUri& dir, const CancelToken& cancel)
+{
+    // MLSD first. `ls -l` is a format meant for a person to read: its columns are
+    // the server's locale, a date more than six months old carries no year, and
+    // IIS in its default mode prints something else entirely. The parser drops
+    // what it cannot read, so a non-empty listing from any of those became an
+    // empty directory -- which a mirror deletes against and a copy finds nothing
+    // to do. MLSD is machine-readable, in UTC and in no locale, and every server
+    // written this century answers it. See RFC 3659 and MOLE-349.
+    bool wasMachineReadable = true;
+    net::Response response = fetchListing(dir, cancel, true);
+    VfsError error = net::errorFor(
         response, QStringLiteral("Listing %1").arg(dir.path()), net::StatusMeaning::ProtocolReply);
+
+    if (error.isError() && !net::wasCancelled(response)) {
+        wasMachineReadable = false;
+        response = fetchListing(dir, cancel, false);
+        error = net::errorFor(
+            response, QStringLiteral("Listing %1").arg(dir.path()), net::StatusMeaning::ProtocolReply);
+    }
     if (error.isError())
         return Result<FileEntryList>(error);
 
+    const Result<QList<net::ListingRow>> parsed
+        = rowsFrom(response.body, wasMachineReadable, QDateTime::currentDateTime());
+    if (!parsed.ok()) {
+        return Result<FileEntryList>::failure(
+            parsed.error().code, QStringLiteral("Listing %1: %2").arg(dir.path(), parsed.error().message));
+    }
+
     FileEntryList entries;
-    const QDateTime now = QDateTime::currentDateTime();
-    for (const net::ListingRow& row : net::parseUnixListing(response.body, now)) {
+    for (const net::ListingRow& row : parsed.value()) {
         if (net::isDotEntry(row))
             continue;
         FileEntry entry;
@@ -203,6 +276,20 @@ Result<FileEntry> FtpFileSystem::stat(const VfsUri& target)
 Result<void> FtpFileSystem::runCommands(
     const QList<QByteArray>& commands, const VfsUri& context, const QString& what)
 {
+    // A control channel is line-based, so a name carrying CR or LF is a second
+    // command. `DELE a\r\nRMD /` is one file name to a filesystem -- ADR-0070 says
+    // a backend takes the names it is given rather than the ones it likes -- and
+    // two commands to a server. Refused here rather than escaped, because there
+    // is no escape: the protocol has no way to say "this byte is part of the
+    // argument". See MOLE-349.
+    for (const QByteArray& command : commands) {
+        if (!commandIsSendable(command)) {
+            return Result<void>::failure(VfsError::IoError,
+                QStringLiteral("%1: a name with a line break in it cannot be sent to an FTP server")
+                    .arg(what));
+        }
+    }
+
     auto lease = m_pool->take();
     if (!lease)
         return Result<void>::failure(VfsError::IoError, QStringLiteral("Could not start an FTP transfer"));
@@ -471,6 +558,21 @@ QList<ConnectionField> FtpFileSystemFactory::connectionFields() const
     port.required = false;
     port.advanced = true;
     fields.append(port);
+
+    ConnectionField verify;
+    verify.key = QStringLiteral("verifyTls");
+    verify.label = QStringLiteral("Verify the TLS certificate");
+    verify.kind = ConnectionField::Boolean;
+    verify.defaultValue = true;
+    verify.required = false;
+    verify.advanced = true;
+    // Read by settingsFrom() and documented on the settings struct since the
+    // backend was written, with no field to set it from -- so a self-signed FTPS
+    // server could not be reached at all, and the one setting that decides
+    // whether "Require TLS" means anything was unreachable. WebDAV and S3 both
+    // offer it. See MOLE-349.
+    verify.help = QStringLiteral("Turn off only for a server with a self-signed certificate you trust");
+    fields.append(verify);
 
     ConnectionField passive;
     passive.key = QStringLiteral("passive");

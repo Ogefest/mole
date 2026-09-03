@@ -1,6 +1,7 @@
 #pragma once
 
 #include "plugins/network/CurlTransport.h"
+#include "plugins/network/UnixListing.h"
 
 #include "core/vfs/IFileSystem.h"
 #include "core/vfs/IFileSystemFactory.h"
@@ -64,12 +65,33 @@ public:
     Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override;
     Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1) override;
 
+    // The three below are reachable because each is where a fault lived, and each
+    // is a pure function of what it is given -- so each can be held to its rule
+    // by a test that needs no server, which is what none of them had.
+
+    /// The url one request goes to. Absolute, spelled the way RFC 1738 requires
+    /// of FTP: see the definition and MOLE-349.
+    QByteArray urlFor(const VfsUri& uri, bool asDirectory) const;
+
+    /// The rows a listing body yields, or the failure a body that said something
+    /// and parsed to nothing is. Never an empty directory -- that answer is an
+    /// instruction to a mirror, and it is what an unrecognised format used to
+    /// produce.
+    static Result<QList<net::ListingRow>> rowsFrom(
+        const QByteArray& body, bool machineReadable, const QDateTime& now);
+
+    /// Whether a command can be put on a control channel at all. False for one
+    /// carrying CR or LF, because a control channel is line-based and a name with
+    /// a line break in it is a second command.
+    static bool commandIsSendable(const QByteArray& command);
+
 private:
     QString remotePath(const VfsUri& uri) const;
-    QByteArray urlFor(const VfsUri& uri, bool asDirectory) const;
     void applySettings(const net::CurlPool::Lease& lease) const;
 
     Result<FileEntryList> listRaw(const VfsUri& dir, const CancelToken& cancel);
+    /// One listing request. `machineReadable` asks for MLSD rather than LIST.
+    net::Response fetchListing(const VfsUri& dir, const CancelToken& cancel, bool machineReadable);
     /// Runs raw FTP commands against a directory that exists.
     Result<void> runCommands(const QList<QByteArray>& commands, const VfsUri& context, const QString& what);
     /// Sends what `source` hands over, appending to the file rather than

@@ -3,6 +3,7 @@
 #include "support/FileSystemConformance.h"
 #include "support/MoleTestMain.h"
 
+#include <QHash>
 #include <QUrl>
 
 #include <algorithm>
@@ -221,6 +222,10 @@ private slots:
     void anEmptyUserBecomesAnonymous();
     void encryptionDefaultsToTryingTls();
     void theFormAsksOnlyWhatFtpNeeds();
+    void everyUrlNamesAnAbsolutePathTheWayFtpRequires();
+    void aListingNobodyCanParseIsAnErrorRatherThanAnEmptyFolder();
+    void aMachineReadableListingIsReadWithoutGuessing();
+    void aNameWithALineBreakCannotCarryASecondCommand();
     void aWriteStreamsRatherThanStagingTheWholeFile();
     void aLargeReadStreamsRatherThanStagingTheWholeFile();
     void rangedFetchDeliversExactlyTheSpanItAsksFor();
@@ -275,6 +280,153 @@ void TestFtpFileSystem::theFormAsksOnlyWhatFtpNeeds()
     // FTP logs in with a plain-text password, so the encryption choice belongs in
     // front of the user rather than hidden behind "advanced".
     QVERIFY(hasSecurity);
+
+    // And the setting that decides whether "Require TLS" can be met at all.
+    // FtpSettings::verifyTls was read by settingsFrom() and documented at length
+    // with no field to set it from, so a self-signed FTPS server was unreachable
+    // and nobody could say so. WebDAV and S3 both offer it. See MOLE-349.
+    bool hasVerify = false;
+    for (const ConnectionField& field : fields)
+        hasVerify = hasVerify || field.key == QLatin1String("verifyTls");
+    QVERIFY2(hasVerify, "the certificate check has to be settable from the form");
+
+    QVERIFY(
+        FtpFileSystemFactory::settingsFrom({ { QStringLiteral("host"), QStringLiteral("h") } }).verifyTls);
+    QVERIFY(!FtpFileSystemFactory::settingsFrom(
+        { { QStringLiteral("host"), QStringLiteral("h") }, { QStringLiteral("verifyTls"), false } })
+                 .verifyTls);
+}
+
+/// Two addressing schemes, one drive.
+///
+/// libcurl implements RFC 1738 for FTP: a path in the url is a sequence of CWDs
+/// *relative to the login directory*, and an absolute path is spelled with an
+/// escaped slash. The QUOTE commands beside these urls -- MKD, DELE, RMD,
+/// RNFR/RNTO -- carry the absolute path, so the two agreed only while the login
+/// directory happened to be "/". That is true of the chrooted account the live
+/// suite uses, which is why it never showed there, and false of an ordinary user
+/// whose home is /home/alice: the listing showed /home/alice/notes.txt while
+/// `DELE /notes.txt` went for the root's, and every upload's closing rename
+/// failed -- so every upload was removed as litter. See MOLE-349.
+void TestFtpFileSystem::everyUrlNamesAnAbsolutePathTheWayFtpRequires()
+{
+    FtpSettings settings;
+    settings.host = QStringLiteral("ftp.example.com");
+    settings.port = 21;
+    FtpFileSystem drive(QStringLiteral("ftp"), settings);
+
+    const VfsUri file(QStringLiteral("ftp"), QString(), QStringLiteral("/x"));
+    QCOMPARE(drive.urlFor(file, false), QByteArray("ftp://ftp.example.com:21/%2Fx"));
+
+    const VfsUri deeper(QStringLiteral("ftp"), QString(), QStringLiteral("/home/alice/notes.txt"));
+    QCOMPARE(drive.urlFor(deeper, false), QByteArray("ftp://ftp.example.com:21/%2Fhome/alice/notes.txt"));
+
+    // A directory ends in a slash, which is what tells curl to CWD into it
+    // rather than to fetch a file of that name.
+    const VfsUri folder(QStringLiteral("ftp"), QString(), QStringLiteral("/home/alice"));
+    QCOMPARE(drive.urlFor(folder, true), QByteArray("ftp://ftp.example.com:21/%2Fhome/alice/"));
+
+    // And the drive root, which is the case where there is nothing after the
+    // escaped slash at all.
+    const VfsUri root(QStringLiteral("ftp"), QString(), QStringLiteral("/"));
+    QCOMPARE(drive.urlFor(root, true), QByteArray("ftp://ftp.example.com:21/%2F/"));
+
+    // A configured root is part of the absolute path and not a second scheme.
+    settings.remoteRoot = QStringLiteral("/srv/share");
+    FtpFileSystem rooted(QStringLiteral("ftp"), settings);
+    QCOMPARE(rooted.urlFor(file, false), QByteArray("ftp://ftp.example.com:21/%2Fsrv/share/x"));
+}
+
+/// "This directory is empty" is an instruction to a mirror.
+///
+/// The listing parser drops every row that does not look like a Unix `ls -l`
+/// line, and the survivors were the directory. IIS in its default DOS format, a
+/// server configured in another locale, or any appliance printing its own thing
+/// therefore parsed to zero rows from a body full of files -- and a sync saw
+/// nothing to copy, a delete found nothing, and a mirror had a list of things to
+/// remove. A body that said something and yielded nothing is a format this build
+/// does not understand, which is a different sentence. See MOLE-349.
+void TestFtpFileSystem::aListingNobodyCanParseIsAnErrorRatherThanAnEmptyFolder()
+{
+    const QDateTime now = QDateTime::currentDateTime();
+
+    // What IIS prints unless it is told otherwise.
+    const QByteArray dos = "01-23-24  10:15AM       <DIR>          reports\r\n"
+                           "01-23-24  10:16AM               1024 notes.txt\r\n";
+    const Result<QList<net::ListingRow>> refused = FtpFileSystem::rowsFrom(dos, false, now);
+    QVERIFY2(!refused.ok(), "a listing in a format this build cannot read is not an empty directory");
+    QCOMPARE(refused.error().code, VfsError::IoError);
+
+    // An empty body, on the other hand, really is an empty directory.
+    const Result<QList<net::ListingRow>> empty = FtpFileSystem::rowsFrom(QByteArray(), false, now);
+    QVERIFY2(empty.ok(), "a server that listed nothing listed nothing");
+    QVERIFY(empty.value().isEmpty());
+    QVERIFY(FtpFileSystem::rowsFrom(QByteArray("\r\n"), false, now).value().isEmpty());
+
+    // And the format that does work still works.
+    const QByteArray unix = "total 8\r\n"
+                            "drwxr-xr-x 2 alice alice 4096 Jan 23 10:15 reports\r\n"
+                            "-rw-r--r-- 1 alice alice 1024 Jan 23 10:16 notes.txt\r\n";
+    const Result<QList<net::ListingRow>> read = FtpFileSystem::rowsFrom(unix, false, now);
+    QVERIFY2(read.ok(), qPrintable(read.error().message));
+    QCOMPARE(read.value().size(), 2);
+}
+
+/// The format that needs no guessing at all.
+///
+/// MLSD is RFC 3659: one fact list and a name, in UTC and in no locale. It is
+/// asked for before LIST now, because every fault above is a property of a format
+/// meant for a person to read. See MOLE-349.
+void TestFtpFileSystem::aMachineReadableListingIsReadWithoutGuessing()
+{
+    const QDateTime now = QDateTime::currentDateTime();
+    const QByteArray mlsd
+        = "type=cdir;modify=20240123101500; /home/alice\r\n"
+          "type=pdir;modify=20240123101500; /home\r\n"
+          "type=dir;sizd=4096;modify=20240123101500;UNIX.mode=0755; reports\r\n"
+          "type=file;size=1024;modify=20240123101600;UNIX.mode=0644; notes and drafts.txt\r\n";
+
+    const Result<QList<net::ListingRow>> parsed = FtpFileSystem::rowsFrom(mlsd, true, now);
+    QVERIFY2(parsed.ok(), qPrintable(parsed.error().message));
+
+    QHash<QString, net::ListingRow> byName;
+    for (const net::ListingRow& row : parsed.value())
+        byName.insert(row.name, row);
+
+    // The two rows that describe the folder and its parent come back as the dot
+    // entries every caller already skips, whatever pathname the server put on
+    // them.
+    QVERIFY(byName.contains(QStringLiteral(".")));
+    QVERIFY(byName.contains(QStringLiteral("..")));
+
+    const net::ListingRow folder = byName.value(QStringLiteral("reports"));
+    QVERIFY(folder.isDir);
+    QCOMPARE(folder.permissions, QStringLiteral("rwxr-xr-x"));
+
+    // A name with a space in it is one name: the split is at the first space
+    // after the facts and nowhere else.
+    const net::ListingRow file = byName.value(QStringLiteral("notes and drafts.txt"));
+    QVERIFY2(file.valid, "a name with spaces in it is still one name");
+    QVERIFY(!file.isDir);
+    QCOMPARE(file.size, qint64(1024));
+    // In UTC, which is the whole reason this format is worth asking for.
+    QCOMPARE(file.modified.toUTC(), QDateTime(QDate(2024, 1, 23), QTime(10, 16), Qt::UTC));
+}
+
+/// A file name that is also a second command.
+///
+/// The quote commands carry names as they are, and a control channel is
+/// line-based: `DELE a\r\nRMD /` is one perfectly legal file name to a
+/// filesystem -- ADR-0070 is about taking the names one is given -- and two
+/// commands to a server, the second of them being "remove the root". There is no
+/// escape for it in the protocol, so it is refused. See MOLE-349.
+void TestFtpFileSystem::aNameWithALineBreakCannotCarryASecondCommand()
+{
+    QVERIFY(FtpFileSystem::commandIsSendable("DELE /srv/ordinary name.txt"));
+    QVERIFY2(!FtpFileSystem::commandIsSendable("DELE /srv/a\r\nRMD /"),
+        "a name carrying CRLF would inject a second command");
+    QVERIFY(!FtpFileSystem::commandIsSendable("DELE /srv/a\nRMD /"));
+    QVERIFY(!FtpFileSystem::commandIsSendable("RNTO /srv/b\r"));
 }
 
 void TestFtpFileSystem::aWriteStreamsRatherThanStagingTheWholeFile()

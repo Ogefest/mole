@@ -2,6 +2,8 @@
 
 #include <QTimeZone>
 
+#include <algorithm>
+
 namespace mole::net {
 namespace {
 
@@ -130,6 +132,81 @@ QList<ListingRow> parseUnixListing(const QByteArray& text, const QDateTime& now)
         const ListingRow row = parseListingLine(line, now);
         if (row.valid)
             rows.append(row);
+    }
+    return rows;
+}
+
+QList<ListingRow> parseMlsdListing(const QByteArray& text, const QDateTime& now)
+{
+    Q_UNUSED(now)
+    QList<ListingRow> rows;
+    const QStringList lines = QString::fromUtf8(text).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+
+    for (const QString& raw : lines) {
+        const QString line = raw.trimmed();
+        // Facts, a single space, then the pathname -- which may itself contain
+        // spaces, so the split is at the *first* one and nothing else.
+        const int space = line.indexOf(QLatin1Char(' '));
+        if (space <= 0)
+            continue;
+
+        ListingRow row;
+        row.name = line.mid(space + 1);
+        if (row.name.isEmpty())
+            continue;
+
+        QString type;
+        qint64 size = -1;
+        for (const QString& fact : line.left(space).split(QLatin1Char(';'), Qt::SkipEmptyParts)) {
+            const int equals = fact.indexOf(QLatin1Char('='));
+            if (equals <= 0)
+                continue;
+            const QString key = fact.left(equals).toLower();
+            const QString value = fact.mid(equals + 1);
+
+            if (key == QLatin1String("type")) {
+                type = value.toLower();
+            } else if (key == QLatin1String("size") || key == QLatin1String("sizd")) {
+                bool ok = false;
+                const qint64 number = value.toLongLong(&ok);
+                if (ok)
+                    size = number;
+            } else if (key == QLatin1String("modify")) {
+                // YYYYMMDDHHMMSS, in UTC and with an optional fraction. Said to be
+                // UTC by the standard, which is the whole reason this format is
+                // worth asking for: an `ls -l` date is in the server's timezone
+                // and carries no year for anything older than six months.
+                QDateTime when = QDateTime::fromString(value.left(14), QStringLiteral("yyyyMMddHHmmss"));
+                if (when.isValid()) {
+                    when.setTimeSpec(Qt::UTC);
+                    row.modified = when.toLocalTime();
+                }
+            } else if (key == QLatin1String("unix.mode")) {
+                bool ok = false;
+                const uint mode = value.toUInt(&ok, 8);
+                if (ok) {
+                    const char* const bits[] = { "---", "--x", "-w-", "-wx", "r--", "r-x", "rw-", "rwx" };
+                    row.permissions = QLatin1String(bits[(mode >> 6) & 7])
+                        + QLatin1String(bits[(mode >> 3) & 7]) + QLatin1String(bits[mode & 7]);
+                }
+            }
+        }
+
+        // A row with no type fact says nothing about what it is, and guessing is
+        // what the human format already does badly.
+        if (type.isEmpty())
+            continue;
+        if (type == QLatin1String("cdir"))
+            row.name = QStringLiteral(".");
+        else if (type == QLatin1String("pdir"))
+            row.name = QStringLiteral("..");
+
+        row.isDir
+            = type == QLatin1String("dir") || type == QLatin1String("cdir") || type == QLatin1String("pdir");
+        row.isSymlink = type.startsWith(QLatin1String("os.unix=slink"));
+        row.size = row.isDir ? 0 : std::max<qint64>(0, size);
+        row.valid = true;
+        rows.append(row);
     }
     return rows;
 }

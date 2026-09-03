@@ -30,6 +30,8 @@ private slots:
 
     void aTransferThatGoesQuietIsEndedByTheGuardItself();
     void aCancelTakesEffectAtOnce();
+
+    void nothingWithACredentialInItReachesTheLog();
 };
 
 void TestCurlTransport::aCompleteDownloadIsAnOk()
@@ -259,6 +261,36 @@ void TestCurlTransport::aCancelTakesEffectAtOnce()
     QVERIFY2(clock.elapsed() < 1000,
         qPrintable(QStringLiteral("a cancelled transfer took %1 ms").arg(clock.elapsed())));
     QVERIFY2(net::wasCancelled(response), "a cancelled transfer has to read as cancelled");
+}
+
+/// The password, in the log, in plain text.
+///
+/// The redactor looks for `name: value` header lines, and libcurl traces FTP
+/// control commands through the same channel: `> USER alice`, `> PASS s3cret`. A
+/// command has no colon in it, so the line went into the log verbatim -- and
+/// MOLE_LOG=curl is what somebody turns up to diagnose an FTP problem, into the
+/// session log that ADR-0012 says gets sent to whoever is helping. Nothing could
+/// hold this before, because the redactor was private to its own file. See
+/// MOLE-349.
+void TestCurlTransport::nothingWithACredentialInItReachesTheLog()
+{
+    // The one that was being written down.
+    QCOMPARE(net::withoutSecrets("PASS hunter2"), QByteArray("PASS <redacted>"));
+    QCOMPARE(net::withoutSecrets("pass hunter2"), QByteArray("pass <redacted>"));
+    QCOMPARE(net::withoutSecrets("ACCT department-4"), QByteArray("ACCT <redacted>"));
+
+    // The ones that already were.
+    QCOMPARE(net::withoutSecrets("Authorization: Basic YWxpY2U6aHVudGVyMg=="),
+        QByteArray("Authorization: <redacted>"));
+    QCOMPARE(net::withoutSecrets("x-amz-security-token: FwoGZXIvYXdz"),
+        QByteArray("x-amz-security-token: <redacted>"));
+
+    // And everything else is left alone, because a log with the useful part
+    // taken out is the other way to be useless.
+    QCOMPARE(net::withoutSecrets("USER alice"), QByteArray("USER alice"));
+    QCOMPARE(net::withoutSecrets("PASV"), QByteArray("PASV"));
+    QCOMPARE(net::withoutSecrets("Content-Length: 12"), QByteArray("Content-Length: 12"));
+    QCOMPARE(net::withoutSecrets("PASSWORD-POLICY: strict"), QByteArray("PASSWORD-POLICY: strict"));
 }
 
 MOLE_TEST_MAIN(TestCurlTransport)

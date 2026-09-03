@@ -13,6 +13,29 @@
 #include <sys/socket.h>
 
 namespace mole::net {
+
+QByteArray withoutSecrets(const QByteArray& line)
+{
+    // An FTP control command first, because that is the one this missed. libcurl
+    // traces them as HEADER_OUT -- `> USER alice`, `> PASS s3cret` -- and a
+    // command has no colon in it, so the header rule below let the line through
+    // verbatim. MOLE_LOG=curl, turned up to diagnose an FTP problem, wrote the
+    // password into the session log that ADR-0012 says gets sent to whoever is
+    // helping. ACCT is the same, and so is PASS on any other protocol curl
+    // speaks that way. See MOLE-349.
+    const QByteArray head = line.left(5).toUpper();
+    if (head.startsWith("PASS ") || head.startsWith("ACCT "))
+        return line.left(4) + " <redacted>";
+
+    const int colon = line.indexOf(':');
+    if (colon <= 0)
+        return line;
+    const QByteArray name = line.left(colon).toLower();
+    if (name == "authorization" || name == "proxy-authorization" || name == "x-amz-security-token")
+        return line.left(colon) + ": <redacted>";
+    return line;
+}
+
 namespace {
 
     std::once_flag g_initOnce;
@@ -26,20 +49,6 @@ namespace {
     {
         quint64 id = 0;
     };
-
-    /// A header that would put a credential in the log, replaced by its name.
-    /// The session log lives on disk and gets sent to whoever is helping; a
-    /// signature or a Basic password has no business travelling with it.
-    QByteArray withoutSecrets(const QByteArray& line)
-    {
-        const int colon = line.indexOf(':');
-        if (colon <= 0)
-            return line;
-        const QByteArray name = line.left(colon).toLower();
-        if (name == "authorization" || name == "proxy-authorization" || name == "x-amz-security-token")
-            return line.left(colon) + ": <redacted>";
-        return line;
-    }
 
     /// libcurl's own commentary, forwarded into the log rather than to stderr.
     int traceCurl(CURL*, curl_infotype type, char* data, size_t size, void* userData)

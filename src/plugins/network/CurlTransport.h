@@ -302,6 +302,15 @@ QByteArray encodeSegment(const QString& segment);
 /// Encodes a whole '/'-separated path, segment by segment, keeping the slashes.
 QByteArray encodePath(const QString& path);
 
+/// A trace line with any credential in it replaced by its name.
+///
+/// The session log lives on disk and gets sent to whoever is helping (ADR-0012),
+/// so an Authorization header, an S3 token or an FTP `PASS` command has no
+/// business travelling with it. Reachable rather than private so a test can hold
+/// it to that: the FTP commands were being logged verbatim for months because
+/// nothing could ask this question. See MOLE-349.
+QByteArray withoutSecrets(const QByteArray& line);
+
 /// Reads a date the way HTTP writes one, and the two other ways servers do.
 ///
 /// One function rather than one per protocol, because the awkward part is the
