@@ -62,6 +62,7 @@ private slots:
     void noPerGroupOverrideEverProposesDeletingEveryCopy();
     void theChoiceHasWeightOnTheScreen();
     void nearestTheTopMeansFewestFoldersDeepAndNotShortestString();
+    void aDeleteRemovesTheCopiesTheQuestionNamedAndNotWhatWasTickedAfterwards();
     void aDeleteTheDriveRefusedKeepsTheRowsAndNamesWhatFailed();
     void everyStrategyNameFitsInThePickerThatOffersIt();
 
@@ -985,6 +986,76 @@ void TestDuplicatesTab::noPerGroupOverrideEverProposesDeletingEveryCopy()
 /// deletion, which is the opposite of what was promised. The existing rule case
 /// could not see it: it asserts only that *some* copy of each group survives.
 /// See MOLE-341.
+/// The confirmation named one set of copies and deleted another.
+///
+/// The dialog froze what it *showed* -- `doomed = selectedDetails()` -- and then
+/// called deleteSelected(), which read the ticks again at accept time. A modal
+/// does not stop the event loop: a group confirmed by a scan still running, or a
+/// tick landing behind the dialog, changed what was deleted without changing
+/// what had been named. The headline count made it worse by being a live binding
+/// to selectedCount, so the number above the list moved while the list did not.
+/// The comment beside `doomed` said the snapshot existed so that could not
+/// happen; only the list was snapshotted. See MOLE-339.
+void TestDuplicatesTab::aDeleteRemovesTheCopiesTheQuestionNamedAndNotWhatWasTickedAfterwards()
+{
+    // Two groups, so there is a copy to tick behind the dialog that the question
+    // never mentioned. Written into the harness's own fixture, because the tab
+    // being driven here belongs to the window and searches what that
+    // application can see.
+    const QByteArray first(4096, 'f');
+    const QByteArray second(2048, 's');
+    QVERIFY(startWindow());
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/one.bin"), first));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/one-copy.bin"), first));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/two.bin"), second));
+    QVERIFY(m_harness->writeFile(QStringLiteral("pile/two-copy.bin"), second));
+
+    DuplicatesController* controller = openTabOn({ fixtureRoot(QStringLiteral("pile")) });
+    QVERIFY(controller);
+    controller->setStrategyId(QStringLiteral("contents"));
+    controller->setMinimumSize(1);
+    controller->scan();
+    QVERIFY(
+        m_harness->until([controller] { return !controller->isScanning() && controller->hasRun(); }, 30000));
+    QCOMPARE(controller->groupCount(), 2);
+
+    // One copy ticked, and the question asked about exactly that one.
+    controller->keepShortestPath();
+    controller->clearSelection();
+    const QString named = controller->groups()->groups().first().files.first().uri.toString();
+    controller->toggle(named);
+    QCOMPARE(controller->selectedUris(), QStringList { named });
+
+    QQuickItem* deleteButton = shown(QStringLiteral("deleteDuplicatesButton"));
+    QVERIFY(deleteButton);
+    QVERIFY(QMetaObject::invokeMethod(deleteButton, "clicked"));
+
+    QObject* dialog = m_harness->object(QStringLiteral("confirmDeleteDuplicates"));
+    QVERIFY(dialog);
+    QVERIFY(m_harness->until([dialog] { return dialog->property("opened").toBool(); }));
+
+    const QVariantList shown = dialog->property("doomed").toList();
+    QCOMPARE(shown.size(), 1);
+    QCOMPARE(shown.first().toMap().value(QStringLiteral("uri")).toString(), named);
+
+    // A tick landing behind the dialog -- which is what a scan confirming another
+    // group, or a stray click, does.
+    const QString never = controller->groups()->groups().last().files.first().uri.toString();
+    QVERIFY(never != named);
+    controller->toggle(never);
+    QCOMPARE(controller->selectedCount(), 2);
+
+    QVERIFY(QMetaObject::invokeMethod(dialog, "accept"));
+
+    // The one that was named is gone; the one ticked afterwards is untouched,
+    // because nobody was ever asked about it.
+    const QString namedPath = VfsUri::fromString(named).path();
+    const QString neverPath = VfsUri::fromString(never).path();
+    QVERIFY2(m_harness->until([namedPath] { return !QFile::exists(namedPath); }, 20000),
+        "the copy the question named was not deleted");
+    QVERIFY2(QFile::exists(neverPath), "a copy ticked behind the dialog was deleted without being named");
+}
+
 void TestDuplicatesTab::nearestTheTopMeansFewestFoldersDeepAndNotShortestString()
 {
     const QByteArray same(4096, 'k');

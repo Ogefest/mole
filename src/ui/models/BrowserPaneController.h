@@ -112,7 +112,11 @@ public:
 
     Q_INVOKABLE void createDirectory(const QString& name);
     Q_INVOKABLE void renameCurrent(const QString& newName);
-    Q_INVOKABLE void deleteTargets();
+    /// Deletes exactly these uris, or the cursor's targets when none are given.
+    ///
+    /// The argument exists because the confirmation has to delete the rows it
+    /// named: the model can reload while the dialog is up. See MOLE-339.
+    Q_INVOKABLE void deleteTargets(const QStringList& uris = {});
     /// The selection, or the row under the cursor when nothing is ticked.
     QList<VfsUri> targets() const;
     /// What a drag that started on `row` carries: the ticked rows when `row` is

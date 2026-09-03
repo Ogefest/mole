@@ -65,6 +65,8 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-03 #MOLE-339 A delete removes exactly the files the confirmation listed, even if the folder changed or a tick moved while the question was on screen
+2026-09-03 #MOLE-339 Removing a configured drive asks first, in red, instead of happening on the first click
 2026-09-03 #MOLE-341 A duplicate scan no longer offers a link as a duplicate of the file it points at, and no longer pairs a file with itself when one search folder sits inside another
 2026-09-03 #MOLE-341 A duplicate scan says how many places it could not read, instead of reporting "no duplicates" about a tree it could only partly open
 2026-09-03 #MOLE-341 "Keep the copy nearest the top of the tree" keeps the one fewest folders deep, rather than the one with the shortest path text

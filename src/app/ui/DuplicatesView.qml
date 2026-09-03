@@ -715,7 +715,11 @@ Item {
         property var doomed: []
 
         onAboutToShow: doomed = controller ? controller.selectedDetails() : []
-        onAccepted: controller.deleteSelected()
+        // The rows that were shown, handed back -- see MOLE-339. A scan may still
+        // be confirming groups behind the dialog, and reading the ticks again
+        // here deleted what was ticked at that instant rather than what was
+        // named above.
+        onAccepted: controller.deleteSelected(doomed.map(function(row) { return row.uri }))
 
         ColumnLayout {
             anchors.fill: parent
@@ -725,9 +729,13 @@ Item {
                 Layout.fillWidth: true
                 wrapMode: Text.Wrap
                 font.pixelSize: App.textSize
-                text: controller
-                      ? controller.selectedCount + " files, " + controller.selectedSizeText + "."
-                      : ""
+                // From the snapshot, not from the live count: the headline used
+                // to be a binding, so a tick landing behind the dialog changed
+                // the number while the names below it stayed as they were --
+                // which is the one thing the snapshot exists to prevent.
+                text: confirmDelete.doomed.length
+                      + (confirmDelete.doomed.length === 1 ? " file, " : " files, ")
+                      + (controller ? controller.selectedSizeText : "") + "."
             }
             // By location, not by name: in a duplicate group every name is the
             // same, so a list of names would be no help at all.

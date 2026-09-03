@@ -169,6 +169,8 @@ private slots:
     void everyBackendBuildsAFormWithoutComplaint();
     void aDriveWithAPasswordSavesAndConnects();
     void savingThroughTheFormShowsWhatTheCheckFound();
+    void removingADriveAsksBeforeItHappens();
+    void aDeleteRemovesTheRowsTheQuestionNamedAndNotWhateverIsUnderTheCursor();
     void typingIntoTheKindPickerFiltersIt();
     void connectingFromTheListSurvivesTheListRebuilding();
     void anAnalysisTabWithNoReportCentresItsMessage();
@@ -3365,6 +3367,143 @@ void TestWalkthrough::savingThroughTheFormShowsWhatTheCheckFound()
 /// Pressing connect from inside a row of the drive list. The handler belongs to
 /// a delegate, and connecting tells the list its contents changed -- so the list
 /// can rebuild, and destroy the very delegate whose handler is still running.
+/// The one destructive action in the window that did not ask.
+///
+/// `Delete` in the drives dialog called App.removeDrive on the first click.
+/// Removing a configured drive takes the record of which stored password belongs
+/// to it with it, and cannot be undone -- and ADR-0010 says a destructive action
+/// asks, in red, with the keyboard on the safe answer. Every other one does.
+/// See MOLE-339.
+void TestWalkthrough::removingADriveAsksBeforeItHappens()
+{
+    QSignalSpy opened(m_harness->app(), &AppController::credentialsAttempted);
+    m_harness->app()->unlockCredentials(QStringLiteral("test-passphrase"));
+    QVERIFY(opened.wait(30000));
+    QVERIFY(m_harness->app()->credentialsUnlocked());
+
+    const QVariantList kinds = m_harness->app()->driveKinds();
+    if (kinds.isEmpty())
+        QSKIP("this build has no drive kinds to configure");
+    const QString factory = kinds.first().toMap().value(QStringLiteral("factory")).toString();
+
+    QVariantMap values;
+    values.insert(QStringLiteral("host"), QStringLiteral("nowhere.invalid"));
+    values.insert(QStringLiteral("user"), QStringLiteral("someone"));
+    QVERIFY(m_harness->app()->saveDrive(
+        QString(), QStringLiteral("Doomed"), factory, QString(), QString(), values));
+
+    QAbstractItemModel* saved = m_harness->app()->configuredDrives();
+    QString driveId;
+    for (int row = 0; row < saved->rowCount(); ++row) {
+        if (saved->data(saved->index(row, 0), DriveListModel::DisplayNameRole).toString()
+            == QStringLiteral("Doomed")) {
+            driveId = saved->data(saved->index(row, 0), DriveListModel::ConfiguredIdRole).toString();
+        }
+    }
+    QVERIFY2(!driveId.isEmpty(), "the drive that was just saved has to be in the list");
+
+    m_harness->app()->triggerAction(QStringLiteral("mole.file.drives"));
+    QObject* dialog = m_harness->object(QStringLiteral("drivesDialog"));
+    QVERIFY(dialog);
+    QVERIFY(m_harness->until([dialog] { return dialog->property("opened").toBool(); }));
+
+    // Editing that drive, which is what makes the Delete button appear.
+    dialog->setProperty("editingId", driveId);
+    m_harness->settle(4);
+    QQuickItem* remove = m_harness->item(QStringLiteral("removeDriveButton"));
+    QVERIFY2(remove, "a drive being edited offers a way to remove it");
+    QVERIFY(QMetaObject::invokeMethod(remove, "clicked"));
+
+    QObject* question = m_harness->object(QStringLiteral("confirmRemoveDrive"));
+    QVERIFY2(question, "removing a drive has to ask first");
+    QVERIFY(m_harness->until([question] { return question->property("opened").toBool(); }));
+
+    // Nothing has happened yet, which is the whole point of asking.
+    const auto isConfigured = [this, driveId] {
+        QAbstractItemModel* list = m_harness->app()->configuredDrives();
+        for (int row = 0; row < list->rowCount(); ++row) {
+            if (list->data(list->index(row, 0), DriveListModel::ConfiguredIdRole).toString() == driveId)
+                return true;
+        }
+        return false;
+    };
+    QVERIFY2(isConfigured(), "the drive was removed before the question was answered");
+
+    // In red, and with the keyboard on the answer that keeps it: Return must not
+    // be what removes a drive. See ConfirmButtons and ADR-0010.
+    auto* footer = qvariant_cast<QObject*>(question->property("footer"));
+    QVERIFY(footer);
+    QVERIFY2(footer->property("destructive").toBool(), "the question has to be asked destructively");
+    QCOMPARE(footer->property("keyboardOn").toString(), QStringLiteral("reject"));
+
+    QVERIFY(QMetaObject::invokeMethod(question, "accept"));
+    QVERIFY2(m_harness->until([isConfigured] { return !isConfigured(); }), "answering yes removes the drive");
+}
+
+/// The rows a delete confirmation showed and the rows it deleted were two
+/// different lists.
+///
+/// The dialog froze what it *displayed* -- `doomed = targetDetails()` -- and then
+/// called deleteTargets(), which worked the targets out again from the cursor and
+/// the selection at accept time. A modal does not stop the event loop: a
+/// directoryChanged from the other pane, a finishing task or a second tab on the
+/// same folder reloads the model underneath, and if the cursor lands on a
+/// different row then the file deleted is not the file named. The comment beside
+/// `doomed` claimed the two were "the same rows by construction"; only the
+/// display was. See MOLE-339.
+void TestWalkthrough::aDeleteRemovesTheRowsTheQuestionNamedAndNotWhateverIsUnderTheCursor()
+{
+    QVERIFY(m_harness->makeDirs(QStringLiteral("doomed")));
+    QVERIFY(m_harness->writeFile(QStringLiteral("doomed/a-first.txt"), "first"));
+    QVERIFY(m_harness->writeFile(QStringLiteral("doomed/b-second.txt"), "second"));
+    QVERIFY(m_harness->writeFile(QStringLiteral("doomed/c-third.txt"), "third"));
+
+    pane()->navigateTo(m_harness->fixtureUri() + QStringLiteral("/doomed"));
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 3; }));
+
+    // The cursor on the middle row, which is the file the question will name.
+    pane()->setCurrentIndex(1);
+    const QString named = pane()->files()->uriAt(1);
+    QVERIFY(named.endsWith(QStringLiteral("/b-second.txt")));
+
+    // F8, which is what the pane binds it to -- and the keyboard is where a
+    // delete is asked for in practice.
+    m_harness->key(Qt::Key_F8);
+    QObject* dialog = m_harness->object(QStringLiteral("deleteDialog"));
+    QVERIFY(dialog);
+    QVERIFY(m_harness->until([dialog] { return dialog->property("opened").toBool(); }));
+
+    // What it says it will delete.
+    const QVariantList shown = dialog->property("doomed").toList();
+    QCOMPARE(shown.size(), 1);
+    QCOMPARE(shown.first().toMap().value(QStringLiteral("uri")).toString(), named);
+
+    // And now the list changes underneath it. The row the question named goes --
+    // somebody else deleted it, on a share or in another window -- so the cursor
+    // cannot stay where it was and lands on the third file. A reload behind the
+    // dialog is one of the four ways the ticket lists for this; a watcher, a
+    // finishing task and a second tab on the same folder are the others, and all
+    // of them arrive here as the same reload.
+    QVERIFY(QFile::remove(QDir(m_harness->fixturePath()).filePath(QStringLiteral("doomed/b-second.txt"))));
+    pane()->refresh();
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 2; }));
+    QVERIFY2(pane()->files()->uriAt(pane()->currentIndex()) != named,
+        "the cursor has to have moved for this case to be about anything");
+
+    QVERIFY(QMetaObject::invokeMethod(dialog, "accept"));
+    m_harness->settle(6);
+
+    // Nothing else went. What was agreed to was one named file, and it was
+    // already gone; the two files nobody mentioned are still there. Accepting
+    // used to delete whatever the cursor had drifted onto instead.
+    const auto stillThere = [this](const QString& name) {
+        return QFile::exists(QDir(m_harness->fixturePath()).filePath(QStringLiteral("doomed/") + name));
+    };
+    QVERIFY2(m_harness->until([stillThere] { return stillThere(QStringLiteral("c-third.txt")); }),
+        "the file the cursor drifted onto was deleted instead of the one the question named");
+    QVERIFY2(stillThere(QStringLiteral("a-first.txt")), "and nor was anything else touched");
+}
+
 void TestWalkthrough::connectingFromTheListSurvivesTheListRebuilding()
 {
     QSignalSpy opened(m_harness->app(), &AppController::credentialsAttempted);

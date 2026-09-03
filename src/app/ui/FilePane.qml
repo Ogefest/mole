@@ -1253,7 +1253,14 @@ FocusScope {
         property var doomed: []
 
         onAboutToShow: doomed = paneController ? paneController.targetDetails() : []
-        onAccepted: { paneController.deleteTargets(); pane.takeFocus() }
+        // The rows that were shown, handed back. Recomputing them here read the
+        // cursor and the selection as they are *now*, and a modal does not stop
+        // the event loop: a refresh landing behind the dialog moves the cursor,
+        // and then the rows deleted are not the rows named. See MOLE-339.
+        onAccepted: {
+            paneController.deleteTargets(doomed.map(function(row) { return row.uri }))
+            pane.takeFocus()
+        }
         onRejected: pane.takeFocus()
 
         ColumnLayout {

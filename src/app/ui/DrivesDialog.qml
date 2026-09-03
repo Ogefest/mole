@@ -660,12 +660,19 @@ Dialog {
                     }
 
                     Button {
+                        objectName: "removeDriveButton"
                         visible: dialog.editingId.length > 0
                         text: "Delete"
                         flat: true
+                        // Asked, not done. Removing a configured drive takes the
+                        // names of its secret fields with it and cannot be
+                        // undone, and it was the one destructive action in the
+                        // window that happened on the first click. See ADR-0010
+                        // and MOLE-339.
                         onClicked: {
-                            App.removeDrive(dialog.editingId)
-                            dialog.startNew()
+                            confirmRemove.driveId = dialog.editingId
+                            confirmRemove.driveName = nameField.text.trim()
+                            confirmRemove.open()
                         }
                     }
                     ActionButton {
@@ -732,6 +739,65 @@ Dialog {
                                                                   field.defaultValue))
             onActivated: dialog.setFieldValue(field.key, field.choices[currentIndex])
             onAccepted: dialog.setFieldValue(field.key, editText)
+        }
+    }
+
+    // The question that was missing. Every other destructive action in the
+    // window asks one; this one removed a drive, and the record of which
+    // credential belonged to it, on a single click. ADR-0010.
+    Dialog {
+        // A dialog sits on the panel ground, said here rather than inherited:
+        // the window no longer hands one down. See ADR-0074.
+        Material.background: App.colour.panel
+        Overlay.modal: DimVeil {}
+        Overlay.modeless: DimVeil {}
+
+        id: confirmRemove
+        objectName: "confirmRemoveDrive"
+        title: "Remove this drive?"
+        modal: true
+        focus: true
+        anchors.centerIn: Overlay.overlay
+        width: 440
+
+        // Held rather than read from the form when Ok is pressed: the form is
+        // still live behind this, and what is being agreed to is the drive that
+        // was named when the question was asked. The same rule as the delete
+        // confirmations -- see MOLE-339.
+        property string driveId: ""
+        property string driveName: ""
+
+        footer: ConfirmButtons {
+            acceptText: "Remove"
+            rejectText: "Keep"
+            destructive: true
+        }
+
+        onAccepted: {
+            App.removeDrive(confirmRemove.driveId)
+            dialog.startNew()
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 10
+
+            Label {
+                objectName: "removeDriveQuestion"
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                font.pixelSize: App.textSize
+                text: "Remove \"" + confirmRemove.driveName + "\" from the list of drives?"
+            }
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                text: "Nothing on the drive itself is touched. What goes is the "
+                      + "configuration and the record of which stored password belongs "
+                      + "to it, and that cannot be undone."
+                color: App.colour.warn
+                font.pixelSize: App.smallTextSize
+            }
         }
     }
 }

@@ -510,6 +510,11 @@ QVariantList BrowserPaneController::targetDetails() const
     QVariantList out;
     for (const FileEntry& entry : m_files->targetEntries(m_currentIndex)) {
         out.append(QVariantMap { { QStringLiteral("name"), entry.name },
+            // The uri as well as the name, because the dialog that shows these
+            // rows is the thing that must then delete exactly *these* rows --
+            // not whatever the cursor and the selection say a second later. See
+            // deleteTargets() and MOLE-339.
+            { QStringLiteral("uri"), entry.uri.toString() },
             { QStringLiteral("isDir"), entry.isDir },
             // A folder's own size says nothing about what is inside it, and a
             // dialog that showed "4 kB" next to a tree of ten thousand files
@@ -568,9 +573,28 @@ void BrowserPaneController::renameCurrent(const QString& newName)
     m_services.events->postEntryRenamed(source, target);
 }
 
-void BrowserPaneController::deleteTargets()
+void BrowserPaneController::deleteTargets(const QStringList& uris)
 {
-    const QList<VfsUri> doomed = targets();
+    // The rows the question was asked about, when the caller kept them -- and
+    // the cursor's own targets only when it did not.
+    //
+    // The confirmation froze what it *showed* and then called this with no
+    // argument, so the targets were worked out again at accept time. A modal
+    // does not stop the event loop: a directoryChanged from the other pane, a
+    // finishing task or a second tab on the same folder reloads the model under
+    // the dialog, and if the cursor lands somewhere else the rows deleted are
+    // not the rows named. The dialog's own comment said the two were "the same
+    // rows by construction"; only the display was. See MOLE-339.
+    QList<VfsUri> doomed;
+    if (uris.isEmpty()) {
+        doomed = targets();
+    } else {
+        for (const QString& uri : uris) {
+            const VfsUri parsed = VfsUri::fromString(uri);
+            if (parsed.isValid())
+                doomed.append(parsed);
+        }
+    }
     if (doomed.isEmpty())
         return;
 

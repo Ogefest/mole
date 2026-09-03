@@ -149,6 +149,10 @@ QVariantList DuplicatesController::selectedDetails() const
             if (!m_groups->isSelected(entry.uri.toString()))
                 continue;
             out.append(QVariantMap { { QStringLiteral("name"), entry.uri.toString() },
+                // Named separately from the text shown, because the dialog these
+                // rows go into is what then has to delete exactly these rows.
+                // See deleteSelected() and MOLE-339.
+                { QStringLiteral("uri"), entry.uri.toString() },
                 { QStringLiteral("isDir"), false },
                 { QStringLiteral("detail"), locale.formattedDataSize(entry.size) } });
         }
@@ -366,14 +370,26 @@ QString DuplicatesController::buildSetFromTicked(const QString& name)
     return built.id;
 }
 
-void DuplicatesController::deleteSelected()
+void DuplicatesController::deleteSelected(const QStringList& uris)
 {
-    if (!m_services.isValid() || m_groups->selectedCount() == 0 || m_task)
+    if (!m_services.isValid() || m_task)
+        return;
+
+    // What the question was asked about, when the caller kept it -- and what is
+    // ticked now only when it did not.
+    //
+    // The confirmation froze the rows it *showed* and then called this, which
+    // read the ticks again at accept time. A modal does not stop the event loop:
+    // a group confirmed by a scan still running, or a tick landing behind the
+    // dialog, changed what was deleted without changing what had been named --
+    // and the headline count was a live binding, so it changed while the names
+    // below it did not. See MOLE-339.
+    const QStringList ticked = uris.isEmpty() ? m_groups->selectedUris() : uris;
+    if (ticked.isEmpty())
         return;
 
     // Grouped by drive, because a delete task belongs to one backend.
     QHash<QString, QList<VfsUri>> byDrive;
-    const QStringList ticked = m_groups->selectedUris();
     for (const QString& uri : ticked) {
         const VfsUri parsed = VfsUri::fromString(uri);
         if (parsed.isValid())

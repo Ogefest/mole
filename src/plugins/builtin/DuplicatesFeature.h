@@ -115,7 +115,12 @@ public:
     /// the alternative -- a set of rule buttons on every group -- is four controls
     /// times fifty groups to express something one click on the row already says.
     Q_INVOKABLE void keepOnly(const QString& uri);
-    Q_INVOKABLE void deleteSelected();
+    /// Deletes exactly these uris, or everything ticked when none are given.
+    ///
+    /// The argument exists because the confirmation has to delete the rows it
+    /// named: a scan may still be confirming groups behind the dialog. See
+    /// MOLE-339.
+    Q_INVOKABLE void deleteSelected(const QStringList& uris = {});
 
     /// Builds a file set from the ticked copies and returns its id, or an empty
     /// string when nothing is ticked.
