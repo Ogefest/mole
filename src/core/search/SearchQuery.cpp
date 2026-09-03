@@ -40,10 +40,18 @@ namespace {
         case SearchPredicate::Field::Size:
             return !predicate.negate;
         case SearchPredicate::Field::Modified:
+            // On the mtime column, which the scan has recorded all along and no
+            // clause read. Left in the remainder it was applied to whatever the
+            // first ten thousand rows happened to be, alphabetically, out of the
+            // whole volume -- so `modified:>7d` inside a large tree answered
+            // from a slice of it and said nothing about the rest. ADR-0036 put
+            // this off "until the form that asks for dates arrives"; it arrived.
+            // Not negatable: "not modified since" is a different question and
+            // the clause does not answer it. See MOLE-371.
+            return !predicate.negate;
         case SearchPredicate::Field::Created:
         case SearchPredicate::Field::Accessed:
-            // `mtime` is a column and no clause reads it yet; the other two are
-            // not recorded at all. All three are evaluated rather than ignored,
+            // Not recorded at all, so they are evaluated rather than ignored,
             // which is the whole point of the plan saying so.
             return false;
         case SearchPredicate::Field::Metadata:

@@ -37,6 +37,8 @@ private slots:
     void searchFiltersBySize();
     void searchScopesToVolume();
     void searchRespectsLimit();
+    void aFolderScopedSearchIsNotDecidedByTheFirstTenThousandNamesOnTheVolume();
+    void aModificationDateIsAnsweredByTheQuery();
     void searchReturnsResolvableUris();
     void rowsFromAnUnfinishedScanAreNotVisible();
     void anAbandonedScanLeavesThePreviousContents();
@@ -402,6 +404,87 @@ void TestIndexDatabase::searchRespectsLimit()
     SearchQuery query;
     query.limit = 10;
     QCOMPARE(m_db->search(query).value().size(), 10);
+}
+
+/// The limit used to be applied before the folder was.
+///
+/// The query sorts by name and stops at the limit; everything SQL cannot state
+/// is applied to those rows afterwards. A folder is one of the things SQL *can*
+/// state -- MOLE-340 gave it a clause -- and this case is what holds it there,
+/// because the fault it prevents is the headline use of the index: searching
+/// inside /photos/2024 on a volume of seven hundred thousand rows answered from
+/// the alphabetically first ten thousand names of the whole volume, possibly
+/// none of which are in that folder, and said so with a confident count. See
+/// MOLE-371.
+void TestIndexDatabase::aFolderScopedSearchIsNotDecidedByTheFirstTenThousandNamesOnTheVolume()
+{
+    // Twenty rows that sort before the five wanted ones, in a folder nobody
+    // asked about. `aaa` before `zzz`, so a limit of five takes only the first.
+    QStringList paths;
+    for (int i = 0; i < 20; ++i)
+        paths.append(QStringLiteral("/data/other/aaa-%1.txt").arg(i, 2, 10, QLatin1Char('0')));
+    for (int i = 0; i < 5; ++i)
+        paths.append(QStringLiteral("/data/wanted/zzz-%1.txt").arg(i));
+    QVERIFY(seedVolume(QStringLiteral("file:///data"), paths) >= 0);
+
+    SearchQuery query;
+    query.limit = 5;
+    query.add(SearchPredicate::underPath(QStringLiteral("file:///data/wanted")));
+
+    const Result<QList<IndexSearchHit>> hits = m_db->search(query);
+    QVERIFY2(hits.ok(), qPrintable(hits.error().message));
+    QCOMPARE(hits.value().size(), 5);
+    for (const IndexSearchHit& hit : hits.value()) {
+        QVERIFY2(hit.uri.contains(QStringLiteral("/data/wanted/")),
+            qPrintable(QStringLiteral("%1 is not in the folder that was asked about").arg(hit.uri)));
+    }
+}
+
+/// A date is a column, and the query is where it is answered.
+///
+/// It used to sit in the remainder and be applied to whatever the capped rows
+/// happened to be. ADR-0036 deferred the clause "until the form that asks for
+/// dates arrives"; the form arrived and mtime went on being unread. See
+/// MOLE-371.
+void TestIndexDatabase::aModificationDateIsAnsweredByTheQuery()
+{
+    constexpr qint64 kOld = 1000000000; // 2001
+    constexpr qint64 kNew = 1700000000; // 2023
+
+    QList<IndexedFile> rows;
+    for (int i = 0; i < 20; ++i) {
+        IndexedFile old = makeFile(QStringLiteral("/data/aaa-%1.txt").arg(i, 2, 10, QLatin1Char('0')));
+        old.modifiedEpoch = kOld;
+        rows.append(old);
+    }
+    for (int i = 0; i < 3; ++i) {
+        IndexedFile fresh = makeFile(QStringLiteral("/data/zzz-%1.txt").arg(i));
+        fresh.modifiedEpoch = kNew;
+        rows.append(fresh);
+    }
+
+    const Result<qint64> volume
+        = m_db->upsertVolume(VfsUri::fromString(QStringLiteral("file:///data")), QStringLiteral("vol"));
+    QVERIFY(volume.ok());
+    QVERIFY(rescan(volume.value(), rows));
+
+    // A limit that the old rows alone would fill, so the answer can only be
+    // right if the date narrowed the query rather than its results.
+    SearchQuery recent;
+    recent.limit = 5;
+    recent.add(SearchPredicate::modifiedAfter(kNew - 1));
+
+    const Result<QList<IndexSearchHit>> hits = m_db->search(recent);
+    QVERIFY2(hits.ok(), qPrintable(hits.error().message));
+    QCOMPARE(hits.value().size(), 3);
+    for (const IndexSearchHit& hit : hits.value())
+        QCOMPARE(hit.modifiedEpoch, kNew);
+
+    // And the other way round, where a row with no date recorded answers
+    // "before" rather than "after" -- as an invalid QDateTime does for a walk.
+    SearchQuery before;
+    before.add(SearchPredicate::modifiedBefore(kOld + 1));
+    QCOMPARE(m_db->search(before).value().size(), 20);
 }
 
 void TestIndexDatabase::searchReturnsResolvableUris()

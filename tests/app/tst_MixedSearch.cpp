@@ -364,15 +364,19 @@ void TestMixedSearch::aCriterionTheIndexCannotStateIsSaidOutLoud()
     QVERIFY(runToEnd(search));
     QVERIFY(search->unpushedNote().isEmpty());
 
-    // A date is not, and neither is a path.
+    // A path is not. Neither was a date until MOLE-371 gave mtime a clause --
+    // so the date is set here as well, and the note has to name the path and
+    // *not* the date: a criterion the index can now state is one it no longer
+    // has to admit to.
     search->setModifiedFrom(QStringLiteral("2000-01-01"));
     search->setPathText(QStringLiteral("/archive/"));
     QVERIFY(runToEnd(search));
 
     const QString note = search->unpushedNote();
     QVERIFY2(!note.isEmpty(), "a criterion the index cannot state has to be said out loud");
-    QVERIFY2(note.contains(QStringLiteral("date changed")), qPrintable(note));
     QVERIFY2(note.contains(QStringLiteral("path")), qPrintable(note));
+    QVERIFY2(!note.contains(QStringLiteral("date changed")),
+        qPrintable(QStringLiteral("the index answers a date itself now: %1").arg(note)));
 
     // Said, and also honoured: the answer is narrowed by both.
     for (const QString& uri : urisIn(search->results()))

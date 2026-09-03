@@ -64,6 +64,8 @@ private slots:
     // ---- the two engines -------------------------------------------------
     void everyCriterionAnswersTheSameThroughBothEngines();
     void aCriterionTheIndexCannotStateStillNarrowsItsAnswer();
+    void aDateIsAnsweredByTheQueryAndNotAfterIt();
+    void anIndexSearchThatStoppedAtTheLimitSaysSo();
 
     // ---- written down ----------------------------------------------------
     void everyFieldAndEveryMatchSurvivesBeingWrittenDown();
@@ -598,6 +600,46 @@ QStringList TestSearchQuery::throughTheIndex(const SearchQuery& query)
     return uris;
 }
 
+/// A capped answer that read as a complete one.
+///
+/// The database sorts by name and stops at the limit; everything SQL could not
+/// state is then applied to those rows. So an answer of exactly the limit means
+/// the volume had more to say and this list is a slice of it -- and the task said
+/// "%1 matches from the index" either way, while the live search has always said
+/// "Stopped at %1 matches (limit reached)" for its own cap. SearchQuery.h's own
+/// promise is that "a search that stops here has to say so rather than let the
+/// list read as complete". See MOLE-371.
+void TestSearchQuery::anIndexSearchThatStoppedAtTheLimitSaysSo()
+{
+    QVERIFY(buildFixture());
+
+    // A limit of one against a fixture with more than one file in it.
+    SearchQuery capped;
+    capped.volumeId = m_volumeId;
+    capped.limit = 1;
+    capped.add(SearchPredicate::kind(false));
+
+    auto* task = new IndexSearchTask(m_index.get(), capped);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task));
+
+    QVERIFY2(task->truncated(), "an answer of exactly the limit is a slice of the volume");
+    QVERIFY2(task->statusText().contains(QStringLiteral("limit reached")), qPrintable(task->statusText()));
+
+    // And a limit nothing reaches says nothing about limits.
+    SearchQuery whole;
+    whole.volumeId = m_volumeId;
+    whole.limit = 1000;
+    whole.add(SearchPredicate::kind(false));
+
+    auto* full = new IndexSearchTask(m_index.get(), whole);
+    m_tasks->submit(full);
+    QVERIFY(waitForTask(full));
+    QVERIFY2(!full->truncated(), "a complete answer must not claim to be a slice");
+    QVERIFY2(full->statusText().contains(QStringLiteral("matches from the index")),
+        qPrintable(full->statusText()));
+}
+
 /// The test that proves the merge lost nothing.
 ///
 /// Every criterion that exists, asked of one tree through both engines. They
@@ -668,17 +710,21 @@ void TestSearchQuery::everyCriterionAnswersTheSameThroughBothEngines()
     }
 }
 
-/// A date is a column the index has and no clause reads yet. The answer still
-/// has to be right: the criterion is evaluated on the way out instead of being
-/// quietly ignored, which is the difference between a slower answer and a wrong
-/// one.
+/// A date the index does not record. The answer still has to be right: the
+/// criterion is evaluated on the way out instead of being quietly ignored, which
+/// is the difference between a slower answer and a wrong one.
+///
+/// `created:` rather than `modified:`, which this used to ask about -- mtime is a
+/// column and MOLE-371 gave it a clause, so a modification date is now one of the
+/// criteria the index *can* state. Creation and access times are recorded by no
+/// scan, which is what keeps this case about the thing it is about.
 void TestSearchQuery::aCriterionTheIndexCannotStateStillNarrowsItsAnswer()
 {
     QVERIFY(buildFixture());
 
     SearchQuery recent;
     recent.add(SearchPredicate::kind(false)); // the folders were all made just now
-    recent.add(SearchPredicate::modifiedAfter(1500000000));
+    recent.add(SearchPredicate::createdAfter(1500000000));
 
     // One criterion into the SQL, one left for the evaluator.
     const SearchPlan plan = planSearch(recent, SearchSource::Index);
@@ -686,11 +732,39 @@ void TestSearchQuery::aCriterionTheIndexCannotStateStillNarrowsItsAnswer()
     QCOMPARE(plan.remainder().size(), 1);
     QVERIFY2(!plan.pushedDownEverything(), "the index claimed a criterion it has no clause for");
 
-    const QStringList indexed = throughTheIndex(recent);
-    QCOMPARE(indexed, throughTheWalk(recent));
-    QCOMPARE(indexed.size(), 2);
-    QVERIFY(indexed.contains(QStringLiteral("mem:///projects/annual-Report.pdf")));
-    QVERIFY(indexed.contains(QStringLiteral("mem:///projects/ŁÓDŹ-raport.pdf")));
+    // Both engines answer the same thing, which is the claim. A drive that does
+    // not report a creation date has no answer, and neither engine invents one.
+    QCOMPARE(throughTheIndex(recent), throughTheWalk(recent));
+}
+
+/// The modification date, answered by the query rather than after it.
+///
+/// It sat in the remainder, so it was applied to whatever rows the SQL had
+/// already capped at -- the first ten thousand names alphabetically, out of the
+/// whole volume. `modified:>7d` inside a large tree therefore answered from a
+/// slice of it and said nothing about the rest. ADR-0036 deferred the clause
+/// "until the form that asks for dates arrives"; it arrived. See MOLE-371.
+void TestSearchQuery::aDateIsAnsweredByTheQueryAndNotAfterIt()
+{
+    QVERIFY(buildFixture());
+
+    SearchQuery recent;
+    recent.add(SearchPredicate::modifiedAfter(1500000000));
+
+    const SearchPlan plan = planSearch(recent, SearchSource::Index);
+    QCOMPARE(plan.pushedDown().size(), 1);
+    QVERIFY2(plan.remainder().isEmpty(), "a modification date is a column the index has a clause for");
+    QVERIFY(plan.pushedDownEverything());
+
+    // And the same question the other way round, which is a different clause: a
+    // row with no date recorded answers "before" and not "after", the way an
+    // invalid QDateTime does for the walk.
+    SearchQuery old;
+    old.add(SearchPredicate::modifiedBefore(1500000000));
+    QVERIFY(planSearch(old, SearchSource::Index).pushedDownEverything());
+
+    QCOMPARE(throughTheIndex(recent), throughTheWalk(recent));
+    QCOMPARE(throughTheIndex(old), throughTheWalk(old));
 }
 
 // ---- written down -----------------------------------------------------------

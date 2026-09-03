@@ -807,6 +807,16 @@ Result<QList<IndexSearchHit>> IndexDatabase::search(const SearchQuery& query) co
             break;
         }
         case SearchPredicate::Field::Modified:
+            // The column the scan has been filling in since there was a scan.
+            // Seconds since the epoch on both sides, and a row that has no date
+            // -- mtime defaults to nought -- answers "before" and not "after",
+            // which is what the walk does with an invalid QDateTime. See
+            // MOLE-371.
+            sql += predicate.match == SearchPredicate::Match::AtMost
+                ? QStringLiteral(" AND f.mtime > 0 AND f.mtime <= ?")
+                : QStringLiteral(" AND f.mtime >= ?");
+            bindings.append(predicate.number);
+            break;
         case SearchPredicate::Field::Created:
         case SearchPredicate::Field::Accessed:
         case SearchPredicate::Field::Hidden:

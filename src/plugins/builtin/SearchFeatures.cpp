@@ -1005,6 +1005,11 @@ void LiveSearchController::startIndexSearch(const SearchQuery& query, const QStr
         if (m_indexTask != indexTask)
             return;
         setRunning(false);
+        // The same banner the live search raises, for the same reason: an index
+        // answer that stopped at the row limit is a slice of the volume, and a
+        // list that reads as complete is the one outcome SearchQuery.h forbids.
+        // See MOLE-371.
+        m_truncated = indexTask->truncated();
         setStatusText(indexTask->state() == Task::State::Failed
                 ? indexTask->error().message
                 : doneFormat.arg(QLocale().toString(m_results->totalCount())));

@@ -62,11 +62,21 @@ void IndexSearchTask::run()
         entries.append(entry);
     }
 
+    // As many rows as the query was allowed means the volume had more to say,
+    // whatever the evaluator then rejected: the rows the database chose are the
+    // alphabetically first, and the rest were never looked at. Read from the
+    // rows and not from the entries, because the criteria applied above are
+    // exactly what makes the two counts differ.
+    const int allowed = m_query.limit > 0 ? m_query.limit : SearchQuery {}.limit;
+    m_truncated = hits.value().size() >= allowed;
+
     m_hitCount = static_cast<int>(entries.size());
     emit resultsReady(entries);
 
     setProgress(100);
-    setStatusText(QStringLiteral("%1 matches from the index").arg(m_hitCount));
+    setStatusText(m_truncated
+            ? QStringLiteral("Stopped at %1 rows from the index (limit reached)").arg(allowed)
+            : QStringLiteral("%1 matches from the index").arg(m_hitCount));
 }
 
 } // namespace mole

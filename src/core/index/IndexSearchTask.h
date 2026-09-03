@@ -27,6 +27,15 @@ public:
     void setSearchIo(SearchIo io);
 
     int hitCount() const { return m_hitCount; }
+    /// Whether the query came back with as many rows as it was allowed.
+    ///
+    /// The database sorts by name and stops at the limit, and everything the SQL
+    /// could not state is applied to those rows afterwards -- so a full answer
+    /// means the volume has more to say and this list is a slice of it. The live
+    /// search has always reported its own cap; this one said "%1 matches from the
+    /// index" with nothing to distinguish a complete answer from a truncated one,
+    /// which SearchQuery.h's own promise forbids. See MOLE-371.
+    bool truncated() const { return m_truncated; }
 
 signals:
     /// Delivered on the UI thread before finished().
@@ -40,6 +49,7 @@ private:
     SearchQuery m_query;
     SearchIo m_io;
     int m_hitCount = 0;
+    bool m_truncated = false;
 };
 
 } // namespace mole
