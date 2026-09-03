@@ -10,11 +10,79 @@
 #include <algorithm>
 #include <archive.h>
 #include <archive_entry.h>
+#include <locale.h>
 
 namespace mole {
 namespace {
 
     constexpr int kReadBlockSize = 64 * 1024;
+
+    /// A UTF-8 LC_CTYPE for as long as libarchive is being called, on this
+    /// thread and no other.
+    ///
+    /// libarchive converts the names in a header to the **process locale**, and
+    /// when it cannot it answers ARCHIVE_WARN and stores no pathname at all --
+    /// which in a `C` locale is every non-ASCII name there is. Measured rather
+    /// than assumed, because the obvious answer does not work:
+    /// archive_entry_pathname_utf8() returns null there too, so there is nothing
+    /// left to fall back to and the member cannot be named. Under
+    /// LC_CTYPE=C.UTF-8 the same header reads cleanly, with no warning.
+    ///
+    /// So it is the conversion that is wrong here, not the reading of it. A `C`
+    /// locale is not exotic: the second-family CI job runs with no locale set and
+    /// the AppImage inherits whatever the host has, so a zip written on Windows
+    /// with accented names listed as a truncated tree -- and "copy everything
+    /// out" copied a subset. See MOLE-352.
+    ///
+    /// Per call and per thread. The process locale is not this plugin's to
+    /// change: Qt does its own conversions and does not consult it, and a
+    /// setlocale() here would be reaching under everything else in the process
+    /// from whichever thread got here first. uselocale() is a thread-local
+    /// pointer swap and costs nothing.
+    class Utf8Names
+    {
+    public:
+#ifdef Q_OS_UNIX
+        Utf8Names()
+            : m_previous(uselocale(utf8Ctype()))
+        {
+        }
+        ~Utf8Names()
+        {
+            if (m_previous != static_cast<locale_t>(0))
+                uselocale(m_previous);
+        }
+#else
+        // Windows has no uselocale(), and libarchive there reads names through
+        // the wide-character API rather than converting through LC_CTYPE, so
+        // there is nothing to correct. Whether that is the whole story is a
+        // question for the machine in MOLE-253.
+        Utf8Names() = default;
+        ~Utf8Names() = default;
+#endif
+        Utf8Names(const Utf8Names&) = delete;
+        Utf8Names& operator=(const Utf8Names&) = delete;
+
+    private:
+#ifdef Q_OS_UNIX
+        /// Made once. Null if this system has no UTF-8 locale at all, in which
+        /// case uselocale(0) reports the current one and changes nothing --
+        /// there is no better answer available and no reason to fail over it.
+        static locale_t utf8Ctype()
+        {
+            static locale_t made = [] {
+                for (const char* name : { "C.UTF-8", "C.utf8", "en_US.UTF-8" }) {
+                    if (locale_t built = newlocale(LC_CTYPE_MASK, name, static_cast<locale_t>(0)))
+                        return built;
+                }
+                return static_cast<locale_t>(0);
+            }();
+            return made;
+        }
+
+        locale_t m_previous;
+#endif
+    };
 
     /// RAII for libarchive's read handle, so no early return can leak it.
     class ArchiveReader
@@ -53,6 +121,7 @@ namespace {
                 archive_read_support_format_raw(m_handle);
             else
                 archive_read_support_format_all(m_handle);
+            const Utf8Names names;
             m_opened = archive_read_open_filename(m_handle, path.toLocal8Bit().constData(), kReadBlockSize)
                 == ARCHIVE_OK;
         }
@@ -82,28 +151,55 @@ namespace {
         {
             if (!isOpen())
                 return false;
-            if (!m_peeked && !m_exhausted)
+            if (!m_peeked && !m_exhausted) {
+                const Utf8Names names;
+                // ARCHIVE_OK and nothing else, which is the opposite of the walk
+                // below and deliberate. This decides whether any format claimed
+                // the file at all, and a format that has to complain about its
+                // very first header has not: the mtree bidder answers WARN for
+                // every line of a gzipped CSV and would otherwise win, listing a
+                // price list as an archive of three members. The name conversion
+                // that used to warn here does not any more -- see Utf8Names --
+                // so what is left really is a bidder that does not fit.
                 m_peeked = archive_read_next_header(m_handle, &m_first) == ARCHIVE_OK;
+                m_lastHeader = m_peeked ? ARCHIVE_OK : ARCHIVE_FATAL;
+                if (!m_peeked)
+                    m_exhausted = true;
+            }
             return m_peeked;
         }
 
         /// The next entry, or null at the end. The first call hands back the
         /// header hasEntries() had to read, rather than skipping past it.
+        ///
+        /// Null means "no more", which is two different things -- see
+        /// endedAtTheEnd(). A caller building an index has to ask which.
         struct archive_entry* nextHeader()
         {
             if (m_peeked) {
                 m_peeked = false;
                 return m_first;
             }
-            if (!isOpen())
+            if (!isOpen() || m_exhausted)
                 return nullptr;
+            const Utf8Names names;
             struct archive_entry* entry = nullptr;
-            if (archive_read_next_header(m_handle, &entry) != ARCHIVE_OK) {
+            if (!readAHeader(archive_read_next_header(m_handle, &entry))) {
                 m_exhausted = true;
                 return nullptr;
             }
             return entry;
         }
+
+        /// Whether the walk stopped because the archive ended, rather than
+        /// because reading it failed. Meaningful once nextHeader() has answered
+        /// null, and the difference between an archive listed whole and one
+        /// listed as far as its damage. See MOLE-352.
+        bool endedAtTheEnd() const { return m_lastHeader == ARCHIVE_EOF; }
+
+        /// The format the reader settled on, once a header has been read.
+        int format() const { return isOpen() ? archive_format(m_handle) : 0; }
+        bool isZip() const { return (format() & ARCHIVE_FORMAT_BASE_MASK) == ARCHIVE_FORMAT_ZIP; }
         /// Whether something actually decompressed this: gzip, xz, bzip2, zstd.
         /// A file named `.gz` that is not gzip opens with no filter at all, and
         /// with `raw` enabled its own bytes would be offered as a member.
@@ -119,8 +215,28 @@ namespace {
         }
 
     private:
+        /// Whether that return value handed over an entry.
+        ///
+        /// **ARCHIVE_WARN is a header that was read**, with a complaint
+        /// attached. Testing for ARCHIVE_OK alone made the first complaint the
+        /// end of the archive: the index stopped there, m_indexed was recorded
+        /// as if the whole thing had been read, and "copy everything out" copied
+        /// a subset of a tree nothing said was incomplete. A short listing is
+        /// what a mirror deletes against. See MOLE-352.
+        ///
+        /// For the *first* header the rule is the other one -- see hasEntries(),
+        /// which is not asking the same question.
+        bool readAHeader(int result)
+        {
+            m_lastHeader = result;
+            return result == ARCHIVE_OK || result == ARCHIVE_WARN;
+        }
+
         struct archive* m_handle = nullptr;
         bool m_opened = false;
+        /// What the last attempt to read a header answered, kept so that the end
+        /// of the archive can be told from a failure to read it.
+        int m_lastHeader = ARCHIVE_OK;
         /// The first header, read to find out whether anything claimed the file
         /// and held until somebody asks for it. libarchive reuses the entry, so it
         /// is handed over before another header is ever asked for.
@@ -139,10 +255,16 @@ namespace {
     /// nothing else. It is also what keeps the tree acyclic -- "/.." resolves to
     /// the root, so a directory listing that contained it would list itself, and
     /// anything walking the mount would go round for ever.
-    QString normaliseEntryPath(const QString& raw)
+    /// `windowsSeparators` says whether a backslash in this format's names is a
+    /// separator. It is for a zip written by an old Windows tool, and it is not
+    /// for a tar from Unix, where `a\\b.txt` is one perfectly ordinary name --
+    /// which the unconditional rewrite turned into a folder called `a` holding a
+    /// file called `b.txt`. See MOLE-352.
+    QString normaliseEntryPath(const QString& raw, bool windowsSeparators)
     {
         QString raw_path = raw;
-        raw_path.replace(QLatin1Char('\\'), QLatin1Char('/'));
+        if (windowsSeparators)
+            raw_path.replace(QLatin1Char('\\'), QLatin1Char('/'));
 
         QStringList parts;
         for (const QString& part : raw_path.split(QLatin1Char('/'), Qt::SkipEmptyParts)) {
@@ -212,11 +334,31 @@ namespace {
         return derived.isEmpty() ? QStringLiteral("data") : derived;
     }
 
-    /// Where this entry sits inside the mount.
-    QString pathOfEntry(struct archive_entry* entry, const QString& archivePath, bool singleStream)
+    /// A name out of a header, in UTF-8 where libarchive could convert it.
+    ///
+    /// The UTF-8 accessor first, and this is not a preference: the plain one
+    /// converts to the process locale and answers **null** when it cannot, which
+    /// under a `C` locale is every non-ASCII name -- so the name came back empty
+    /// and the member was skipped as nameless. Raw bytes as the last resort,
+    /// because a name read as mojibake still addresses the right member and no
+    /// name at all does not.
+    QString nameFromHeader(const char* utf8, const char* local)
     {
-        const QString reported = QString::fromUtf8(archive_entry_pathname(entry));
-        return normaliseEntryPath(singleStream ? singleStreamMemberName(archivePath, reported) : reported);
+        if (utf8)
+            return QString::fromUtf8(utf8);
+        if (local)
+            return QString::fromLocal8Bit(local);
+        return {};
+    }
+
+    /// Where this entry sits inside the mount.
+    QString pathOfEntry(
+        struct archive_entry* entry, const QString& archivePath, bool singleStream, bool windowsSeparators)
+    {
+        const QString reported
+            = nameFromHeader(archive_entry_pathname_utf8(entry), archive_entry_pathname(entry));
+        return normaliseEntryPath(
+            singleStream ? singleStreamMemberName(archivePath, reported) : reported, windowsSeparators);
     }
 
     /// One member of an archive, decompressed as it is read rather than all at
@@ -243,10 +385,20 @@ namespace {
     class ArchiveMemberDevice final : public QIODevice
     {
     public:
-        ArchiveMemberDevice(QString archivePath, QString memberPath, qint64 knownSize)
+        /// `ordinal` is which header this member is, counted from zero as the
+        /// walk reads them -- not its name.
+        ///
+        /// Two entries can carry the same name: `zip -u` appends a new version
+        /// rather than replacing the old one, and a rebuilt jar does the same.
+        /// The index keeps the last of them, while this walk used to stop at the
+        /// first name that matched -- so the listing described one member and
+        /// every read handed back another, with a size() that did not match the
+        /// bytes. See MOLE-352.
+        ArchiveMemberDevice(QString archivePath, QString memberPath, qint64 knownSize, int ordinal)
             : m_archivePath(std::move(archivePath))
             , m_memberPath(std::move(memberPath))
             , m_knownSize(knownSize)
+            , m_ordinal(ordinal)
         {
         }
 
@@ -322,9 +474,15 @@ namespace {
                 return false;
             }
 
+            int at = 0;
             while (struct archive_entry* entry = m_reader->nextHeader()) {
-                if (pathOfEntry(entry, m_archivePath, m_open.singleStream) == m_memberPath)
+                const bool isTheOne = m_ordinal >= 0
+                    ? at == m_ordinal
+                    : pathOfEntry(entry, m_archivePath, m_open.singleStream, m_reader->isZip())
+                        == m_memberPath;
+                if (isTheOne)
                     return true;
+                ++at;
                 archive_read_data_skip(m_reader->handle());
             }
 
@@ -355,6 +513,9 @@ namespace {
         QString m_archivePath;
         QString m_memberPath;
         qint64 m_knownSize = -1;
+        /// Which header the member is, or -1 when the caller does not know and
+        /// the name is all there is to go on.
+        int m_ordinal = -1;
         OpenArchive m_open;
         /// Owned by m_open; held separately because it is what every read touches.
         ArchiveReader* m_reader = nullptr;
@@ -405,16 +566,54 @@ Result<void> ArchiveFileSystem::ensureIndexed()
             QStringLiteral("Cannot open archive %1: %2").arg(m_archivePath, reader.errorText()));
     }
 
-    m_nodes.insert(QStringLiteral("/"), Node { true, 0, QFileInfo(m_archivePath).lastModified() });
+    Node root;
+    root.isDir = true;
+    root.modified = QFileInfo(m_archivePath).lastModified();
+    m_nodes.insert(QStringLiteral("/"), root);
 
+    int ordinal = 0;
     while (struct archive_entry* entry = reader.nextHeader()) {
-        const QString path = pathOfEntry(entry, m_archivePath, open.singleStream);
+        const int at = ordinal++;
+        const QString path = pathOfEntry(entry, m_archivePath, open.singleStream, reader.isZip());
         if (path.isEmpty())
             continue;
 
         Node node;
-        node.isDir = archive_entry_filetype(entry) == AE_IFDIR;
+        node.ordinal = at;
+        const auto filetype = archive_entry_filetype(entry);
+        node.isDir = filetype == AE_IFDIR;
         node.size = node.isDir ? 0 : static_cast<qint64>(archive_entry_size(entry));
+
+        // What the entry is, rather than "a directory or a file". A tarball of
+        // almost any source release has links in it, and node_modules is mostly
+        // links; each one used to arrive as a file whose bytes were empty, and a
+        // copy out of the archive wrote empty files under the link names and
+        // reported success. See MOLE-352.
+        node.isSymlink = filetype == AE_IFLNK;
+        if (node.isSymlink) {
+            node.linkTarget = nameFromHeader(archive_entry_symlink_utf8(entry), archive_entry_symlink(entry));
+        }
+        // A hard link carries no data of its own: the bytes are in the member it
+        // names, and reading the entry itself gives nothing at all.
+        if (const QString hard
+            = nameFromHeader(archive_entry_hardlink_utf8(entry), archive_entry_hardlink(entry));
+            !hard.isEmpty()) {
+            node.hardLinkTo = normaliseEntryPath(hard, reader.isZip());
+        }
+        switch (filetype) {
+        case AE_IFIFO:
+            node.special = SpecialKind::Pipe;
+            break;
+        case AE_IFSOCK:
+            node.special = SpecialKind::Socket;
+            break;
+        case AE_IFBLK:
+        case AE_IFCHR:
+            node.special = SpecialKind::Device;
+            break;
+        default:
+            break;
+        }
         // A compressed stream does not know its uncompressed length until it has
         // been read, and `raw` says so by leaving the size unset. Unknown rather
         // than nought: a listing claiming a member with contents is 0 bytes is a
@@ -434,11 +633,43 @@ Result<void> ArchiveFileSystem::ensureIndexed()
             const QString parent = path.left(slash);
             if (m_nodes.contains(parent))
                 break;
-            m_nodes.insert(parent, Node { true, 0, node.modified });
+            Node made;
+            made.isDir = true;
+            made.modified = node.modified;
+            m_nodes.insert(parent, made);
             slash = parent.lastIndexOf(QLatin1Char('/'));
         }
 
         archive_read_data_skip(reader.handle());
+    }
+
+    // Read as far as the archive goes, or as far as it could be read?
+    //
+    // Two things arrive here as "no more headers". One is the end of the
+    // archive; the other is a container a format bidder accepted and then could
+    // not parse -- the mtree bidder claiming a gzipped CSV is the case
+    // openArchive()'s own comment names -- or a tarball whose end is missing.
+    // Both used to be indexed as a complete archive: the first as a drive
+    // holding nothing but `/`, the second as however much of the tree came
+    // before the damage, with m_indexed recorded as if the whole thing had been
+    // read. A short listing is what a mirror deletes against. See MOLE-352.
+    if (!reader.endedAtTheEnd()) {
+        m_nodes.clear();
+        return Result<void>::failure(VfsError::IoError,
+            QStringLiteral("Cannot read archive %1: %2").arg(m_archivePath, reader.errorText()));
+    }
+
+    // The children of each directory, worked out once. list() used to scan every
+    // key in the index for a prefix, so walking a kernel tarball -- eighty
+    // thousand entries, as many directories -- was some hundreds of millions of
+    // string comparisons, all of them under the mutex.
+    for (auto it = m_nodes.constBegin(); it != m_nodes.constEnd(); ++it) {
+        const QString& path = it.key();
+        if (path == QLatin1String("/"))
+            continue;
+        const int slash = path.lastIndexOf(QLatin1Char('/'));
+        const QString parent = slash > 0 ? path.left(slash) : QStringLiteral("/");
+        m_children[parent].append(path);
     }
 
     m_indexed = true;
@@ -463,22 +694,12 @@ Result<FileEntryList> ArchiveFileSystem::list(const VfsUri& dir, const CancelTok
     const QString prefix = (path == QLatin1String("/")) ? QStringLiteral("/") : path + QLatin1Char('/');
 
     FileEntryList out;
-    for (auto it = m_nodes.constBegin(); it != m_nodes.constEnd(); ++it) {
-        const QString& candidate = it.key();
-        if (candidate == path || !candidate.startsWith(prefix))
+    for (const QString& candidate : m_children.value(path)) {
+        const auto child = m_nodes.constFind(candidate);
+        if (child == m_nodes.constEnd())
             continue;
-        if (candidate.indexOf(QLatin1Char('/'), prefix.size()) >= 0)
-            continue;
-
-        FileEntry file;
-        file.name = candidate.mid(prefix.size());
-        file.uri = VfsUri(scheme(), dir.authority(), candidate);
-        file.isDir = it->isDir;
-        file.isHidden = file.name.startsWith(QLatin1Char('.'));
-        file.isWritable = false;
-        file.size = it->size;
-        file.modified = it->modified;
-        out.append(file);
+        out.append(
+            entryFor(VfsUri(scheme(), dir.authority(), candidate), candidate.mid(prefix.size()), *child));
     }
 
     std::sort(out.begin(), out.end(), [](const FileEntry& a, const FileEntry& b) { return a.name < b.name; });
@@ -496,14 +717,56 @@ Result<FileEntry> ArchiveFileSystem::stat(const VfsUri& target)
         return VfsError::make(
             VfsError::NotFound, QStringLiteral("No such entry in archive: %1").arg(target.path()));
 
+    return entryFor(target, target.fileName(), *node);
+}
+
+FileEntry ArchiveFileSystem::entryFor(const VfsUri& uri, const QString& name, const Node& node) const
+{
+    // Caller holds m_mutex.
     FileEntry entry;
-    entry.name = target.fileName();
-    entry.uri = target;
-    entry.isDir = node->isDir;
+    entry.name = name;
+    entry.uri = uri;
+    entry.isDir = node.isDir;
+    entry.isSymlink = node.isSymlink;
+    entry.special = node.special;
+    entry.isHidden = name.startsWith(QLatin1Char('.'));
     entry.isWritable = false;
-    entry.size = node->size;
-    entry.modified = node->modified;
+    entry.size = node.size;
+    entry.modified = node.modified;
+
+    // A link whose target is not in this archive. Named rather than left as an
+    // ordinary link, because the refusal above this layer has to say why -- see
+    // SpecialKind and MOLE-333.
+    if (node.isSymlink && entry.special == SpecialKind::None
+        && resolvedLinkTarget(uri.path(), node.linkTarget).isEmpty()) {
+        entry.special = SpecialKind::DanglingLink;
+    }
+    // A hard link is the member it names, so it is that member's size that a
+    // reader will get and that a copy has to plan for.
+    if (!node.hardLinkTo.isEmpty()) {
+        const auto pointedAt = m_nodes.constFind(node.hardLinkTo);
+        if (pointedAt != m_nodes.constEnd())
+            entry.size = pointedAt->size;
+        else
+            entry.special = SpecialKind::DanglingLink;
+    }
     return entry;
+}
+
+QString ArchiveFileSystem::resolvedLinkTarget(const QString& from, const QString& target) const
+{
+    // Caller holds m_mutex.
+    if (target.isEmpty())
+        return {};
+    // Relative to the link's own directory, the way a link is read anywhere
+    // else, and absolute targets resolve against the archive root -- there is
+    // nothing else here for them to mean.
+    const int slash = from.lastIndexOf(QLatin1Char('/'));
+    const QString directory = slash > 0 ? from.left(slash) : QString();
+    const QString joined
+        = target.startsWith(QLatin1Char('/')) ? target : directory + QLatin1Char('/') + target;
+    const QString resolved = normaliseEntryPath(joined, false);
+    return m_nodes.contains(resolved) ? resolved : QString();
 }
 
 Result<std::unique_ptr<QIODevice>> ArchiveFileSystem::openRead(const VfsUri& target, qint64)
@@ -514,19 +777,37 @@ Result<std::unique_ptr<QIODevice>> ArchiveFileSystem::openRead(const VfsUri& tar
     // returned", and nothing here needs to break that -- a lazy device gives a
     // window without being told how big to make it.
     qint64 known = -1;
+    int ordinal = -1;
+    QString member = target.path();
     {
         QMutexLocker lock(&m_mutex);
         if (Result<void> indexed = ensureIndexed(); !indexed.ok())
             return indexed.error();
 
-        const auto node = m_nodes.constFind(target.path());
+        auto node = m_nodes.constFind(target.path());
         if (node == m_nodes.constEnd())
             return VfsError::make(
                 VfsError::NotFound, QStringLiteral("No such entry in archive: %1").arg(target.path()));
         if (node->isDir)
             return VfsError::make(
                 VfsError::IsADirectory, QStringLiteral("Is a directory: %1").arg(target.path()));
+
+        // A hard link's bytes are in the member it names -- the entry itself
+        // carries none, so reading it used to hand back a zero-byte file. Read
+        // that member instead, which is what "the same file under two names"
+        // means inside a tarball.
+        if (!node->hardLinkTo.isEmpty()) {
+            const auto pointedAt = m_nodes.constFind(node->hardLinkTo);
+            if (pointedAt == m_nodes.constEnd()) {
+                return VfsError::make(VfsError::NotFound,
+                    QStringLiteral("%1 is a link to %2, which is not in this archive")
+                        .arg(target.path(), node->hardLinkTo));
+            }
+            member = node->hardLinkTo;
+            node = pointedAt;
+        }
         known = node->size;
+        ordinal = node->ordinal;
     }
 
     // Stream formats have no random access, so reaching a byte means decompressing
@@ -535,17 +816,17 @@ Result<std::unique_ptr<QIODevice>> ArchiveFileSystem::openRead(const VfsUri& tar
     // decompresses as it is read and holds only the chunk it is handing over, so a
     // preview costs its window and an extraction that reads to the end still gets
     // every byte. See MOLE-218.
-    auto member = std::make_unique<ArchiveMemberDevice>(m_archivePath, target.path(), known);
-    if (!member->open(QIODevice::ReadOnly)) {
+    auto device = std::make_unique<ArchiveMemberDevice>(m_archivePath, member, known, ordinal);
+    if (!device->open(QIODevice::ReadOnly)) {
         // Every refusal inside the device records why. A Result built from an
         // error that is not one would be a success carrying no device at all,
         // which is a null the caller has no reason to expect.
-        const VfsError why = member->failure();
+        const VfsError why = device->failure();
         return why.isError()
             ? why
             : VfsError::make(VfsError::IoError, QStringLiteral("Cannot read %1").arg(target.path()));
     }
-    return Result<std::unique_ptr<QIODevice>>(std::move(member));
+    return Result<std::unique_ptr<QIODevice>>(std::move(device));
 }
 
 QList<ConnectionField> ArchiveFileSystemFactory::connectionFields() const

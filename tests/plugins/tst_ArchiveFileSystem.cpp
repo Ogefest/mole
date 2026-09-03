@@ -8,10 +8,12 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QProcess>
 #include <QStandardPaths>
 
 #include <algorithm>
+#include <locale.h>
 
 #ifdef Q_OS_UNIX
 #include <unistd.h>
@@ -203,6 +205,13 @@ private slots:
     void aRealPackageOpensWhereThereIsSomethingToBuildOneWith();
     void aDocumentThatHappensToBeAZipIsNotOfferedAsADrive();
     void anArchiveInsideAnArchiveCannotBeOpenedInPlace();
+
+    void everyMemberIsListedWhateverLocaleTheProcessIsIn();
+    void aTarballCutShortIsAnErrorRatherThanTheTreeItGotThrough();
+    void aTextFileNamedZipThatAFormatBidsForFailsCleanly();
+    void twoEntriesWithOneNameReadTheOneTheListingDescribes();
+    void aLinkInsideAnArchiveIsShownAsOneAndAHardLinkReadsItsTarget();
+    void aBackslashInATarNameIsPartOfTheName();
 
     void openingAMemberOfATruncatedArchiveStillGivesItsFirstWindow();
     void theDamageInATruncatedMemberIsReportedByTheReadThatReachesIt();
@@ -810,6 +819,287 @@ void TestArchiveFileSystem::aSevenZipIsUnaffected()
 // file is never held, only the window being shown". MOLE-216 made it urgent
 // rather than theoretical: a file compressed with gzip alone is typically a log
 // or a dump, and those are the large ones. See MOLE-218.
+
+/// A zip written on Windows with accented names, read in a `C` locale.
+///
+/// libarchive converts the names in a header to the process locale, and when it
+/// cannot it answers ARCHIVE_WARN and stores **no pathname at all**. The reader
+/// treated any non-OK return as the end of the archive, so the index stopped at
+/// the first accented member and recorded itself as complete: a truncated tree
+/// nothing said was truncated, and "copy everything out" copied a subset. If the
+/// *first* header warned, the file fell through to the raw probe and a perfectly
+/// good zip was an unrecognised format.
+///
+/// A `C` locale is not exotic -- CI runs one and the AppImage inherits whatever
+/// the host has -- so the case sets one rather than hoping. See MOLE-352.
+void TestArchiveFileSystem::everyMemberIsListedWhateverLocaleTheProcessIsIn()
+{
+    QTemporaryDir staging;
+    QVERIFY(staging.isValid());
+    const QStringList names { QStringLiteral("ascii.txt"), QString::fromUtf8("żółw.txt"),
+        QString::fromUtf8("上海.txt"), QStringLiteral("zebra.txt") };
+    for (const QString& name : names) {
+        QFile file(QDir(staging.path()).filePath(name));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(name.toUtf8());
+        file.close();
+    }
+
+    const QString path = packDirectory(staging.path(),
+        QDir(m_workspace->path()).filePath(QStringLiteral("accented.zip")), QStringLiteral("zip"));
+    if (path.isEmpty())
+        QSKIP("zip is not available to build the fixture");
+
+    // The locale the fault needs, put back whatever happens: it is process-wide
+    // and every case after this one would inherit it.
+    const QByteArray was(setlocale(LC_CTYPE, nullptr));
+    setlocale(LC_CTYPE, "C");
+    const FileSystemPtr fs = openArchive(path);
+    const Result<FileEntryList> listed = fs->list(rootOf(path), CancelToken());
+    const bool ok = listed.ok();
+    QStringList found;
+    if (ok) {
+        for (const FileEntry& entry : listed.value())
+            found.append(entry.name);
+    }
+    setlocale(LC_CTYPE, was.constData());
+
+    QVERIFY2(ok, "a zip with accented names was not readable at all");
+    found.sort();
+    QStringList wanted = names;
+    wanted.sort();
+    QCOMPARE(found, wanted);
+
+    // And the member is readable, not merely listed: the name has to be the one
+    // the archive holds, or the walk to it finds nothing.
+    for (const FileEntry& entry : listed.value()) {
+        const Result<std::unique_ptr<QIODevice>> opened = fs->openRead(entry.uri);
+        QVERIFY2(opened.ok(), qPrintable(entry.name + QStringLiteral(": ") + opened.error().message));
+        QCOMPARE(opened.value()->readAll(), entry.name.toUtf8());
+    }
+}
+
+/// A tarball whose end is missing listed the part that survived.
+///
+/// The zip case beside this one is about the same fault; a tar is the shape that
+/// shows it plainly, being read as a stream from the front. Half a tree reported
+/// as a tree is what a mirror deletes against, and an extraction of it is
+/// reported as an extraction. See MOLE-352.
+void TestArchiveFileSystem::aTarballCutShortIsAnErrorRatherThanTheTreeItGotThrough()
+{
+    QTemporaryDir staging;
+    QVERIFY(staging.isValid());
+    for (int i = 0; i < 40; ++i) {
+        QFile file(QDir(staging.path()).filePath(QStringLiteral("member-%1.txt").arg(i)));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(QByteArray(4096, static_cast<char>('a' + (i % 26))));
+        file.close();
+    }
+    const QString whole = packDirectory(staging.path(),
+        QDir(m_workspace->path()).filePath(QStringLiteral("whole.tar.gz")), QStringLiteral("tar"));
+    if (whole.isEmpty())
+        QSKIP("tar is not available to build the fixture");
+
+    QFile source(whole);
+    QVERIFY(source.open(QIODevice::ReadOnly));
+    const QByteArray bytes = source.readAll();
+    source.close();
+
+    const QString path = QDir(m_workspace->path()).filePath(QStringLiteral("cut.tar.gz"));
+    QFile cut(path);
+    QVERIFY(cut.open(QIODevice::WriteOnly));
+    // Two thirds: far enough in that some members are whole, so the tempting
+    // wrong answer -- a listing of those -- is available.
+    cut.write(bytes.left(bytes.size() * 2 / 3));
+    cut.close();
+
+    const FileSystemPtr fs = openArchive(path);
+    const Result<FileEntryList> listed = fs->list(rootOf(path), CancelToken());
+    QVERIFY2(!listed.ok(), "a tarball that stops half way listed as a whole archive");
+    QCOMPARE(listed.error().code, VfsError::IoError);
+}
+
+/// A container a bidder accepts and cannot parse was an empty drive.
+///
+/// ensureIndexed() checked only that the reader was open. A format bidder that
+/// accepts the file and fails at the first header -- libarchive's mtree bidder
+/// claiming a text file is the case openArchive()'s own comment names -- left the
+/// loop body never running, and the mount was a lone `/`: a file that opens onto
+/// nothing, with the error the reader was holding never read. Named `.zip` so the
+/// single-compressed-stream fallback does not apply and the container really is
+/// the last word. See MOLE-352.
+void TestArchiveFileSystem::aTextFileNamedZipThatAFormatBidsForFailsCleanly()
+{
+    const QString path = QDir(m_workspace->path()).filePath(QStringLiteral("prices.zip"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("name;price\nwidget;1,50\nbolt;0,99\n");
+    file.close();
+
+    const FileSystemPtr fs = openArchive(path);
+    const Result<FileEntryList> listed = fs->list(rootOf(path), CancelToken());
+    QVERIFY2(!listed.ok(), "a text file that no format can really read opened as an archive of nothing");
+    QVERIFY2(!listed.error().message.isEmpty(), "and the reason has to reach whoever opened it");
+}
+
+/// The listing described one member and every read handed back another.
+///
+/// `zip -u` appends a new version of a file rather than replacing it, and a
+/// rebuilt jar does the same, so two headers carry one name. The index kept the
+/// last of them -- its size, its date -- while the walk to the bytes stopped at
+/// the first name that matched. So a preview showed the wrong bytes and a copy
+/// wrote a file whose length did not match what the listing had promised, which
+/// is a transfer that reports success and produces the wrong file. See MOLE-352.
+void TestArchiveFileSystem::twoEntriesWithOneNameReadTheOneTheListingDescribes()
+{
+    QTemporaryDir staging;
+    QVERIFY(staging.isValid());
+    const QString name = QStringLiteral("report.txt");
+    const QByteArray first = QByteArrayLiteral("the first version");
+    const QByteArray second = QByteArrayLiteral("the second version, which is longer than the first");
+
+    QFile file(QDir(staging.path()).filePath(name));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(first);
+    file.close();
+    const QString path = packMembers(
+        staging.path(), QDir(m_workspace->path()).filePath(QStringLiteral("updated.tar")), { name });
+    if (path.isEmpty())
+        QSKIP("tar is not available to build the fixture");
+
+    // Appended, which is what `tar -r` and `zip -u` both do: the older entry
+    // stays in the file and the newer one is what a reader should end up with.
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(second);
+    file.close();
+    QProcess append;
+    append.setWorkingDirectory(staging.path());
+    append.start(
+        QStandardPaths::findExecutable(QStringLiteral("tar")), { QStringLiteral("-rPf"), path, name });
+    QVERIFY(append.waitForFinished(30000));
+    if (append.exitCode() != 0)
+        QSKIP("this tar will not append to an archive");
+
+    const FileSystemPtr fs = openArchive(path);
+    const Result<FileEntryList> listed = fs->list(rootOf(path), CancelToken());
+    QVERIFY2(listed.ok(), qPrintable(listed.error().message));
+    QCOMPARE(listed.value().size(), 1);
+
+    const FileEntry entry = listed.value().first();
+    const Result<std::unique_ptr<QIODevice>> opened = fs->openRead(entry.uri);
+    QVERIFY2(opened.ok(), qPrintable(opened.error().message));
+    const QByteArray got = opened.value()->readAll();
+
+    QCOMPARE(got.size(), static_cast<int>(entry.size));
+    QVERIFY2(got == second,
+        qPrintable(QStringLiteral("the listing said %1 bytes and the read gave %2: \"%3\"")
+                       .arg(entry.size)
+                       .arg(got.size())
+                       .arg(QString::fromUtf8(got))));
+}
+
+/// Links inside an archive arrived as empty files.
+///
+/// Only AE_IFDIR was distinguished, so a symbolic link became a file with no
+/// bytes in it and a hard link became a zero-byte file -- and a copy out of any
+/// tarball with links in it, which is most source releases and all of
+/// node_modules, wrote empty files under the link names and reported success.
+/// The header says what each one is and where it points; nothing asked. See
+/// MOLE-352.
+void TestArchiveFileSystem::aLinkInsideAnArchiveIsShownAsOneAndAHardLinkReadsItsTarget()
+{
+#ifndef Q_OS_UNIX
+    QSKIP("building the fixture needs links this platform does not have");
+#else
+    QTemporaryDir staging;
+    QVERIFY(staging.isValid());
+    const QByteArray contents = QByteArrayLiteral("what the target holds");
+    QFile target(QDir(staging.path()).filePath(QStringLiteral("target.txt")));
+    QVERIFY(target.open(QIODevice::WriteOnly));
+    target.write(contents);
+    target.close();
+
+    // A symbolic link to it, and a hard link to it. tar stores the first as a
+    // link entry with the target in the header, and the second as a hardlink
+    // entry -- which carries no data at all.
+    QVERIFY(QFile::link(QStringLiteral("target.txt"), QDir(staging.path()).filePath(QStringLiteral("soft"))));
+    QVERIFY(::link(QDir(staging.path()).filePath(QStringLiteral("target.txt")).toLocal8Bit().constData(),
+                QDir(staging.path()).filePath(QStringLiteral("hard")).toLocal8Bit().constData())
+        == 0);
+
+    const QString path
+        = packMembers(staging.path(), QDir(m_workspace->path()).filePath(QStringLiteral("links.tar")),
+            { QStringLiteral("target.txt"), QStringLiteral("hard"), QStringLiteral("soft") });
+    if (path.isEmpty())
+        QSKIP("tar is not available to build the fixture");
+
+    const FileSystemPtr fs = openArchive(path);
+    const Result<FileEntryList> listed = fs->list(rootOf(path), CancelToken());
+    QVERIFY2(listed.ok(), qPrintable(listed.error().message));
+
+    QHash<QString, FileEntry> byName;
+    for (const FileEntry& entry : listed.value())
+        byName.insert(entry.name, entry);
+    QVERIFY(byName.contains(QStringLiteral("soft")));
+    QVERIFY(byName.contains(QStringLiteral("hard")));
+
+    // Said to be a link, so a walk that was not asked to follow links declines
+    // to and a copy can decide what to do about it -- rather than writing an
+    // empty file and calling it done.
+    QVERIFY2(byName.value(QStringLiteral("soft")).isSymlink, "a symbolic link must be shown as one");
+    QVERIFY2(!byName.value(QStringLiteral("target.txt")).isSymlink, "and an ordinary file must not be");
+
+    // A hard link is the same file under another name, so it is the target's
+    // length that is promised and the target's bytes that arrive.
+    QCOMPARE(byName.value(QStringLiteral("hard")).size, static_cast<qint64>(contents.size()));
+    const Result<std::unique_ptr<QIODevice>> opened = fs->openRead(byName.value(QStringLiteral("hard")).uri);
+    QVERIFY2(opened.ok(), qPrintable(opened.error().message));
+    QCOMPARE(opened.value()->readAll(), contents);
+#endif
+}
+
+/// `a\b.txt` in a tar is one file, and it was being split in two.
+///
+/// The backslash rewrite is right for a zip written by an old Windows tool,
+/// where `\` really is the separator, and wrong for every other format: on Unix
+/// a backslash is an ordinary character in a name. It was applied
+/// unconditionally, so a tar holding one file called `a\b.txt` showed a folder
+/// called `a` with a file called `b.txt` in it -- and the file itself could not
+/// be addressed at all. See MOLE-352.
+void TestArchiveFileSystem::aBackslashInATarNameIsPartOfTheName()
+{
+#ifndef Q_OS_UNIX
+    QSKIP("a backslash cannot be part of a file name on this platform");
+#else
+    QTemporaryDir staging;
+    QVERIFY(staging.isValid());
+    const QString name = QStringLiteral("a\\b.txt");
+    QFile file(QDir(staging.path()).filePath(name));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("one name, not two");
+    file.close();
+
+    // The whole directory rather than the member by name: GNU tar refuses a
+    // command-line argument with a backslash in it ("cannot stat"), and what is
+    // in question is how the *archive* spells the name, not how tar is asked for
+    // it.
+    const QString path = packDirectory(staging.path(),
+        QDir(m_workspace->path()).filePath(QStringLiteral("slash.tar.gz")), QStringLiteral("tar"));
+    if (path.isEmpty())
+        QSKIP("tar is not available to build the fixture");
+
+    const FileSystemPtr fs = openArchive(path);
+    const Result<FileEntryList> listed = fs->list(rootOf(path), CancelToken());
+    QVERIFY2(listed.ok(), qPrintable(listed.error().message));
+    QCOMPARE(listed.value().size(), 1);
+    QCOMPARE(listed.value().first().name, name);
+    QVERIFY2(!listed.value().first().isDir, "a name with a backslash in it is a file, not a folder");
+
+    const Result<std::unique_ptr<QIODevice>> opened = fs->openRead(listed.value().first().uri);
+    QVERIFY2(opened.ok(), qPrintable(opened.error().message));
+    QCOMPARE(opened.value()->readAll(), QByteArrayLiteral("one name, not two"));
+#endif
+}
 
 void TestArchiveFileSystem::openingAMemberOfATruncatedArchiveStillGivesItsFirstWindow()
 {

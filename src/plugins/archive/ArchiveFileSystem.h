@@ -42,15 +42,47 @@ private:
         bool isDir = false;
         qint64 size = 0;
         QDateTime modified;
+        /// Which header this entry is, counted from zero as the index is built.
+        ///
+        /// Because a name does not identify a member: `zip -u` appends a new
+        /// version rather than replacing the old one, so two headers carry the
+        /// same name, and the index keeps the last while a reader looking the
+        /// name up found the first. The listing described one and every read
+        /// handed back the other. See MOLE-352.
+        int ordinal = -1;
+        /// What a symbolic link points at, as the archive states it. Empty for
+        /// everything else.
+        QString linkTarget;
+        bool isSymlink = false;
+        /// The member a hard link names. Its bytes are the ones to read: a hard
+        /// link entry carries none of its own.
+        QString hardLinkTo;
+        /// A pipe, a socket, a device node or a link to nothing -- an archive can
+        /// hold all of them, and each one copied as an empty file is a copy that
+        /// silently did not happen. See SpecialKind and MOLE-333.
+        SpecialKind special = SpecialKind::None;
     };
 
     /// Reads the central directory once and caches it. Cheap for zip, a full
     /// pass for stream formats like tar.gz -- either way, only once.
     Result<void> ensureIndexed();
 
+    /// One node, shaped as the listing and stat() both want it.
+    FileEntry entryFor(const VfsUri& uri, const QString& name, const Node& node) const;
+
+    /// Where a link points *inside this archive*, or empty when it points at
+    /// something the archive does not contain.
+    QString resolvedLinkTarget(const QString& from, const QString& target) const;
+
     QString m_archivePath;
     mutable QMutex m_mutex;
     QHash<QString, Node> m_nodes;
+    /// The children of each directory, built with the index.
+    ///
+    /// list() used to scan every key for a prefix, which for a kernel tarball --
+    /// eighty thousand entries and as many directories to walk -- is hundreds of
+    /// millions of string comparisons, all under the mutex. See MOLE-352.
+    QHash<QString, QStringList> m_children;
     bool m_indexed = false;
 };
 

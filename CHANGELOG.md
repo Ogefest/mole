@@ -65,6 +65,10 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-03 #MOLE-352 An archive with non-ASCII names lists every member whatever locale the machine is in, instead of stopping at the first accented name
+2026-09-03 #MOLE-352 A link inside an archive is shown as a link, and a hard link reads the file it points at, instead of both arriving as empty files
+2026-09-03 #MOLE-352 An archive that is damaged, cut short, or only half recognised says so, instead of opening onto part of a tree or onto nothing
+2026-09-03 #MOLE-352 A member whose name appears twice reads the version the listing describes, and a name with a backslash in a tar is one file rather than a folder
 2026-09-03 #MOLE-347 Cancelling an upload to an object store now removes the parts it had already sent, instead of leaving them in the bucket being charged for
 2026-09-03 #MOLE-347 An object or a folder over 5 GB on an object store can be renamed, instead of failing part way with keys copied under both names
 2026-09-03 #MOLE-347 An object store says when an object last changed, and a key refused by a policy says so rather than reporting the file as missing
