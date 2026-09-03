@@ -290,6 +290,16 @@ Two rules, because they answer different questions — the Epics board says *whi
 topic*, and `Ready` says *which of its tasks*. Skip an epic with nothing in `Ready`:
 whatever it has left is in `Backlog` or `Blocked`, and neither is dispatchable.
 
+**Skipping means going on down the queue, not stopping.** Read the next card in `To-Do`,
+and the next, and take the first task you find in `Ready`. Only when *no* epic in `To-Do`
+has anything in `Ready` is there nothing to take — and then say so plainly, because it
+means planning is behind rather than that the work is finished.
+
+**It went the other way on 2026-09-04, which is why this paragraph exists.** *Where the
+parts disagree* ran its `Ready` empty at 24 tasks of 79 — fifty-three dispatchable ones
+were still in `Backlog`, waiting on a planning sitting — and the report came back as *no
+topics left to take*. There were ten, in the two epics below it in `To-Do`.
+
 The Mole board's five columns say what state a task is in:
 
 | Column | Holds |
@@ -368,6 +378,11 @@ v "/tasks/$epic" | jq -r '[.related_tasks.subtask[]?|select(.done|not)|"MOLE-\(.
 An empty list there is the whole test. If it is not empty, the epic is still the
 work, even when everything left in it sits in `Backlog` or `Blocked` — in that case
 say so rather than moving the card, because what happens next is a planning call.
+
+**That paragraph governs the epic's card and nothing else.** "The epic is still the
+work" means do not mark it `Done`; it does not mean stay on it, and it does not mean
+stop. With its `Ready` empty the epic is not dispatchable to you either — so say what it
+is waiting for *and* go on down `To-Do`, rather than saying it instead.
 
 Both orders are deliberate rather than obvious. They are planned separately,
 weighing what unblocks the most against what is losing data today, and the
