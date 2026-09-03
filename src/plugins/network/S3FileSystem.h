@@ -147,9 +147,8 @@ private:
     Result<QString> beginMultipart(const QString& key);
     /// Sends one part, and returns the tag the server gives it -- completing the
     /// upload means handing all of them back in order.
-    Result<QByteArray> uploadPart(
-        const QString& key, const QString& uploadId, int partNumber, QIODevice& body, qint64 size,
-        const CancelToken& cancel = CancelToken());
+    Result<QByteArray> uploadPart(const QString& key, const QString& uploadId, int partNumber,
+        QIODevice& body, qint64 size, const CancelToken& cancel = CancelToken());
     /// Assembles the parts into the object.
     Result<void> completeMultipart(
         const QString& key, const QString& uploadId, const QList<QByteArray>& tags);

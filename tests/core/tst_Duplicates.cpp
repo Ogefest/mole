@@ -261,7 +261,8 @@ void TestDuplicates::aSymbolicLinkIsNotADuplicateOfWhatItPointsAt()
     QSKIP("this platform has no symbolic links to make");
 #else
     QVERIFY(m_tree->writeFile(QStringLiteral("real.bin"), QByteArray(8192, 'r')));
-    QVERIFY(QFile::link(m_tree->absolute(QStringLiteral("real.bin")), m_tree->absolute(QStringLiteral("pointer"))));
+    QVERIFY(QFile::link(
+        m_tree->absolute(QStringLiteral("real.bin")), m_tree->absolute(QStringLiteral("pointer"))));
 
     FindDuplicatesTask* task = findUnder({ m_tree->rootUri() }, std::make_unique<SameContentStrategy>());
     QVERIFY(task);

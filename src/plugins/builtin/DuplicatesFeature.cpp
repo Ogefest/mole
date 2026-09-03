@@ -152,8 +152,7 @@ QVariantList DuplicatesController::selectedDetails() const
                 // Named separately from the text shown, because the dialog these
                 // rows go into is what then has to delete exactly these rows.
                 // See deleteSelected() and MOLE-339.
-                { QStringLiteral("uri"), entry.uri.toString() },
-                { QStringLiteral("isDir"), false },
+                { QStringLiteral("uri"), entry.uri.toString() }, { QStringLiteral("isDir"), false },
                 { QStringLiteral("detail"), locale.formattedDataSize(entry.size) } });
         }
     }

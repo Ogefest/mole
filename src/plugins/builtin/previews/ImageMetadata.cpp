@@ -335,8 +335,7 @@ namespace {
             // an FF E1 LL LL -- a JPEG whose APP1 marker sits at 4091 hits it by
             // accident, a hostile file on purpose. Every other slice in this file
             // is guarded; this one was not. See ADR-0010 and MOLE-357.
-            if (marker8 == 0xe1 && payloadBytes > marker.size()
-                && payload + marker.size() <= bytes.size()
+            if (marker8 == 0xe1 && payloadBytes > marker.size() && payload + marker.size() <= bytes.size()
                 && bytes.sliced(payload, marker.size()) == QByteArrayView(marker)) {
                 const qint64 start = payload + marker.size();
                 // Truncated on the way in: take what is here rather than nothing,
