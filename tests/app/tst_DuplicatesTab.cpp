@@ -13,6 +13,7 @@
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/VfsManager.h"
 #include "core/vfs/backends/LocalFileSystem.h"
+#include "core/vfs/backends/MemoryFileSystem.h"
 
 #include <QDir>
 #include <QFile>
@@ -60,6 +61,8 @@ private slots:
     void keepingOneCopyLeavesEveryOtherGroupAlone();
     void noPerGroupOverrideEverProposesDeletingEveryCopy();
     void theChoiceHasWeightOnTheScreen();
+    void nearestTheTopMeansFewestFoldersDeepAndNotShortestString();
+    void aDeleteTheDriveRefusedKeepsTheRowsAndNamesWhatFailed();
     void everyStrategyNameFitsInThePickerThatOffersIt();
 
     void confirmingEachGroupInsertsOneRowAndResetsNothing();
@@ -971,6 +974,95 @@ void TestDuplicatesTab::noPerGroupOverrideEverProposesDeletingEveryCopy()
         QCOMPARE(ticked.size(), 2);
         QVERIFY2(!ticked.contains(kept), qPrintable(QStringLiteral("keeping %1 ticked it").arg(kept)));
     }
+}
+
+/// "Nearest the top of the tree" meant the shortest string.
+///
+/// keepShortestPath() compared path().size(), while the button, the rule text
+/// and the comment above it all say depth. `/a/b/c/photo.jpg` is 16 characters
+/// and three folders deep; `/documents-archive/photo.jpg` is 28 characters and
+/// one folder deep -- so the copy in the archive was the one offered for
+/// deletion, which is the opposite of what was promised. The existing rule case
+/// could not see it: it asserts only that *some* copy of each group survives.
+/// See MOLE-341.
+void TestDuplicatesTab::nearestTheTopMeansFewestFoldersDeepAndNotShortestString()
+{
+    const QByteArray same(4096, 'k');
+    // One folder deep with a long name, three folders deep with short ones.
+    QVERIFY(m_tree->writeFile(QStringLiteral("documents-archive/photo.jpg"), same));
+    QVERIFY(m_tree->writeFile(QStringLiteral("a/b/c/photo.jpg"), same));
+
+    // Headless: the claim is about which copy the rule picks, and a window would
+    // add a minute to it without adding anything to the assertion.
+    DuplicatesController controller(guiless());
+    controller.setStrategyId(QStringLiteral("contents"));
+    controller.setMinimumSize(1);
+    controller.setTargets({ m_tree->rootUri().toString() });
+    controller.scan();
+    QVERIFY(waitFor([&] { return !controller.isScanning() && controller.hasRun(); }, 30000));
+    QCOMPARE(controller.groupCount(), 1);
+
+    controller.keepShortestPath();
+
+    const QStringList ticked = controller.selectedUris();
+    QCOMPARE(ticked.size(), 1);
+    QVERIFY2(ticked.first().endsWith(QStringLiteral("/a/b/c/photo.jpg")),
+        qPrintable(QStringLiteral("the buried copy should be the one offered for deletion, not %1")
+                       .arg(ticked.first())));
+}
+
+/// A delete the drive refused emptied the tab.
+///
+/// The finished lambda cleared the groups, the rule text and hasRun whatever had
+/// happened, and DeleteTask::failures() was never read. So a delete a read-only
+/// drive refused left an empty tab, no reason anywhere, and a rescan of the
+/// whole tree to do -- and where the ticks spanned two drives, the first task to
+/// finish wiped the second's rows before it had run. See MOLE-341.
+void TestDuplicatesTab::aDeleteTheDriveRefusedKeepsTheRowsAndNamesWhatFailed()
+{
+    auto drive = std::make_shared<MemoryFileSystem>();
+    drive->addDirectory(QStringLiteral("/one"));
+    drive->addDirectory(QStringLiteral("/two"));
+    drive->addFile(QStringLiteral("/one/report.txt"), QByteArray(4096, 'r'));
+    drive->addFile(QStringLiteral("/two/report.txt"), QByteArray(4096, 'r'));
+
+    Mount mount;
+    mount.id = QStringLiteral("stubborn");
+    mount.root = VfsUri::fromString(QStringLiteral("mem:///"));
+    mount.fileSystem = drive;
+    m_vfs->addMount(mount);
+
+    DuplicatesController controller(guiless());
+    controller.setStrategyId(QStringLiteral("contents"));
+    controller.setMinimumSize(1);
+    controller.setTargets({ QStringLiteral("mem:///") });
+    controller.scan();
+    QVERIFY(waitFor([&] { return !controller.isScanning() && controller.hasRun(); }, 30000));
+    QCOMPARE(controller.groupCount(), 1);
+
+    controller.keepShortestPath();
+    const QStringList ticked = controller.selectedUris();
+    QCOMPARE(ticked.size(), 1);
+
+    // Refused only now, so the scan read the tree and it is the delete that
+    // fails -- which is the order it happens in: a share whose permissions say
+    // no, a mount that is read-only, a file somebody else has open.
+    drive->setFault(VfsUri::fromString(ticked.first()).path(), VfsError::AccessDenied);
+
+    controller.deleteSelected();
+    QVERIFY(waitFor([&] { return !controller.deleteFailures().isEmpty(); }, 30000));
+
+    // The rows are still there, because the files are.
+    QCOMPARE(controller.groupCount(), 1);
+    QCOMPARE(controller.selectedUris(), ticked);
+    QVERIFY2(controller.hasRun(), "the scan still ran, so the tab must not go back to its empty state");
+
+    // And the refusal says which file and why.
+    const QString said = controller.deleteFailures().join(QStringLiteral("; "));
+    QVERIFY2(said.contains(QStringLiteral("report.txt")), qPrintable(said));
+    QVERIFY2(said.contains(QStringLiteral("fault")), qPrintable(said));
+    QVERIFY2(controller.summary().contains(QStringLiteral("could not be deleted")),
+        qPrintable(controller.summary()));
 }
 
 void TestDuplicatesTab::theChoiceHasWeightOnTheScreen()

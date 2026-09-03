@@ -82,6 +82,53 @@ void DuplicateGroupModel::clear()
     emit countChanged();
 }
 
+void DuplicateGroupModel::removeUris(const QStringList& uris)
+{
+    if (uris.isEmpty() || m_groups.isEmpty())
+        return;
+
+    const QSet<QString> going(uris.begin(), uris.end());
+    // Back to front, so a removal does not move the rows still to be examined.
+    for (int row = static_cast<int>(m_groups.size()) - 1; row >= 0; --row) {
+        QList<FileEntry> kept;
+        for (const FileEntry& entry : m_groups.at(row).files) {
+            if (!going.contains(entry.uri.toString()))
+                kept.append(entry);
+        }
+        if (kept.size() == m_groups.at(row).files.size())
+            continue;
+
+        // One copy left is not a group. Neither is none, which is what deleting
+        // every copy of something leaves -- and somebody who ticked every copy
+        // of a file meant it.
+        if (kept.size() < 2) {
+            beginRemoveRows(QModelIndex(), row, row);
+            m_groups.removeAt(row);
+            endRemoveRows();
+            continue;
+        }
+
+        DuplicateGroup& group = m_groups[row];
+        group.files = kept;
+        // What is left to reclaim, worked out again rather than left as it was:
+        // it is "all but one of these", and there are fewer of them now.
+        group.reclaimable = static_cast<qint64>(kept.size() - 1) * kept.first().size;
+        emit dataChanged(index(row), index(row), { CopiesRole, ReclaimableTextRole, FilesRole });
+    }
+
+    for (const QString& uri : uris)
+        m_selected.remove(uri);
+
+    m_reclaimable = 0;
+    m_copyCount = 0;
+    for (const DuplicateGroup& group : std::as_const(m_groups)) {
+        m_reclaimable += group.reclaimable;
+        m_copyCount += static_cast<int>(group.files.size());
+    }
+    recountSelectedBytes();
+    emit countChanged();
+}
+
 QStringList DuplicateGroupModel::selectedUris() const
 {
     QStringList out = m_selected.values();

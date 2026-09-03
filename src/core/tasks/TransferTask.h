@@ -198,6 +198,14 @@ public:
 
     int deletedCount() const { return m_deleted; }
     const QStringList& failures() const { return m_failures; }
+    /// Which targets actually went.
+    ///
+    /// The count says how many and this says which, because a caller showing a
+    /// list of files has to remove the rows that are gone and keep the rows that
+    /// are not. The duplicates tab used to clear all of them whatever happened,
+    /// so a delete refused by a read-only drive left an empty tab and a rescan to
+    /// do. See MOLE-341.
+    const QList<VfsUri>& deletedUris() const { return m_deletedUris; }
 
 protected:
     void run() override;
@@ -206,6 +214,7 @@ private:
     FileSystemPtr m_fileSystem;
     QList<VfsUri> m_targets;
     int m_deleted = 0;
+    QList<VfsUri> m_deletedUris;
     QStringList m_failures;
 };
 

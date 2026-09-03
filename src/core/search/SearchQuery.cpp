@@ -154,6 +154,11 @@ QString foldForSearch(const QString& text)
     return text.toLower();
 }
 
+QString foldForIdentity(const QString& text)
+{
+    return text.toCaseFolded();
+}
+
 QStringList knownTypeClasses()
 {
     return { QStringLiteral("image"), QStringLiteral("video"), QStringLiteral("audio"),

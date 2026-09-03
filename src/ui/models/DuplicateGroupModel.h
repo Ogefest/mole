@@ -65,6 +65,17 @@ public:
     /// spurious one would be indistinguishable from the fault.
     void clear();
 
+    /// Forgets these copies, keeping everything else and everything ticked.
+    ///
+    /// What a finished delete leaves behind: the files that went are gone and
+    /// the ones that could not go are still there, still ticked, with the
+    /// failure beside them. A group that is down to one copy is not a duplicate
+    /// group any more and goes with them. Clearing the lot instead -- which is
+    /// what this replaced -- meant a delete refused by a read-only drive left an
+    /// empty tab and a rescan to do, and with two drives the first task to
+    /// finish wiped the second's rows before it had run. See MOLE-341.
+    void removeUris(const QStringList& uris);
+
     const QList<DuplicateGroup>& groups() const { return m_groups; }
     int copyCount() const { return m_copyCount; }
     qint64 reclaimableBytes() const { return m_reclaimable; }

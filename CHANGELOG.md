@@ -65,6 +65,10 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-03 #MOLE-341 A duplicate scan no longer offers a link as a duplicate of the file it points at, and no longer pairs a file with itself when one search folder sits inside another
+2026-09-03 #MOLE-341 A duplicate scan says how many places it could not read, instead of reporting "no duplicates" about a tree it could only partly open
+2026-09-03 #MOLE-341 "Keep the copy nearest the top of the tree" keeps the one fewest folders deep, rather than the one with the shortest path text
+2026-09-03 #MOLE-341 A duplicate delete that the drive refused keeps the results on screen with the reason, instead of emptying the tab and needing another scan
 2026-09-03 #MOLE-352 An archive with non-ASCII names lists every member whatever locale the machine is in, instead of stopping at the first accented name
 2026-09-03 #MOLE-352 A link inside an archive is shown as a link, and a hard link reads the file it points at, instead of both arriving as empty files
 2026-09-03 #MOLE-352 An archive that is damaged, cut short, or only half recognised says so, instead of opening onto part of a tree or onto nothing

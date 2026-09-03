@@ -118,9 +118,21 @@ QString DuplicatesController::summary() const
         return m_groups->rowCount() == 0 ? QStringLiteral("stopped before anything was found")
                                          : found + QStringLiteral(" · stopped early");
     }
-    if (m_groups->rowCount() == 0)
-        return QStringLiteral("no duplicates found");
-    return found;
+    QString said = m_groups->rowCount() == 0 ? QStringLiteral("no duplicates found") : found;
+    // What the walk could not read, in the same sentence as the answer -- because
+    // it qualifies the answer. "no duplicates found" about a tree whose largest
+    // subtree could not be opened is a statement about permissions dressed up as
+    // a statement about the files. See ADR-0030 and MOLE-341.
+    if (m_unreadable > 0)
+        said += QStringLiteral(" · %1 place(s) could not be read").arg(m_unreadable);
+    if (m_links > 0)
+        said += QStringLiteral(" · %1 link(s) left out").arg(m_links);
+    if (!m_deleteFailures.isEmpty()) {
+        said += QStringLiteral(" · %1 could not be deleted: %2")
+                    .arg(m_deleteFailures.size())
+                    .arg(m_deleteFailures.join(QStringLiteral("; ")));
+    }
+    return said;
 }
 
 QStringList DuplicatesController::selectedUris() const
@@ -223,6 +235,9 @@ void DuplicatesController::scan()
         // wrong answer, only a short one, and the alternative -- throwing away
         // groups somebody is already looking at -- is the surprising behaviour.
         m_wasCancelled = task->state() == Task::State::Cancelled;
+        m_unreadable = task->unreadablePlaces();
+        m_links = task->linksLeftOut();
+        m_deleteFailures.clear();
         m_progressText.clear();
         emit progressChanged();
         emit resultsChanged();
@@ -304,12 +319,25 @@ void DuplicatesController::keepShortestPath()
 {
     // The copy nearest the top of the tree is usually the original; the ones
     // buried in "old", "backup" and "copy of copy" are usually not.
+    //
+    // Nearest the top means fewest folders deep, which is what the button says
+    // and what this used to get wrong: it compared the *length* of the path, so
+    // `/a/b/c/photo.jpg` beat `/documents-archive/photo.jpg` and the copy
+    // somebody was promised would be kept was the one that went. Length is kept
+    // as the tie-break, because two copies at the same depth have to be decided
+    // somehow and the shorter name is the better guess. See MOLE-341.
     selectAllBut(
         QStringLiteral("Keeping the copy nearest the top of the tree"), [](const QList<FileEntry>& files) {
+            const auto depthOf
+                = [](const FileEntry& file) { return file.uri.path().count(QLatin1Char('/')); };
             int best = 0;
             for (int i = 1; i < files.size(); ++i) {
-                if (files.at(i).uri.path().size() < files.at(best).uri.path().size())
+                const int here = depthOf(files.at(i));
+                const int there = depthOf(files.at(best));
+                if (here < there
+                    || (here == there && files.at(i).uri.path().size() < files.at(best).uri.path().size())) {
                     best = i;
+                }
             }
             return best;
         });
@@ -352,18 +380,34 @@ void DuplicatesController::deleteSelected()
             byDrive[parsed.scheme() + QLatin1Char('/') + parsed.authority()].append(parsed);
     }
 
+    m_deleteFailures.clear();
+
     for (auto it = byDrive.constBegin(); it != byDrive.constEnd(); ++it) {
         FileSystemPtr fs = m_services.vfs->resolve(it.value().first());
         if (!fs)
             continue;
 
         auto* task = new DeleteTask(fs, it.value());
-        connect(task, &Task::finished, this, [this] {
-            // The results now describe files that may be gone, so they are
-            // cleared rather than left to look actionable.
-            m_groups->clear();
-            m_ruleText.clear();
-            m_hasRun = false;
+        connect(task, &Task::finished, this, [this, task] {
+            // Only the rows that are actually gone. This used to clear the lot
+            // whatever happened, so a delete a read-only drive refused left an
+            // empty tab and a rescan to do -- and where the ticks spanned two
+            // drives, the first task to finish wiped the second's rows before it
+            // had run. What could not be deleted stays on screen, still ticked,
+            // with the reason beside it. See MOLE-341.
+            QStringList gone;
+            for (const VfsUri& uri : task->deletedUris())
+                gone.append(uri.toString());
+            m_groups->removeUris(gone);
+
+            // The failures, named. A delete that did not happen and said nothing
+            // is indistinguishable from one that did.
+            m_deleteFailures += task->failures();
+
+            // The rule no longer describes the ticks: some of what it chose has
+            // gone and the rest is still chosen, which is nobody's rule.
+            if (!gone.isEmpty())
+                m_ruleText.clear();
             emit resultsChanged();
             emit selectionChanged();
         });

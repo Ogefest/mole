@@ -29,6 +29,21 @@ project, and a contributor should never hit a wall of text they cannot read.
 
 ## Notes
 
+- **Two names for one inode are still reported as duplicates of each other, and
+  the "could be freed" of such a group is a fiction.** A duplicate scan now leaves
+  symbolic links out and never compares a file with itself (MOLE-341), but a *hard*
+  link is indistinguishable from a copy at the level the scan works at: same size,
+  same bytes, same hash, two names. An `rsync --link-dest` snapshot tree -- the
+  ordinary NAS backup layout -- is therefore still one enormous set of "duplicates"
+  that would free nothing at all, and deleting one name of a pair frees nothing
+  while looking as though it freed the file.
+  **What it would take:** an identity on `FileEntry` -- device and inode, or the
+  platform's file id -- filled in by every backend that has one. That is a syscall
+  per entry in every listing on every drive, paid by everything that lists a folder,
+  for one feature's benefit; Qt exposes no such field, so each backend would need
+  its own call. Worth deciding deliberately rather than adding on the way past,
+  which is why it is here and not in the code.
+
 - **Two drives cannot honour ADR-0020's rule about a destination that appeared
   while a write was in flight, and that is a fact about them rather than a gap
   waiting to be filled.** The rule needs a working name to finish from: a write

@@ -1,5 +1,6 @@
 #include "core/duplicates/FindDuplicatesTask.h"
 
+#include "core/search/SearchQuery.h"
 #include "core/vfs/DirectoryWalker.h"
 #include "core/vfs/VfsManager.h"
 
@@ -57,8 +58,10 @@ void FindDuplicatesTask::run()
 
     QList<FileEntry> candidates;
     QHash<QString, FileSystemPtr> drives;
+    /// Every uri already taken, so nothing is compared with itself.
+    QSet<QString> seen;
 
-    for (const VfsUri& root : std::as_const(m_roots)) {
+    for (const VfsUri& root : rootsToWalk()) {
         if (isCancelRequested())
             return;
 
@@ -70,11 +73,18 @@ void FindDuplicatesTask::run()
         DirectoryWalker walker(fs);
         walker.walk(root, cancelToken(), [&](const FileEntry& entry, int) {
             if (!entry.isDir && entry.size >= m_minimumSize)
-                candidates.append(entry);
+                take(entry, candidates, seen);
             setStatusText(QStringLiteral("%1 files").arg(candidates.size()));
             reportCount(QStringLiteral("scanned"), QStringLiteral("Scanned"), candidates.size(), 10);
             return DirectoryWalker::Action::Continue;
         });
+        // What could not be read, rather than nothing at all. A subtree this
+        // account cannot open is absent from the answer either way; the
+        // difference is whether "no duplicates" means the tree has none or means
+        // most of it was never looked at. ScanTask, AnalyseDirectoryTask and
+        // SyncPlan all say so -- ADR-0030 -- and the one feature whose output is
+        // a deletion list did not. See MOLE-341.
+        m_unreadable += static_cast<int>(walker.errors().size());
     }
 
     if (isCancelRequested())
@@ -133,10 +143,76 @@ void FindDuplicatesTask::run()
     if (m_reclaimable > 0) {
         reportBytes(QStringLiteral("reclaimable"), QStringLiteral("Reclaimable"), m_reclaimable, 40);
     }
-    setStatusText(m_groups.isEmpty() ? QStringLiteral("no duplicates")
-                                     : QStringLiteral("%1 groups · %2 could be freed")
-                                           .arg(m_groups.size())
-                                           .arg(QLocale().formattedDataSize(m_reclaimable)));
+    QString said = m_groups.isEmpty() ? QStringLiteral("no duplicates")
+                                      : QStringLiteral("%1 groups · %2 could be freed")
+                                            .arg(m_groups.size())
+                                            .arg(QLocale().formattedDataSize(m_reclaimable));
+    // Said in the same sentence as the answer, because it qualifies the answer.
+    // "no duplicates · 3 places could not be read" is a different statement from
+    // "no duplicates", and the second one is what a scan of a tree with an
+    // unreadable subtree in it used to make.
+    if (m_unreadable > 0) {
+        said += QStringLiteral(" · %1 place(s) could not be read").arg(m_unreadable);
+        reportCount(QStringLiteral("unreadable"), QStringLiteral("Unreadable"), m_unreadable, 50);
+    }
+    if (m_links > 0) {
+        said += QStringLiteral(" · %1 link(s) left out").arg(m_links);
+        reportCount(QStringLiteral("links"), QStringLiteral("Links skipped"), m_links, 60);
+    }
+    setStatusText(said);
+}
+
+QList<VfsUri> FindDuplicatesTask::rootsToWalk() const
+{
+    // A root inside another root is walked twice, and everything under it then
+    // appears twice among the candidates -- where a file is identical to itself,
+    // so it is confirmed as a group of one file listed twice whose "could be
+    // freed" is its whole size. `/a` and `/a/b` together is not a mistake
+    // anybody makes on purpose; it is what a file set holds, or two console
+    // arguments. See MOLE-341.
+    QList<VfsUri> kept;
+    for (const VfsUri& root : m_roots) {
+        bool covered = false;
+        for (const VfsUri& other : m_roots) {
+            if (other == root)
+                continue;
+            // Under, and not merely equal: two spellings of the same root are
+            // the same place, and the first of them is the one to keep.
+            if (root.scheme() == other.scheme() && root.authority() == other.authority()
+                && isUnder(root.path(), other.path()) && root.path() != other.path()) {
+                covered = true;
+                break;
+            }
+        }
+        if (covered)
+            continue;
+        // And the same root twice: kept once.
+        if (!kept.contains(root))
+            kept.append(root);
+    }
+    return kept;
+}
+
+void FindDuplicatesTask::take(const FileEntry& entry, QList<FileEntry>& candidates, QSet<QString>& seen)
+{
+    // A symbolic link has the size, the hash and the bytes of what it points at,
+    // so it was confirmed as a duplicate of its own target with `reclaimable =
+    // size`. Deleting "the copy" then either removes the target and leaves a
+    // dangling link, or removes the link and frees nothing at all -- and which
+    // of the two happened depended on which one the keep rule picked. Left out
+    // and counted, because a file silently missing from a scan is the other way
+    // to be wrong. See MOLE-341.
+    if (entry.isSymlink || entry.special != SpecialKind::None) {
+        ++m_links;
+        return;
+    }
+    // Belt as well as braces: roots that nest are dropped above, and two
+    // spellings of one uri would still arrive twice.
+    const QString key = entry.uri.toString();
+    if (seen.contains(key))
+        return;
+    seen.insert(key);
+    candidates.append(entry);
 }
 
 int FindDuplicatesTask::workerCount() const

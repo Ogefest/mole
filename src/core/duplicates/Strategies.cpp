@@ -1,6 +1,7 @@
 #include "core/duplicates/Strategies.h"
 
 #include "core/duplicates/ContentComparison.h"
+#include "core/search/SearchQuery.h"
 
 #include <QCryptographicHash>
 
@@ -110,7 +111,9 @@ QString SameSizeStrategy::keyFor(int, const FileEntry& entry, IFileSystem*, cons
 
 QString SameNameStrategy::keyFor(int, const FileEntry& entry, IFileSystem*, const CancelToken&) const
 {
-    return entry.name.toLower();
+    // Folded, not lowercased: the question here is whether two names are the
+    // same name, and toLower() answers a different one -- see foldForIdentity().
+    return foldForIdentity(entry.name);
 }
 
 QString SameNameAndSizeStrategy::keyFor(
@@ -118,7 +121,7 @@ QString SameNameAndSizeStrategy::keyFor(
 {
     if (stage == 0)
         return entry.size > 0 ? QString::number(entry.size) : QString();
-    return entry.name.toLower();
+    return foldForIdentity(entry.name);
 }
 
 QString SameContentStrategy::keyFor(

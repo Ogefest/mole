@@ -395,6 +395,19 @@ private:
 /// each of them.
 [[nodiscard]] QString foldForSearch(const QString& text);
 
+/// The form two names are compared in when the question is whether they are the
+/// **same node**, which is not the same question as whether one matches the
+/// other.
+///
+/// Beside foldForSearch() so that the two can be seen to differ, because they
+/// do: toLower() and toCaseFolded() disagree over a handful of code points --
+/// Greek final sigma is the one to remember, "ΟΔΥΣΣΕΥΣ" lowercasing to a
+/// different string than it folds to. VfsUri::equals() folds, so a duplicate
+/// scan that lowercased put two names Mole calls one node in two buckets and
+/// then compared neither with the other. Identity questions fold; matching
+/// lowercases. See MOLE-341.
+[[nodiscard]] QString foldForIdentity(const QString& text);
+
 /// What sort of file a MIME type is: "image", "video", "audio", "document",
 /// "archive", "code", or empty for anything that is none of them.
 ///

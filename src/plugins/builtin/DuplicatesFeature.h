@@ -56,6 +56,9 @@ class DuplicatesController final : public FeatureController
     /// that says what just happened, and it stops being a rule the moment
     /// somebody edits the ticks by hand, because then it is no longer true.
     Q_PROPERTY(QString ruleText READ ruleText NOTIFY selectionChanged)
+    /// What a delete could not remove, one line each. A delete that failed and
+    /// said nothing is indistinguishable from one that worked. See MOLE-341.
+    Q_PROPERTY(QStringList deleteFailures READ deleteFailures NOTIFY resultsChanged)
 
 public:
     DuplicatesController(PluginServices services, QObject* parent = nullptr);
@@ -83,6 +86,9 @@ public:
     QString selectedSizeText() const;
     int copyCount() const;
     QString ruleText() const { return m_ruleText; }
+    /// What the last delete could not remove. Empty when everything went, and
+    /// what the tab shows beside the rows that are still there.
+    QStringList deleteFailures() const { return m_deleteFailures; }
     Q_INVOKABLE QStringList selectedUris() const;
     /// The ticked copies, listed for the confirmation: full location rather than
     /// name, because in a duplicate group every name is the same and the location
@@ -148,6 +154,12 @@ private:
     bool m_hasRun = false;
     bool m_wasCancelled = false;
     QString m_ruleText;
+    /// What the last scan could not read and what it left out, so the summary can
+    /// qualify its own answer rather than presenting a partial one as whole.
+    int m_unreadable = 0;
+    int m_links = 0;
+    /// What the last delete could not remove, named. Cleared by the next scan.
+    QStringList m_deleteFailures;
     QString m_progressText;
     QPointer<Task> m_task;
 };

@@ -718,10 +718,12 @@ void DeleteTask::run()
         }
 
         Result<void> removed = m_fileSystem->remove(target, true);
-        if (removed.ok())
+        if (removed.ok()) {
             ++m_deleted;
-        else
+            m_deletedUris.append(target);
+        } else {
             m_failures.append(QStringLiteral("%1: %2").arg(target.fileName(), removed.error().message));
+        }
 
         ++done;
         setProgress(static_cast<int>(100.0 * done / m_targets.size()));

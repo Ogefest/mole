@@ -10,8 +10,10 @@
 #include "core/vfs/backends/LocalFileSystem.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
+#include <QFile>
 #include <QMutex>
 #include <QSemaphore>
+#include <QSet>
 
 #include <atomic>
 
@@ -58,8 +60,17 @@ private slots:
     void aBurstOfConfirmationsIsBoundedByTheDrainAndNotByTheGroupCount();
     void aGroupReachesTheWindowWhileTheScanIsStillStandingInConfirm();
 
+    void aRootInsideAnotherRootDoesNotMakeEveryFileItsOwnDuplicate();
+    void aSymbolicLinkIsNotADuplicateOfWhatItPointsAt();
+    void aSubtreeThatCouldNotBeReadIsCountedRatherThanPassedOver();
+    void twoSpellingsOfOneNameLandInOneBucket();
+
 private:
     QList<DuplicateGroup> find(std::unique_ptr<IDuplicateStrategy> strategy, qint64 minimumSize = 1);
+    /// The same, over roots this case chooses, and with the task kept so its
+    /// counts can be read.
+    FindDuplicatesTask* findUnder(
+        const QList<VfsUri>& roots, std::unique_ptr<IDuplicateStrategy> strategy, qint64 minimumSize = 1);
 
     std::unique_ptr<TempTree> m_tree;
     std::unique_ptr<VfsManager> m_vfs;
@@ -189,6 +200,139 @@ QList<DuplicateGroup> TestDuplicates::find(std::unique_ptr<IDuplicateStrategy> s
     if (!waitFor([task] { return task->isFinished(); }, 30000))
         return {};
     return task->groups();
+}
+
+FindDuplicatesTask* TestDuplicates::findUnder(
+    const QList<VfsUri>& roots, std::unique_ptr<IDuplicateStrategy> strategy, qint64 minimumSize)
+{
+    auto* task = new FindDuplicatesTask(m_vfs.get(), roots, std::move(strategy));
+    task->setMinimumSize(minimumSize);
+    m_tasks->submit(task);
+    if (!waitFor([task] { return task->isFinished(); }, 30000))
+        return nullptr;
+    return task;
+}
+
+/// `/a` and `/a/b` together, which is what a file set holds or two console
+/// arguments give.
+///
+/// Both roots were walked, so everything under the inner one arrived twice --
+/// and a file is identical to itself, so it was confirmed as a group whose two
+/// members are the same uri and whose "could be freed" is its whole size. The
+/// next thing that happens to a group is that all but one of it is deleted. See
+/// MOLE-341.
+void TestDuplicates::aRootInsideAnotherRootDoesNotMakeEveryFileItsOwnDuplicate()
+{
+    QVERIFY(m_tree->makeDirs(QStringLiteral("inner")));
+    QVERIFY(m_tree->writeFile(QStringLiteral("inner/only-one-of-me.txt"), QByteArray(4096, 'x')));
+
+    FindDuplicatesTask* task
+        = findUnder({ m_tree->rootUri(), m_tree->rootUri().child(QStringLiteral("inner")) },
+            std::make_unique<SameContentStrategy>());
+    QVERIFY(task);
+
+    for (const DuplicateGroup& group : task->groups()) {
+        QSet<QString> uris;
+        for (const FileEntry& file : group.files)
+            uris.insert(file.uri.toString());
+        QVERIFY2(uris.size() == group.files.size(),
+            qPrintable(QStringLiteral("a group listed the same file twice: %1")
+                           .arg(group.files.first().uri.toString())));
+    }
+    QVERIFY2(task->groups().isEmpty(), "one file under two roots is not two files");
+    QCOMPARE(task->reclaimableBytes(), qint64(0));
+
+    // And the same root twice, which is the other way to arrive here.
+    FindDuplicatesTask* again
+        = findUnder({ m_tree->rootUri(), m_tree->rootUri() }, std::make_unique<SameContentStrategy>());
+    QVERIFY(again);
+    QVERIFY2(again->groups().isEmpty(), "one root given twice is one root");
+}
+
+/// A link has its target's size, its hash and its bytes.
+///
+/// So the two were confirmed as a group with `reclaimable = size`, and deleting
+/// "the copy" either removed the target and left a dangling link or removed the
+/// link and freed nothing -- whichever the keep rule happened to pick. See
+/// MOLE-341.
+void TestDuplicates::aSymbolicLinkIsNotADuplicateOfWhatItPointsAt()
+{
+#ifndef Q_OS_UNIX
+    QSKIP("this platform has no symbolic links to make");
+#else
+    QVERIFY(m_tree->writeFile(QStringLiteral("real.bin"), QByteArray(8192, 'r')));
+    QVERIFY(QFile::link(m_tree->absolute(QStringLiteral("real.bin")), m_tree->absolute(QStringLiteral("pointer"))));
+
+    FindDuplicatesTask* task = findUnder({ m_tree->rootUri() }, std::make_unique<SameContentStrategy>());
+    QVERIFY(task);
+
+    QVERIFY2(task->groups().isEmpty(),
+        "a link and its target are one file, and offering to delete one of them frees nothing");
+    QCOMPARE(task->reclaimableBytes(), qint64(0));
+    // Left out and said so, because a file quietly missing from a scan is the
+    // other way to be wrong.
+    QCOMPARE(task->linksLeftOut(), 1);
+#endif
+}
+
+/// "No duplicates" about a tree most of which could not be opened.
+///
+/// walker.walk()'s result and walker.errors() were both dropped, so an
+/// unreadable subtree was absent from the answer with nothing saying so --
+/// while ScanTask, AnalyseDirectoryTask and SyncPlan all report what they could
+/// not read (ADR-0030). On the one feature whose output is a deletion list. See
+/// MOLE-341.
+void TestDuplicates::aSubtreeThatCouldNotBeReadIsCountedRatherThanPassedOver()
+{
+    auto drive = std::make_shared<MemoryFileSystem>();
+    drive->addDirectory(QStringLiteral("/readable"));
+    drive->addFile(QStringLiteral("/readable/one.txt"), QByteArray(4096, 'a'));
+    drive->addDirectory(QStringLiteral("/locked"));
+    drive->addFile(QStringLiteral("/locked/two.txt"), QByteArray(4096, 'a'));
+
+    Mount mount;
+    mount.id = QStringLiteral("mem");
+    mount.root = VfsUri::fromString(QStringLiteral("mem:///"));
+    mount.fileSystem = drive;
+    m_vfs->addMount(mount);
+
+    drive->setFault(QStringLiteral("/locked"), VfsError::AccessDenied);
+
+    FindDuplicatesTask* task = findUnder(
+        { VfsUri::fromString(QStringLiteral("mem:///")) }, std::make_unique<SameContentStrategy>());
+    QVERIFY(task);
+
+    // The two identical files would have been a group had both been readable, so
+    // this really is an answer that is smaller than the truth.
+    QVERIFY(task->groups().isEmpty());
+    QVERIFY2(task->unreadablePlaces() > 0,
+        "a scan that could not read part of the tree answered exactly as one that read all of it");
+    QVERIFY2(
+        task->statusText().contains(QStringLiteral("could not be read")), qPrintable(task->statusText()));
+}
+
+/// Two names Mole calls one node, put in two buckets.
+///
+/// The same-name key folded with toLower() -- the *search* fold -- for an
+/// identity question, while VfsUri::equals() folds with toCaseFolded(). The two
+/// disagree over a handful of code points, Greek final sigma among them, so
+/// "ΟΔΥΣΣΕΥΣ" and "οδυσσευς" were never compared with each other at all. See
+/// MOLE-341.
+void TestDuplicates::twoSpellingsOfOneNameLandInOneBucket()
+{
+    const QString upper = QString::fromUtf8("ΟΔΥΣΣΕΥΣ.txt");
+    const QString lower = QString::fromUtf8("οδυσσευς.txt");
+    QVERIFY(m_tree->makeDirs(QStringLiteral("one")));
+    QVERIFY(m_tree->makeDirs(QStringLiteral("two")));
+    QVERIFY(m_tree->writeFile(QStringLiteral("one/") + upper, QByteArray("the same text")));
+    QVERIFY(m_tree->writeFile(QStringLiteral("two/") + lower, QByteArray("a different text entirely")));
+
+    // The same-name strategy, because the question is the key and not the bytes:
+    // these two files differ in content on purpose, so a group can only come
+    // from their names being read as one.
+    const QList<DuplicateGroup> groups = find(std::make_unique<SameNameStrategy>());
+    QCOMPARE(groups.size(), 1);
+    QCOMPARE(groups.first().files.size(), 2);
 }
 
 void TestDuplicates::everyStrategyDescribesItself()

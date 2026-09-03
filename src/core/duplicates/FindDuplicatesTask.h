@@ -73,6 +73,15 @@ public:
     /// left out of every group. Reported rather than hidden: a scan that quietly
     /// ignored a file is a scan whose answer is smaller than the truth.
     int changedDuringTheScan() const { return m_movedUnderfoot; }
+    /// Places the walk could not read, counted rather than passed over. A tree
+    /// with an unreadable subtree in it used to answer "no duplicates" exactly
+    /// the way a tree with none does. See MOLE-341 and ADR-0030.
+    int unreadablePlaces() const { return m_unreadable; }
+    /// Links left out of the comparison. A symbolic link has its target's size,
+    /// hash and bytes, so it was confirmed as a duplicate of the very file it
+    /// points at -- and the group's "could be freed" was a fiction either way
+    /// round.
+    int linksLeftOut() const { return m_links; }
 
     /// Called the instant a group is confirmed, on whichever thread confirmed it,
     /// once the group is in the box the window is told from.
@@ -116,6 +125,13 @@ protected:
     void drainPayload() override;
 
 private:
+    /// The roots actually walked: the ones given, less any that sit inside
+    /// another of them, and each one only once.
+    QList<VfsUri> rootsToWalk() const;
+
+    /// Takes one file as a candidate, or says why not.
+    void take(const FileEntry& entry, QList<FileEntry>& candidates, QSet<QString>& seen);
+
     /// What one file came back with from a keying stage.
     struct StageKey
     {
@@ -159,6 +175,8 @@ private:
     QList<DuplicateGroup> m_groups;
     qint64 m_reclaimable = 0;
     int m_movedUnderfoot = 0;
+    int m_unreadable = 0;
+    int m_links = 0;
     std::function<void(const DuplicateGroup&, int)> m_onConfirmed;
 
     // --- the box: filled by whichever thread confirms, emptied by the drawing
