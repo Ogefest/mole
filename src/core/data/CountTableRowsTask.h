@@ -13,10 +13,10 @@ namespace mole {
 /// which is exactly what opening a database used to do, once per table, before
 /// it drew anything.
 ///
-/// The task opens its own read-only connection. `connectionNameFor()` in
-/// SqliteTable hashes the calling thread into the name, so a second connection
-/// on a pool thread needs no new design: the interface reads through its own
-/// while this one counts, the same shape the delimited importer already uses.
+/// The task opens a SqliteTable of its own, read-only, and gets a connection of
+/// its own with it: a sqlite::Connection is per object and per thread, so the
+/// interface reads through its own while this one counts. The same shape the
+/// delimited importer already uses.
 class CountTableRowsTask final : public Task
 {
     Q_OBJECT

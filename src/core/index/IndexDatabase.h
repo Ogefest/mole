@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/data/SqliteConnection.h"
 #include "core/index/ScanOptions.h"
 #include "core/search/SearchQuery.h"
 #include "core/vfs/VfsTypes.h"
@@ -94,10 +95,10 @@ struct IndexSearchHit
 ///
 /// There are two locks and readers take neither, which is ADR-0065:
 ///
-/// - `m_registry` guards the connection bookkeeping -- `m_connections` and
-///   `m_nextConnection` -- and is held for a hash lookup and a connection setup,
-///   never across a query. Every method that touches the database takes it, for
-///   microseconds, inside connectionForCurrentThread().
+/// - `m_connections` -- a sqlite::Connection, shared with the other two SQLite
+///   users in the codebase -- takes a lock of its own for a hash lookup and a
+///   connection setup, never across a query. Every method that touches the
+///   database takes it, for microseconds, inside connectionForCurrentThread().
 /// - `m_writers` serialises Mole's own writers against each other, exactly as
 ///   the single lock used to: open, close, applyMigrations, upsertVolume,
 ///   removeVolume, beginScan, carryForward, commitScan, abandonScan, insertBatch.
@@ -239,13 +240,28 @@ public:
     /// not be offered at all.
     [[nodiscard]] Result<QStringList> factKeys(qint64 volumeId = -1) const;
 
+    /// What `PRAGMA name` reads back as on *this thread's* connection, or an
+    /// empty string when there is no answer.
+    ///
+    /// Here for the same reason DelimitedStore has one: the settings that let a
+    /// scan write while the window reads are a property of a connection rather
+    /// than of the index, so a claim about them has to be made from the thread
+    /// that is being claimed about. A test that read them from whichever
+    /// connection open() happened to make would be asserting nothing about the
+    /// one a pool thread scans through.
+    [[nodiscard]] QString pragmaValue(const QString& name) const;
+
 private:
-    /// Opens (or reuses) this thread's connection. Takes m_registry itself, so
+    /// Opens (or reuses) this thread's connection. Takes a lock of its own, so
     /// callers hold nothing of ours -- which is what lets a reader call it.
-    QSqlDatabase connectionForCurrentThread() const;
+    QSqlDatabase connectionForCurrentThread() const { return m_connections.forCurrentThread(); }
     /// Warns when `what` is being asked from the thread that draws the window.
     void checkNotOnTheDrawingThread(const char* what) const;
     Result<void> applyMigrations();
+    /// The failure to report when this thread has no connection, carrying what
+    /// the driver said about why -- which sqlError() cannot, having only an
+    /// invalid QSqlDatabase to ask.
+    Result<void> noConnection() const;
     /// A failure to report, from whichever of the two has it. A statement that
     /// failed carries its own error and the connection does not -- see the note on
     /// the query overload.
@@ -253,13 +269,12 @@ private:
     static Result<void> sqlError(const QSqlDatabase& db, const QString& context);
 
     QString m_filePath;
-    QString m_baseName;
     /// Serialises Mole's own writers. Readers never take it.
     mutable QMutex m_writers;
-    /// Guards the two members below, and is never held across a query.
-    mutable QMutex m_registry;
-    mutable QHash<QThread*, QString> m_connections;
-    mutable int m_nextConnection = 0;
+    /// Every thread's connection to the file, and the pragma block they are all
+    /// held to. Takes a lock of its own for a hash lookup and never across a
+    /// query, which is what lets a reader ask for one -- see ADR-0065.
+    mutable sqlite::Connection m_connections;
     /// Atomic because a reader looks at it holding no lock.
     std::atomic<bool> m_open = false;
     /// The thread queries must not come from, or nullptr. Atomic for the same

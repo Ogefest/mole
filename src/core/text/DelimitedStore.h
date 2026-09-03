@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/data/ITableSource.h"
+#include "core/data/SqliteConnection.h"
 
 #include <QMutex>
 #include <QSqlDatabase>
@@ -114,8 +115,14 @@ private:
     /// Every connection name handed out, so close() can remove all of them. The
     /// importer's connection is made on a pool thread and used to be left behind
     /// whichever way the store ended.
-    mutable QMutex m_connectionGuard;
-    mutable QStringList m_connections;
+    /// Every thread's connection, and the pragma block they are all held to.
+    /// The importer's is made on a pool thread and used to be left behind
+    /// whichever way the store ended. Shared with the index and the SQLite
+    /// preview -- see sqlite::Connection.
+    ///
+    /// A pointer because the path is settled in the constructor's body, and
+    /// because a store may be moved into place before it is opened.
+    std::unique_ptr<sqlite::Connection> m_connections;
     /// Guards m_headers alone: the importer settles the columns on a pool thread
     /// while the grid, already attached, is reading through the same store.
     mutable QMutex m_shapeGuard;

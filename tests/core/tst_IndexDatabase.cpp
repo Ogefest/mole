@@ -7,6 +7,7 @@
 #include <QDir>
 #include <QSqlDatabase>
 #include <QSqlQuery>
+#include <QThread>
 #include <QVariant>
 
 #include <atomic>
@@ -48,6 +49,10 @@ private slots:
     void removeVolumeDropsEverything();
     void commitScanRecordsTheCountAndTheTime();
     void anIndexWrittenBeforeGenerationsStaysVisible();
+    void anIndexInterruptedHalfWayUpTheSchemaOpensAgain();
+    void anIndexFromANewerBuildIsRefusedRatherThanWrittenTo();
+    void everyThreadsConnectionIsInWalMode();
+    void aConnectionGoesWhenTheThreadThatOpenedItDoes();
     void whatAFileSaysAboutItselfIsStoredAndAskedFor();
     void aRowInsideAContainerKeepsItsOwnAddress();
     void aFolderScopedSearchFindsWhatIsInsideAnArchiveInThatFolder();
@@ -225,11 +230,11 @@ void TestIndexDatabase::aWriteRefusedByAnotherConnectionSaysTheIndexWasLocked()
         = m_db->upsertVolume(VfsUri::fromString(QStringLiteral("file:///data")), QStringLiteral("vol"));
     QVERIFY(volume.ok());
 
-    QSqlDatabase writing = sqlite::connectionOn(path);
+    QSqlDatabase writing = test::sqlite::connectionOn(path);
     QVERIFY2(writing.isValid(), "the index's connection has to be findable, or this case tests nothing");
-    QVERIFY(sqlite::stopWaitingForLocks(writing));
+    QVERIFY(test::sqlite::stopWaitingForLocks(writing));
 
-    sqlite::WriteLock held(path);
+    test::sqlite::WriteLock held(path);
     QVERIFY2(held.isHeld(), "the lock has to be taken, or the write below is unhindered");
 
     IndexedFile row;
@@ -262,9 +267,10 @@ void TestIndexDatabase::aWriteThatRanOutOfRoomSaysWhatHappenedRatherThanNothing(
         = m_db->upsertVolume(VfsUri::fromString(QStringLiteral("file:///data")), QStringLiteral("vol"));
     QVERIFY(volume.ok());
 
-    QSqlDatabase writing = sqlite::connectionOn(path);
+    QSqlDatabase writing = test::sqlite::connectionOn(path);
     QVERIFY(writing.isValid());
-    QVERIFY2(sqlite::capAtCurrentSize(writing), "the cap has to take, or the rows below are unhindered");
+    QVERIFY2(
+        test::sqlite::capAtCurrentSize(writing), "the cap has to take, or the rows below are unhindered");
 
     QList<IndexedFile> rows;
     rows.reserve(3000);
@@ -711,6 +717,147 @@ void TestIndexDatabase::anIndexWrittenBeforeGenerationsStaysVisible()
     QCOMPARE(upgraded.fileCount().value(), 1);
 }
 
+/// A migration that died half way used to make the index unopenable for ever.
+///
+/// Each block ran in its own committed transaction and `PRAGMA user_version` was
+/// written once, after all of them. A failure in block 3 -- a disk that filled
+/// mid-migration, the MOLE-306 class -- left the version at 0 with blocks 1 and
+/// 2 already applied. The next open re-ran block 2, `ALTER TABLE files ADD
+/// COLUMN generation` failed with "duplicate column name", and every open from
+/// then on failed at "Applying migration 2" until the user deleted the file.
+///
+/// So the file here is exactly that wreckage, built by hand: version 0 with the
+/// generation columns already there. It cannot be produced by the migration
+/// under test, which is the point of writing it out.
+void TestIndexDatabase::anIndexInterruptedHalfWayUpTheSchemaOpensAgain()
+{
+    const QString path = QDir(m_dir->path()).filePath(QStringLiteral("half-migrated.sqlite"));
+    const QString name = QStringLiteral("half_migrated");
+    {
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), name);
+        db.setDatabaseName(path);
+        QVERIFY(db.open());
+        QSqlQuery query(db);
+        QVERIFY(query.exec(QStringLiteral(
+            "CREATE TABLE volumes (id INTEGER PRIMARY KEY AUTOINCREMENT, root_uri TEXT NOT NULL UNIQUE, "
+            "label TEXT NOT NULL, last_scan INTEGER, file_count INTEGER NOT NULL DEFAULT 0, "
+            "generation INTEGER NOT NULL DEFAULT 0, next_generation INTEGER NOT NULL DEFAULT 0)")));
+        QVERIFY(query.exec(QStringLiteral(
+            "CREATE TABLE files (id INTEGER PRIMARY KEY AUTOINCREMENT, volume_id INTEGER NOT NULL "
+            "REFERENCES volumes(id) ON DELETE CASCADE, name TEXT NOT NULL, name_folded TEXT NOT NULL, "
+            "path TEXT NOT NULL, parent_path TEXT NOT NULL, extension TEXT, "
+            "is_dir INTEGER NOT NULL DEFAULT 0, size INTEGER NOT NULL DEFAULT 0, "
+            "mtime INTEGER NOT NULL DEFAULT 0, generation INTEGER NOT NULL DEFAULT 0)")));
+        QVERIFY(query.exec(QStringLiteral(
+            "INSERT INTO volumes (root_uri, label, last_scan, file_count) VALUES ('file:///half', 'half', "
+            "1700000000, 1)")));
+        QVERIFY(query.exec(
+            QStringLiteral("INSERT INTO files (volume_id, name, name_folded, path, parent_path, extension) "
+                           "VALUES (1, 'kept.txt', 'kept.txt', '/half/kept.txt', '/half', 'txt')")));
+        // The part that makes it wreckage rather than an old index: the columns
+        // are there and nothing recorded that they are.
+        QVERIFY(query.exec(QStringLiteral("PRAGMA user_version=0")));
+    }
+    QSqlDatabase::removeDatabase(name);
+
+    IndexDatabase recovered(path);
+    const Result<void> opened = recovered.open();
+    QVERIFY2(opened.ok(), qPrintable(opened.ok() ? QString() : opened.error().message));
+    QCOMPARE(recovered.fileCount().value(), 1);
+
+    // And it really is up to date afterwards, rather than opening and stopping.
+    QCOMPARE(recovered.pragmaValue(QStringLiteral("user_version")).toInt(), 5);
+    const qint64 volume = recovered.volumes().value().first().id;
+    QVERIFY(recovered.beginScan(volume).ok());
+}
+
+/// A file from the future is refused, not written to.
+///
+/// It used to be accepted without a word -- unlike the credential store, which
+/// has said so since it shipped -- and then written to on a schema this build
+/// does not understand. See ADR-0093.
+void TestIndexDatabase::anIndexFromANewerBuildIsRefusedRatherThanWrittenTo()
+{
+    const QString path = QDir(m_dir->path()).filePath(QStringLiteral("from-the-future.sqlite"));
+    {
+        IndexDatabase current(path);
+        QVERIFY(current.open().ok());
+        QVERIFY(
+            current.upsertVolume(VfsUri::fromString(QStringLiteral("file:///later")), QStringLiteral("later"))
+                .ok());
+    }
+    const QString name = QStringLiteral("from_the_future");
+    {
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), name);
+        db.setDatabaseName(path);
+        QVERIFY(db.open());
+        QSqlQuery query(db);
+        QVERIFY(query.exec(QStringLiteral("PRAGMA user_version=99")));
+        db.close();
+    }
+    QSqlDatabase::removeDatabase(name);
+
+    IndexDatabase older(path);
+    const Result<void> opened = older.open();
+    QVERIFY2(!opened.ok(), "an index written by a newer build was opened and would have been written to");
+    QCOMPARE(opened.error().code, VfsError::NotSupported);
+    QVERIFY2(
+        opened.error().message.contains(QStringLiteral("newer version")), qPrintable(opened.error().message));
+}
+
+/// WAL on the connection a scan writes through, not just on the one open() made.
+///
+/// `PRAGMA journal_mode=WAL` was executed and its answer thrown away. An index
+/// on a filesystem that will not have it ran in rollback-journal mode instead,
+/// readers queued behind writers, and the whole of ADR-0065 was undone with
+/// nothing said. The claim has to be made from a pool thread, because that is
+/// where a scan writes from and a connection carries its own settings.
+void TestIndexDatabase::everyThreadsConnectionIsInWalMode()
+{
+    QCOMPARE(m_db->pragmaValue(QStringLiteral("journal_mode")).toLower(), QStringLiteral("wal"));
+
+    QString journal;
+    int timeout = 0;
+    std::thread worker([&] {
+        journal = m_db->pragmaValue(QStringLiteral("journal_mode")).toLower();
+        timeout = m_db->pragmaValue(QStringLiteral("busy_timeout")).toInt();
+    });
+    worker.join();
+
+    QCOMPARE(journal, QStringLiteral("wal"));
+    QCOMPARE(timeout, 5000);
+}
+
+/// A pool thread that touched the index and then expired used to leave its
+/// connection behind for the rest of the session.
+///
+/// The registry was keyed on QThread*, and a stale entry was erased from the
+/// hash without QSqlDatabase::removeDatabase() -- so close() could not see it
+/// either. A long session accumulated an open handle per expired thread, each
+/// with its page cache and its -shm mapping, and Qt printed "requested database
+/// does not belong to the calling thread" every time an address came round
+/// again.
+void TestIndexDatabase::aConnectionGoesWhenTheThreadThatOpenedItDoes()
+{
+    const QStringList before = QSqlDatabase::connectionNames();
+
+    QThread worker;
+    QObject context;
+    context.moveToThread(&worker);
+    QObject::connect(&worker, &QThread::started, &context, [this] {
+        // Anything that opens this thread's connection will do.
+        m_db->pragmaValue(QStringLiteral("journal_mode"));
+    });
+    worker.start();
+    QVERIFY(waitFor([&] { return QSqlDatabase::connectionNames().size() > before.size(); }, 5000));
+
+    worker.quit();
+    QVERIFY(worker.wait(5000));
+
+    QVERIFY2(waitFor([&] { return QSqlDatabase::connectionNames().size() == before.size(); }, 5000),
+        qPrintable(QSqlDatabase::connectionNames().join(QLatin1Char(' '))));
+}
+
 /// Metadata is the one thing worth indexing precisely because the contents are
 /// not: a camera and a date taken are a few dozen bytes where the photograph is
 /// eight megabytes.
@@ -853,14 +1000,14 @@ void TestIndexDatabase::carryingASubtreeForwardIntoALockedIndexSaysSoRatherThanC
         { QStringLiteral("/data/steady"), QStringLiteral("/data/steady/kept.txt") });
     QVERIFY(volume >= 0);
 
-    QSqlDatabase writing = sqlite::connectionOn(path);
+    QSqlDatabase writing = test::sqlite::connectionOn(path);
     QVERIFY2(writing.isValid(), "the index's connection has to be findable, or this case tests nothing");
-    QVERIFY(sqlite::stopWaitingForLocks(writing));
+    QVERIFY(test::sqlite::stopWaitingForLocks(writing));
 
     const Result<qint64> generation = m_db->beginScan(volume);
     QVERIFY(generation.ok());
 
-    sqlite::WriteLock held(path);
+    test::sqlite::WriteLock held(path);
     QVERIFY2(held.isHeld(), "the lock has to be taken, or the carry below is unhindered");
 
     const Result<qint64> carried

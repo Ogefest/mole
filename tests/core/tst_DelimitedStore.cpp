@@ -744,7 +744,7 @@ void TestDelimitedStore::aReadThatFailedIsNotATableWithNothingInIt()
 /// everything MOLE-293 built stands on it.
 static QSqlDatabase storeConnectionOn(const QString& path)
 {
-    return sqlite::connectionOn(path);
+    return test::sqlite::connectionOn(path);
 }
 
 void TestDelimitedStore::aBatchCommitThatFailedFailsTheImportRatherThanLosingTheRows()
@@ -832,9 +832,9 @@ void TestDelimitedStore::aWriteRefusedByAnotherConnectionIsReportedAsALockedData
 
     QSqlDatabase writing = storeConnectionOn(path);
     QVERIFY2(writing.isValid(), "the store's connection has to be findable, or this case tests nothing");
-    QVERIFY(sqlite::stopWaitingForLocks(writing));
+    QVERIFY(test::sqlite::stopWaitingForLocks(writing));
 
-    sqlite::WriteLock held(path);
+    test::sqlite::WriteLock held(path);
     QVERIFY2(held.isHeld(), "the lock has to be taken, or the write below is unhindered");
 
     QString error;
@@ -861,7 +861,8 @@ void TestDelimitedStore::aWriteWithNoRoomLeftIsToldApartFromALockedDatabase()
 
     QSqlDatabase writing = storeConnectionOn(path);
     QVERIFY(writing.isValid());
-    QVERIFY2(sqlite::capAtCurrentSize(writing), "the cap has to take, or the rows below are unhindered");
+    QVERIFY2(
+        test::sqlite::capAtCurrentSize(writing), "the cap has to take, or the rows below are unhindered");
 
     QList<QStringList> rows;
     rows.reserve(4000);
@@ -897,7 +898,7 @@ void TestDelimitedStore::aWriteRefusedBecauseTheDatabaseMovedOnIsNotDescribedAsA
     QVERIFY(writing.isValid());
     // Inside the transaction the import already opened, which is the state this
     // happens in.
-    sqlite::StaleReadSnapshot stale(writing, path);
+    test::sqlite::StaleReadSnapshot stale(writing, path);
     QVERIFY2(stale.isStale(), "the snapshot has to go stale, or the write below is unhindered");
 
     QString error;

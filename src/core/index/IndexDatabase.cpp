@@ -26,53 +26,26 @@ namespace {
 
 IndexDatabase::IndexDatabase(QString filePath)
     : m_filePath(std::move(filePath))
-    , m_baseName(QStringLiteral("mole_index_%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)))
+    , m_connections(m_filePath,
+          sqlite::Connection::Settings {
+              .readOnly = false,
+              // WAL is what lets a scan write while the interface reads, and it
+              // is the whole of ADR-0065. An index parked on a filesystem that
+              // will not have it -- MOLE_INDEX_PATH pointing at a network mount
+              // -- used to run in rollback-journal mode with nothing said, so
+              // readers queued behind writers again and the fault was back
+              // invisibly. Now it refuses to open and says which filesystem.
+              .requireWal = true,
+              .busyTimeoutMs = kBusyTimeoutMs,
+              .pragmas
+              = { QStringLiteral("PRAGMA synchronous=NORMAL"), QStringLiteral("PRAGMA foreign_keys=ON") },
+          })
 {
 }
 
 IndexDatabase::~IndexDatabase()
 {
     close();
-}
-
-QSqlDatabase IndexDatabase::connectionForCurrentThread() const
-{
-    // Its own lock, held for a hash lookup and a connection setup and nothing
-    // else. Sharing one with the SQL was the fault ADR-0065 describes: a reader
-    // queued behind a scan's transactions for want of a QHash read.
-    QMutexLocker lock(&m_registry);
-
-    QThread* thread = QThread::currentThread();
-
-    const auto cached = m_connections.constFind(thread);
-    if (cached != m_connections.constEnd()) {
-        QSqlDatabase existing = QSqlDatabase::database(*cached, false);
-        if (existing.isValid() && existing.isOpen())
-            return existing;
-        // A pool thread died and its address was recycled, so the cached
-        // connection belongs to a thread that no longer exists. Drop it and
-        // open a fresh one below.
-        m_connections.erase(cached);
-    }
-
-    const QString name = QStringLiteral("%1_%2").arg(m_baseName).arg(m_nextConnection++);
-    QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), name);
-    db.setDatabaseName(m_filePath);
-    if (!db.open()) {
-        QSqlDatabase::removeDatabase(name);
-        return {};
-    }
-
-    QSqlQuery pragma(db);
-    // WAL is what lets a scan write while the UI reads. It is a property of
-    // the database file, but every connection needs the busy timeout.
-    pragma.exec(QStringLiteral("PRAGMA journal_mode=WAL"));
-    pragma.exec(QStringLiteral("PRAGMA synchronous=NORMAL"));
-    pragma.exec(QStringLiteral("PRAGMA foreign_keys=ON"));
-    pragma.exec(QStringLiteral("PRAGMA busy_timeout=%1").arg(kBusyTimeoutMs));
-
-    m_connections.insert(thread, name);
-    return db;
 }
 
 QString IndexDatabase::defaultFilePath()
@@ -102,8 +75,13 @@ Result<void> IndexDatabase::open()
     m_open = true;
     if (!connectionForCurrentThread().isOpen()) {
         m_open = false;
-        return Result<void>::failure(
-            VfsError::IoError, QStringLiteral("Cannot open index %1").arg(m_filePath));
+        // With what the driver said, which used to be dropped on the floor --
+        // "Cannot open index /..." and nothing about why. See MOLE-306 for the
+        // shape of that complaint and MOLE-356 for the last of it.
+        const QString why = m_connections.lastError();
+        return Result<void>::failure(VfsError::IoError,
+            why.isEmpty() ? QStringLiteral("Cannot open index %1").arg(m_filePath)
+                          : QStringLiteral("Cannot open index %1: %2").arg(m_filePath, why));
     }
     lock.unlock();
 
@@ -126,20 +104,7 @@ void IndexDatabase::close()
     // using the index -- the application tears down its TaskManager first.
     // That contract is what makes this safe now that a reader holds no lock of
     // ours while its query runs: nothing here waits for one to finish.
-    QMutexLocker registry(&m_registry);
-    QThread* const self = QThread::currentThread();
-    for (auto it = m_connections.cbegin(); it != m_connections.cend(); ++it) {
-        if (it.key() == self) {
-            QSqlDatabase db = QSqlDatabase::database(it.value(), false);
-            if (db.isValid())
-                db.close();
-        }
-        // A connection belonging to another thread is dropped by name alone.
-        // Fetching the QSqlDatabase object for it from here is precisely what
-        // Qt warns about, and it buys nothing: removeDatabase() closes it.
-        QSqlDatabase::removeDatabase(it.value());
-    }
-    m_connections.clear();
+    m_connections.closeAll();
 }
 
 void IndexDatabase::doNotQueryFrom(QThread* thread)
@@ -189,12 +154,36 @@ Result<void> IndexDatabase::sqlError(const QSqlDatabase& db, const QString& cont
         QStringLiteral("%1: %2").arg(context, sqlite::describe(db.lastError(), kBusyTimeoutMs)));
 }
 
+QString IndexDatabase::pragmaValue(const QString& name) const
+{
+    QSqlDatabase db = connectionForCurrentThread();
+    if (!db.isOpen())
+        return {};
+    QSqlQuery query(db);
+    if (!query.exec(QStringLiteral("PRAGMA %1").arg(name)) || !query.next())
+        return {};
+    return query.value(0).toString();
+}
+
+Result<void> IndexDatabase::noConnection() const
+{
+    // sqlError(db, ...) cannot say anything here. The QSqlDatabase is the
+    // invalid one forCurrentThread() hands back when it could not open, and an
+    // invalid connection has no lastError -- which is how thirteen callers came
+    // to report "No index connection for this thread: " with nothing after the
+    // colon. The reason belongs to the thing that tried to open it.
+    const QString why = m_connections.lastError();
+    return Result<void>::failure(VfsError::IoError,
+        why.isEmpty() ? QStringLiteral("No index connection for this thread")
+                      : QStringLiteral("No index connection for this thread: %1").arg(why));
+}
+
 Result<void> IndexDatabase::applyMigrations()
 {
     QMutexLocker lock(&m_writers);
     QSqlDatabase db = connectionForCurrentThread();
     if (!db.isOpen())
-        return sqlError(db, QStringLiteral("No index connection for this thread"));
+        return noConnection();
 
     QSqlQuery query(db);
     if (!query.exec(QStringLiteral("PRAGMA user_version")))
@@ -204,25 +193,77 @@ Result<void> IndexDatabase::applyMigrations()
     if (query.next())
         version = query.value(0).toInt();
 
-    if (version >= kSchemaVersion)
+    if (version == kSchemaVersion)
         return {};
 
+    // A file from the future. The credential store already refuses one and says
+    // so; this accepted it without a word and then wrote to a schema it does not
+    // understand, which is how an index gets corrupted by an older build that
+    // was only trying to help. Refusing is the same answer for the same reason:
+    // there is nothing safe to do with columns nobody here has heard of, and a
+    // read-only opening would be a second mode to keep working for ever.
+    // See ADR-0093.
+    if (version > kSchemaVersion) {
+        return Result<void>::failure(VfsError::NotSupported,
+            QStringLiteral("This index was written by a newer version of Mole (schema %1, this build "
+                           "understands %2)")
+                .arg(version)
+                .arg(kSchemaVersion));
+    }
+
     // Each block runs on its own so a database part way up the sequence gets
-    // only what it is missing, and each is one transaction so a migration that
-    // fails leaves the schema it started from rather than half of the next.
+    // only what it is missing, and each is one transaction -- *including the
+    // line that records it happened*, which is the whole of MOLE-356's first
+    // fault. The version used to be written once, after every block, so a
+    // failure in block 3 left user_version at 0 with blocks 1 and 2 applied.
+    // The next open re-ran block 2, `ALTER TABLE files ADD COLUMN generation`
+    // failed with "duplicate column name", and every open from then on failed
+    // the same way until the user deleted the file. Written inside the
+    // transaction, a block either happened and is recorded or did neither.
     const auto apply = [&db](int number, const QStringList& statements) -> Result<void> {
         if (!db.transaction())
             return sqlError(db, QStringLiteral("Starting migration %1").arg(number));
         for (const QString& statement : statements) {
+            if (statement.isEmpty())
+                continue; // a column that is already there -- see addColumn() below
             QSqlQuery migration(db);
             if (!migration.exec(statement)) {
                 db.rollback();
                 return sqlError(migration, QStringLiteral("Applying migration %1").arg(number));
             }
         }
+        // PRAGMA user_version is a header write and takes part in the
+        // transaction like any other, which is what makes this one step.
+        QSqlQuery bump(db);
+        if (!bump.exec(QStringLiteral("PRAGMA user_version=%1").arg(number))) {
+            db.rollback();
+            return sqlError(bump, QStringLiteral("Recording migration %1").arg(number));
+        }
         if (!db.commit())
             return sqlError(db, QStringLiteral("Committing migration %1").arg(number));
         return {};
+    };
+
+    // `ALTER TABLE ... ADD COLUMN`, unless the column is already there.
+    //
+    // SQLite has no IF NOT EXISTS for a column, and every other statement in
+    // these blocks has one -- which is why re-running a block only ever failed
+    // on an ALTER. An index that an older Mole left half migrated has the column
+    // and no record of it, and the block's job is that the column exists rather
+    // than that this particular statement ran. Nothing was lost by running the
+    // statement blind while the version was written once at the end; with the
+    // version written per block, this is what lets the wreckage of an
+    // interrupted upgrade be finished rather than refused for ever.
+    const auto addColumn
+        = [&db](const QString& table, const QString& name, const QString& definition) -> QString {
+        QSqlQuery info(db);
+        if (info.exec(QStringLiteral("PRAGMA table_info(%1)").arg(table))) {
+            while (info.next()) {
+                if (info.value(1).toString().compare(name, Qt::CaseInsensitive) == 0)
+                    return {};
+            }
+        }
+        return QStringLiteral("ALTER TABLE %1 ADD COLUMN %2 %3").arg(table, name, definition);
     };
 
     // Migrations are append-only: add a new `if (version < N)` block and bump
@@ -270,9 +311,12 @@ Result<void> IndexDatabase::applyMigrations()
         // migration stays visible in full, and its next rescan is the first
         // one to hand out a generation.
         const QStringList statements = {
-            QStringLiteral("ALTER TABLE files ADD COLUMN generation INTEGER NOT NULL DEFAULT 0"),
-            QStringLiteral("ALTER TABLE volumes ADD COLUMN generation INTEGER NOT NULL DEFAULT 0"),
-            QStringLiteral("ALTER TABLE volumes ADD COLUMN next_generation INTEGER NOT NULL DEFAULT 0"),
+            addColumn(QStringLiteral("files"), QStringLiteral("generation"),
+                QStringLiteral("INTEGER NOT NULL DEFAULT 0")),
+            addColumn(QStringLiteral("volumes"), QStringLiteral("generation"),
+                QStringLiteral("INTEGER NOT NULL DEFAULT 0")),
+            addColumn(QStringLiteral("volumes"), QStringLiteral("next_generation"),
+                QStringLiteral("INTEGER NOT NULL DEFAULT 0")),
             // Every search joins on this pair, and so does the sweep that ends
             // a scan; without it both are a scan of the volume's whole extent.
             QStringLiteral("CREATE INDEX IF NOT EXISTS idx_files_generation "
@@ -315,7 +359,7 @@ Result<void> IndexDatabase::applyMigrations()
         // archive. Null for everything else, which is almost every row, so the
         // column costs a byte apiece and answers a question nothing else can.
         const QStringList statements = {
-            QStringLiteral("ALTER TABLE files ADD COLUMN uri TEXT"),
+            addColumn(QStringLiteral("files"), QStringLiteral("uri"), QStringLiteral("TEXT")),
         };
         if (Result<void> applied = apply(4, statements); !applied.ok())
             return applied;
@@ -328,17 +372,14 @@ Result<void> IndexDatabase::applyMigrations()
         // recorded options, and "not known" is the honest answer for it rather
         // than "no metadata", which would be a lie about a tree indexed with it.
         const QStringList statements = {
-            QStringLiteral("ALTER TABLE volumes ADD COLUMN scan_incremental INTEGER"),
-            QStringLiteral("ALTER TABLE volumes ADD COLUMN scan_metadata INTEGER"),
-            QStringLiteral("ALTER TABLE volumes ADD COLUMN scan_archives INTEGER"),
+            addColumn(
+                QStringLiteral("volumes"), QStringLiteral("scan_incremental"), QStringLiteral("INTEGER")),
+            addColumn(QStringLiteral("volumes"), QStringLiteral("scan_metadata"), QStringLiteral("INTEGER")),
+            addColumn(QStringLiteral("volumes"), QStringLiteral("scan_archives"), QStringLiteral("INTEGER")),
         };
         if (Result<void> applied = apply(5, statements); !applied.ok())
             return applied;
     }
-
-    QSqlQuery bump(db);
-    if (!bump.exec(QStringLiteral("PRAGMA user_version=%1").arg(kSchemaVersion)))
-        return sqlError(bump, QStringLiteral("Writing schema version"));
 
     return {};
 }
@@ -352,7 +393,7 @@ Result<qint64> IndexDatabase::upsertVolume(const VfsUri& root, const QString& la
 
     QSqlDatabase db = connectionForCurrentThread();
     if (!db.isOpen())
-        return sqlError(db, QStringLiteral("No index connection for this thread")).error();
+        return noConnection().error();
     const QString rootUri = root.toString();
 
     QSqlQuery select(db);
@@ -382,18 +423,34 @@ Result<void> IndexDatabase::removeVolume(qint64 volumeId)
 
     QSqlDatabase db = connectionForCurrentThread();
     if (!db.isOpen())
-        return sqlError(db, QStringLiteral("No index connection for this thread"));
+        return noConnection();
+    // One transaction, because half of it is worse than neither. The rows going
+    // without the volume leaves an index that says a drive holds nothing; the
+    // volume going without its rows leaves rows no search can reach and nothing
+    // will ever clear, because the sweep that clears them is per volume.
+    if (!db.transaction())
+        return sqlError(db, QStringLiteral("Removing volume"));
+
     QSqlQuery files(db);
     files.prepare(QStringLiteral("DELETE FROM files WHERE volume_id = ?"));
     files.addBindValue(volumeId);
-    if (!files.exec())
+    if (!files.exec()) {
+        db.rollback();
         return sqlError(files, QStringLiteral("Removing volume files"));
+    }
 
     QSqlQuery volume(db);
     volume.prepare(QStringLiteral("DELETE FROM volumes WHERE id = ?"));
     volume.addBindValue(volumeId);
-    if (!volume.exec())
+    if (!volume.exec()) {
+        db.rollback();
         return sqlError(volume, QStringLiteral("Removing volume"));
+    }
+
+    if (!db.commit()) {
+        db.rollback();
+        return sqlError(db, QStringLiteral("Removing volume"));
+    }
     return {};
 }
 
@@ -406,7 +463,7 @@ Result<qint64> IndexDatabase::beginScan(qint64 volumeId)
 
     QSqlDatabase db = connectionForCurrentThread();
     if (!db.isOpen())
-        return sqlError(db, QStringLiteral("No index connection for this thread")).error();
+        return noConnection().error();
     if (!db.transaction())
         return sqlError(db, QStringLiteral("Opening a scan")).error();
 
@@ -421,7 +478,15 @@ Result<qint64> IndexDatabase::beginScan(qint64 volumeId)
     QSqlQuery read(db);
     read.prepare(QStringLiteral("SELECT generation, next_generation FROM volumes WHERE id = ?"));
     read.addBindValue(volumeId);
-    if (!read.exec() || !read.next()) {
+    // A statement that failed and a statement that found nothing were the same
+    // answer here, so a locked index reported "No indexed volume 3" -- a fact
+    // about the database being busy, told as a fact about the drive not being
+    // in it. Whoever read that went looking for a volume that was there.
+    if (!read.exec()) {
+        db.rollback();
+        return sqlError(read, QStringLiteral("Opening a scan")).error();
+    }
+    if (!read.next()) {
         db.rollback();
         return VfsError::make(VfsError::NotFound, QStringLiteral("No indexed volume %1").arg(volumeId));
     }
@@ -459,7 +524,7 @@ Result<QHash<QString, qint64>> IndexDatabase::directoryTimes(qint64 volumeId) co
 
     QSqlDatabase db = connectionForCurrentThread();
     if (!db.isOpen())
-        return sqlError(db, QStringLiteral("No index connection for this thread")).error();
+        return noConnection().error();
 
     QSqlQuery query(db);
     // Only folders that were already settled when the last scan ran.
@@ -491,7 +556,7 @@ Result<qint64> IndexDatabase::carryForward(qint64 volumeId, qint64 generation, c
 
     QSqlDatabase db = connectionForCurrentThread();
     if (!db.isOpen())
-        return sqlError(db, QStringLiteral("No index connection for this thread")).error();
+        return noConnection().error();
     if (!db.transaction())
         return sqlError(db, QStringLiteral("Carrying a subtree forward")).error();
 
@@ -554,7 +619,7 @@ Result<void> IndexDatabase::commitScan(
 
     QSqlDatabase db = connectionForCurrentThread();
     if (!db.isOpen())
-        return sqlError(db, QStringLiteral("No index connection for this thread"));
+        return noConnection();
     // One transaction for the whole swap. A search runs either before it or
     // after it; there is no moment at which the volume holds some of each, and
     // a process that dies part way through leaves the previous scan intact.
@@ -604,7 +669,7 @@ Result<void> IndexDatabase::abandonScan(qint64 volumeId, qint64 generation)
 
     QSqlDatabase db = connectionForCurrentThread();
     if (!db.isOpen())
-        return sqlError(db, QStringLiteral("No index connection for this thread"));
+        return noConnection();
     QSqlQuery query(db);
     // Never the generation the volume is currently serving, whatever it is
     // handed. Abandoning a scan is a tidy-up, and a tidy-up that can empty a
@@ -630,7 +695,7 @@ Result<QList<IndexVolume>> IndexDatabase::volumes() const
 
     QSqlDatabase db = connectionForCurrentThread();
     if (!db.isOpen())
-        return sqlError(db, QStringLiteral("No index connection for this thread")).error();
+        return noConnection().error();
     QSqlQuery query(db);
     if (!query.exec(QStringLiteral("SELECT id, root_uri, label, last_scan, file_count, "
                                    "scan_incremental, scan_metadata, scan_archives "
@@ -673,7 +738,7 @@ Result<void> IndexDatabase::insertBatch(qint64 volumeId, qint64 generation, cons
 
     QSqlDatabase db = connectionForCurrentThread();
     if (!db.isOpen())
-        return sqlError(db, QStringLiteral("No index connection for this thread"));
+        return noConnection();
     if (!db.transaction())
         return sqlError(db, QStringLiteral("Starting insert batch"));
 
@@ -734,7 +799,7 @@ Result<QList<IndexSearchHit>> IndexDatabase::search(const SearchQuery& query) co
 
     QSqlDatabase db = connectionForCurrentThread();
     if (!db.isOpen())
-        return sqlError(db, QStringLiteral("No index connection for this thread")).error();
+        return noConnection().error();
 
     // The generations having to agree is what keeps a scan in progress out of
     // the answer: its rows are in the table and belong to no volume yet.
@@ -907,7 +972,7 @@ Result<QStringList> IndexDatabase::factKeys(qint64 volumeId) const
 
     QSqlDatabase db = connectionForCurrentThread();
     if (!db.isOpen())
-        return sqlError(db, QStringLiteral("No index connection for this thread")).error();
+        return noConnection().error();
 
     // The same generation join a search makes, so a scan in progress cannot
     // offer a field for facts nothing can yet find.
@@ -941,7 +1006,7 @@ Result<qint64> IndexDatabase::fileCount(qint64 volumeId) const
 
     QSqlDatabase db = connectionForCurrentThread();
     if (!db.isOpen())
-        return sqlError(db, QStringLiteral("No index connection for this thread")).error();
+        return noConnection().error();
     // What a search can reach, on the same join it uses, rather than every row
     // in the table -- a count that included a scan in progress would say the
     // index holds files nothing can find.

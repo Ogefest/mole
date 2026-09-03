@@ -400,8 +400,14 @@ void TestIndexesTab::forgettingARowTakesTheIndexAndItsSchedule()
     QCOMPARE(m_app->services().index->search(byName).value().size(), 2);
 
     QVERIFY(tab->forget(id));
-    // Forgetting posts indexUpdated and the row goes when the snapshot has read
-    // again, which is a task round trip rather than the same stack frame.
+    // Forgetting runs on a task, so the index has to be *seen* to have lost the
+    // volume before the snapshot is asked to read again. Refreshing straight
+    // after the call raced the delete: the read landed first, the row was still
+    // there, and the test failed once in a parallel run and never again. On the
+    // condition, never on a clock.
+    QVERIFY(waitFor([&] { return m_app->services().index->volumes().value().size() == 1; }, 5000));
+    // The row then goes when the snapshot has read again, which is a task round
+    // trip rather than the same stack frame.
     QVERIFY(refreshIndexSummary(m_app->services().indexSummary));
 
     QCOMPARE(tab->volumeCount(), 1);

@@ -6,7 +6,6 @@
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QTemporaryDir>
-#include <QThread>
 #include <QUuid>
 #include <QVariant>
 
@@ -19,15 +18,8 @@ namespace {
     constexpr int kBatchRows = 2000;
 
     /// How long a connection waits for the file rather than giving up, in
-    /// milliseconds. The index's own figure -- see IndexDatabase::connectionFor().
+    /// milliseconds. The index's own figure -- see IndexDatabase.
     constexpr int kBusyTimeoutMs = 5000;
-
-    QString connectionNameFor(const QString& path)
-    {
-        return QStringLiteral("mole-table-%1-%2")
-            .arg(QString::number(reinterpret_cast<quintptr>(QThread::currentThread()), 16),
-                QString::number(qHash(path), 16));
-    }
 
 } // namespace
 
@@ -37,6 +29,38 @@ DelimitedStore::DelimitedStore(QString path, std::shared_ptr<QTemporaryDir> scra
 {
     if (m_path.isEmpty())
         m_path = QStringLiteral(":memory:");
+
+    // The settings are on the connection rather than on the store, and this is
+    // the whole of MOLE-289: a connection is keyed by the thread that asked for
+    // it, and open() is called by the controller on the drawing thread. Set
+    // there, every one of these landed on the reader's connection and the
+    // importer got a brand-new one with SQLite's defaults -- a rollback journal
+    // per transaction, synchronous writes, and no busy timeout at all. Set here,
+    // a connection cannot exist without them.
+    m_connections = std::make_unique<sqlite::Connection>(m_path,
+        sqlite::Connection::Settings {
+            .readOnly = false,
+            // WAL is what lets the grid be attached before the import starts: a
+            // reader sees everything committed so far while the writer is still
+            // going. With no journal there is nothing to roll back from, so a
+            // write transaction holds the file exclusively -- and the importer
+            // commits every two thousand rows and opens the next at once, so it
+            // would hold it almost throughout. Required rather than asked for,
+            // because a scratch database that quietly lost it would make the
+            // grid wait on the import instead of following it.
+            .requireWal = true,
+            // WAL removes almost all of the contention and a checkpoint is the
+            // moment it does not, so a reader that met one must wait rather
+            // than fail.
+            .busyTimeoutMs = kBusyTimeoutMs,
+            // A scratch database rebuilt from a file that still exists: a
+            // machine that loses power mid-import has nothing to recover, so
+            // the fsync per commit buys nothing. NORMAL rather than OFF because
+            // WAL needs a checkpoint it can trust, and NORMAL is already the
+            // setting at which durability is the only thing given up.
+            .pragmas
+            = { QStringLiteral("PRAGMA synchronous = NORMAL"), QStringLiteral("PRAGMA temp_store = MEMORY") },
+        });
 }
 
 DelimitedStore::~DelimitedStore()
@@ -55,50 +79,7 @@ QString DelimitedStore::columnName(int index)
 
 QSqlDatabase DelimitedStore::connectionForCurrentThread() const
 {
-    const QString name = connectionNameFor(m_path);
-    if (QSqlDatabase::contains(name)) {
-        QSqlDatabase existing = QSqlDatabase::database(name);
-        if (existing.isOpen())
-            return existing;
-    }
-
-    QSqlDatabase database = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), name);
-    database.setDatabaseName(m_path);
-    if (!database.open())
-        return database;
-
-    // Here rather than in open(), and this is the whole of MOLE-289. A
-    // connection is keyed by the thread that asked for it, and open() is called
-    // by the controller -- on the drawing thread. Set there, every one of these
-    // landed on the reader's connection and the importer got a brand-new one
-    // with SQLite's defaults: a rollback journal per transaction, synchronous
-    // writes, and no busy timeout at all. Set here, a connection cannot exist
-    // without them.
-    QSqlQuery pragma(database);
-    // WAL is what lets the grid be attached before the import starts: a reader
-    // sees everything committed so far while the writer is still going. With no
-    // journal there is nothing to roll back from, so a write transaction holds
-    // the file exclusively -- and the importer commits every two thousand rows
-    // and opens the next transaction at once, so it holds it almost throughout.
-    pragma.exec(QStringLiteral("PRAGMA journal_mode = WAL"));
-    // A scratch database rebuilt from a file that still exists: a machine that
-    // loses power mid-import has nothing to recover, so the fsync per commit
-    // buys nothing. NORMAL rather than OFF because WAL needs a checkpoint it can
-    // trust, and NORMAL is already the setting at which durability is the only
-    // thing given up.
-    pragma.exec(QStringLiteral("PRAGMA synchronous = NORMAL"));
-    pragma.exec(QStringLiteral("PRAGMA temp_store = MEMORY"));
-    // The index sets the same figure on every connection it opens, for the same
-    // reason: WAL removes almost all of the contention and a checkpoint is the
-    // moment it does not, so a reader that met one must wait rather than fail.
-    pragma.exec(QStringLiteral("PRAGMA busy_timeout = %1").arg(kBusyTimeoutMs));
-
-    {
-        const QMutexLocker held(&m_connectionGuard);
-        if (!m_connections.contains(name))
-            m_connections.append(name);
-    }
-    return database;
+    return m_connections->forCurrentThread();
 }
 
 QString DelimitedStore::pragmaValue(const QString& name) const
@@ -115,8 +96,10 @@ bool DelimitedStore::open(QString* errorOut)
 {
     QSqlDatabase database = connectionForCurrentThread();
     if (!database.isOpen()) {
+        // From the thing that tried to open it. An invalid QSqlDatabase has no
+        // lastError of its own, so asking it produced an empty message.
         if (errorOut)
-            *errorOut = database.lastError().text();
+            *errorOut = m_connections->lastError();
         return false;
     }
 
@@ -132,27 +115,11 @@ void DelimitedStore::close()
         return;
     m_open = false;
 
-    QStringList names;
-    {
-        const QMutexLocker held(&m_connectionGuard);
-        names.swap(m_connections);
-    }
-
     // Every connection the store handed out, and not the calling thread's alone.
     // The importer writes through one of its own on a pool thread, so closing
     // only the caller's left that one behind for the life of the process --
     // whichever way the store ended, and however many files were opened.
-    for (const QString& name : names) {
-        if (!QSqlDatabase::contains(name))
-            continue;
-        // Removed without being fetched first. Taking a copy is what the old
-        // close() did, to avoid removeDatabase's "still in use" warning, and it
-        // cannot be done here: asking for a connection that belongs to another
-        // thread is itself a warning, and one of these two always does. Removing
-        // it deletes the driver, which closes the file -- and nothing holds a
-        // copy at this point, because a store is only closed as it is destroyed.
-        QSqlDatabase::removeDatabase(name);
-    }
+    m_connections->closeAll();
 }
 
 QStringList DelimitedStore::shape() const

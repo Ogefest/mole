@@ -1,10 +1,13 @@
 #pragma once
 
 #include "core/data/ITableSource.h"
+#include "core/data/SqliteConnection.h"
 
 #include <QHash>
 #include <QSqlDatabase>
 #include <QStringList>
+
+#include <memory>
 
 namespace mole {
 
@@ -77,7 +80,14 @@ private:
     void bindFilter(class QSqlQuery& query, const QString& filter) const;
 
     QString m_path;
-    QString m_connectionName;
+    /// This table's own connection. A sqlite::Connection carries a token unique
+    /// to the object, which is what stops two previews of one file colliding --
+    /// the name used to be the thread's address plus a hash of the path, so two
+    /// tabs on the drawing thread showing the same database got the same name,
+    /// Qt's addDatabase replaced the first, both objects ended up on the
+    /// second's connection, and closing either left the other's rows() failing
+    /// for the rest of its life. See MOLE-356.
+    std::unique_ptr<sqlite::Connection> m_connections;
     QStringList m_tables;
     QString m_table;
     QStringList m_headers;

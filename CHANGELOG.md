@@ -65,6 +65,10 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-356 An index interrupted while upgrading its schema opens again next time, instead of failing for ever
+2026-09-04 #MOLE-356 An index written by a newer Mole says so, instead of being opened and written to
+2026-09-04 #MOLE-356 Two previews of one .sqlite file no longer blank each other out when either is closed
+2026-09-04 #MOLE-356 An index or an imported table that cannot run in WAL mode says so, instead of quietly running slowly
 2026-09-04 #MOLE-345 A WebDAV delete or move that the server only half did is reported as such, instead of as done
 2026-09-04 #MOLE-345 Renaming into a folder that is not there says so, instead of "already exists"
 2026-09-04 #MOLE-345 A WebDAV folder whose server answers under another address no longer lists itself as its own child

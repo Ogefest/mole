@@ -11,20 +11,14 @@
 #include <algorithm>
 
 namespace mole {
-namespace {
-
-    QString connectionNameFor(const QString& path)
-    {
-        return QStringLiteral("mole-sqlite-%1-%2")
-            .arg(QString::number(reinterpret_cast<quintptr>(QThread::currentThread()), 16),
-                QString::number(qHash(path), 16));
-    }
-
-} // namespace
 
 SqliteTable::SqliteTable(QString path)
     : m_path(std::move(path))
-    , m_connectionName(connectionNameFor(m_path))
+    // Read-only through SQLite's URI form, which is the only way it will refuse
+    // writes outright. No pragmas: this is somebody else's database, opened to
+    // be looked at, and another process may be writing to it.
+    , m_connections(
+          std::make_unique<sqlite::Connection>(m_path, sqlite::Connection::Settings { .readOnly = true }))
 {
 }
 
@@ -42,7 +36,7 @@ QString SqliteTable::quoted(const QString& identifier)
 
 QSqlDatabase SqliteTable::connection() const
 {
-    return QSqlDatabase::database(m_connectionName, false);
+    return m_connections->forCurrentThread();
 }
 
 bool SqliteTable::open(QString* errorOut)
@@ -56,37 +50,47 @@ bool SqliteTable::open(QString* errorOut)
     if (!QFileInfo::exists(m_path))
         return fail(QStringLiteral("No such file"));
 
-    QSqlDatabase database = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), m_connectionName);
-    // Read-only through the URI form, which is the only way SQLite will refuse
-    // writes outright. `immutable` is deliberately *not* set: it would promise
-    // the file cannot change, and another process may well be writing to it.
-    database.setDatabaseName(
-        QStringLiteral("file:%1?mode=ro").arg(QString::fromUtf8(QUrl::toPercentEncoding(m_path, "/"))));
-    database.setConnectOptions(QStringLiteral("QSQLITE_OPEN_READONLY;QSQLITE_OPEN_URI"));
-
-    if (!database.open()) {
-        const QString message = database.lastError().text();
-        QSqlDatabase::removeDatabase(m_connectionName);
+    QSqlDatabase database = m_connections->forCurrentThread();
+    if (!database.isOpen()) {
+        const QString message = m_connections->lastError();
         return fail(message.isEmpty() ? QStringLiteral("Not a SQLite database") : message);
     }
 
     m_open = true;
 
-    QSqlQuery query(database);
-    // Views as well as tables: from the outside both are something to look at,
-    // and excluding views would hide half of some databases.
-    if (!query.exec(QStringLiteral("SELECT name FROM sqlite_master WHERE type IN ('table','view') "
-                                   "AND name NOT LIKE 'sqlite_%' ORDER BY name"))) {
-        const QString message = query.lastError().text();
-        close();
-        return fail(message);
+    // The query and the local copy of the connection are both scoped, because
+    // close() below removes the connection and Qt says "still in use, all
+    // queries will cease to work" if anything is holding one when it does.
+    QString wrong;
+    QStringList found;
+    {
+        QSqlQuery query(database);
+        // Views as well as tables: from the outside both are something to look
+        // at, and excluding views would hide half of some databases.
+        if (!query.exec(QStringLiteral("SELECT name FROM sqlite_master WHERE type IN ('table','view') "
+                                       "AND name NOT LIKE 'sqlite_%' ORDER BY name"))) {
+            wrong = query.lastError().text();
+        } else {
+            while (query.next())
+                found.append(query.value(0).toString());
+        }
     }
-    while (query.next())
-        m_tables.append(query.value(0).toString());
+    database = QSqlDatabase();
 
-    if (m_tables.isEmpty())
+    // Closed on the way out, not merely reported. open() used to return false
+    // here with m_open left true and the connection still registered, so a
+    // second attempt on the same object met the duplicate-name path and Qt's
+    // warning rather than the answer it asked for.
+    if (!wrong.isEmpty()) {
+        close();
+        return fail(wrong);
+    }
+    if (found.isEmpty()) {
+        close();
         return fail(QStringLiteral("This database has no tables"));
+    }
 
+    m_tables = found;
     return setCurrentTable(m_tables.first());
 }
 
@@ -96,12 +100,7 @@ void SqliteTable::close()
         return;
     m_open = false;
     m_rowCounts.clear();
-    {
-        QSqlDatabase database = QSqlDatabase::database(m_connectionName, false);
-        if (database.isOpen())
-            database.close();
-    }
-    QSqlDatabase::removeDatabase(m_connectionName);
+    m_connections->closeAll();
 }
 
 bool SqliteTable::setCurrentTable(const QString& table)

@@ -12,9 +12,12 @@
 #include "core/data/ParquetTable.h"
 #include "core/data/SqliteTable.h"
 
+#include <QDir>
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <QTemporaryDir>
+
+#include <memory>
 
 using namespace mole;
 using namespace mole::test;
@@ -39,6 +42,8 @@ private slots:
     void survivesAwkwardIdentifiers();
     void refusesSomethingThatIsNotADatabase();
     void opensReadOnly();
+    void twoViewsOfOneDatabaseDoNotShareAConnection();
+    void aDatabaseWithNoTablesCanBeOpenedAgain();
 
     // ---- Parquet ----
     void readsAParquetFile();
@@ -272,6 +277,71 @@ void TestTableSources::opensReadOnly()
 }
 
 // --------------------------------------------------------------- Parquet
+
+/// Two tabs on one file, and closing one used to blind the other.
+///
+/// The connection was named by the calling thread's address plus a hash of the
+/// path, so two previews of the same database on the drawing thread asked Qt
+/// for the same name. addDatabase replaces an existing one and warns, both
+/// objects ended up on the second's connection, and whichever closed first took
+/// the other's away -- a blank grid, for the rest of that tab's life, with no
+/// error anywhere. See MOLE-356.
+void TestTableSources::twoViewsOfOneDatabaseDoNotShareAConnection()
+{
+    buildDatabase();
+
+    auto first = std::make_unique<SqliteTable>(databasePath());
+    QVERIFY(first->open());
+    QVERIFY(first->setCurrentTable(QStringLiteral("people")));
+
+    SqliteTable second(databasePath());
+    QVERIFY(second.open());
+    QVERIFY(second.setCurrentTable(QStringLiteral("people")));
+
+    // Both read, which the shared connection also managed.
+    QCOMPARE(first->rows(0, 1).size(), 1);
+    QCOMPARE(second.rows(0, 1).size(), 1);
+
+    // And then one goes, which is where it used to come apart.
+    first.reset();
+
+    const QList<QStringList> after = second.rows(0, 2);
+    QCOMPARE(after.size(), 2);
+    QCOMPARE(after.first().at(1), QStringLiteral("Ada"));
+    QCOMPARE(second.rowCountOf(QStringLiteral("people")), 4);
+}
+
+/// A file that opens and has nothing to show can be tried again.
+///
+/// open() returned false for "no tables" with m_open left true and the
+/// connection still registered, so a second attempt on the same object met the
+/// duplicate-name path rather than the same answer.
+void TestTableSources::aDatabaseWithNoTablesCanBeOpenedAgain()
+{
+    const QString path = QDir(m_dir->path()).filePath(QStringLiteral("empty.sqlite"));
+    const QString name = QStringLiteral("tst-empty-db");
+    {
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), name);
+        db.setDatabaseName(path);
+        QVERIFY(db.open());
+        db.close();
+    }
+    QSqlDatabase::removeDatabase(name);
+
+    SqliteTable table(path);
+    QString first;
+    QVERIFY(!table.open(&first));
+    QVERIFY2(first.contains(QStringLiteral("no tables")), qPrintable(first));
+
+    // The second attempt is where it showed: the connection was still
+    // registered under a name built from the thread and the path, so Qt
+    // reported a duplicate and removed the old one underneath whoever held it.
+    CapturedWarnings warnings;
+    QString again;
+    QVERIFY2(!table.open(&again), "a database with no tables does not gain one by being asked twice");
+    QCOMPARE(again, first);
+    QVERIFY2(!warnings.contains(QStringLiteral("duplicate connection name")), qPrintable(warnings.joined()));
+}
 
 void TestTableSources::readsAParquetFile()
 {
