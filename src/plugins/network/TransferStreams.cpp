@@ -320,6 +320,25 @@ StreamingDownload::StreamingDownload(Fetch fetch, qint64 size, qint64 spanBytes,
 {
 }
 
+VfsError fileChangedWhileBeingRead()
+{
+    return VfsError::make(VfsError::IoError, QStringLiteral("the file changed while it was being read"));
+}
+
+QString identityOf(const FileEntry& entry)
+{
+    if (entry.size == kUnknownSize && !entry.modified.isValid())
+        return {};
+    return QStringLiteral("%1:%2")
+        .arg(entry.size)
+        .arg(entry.modified.isValid() ? entry.modified.toMSecsSinceEpoch() : -1);
+}
+
+void StreamingDownload::checkBeforeEverySpan(StillTheSameFile check)
+{
+    m_stillTheSameFile = std::move(check);
+}
+
 void StreamingDownload::pauseBeforeRetrying(int attempt)
 {
     // A quarter of a second, doubling, capped at two. Capped low on purpose:
@@ -347,6 +366,9 @@ bool StreamingDownload::open(OpenMode mode)
         setErrorString(QStringLiteral("a download stream can only be opened for reading"));
         return false;
     }
+    // A stream that is opened again is a read that begins again, so the next
+    // span is the first one and there is nothing yet to check it against.
+    m_spanHasFinished = false;
     // Unbuffered: QIODevice's own read buffer would ask for large blocks and
     // hold them, which only puts a second buffer in front of the one that is
     // already there for this purpose.
@@ -390,6 +412,25 @@ void StreamingDownload::startFetching(qint64 offset)
         int attempt = 0;
 
         while (!m_cancel.isCancelled() && at < m_size) {
+            // Before a byte of this span is asked for, and never for the first
+            // one -- that is the span the validator was taken from. A file that
+            // has been replaced must not contribute anything at all to what the
+            // reader sees, so this is asked here rather than worked out
+            // afterwards from what arrived. See MOLE-348.
+            if (m_spanHasFinished && m_stillTheSameFile) {
+                const VfsError changed = m_stillTheSameFile();
+                if (changed.isError()) {
+                    if (m_cancel.isCancelled())
+                        break;
+                    // Not retried, whatever the budget has left. Fetching the
+                    // span again would fetch it from the file that replaced the
+                    // one being read, which is not the file anybody asked for.
+                    const std::lock_guard<std::mutex> guard(m_mutex);
+                    m_error = changed;
+                    break;
+                }
+            }
+
             const qint64 span = std::min(m_spanBytes, m_size - at);
             Sink sink(*this);
             const VfsError failed = m_fetch(sink, at, span, m_cancel);
@@ -431,6 +472,8 @@ void StreamingDownload::startFetching(qint64 offset)
                 pauseBeforeRetrying(++attempt);
                 continue;
             }
+
+            m_spanHasFinished = true;
 
             // Short of what was asked for, with no error, is the end of the
             // file -- a server clamps a range that runs past it.

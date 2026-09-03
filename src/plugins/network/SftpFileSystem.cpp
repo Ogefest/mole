@@ -380,7 +380,27 @@ Result<std::unique_ptr<QIODevice>> SftpFileSystem::openRead(const VfsUri& target
         return fetchSpan(url, what, sink, offset, span, cancel);
     };
 
+    // What the file was when this read began. SFTP has no ETag and no
+    // conditional read, so the validator is what the protocol can say about
+    // which file this is: how big it is and when it was last written. Taken
+    // here, once, and asked again before every later span -- a span is an
+    // independent request by byte offset and nothing else would notice the file
+    // being replaced between two of them. A stat that fails leaves it empty,
+    // which switches the check off rather than failing an open over it.
+    QString openedAs;
+    if (const Result<FileEntry> opened = stat(target); opened.ok())
+        openedAs = net::identityOf(opened.value());
+
     auto stream = std::make_unique<net::StreamingDownload>(std::move(fetch), length, kSpanBytes);
+    if (!openedAs.isEmpty()) {
+        stream->checkBeforeEverySpan([this, target, openedAs]() -> VfsError {
+            const Result<FileEntry> now = stat(target);
+            if (!now.ok())
+                return now.error();
+            return net::identityOf(now.value()) == openedAs ? VfsError::ok()
+                                                            : net::fileChangedWhileBeingRead();
+        });
+    }
     if (!stream->open(QIODevice::ReadOnly)) {
         return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, stream->errorString());
     }

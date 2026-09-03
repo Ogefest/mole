@@ -262,6 +262,91 @@ QByteArray payloadOf(int size)
     return data;
 }
 
+/// A server that can be rewritten between spans, and that has an ETag.
+///
+/// The fault this stands for is ordinary: a log rotated, a backup re-run, a
+/// photo re-exported over itself, while a hundred-gigabyte read is walking
+/// through it a span at a time. Each span is an independent request by byte
+/// offset and nothing in the protocol says which version answered it, so the
+/// reader is handed the first half of one file and the second half of another,
+/// of exactly the right total length.
+class RewritableServer
+{
+public:
+    explicit RewritableServer(QByteArray contents)
+        : m_contents(std::move(contents))
+        , m_etag(QStringLiteral("one"))
+    {
+    }
+
+    net::StreamingDownload::Fetch fetch()
+    {
+        return [this](QIODevice& sink, qint64 offset, qint64 span, const CancelToken&) {
+            ++m_spans;
+            const std::lock_guard<std::mutex> guard(m_mutex);
+            const qint64 available = std::min(span, static_cast<qint64>(m_contents.size()) - offset);
+            if (available > 0 && sink.write(m_contents.constData() + offset, available) != available)
+                return VfsError::make(VfsError::IoError, QStringLiteral("the reader went away"));
+            return VfsError::ok();
+        };
+    }
+
+    /// What a backend with an ETag does: hold the value the read began on and
+    /// compare it before every later span.
+    ///
+    /// `holdTheFirstCheck` makes the first one wait until release(), which is
+    /// how a test gets to rewrite the file at a known point rather than racing
+    /// the fetch thread: the stream reads ahead into an eight-megabyte buffer,
+    /// so a small file is fetched whole before a test can do anything to it.
+    net::StreamingDownload::StillTheSameFile guard(bool holdTheFirstCheck = false)
+    {
+        return [this, holdTheFirstCheck, opened = etag()]() -> VfsError {
+            if (holdTheFirstCheck && m_checks == 0) {
+                std::unique_lock<std::mutex> lock(m_mutex);
+                m_released.wait(lock, [this] { return m_release; });
+            }
+            ++m_checks;
+            return etag() == opened ? VfsError::ok() : net::fileChangedWhileBeingRead();
+        };
+    }
+
+    /// Lets a held check go.
+    void release()
+    {
+        {
+            const std::lock_guard<std::mutex> guard(m_mutex);
+            m_release = true;
+        }
+        m_released.notify_all();
+    }
+
+    /// The whole file is replaced, and says so.
+    void rewriteWith(const QByteArray& contents, const QString& etag)
+    {
+        const std::lock_guard<std::mutex> guard(m_mutex);
+        m_contents = contents;
+        m_etag = etag;
+    }
+
+    QString etag() const
+    {
+        const std::lock_guard<std::mutex> guard(m_mutex);
+        return m_etag;
+    }
+
+    int spans() const { return m_spans; }
+    int checks() const { return m_checks; }
+
+private:
+    mutable std::mutex m_mutex;
+    std::condition_variable m_released;
+    bool m_release = false;
+    QByteArray m_contents;
+    QString m_etag;
+    std::atomic<int> m_spans { 0 };
+    std::atomic<int> m_checks { 0 };
+};
+
 /// Reads to the end, or until the stream says it failed.
 QByteArray readAll(net::StreamingDownload& stream, qint64* lastResult)
 {
@@ -305,6 +390,9 @@ private slots:
     void aFileTheSizeOfTheBufferArrivesWhole();
     void aFetchFasterThanTheReaderFillsUpAndWaits();
     void aReaderFasterThanTheFetchWaitsAndGetsEverything();
+    void aFileRewrittenBetweenTwoSpansFailsRatherThanStitchingThem();
+    void aFileThatIsStillItselfIsCheckedAndNotDisturbed();
+    void aStreamWithNoCheckReadsExactlyAsItDidBefore();
     void readingAgainAfterAnErrorSaysTheSameThing();
     void closingDuringABlockedReadDoesNotHang();
 };
@@ -823,6 +911,78 @@ void TestStreamingDownload::aReaderFasterThanTheFetchWaitsAndGetsEverything()
     QCOMPARE(last, 0);
     QCOMPARE(collected, payload);
     QCOMPARE(server.spans(), 1);
+}
+
+/// The stitched file, refused.
+///
+/// The reader gets the first span and then an error -- never the second span's
+/// bytes, because the check runs before they are asked for. Getting that order
+/// wrong would leave the wrong half of another file in the buffer for a reader
+/// that ignores the return code, and the whole point is that nothing downstream
+/// has to.
+void TestStreamingDownload::aFileRewrittenBetweenTwoSpansFailsRatherThanStitchingThem()
+{
+    const QByteArray first(200 * 1024, 'a');
+    const QByteArray second(200 * 1024, 'b');
+    RewritableServer server(first);
+
+    net::StreamingDownload stream(server.fetch(), first.size(), 64 * 1024);
+    stream.checkBeforeEverySpan(server.guard(true));
+    QVERIFY(stream.open(QIODevice::ReadOnly));
+
+    // The first span arrives, and then the file underneath becomes another one.
+    // The check for the second span is held until it has, so this is a sequence
+    // rather than a race.
+    const QByteArray opening = stream.read(64 * 1024);
+    QCOMPARE(opening, first.left(64 * 1024));
+    server.rewriteWith(second, QStringLiteral("two"));
+    server.release();
+
+    qint64 last = 0;
+    const QByteArray rest = readAll(stream, &last);
+    QCOMPARE(last, -1);
+    QCOMPARE(stream.error().code, VfsError::IoError);
+    QCOMPARE(stream.error().message, QStringLiteral("the file changed while it was being read"));
+
+    // Not one byte of the file that replaced it.
+    QVERIFY2(!rest.contains('b'), "the second file's bytes were handed to the reader");
+    QVERIFY2(server.spans() <= 2, "a span was fetched after the file was known to have changed");
+}
+
+/// And a file that is still itself is read exactly as before, having been asked.
+void TestStreamingDownload::aFileThatIsStillItselfIsCheckedAndNotDisturbed()
+{
+    const QByteArray payload = payloadOf(300 * 1024);
+    RewritableServer server(payload);
+
+    net::StreamingDownload stream(server.fetch(), payload.size(), 128 * 1024);
+    stream.checkBeforeEverySpan(server.guard());
+    QVERIFY(stream.open(QIODevice::ReadOnly));
+
+    qint64 last = 0;
+    QCOMPARE(readAll(stream, &last), payload);
+    QCOMPARE(last, 0);
+    QCOMPARE(server.spans(), 3);
+    // Before every span but the first: three spans, two checks. The first is the
+    // one the validator was taken from and asking about it would be asking
+    // whether the file is the file.
+    QCOMPARE(server.checks(), 2);
+}
+
+/// A drive that folds the question into its own request sets no check, and
+/// nothing changes for it.
+void TestStreamingDownload::aStreamWithNoCheckReadsExactlyAsItDidBefore()
+{
+    const QByteArray payload = payloadOf(300 * 1024);
+    RewritableServer server(payload);
+
+    net::StreamingDownload stream(server.fetch(), payload.size(), 128 * 1024);
+    QVERIFY(stream.open(QIODevice::ReadOnly));
+
+    qint64 last = 0;
+    QCOMPARE(readAll(stream, &last), payload);
+    QCOMPARE(last, 0);
+    QCOMPARE(server.checks(), 0);
 }
 
 void TestStreamingDownload::readingAgainAfterAnErrorSaysTheSameThing()

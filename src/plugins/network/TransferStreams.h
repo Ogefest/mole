@@ -153,6 +153,22 @@ private:
 /// see StreamingDownload, and the size at which each backend switches over.
 Result<std::unique_ptr<QIODevice>> openDownloadedFile(std::unique_ptr<QTemporaryFile> file);
 
+/// The failure a streamed read gives when the file was replaced underneath it.
+///
+/// One sentence rather than one per backend: it is the same fact wherever it is
+/// noticed, and the reader above has no way to tell SFTP's version of it from
+/// WebDAV's. See MOLE-348.
+VfsError fileChangedWhileBeingRead();
+
+/// What a drive with no validator of its own can say about which file this is:
+/// how big it is and when it was last written.
+///
+/// Compared as text and never interpreted. A drive that reports no modification
+/// time can only notice a change of length -- which is weaker than an ETag and
+/// still catches the rewrite that changes the size. Empty where the drive says
+/// neither, and then nothing is checked.
+QString identityOf(const FileEntry& entry);
+
 /// A read stream that fetches from the server while the caller reads, instead
 /// of downloading the whole file first.
 ///
@@ -183,6 +199,31 @@ public:
     using Fetch
         = std::function<VfsError(QIODevice& sink, qint64 offset, qint64 span, const CancelToken& cancel)>;
 
+    /// Whether the file is still the one this read began on.
+    ///
+    /// A span is an independent request by byte offset, and nothing about a
+    /// range request says which version of the file answered it. A file
+    /// rewritten between span one and span two -- a log rotated, a backup
+    /// re-run, a photo re-exported over itself -- gives a device of the right
+    /// length holding the wrong bytes: ADR-0027's guard compares sizes and a
+    /// rewrite of the same size passes it, and ADR-0016 then confirms that the
+    /// wrong bytes arrived whole. A move deletes the only good copy next.
+    ///
+    /// So the validator is captured when the stream is opened and this closure
+    /// holds it. Called **before every span but the first**, and never for the
+    /// first, which is the one the validator was taken from; its failure ends
+    /// the read and is not retried, because retrying a file that has been
+    /// replaced cannot make it the file that was asked for. No bytes of the
+    /// span are asked for until it has answered, so a rewritten file never
+    /// contributes to what the reader sees.
+    ///
+    /// Unset means nothing is checked. That is the right answer for a backend
+    /// that folds the question into the request itself -- an ETag sent back as
+    /// `If-Match` costs no round trip and the server does the comparing -- and
+    /// it is a fact worth having in the open rather than a silent difference
+    /// between drives. See MOLE-348.
+    using StillTheSameFile = std::function<VfsError()>;
+
     /// `size` is the length of the file, which the stream must know: a device
     /// that cannot say where it ends cannot be read by anything that asks.
     ///
@@ -199,6 +240,9 @@ public:
     StreamingDownload(
         Fetch fetch, qint64 size, qint64 spanBytes, std::chrono::seconds budget = std::chrono::seconds(120));
     ~StreamingDownload() override;
+
+    /// Sets the check above. Called before opening, and once.
+    void checkBeforeEverySpan(StillTheSameFile check);
 
     bool open(OpenMode mode) override;
     void close() override;
@@ -236,6 +280,11 @@ private:
     bool deliver(const char* data, qint64 size);
 
     Fetch m_fetch;
+    StillTheSameFile m_stillTheSameFile;
+    /// Whether a span has completed on this stream, which is what makes the next
+    /// one a *later* span. Survives a seek: a seek starts a new transfer, and
+    /// the file may have been replaced since the one before it.
+    bool m_spanHasFinished = false;
     qint64 m_size = 0;
     qint64 m_spanBytes = 0;
     qint64 m_budgetMs = 0;

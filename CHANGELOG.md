@@ -65,6 +65,7 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-348 A streamed download notices when the file changed underneath it, instead of handing back the first half of one file and the second half of another
 2026-09-04 #MOLE-336 A sync says when a name is a file on one side and a folder on the other, instead of replacing one with the other or failing once per file inside it
 2026-09-04 #MOLE-336 Writing a file where a folder stands is refused on every drive, instead of the folder being removed to make room
 2026-09-04 #MOLE-334 A move to another disk goes through the guarded copy, instead of an unchecked block copy that could leave a truncated file under the final name

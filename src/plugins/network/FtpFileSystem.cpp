@@ -442,7 +442,23 @@ Result<std::unique_ptr<QIODevice>> FtpFileSystem::openRead(const VfsUri& target,
         return fetchSpan(url, what, sink, offset, span, cancel);
     };
 
+    // The same validator SFTP uses, for the same reason: FTP has nothing like an
+    // ETag either, so which file this is has to be asked as a fresh stat before
+    // every later span. See MOLE-348 and the note in SftpFileSystem::openRead.
+    QString openedAs;
+    if (const Result<FileEntry> opened = stat(target); opened.ok())
+        openedAs = net::identityOf(opened.value());
+
     auto stream = std::make_unique<net::StreamingDownload>(std::move(fetch), length, kDownloadSpanBytes);
+    if (!openedAs.isEmpty()) {
+        stream->checkBeforeEverySpan([this, target, openedAs]() -> VfsError {
+            const Result<FileEntry> now = stat(target);
+            if (!now.ok())
+                return now.error();
+            return net::identityOf(now.value()) == openedAs ? VfsError::ok()
+                                                            : net::fileChangedWhileBeingRead();
+        });
+    }
     if (!stream->open(QIODevice::ReadOnly)) {
         return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, stream->errorString());
     }
