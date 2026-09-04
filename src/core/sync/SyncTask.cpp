@@ -99,12 +99,12 @@ bool SyncTask::copyOne(const SyncPlan::Step& step)
 {
     // The plan measured the file already; passing that on is what lets a remote
     // backend fetch a large one differently from a small one.
-    Result<std::unique_ptr<QIODevice>> input = m_sourceFs->openRead(step.source, step.bytes);
+    Result<std::unique_ptr<QIODevice>> input = m_sourceFs->openRead(step.source, step.bytes, cancelToken());
     if (!input.ok()) {
         m_failures.append(QStringLiteral("%1: %2").arg(step.relativePath, input.error().message));
         return false;
     }
-    Result<std::unique_ptr<QIODevice>> output = m_targetFs->openWrite(step.target, step.bytes);
+    Result<std::unique_ptr<QIODevice>> output = m_targetFs->openWrite(step.target, step.bytes, cancelToken());
     if (!output.ok()) {
         m_failures.append(QStringLiteral("%1: %2").arg(step.relativePath, output.error().message));
         return false;
@@ -329,7 +329,7 @@ void SyncTask::run()
                 m_failures.append(QStringLiteral("%1: not deleted -- %2").arg(step.relativePath, changed));
                 break;
             }
-            if (Result<void> removed = m_targetFs->remove(step.target, true); !removed.ok()) {
+            if (Result<void> removed = m_targetFs->remove(step.target, true, cancelToken()); !removed.ok()) {
                 m_failures.append(QStringLiteral("%1: %2").arg(step.relativePath, removed.error().message));
             } else {
                 ++m_applied;

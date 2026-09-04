@@ -90,13 +90,13 @@ public:
         return Result<void>::failure(VfsError::AlreadyExists, QStringLiteral("mkdir was here"));
     }
 
-    Result<void> remove(const VfsUri&, bool recursive) override
+    Result<void> remove(const VfsUri&, bool recursive, const CancelToken&) override
     {
         return Result<void>::failure(VfsError::NotEmpty,
             recursive ? QStringLiteral("remove -r was here") : QStringLiteral("remove was here"));
     }
 
-    Result<void> rename(const VfsUri&, const VfsUri&) override
+    Result<void> rename(const VfsUri&, const VfsUri&, const CancelToken&) override
     {
         return Result<void>::failure(VfsError::IsADirectory, QStringLiteral("rename was here"));
     }
@@ -106,12 +106,13 @@ public:
     /// lost this one would go on working -- against a drive that was never asked
     /// whether it could do better, and through two calls where the drive offers
     /// one. See ADR-0087.
-    Result<void> replace(const VfsUri&, const VfsUri&) override
+    Result<void> replace(const VfsUri&, const VfsUri&, const CancelToken&) override
     {
         return Result<void>::failure(VfsError::NotEmpty, QStringLiteral("replace was here"));
     }
 
-    Result<std::unique_ptr<QIODevice>> openRead(const VfsUri&, qint64 expectedSize) override
+    Result<std::unique_ptr<QIODevice>> openRead(
+        const VfsUri&, qint64 expectedSize, const CancelToken& = {}) override
     {
         // The hint comes back in the bytes, so a wrapper that dropped it or
         // substituted its own default is a different answer rather than the
@@ -123,7 +124,8 @@ public:
         return Result<std::unique_ptr<QIODevice>>(std::unique_ptr<QIODevice>(buffer.release()));
     }
 
-    Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri&, qint64 expectedSize) override
+    Result<std::unique_ptr<QIODevice>> openWrite(
+        const VfsUri&, qint64 expectedSize, const CancelToken& = {}) override
     {
         return Result<std::unique_ptr<QIODevice>>(
             VfsError::make(VfsError::AccessDenied, QStringLiteral("write hint %1").arg(expectedSize)));

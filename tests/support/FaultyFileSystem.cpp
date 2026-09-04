@@ -746,7 +746,7 @@ Result<void> FaultyFileSystem::makeDirectory(const VfsUri& target)
     return m_inner->makeDirectory(target);
 }
 
-Result<void> FaultyFileSystem::remove(const VfsUri& target, bool recursive)
+Result<void> FaultyFileSystem::remove(const VfsUri& target, bool recursive, const CancelToken& cancel)
 {
     if (m_policy->revoked.load())
         return revokedError();
@@ -754,7 +754,7 @@ Result<void> FaultyFileSystem::remove(const VfsUri& target, bool recursive)
     // directory nobody may write to actually does to a recursive delete.
     if (const std::optional<VfsError> refused = m_policy->refusalFor(m_policy->removeRefusals, target, true))
         return Result<void>(*refused);
-    return m_inner->remove(target, recursive);
+    return m_inner->remove(target, recursive, cancel);
 }
 
 FaultyFileSystem& FaultyFileSystem::removeFails(
@@ -765,26 +765,27 @@ FaultyFileSystem& FaultyFileSystem::removeFails(
     return *this;
 }
 
-Result<void> FaultyFileSystem::rename(const VfsUri& from, const VfsUri& to)
+Result<void> FaultyFileSystem::rename(const VfsUri& from, const VfsUri& to, const CancelToken& cancel)
 {
     if (m_policy->revoked.load())
         return revokedError();
-    return m_inner->rename(from, to);
+    return m_inner->rename(from, to, cancel);
 }
 
-Result<void> FaultyFileSystem::replace(const VfsUri& from, const VfsUri& to)
+Result<void> FaultyFileSystem::replace(const VfsUri& from, const VfsUri& to, const CancelToken& cancel)
 {
     if (m_policy->revoked.load())
         return revokedError();
-    return m_inner->replace(from, to);
+    return m_inner->replace(from, to, cancel);
 }
 
-Result<std::unique_ptr<QIODevice>> FaultyFileSystem::openRead(const VfsUri& target, qint64 expectedSize)
+Result<std::unique_ptr<QIODevice>> FaultyFileSystem::openRead(
+    const VfsUri& target, qint64 expectedSize, const CancelToken& cancel)
 {
     if (m_policy->revoked.load())
         return revokedError();
 
-    Result<std::unique_ptr<QIODevice>> inner = m_inner->openRead(target, expectedSize);
+    Result<std::unique_ptr<QIODevice>> inner = m_inner->openRead(target, expectedSize, cancel);
     if (!inner.ok())
         return inner;
     auto device = std::make_unique<FaultyReadDevice>(std::move(inner.value()), m_policy,
@@ -793,7 +794,8 @@ Result<std::unique_ptr<QIODevice>> FaultyFileSystem::openRead(const VfsUri& targ
     return Result<std::unique_ptr<QIODevice>>(std::unique_ptr<QIODevice>(device.release()));
 }
 
-Result<std::unique_ptr<QIODevice>> FaultyFileSystem::openWrite(const VfsUri& target, qint64 expectedSize)
+Result<std::unique_ptr<QIODevice>> FaultyFileSystem::openWrite(
+    const VfsUri& target, qint64 expectedSize, const CancelToken& cancel)
 {
     if (m_policy->revoked.load())
         return revokedError();
@@ -810,7 +812,7 @@ Result<std::unique_ptr<QIODevice>> FaultyFileSystem::openWrite(const VfsUri& tar
     // the send failed, so nothing is opened underneath and nothing lands.
     std::unique_ptr<QIODevice> innerDevice;
     if (!failOnClose) {
-        Result<std::unique_ptr<QIODevice>> inner = m_inner->openWrite(target, expectedSize);
+        Result<std::unique_ptr<QIODevice>> inner = m_inner->openWrite(target, expectedSize, cancel);
         if (!inner.ok())
             return inner;
         innerDevice = std::move(inner.value());

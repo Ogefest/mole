@@ -343,8 +343,10 @@ Result<void> WebdavFileSystem::makeDirectory(const VfsUri& target)
     return {};
 }
 
-Result<void> WebdavFileSystem::remove(const VfsUri& target, bool recursive)
+Result<void> WebdavFileSystem::remove(const VfsUri& target, bool recursive, const CancelToken& cancel)
 {
+    if (cancel.isCancelled())
+        return Result<void>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
     const Result<FileEntry> what = stat(target);
     if (!what.ok())
         return Result<void>(what.error());
@@ -352,7 +354,7 @@ Result<void> WebdavFileSystem::remove(const VfsUri& target, bool recursive)
     if (what.value().isDir && !recursive) {
         // WebDAV's DELETE on a collection is always recursive, so refusing a
         // non-empty one has to be done here rather than left to the server.
-        const Result<FileEntryList> children = list(target, CancelToken());
+        const Result<FileEntryList> children = list(target, cancel);
         if (!children.ok())
             return Result<void>(children.error());
         if (!children.value().isEmpty()) {
@@ -364,7 +366,7 @@ Result<void> WebdavFileSystem::remove(const VfsUri& target, bool recursive)
     Call call;
     call.method = "DELETE";
     call.url = urlFor(target);
-    const net::Response response = send(call, CancelToken());
+    const net::Response response = send(call, cancel);
     const QString deleting = QStringLiteral("Deleting %1").arg(target.path());
     if (const VfsError refused = whatTheMultiStatusRefused(response, deleting); refused.isError())
         return Result<void>(refused);
@@ -374,8 +376,10 @@ Result<void> WebdavFileSystem::remove(const VfsUri& target, bool recursive)
     return {};
 }
 
-Result<void> WebdavFileSystem::rename(const VfsUri& from, const VfsUri& to)
+Result<void> WebdavFileSystem::rename(const VfsUri& from, const VfsUri& to, const CancelToken& cancel)
 {
+    if (cancel.isCancelled())
+        return Result<void>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
     const Result<FileEntry> source = stat(from);
     if (!source.ok())
         return Result<void>(source.error());
@@ -387,7 +391,7 @@ Result<void> WebdavFileSystem::rename(const VfsUri& from, const VfsUri& to)
     // Without this the server would overwrite whatever is at the destination.
     call.headers.append({ QByteArray("Overwrite"), QByteArray("F") });
 
-    const net::Response response = send(call, CancelToken());
+    const net::Response response = send(call, cancel);
     // 412 is the name being taken: it is what `Overwrite: F` answers, and there
     // is nothing else it can mean here. 409 used to be treated the same way and
     // is not the same thing -- RFC 4918 §9.9.4 gives it for a destination whose
@@ -409,8 +413,12 @@ Result<void> WebdavFileSystem::rename(const VfsUri& from, const VfsUri& to)
     return {};
 }
 
-Result<std::unique_ptr<QIODevice>> WebdavFileSystem::openRead(const VfsUri& target, qint64)
+Result<std::unique_ptr<QIODevice>> WebdavFileSystem::openRead(
+    const VfsUri& target, qint64, const CancelToken& cancel)
 {
+    if (cancel.isCancelled()) {
+        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
+    }
     auto scratch = std::make_unique<QTemporaryFile>();
     QString staging;
     if (!staging::openFile(*scratch, &staging)) {
@@ -420,7 +428,7 @@ Result<std::unique_ptr<QIODevice>> WebdavFileSystem::openRead(const VfsUri& targ
 
     Call call;
     call.url = urlFor(target);
-    const net::Response response = send(call, CancelToken(), scratch.get());
+    const net::Response response = send(call, cancel, scratch.get());
     const VfsError error = net::errorFor(response, QStringLiteral("Reading %1").arg(target.path()));
     if (error.isError())
         return Result<std::unique_ptr<QIODevice>>(error);
@@ -458,8 +466,12 @@ Result<void> WebdavFileSystem::uploadFrom(
     return {};
 }
 
-Result<std::unique_ptr<QIODevice>> WebdavFileSystem::openWrite(const VfsUri& target, qint64 expectedSize)
+Result<std::unique_ptr<QIODevice>> WebdavFileSystem::openWrite(
+    const VfsUri& target, qint64 expectedSize, const CancelToken& cancel)
 {
+    if (cancel.isCancelled()) {
+        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
+    }
     // Big enough that staging it locally is the problem rather than the answer,
     // so it goes as it is written, with a chunked transfer encoding.
     //
@@ -506,11 +518,14 @@ Result<std::unique_ptr<QIODevice>> WebdavFileSystem::openWrite(const VfsUri& tar
         return Result<std::unique_ptr<QIODevice>>(std::unique_ptr<QIODevice>(stream.release()));
     }
 
+    // The token is captured, not referenced: the sink runs from close(), which
+    // may be long after openWrite() returned. A staged PUT of 64 MiB is the one
+    // this is for -- it used to run to completion whatever the user did.
     auto stream = std::make_unique<net::BufferedUpload>(
-        [this, staging](QIODevice& payload, qint64 size) {
-            const Result<void> sent = uploadFrom(staging, payload, size, CancelToken());
+        [this, staging, cancel](QIODevice& payload, qint64 size) {
+            const Result<void> sent = uploadFrom(staging, payload, size, cancel);
             if (!sent.ok())
-                remove(staging, false);
+                remove(staging, false, cancel);
             return sent;
         },
         std::move(commit));

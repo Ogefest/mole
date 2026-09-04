@@ -41,6 +41,19 @@ public:
     /// What this backend actually supports. Callers must check before acting.
     virtual VfsCapabilities capabilities() const = 0;
 
+    // **An operation whose work is not bounded by one request takes a
+    // CancelToken, and a cancelled one means no I/O at all.** That is list(),
+    // remove(), rename(), replace(), openRead() and openWrite(). stat(),
+    // makeDirectory(), space() and access() take none: each is one request and
+    // one answer, with no moment between the two for a token to be consulted in,
+    // so a parameter there would read as a promise nothing could keep.
+    //
+    // list() was the only one that had a token, so every backend that needed one
+    // inside built a fresh one -- and a token that is never cancelled does
+    // nothing. A recursive remove over a large remote tree, a rename of an S3
+    // "directory" and a 64 MiB whole-file read all ran to the end whatever the
+    // user did. See ADR-0096.
+
     /// Whether two spellings that differ only in case are two nodes here.
     ///
     /// The volume is the only thing that really knows. S3 is case-sensitive and
@@ -97,8 +110,8 @@ public:
     /// Fails with AlreadyExists when the name is taken -- the same rule
     /// makeDirectory() follows, and for the same reason. See ADR-0092.
     virtual Result<void> makeLink(const VfsUri& link, const QString& target);
-    virtual Result<void> remove(const VfsUri& target, bool recursive);
-    virtual Result<void> rename(const VfsUri& from, const VfsUri& to);
+    virtual Result<void> remove(const VfsUri& target, bool recursive, const CancelToken& cancel = {});
+    virtual Result<void> rename(const VfsUri& from, const VfsUri& to, const CancelToken& cancel = {});
 
     /// Puts `from` at `to`, replacing whatever is already there.
     ///
@@ -121,7 +134,7 @@ public:
     /// The destination is removed non-recursively, so a directory with things
     /// in it is refused rather than emptied: throwing away a tree is a decision
     /// for a caller that means it, not a side effect of putting a file down.
-    virtual Result<void> replace(const VfsUri& from, const VfsUri& to);
+    virtual Result<void> replace(const VfsUri& from, const VfsUri& to, const CancelToken& cancel = {});
 
     /// Opens a stream for reading. Caller owns the device and must close it.
     ///
@@ -136,12 +149,14 @@ public:
     /// Every override repeats the default. A default argument binds to the
     /// static type, so an override that leaves it out compiles everywhere except
     /// at a call through the concrete class -- which is most of the test suite.
-    virtual Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1);
+    virtual Result<std::unique_ptr<QIODevice>> openRead(
+        const VfsUri& target, qint64 expectedSize = -1, const CancelToken& cancel = {});
     /// Opens a stream for writing. `expectedSize` is the same kind of hint as
     /// above and carries the same caveat about defaults in overrides: a backend
     /// that has to choose between one request and many needs to know roughly how
     /// much is coming, and -1 means the caller cannot say.
-    virtual Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1);
+    virtual Result<std::unique_ptr<QIODevice>> openWrite(
+        const VfsUri& target, qint64 expectedSize = -1, const CancelToken& cancel = {});
 
     /// How much room this drive has. Only meaningful when ReportsSpace is
     /// advertised; everything else returns NotSupported and the interface

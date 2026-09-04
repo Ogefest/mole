@@ -52,17 +52,19 @@ public:
     Result<void> makeDirectory(const VfsUri& target) override;
     Result<QString> readLink(const VfsUri& link) override;
     Result<void> makeLink(const VfsUri& link, const QString& target) override;
-    Result<void> remove(const VfsUri& target, bool recursive) override;
-    Result<void> rename(const VfsUri& from, const VfsUri& to) override;
+    Result<void> remove(const VfsUri& target, bool recursive, const CancelToken& cancel = {}) override;
+    Result<void> rename(const VfsUri& from, const VfsUri& to, const CancelToken& cancel = {}) override;
 
     /// One step where the platform has one: rename(2) puts a file over a file
     /// with no instant in between at which the name has nothing at it. Across
     /// two kinds -- a directory arriving over a file -- no filesystem can, and
     /// it falls back to the interface's remove-then-rename. See ADR-0087.
-    Result<void> replace(const VfsUri& from, const VfsUri& to) override;
+    Result<void> replace(const VfsUri& from, const VfsUri& to, const CancelToken& cancel = {}) override;
 
-    Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override;
-    Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1) override;
+    Result<std::unique_ptr<QIODevice>> openRead(
+        const VfsUri& target, qint64 expectedSize = -1, const CancelToken& cancel = {}) override;
+    Result<std::unique_ptr<QIODevice>> openWrite(
+        const VfsUri& target, qint64 expectedSize = -1, const CancelToken& cancel = {}) override;
 
     // ---- earlier states of a file, where the filesystem keeps them ---------
     //

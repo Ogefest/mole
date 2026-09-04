@@ -65,6 +65,8 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-368 Cancelling a delete, a rename or a large read on a remote drive stops it, instead of running to the end
+2026-09-04 #MOLE-368 Deleting a folder over SFTP or FTP asks the server once per folder instead of once per file
 2026-09-04 #MOLE-380 A report filed by a schedule appears in the Reports tab at once, instead of waiting for some folder to change
 2026-09-04 #MOLE-380 Nightly runs keep the same report history as manual ones, instead of throwing away everything past thirty
 2026-09-04 #MOLE-380 Copying, deleting or refreshing a folder no longer re-reads every saved report on the thread that draws

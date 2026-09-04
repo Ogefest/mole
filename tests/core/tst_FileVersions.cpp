@@ -44,7 +44,8 @@ public:
         return entry;
     }
 
-    Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64) override
+    Result<std::unique_ptr<QIODevice>> openRead(
+        const VfsUri& target, qint64, const CancelToken& = {}) override
     {
         auto buffer = std::make_unique<QBuffer>();
         buffer->setData(contentsFor(target));

@@ -40,7 +40,7 @@ void ReadRangeTask::run()
         return;
     }
 
-    Result<std::unique_ptr<QIODevice>> opened = m_fileSystem->openRead(m_target);
+    Result<std::unique_ptr<QIODevice>> opened = m_fileSystem->openRead(m_target, -1, cancelToken());
     if (!opened.ok()) {
         fail(opened.error());
         return;

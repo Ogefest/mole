@@ -358,8 +358,10 @@ Result<void> MemoryFileSystem::makeLink(const VfsUri& link, const QString& targe
     return {};
 }
 
-Result<void> MemoryFileSystem::remove(const VfsUri& target, bool recursive)
+Result<void> MemoryFileSystem::remove(const VfsUri& target, bool recursive, const CancelToken& cancel)
 {
+    if (cancel.isCancelled())
+        return Result<void>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
     checkNotOnTheDrawingThread("remove");
     waitAsASlowDriveWould();
     QMutexLocker lock(&m_mutex);
@@ -394,8 +396,10 @@ Result<void> MemoryFileSystem::remove(const VfsUri& target, bool recursive)
     return {};
 }
 
-Result<void> MemoryFileSystem::rename(const VfsUri& from, const VfsUri& to)
+Result<void> MemoryFileSystem::rename(const VfsUri& from, const VfsUri& to, const CancelToken& cancel)
 {
+    if (cancel.isCancelled())
+        return Result<void>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
     checkNotOnTheDrawingThread("rename");
     waitAsASlowDriveWould();
     QMutexLocker lock(&m_mutex);
@@ -466,8 +470,12 @@ namespace {
 
 } // namespace
 
-Result<std::unique_ptr<QIODevice>> MemoryFileSystem::openRead(const VfsUri& target, qint64)
+Result<std::unique_ptr<QIODevice>> MemoryFileSystem::openRead(
+    const VfsUri& target, qint64, const CancelToken& cancel)
 {
+    if (cancel.isCancelled()) {
+        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
+    }
     checkNotOnTheDrawingThread("openRead");
     waitAsASlowDriveWould();
     // Slept before the lock is taken, so a delayed read does not block every
@@ -546,8 +554,12 @@ namespace {
 
 } // namespace
 
-Result<std::unique_ptr<QIODevice>> MemoryFileSystem::openWrite(const VfsUri& target, qint64)
+Result<std::unique_ptr<QIODevice>> MemoryFileSystem::openWrite(
+    const VfsUri& target, qint64, const CancelToken& cancel)
 {
+    if (cancel.isCancelled()) {
+        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
+    }
     checkNotOnTheDrawingThread("openWrite");
     waitAsASlowDriveWould();
     // A stack-allocated MemoryFileSystem has no owning shared_ptr, and a device

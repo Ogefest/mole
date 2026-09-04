@@ -596,15 +596,17 @@ Result<void> NfsFileSystem::makeDirectory(const VfsUri& target)
     return {};
 }
 
-Result<void> NfsFileSystem::remove(const VfsUri& target, bool recursive)
+Result<void> NfsFileSystem::remove(const VfsUri& target, bool recursive, const CancelToken& cancel)
 {
+    if (cancel.isCancelled())
+        return Result<void>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
     const Result<FileEntry> what = stat(target);
     if (!what.ok())
         return Result<void>(what.error());
 
     if (what.value().isDir && recursive) {
         // Depth first, because a directory cannot go until what is in it has.
-        const Result<FileEntryList> inside = list(target, CancelToken());
+        const Result<FileEntryList> inside = list(target, cancel);
         if (!inside.ok())
             return Result<void>(inside.error());
         for (const FileEntry& child : inside.value()) {
@@ -629,8 +631,10 @@ Result<void> NfsFileSystem::remove(const VfsUri& target, bool recursive)
     return {};
 }
 
-Result<void> NfsFileSystem::rename(const VfsUri& from, const VfsUri& to)
+Result<void> NfsFileSystem::rename(const VfsUri& from, const VfsUri& to, const CancelToken& cancel)
 {
+    if (cancel.isCancelled())
+        return Result<void>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
     Mount mount(m_settings);
     if (!mount.ok())
         return VfsError::make(VfsError::NetworkError, mount.failure());
@@ -662,8 +666,10 @@ Result<void> NfsFileSystem::rename(const VfsUri& from, const VfsUri& to)
     return {};
 }
 
-Result<void> NfsFileSystem::replace(const VfsUri& from, const VfsUri& to)
+Result<void> NfsFileSystem::replace(const VfsUri& from, const VfsUri& to, const CancelToken& cancel)
 {
+    if (cancel.isCancelled())
+        return Result<void>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
     // One call, and no window in which the name has nothing at it. The default
     // is remove-then-rename, which is all a protocol without an atomic replace
     // can offer -- and NFS, being POSIX, has one: a rename over an existing name
@@ -685,8 +691,12 @@ Result<void> NfsFileSystem::replace(const VfsUri& from, const VfsUri& to)
     return {};
 }
 
-Result<std::unique_ptr<QIODevice>> NfsFileSystem::openRead(const VfsUri& target, qint64 expectedSize)
+Result<std::unique_ptr<QIODevice>> NfsFileSystem::openRead(
+    const VfsUri& target, qint64 expectedSize, const CancelToken& cancel)
 {
+    if (cancel.isCancelled()) {
+        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
+    }
     Mount mount(m_settings);
     if (!mount.ok())
         return Result<std::unique_ptr<QIODevice>>::failure(VfsError::NetworkError, mount.failure());
@@ -730,8 +740,12 @@ Result<std::unique_ptr<QIODevice>> NfsFileSystem::openRead(const VfsUri& target,
     return Result<std::unique_ptr<QIODevice>>(std::unique_ptr<QIODevice>(file.release()));
 }
 
-Result<std::unique_ptr<QIODevice>> NfsFileSystem::openWrite(const VfsUri& target, qint64)
+Result<std::unique_ptr<QIODevice>> NfsFileSystem::openWrite(
+    const VfsUri& target, qint64, const CancelToken& cancel)
 {
+    if (cancel.isCancelled()) {
+        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
+    }
     Mount mount(m_settings);
     if (!mount.ok())
         return Result<std::unique_ptr<QIODevice>>::failure(VfsError::NetworkError, mount.failure());

@@ -21,7 +21,7 @@ void ReadFileTask::run()
         return;
     }
 
-    Result<std::unique_ptr<QIODevice>> device = m_fileSystem->openRead(m_target);
+    Result<std::unique_ptr<QIODevice>> device = m_fileSystem->openRead(m_target, -1, cancelToken());
     if (!device.ok()) {
         fail(device.error());
         return;

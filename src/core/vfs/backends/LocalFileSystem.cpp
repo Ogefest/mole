@@ -564,8 +564,10 @@ Result<void> LocalFileSystem::makeLink(const VfsUri& link, const QString& target
     return {};
 }
 
-Result<void> LocalFileSystem::remove(const VfsUri& target, bool recursive)
+Result<void> LocalFileSystem::remove(const VfsUri& target, bool recursive, const CancelToken& cancel)
 {
+    if (cancel.isCancelled())
+        return Result<void>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
     checkNotOnTheDrawingThread("remove");
     if (Result<void> older = refuseWritingToAVersion(target); !older.ok())
         return older;
@@ -607,8 +609,10 @@ Result<void> LocalFileSystem::remove(const VfsUri& target, bool recursive)
     return {};
 }
 
-Result<void> LocalFileSystem::rename(const VfsUri& from, const VfsUri& to)
+Result<void> LocalFileSystem::rename(const VfsUri& from, const VfsUri& to, const CancelToken& cancel)
 {
+    if (cancel.isCancelled())
+        return Result<void>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
     checkNotOnTheDrawingThread("rename");
     if (Result<void> older = refuseWritingToAVersion(from); !older.ok())
         return older;
@@ -651,8 +655,10 @@ Result<void> LocalFileSystem::rename(const VfsUri& from, const VfsUri& to)
     return {};
 }
 
-Result<void> LocalFileSystem::replace(const VfsUri& from, const VfsUri& to)
+Result<void> LocalFileSystem::replace(const VfsUri& from, const VfsUri& to, const CancelToken& cancel)
 {
+    if (cancel.isCancelled())
+        return Result<void>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
     if (Result<void> older = refuseWritingToAVersion(from); !older.ok())
         return older;
     if (Result<void> older = refuseWritingToAVersion(to); !older.ok())
@@ -693,8 +699,12 @@ Result<void> LocalFileSystem::replace(const VfsUri& from, const VfsUri& to)
     return {};
 }
 
-Result<std::unique_ptr<QIODevice>> LocalFileSystem::openRead(const VfsUri& target, qint64)
+Result<std::unique_ptr<QIODevice>> LocalFileSystem::openRead(
+    const VfsUri& target, qint64, const CancelToken& cancel)
 {
+    if (cancel.isCancelled()) {
+        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
+    }
     checkNotOnTheDrawingThread("openRead");
     const QString path = localPathFor(target);
 
@@ -716,8 +726,12 @@ Result<std::unique_ptr<QIODevice>> LocalFileSystem::openRead(const VfsUri& targe
     return Result<std::unique_ptr<QIODevice>>(std::move(file));
 }
 
-Result<std::unique_ptr<QIODevice>> LocalFileSystem::openWrite(const VfsUri& target, qint64)
+Result<std::unique_ptr<QIODevice>> LocalFileSystem::openWrite(
+    const VfsUri& target, qint64, const CancelToken& cancel)
 {
+    if (cancel.isCancelled()) {
+        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
+    }
     checkNotOnTheDrawingThread("openWrite");
     if (Result<void> older = refuseWritingToAVersion(target); !older.ok())
         return older.error();

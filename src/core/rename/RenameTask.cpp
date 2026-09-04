@@ -61,7 +61,8 @@ void RenameTask::run()
         FileSystemPtr fs = m_vfs->resolve(entry.source);
         if (!fs) {
             m_failures.append(QStringLiteral("%1: no drive").arg(entry.originalName));
-        } else if (Result<void> renamed = fs->rename(entry.source, targetOf(index)); !renamed.ok()) {
+        } else if (Result<void> renamed = fs->rename(entry.source, targetOf(index), cancelToken());
+                   !renamed.ok()) {
             m_failures.append(QStringLiteral("%1: %2").arg(entry.originalName, renamed.error().message));
         } else {
             ++m_renamed;
@@ -99,7 +100,7 @@ void RenameTask::run()
             RenamePlan::Entry& entry = m_entries[index];
             FileSystemPtr fs = m_vfs->resolve(entry.source);
             const VfsUri parked = entry.source.parent().child(entry.newName + kRenameParkingSuffix);
-            if (!fs || !fs->rename(entry.source, parked).ok()) {
+            if (!fs || !fs->rename(entry.source, parked, cancelToken()).ok()) {
                 m_failures.append(
                     QStringLiteral("%1: could not be moved out of the way").arg(entry.originalName));
                 setProgress(total > 0 ? static_cast<int>(100.0 * ++done / total) : 100);

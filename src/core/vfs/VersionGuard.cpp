@@ -84,43 +84,45 @@ Result<void> VersionGuard::makeLink(const VfsUri& link, const QString& target)
     return m_inner->makeLink(link, target);
 }
 
-Result<void> VersionGuard::remove(const VfsUri& target, bool recursive)
+Result<void> VersionGuard::remove(const VfsUri& target, bool recursive, const CancelToken& cancel)
 {
     if (!passes(target))
         return Result<void>(refusal(target));
-    return m_inner->remove(target, recursive);
+    return m_inner->remove(target, recursive, cancel);
 }
 
-Result<void> VersionGuard::rename(const VfsUri& from, const VfsUri& to)
+Result<void> VersionGuard::rename(const VfsUri& from, const VfsUri& to, const CancelToken& cancel)
 {
     if (!passes(from))
         return Result<void>(refusal(from));
     if (!passes(to))
         return Result<void>(refusal(to));
-    return m_inner->rename(from, to);
+    return m_inner->rename(from, to, cancel);
 }
 
-Result<void> VersionGuard::replace(const VfsUri& from, const VfsUri& to)
+Result<void> VersionGuard::replace(const VfsUri& from, const VfsUri& to, const CancelToken& cancel)
 {
     if (!passes(from))
         return Result<void>(refusal(from));
     if (!passes(to))
         return Result<void>(refusal(to));
-    return m_inner->replace(from, to);
+    return m_inner->replace(from, to, cancel);
 }
 
-Result<std::unique_ptr<QIODevice>> VersionGuard::openRead(const VfsUri& target, qint64 expectedSize)
+Result<std::unique_ptr<QIODevice>> VersionGuard::openRead(
+    const VfsUri& target, qint64 expectedSize, const CancelToken& cancel)
 {
     if (!passes(target))
         return refusal(target);
-    return m_inner->openRead(target, expectedSize);
+    return m_inner->openRead(target, expectedSize, cancel);
 }
 
-Result<std::unique_ptr<QIODevice>> VersionGuard::openWrite(const VfsUri& target, qint64 expectedSize)
+Result<std::unique_ptr<QIODevice>> VersionGuard::openWrite(
+    const VfsUri& target, qint64 expectedSize, const CancelToken& cancel)
 {
     if (!passes(target))
         return refusal(target);
-    return m_inner->openWrite(target, expectedSize);
+    return m_inner->openWrite(target, expectedSize, cancel);
 }
 
 Result<SpaceInfo> VersionGuard::space(const VfsUri& target)

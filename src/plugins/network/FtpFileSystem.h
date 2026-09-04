@@ -59,11 +59,13 @@ public:
     Result<FileEntry> stat(const VfsUri& target) override;
 
     Result<void> makeDirectory(const VfsUri& target) override;
-    Result<void> remove(const VfsUri& target, bool recursive) override;
-    Result<void> rename(const VfsUri& from, const VfsUri& to) override;
+    Result<void> remove(const VfsUri& target, bool recursive, const CancelToken& cancel = {}) override;
+    Result<void> rename(const VfsUri& from, const VfsUri& to, const CancelToken& cancel = {}) override;
 
-    Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override;
-    Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1) override;
+    Result<std::unique_ptr<QIODevice>> openRead(
+        const VfsUri& target, qint64 expectedSize = -1, const CancelToken& cancel = {}) override;
+    Result<std::unique_ptr<QIODevice>> openWrite(
+        const VfsUri& target, qint64 expectedSize = -1, const CancelToken& cancel = {}) override;
 
     // The three below are reachable because each is where a fault lived, and each
     // is a pure function of what it is given -- so each can be held to its rule
@@ -93,7 +95,14 @@ private:
     /// One listing request. `machineReadable` asks for MLSD rather than LIST.
     net::Response fetchListing(const VfsUri& dir, const CancelToken& cancel, bool machineReadable);
     /// Runs raw FTP commands against a directory that exists.
-    Result<void> runCommands(const QList<QByteArray>& commands, const VfsUri& context, const QString& what);
+    Result<void> runCommands(const QList<QByteArray>& commands, const VfsUri& context, const QString& what,
+        const CancelToken& cancel);
+
+    /// Removes what the caller already knows about, without asking again. The
+    /// same split SftpFileSystem has, for the same reason: remove() began with a
+    /// stat, which here is a full listing of the parent, and the recursion
+    /// re-listed the same parent once per child. See MOLE-368.
+    Result<void> removeEntry(const FileEntry& entry, bool recursive, const CancelToken& cancel);
     /// Sends what `source` hands over, appending to the file rather than
     /// replacing it when `append` is set. One span of a streamed upload; runs on
     /// the stream's own thread.

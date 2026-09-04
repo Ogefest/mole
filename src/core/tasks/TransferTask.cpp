@@ -305,7 +305,7 @@ TransferTask::Verdict TransferTask::resolveConflict(const VfsUri& target, bool i
         // directory standing where a file is going, or a file where a directory
         // is. That one has to go first, and there is no moment at which both
         // could exist anyway.
-        Result<void> removed = m_request.targetFileSystem->remove(target, true);
+        Result<void> removed = m_request.targetFileSystem->remove(target, true, cancelToken());
         if (!removed.ok()) {
             recordFailure(target, removed.error());
             return Verdict::Failed;
@@ -327,13 +327,15 @@ bool TransferTask::copyStream(const VfsUri& from, const VfsUri& to, qint64 expec
     // The size from the plan goes with the request: a remote backend cannot set
     // up a transfer sensibly without knowing whether it is fetching kilobytes or
     // gigabytes, and this is the one caller that always knows.
-    Result<std::unique_ptr<QIODevice>> input = m_request.sourceFileSystem->openRead(from, expectedSize);
+    Result<std::unique_ptr<QIODevice>> input
+        = m_request.sourceFileSystem->openRead(from, expectedSize, cancelToken());
     if (!input.ok()) {
         recordFailure(from, input.error());
         return false;
     }
 
-    Result<std::unique_ptr<QIODevice>> output = m_request.targetFileSystem->openWrite(to, expectedSize);
+    Result<std::unique_ptr<QIODevice>> output
+        = m_request.targetFileSystem->openWrite(to, expectedSize, cancelToken());
     if (!output.ok()) {
         recordFailure(to, output.error());
         return false;
@@ -567,7 +569,7 @@ bool TransferTask::linkOne(const Job& job, bool replacing)
     // than being left until the arrival is whole -- the moment ADR-0021 protects
     // for a file does not exist for a link.
     if (replacing) {
-        if (const Result<void> removed = m_request.targetFileSystem->remove(job.target, false);
+        if (const Result<void> removed = m_request.targetFileSystem->remove(job.target, false, cancelToken());
             !removed.ok()) {
             recordFailure(job.target, removed.error());
             return false;
@@ -609,7 +611,7 @@ void TransferTask::removeWhatArrivedUnder(
         if (isCancelRequested())
             return;
         const Job& job = jobs.at(at);
-        const Result<void> removed = m_request.sourceFileSystem->remove(job.source, false);
+        const Result<void> removed = m_request.sourceFileSystem->remove(job.source, false, cancelToken());
         // A directory that is not empty is one holding what was skipped, which
         // is the outcome asked for rather than a failure to report.
         if (!removed.ok() && !(job.kind == Kind::Directory && removed.error().code == VfsError::NotEmpty))
@@ -666,8 +668,9 @@ void TransferTask::run()
             // Nothing was cleared out of the way, so the rename is the one that
             // is allowed to replace what is standing there. rename() refuses an
             // occupied name, and has to.
-            Result<void> renamed = replacing ? m_request.sourceFileSystem->replace(source, target)
-                                             : m_request.sourceFileSystem->rename(source, target);
+            Result<void> renamed = replacing
+                ? m_request.sourceFileSystem->replace(source, target, cancelToken())
+                : m_request.sourceFileSystem->rename(source, target, cancelToken());
             if (renamed.ok())
                 ++m_copied;
             else if (renamed.error().code == VfsError::NotSupported)
@@ -761,7 +764,8 @@ void TransferTask::run()
             if (isCancelRequested())
                 return;
             if (!m_unfinishedSources.contains(index)) {
-                Result<void> removed = m_request.sourceFileSystem->remove(m_request.sources.at(index), true);
+                Result<void> removed
+                    = m_request.sourceFileSystem->remove(m_request.sources.at(index), true, cancelToken());
                 if (!removed.ok())
                     recordFailure(m_request.sources.at(index), removed.error());
                 continue;
@@ -811,7 +815,7 @@ void DeleteTask::run()
             continue;
         }
 
-        Result<void> removed = m_fileSystem->remove(target, true);
+        Result<void> removed = m_fileSystem->remove(target, true, cancelToken());
         if (removed.ok()) {
             ++m_deleted;
             m_deletedUris.append(target);

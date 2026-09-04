@@ -112,32 +112,36 @@ Result<void> LoggingFileSystem::makeLink(const VfsUri& link, const QString& targ
     return watch(m_name, "link", subject, [&] { return m_inner->makeLink(link, target); });
 }
 
-Result<void> LoggingFileSystem::remove(const VfsUri& target, bool recursive)
-{
-    return watch(m_name, "remove", target.toString(), [&] { return m_inner->remove(target, recursive); });
-}
-
-Result<void> LoggingFileSystem::rename(const VfsUri& from, const VfsUri& to)
-{
-    const QString subject = from.toString() + QStringLiteral(" -> ") + to.toString();
-    return watch(m_name, "rename", subject, [&] { return m_inner->rename(from, to); });
-}
-
-Result<void> LoggingFileSystem::replace(const VfsUri& from, const VfsUri& to)
-{
-    const QString subject = from.toString() + QStringLiteral(" -> ") + to.toString();
-    return watch(m_name, "replace", subject, [&] { return m_inner->replace(from, to); });
-}
-
-Result<std::unique_ptr<QIODevice>> LoggingFileSystem::openRead(const VfsUri& target, qint64 expectedSize)
-{
-    return watch(m_name, "read", target.toString(), [&] { return m_inner->openRead(target, expectedSize); });
-}
-
-Result<std::unique_ptr<QIODevice>> LoggingFileSystem::openWrite(const VfsUri& target, qint64 expectedSize)
+Result<void> LoggingFileSystem::remove(const VfsUri& target, bool recursive, const CancelToken& cancel)
 {
     return watch(
-        m_name, "write", target.toString(), [&] { return m_inner->openWrite(target, expectedSize); });
+        m_name, "remove", target.toString(), [&] { return m_inner->remove(target, recursive, cancel); });
+}
+
+Result<void> LoggingFileSystem::rename(const VfsUri& from, const VfsUri& to, const CancelToken& cancel)
+{
+    const QString subject = from.toString() + QStringLiteral(" -> ") + to.toString();
+    return watch(m_name, "rename", subject, [&] { return m_inner->rename(from, to, cancel); });
+}
+
+Result<void> LoggingFileSystem::replace(const VfsUri& from, const VfsUri& to, const CancelToken& cancel)
+{
+    const QString subject = from.toString() + QStringLiteral(" -> ") + to.toString();
+    return watch(m_name, "replace", subject, [&] { return m_inner->replace(from, to, cancel); });
+}
+
+Result<std::unique_ptr<QIODevice>> LoggingFileSystem::openRead(
+    const VfsUri& target, qint64 expectedSize, const CancelToken& cancel)
+{
+    return watch(
+        m_name, "read", target.toString(), [&] { return m_inner->openRead(target, expectedSize, cancel); });
+}
+
+Result<std::unique_ptr<QIODevice>> LoggingFileSystem::openWrite(
+    const VfsUri& target, qint64 expectedSize, const CancelToken& cancel)
+{
+    return watch(
+        m_name, "write", target.toString(), [&] { return m_inner->openWrite(target, expectedSize, cancel); });
 }
 
 Result<SpaceInfo> LoggingFileSystem::space(const VfsUri& target)

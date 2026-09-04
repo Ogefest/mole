@@ -817,8 +817,10 @@ Result<void> S3FileSystem::makeDirectory(const VfsUri& target)
     return putObject(withTrailingSlash(keyFor(target)), nullptr, 0);
 }
 
-Result<void> S3FileSystem::remove(const VfsUri& target, bool recursive)
+Result<void> S3FileSystem::remove(const VfsUri& target, bool recursive, const CancelToken& cancel)
 {
+    if (cancel.isCancelled())
+        return Result<void>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
     const Result<FileEntry> what = stat(target);
     if (!what.ok())
         return Result<void>(what.error());
@@ -828,7 +830,7 @@ Result<void> S3FileSystem::remove(const VfsUri& target, bool recursive)
         return deleteObject(key);
 
     const QString prefix = withTrailingSlash(key);
-    Result<QList<net::S3Object>> under = allKeysUnder(prefix, CancelToken());
+    Result<QList<net::S3Object>> under = allKeysUnder(prefix, cancel);
     if (!under.ok())
         return Result<void>(under.error());
 
@@ -857,8 +859,10 @@ Result<void> S3FileSystem::remove(const VfsUri& target, bool recursive)
     return {};
 }
 
-Result<void> S3FileSystem::rename(const VfsUri& from, const VfsUri& to)
+Result<void> S3FileSystem::rename(const VfsUri& from, const VfsUri& to, const CancelToken& cancel)
 {
+    if (cancel.isCancelled())
+        return Result<void>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
     const Result<FileEntry> source = stat(from);
     if (!source.ok())
         return Result<void>(source.error());
@@ -882,7 +886,7 @@ Result<void> S3FileSystem::rename(const VfsUri& from, const VfsUri& to)
 
     const QString fromPrefix = withTrailingSlash(fromKey);
     const QString toPrefix = withTrailingSlash(toKey);
-    Result<QList<net::S3Object>> under = allKeysUnder(fromPrefix, CancelToken());
+    Result<QList<net::S3Object>> under = allKeysUnder(fromPrefix, cancel);
     if (!under.ok())
         return Result<void>(under.error());
 
@@ -912,8 +916,12 @@ Result<void> S3FileSystem::rename(const VfsUri& from, const VfsUri& to)
     return deleteObject(fromPrefix);
 }
 
-Result<std::unique_ptr<QIODevice>> S3FileSystem::openRead(const VfsUri& target, qint64)
+Result<std::unique_ptr<QIODevice>> S3FileSystem::openRead(
+    const VfsUri& target, qint64, const CancelToken& cancel)
 {
+    if (cancel.isCancelled()) {
+        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
+    }
     auto scratch = std::make_unique<QTemporaryFile>();
     QString staging;
     if (!staging::openFile(*scratch, &staging)) {
@@ -927,7 +935,7 @@ Result<std::unique_ptr<QIODevice>> S3FileSystem::openRead(const VfsUri& target, 
     // and the whole reason an earlier version is an ordinary readable uri.
     if (target.hasVersion())
         call.query.append({ QStringLiteral("versionId"), target.version() });
-    const net::Response response = send(call, CancelToken(), scratch.get());
+    const net::Response response = send(call, cancel, scratch.get());
     const VfsError error = errorFor(response, QStringLiteral("Reading %1").arg(target.path()));
     if (error.isError())
         return Result<std::unique_ptr<QIODevice>>(error);
@@ -1141,8 +1149,12 @@ Result<void> S3FileSystem::discardLeftover(const DriveLeftover& leftover)
     return errorFor(response, QStringLiteral("Abandoning the unfinished upload of %1").arg(leftover.path));
 }
 
-Result<std::unique_ptr<QIODevice>> S3FileSystem::openWrite(const VfsUri& target, qint64 expectedSize)
+Result<std::unique_ptr<QIODevice>> S3FileSystem::openWrite(
+    const VfsUri& target, qint64 expectedSize, const CancelToken& cancel)
 {
+    if (cancel.isCancelled()) {
+        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
+    }
     const QString key = keyFor(target);
 
     // A bucket has no directories, so nothing here can be destroyed by writing

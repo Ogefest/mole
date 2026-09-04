@@ -249,11 +249,13 @@ public:
     Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) override;
     Result<FileEntry> stat(const VfsUri& target) override;
     Result<void> makeDirectory(const VfsUri& target) override;
-    Result<void> remove(const VfsUri& target, bool recursive) override;
-    Result<void> rename(const VfsUri& from, const VfsUri& to) override;
-    Result<void> replace(const VfsUri& from, const VfsUri& to) override;
-    Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override;
-    Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1) override;
+    Result<void> remove(const VfsUri& target, bool recursive, const CancelToken& cancel = {}) override;
+    Result<void> rename(const VfsUri& from, const VfsUri& to, const CancelToken& cancel = {}) override;
+    Result<void> replace(const VfsUri& from, const VfsUri& to, const CancelToken& cancel = {}) override;
+    Result<std::unique_ptr<QIODevice>> openRead(
+        const VfsUri& target, qint64 expectedSize = -1, const CancelToken& cancel = {}) override;
+    Result<std::unique_ptr<QIODevice>> openWrite(
+        const VfsUri& target, qint64 expectedSize = -1, const CancelToken& cancel = {}) override;
     Result<SpaceInfo> space(const VfsUri& target) override;
     Result<AccessInfo> access(const VfsUri& target) override;
     /// The work the drive underneath is still holding, and the drive underneath

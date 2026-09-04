@@ -253,6 +253,10 @@ public:
     /// How the server refuses when this path is listed.
     void refuses(const QString& path, CURLcode code) { m_refusals.insert(path, code); }
 
+    /// How many times the server was asked to list, and which paths.
+    int listCount() const { return m_listings_asked; }
+    QStringList listed() const { return m_listedPaths; }
+
     /// One `ls -l` row in the shape libcurl produces for SFTP.
     static QByteArray row(const QString& name, bool isDir, int size)
     {
@@ -267,6 +271,8 @@ protected:
     net::Response fetchListing(const VfsUri& dir, const CancelToken&) override
     {
         const QString path = dir.path().isEmpty() ? QStringLiteral("/") : dir.path();
+        ++m_listings_asked;
+        m_listedPaths.append(path);
 
         net::Response response;
         if (m_refusals.contains(path)) {
@@ -281,6 +287,8 @@ protected:
 private:
     QHash<QString, QByteArray> m_listings;
     QHash<QString, CURLcode> m_refusals;
+    int m_listings_asked = 0;
+    QStringList m_listedPaths;
 };
 
 } // namespace
@@ -297,6 +305,8 @@ private slots:
     void aPrivateKeyIsPartOfEveryLeaseAndNotOneOfThem();
     void aKeyPathWrittenWithATildeBecomesAnAbsoluteOne();
     void nothingOutsideThePoolSetsAnSshCredential();
+    void aRecursiveRemoveListsEachDirectoryOnce();
+    void aPreCancelledRemoveDoesNoIoAtAll();
 
     void aServerThatDescribesTheFileItselfIsUnderstoodToMeanAFile();
     void aServerThatRefusesToListAFileIsUnderstoodToMeanAFile();
@@ -1045,6 +1055,64 @@ void TestSftpFileSystem::aHostKeyThatChangedIsRefused()
     QVERIFY2(!refused.error().message.isEmpty(),
         "a refusal has to say something; being turned away for no stated reason is indistinguishable "
         "from the server being down");
+}
+
+void TestSftpFileSystem::aRecursiveRemoveListsEachDirectoryOnce()
+{
+    // remove() began with stat(target), which on this backend is a full listing
+    // of the *parent* -- and the recursion, which already holds each child's
+    // FileEntry and has just listed the parent once, called remove(child.uri,
+    // true) for every child, which listed the same parent again. A directory of
+    // n entries cost n+1 listings of n rows before a single rm, so deleting ten
+    // thousand files over SFTP parsed a hundred million listing rows. With the
+    // connection pool cold each of those listings is also an SSH handshake.
+    // See MOLE-368.
+    ServerThatAnswers server;
+    server.answers(QStringLiteral("/"), ServerThatAnswers::row(QStringLiteral("folder"), true, 0));
+    QByteArray inside;
+    constexpr int kChildren = 12;
+    for (int i = 0; i < kChildren; ++i)
+        inside += ServerThatAnswers::row(QStringLiteral("file%1").arg(i), false, 10);
+    server.answers(QStringLiteral("/folder"), inside);
+    // The children are files, so nothing under them is ever listed.
+
+    // The quote commands go nowhere -- there is no server behind them -- so the
+    // first `rm` fails and the recursion stops there. That is enough: the extra
+    // listing the old code produced was the re-listing of `/folder` for the first
+    // child, and on a real server it would have been one per child.
+    (void)server.remove(VfsUri::fromString(QStringLiteral("sftp:///folder")), true);
+
+    // One for the stat at the top -- which lists "/" -- and one for the folder
+    // itself. Never the parent again, once per child.
+    QVERIFY2(server.listCount() <= 2,
+        qPrintable(QStringLiteral("listed %1 times for %2 children: %3")
+                       .arg(server.listCount())
+                       .arg(kChildren)
+                       .arg(server.listed().join(QLatin1Char(' ')))));
+}
+
+void TestSftpFileSystem::aPreCancelledRemoveDoesNoIoAtAll()
+{
+    // The contract the conformance suite states for every backend, held here
+    // where the listing can be counted: a cancelled token means no request at
+    // all, not a request whose answer is discarded.
+    ServerThatAnswers server;
+    server.answers(QStringLiteral("/"), ServerThatAnswers::row(QStringLiteral("folder"), true, 0));
+
+    CancelToken cancelled;
+    cancelled.cancel();
+
+    const Result<void> removed
+        = server.remove(VfsUri::fromString(QStringLiteral("sftp:///folder")), true, cancelled);
+    QVERIFY(!removed.ok());
+    QCOMPARE(removed.error().code, VfsError::Cancelled);
+    QCOMPARE(server.listCount(), 0);
+
+    const Result<void> renamed = server.rename(VfsUri::fromString(QStringLiteral("sftp:///folder")),
+        VfsUri::fromString(QStringLiteral("sftp:///other")), cancelled);
+    QVERIFY(!renamed.ok());
+    QCOMPARE(renamed.error().code, VfsError::Cancelled);
+    QCOMPARE(server.listCount(), 0);
 }
 
 /// The half of MOLE-374 that only a server can answer.

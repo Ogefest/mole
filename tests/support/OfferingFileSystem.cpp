@@ -122,25 +122,26 @@ Result<void> OfferingFileSystem::makeLink(const VfsUri& link, const QString& tar
     return m_inner->makeLink(link, target);
 }
 
-Result<void> OfferingFileSystem::remove(const VfsUri& target, bool recursive)
+Result<void> OfferingFileSystem::remove(const VfsUri& target, bool recursive, const CancelToken& cancel)
 {
-    return m_inner->remove(target, recursive);
+    return m_inner->remove(target, recursive, cancel);
 }
 
-Result<void> OfferingFileSystem::rename(const VfsUri& from, const VfsUri& to)
+Result<void> OfferingFileSystem::rename(const VfsUri& from, const VfsUri& to, const CancelToken& cancel)
 {
-    return m_inner->rename(from, to);
+    return m_inner->rename(from, to, cancel);
 }
 
-Result<void> OfferingFileSystem::replace(const VfsUri& from, const VfsUri& to)
+Result<void> OfferingFileSystem::replace(const VfsUri& from, const VfsUri& to, const CancelToken& cancel)
 {
-    return m_inner->replace(from, to);
+    return m_inner->replace(from, to, cancel);
 }
 
-Result<std::unique_ptr<QIODevice>> OfferingFileSystem::openRead(const VfsUri& target, qint64 expectedSize)
+Result<std::unique_ptr<QIODevice>> OfferingFileSystem::openRead(
+    const VfsUri& target, qint64 expectedSize, const CancelToken& cancel)
 {
     if (!target.hasVersion())
-        return m_inner->openRead(target, expectedSize);
+        return m_inner->openRead(target, expectedSize, cancel);
 
     QMutexLocker lock(&m_mutex);
     for (const auto& version : m_versions.value(target.path())) {
@@ -155,12 +156,13 @@ Result<std::unique_ptr<QIODevice>> OfferingFileSystem::openRead(const VfsUri& ta
         VfsError::NotFound, QStringLiteral("no such version of %1: %2").arg(target.path(), target.version()));
 }
 
-Result<std::unique_ptr<QIODevice>> OfferingFileSystem::openWrite(const VfsUri& target, qint64 expectedSize)
+Result<std::unique_ptr<QIODevice>> OfferingFileSystem::openWrite(
+    const VfsUri& target, qint64 expectedSize, const CancelToken& cancel)
 {
     // An earlier state is read-only, which is what an earlier state is.
     if (target.hasVersion())
         return VfsError::make(VfsError::NotSupported, QStringLiteral("an earlier version cannot be written"));
-    return m_inner->openWrite(target, expectedSize);
+    return m_inner->openWrite(target, expectedSize, cancel);
 }
 
 // ---- what this drive contributes -------------------------------------------

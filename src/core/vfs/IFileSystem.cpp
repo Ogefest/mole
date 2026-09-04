@@ -55,17 +55,17 @@ Result<void> IFileSystem::makeLink(const VfsUri&, const QString&)
     return notSupported("makeLink");
 }
 
-Result<void> IFileSystem::remove(const VfsUri&, bool)
+Result<void> IFileSystem::remove(const VfsUri&, bool, const CancelToken&)
 {
     return notSupported("remove");
 }
 
-Result<void> IFileSystem::rename(const VfsUri&, const VfsUri&)
+Result<void> IFileSystem::rename(const VfsUri&, const VfsUri&, const CancelToken&)
 {
     return notSupported("rename");
 }
 
-Result<void> IFileSystem::replace(const VfsUri& from, const VfsUri& to)
+Result<void> IFileSystem::replace(const VfsUri& from, const VfsUri& to, const CancelToken& cancel)
 {
     // Asked before anything is removed. A backend that cannot rename would
     // remove the destination and then discover it has nothing to put there,
@@ -79,12 +79,12 @@ Result<void> IFileSystem::replace(const VfsUri& from, const VfsUri& to)
     return rename(from, to);
 }
 
-Result<std::unique_ptr<QIODevice>> IFileSystem::openRead(const VfsUri&, qint64)
+Result<std::unique_ptr<QIODevice>> IFileSystem::openRead(const VfsUri&, qint64, const CancelToken&)
 {
     return VfsError::make(VfsError::NotSupported, QStringLiteral("openRead not supported"));
 }
 
-Result<std::unique_ptr<QIODevice>> IFileSystem::openWrite(const VfsUri&, qint64)
+Result<std::unique_ptr<QIODevice>> IFileSystem::openWrite(const VfsUri&, qint64, const CancelToken&)
 {
     return VfsError::make(VfsError::NotSupported, QStringLiteral("openWrite not supported"));
 }

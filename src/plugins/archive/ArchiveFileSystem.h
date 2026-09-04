@@ -36,7 +36,8 @@ public:
     /// tree of links puts links on the disk rather than empty files. Reading
     /// only: nothing here can be written. See ADR-0092.
     Result<QString> readLink(const VfsUri& link) override;
-    Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override;
+    Result<std::unique_ptr<QIODevice>> openRead(
+        const VfsUri& target, qint64 expectedSize = -1, const CancelToken& cancel = {}) override;
 
     QString archivePath() const { return m_archivePath; }
 

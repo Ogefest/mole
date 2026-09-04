@@ -42,16 +42,21 @@ public:
     }
     Result<FileEntry> stat(const VfsUri& target) override { return m_inner->stat(target); }
     Result<void> makeDirectory(const VfsUri& target) override { return m_inner->makeDirectory(target); }
-    Result<void> remove(const VfsUri& target, bool recursive) override
+    Result<void> remove(const VfsUri& target, bool recursive, const CancelToken&) override
     {
         return m_inner->remove(target, recursive);
     }
-    Result<void> rename(const VfsUri& from, const VfsUri& to) override { return m_inner->rename(from, to); }
-    Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override
+    Result<void> rename(const VfsUri& from, const VfsUri& to, const CancelToken&) override
+    {
+        return m_inner->rename(from, to);
+    }
+    Result<std::unique_ptr<QIODevice>> openRead(
+        const VfsUri& target, qint64 expectedSize = -1, const CancelToken& = {}) override
     {
         return m_inner->openRead(target, expectedSize);
     }
-    Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1) override
+    Result<std::unique_ptr<QIODevice>> openWrite(
+        const VfsUri& target, qint64 expectedSize = -1, const CancelToken& = {}) override
     {
         return m_inner->openWrite(target, expectedSize);
     }

@@ -274,7 +274,7 @@ Result<FileEntry> FtpFileSystem::stat(const VfsUri& target)
 }
 
 Result<void> FtpFileSystem::runCommands(
-    const QList<QByteArray>& commands, const VfsUri& context, const QString& what)
+    const QList<QByteArray>& commands, const VfsUri& context, const QString& what, const CancelToken& cancel)
 {
     // A control channel is line-based, so a name carrying CR or LF is a second
     // command. `DELE a\r\nRMD /` is one file name to a filesystem -- ADR-0070 says
@@ -304,7 +304,7 @@ Result<void> FtpFileSystem::runCommands(
     curl_easy_setopt(lease.get(), CURLOPT_NOBODY, 1L);
     applySettings(lease);
 
-    const net::Response response = m_pool->perform(lease, CancelToken());
+    const net::Response response = m_pool->perform(lease, cancel);
     curl_slist_free_all(list);
 
     const VfsError error = net::errorFor(response, what, net::StatusMeaning::ProtocolReply);
@@ -319,43 +319,56 @@ Result<void> FtpFileSystem::makeDirectory(const VfsUri& target)
         return Result<void>::failure(
             VfsError::AlreadyExists, QStringLiteral("%1 already exists").arg(target.path()));
     }
-    return runCommands(
-        { "MKD " + remotePath(target).toUtf8() }, target, QStringLiteral("Creating %1").arg(target.path()));
+    return runCommands({ "MKD " + remotePath(target).toUtf8() }, target,
+        QStringLiteral("Creating %1").arg(target.path()), CancelToken());
 }
 
-Result<void> FtpFileSystem::remove(const VfsUri& target, bool recursive)
+Result<void> FtpFileSystem::remove(const VfsUri& target, bool recursive, const CancelToken& cancel)
 {
+    if (cancel.isCancelled())
+        return Result<void>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
+
+    // The one stat, at the top. See removeEntry().
     const Result<FileEntry> what = stat(target);
     if (!what.ok())
         return Result<void>(what.error());
+    return removeEntry(what.value(), recursive, cancel);
+}
 
-    if (!what.value().isDir) {
-        return runCommands({ "DELE " + remotePath(target).toUtf8() }, target,
-            QStringLiteral("Deleting %1").arg(target.path()));
+Result<void> FtpFileSystem::removeEntry(const FileEntry& entry, bool recursive, const CancelToken& cancel)
+{
+    if (cancel.isCancelled())
+        return Result<void>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
+
+    if (!entry.isDir) {
+        return runCommands({ "DELE " + remotePath(entry.uri).toUtf8() }, entry.uri,
+            QStringLiteral("Deleting %1").arg(entry.uri.path()), cancel);
     }
 
-    const Result<FileEntryList> children = listRaw(target, CancelToken());
+    const Result<FileEntryList> children = listRaw(entry.uri, cancel);
     if (!children.ok())
         return Result<void>(children.error());
 
     if (!children.value().isEmpty()) {
         if (!recursive) {
             return Result<void>::failure(
-                VfsError::NotEmpty, QStringLiteral("%1 is not empty").arg(target.path()));
+                VfsError::NotEmpty, QStringLiteral("%1 is not empty").arg(entry.uri.path()));
         }
         for (const FileEntry& child : children.value()) {
-            const Result<void> removed = remove(child.uri, true);
+            const Result<void> removed = removeEntry(child, true, cancel);
             if (!removed.ok())
                 return removed;
         }
     }
 
-    return runCommands(
-        { "RMD " + remotePath(target).toUtf8() }, target, QStringLiteral("Deleting %1").arg(target.path()));
+    return runCommands({ "RMD " + remotePath(entry.uri).toUtf8() }, entry.uri,
+        QStringLiteral("Deleting %1").arg(entry.uri.path()), cancel);
 }
 
-Result<void> FtpFileSystem::rename(const VfsUri& from, const VfsUri& to)
+Result<void> FtpFileSystem::rename(const VfsUri& from, const VfsUri& to, const CancelToken& cancel)
 {
+    if (cancel.isCancelled())
+        return Result<void>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
     if (stat(to).ok()) {
         return Result<void>::failure(
             VfsError::AlreadyExists, QStringLiteral("%1 already exists").arg(to.path()));
@@ -363,7 +376,7 @@ Result<void> FtpFileSystem::rename(const VfsUri& from, const VfsUri& to)
     // RNFR then RNTO, which is the only rename FTP has and has to arrive as one
     // pair on one connection.
     return runCommands({ "RNFR " + remotePath(from).toUtf8(), "RNTO " + remotePath(to).toUtf8() }, from,
-        QStringLiteral("Renaming %1").arg(from.path()));
+        QStringLiteral("Renaming %1").arg(from.path()), cancel);
 }
 
 VfsError FtpFileSystem::fetchSpan(const QByteArray& url, const QString& what, QIODevice& sink, qint64 offset,
@@ -393,8 +406,12 @@ VfsError FtpFileSystem::fetchSpan(const QByteArray& url, const QString& what, QI
     return net::errorFor(response, what, net::StatusMeaning::ProtocolReply);
 }
 
-Result<std::unique_ptr<QIODevice>> FtpFileSystem::openRead(const VfsUri& target, qint64 expectedSize)
+Result<std::unique_ptr<QIODevice>> FtpFileSystem::openRead(
+    const VfsUri& target, qint64 expectedSize, const CancelToken& cancel)
 {
+    if (cancel.isCancelled()) {
+        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
+    }
     const QByteArray url = urlFor(target, false);
     const QString what = QStringLiteral("Reading %1").arg(target.path());
 
@@ -427,7 +444,7 @@ Result<std::unique_ptr<QIODevice>> FtpFileSystem::openRead(const VfsUri& target,
         lease.setUrl(url);
         applySettings(lease);
 
-        const net::Response response = m_pool->perform(lease, CancelToken(), scratch.get());
+        const net::Response response = m_pool->perform(lease, cancel, scratch.get());
         const VfsError error = net::errorFor(response, what, net::StatusMeaning::ProtocolReply);
         if (error.isError())
             return Result<std::unique_ptr<QIODevice>>(error);
@@ -498,8 +515,12 @@ VfsError FtpFileSystem::sendSpan(
     return error;
 }
 
-Result<std::unique_ptr<QIODevice>> FtpFileSystem::openWrite(const VfsUri& target, qint64)
+Result<std::unique_ptr<QIODevice>> FtpFileSystem::openWrite(
+    const VfsUri& target, qint64, const CancelToken& cancel)
 {
+    if (cancel.isCancelled()) {
+        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
+    }
     // Streamed rather than staged, which is what makes a file bigger than the
     // local disk writable at all: staging collected the whole payload into a
     // temporary file before sending any of it, so a 200 GB upload wanted 200 GB

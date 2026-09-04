@@ -792,8 +792,12 @@ QString ArchiveFileSystem::resolvedLinkTarget(const QString& from, const QString
     return m_nodes.contains(resolved) ? resolved : QString();
 }
 
-Result<std::unique_ptr<QIODevice>> ArchiveFileSystem::openRead(const VfsUri& target, qint64)
+Result<std::unique_ptr<QIODevice>> ArchiveFileSystem::openRead(
+    const VfsUri& target, qint64, const CancelToken& cancel)
 {
+    if (cancel.isCancelled()) {
+        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
+    }
     // What the index knows about the member, which is what the device reports as
     // its size. The hint the caller passed is deliberately not used: IFileSystem
     // says expectedSize "is a hint about how to fetch, never a limit on what is

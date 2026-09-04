@@ -81,11 +81,13 @@ public:
     Result<FileEntry> stat(const VfsUri& target) override;
 
     Result<void> makeDirectory(const VfsUri& target) override;
-    Result<void> remove(const VfsUri& target, bool recursive) override;
-    Result<void> rename(const VfsUri& from, const VfsUri& to) override;
+    Result<void> remove(const VfsUri& target, bool recursive, const CancelToken& cancel = {}) override;
+    Result<void> rename(const VfsUri& from, const VfsUri& to, const CancelToken& cancel = {}) override;
 
-    Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override;
-    Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1) override;
+    Result<std::unique_ptr<QIODevice>> openRead(
+        const VfsUri& target, qint64 expectedSize = -1, const CancelToken& cancel = {}) override;
+    Result<std::unique_ptr<QIODevice>> openWrite(
+        const VfsUri& target, qint64 expectedSize = -1, const CancelToken& cancel = {}) override;
 
     /// The url libsmbclient wants for a uri: smb://host/share/root/path.
     QString urlFor(const VfsUri& uri) const;

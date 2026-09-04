@@ -147,12 +147,46 @@ void runFileSystemConformance(const ConformanceContext& context)
     }
 
     // --- cancellation is observed ----------------------------------------
+    //
+    // **Every operation, not only the listing.** `list()` was the only method
+    // that took a token, so every backend filled the gap with a fresh one --
+    // thirty-three sites across four network backends -- and a recursive
+    // `remove()` over a large remote tree, a rename of an S3 "directory" (a copy
+    // and a delete per key), a whole-file `openRead()` and a staged 64 MiB PUT in
+    // `openWrite()`'s close all ran to completion whatever the user did. The task
+    // layer could stop only *between* backend calls. See ADR-0096 and MOLE-368.
     {
         CancelToken cancelled;
         cancelled.cancel();
         Result<FileEntryList> listing = fs.list(context.root, cancelled);
         QVERIFY2(!listing.ok(), "a pre-cancelled token must abort the listing");
         QCOMPARE(listing.error().code, VfsError::Cancelled);
+
+        // A read that would fetch the whole file on a remote drive.
+        Result<std::unique_ptr<QIODevice>> reading
+            = fs.openRead(context.root.child(QStringLiteral("alpha.txt")), -1, cancelled);
+        QVERIFY2(!reading.ok(), "a pre-cancelled token must abort the read before it starts");
+        QCOMPARE(reading.error().code, VfsError::Cancelled);
+
+        if (context.expectsWriteSupport) {
+            // And the two that walk a tree. `nested` is seeded above and its
+            // contents are asserted on further down, so this must not delete it:
+            // the token is what stops it, and that is the whole assertion.
+            const Result<void> removing
+                = fs.remove(context.root.child(QStringLiteral("nested")), true, cancelled);
+            QVERIFY2(!removing.ok(), "a pre-cancelled token must abort a recursive remove");
+            QCOMPARE(removing.error().code, VfsError::Cancelled);
+
+            const Result<void> renaming = fs.rename(context.root.child(QStringLiteral("nested")),
+                context.root.child(QStringLiteral("moved-nowhere")), cancelled);
+            QVERIFY2(!renaming.ok(), "a pre-cancelled token must abort a rename");
+            QCOMPARE(renaming.error().code, VfsError::Cancelled);
+
+            Result<std::unique_ptr<QIODevice>> writing
+                = fs.openWrite(context.root.child(QStringLiteral("never-written.bin")), 4, cancelled);
+            QVERIFY2(!writing.ok(), "a pre-cancelled token must abort a write before it starts");
+            QCOMPARE(writing.error().code, VfsError::Cancelled);
+        }
     }
 
     {

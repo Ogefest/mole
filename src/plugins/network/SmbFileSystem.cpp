@@ -497,8 +497,10 @@ Result<void> SmbFileSystem::makeDirectory(const VfsUri& target)
     return {};
 }
 
-Result<void> SmbFileSystem::remove(const VfsUri& target, bool recursive)
+Result<void> SmbFileSystem::remove(const VfsUri& target, bool recursive, const CancelToken& cancel)
 {
+    if (cancel.isCancelled())
+        return Result<void>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
     // No session taken here. What follows calls stat(), list() and remove()
     // again, each of which takes one -- and the guard is not recursive, so
     // holding it across them would deadlock on the first child.
@@ -519,7 +521,7 @@ Result<void> SmbFileSystem::remove(const VfsUri& target, bool recursive)
 
     if (recursive) {
         // Depth first, because a directory cannot go until what is in it has.
-        const Result<FileEntryList> inside = list(target, CancelToken());
+        const Result<FileEntryList> inside = list(target, cancel);
         if (!inside.ok())
             return Result<void>(inside.error());
         for (const FileEntry& child : inside.value()) {
@@ -538,8 +540,10 @@ Result<void> SmbFileSystem::remove(const VfsUri& target, bool recursive)
     return {};
 }
 
-Result<void> SmbFileSystem::rename(const VfsUri& from, const VfsUri& to)
+Result<void> SmbFileSystem::rename(const VfsUri& from, const VfsUri& to, const CancelToken& cancel)
 {
+    if (cancel.isCancelled())
+        return Result<void>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
     const Session session(*this);
     if (!session.ok())
         return VfsError::make(VfsError::IoError, QStringLiteral("This machine cannot start an SMB session"));
@@ -585,8 +589,12 @@ Result<void> SmbFileSystem::rename(const VfsUri& from, const VfsUri& to)
     return {};
 }
 
-Result<std::unique_ptr<QIODevice>> SmbFileSystem::openRead(const VfsUri& target, qint64 expectedSize)
+Result<std::unique_ptr<QIODevice>> SmbFileSystem::openRead(
+    const VfsUri& target, qint64 expectedSize, const CancelToken& cancel)
 {
+    if (cancel.isCancelled()) {
+        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
+    }
     const Session session(*this);
     if (!session.ok()) {
         return Result<std::unique_ptr<QIODevice>>::failure(
@@ -618,8 +626,12 @@ Result<std::unique_ptr<QIODevice>> SmbFileSystem::openRead(const VfsUri& target,
     return Result<std::unique_ptr<QIODevice>>(std::unique_ptr<QIODevice>(file.release()));
 }
 
-Result<std::unique_ptr<QIODevice>> SmbFileSystem::openWrite(const VfsUri& target, qint64)
+Result<std::unique_ptr<QIODevice>> SmbFileSystem::openWrite(
+    const VfsUri& target, qint64, const CancelToken& cancel)
 {
+    if (cancel.isCancelled()) {
+        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
+    }
     // A folder standing at the destination is refused before a byte goes over
     // the wire: it is not an old version of the file and there is nothing to
     // weigh up. The same call answers whether this is an overwrite, which only

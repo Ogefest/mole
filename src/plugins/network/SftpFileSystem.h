@@ -61,11 +61,13 @@ public:
     Result<FileEntry> stat(const VfsUri& target) override;
 
     Result<void> makeDirectory(const VfsUri& target) override;
-    Result<void> remove(const VfsUri& target, bool recursive) override;
-    Result<void> rename(const VfsUri& from, const VfsUri& to) override;
+    Result<void> remove(const VfsUri& target, bool recursive, const CancelToken& cancel = {}) override;
+    Result<void> rename(const VfsUri& from, const VfsUri& to, const CancelToken& cancel = {}) override;
 
-    Result<std::unique_ptr<QIODevice>> openRead(const VfsUri& target, qint64 expectedSize = -1) override;
-    Result<std::unique_ptr<QIODevice>> openWrite(const VfsUri& target, qint64 expectedSize = -1) override;
+    Result<std::unique_ptr<QIODevice>> openRead(
+        const VfsUri& target, qint64 expectedSize = -1, const CancelToken& cancel = {}) override;
+    Result<std::unique_ptr<QIODevice>> openWrite(
+        const VfsUri& target, qint64 expectedSize = -1, const CancelToken& cancel = {}) override;
 
     Result<AccessInfo> access(const VfsUri& target) override;
 
@@ -94,7 +96,19 @@ private:
     /// Runs one SFTP quote command against the parent of `context`, which is a
     /// directory known to exist -- curl needs a workable url even when all the
     /// work is in the command.
-    Result<void> runCommand(const QByteArray& command, const VfsUri& context, const QString& what);
+    Result<void> runCommand(
+        const QByteArray& command, const VfsUri& context, const QString& what, const CancelToken& cancel);
+
+    /// Removes what the caller already knows about, without asking again.
+    ///
+    /// `remove()` began with `stat(target)`, which on this backend is a full
+    /// listing of the parent -- and the recursion, which already holds each
+    /// child's FileEntry and has just listed the parent once, called
+    /// `remove(child.uri, true)` for every child, which listed the same parent
+    /// again. A directory of n entries cost n+1 listings of n rows before a
+    /// single `rm`, so deleting ten thousand files over SFTP parsed a hundred
+    /// million listing rows. See MOLE-368.
+    Result<void> removeEntry(const FileEntry& entry, bool recursive, const CancelToken& cancel);
 
     /// Sends one span of a file, appending to what the last one left. Called
     /// from a stream's own thread, like fetchSpan below.

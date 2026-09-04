@@ -257,7 +257,8 @@ Result<FileEntry> SftpFileSystem::stat(const VfsUri& target)
         VfsError::NotFound, QStringLiteral("%1 does not exist").arg(target.path()));
 }
 
-Result<void> SftpFileSystem::runCommand(const QByteArray& command, const VfsUri& context, const QString& what)
+Result<void> SftpFileSystem::runCommand(
+    const QByteArray& command, const VfsUri& context, const QString& what, const CancelToken& cancel)
 {
     auto lease = m_pool->take();
     if (!lease)
@@ -273,7 +274,7 @@ Result<void> SftpFileSystem::runCommand(const QByteArray& command, const VfsUri&
     curl_easy_setopt(lease.get(), CURLOPT_QUOTE, commands);
     curl_easy_setopt(lease.get(), CURLOPT_NOBODY, 1L);
 
-    const net::Response response = m_pool->perform(lease, CancelToken());
+    const net::Response response = m_pool->perform(lease, cancel);
     curl_slist_free_all(commands);
 
     const VfsError error = net::errorFor(response, what, net::StatusMeaning::ProtocolReply);
@@ -288,49 +289,63 @@ Result<void> SftpFileSystem::makeDirectory(const VfsUri& target)
         return Result<void>::failure(
             VfsError::AlreadyExists, QStringLiteral("%1 already exists").arg(target.path()));
     }
-    return runCommand(
-        "mkdir " + quoted(remotePath(target)), target, QStringLiteral("Creating %1").arg(target.path()));
+    return runCommand("mkdir " + quoted(remotePath(target)), target,
+        QStringLiteral("Creating %1").arg(target.path()), CancelToken());
 }
 
-Result<void> SftpFileSystem::remove(const VfsUri& target, bool recursive)
+Result<void> SftpFileSystem::remove(const VfsUri& target, bool recursive, const CancelToken& cancel)
 {
+    if (cancel.isCancelled())
+        return Result<void>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
+
+    // The one stat, at the top. The recursion below uses what the listing
+    // already said. See removeEntry().
     const Result<FileEntry> what = stat(target);
     if (!what.ok())
         return Result<void>(what.error());
+    return removeEntry(what.value(), recursive, cancel);
+}
 
-    if (!what.value().isDir) {
-        return runCommand(
-            "rm " + quoted(remotePath(target)), target, QStringLiteral("Deleting %1").arg(target.path()));
+Result<void> SftpFileSystem::removeEntry(const FileEntry& entry, bool recursive, const CancelToken& cancel)
+{
+    if (cancel.isCancelled())
+        return Result<void>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
+
+    if (!entry.isDir) {
+        return runCommand("rm " + quoted(remotePath(entry.uri)), entry.uri,
+            QStringLiteral("Deleting %1").arg(entry.uri.path()), cancel);
     }
 
-    const Result<FileEntryList> children = listRaw(target, CancelToken());
+    const Result<FileEntryList> children = listRaw(entry.uri, cancel);
     if (!children.ok())
         return Result<void>(children.error());
 
     if (!children.value().isEmpty()) {
         if (!recursive) {
             return Result<void>::failure(
-                VfsError::NotEmpty, QStringLiteral("%1 is not empty").arg(target.path()));
+                VfsError::NotEmpty, QStringLiteral("%1 is not empty").arg(entry.uri.path()));
         }
         for (const FileEntry& child : children.value()) {
-            const Result<void> removed = remove(child.uri, true);
+            const Result<void> removed = removeEntry(child, true, cancel);
             if (!removed.ok())
                 return removed;
         }
     }
 
-    return runCommand(
-        "rmdir " + quoted(remotePath(target)), target, QStringLiteral("Deleting %1").arg(target.path()));
+    return runCommand("rmdir " + quoted(remotePath(entry.uri)), entry.uri,
+        QStringLiteral("Deleting %1").arg(entry.uri.path()), cancel);
 }
 
-Result<void> SftpFileSystem::rename(const VfsUri& from, const VfsUri& to)
+Result<void> SftpFileSystem::rename(const VfsUri& from, const VfsUri& to, const CancelToken& cancel)
 {
+    if (cancel.isCancelled())
+        return Result<void>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
     if (stat(to).ok()) {
         return Result<void>::failure(
             VfsError::AlreadyExists, QStringLiteral("%1 already exists").arg(to.path()));
     }
     const QByteArray command = "rename " + quoted(remotePath(from)) + ' ' + quoted(remotePath(to));
-    return runCommand(command, from, QStringLiteral("Renaming %1").arg(from.path()));
+    return runCommand(command, from, QStringLiteral("Renaming %1").arg(from.path()), cancel);
 }
 
 VfsError SftpFileSystem::fetchSpan(const QByteArray& url, const QString& what, QIODevice& sink, qint64 offset,
@@ -348,8 +363,12 @@ VfsError SftpFileSystem::fetchSpan(const QByteArray& url, const QString& what, Q
     return net::errorFor(response, what, net::StatusMeaning::ProtocolReply);
 }
 
-Result<std::unique_ptr<QIODevice>> SftpFileSystem::openRead(const VfsUri& target, qint64 expectedSize)
+Result<std::unique_ptr<QIODevice>> SftpFileSystem::openRead(
+    const VfsUri& target, qint64 expectedSize, const CancelToken& cancel)
 {
+    if (cancel.isCancelled()) {
+        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
+    }
     const QByteArray url = urlFor(target, false);
     const QString what = QStringLiteral("Reading %1").arg(target.path());
 
@@ -379,7 +398,7 @@ Result<std::unique_ptr<QIODevice>> SftpFileSystem::openRead(const VfsUri& target
         }
         lease.setUrl(url);
 
-        const net::Response response = m_pool->perform(lease, CancelToken(), scratch.get());
+        const net::Response response = m_pool->perform(lease, cancel, scratch.get());
         const VfsError error = net::errorFor(response, what, net::StatusMeaning::ProtocolReply);
         if (error.isError())
             return Result<std::unique_ptr<QIODevice>>(error);
@@ -455,8 +474,12 @@ VfsError SftpFileSystem::sendSpan(
     return error;
 }
 
-Result<std::unique_ptr<QIODevice>> SftpFileSystem::openWrite(const VfsUri& target, qint64)
+Result<std::unique_ptr<QIODevice>> SftpFileSystem::openWrite(
+    const VfsUri& target, qint64, const CancelToken& cancel)
 {
+    if (cancel.isCancelled()) {
+        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
+    }
     // Streamed rather than staged: a copy of a hundred-gigabyte file must not
     // need a hundred gigabytes of local scratch space to send it, and the span
     // loop keeps each transfer clear of the fault a long one runs into.
