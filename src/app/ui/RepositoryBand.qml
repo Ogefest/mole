@@ -157,6 +157,14 @@ Rectangle {
         id: changedPaths
         objectName: "repositoryChangedPaths"
 
+        // **This one keeps the default closePolicy, and that is a decision.** A
+        // popup that closes on Escape wants key events, and while it has them Qt
+        // suppresses every window Shortcut outside it -- which is why the error
+        // toast beside this had to give that up (see ui/Toast.qml and MOLE-398).
+        // Here it is right: this is a list somebody opened on purpose and closes
+        // with Escape, so the suppression lasts exactly as long as they are
+        // reading it, and Escape is the key they will reach for.
+
         // Under the word it belongs to, and pulled back inside the pane when the
         // word is near the right edge -- a pane is narrow and this is wider than it.
         x: Math.max(0, Math.min(changesLabel.x, band.width - width))

@@ -9,15 +9,7 @@ import QtQuick.Layouts
 // a password, whether it only applies to one provider — comes from the backend
 // itself, so a new provider appears with a correct form and nothing in this file
 // changes. That is the whole reason drives are a plugin seam.
-Dialog {
-    // A dialog sits on the panel ground, said here rather than inherited:
-    // the window no longer hands one down. See ADR-0074.
-    Material.background: App.colour.panel
-    // Dimmed rather than washed out: Qt's Material dark theme dims with
-    // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
-    Overlay.modal: DimVeil {}
-    Overlay.modeless: DimVeil {}
-
+MoleDialog {
     id: dialog
     objectName: "drivesDialog"
 
@@ -57,12 +49,9 @@ Dialog {
     }
 
     title: "Drives"
-    modal: true
     // Without this the popup never becomes a focus scope, so nothing inside it
     // can hold the keyboard and the footer's focus quietly does nothing.
-    focus: true
-    anchors.centerIn: Overlay.overlay
-    width: Math.min(880, parent ? parent.width - 80 : 880)
+    preferredWidth: 880
     height: Math.min(640, parent ? parent.height - 80 : 640)
 
     // Nothing to confirm: a drive is saved by the form's own button, so the one
@@ -395,8 +384,8 @@ Dialog {
                                 objectName: "driveCheckButton"
                                 visible: configuredId !== ""
                                 text: "?"
-                                implicitWidth: 24
-                                implicitHeight: 24
+                                implicitWidth: App.minimumTarget
+                                implicitHeight: App.minimumTarget
                                 ToolTip.text: "Check that this drive can be reached"
                                 ToolTip.visible: hovered
                                 // Asking is cheap and the answer is the thing a
@@ -412,8 +401,8 @@ Dialog {
                                 objectName: "driveSweepButton"
                                 visible: configuredId !== ""
                                 text: "⌫"
-                                implicitWidth: 24
-                                implicitHeight: 24
+                                implicitWidth: App.minimumTarget
+                                implicitHeight: App.minimumTarget
                                 ToolTip.text: "Look for uploads this drive never finished"
                                 ToolTip.visible: hovered
                                 // An upload interrupted by the machine losing
@@ -431,8 +420,8 @@ Dialog {
                                 objectName: "driveConnectButton"
                                 visible: configuredId !== ""
                                 text: canEject ? "⏏" : "▶"
-                                implicitWidth: 24
-                                implicitHeight: 24
+                                implicitWidth: App.minimumTarget
+                                implicitHeight: App.minimumTarget
                                 // Redundant with the sidebar, and harmless now
                                 // that it is not the only way. What mattered was
                                 // that it was the only way.
@@ -442,8 +431,17 @@ Dialog {
                                         App.disconnectDrive(configuredId)
                                     } else {
                                         const problem = App.connectDrive(configuredId)
-                                        if (problem.length > 0)
-                                            saveError.text = problem
+                                        if (problem.length > 0) {
+                                            // Into the band, not into `saveError`
+                                            // -- that label lives in a row whose
+                                            // `visible` is false while no drive
+                                            // kind is selected, which is exactly
+                                            // the state somebody is in when they
+                                            // press Connect in the list. See
+                                            // MOLE-398.
+                                            dialog.checkOk = false
+                                            dialog.checkMessage = problem
+                                        }
                                     }
                                 }
                             }
@@ -651,13 +649,6 @@ Dialog {
 
                     Item { Layout.fillWidth: true }
 
-                    Label {
-                        id: saveError
-                        color: App.colour.bad
-                        font.pixelSize: 11
-                        elide: Text.ElideRight
-                        Layout.maximumWidth: 300
-                    }
 
                     Button {
                         objectName: "removeDriveButton"
@@ -680,7 +671,6 @@ Dialog {
                         text: "Save"
                         enabled: nameField.text.trim().length > 0 && dialog.factory.length > 0
                         onClicked: {
-                            saveError.text = ""
                             // Saying so before the answer arrives, because the
                             // check does real network I/O and can take a moment
                             // against a host that is not answering.
@@ -690,7 +680,19 @@ Dialog {
                                               dialog.variant, rootField.text, dialog.values)) {
                                 dialog.startNew()
                             } else {
-                                dialog.checkMessage = ""
+                                // **It said nothing at all.** This cleared its
+                                // own band, and the window's toast about the
+                                // failure appears behind this modal's veil -- so
+                                // a save that could not happen looked exactly
+                                // like one that did nothing. The band across the
+                                // top is the one place in this dialog that is
+                                // visible whatever the form is showing. See
+                                // MOLE-398.
+                                dialog.checkOk = false
+                                dialog.checkMessage
+                                    = "\u2018" + nameField.text.trim() + "\u2019 was not saved."
+                                      + (App.credentialsUnlocked
+                                         ? "" : " Unlock the credential store first.")
                             }
                         }
                     }
@@ -745,20 +747,11 @@ Dialog {
     // The question that was missing. Every other destructive action in the
     // window asks one; this one removed a drive, and the record of which
     // credential belonged to it, on a single click. ADR-0010.
-    Dialog {
-        // A dialog sits on the panel ground, said here rather than inherited:
-        // the window no longer hands one down. See ADR-0074.
-        Material.background: App.colour.panel
-        Overlay.modal: DimVeil {}
-        Overlay.modeless: DimVeil {}
-
+    MoleDialog {
         id: confirmRemove
         objectName: "confirmRemoveDrive"
         title: "Remove this drive?"
-        modal: true
-        focus: true
-        anchors.centerIn: Overlay.overlay
-        width: 440
+        preferredWidth: 440
 
         // Held rather than read from the form when Ok is pressed: the form is
         // still live behind this, and what is being agreed to is the drive that

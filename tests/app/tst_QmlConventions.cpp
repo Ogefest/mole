@@ -25,6 +25,9 @@ private slots:
     void nothingBuildsOrTakesApartAUriByHand();
     void nothingInTheShellNamesADriveOrAFilesystem();
     void everyKeyTheMenuAdvertisesIsAKeyTheWindowDeclares();
+    void noIconOnlyControlIsSmallerThanTheFloor();
+    void everyDialogIsBuiltOnTheOneBase();
+    void noImageDecodeIsBoundToALiveSize();
 
 private:
     /// path -> contents, for every .qml shipped with the application.
@@ -349,6 +352,170 @@ void TestQmlConventions::everyKeyTheMenuAdvertisesIsAKeyTheWindowDeclares()
     QVERIFY2(undeclared.isEmpty(),
         qPrintable(QStringLiteral("the menu advertises keys the window does not declare: %1")
                        .arg(undeclared.join(QStringLiteral(", ")))));
+}
+
+void TestQmlConventions::noIconOnlyControlIsSmallerThanTheFloor()
+{
+    // **Twenty-four were raised and six were missed**, two of them half-raised --
+    // `implicitHeight: App.minimumTarget` with `implicitWidth: 24` left behind,
+    // which is the copy-paste-with-one-edit shape. The walkthrough holds two
+    // named controls at run time; these six had no names to hold, so this reads
+    // the source instead and covers every one there is.
+    //
+    // Static because it is a claim about what is written rather than about what a
+    // window did: a control declared at 24 is 24 on every machine, and a rule
+    // read from the source goes on being true for controls nobody has written
+    // yet. See MOLE-398 and theIconOnlyControlsAreBigEnoughToHit.
+    static const QRegularExpression fixedSize(QStringLiteral("implicit(Width|Height)\\s*:\\s*([0-9]+)\\b"));
+
+    QStringList tooSmall;
+    for (auto it = m_sources.cbegin(); it != m_sources.cend(); ++it) {
+        const QStringList lines = it.value().split(QLatin1Char('\n'));
+        for (int line = 0; line < lines.size(); ++line) {
+            const QRegularExpressionMatch match = fixedSize.match(lines.at(line));
+            if (!match.hasMatch())
+                continue;
+            if (match.captured(2).toInt() >= 28)
+                continue;
+
+            // Only a control: a busy indicator, a tag and a coloured dot are not
+            // things to hit, and a floor for them would be a rule about
+            // decoration. The kind is the enclosing declaration, so this looks
+            // back for the nearest one.
+            QString kind;
+            for (int back = line; back >= 0 && back > line - 12; --back) {
+                static const QRegularExpression opensAType(QStringLiteral("^\\s*([A-Z][A-Za-z]*)\\s*\\{"));
+                const QRegularExpressionMatch opener = opensAType.match(lines.at(back));
+                if (opener.hasMatch()) {
+                    kind = opener.captured(1);
+                    break;
+                }
+            }
+            static const QStringList controls { QStringLiteral("ToolButton"), QStringLiteral("Button"),
+                QStringLiteral("ActionButton"), QStringLiteral("RoundButton"), QStringLiteral("CheckBox"),
+                QStringLiteral("RadioButton"), QStringLiteral("Switch") };
+            if (!controls.contains(kind))
+                continue;
+
+            tooSmall.append(
+                QStringLiteral("%1:%2 a %3 of %4").arg(it.key()).arg(line + 1).arg(kind, match.captured(2)));
+        }
+    }
+
+    QVERIFY2(tooSmall.isEmpty(),
+        qPrintable(QStringLiteral("a control smaller than the 28px floor: %1")
+                       .arg(tooSmall.join(QStringLiteral(", ")))));
+}
+
+void TestQmlConventions::everyDialogIsBuiltOnTheOneBase()
+{
+    // **Nineteen dialogs pasted the same nine lines** -- the panel ground, both
+    // overlay veils, `modal`, `focus`, `anchors.centerIn`, a width, and six lines
+    // of comment about the first three. Three CMake greps stand in for the
+    // component that makes the omission impossible, and they exist because the
+    // paste was forgotten three times. The placement drifted with it: six
+    // dialogs centred on `parent` -- the tab body, which is not the middle of the
+    // window once there is a sidebar, and is a third of the way up it with the
+    // terminal panel open -- and four fixed a width with no clamp while five
+    // clamped.
+    //
+    // ui/MoleDialog.qml holds all of it once. This is the rule that keeps the
+    // twentieth from being written the old way; the CMake greps stay as the
+    // backstop for the veil in particular. See MOLE-398.
+    static const QRegularExpression rawDialog(QStringLiteral("(?m)^\\s*Dialog\\s*\\{"));
+    QStringList raw;
+    QStringList unclamped;
+    for (auto it = m_sources.cbegin(); it != m_sources.cend(); ++it) {
+        if (it.key().endsWith(QStringLiteral("MoleDialog.qml")))
+            continue;
+        if (it.value().contains(rawDialog))
+            raw.append(it.key());
+
+        // A dialog centred on its parent lands in the middle of whatever
+        // declared it. MoleDialog centres on the window's overlay; nothing else
+        // may make that decision for a dialog -- so this looks *inside* each
+        // MoleDialog block, at its own level. An `anchors.centerIn: parent` on a
+        // label inside one is ordinary and is not this.
+        const QStringList lines = it.value().split(QLatin1Char('\n'));
+        for (int line = 0; line < lines.size(); ++line) {
+            static const QRegularExpression opensADialog(
+                QStringLiteral("^(\\s*)(MoleDialog|SingleFieldDialog)\\s*\\{"));
+            const QRegularExpressionMatch opener = opensADialog.match(lines.at(line));
+            if (!opener.hasMatch())
+                continue;
+            const QString inside = opener.captured(1) + QStringLiteral("    ");
+            for (int at = line + 1; at < lines.size(); ++at) {
+                // Its own level only, and the block ends at the closing brace on
+                // the opener's indentation.
+                if (lines.at(at) == opener.captured(1) + QLatin1Char('}'))
+                    break;
+                if (lines.at(at) == inside + QStringLiteral("anchors.centerIn: parent"))
+                    unclamped.append(QStringLiteral("%1:%2").arg(it.key()).arg(at + 1));
+            }
+        }
+    }
+
+    QVERIFY2(raw.isEmpty(),
+        qPrintable(QStringLiteral("a dialog is declared without the base that carries the veil, "
+                                  "the ground, the focus and the clamp: %1")
+                       .arg(raw.join(QStringLiteral(", ")))));
+    QVERIFY2(unclamped.isEmpty(),
+        qPrintable(QStringLiteral("a dialog centres on its parent rather than on the window: %1")
+                       .arg(unclamped.join(QStringLiteral(", ")))));
+
+    // And the base itself says all nine things, or removing them from nineteen
+    // files removed them altogether.
+    const QString base = m_sources.value(QStringLiteral("MoleDialog.qml"));
+    QVERIFY2(!base.isEmpty(), "ui/MoleDialog.qml was not read");
+    for (const QString& line : { QStringLiteral("Material.background: App.colour.panel"),
+             QStringLiteral("Overlay.modal: DimVeil {}"), QStringLiteral("Overlay.modeless: DimVeil {}"),
+             QStringLiteral("modal: true"), QStringLiteral("focus: true"),
+             QStringLiteral("anchors.centerIn: Overlay.overlay"),
+             QStringLiteral("Math.min(preferredWidth") }) {
+        QVERIFY2(
+            base.contains(line), qPrintable(QStringLiteral("ui/MoleDialog.qml does not say: %1").arg(line)));
+    }
+}
+
+void TestQmlConventions::noImageDecodeIsBoundToALiveSize()
+{
+    // **Changing `sourceSize` makes Image reload.** ImagePreview bound it to the
+    // live pane width, so dragging the sidebar or the details divider issued a
+    // decode per pixel of width -- the picture flickering through Image.Loading
+    // for the length of the drag, on every intermediate size nobody was looking
+    // at. Quantised to the next 256 px, a drag across a pane costs a handful of
+    // decodes instead of hundreds.
+    //
+    // Read from the source rather than counted at run time: what is being
+    // asserted is that the request does not change with every pixel, and a
+    // binding either quantises or it does not. A count of `Image.status`
+    // transitions across a resize would measure the same thing through a window
+    // manager. See MOLE-398.
+    static const QRegularExpression sourceSize(
+        QStringLiteral("(?m)^\\s*sourceSize\\.(width|height)\\s*:([^\\n]*)$"));
+
+    QStringList live;
+    for (auto it = m_sources.cbegin(); it != m_sources.cend(); ++it) {
+        auto found = sourceSize.globalMatch(it.value());
+        while (found.hasNext()) {
+            const QRegularExpressionMatch match = found.next();
+            const QString binding = match.captured(2);
+            // A constant, or nothing at all, is fine. What is not is a width or a
+            // height straight off an item, with nothing rounding it.
+            const bool reads
+                = binding.contains(QStringLiteral(".width")) || binding.contains(QStringLiteral(".height"));
+            const bool quantised = binding.contains(QStringLiteral("Math.ceil"))
+                || binding.contains(QStringLiteral("Math.floor"))
+                || binding.contains(QStringLiteral("Math.round"));
+            if (reads && !quantised)
+                live.append(QStringLiteral("%1: %2").arg(it.key(), binding.trimmed()));
+        }
+    }
+
+    QVERIFY2(live.isEmpty(),
+        qPrintable(QStringLiteral("an image decode is bound to a live size, so a drag re-decodes "
+                                  "on every pixel: %1")
+                       .arg(live.join(QStringLiteral(", ")))));
 }
 
 MOLE_TEST_MAIN_GUI(TestQmlConventions)

@@ -105,8 +105,12 @@ ApplicationWindow {
 
     onActiveChanged: if (active) Qt.callLater(focusCurrentTab)
 
-    // Set MOLE_DEBUG_FOCUS=1 to have the window report what holds the keyboard.
-    // Focus problems depend on the window manager, so this beats guessing.
+    // `--debug-focus` (or `--debug-keys`) has the window report what holds the
+    // keyboard, once a second. Focus problems depend on the window manager, so
+    // this beats guessing.
+    //
+    // This said MOLE_DEBUG_FOCUS=1, which nothing has ever read: the switch is
+    // the argument the Timer below actually looks for. See MOLE-398.
     Timer {
         running: Qt.application.arguments.indexOf("--debug-focus") >= 0
                  || Qt.application.arguments.indexOf("--debug-keys") >= 0
@@ -772,24 +776,13 @@ ApplicationWindow {
     }
     }
 
-    Dialog {
-        // A dialog sits on the panel ground, said here rather than inherited:
-        // the window no longer hands one down. See ADR-0074.
-        Material.background: App.colour.panel
-        // Dimmed rather than washed out: Qt's Material dark theme dims with
-        // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
-        Overlay.modal: DimVeil {}
-        Overlay.modeless: DimVeil {}
-
+    MoleDialog {
         id: aboutDialog
         objectName: "aboutDialog"
         // Without this the popup never becomes a focus scope, so nothing inside it
         // can hold the keyboard and the footer's focus quietly does nothing.
-        focus: true
         title: "Loaded plugins"
-        modal: true
-        anchors.centerIn: parent
-        width: Math.min(560, root.width - 80)
+        preferredWidth: 560
 
         footer: ConfirmButtons { dismissOnly: true }
 
@@ -844,24 +837,13 @@ ApplicationWindow {
         }
     }
 
-    Dialog {
-        // A dialog sits on the panel ground, said here rather than inherited:
-        // the window no longer hands one down. See ADR-0074.
-        Material.background: App.colour.panel
-        // Dimmed rather than washed out: Qt's Material dark theme dims with
-        // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
-        Overlay.modal: DimVeil {}
-        Overlay.modeless: DimVeil {}
-
+    MoleDialog {
         id: shortcutDialog
         objectName: "shortcutDialog"
         // Without this the popup never becomes a focus scope, so nothing inside it
         // can hold the keyboard and the footer's focus quietly does nothing.
-        focus: true
         title: "Keyboard"
-        modal: true
-        anchors.centerIn: Overlay.overlay
-        width: Math.min(620, root.width - 80)
+        preferredWidth: 620
 
         footer: ConfirmButtons { dismissOnly: true }
 
@@ -873,6 +855,7 @@ ApplicationWindow {
                 ["Ctrl+F", "Search this folder (new tab)"],
                 ["Ctrl+Shift+I", "Search everywhere indexed (new tab)"],
                 ["F3", "Preview the file under the cursor"],
+                ["Space / Backspace", "Next / previous file, in a preview"],
                 ["Ctrl+Shift+A", "Analyse the selected folders, or this one"],
                 ["Ctrl+R", "Find any command, bookmark or drive"],
                 ["Ctrl+Shift+S", "Size the selected folders, or all of them"],
@@ -973,9 +956,8 @@ ApplicationWindow {
             })
         }
         function onNotification(severity, title, detail) {
-            notificationLabel.text = detail.length > 0 ? title + " — " + detail : title
             notificationPopup.offersRelease = false
-            notificationPopup.open()
+            notificationPopup.show(detail.length > 0 ? title + " — " + detail : title)
         }
         // A newer Mole exists. The same toast, and the version is all it says: the
         // release page has the notes, and a notice that carries them is a notice
@@ -983,73 +965,41 @@ ApplicationWindow {
         // and this appearing is what counts as having said it, whether the button
         // is pressed, the toast dismissed or the window closed. See MOLE-325.
         function onVersionAvailable(version) {
-            notificationLabel.text = "Mole " + version + " has been released."
             notificationPopup.offersRelease = true
-            notificationPopup.open()
+            notificationPopup.show("Mole " + version + " has been released.")
         }
     }
 
-    Popup {
-        // Dimmed rather than washed out: Qt's Material dark theme dims with
-        // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
-        Overlay.modal: DimVeil {}
-        Overlay.modeless: DimVeil {}
-
+    // The window's own toast, and the component the browser view uses too: one
+    // popup, one timer, one closePolicy. See ui/Toast.qml and MOLE-398.
+    Toast {
         id: notificationPopup
         objectName: "notificationPopup"
-        x: (root.width - width) / 2
-        y: root.height - height - 80
-        width: Math.min(600, root.width - 100)
-        padding: 14
-        Material.background: App.colour.panel
-
-        // A notification is something to read, not something to operate, and it
-        // must not take the keyboard. With the default policy it closes on Escape,
-        // which means it wants key events -- and while it had them every window
-        // shortcut in the application stopped working for the five seconds the
-        // toast was up. Dismissing it by clicking outside still works.
-        closePolicy: Popup.CloseOnPressOutside
+        liftBy: 80
 
         /// Whether this notice has somewhere to go, which is the update notice and
         /// nothing else so far.
         property bool offersRelease: false
 
-        Timer {
-            objectName: "notificationTimer"
-            // Not while there is a button. Five seconds is right for something to
-            // read and wrong for something to press: a link that disappears while
-            // somebody reaches for it is worse than no link. This notice goes when
-            // it is dismissed, which is a click anywhere outside it.
-            running: notificationPopup.opened && !notificationPopup.offersRelease
-            interval: 5000
-            onTriggered: notificationPopup.close()
-        }
+        // Not while there is a button. Five seconds is right for something to
+        // read and wrong for something to press: a link that disappears while
+        // somebody reaches for it is worse than no link. This notice goes when
+        // it is dismissed, which is a click anywhere outside it.
+        dwellMs: offersRelease ? 0 : 5000
 
-        RowLayout {
-            anchors.fill: parent
-            spacing: 12
-
-            Label {
-                id: notificationLabel
-                objectName: "notificationLabel"
-                Layout.fillWidth: true
-                wrapMode: Text.Wrap
-            }
-
-            ActionButton {
-                objectName: "openReleasePageButton"
-                visible: notificationPopup.offersRelease
-                // Outlined rather than filled: this is an offer, not the one thing
-                // the window exists to do.
-                filled: false
-                text: "Release page"
-                onClicked: {
-                    // The application opens what the manifest handed it. Nothing
-                    // here knows the URL, which is why there is nothing here that
-                    // could assemble one.
-                    App.openReleasePage()
-                    notificationPopup.close()
-                }
+        ActionButton {
+            objectName: "openReleasePageButton"
+            visible: notificationPopup.offersRelease
+            // Outlined rather than filled: this is an offer, not the one thing
+            // the window exists to do.
+            filled: false
+            text: "Release page"
+            onClicked: {
+                // The application opens what the manifest handed it. Nothing
+                // here knows the URL, which is why there is nothing here that
+                // could assemble one.
+                App.openReleasePage()
+                notificationPopup.close()
             }
         }
     }

@@ -33,8 +33,24 @@ Item {
         // a tab rather than a dialog.
         Keys.onLeftPressed: if (controller) controller.previous()
         Keys.onRightPressed: if (controller) controller.next()
+
+        // **Space is next, in every viewer.** It reached TextPreview's
+        // type-to-find first when a text file was loaded, so the same key opened
+        // the find bar holding a space in one viewer and stepped to the next file
+        // in another -- and neither was written down anywhere. The text viewer
+        // ignores a plain space now; `/` still opens the bar empty. ADR-0060: a
+        // key is handled in exactly one place. See MOLE-398.
         Keys.onSpacePressed: if (controller) controller.next()
-        Keys.onBackPressed: if (controller) controller.previous()
+
+        // Backspace, and it is a real key here. `Keys.onBackPressed` handles
+        // Qt::Key_Back -- the Android hardware button -- so whatever this was
+        // meant to do it has never done it on any machine this runs on.
+        Keys.onPressed: function(event) {
+            if (event.key === Qt.Key_Backspace && controller) {
+                controller.previous()
+                event.accepted = true
+            }
+        }
 
         ColumnLayout {
             anchors.fill: parent

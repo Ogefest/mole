@@ -121,7 +121,7 @@ Item {
                                 elide: Text.ElideMiddle
                             }
                             Label {
-                                text: modelData.entryCountText + " entries"
+                                text: App.countOf(modelData.entryCount, "entry", "entries")
                                 color: App.colour.textMuted
                                 font.pixelSize: 10
                             }
@@ -280,22 +280,11 @@ Item {
         }
     }
 
-    Dialog {
-        // A dialog sits on the panel ground, said here rather than inherited:
-        // the window no longer hands one down. See ADR-0074.
-        Material.background: App.colour.panel
-        // Dimmed rather than washed out: Qt's Material dark theme dims with
-        // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
-        Overlay.modal: DimVeil {}
-        Overlay.modeless: DimVeil {}
-
+    MoleDialog {
         id: forgetDialog
         objectName: "forgetIndexDialog"
         // Without this the popup never becomes a focus scope, so nothing inside
         // it can hold the keyboard and the footer's focus quietly does nothing.
-        focus: true
-        anchors.centerIn: parent
-        modal: true
         title: "Forget this index?"
 
         property var volumeId: -1

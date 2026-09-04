@@ -243,9 +243,10 @@ Item {
                                         font.bold: modelData.current
                                     }
                                     Label {
-                                        text: modelData.count + " items"
+                                        text: App.countOf(modelData.count, "item", "items")
                                               + (modelData.driveCount > 1
-                                                 ? " · " + modelData.driveCount + " drives" : "")
+                                                 ? " · " + App.countOf(modelData.driveCount,
+                                                                       "drive", "drives") : "")
                                         color: App.colour.textMuted
                                         font.pixelSize: 10
                                     }

@@ -19,6 +19,11 @@ Item {
 
     /// A TableModel. Whatever fills it is the caller's business.
     property var table: null
+
+    /// The height of one row, in pixels. One number, where the row-height
+    /// provider and the delegate each had their own 22 and the paging keys had a
+    /// 25 that was not related to either. See rowsPerPage() and MOLE-398.
+    readonly property int rowPixels: 22
     /// Called with (top, left, bottom, right) when the user asks for a copy.
     /// The controller owns the clipboard; this only knows what is selected.
     signal copyRequested(int top, int left, int bottom, int right)
@@ -108,6 +113,16 @@ Item {
         function onModelReset() { grid.clearSelection() }
     }
 
+    /// How many rows a page is, measured from the viewport the same way
+    /// FilePane::entriesPerPage() does. One when the rows have no height yet,
+    /// because a page of nothing moves nothing.
+    function rowsPerPage() {
+        // The row height the provider hands the view, and the view's own height.
+        if (grid.rowPixels <= 0 || view.height <= 0)
+            return 1
+        return Math.max(1, Math.floor(view.height / grid.rowPixels))
+    }
+
     Keys.onPressed: function(event) {
         if (event.matches(StandardKey.Copy)) {
             copySelection()
@@ -132,8 +147,11 @@ Item {
         case Qt.Key_Down:  moveCursor(1, 0, extend);  event.accepted = true; break
         case Qt.Key_Left:  moveCursor(0, -1, extend); event.accepted = true; break
         case Qt.Key_Right: moveCursor(0, 1, extend);  event.accepted = true; break
-        case Qt.Key_PageDown: moveCursor(25, 0, extend); event.accepted = true; break
-        case Qt.Key_PageUp:   moveCursor(-25, 0, extend); event.accepted = true; break
+        // A page is what fits, not 25: the constant was a guess at a table's
+        // height and meant something different at every window size -- and the
+        // pane next to it measures. See rowsPerPage() below and MOLE-398.
+        case Qt.Key_PageDown: moveCursor(rowsPerPage(), 0, extend); event.accepted = true; break
+        case Qt.Key_PageUp:   moveCursor(-rowsPerPage(), 0, extend); event.accepted = true; break
         }
     }
 
@@ -193,7 +211,7 @@ Item {
             boundsBehavior: Flickable.StopAtBounds
 
             columnWidthProvider: function(column) { return grid.columnPixels(column) }
-            rowHeightProvider: function(row) { return 22 }
+            rowHeightProvider: function(row) { return grid.rowPixels }
 
             ScrollBar.vertical: ScrollBar {}
             ScrollBar.horizontal: ScrollBar {}
@@ -204,7 +222,7 @@ Item {
                 required property string cell
 
                 implicitWidth: 100
-                implicitHeight: 22
+                implicitHeight: grid.rowPixels
                 color: grid.isSelected(row, column) ? App.colour.selection
                      : (row % 2 === 0 ? App.colour.pane : App.colour.panel)
                 border.width: grid.cursorRow === row && grid.cursorColumn === column ? 1 : 0

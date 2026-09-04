@@ -43,6 +43,9 @@ set(MOLE_QML_FILES
     ui/ConfirmButtons.qml
     ui/ActionButton.qml
     ui/DimVeil.qml
+    ui/Toast.qml
+    ui/MoleDialog.qml
+    ui/SingleFieldDialog.qml
     ui/Sidebar.qml
     ui/UnlockDialog.qml
     ui/TaskStrip.qml
@@ -141,12 +144,35 @@ endif()
 # that stopped part way. That is MOLE-128, and nothing about it is visible to
 # whoever writes the nineteenth dialog. So the build says so.
 #
-# A grep is enough, as above: a file that declares a popup declares a veil.
+# A grep is enough, as above: a file that declares a popup declares a veil --
+# unless what it declares is one of *this directory's own* components, which
+# carries its veil where it is defined. `MoleDialog` and `Toast` are the two that
+# exist to hold these nine lines once, and a `DrivesDialog {` in Main.qml is an
+# instance of a file that has already been checked here. That distinction is what
+# the check has to make, or the component that removes the paste fails the rule
+# the paste existed to satisfy. See MOLE-398.
+#
+# The local type names come from the file names, so a component added later joins
+# this by existing.
+set(MOLE_QML_LOCAL_TYPES "")
+foreach(qml IN LISTS MOLE_QML_ON_DISK)
+    get_filename_component(mole_qml_type "${qml}" NAME_WE)
+    list(APPEND MOLE_QML_LOCAL_TYPES "${mole_qml_type}")
+endforeach()
+
 set(MOLE_QML_UNVEILED "")
 foreach(qml IN LISTS MOLE_QML_ON_DISK)
     file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/${qml}" popups
-         REGEX "^[^/]*(Dialog|Popup|Menu|Drawer)[ 	]*\{")
-    if(popups)
+         REGEX "^[^/]*[A-Za-z]*(Dialog|Popup|Menu|Drawer)[ 	]*\{")
+    set(mole_qml_raw_popup FALSE)
+    foreach(line IN LISTS popups)
+        string(REGEX MATCH "([A-Za-z]+)[ 	]*\{" mole_qml_opener "${line}")
+        set(mole_qml_type "${CMAKE_MATCH_1}")
+        if(NOT mole_qml_type IN_LIST MOLE_QML_LOCAL_TYPES)
+            set(mole_qml_raw_popup TRUE)
+        endif()
+    endforeach()
+    if(mole_qml_raw_popup)
         file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/${qml}" veiled
              REGEX "^[^/]*Overlay\.modal[ 	]*:")
         if(NOT veiled)

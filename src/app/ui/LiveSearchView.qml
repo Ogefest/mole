@@ -231,7 +231,7 @@ Item {
                 objectName: "narrowCount"
                 text: controller && controller.results
                       ? (controller.results.count === controller.results.totalCount
-                            ? controller.results.count + " results"
+                            ? App.countOf(controller.results.count, "result", "results")
                             : controller.results.count + " of " + controller.results.totalCount)
                       : ""
                 color: App.colour.textFaint
@@ -362,24 +362,13 @@ Item {
         scanDialog.open()
     }
 
-    Dialog {
-        // A dialog sits on the panel ground, said here rather than inherited:
-        // the window no longer hands one down. See ADR-0074.
-        Material.background: App.colour.panel
-        // Dimmed rather than washed out: Qt's Material dark theme dims with
-        // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
-        Overlay.modal: DimVeil {}
-        Overlay.modeless: DimVeil {}
-
+    MoleDialog {
         id: scanDialog
         objectName: "scanDialog"
         // Without this the popup never becomes a focus scope, so nothing inside it
         // can hold the keyboard and the footer's focus quietly does nothing.
-        focus: true
         title: "Index a folder"
-        modal: true
-        anchors.centerIn: parent
-        width: 520
+        preferredWidth: 520
 
         footer: ConfirmButtons {
             acceptText: "Index"

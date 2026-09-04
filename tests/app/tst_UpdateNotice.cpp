@@ -190,8 +190,11 @@ bool TestUpdateNotice::toastIsOpen() const
 
 QString TestUpdateNotice::toastText() const
 {
-    QQuickItem* label = m_harness->item(QStringLiteral("notificationLabel"));
-    return label ? label->property("text").toString() : QString();
+    // Asked of the toast itself rather than of the label inside it: the toast is
+    // a shared component now, so two of them exist and their innards carry the
+    // same objectNames. See ui/Toast.qml and MOLE-398.
+    QObject* toast = m_harness->object(QStringLiteral("notificationPopup"));
+    return toast ? toast->property("text").toString() : QString();
 }
 
 void TestUpdateNotice::nothingIsAskedUntilTheWindowIsUp()
@@ -240,15 +243,15 @@ void TestUpdateNotice::theToastWithAButtonDoesNotCountDown()
     // press. Asserted on the timer rather than by waiting five seconds to see
     // whether it goes: a test that waits for a clock is a test that fails on a
     // slow machine.
-    QObject* timer = m_harness->object(QStringLiteral("notificationTimer"));
-    QVERIFY(timer);
-    QVERIFY2(!timer->property("running").toBool(), "the notice is counting down with a button on it");
+    QObject* toast = m_harness->object(QStringLiteral("notificationPopup"));
+    QVERIFY(toast);
+    QVERIFY2(!toast->property("counting").toBool(), "the notice is counting down with a button on it");
 
     // And an ordinary notification still does, so this did not switch it off for
     // everybody.
     emit m_harness->app()->notification(0, QStringLiteral("Something happened"), QString());
     QVERIFY(m_harness->until([this] { return toastText() == QStringLiteral("Something happened"); }));
-    QVERIFY(timer->property("running").toBool());
+    QVERIFY(toast->property("counting").toBool());
 }
 
 void TestUpdateNotice::thePageOpenedIsTheOneTheManifestNamed()

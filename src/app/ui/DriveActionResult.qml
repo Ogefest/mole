@@ -11,18 +11,13 @@ import QtQuick.Layouts
 // long it stays true; a list of other uris for the same file is offered as a list
 // to open one from. Two backends answering with text are indistinguishable here,
 // which is the whole point of the set being closed. See ADR-0075.
-Dialog {
+MoleDialog {
     id: dialog
     objectName: "driveActionResult"
 
     // A dialog sits on the panel ground, said here rather than inherited. ADR-0074.
-    Material.background: App.colour.panel
-    Overlay.modal: DimVeil {}
-    Overlay.modeless: DimVeil {}
 
-    modal: true
-    anchors.centerIn: parent
-    width: Math.min(520, parent ? parent.width - 80 : 520)
+    preferredWidth: 520
     footer: ConfirmButtons { dismissOnly: true }
 
     /// "text" or "uris". Nothing else, ever.

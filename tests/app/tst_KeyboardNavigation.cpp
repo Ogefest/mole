@@ -58,6 +58,7 @@ private slots:
     void cursorStaysInStepAfterAClick();
     void enterOpensTheRightRowAfterNavigating();
     void ctrlArrowsNavigateHistory();
+    void theKeyboardKeepsWorkingWhileAnErrorIsOnScreen();
     void deleteAsksWithTheFilesNamed();
     void typingStartsFilteringWithoutAShortcut();
     void modifiedKeysDoNotStartFiltering();
@@ -1248,6 +1249,29 @@ void TestKeyboardNavigation::theGalleryIsTheSamePaneWithBiggerTiles()
     QCOMPARE(m_app->tabs()->rowCount(), tabsBefore + 1);
     QCOMPARE(m_app->tabs()->currentController()->property("currentUri").toString(),
         m_tree->rootUri().child(QStringLiteral("one.txt")).toString());
+}
+
+void TestKeyboardNavigation::theKeyboardKeepsWorkingWhileAnErrorIsOnScreen()
+{
+    // **Every window shortcut died for six seconds after any failed operation.**
+    // The browser view's error toast was a Popup with the default closePolicy,
+    // which closes on Escape -- and Qt Quick Controls suppresses a window
+    // `Shortcut` while an overlay popup wants key events and does not contain the
+    // shortcut's item. Main.qml carries a comment about exactly this for the
+    // window's own toast and fixes it with `Popup.CloseOnPressOutside`; this copy
+    // did not get the line. So a refused rename, a drop with nowhere to go or
+    // "no drive is mounted here" took F3, Ctrl+W, Ctrl+T, Ctrl+R and F4 away at
+    // the moment somebody most wants them. See ui/Toast.qml and MOLE-398.
+    const int tabs = m_app->tabs()->rowCount();
+
+    // The failure a pane reports, reported the way it reports it.
+    emit browser() -> operationFailed(QStringLiteral("No drive is mounted here"));
+    settle();
+
+    // And the keyboard still reaches the window.
+    pressKey(Qt::Key_T, Qt::ControlModifier);
+    QVERIFY2(waitFor([this, tabs] { return m_app->tabs()->rowCount() == tabs + 1; }, 3000),
+        "Ctrl+T did nothing while an error was on screen");
 }
 
 int main(int argc, char** argv)

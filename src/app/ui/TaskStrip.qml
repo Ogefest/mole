@@ -42,8 +42,12 @@ Rectangle {
             spacing: 8
 
             ToolButton {
+                // Half-raised, which is the copy-paste-with-one-edit shape: the
+                // height was App.minimumTarget and the width was left at 24.
+                // See MOLE-398 and theIconOnlyControlsAreBigEnoughToHit.
+                objectName: "taskStripExpander"
                 text: strip.expanded ? "▾" : "▸"
-                implicitWidth: 24
+                implicitWidth: App.minimumTarget
                 implicitHeight: App.minimumTarget
                 onClicked: strip.expanded = !strip.expanded
             }

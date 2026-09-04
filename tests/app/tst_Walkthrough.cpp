@@ -127,6 +127,8 @@ private slots:
     void theDrivesAreInThePaletteToo();
     void theListingTakesItsTypeSizeFromTheScale();
     void theIconOnlyControlsAreBigEnoughToHit();
+    void spaceMeansTheSameThingInEveryViewer();
+    void oneOfSomethingReadsAsOne();
     void theSidebarRowsAreEvenlyTallAndHoldStill();
     void theCopyPathKeysActuallyCopyAPath();
     void theCommandPaletteFindsAndRunsThings();
@@ -860,6 +862,37 @@ void TestWalkthrough::theListingMarksReportsAndAlerts()
     QVERIFY2(flag(mediaRow, FileListModel::AlertTriggeredRole), "and a tripped alert reads differently");
     QVERIFY2(!flag(mediaRow, FileListModel::HasReportRole), "a folder with no report is not marked");
 
+    // And the tag above the listing says how many, in the right number. "3 alert
+    // triggered" was a concatenation with no plural branch, directly above a
+    // line that has one -- so the tab's own summary of a folder read as broken
+    // English whenever more than one alert had gone off. See App.countOf() and
+    // MOLE-398.
+    // On the folder the pane is showing, because that is what the tag counts.
+    AlertRule here;
+    here.id = QStringLiteral("watch-here");
+    here.label = QStringLiteral("This folder grows");
+    here.targetUri = pane()->currentUri();
+    here.state = AlertState::Triggered;
+    QVERIFY(m_harness->app()->alerts()->put(here));
+
+    QQuickItem* alertTag = m_harness->item(QStringLiteral("alertTag"));
+    QVERIFY2(alertTag, "the browser has no alert tag");
+    QVERIFY2(m_harness->until([alertTag] {
+        return alertTag->property("label").toString() == QStringLiteral("1 alert triggered");
+    }),
+        qPrintable(QStringLiteral("the tag says: %1").arg(alertTag->property("label").toString())));
+
+    AlertRule second;
+    second.id = QStringLiteral("watch-here-too");
+    second.label = QStringLiteral("This folder grows again");
+    second.targetUri = pane()->currentUri();
+    second.state = AlertState::Triggered;
+    QVERIFY(m_harness->app()->alerts()->put(second));
+    QVERIFY2(m_harness->until([alertTag] {
+        return alertTag->property("label").toString() == QStringLiteral("2 alerts triggered");
+    }),
+        qPrintable(QStringLiteral("the tag says: %1").arg(alertTag->property("label").toString())));
+
     m_harness->screenshot(QStringLiteral("01c-listing-tags"));
 }
 
@@ -1189,6 +1222,84 @@ void TestWalkthrough::theListingTakesItsTypeSizeFromTheScale()
 
     const QFont font = name->property("font").value<QFont>();
     QCOMPARE(font.pixelSize(), m_harness->app()->textSize());
+}
+
+void TestWalkthrough::oneOfSomethingReadsAsOne()
+{
+    // **"1 items."** Nine places wrote `count + " items"` with no singular
+    // branch, and the pane's status line is the most visible of them: a folder
+    // holding one file said so in the plural, every time anybody opened one.
+    // Six other sites in the same files took the trouble, which is what made it
+    // one function's worth of work. See App.countOf() and MOLE-398.
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() > 0; }));
+
+    // A folder with exactly one thing in it.
+    QVERIFY(m_harness->writeFile(QStringLiteral("lonely/only.txt"), QByteArray("one")));
+    pane()->navigateTo(pane()->currentUri() + QStringLiteral("/lonely"));
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 1; }));
+    m_harness->settle();
+
+    QQuickItem* count = m_harness->item(QStringLiteral("paneCount"));
+    QVERIFY2(count, "the pane has no counter to read");
+    QCOMPARE(count->property("text").toString(), QStringLiteral("1 item"));
+
+    // And the plural is still a plural, so this is not one word for every count.
+    pane()->goUp();
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() > 1; }));
+    m_harness->settle();
+    const QString many = count->property("text").toString();
+    QVERIFY2(many.endsWith(QStringLiteral(" items")), qPrintable(many));
+}
+
+void TestWalkthrough::spaceMeansTheSameThingInEveryViewer()
+{
+    // **Space did two things in a preview.** With a text viewer loaded it reached
+    // TextPreview's type-to-find first and opened the find bar holding a space;
+    // with an image or a PDF it stepped to the next file. Neither was in the key
+    // dialog, the README or the guide. ADR-0060 says a key is handled in exactly
+    // one place, so the text viewer ignores a plain space and Space steps in
+    // every viewer. See MOLE-398.
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() > 0; }));
+
+    // A text file, which is the viewer that used to claim the key. `notes.txt`
+    // is at the top of the fixture tree, so this case does not depend on where a
+    // previous one left the pane.
+    const int row = pane()->files()->rowOfUri(pane()->currentUri() + QStringLiteral("/notes.txt"));
+    QVERIFY2(row >= 0, "the fixture has no notes.txt to preview");
+    pane()->setCurrentIndex(row);
+    m_harness->settle();
+    m_harness->key(Qt::Key_F3);
+
+    auto* preview = qobject_cast<PreviewTabController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY2(preview, "F3 must open a preview tab");
+    QCOMPARE(preview->viewerName(), QStringLiteral("Text"));
+    QVERIFY(m_harness->until([preview] { return preview->siblingCount() > 0; }));
+    const QString started = preview->fileName();
+
+    // With the keyboard *in the text*, which is where the fault was: the type-to-
+    // find handler is on the TextArea, so Space reached it first and opened the
+    // find bar holding a space. Clicking into a preview to read it is the
+    // ordinary thing to do, and it changed what a key meant.
+    QQuickItem* text = m_harness->item(QStringLiteral("previewText"));
+    QVERIFY2(text, "the text viewer has no text area");
+    text->forceActiveFocus();
+    m_harness->settle();
+
+    m_harness->key(Qt::Key_Space);
+    QVERIFY2(m_harness->until([preview, started] { return preview->fileName() != started; }),
+        "Space in a text viewer did not step to the next file");
+
+    // And the find bar is not up holding a space.
+    QQuickItem* findBar = m_harness->item(QStringLiteral("findBar"));
+    QVERIFY2(!findBar || !findBar->isVisible(), "Space opened the find bar instead of stepping");
+
+    // And back, with Backspace -- which was `Keys.onBackPressed`, the Android
+    // hardware key, so it had never worked on any machine this runs on.
+    const QString second = preview->fileName();
+    m_harness->key(Qt::Key_Backspace);
+    QVERIFY2(m_harness->until([preview, second] { return preview->fileName() != second; }),
+        "Backspace in a preview did not step back");
+    QCOMPARE(preview->fileName(), started);
 }
 
 void TestWalkthrough::theIconOnlyControlsAreBigEnoughToHit()

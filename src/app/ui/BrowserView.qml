@@ -72,8 +72,7 @@ Item {
     Connections {
         target: controller
         function onOperationFailed(message) {
-            errorLabel.text = message
-            errorPopup.open()
+            errorPopup.show(message)
         }
         // One treatment per kind of answer, and the same one whichever drive
         // produced it -- this view has no idea which did. See ADR-0075.
@@ -274,9 +273,13 @@ Item {
                         label: {
                             if (!controller)
                                 return ""
+                            // "3 alert triggered" was a concatenation with no
+                            // plural branch, directly above a line that has one.
+                            // See App.countOf() and MOLE-398.
                             if (controller.triggeredAlertCount > 0)
-                                return controller.triggeredAlertCount + " alert triggered"
-                            return controller.alertCount === 1 ? "1 alert" : controller.alertCount + " alerts"
+                                return App.countOf(controller.triggeredAlertCount,
+                                                   "alert", "alerts") + " triggered"
+                            return App.countOf(controller.alertCount, "alert", "alerts")
                         }
                     }
 
@@ -391,20 +394,11 @@ Item {
 
     // --- dialogs -------------------------------------------------------
 
-    Dialog {
-        // A dialog sits on the panel ground, said here rather than inherited:
-        // the window no longer hands one down. See ADR-0074.
-        Material.background: App.colour.panel
-        // Dimmed rather than washed out: Qt's Material dark theme dims with
-        // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
-        Overlay.modal: DimVeil {}
-        Overlay.modeless: DimVeil {}
-
+    MoleDialog {
         id: transferDialog
         objectName: "transferDialog"
         // Without this the popup never becomes a focus scope, so nothing inside it
         // can hold the keyboard and the footer's focus quietly does nothing.
-        focus: true
         property bool isMove: false
         /// Read once when the dialog opens; the panes cannot change underneath
         /// a modal prompt, and re-reading per binding would re-scan the listing.
@@ -419,9 +413,7 @@ Item {
         property var droppedUrls: []
 
         title: isMove ? "Move" : "Copy"
-        modal: true
-        anchors.centerIn: Overlay.overlay
-        width: 520
+        preferredWidth: 520
 
         footer: ConfirmButtons {
             acceptText: transferDialog.isMove ? "Move" : "Copy"
@@ -489,7 +481,7 @@ Item {
                     const count = transferDialog.plan.count || 0
                     const size = transferDialog.plan.sizeText || ""
                     const where = transferDialog.plan.targetPath || ""
-                    const what = count === 1 ? "1 item" : count + " items"
+                    const what = App.countOf(count, "item", "items")
                     return what + (size.length > 0 ? " · " + size : "") + "\n→ " + where
                 }
             }
@@ -595,24 +587,13 @@ Item {
         }
     }
 
-    Dialog {
-        // A dialog sits on the panel ground, said here rather than inherited:
-        // the window no longer hands one down. See ADR-0074.
-        Material.background: App.colour.panel
-        // Dimmed rather than washed out: Qt's Material dark theme dims with
-        // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
-        Overlay.modal: DimVeil {}
-        Overlay.modeless: DimVeil {}
-
+    MoleDialog {
         id: transferHint
         objectName: "transferHint"
         // Without this the popup never becomes a focus scope, so nothing inside it
         // can hold the keyboard and the footer's focus quietly does nothing.
-        focus: true
         title: "Two panes needed"
-        modal: true
-        anchors.centerIn: Overlay.overlay
-        width: 420
+        preferredWidth: 420
 
         footer: ConfirmButtons { dismissOnly: true }
 
@@ -627,30 +608,14 @@ Item {
         }
     }
 
-    Popup {
-        // Dimmed rather than washed out: Qt's Material dark theme dims with
-        // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
-        Overlay.modal: DimVeil {}
-        Overlay.modeless: DimVeil {}
-
+    // The window's toast, in this view. It was a Popup of its own with its own
+    // timer and its own five numbers -- and without the one line that keeps a
+    // popup from taking the keyboard, so every window shortcut stopped working
+    // for the six seconds an error was on screen. See ui/Toast.qml and MOLE-398.
+    Toast {
         id: errorPopup
-        x: (view.width - width) / 2
-        y: view.height - height - 40
-        width: Math.min(560, view.width - 60)
-        padding: 12
-        Material.background: App.colour.panel
-
-        Timer {
-            running: errorPopup.opened
-            interval: 6000
-            onTriggered: errorPopup.close()
-        }
-
-        Label {
-            id: errorLabel
-            anchors.fill: parent
-            wrapMode: Text.Wrap
-            color: App.colour.bad
-        }
+        objectName: "errorPopup"
+        dwellMs: 6000
+        textColour: App.colour.bad
     }
 }

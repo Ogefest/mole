@@ -121,6 +121,10 @@ QVariantList ReportsController::folders() const
             { QStringLiteral("latestAt"), latest.createdAt.toString(QStringLiteral("yyyy-MM-dd HH:mm")) },
             { QStringLiteral("sizeText"), locale.formattedDataSize(latest.totalBytes) },
             { QStringLiteral("fileCountText"), locale.toString(latest.fileCount) },
+            // The number as well as the formatted text: a view that wants "3
+            // files" rather than "3" needs the figure to choose the word. See
+            // AppController::countOf() and MOLE-398.
+            { QStringLiteral("fileCount"), qint64(latest.fileCount) },
             { QStringLiteral("spanText"),
                 folder.runs.size() < 2 ? QStringLiteral("one run")
                                        : QStringLiteral("history back to %1")
@@ -166,6 +170,7 @@ QVariantList ReportsController::runs() const
                 { QStringLiteral("whenText"), relativeTime(run.createdAt) },
                 { QStringLiteral("sizeText"), locale.formattedDataSize(run.totalBytes) },
                 { QStringLiteral("fileCountText"), locale.toString(run.fileCount) },
+                { QStringLiteral("fileCount"), qint64(run.fileCount) },
                 { QStringLiteral("changeText"), change },
                 { QStringLiteral("grew"), change.startsWith(QStringLiteral("+")) },
             });

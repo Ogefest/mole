@@ -303,6 +303,16 @@ public:
     /// would produce something that looks local and is not -- "/reports/2026"
     /// pasted into a terminal means a directory that does not exist rather than a
     /// folder in a bucket. The uri says where it is.
+    /// "1 item", "3 items" -- a count with the right word after it.
+    ///
+    /// **Nine places wrote `count + " items"`** with no singular branch, so a
+    /// folder holding one file read "1 items" in the pane's status line, and the
+    /// same in the sets, analysis, reports, live-search, indexes and duplicates
+    /// views. Six other sites in the same files took the trouble, which is the
+    /// shape of a thing that wants one function. Here rather than in QML because
+    /// the same question is asked from C++ too. See MOLE-398.
+    Q_INVOKABLE QString countOf(int count, const QString& singular, const QString& plural) const;
+
     Q_INVOKABLE QString pathTextFor(const QString& uri) const;
 
     /// The other direction: what somebody typed, as a uri.

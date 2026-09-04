@@ -26,7 +26,18 @@ Item {
             asynchronous: true
             // Large photographs are downscaled on load rather than held at
             // full resolution just to be shrunk for display.
-            sourceSize.width: view.actualSize ? 0 : view.width * 2
+            //
+            // **Quantised, because changing sourceSize makes Image reload.** This
+            // was bound to the live pane width, so dragging the sidebar or the
+            // details divider issued a decode per pixel of width -- the picture
+            // flickering through Image.Loading for the length of the drag, on
+            // every intermediate size nobody was looking at. Rounded up to the
+            // next 256 px, so a drag across a pane costs a handful of decodes
+            // instead of hundreds and the result is never smaller than the pane
+            // asks for. See MOLE-398.
+            sourceSize.width: view.actualSize
+                              ? 0
+                              : Math.ceil(Math.max(1, view.width * 2) / 256) * 256
             fillMode: Image.PreserveAspectFit
             width: view.actualSize ? implicitWidth : Math.min(implicitWidth, view.width - 16)
             height: view.actualSize ? implicitHeight : Math.min(implicitHeight, view.height - 40)

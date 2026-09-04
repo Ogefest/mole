@@ -212,7 +212,7 @@ Item {
                                 Layout.preferredWidth: 90
                             }
                             Label {
-                                text: modelData.fileCountText + " files"
+                                text: App.countOf(modelData.fileCount, "file", "files")
                                 color: App.colour.textMuted
                                 font.pixelSize: 11
                                 Layout.preferredWidth: 110
@@ -246,22 +246,11 @@ Item {
         }
     }
 
-    Dialog {
-        // A dialog sits on the panel ground, said here rather than inherited:
-        // the window no longer hands one down. See ADR-0074.
-        Material.background: App.colour.panel
-        // Dimmed rather than washed out: Qt's Material dark theme dims with
-        // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
-        Overlay.modal: DimVeil {}
-        Overlay.modeless: DimVeil {}
-
+    MoleDialog {
         id: forgetDialog
         objectName: "forgetDialog"
         // Without this the popup never becomes a focus scope, so nothing inside it
         // can hold the keyboard and the footer's focus quietly does nothing.
-        focus: true
-        anchors.centerIn: parent
-        modal: true
         title: "Forget these reports?"
 
         // History that cannot be recovered, offered until now on a button

@@ -440,7 +440,7 @@ Item {
                             const count = controller.roots.length
                             const where = count === 1
                                   ? view.readableRoot(controller.roots[0])
-                                  : count + " folders"
+                                  : App.countOf(count, "folder", "folders")
                             return "Scanning will walk " + where + ", matching by " +
                                    view.strategyLabel().toLowerCase() + "."
                         }
@@ -688,27 +688,16 @@ Item {
         }
     }
 
-    Dialog {
-        // A dialog sits on the panel ground, said here rather than inherited:
-        // the window no longer hands one down. See ADR-0074.
-        Material.background: App.colour.panel
-        // Dimmed rather than washed out: Qt's Material dark theme dims with
-        // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
-        Overlay.modal: DimVeil {}
-        Overlay.modeless: DimVeil {}
-
+    MoleDialog {
         id: confirmDelete
         objectName: "confirmDeleteDuplicates"
-        anchors.centerIn: parent
-        modal: true
         title: "Delete these files?"
-        focus: true
         footer: ConfirmButtons {
             acceptText: "Delete"
             rejectText: "Keep"
             destructive: true
         }
-        width: 520
+        preferredWidth: 520
 
         // Snapshotted when the question is asked, so a tick landing behind the
         // dialog cannot change what pressing Ok means.

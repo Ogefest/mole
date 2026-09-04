@@ -14,25 +14,14 @@ import QtQuick.Layouts
 // This reverses half of an earlier decision, which was that the store must never
 // be asked for in a modal; the reason behind that stands and is why the other
 // half was kept. See docs/adr/0031-a-locked-drive-is-connected-when-it-is-opened.md.
-Dialog {
-    // A dialog sits on the panel ground, said here rather than inherited:
-    // the window no longer hands one down. See ADR-0074.
-    Material.background: App.colour.panel
-    // Dimmed rather than washed out: Qt's Material dark theme dims with
-    // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
-    Overlay.modal: DimVeil {}
-    Overlay.modeless: DimVeil {}
-
+MoleDialog {
     id: dialog
     objectName: "unlockDialog"
 
     title: App.credentialsExist ? "Unlock the credential store" : "Choose a passphrase"
-    modal: true
     // Without this the popup never becomes a focus scope, so nothing inside it
     // can hold the keyboard and forceActiveFocus() quietly does nothing.
-    focus: true
-    anchors.centerIn: Overlay.overlay
-    width: Math.min(460, parent ? parent.width - 80 : 460)
+    preferredWidth: 460
 
     // Not `Unlock` and not red: opening a store destroys nothing. The button
     // acts without closing, because a passphrase can be refused and the dialog

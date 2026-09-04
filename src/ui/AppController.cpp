@@ -50,6 +50,7 @@
 #include <QFontDatabase>
 #include <QFutureWatcher>
 #include <QGuiApplication>
+#include <QLocale>
 #include <QRegularExpression>
 #include <QScreen>
 #include <QSortFilterProxyModel>
@@ -2386,6 +2387,14 @@ QString AppController::currentFile() const
     bool isDir = false;
     QMetaObject::invokeMethod(files, "isDirAt", Q_RETURN_ARG(bool, isDir), Q_ARG(int, row));
     return isDir ? QString() : uri;
+}
+
+QString AppController::countOf(int count, const QString& singular, const QString& plural) const
+{
+    // Grouped by the locale, because the sites this replaced included two that
+    // formatted the number and seven that did not -- so the same figure had
+    // separators in one view and none in the next.
+    return QStringLiteral("%1 %2").arg(QLocale().toString(count), count == 1 ? singular : plural);
 }
 
 QString AppController::pathTextFor(const QString& uri) const

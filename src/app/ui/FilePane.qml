@@ -554,10 +554,14 @@ FocusScope {
                         pane.clearFilter()
                         event.accepted = true
                     } else if (event.key === Qt.Key_PageDown) {
-                        if (paneController) paneController.moveCursor(10)
+                        // The pane's own page, measured from the viewport --
+                        // this was a constant 10 while the pane used
+                        // entriesPerPage() and DataGrid used 25, so one gesture
+                        // meant three things. See MOLE-398.
+                        if (paneController) paneController.moveCursor(pane.entriesPerPage())
                         event.accepted = true
                     } else if (event.key === Qt.Key_PageUp) {
-                        if (paneController) paneController.moveCursor(-10)
+                        if (paneController) paneController.moveCursor(-pane.entriesPerPage())
                         event.accepted = true
                     } else if (event.key === Qt.Key_Tab) {
                         // An explicit way out, for when the list is where the
@@ -578,10 +582,11 @@ FocusScope {
             }
 
             ToolButton {
+                objectName: "filterClearButton"
                 text: "×"
                 font.pixelSize: App.textSize
-                implicitWidth: 24
-                implicitHeight: 24
+                implicitWidth: App.minimumTarget
+                implicitHeight: App.minimumTarget
                 onClicked: pane.clearFilter()
             }
         }
@@ -1035,13 +1040,14 @@ FocusScope {
             spacing: 8
 
             Label {
+                objectName: "paneCount"
                 text: {
                     if (!paneController || !paneController.files)
                         return ""
                     var files = paneController.files
                     return files.selectionCount > 0
                         ? files.selectionCount + " of " + files.count + " selected"
-                        : files.count + " items"
+                        : App.countOf(files.count, "item", "items")
                 }
                 color: paneController && paneController.files
                        && paneController.files.selectionCount > 0
@@ -1152,7 +1158,7 @@ FocusScope {
                     var count = dropTarget.plan.count || 0
                     var size = dropTarget.plan.sizeText || ""
                     var where = dropTarget.plan.targetPath || ""
-                    var what = (count === 1 ? "1 item" : count + " items")
+                    var what = App.countOf(count, "item", "items")
                     return "Copy " + what + (size.length > 0 ? " · " + size : "") + " → " + where
                 }
             }
@@ -1161,85 +1167,39 @@ FocusScope {
 
     // --- dialogs -------------------------------------------------------
 
-    Dialog {
-        // A dialog sits on the panel ground, said here rather than inherited:
-        // the window no longer hands one down. See ADR-0074.
-        Material.background: App.colour.panel
-        // Dimmed rather than washed out: Qt's Material dark theme dims with
-        // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
-        Overlay.modal: DimVeil {}
-        Overlay.modeless: DimVeil {}
-
+    // The same dialog twice with two words changed, which is how one of them kept
+    // `selectByMouse` and the other did not. See ui/SingleFieldDialog.qml.
+    SingleFieldDialog {
         id: mkdirDialog
+        objectName: "mkdirDialog"
         title: "New folder"
-        modal: true
-        anchors.centerIn: Overlay.overlay
-        width: 400
-        footer: ConfirmButtons { acceptText: "Create" }
+        acceptText: "Create"
+        placeholder: "Folder name"
 
-        onOpened: { mkdirField.text = ""; mkdirField.forceActiveFocus() }
-        onAccepted: { paneController.createDirectory(mkdirField.text); pane.takeFocus() }
+        onOpened: text = ""
+        onAccepted: { paneController.createDirectory(text); pane.takeFocus() }
         onRejected: pane.takeFocus()
-
-        TextField {
-            id: mkdirField
-            anchors.fill: parent
-            placeholderText: "Folder name"
-            selectByMouse: true
-            onAccepted: mkdirDialog.accept()
-        }
     }
 
-    Dialog {
-        // A dialog sits on the panel ground, said here rather than inherited:
-        // the window no longer hands one down. See ADR-0074.
-        Material.background: App.colour.panel
-        // Dimmed rather than washed out: Qt's Material dark theme dims with
-        // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
-        Overlay.modal: DimVeil {}
-        Overlay.modeless: DimVeil {}
-
+    SingleFieldDialog {
         id: renameDialog
+        objectName: "renameDialog"
         title: "Rename"
-        modal: true
-        anchors.centerIn: Overlay.overlay
-        width: 400
-        footer: ConfirmButtons { acceptText: "Rename" }
+        acceptText: "Rename"
+        selectOnOpen: true
 
-        onOpened: {
-            renameField.text = paneController ? paneController.currentName : ""
-            renameField.forceActiveFocus()
-            renameField.selectAll()
-        }
-        onAccepted: { paneController.renameCurrent(renameField.text); pane.takeFocus() }
+        onOpened: text = paneController ? paneController.currentName : ""
+        onAccepted: { paneController.renameCurrent(text); pane.takeFocus() }
         onRejected: pane.takeFocus()
-
-        TextField {
-            id: renameField
-            anchors.fill: parent
-            selectByMouse: true
-            onAccepted: renameDialog.accept()
-        }
     }
 
-    Dialog {
-        // A dialog sits on the panel ground, said here rather than inherited:
-        // the window no longer hands one down. See ADR-0074.
-        Material.background: App.colour.panel
-        // Dimmed rather than washed out: Qt's Material dark theme dims with
-        // near-white at sixty percent. See ui/DimVeil.qml and MOLE-128.
-        Overlay.modal: DimVeil {}
-        Overlay.modeless: DimVeil {}
-
+    MoleDialog {
         id: deleteDialog
         objectName: "deleteDialog"
         title: "Delete"
-        modal: true
         // Without this the popup never becomes a focus scope, so nothing inside it
         // can hold the keyboard and forceActiveFocus() quietly does nothing.
-        focus: true
-        anchors.centerIn: Overlay.overlay
-        width: 440
+        preferredWidth: 440
         footer: ConfirmButtons {
             acceptText: "Delete"
             rejectText: "Keep"

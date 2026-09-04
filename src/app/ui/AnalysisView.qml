@@ -350,8 +350,10 @@ Item {
                                     if (!target || !target.hasDiff)
                                         return ""
                                     var d = target.diffHeadline
-                                    return (d.filesDelta >= 0 ? "+" : "") + d.filesDelta + " files, "
-                                         + (d.foldersDelta >= 0 ? "+" : "") + d.foldersDelta + " folders"
+                                    return (d.filesDelta >= 0 ? "+" : "")
+                                         + App.countOf(d.filesDelta, "file", "files") + ", "
+                                         + (d.foldersDelta >= 0 ? "+" : "")
+                                         + App.countOf(d.foldersDelta, "folder", "folders")
                                 }
                                 color: App.colour.textMuted
                                 font.pixelSize: 12
@@ -569,8 +571,9 @@ Item {
                                     font.pixelSize: 12
                                 }
                                 ToolButton {
+                                    objectName: "analysisOpenFolderButton"
                                     text: "→"
-                                    implicitWidth: 24
+                                    implicitWidth: App.minimumTarget
                                     implicitHeight: App.minimumTarget
                                     focusPolicy: Qt.NoFocus
                                     ToolTip.visible: hovered

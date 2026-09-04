@@ -103,7 +103,13 @@ Item {
             if (!view.finding && event.text.length > 0
                     && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))) {
                 var ch = event.text
-                if (ch >= " " && ch !== "\u007f") {
+                // Not a plain space: in a preview tab Space steps to the next
+                // file, and this claimed it first whenever a text viewer was
+                // loaded -- so one key did two things depending on what was on
+                // screen, and opened the find bar holding a space. A leading
+                // space is not a search term anybody typed on purpose. See
+                // PreviewView.qml and MOLE-398.
+                if (ch >= " " && ch !== " " && ch !== "\u007f") {
                     // `/` opens it empty; anything else opens it holding what was
                     // typed, so the first keystroke is not lost.
                     view.beginFind(ch === "/" ? "" : ch)

@@ -308,6 +308,9 @@ QVariantList IndexesController::volumes() const
                                           : QString() },
             { QStringLiteral("entryCount"), QVariant::fromValue(volume.fileCount) },
             { QStringLiteral("entryCountText"), locale.toString(volume.fileCount) },
+            // The figure too, for a view that has to pick between "entry" and
+            // "entries". See AppController::countOf() and MOLE-398.
+            { QStringLiteral("entryCount"), qint64(volume.fileCount) },
             { QStringLiteral("kindText"), kindInWords(volume.scan) },
             { QStringLiteral("kindKnown"), volume.scan.has_value() },
             { QStringLiteral("hasMetadata"), volume.scan && volume.scan->metadata },
