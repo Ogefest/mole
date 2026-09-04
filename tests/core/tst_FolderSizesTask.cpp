@@ -180,15 +180,22 @@ void TestFolderSizesTask::reportsWhatItCanReadOfAnUnreadableTree()
     QVERIFY(m_tree->makeDirs(QStringLiteral("mixed/shut")));
     QVERIFY(m_tree->writeFile(QStringLiteral("mixed/shut/f.bin"), QByteArray(9000, 'f')));
 
+    // Through the helper, which *proves* the account cannot list it: this called
+    // QFile::setPermissions directly, which succeeds as root and on any
+    // filesystem that ignores mode bits -- so the skip never fired and the
+    // directory stayed readable. See test::madeUnlistable() and MOLE-399.
     const QString shut = m_tree->path() + QStringLiteral("/mixed/shut");
-    if (!QFile::setPermissions(shut, QFileDevice::ReadOwner))
-        QSKIP("cannot make a directory unreadable here");
+    if (!madeUnlistable(shut))
+        QSKIP("this account can list a directory with no execute bit, so there is nothing to refuse");
 
     const QList<Sized> seen = measure({ QStringLiteral("mixed") });
     QFile::setPermissions(shut, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
 
     QCOMPARE(seen.size(), 1);
-    QVERIFY2(seen.first().bytes >= 500, "what could be read is still reported");
+    // Exactly what was readable, not "at least": `>= 500` is satisfied whether
+    // the walker skipped the folder (500) or read it (9500), so it could not tell
+    // the two outcomes apart -- which is the whole question.
+    QCOMPARE(seen.first().bytes, qint64(500));
 }
 
 MOLE_TEST_MAIN(TestFolderSizesTask)

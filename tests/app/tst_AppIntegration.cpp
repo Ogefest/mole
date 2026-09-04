@@ -2404,9 +2404,41 @@ void TestAppIntegration::shutsDownCleanlyWithWorkInFlight()
 {
     // Tearing the application down while a scan is still writing to the index
     // is exactly what closing the window does.
-    m_app->queueScan(VfsUri::fromLocalPath(QDir::rootPath()).toString(), QStringLiteral("root"));
+    //
+    // **It used to scan the machine's real root.** `queueScan(QDir::rootPath())`
+    // depends on the machine -- a hung mount under `/` stalls the reset until the
+    // CTest timeout -- and on the account, and then asserted `QVERIFY(true)`, so
+    // whatever happened it passed. The PrivateProfile machinery exists precisely
+    // so a test never touches the real filesystem. An in-memory drive that lists
+    // slowly is a scan that is certainly still running when the reset begins, and
+    // it is this suite's own. See MOLE-399.
+    auto slow = std::make_shared<MemoryFileSystem>();
+    for (int i = 0; i < 40; ++i)
+        slow->addFile(QStringLiteral("/deep/file%1.bin").arg(i), QByteArray(64, 'x'));
+    slow->setListDelayMs(50);
+
+    Mount mount;
+    mount.displayName = QStringLiteral("a slow drive");
+    mount.root = VfsUri::fromString(QStringLiteral("mem://slowshutdown/"));
+    mount.fileSystem = slow;
+    QVERIFY(!m_app->services().vfs->addMount(mount).isEmpty());
+
+    TaskManager* tasks = m_app->services().tasks;
+    QVERIFY(tasks);
+    m_app->queueScan(mount.root.toString(), QStringLiteral("a slow drive"));
+    QVERIFY2(waitFor([tasks] { return tasks->activeCount() > 0; }, 5000),
+        "the scan never started, so there is no work in flight to shut down over");
+
+    // The teardown itself is the assertion: TaskManager's destructor cancels and
+    // joins the pool, so this returns only when the scan has stopped -- and the
+    // index is closed on the way. A hang here is a hang in the real thing.
     m_app.reset();
-    QVERIFY(true);
+
+    // And the suite can build another one afterwards, which is what says the
+    // first went away cleanly rather than leaving the index locked.
+    m_app = std::make_unique<AppController>();
+    QString error;
+    QVERIFY2(m_app->initialise(builtIns(), &error), qPrintable(error));
 }
 
 BrowserController* TestAppIntegration::readyToTransfer(const QString& destination)

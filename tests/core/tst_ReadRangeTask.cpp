@@ -1,3 +1,4 @@
+#include "support/FaultyFileSystem.h"
 #include "support/MoleTestMain.h"
 #include "support/TestSupport.h"
 
@@ -159,17 +160,27 @@ void TestReadRangeTask::neverReadsMoreThanAskedFor()
 
 void TestReadRangeTask::refusesToSeekOnAStreamOnlyDrive()
 {
+    // **This case had never executed.** It built a MemoryFileSystem and then
+    // skipped when that drive could seek -- which it always can, so the guard was
+    // always true and the seven lines after it had never run once. The claim they
+    // hold is the one ADR-0027 and the span loop exist for: a ranged read on a
+    // drive that cannot seek is refused rather than answered from offset 0.
+    //
+    // A drive that really cannot: FaultyFileSystem::cannotSeek() drops the
+    // capability, which is what a backend streaming over a socket is, and is the
+    // flag ReadRangeTask actually asks about. See MOLE-399.
     auto memory = std::make_shared<MemoryFileSystem>();
-    QVERIFY(memory->capabilities().testFlag(VfsCapability::Read));
-
     const VfsUri root = VfsUri::fromString(QStringLiteral("mem://test/"));
     const VfsUri file = root.child(QStringLiteral("a.txt"));
     memory->addFile(QStringLiteral("/a.txt"), QByteArray("hello there"));
 
-    if (memory->capabilities().testFlag(VfsCapability::RandomAccessRead))
-        QSKIP("this backend can seek, so there is nothing to refuse");
+    auto streamOnly = std::make_shared<FaultyFileSystem>(memory);
+    streamOnly->cannotSeek();
+    QVERIFY(streamOnly->capabilities().testFlag(VfsCapability::Read));
+    QVERIFY2(!streamOnly->capabilities().testFlag(VfsCapability::RandomAccessRead),
+        "the fixture still advertises seeking, so there is nothing to refuse");
 
-    auto* task = new ReadRangeTask(memory, file, 4, 10);
+    auto* task = new ReadRangeTask(streamOnly, file, 4, 10);
     m_tasks->submit(task);
     QVERIFY(waitFor([task] { return task->isFinished(); }, 10000));
 
@@ -177,6 +188,13 @@ void TestReadRangeTask::refusesToSeekOnAStreamOnlyDrive()
     // simulate a seek the drive cannot do.
     QCOMPARE(task->state(), Task::State::Failed);
     QCOMPARE(task->error().code, VfsError::NotSupported);
+
+    // And a read from the beginning still works on the same drive, so what is
+    // being refused is the seek rather than the drive.
+    auto* fromTheStart = new ReadRangeTask(streamOnly, file, 0, 5);
+    m_tasks->submit(fromTheStart);
+    QVERIFY(waitFor([fromTheStart] { return fromTheStart->isFinished(); }, 10000));
+    QCOMPARE(fromTheStart->state(), Task::State::Succeeded);
 }
 
 void TestReadRangeTask::failsOnAFileThatIsNotThere()

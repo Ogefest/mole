@@ -140,11 +140,22 @@ void TestEventBus::customTopicsPassThroughUntouched()
 
 void TestEventBus::noSubscribersIsHarmless()
 {
+    // Harmless means *silent* as well as not fatal: a bus that logged a warning
+    // for every event nobody wanted would fill the session log with the ordinary
+    // case. `QVERIFY(true)` said only that the three calls returned, which they
+    // would have done while complaining. See MOLE-399.
+    CapturedWarnings said(QtWarningMsg);
+
     EventBus bus;
     bus.postMountsChanged();
     bus.postDirectoryChanged(VfsUri::fromString(QStringLiteral("file:///tmp")));
     bus.postNotification(EventBus::Severity::Info, QStringLiteral("hello"));
-    QVERIFY(true);
+
+    // Delivered on the event loop, so the posts have to be allowed to land before
+    // asking what was said about them.
+    QCoreApplication::processEvents();
+
+    QVERIFY2(said.messages().isEmpty(), qPrintable(said.joined()));
 }
 
 MOLE_TEST_MAIN(TestEventBus)

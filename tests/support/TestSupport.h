@@ -183,6 +183,25 @@ bool setModifiedTime(const QString& absolutePath, const QDateTime& when);
 /// be deleted.
 bool madeUnreadable(const QString& absolutePath);
 
+/// The same for a *directory*, and it needs its own probe.
+///
+/// `madeUnreadable()` proves the account cannot read the thing by opening it with
+/// `QFile::open`, which cannot open a directory at all -- so a caller that used it
+/// on a folder would be told "made unreadable" whatever happened. A directory is
+/// probed by trying to list it.
+///
+/// This is the fifth site of the fault TODO.md's fourth rule is about, and it was
+/// not among the four the note names precisely *because* the helper could not be
+/// used here: `tst_FolderSizesTask` called `QFile::setPermissions` directly, which
+/// succeeds as root and on any filesystem that ignores mode bits -- so the skip
+/// never fired, the directory stayed readable, and the case asserted `bytes >=
+/// 500`, which is true whether the walker skipped the folder (500) or read it
+/// (9500). See MOLE-399.
+///
+/// False means "this account can still list it", and the caller should skip: the
+/// permissions are put back before it returns.
+bool madeUnlistable(const QString& absoluteDirectory);
+
 /// A temporary directory that cleans itself up, plus helpers to populate it.
 class TempTree
 {

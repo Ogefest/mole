@@ -1,5 +1,6 @@
 #include "plugins/network/TransferStreams.h"
 #include "support/MoleTestMain.h"
+#include "support/TestSupport.h"
 
 #include "core/vfs/backends/MemoryFileSystem.h"
 
@@ -607,12 +608,31 @@ void TestStreamingDownload::abandoningTheStreamDoesNotHang()
     const QByteArray payload = payloadOf(40 * 1024 * 1024);
     FakeServer server(payload);
 
-    net::StreamingDownload stream(server.fetch(), payload.size(), 64 * 1024 * 1024);
-    QVERIFY(stream.open(QIODevice::ReadOnly));
-    QCOMPARE(stream.read(4096).size(), 4096);
-    stream.close();
+    auto stream = std::make_unique<net::StreamingDownload>(server.fetch(), payload.size(), 64 * 1024 * 1024);
+    QVERIFY(stream->open(QIODevice::ReadOnly));
+    QCOMPARE(stream->read(4096).size(), 4096);
 
-    QVERIFY(true); // reaching here at all is the assertion
+    // **The close happens on a thread of its own, and that is the assertion.**
+    // This was `stream.close(); QVERIFY(true); // reaching here at all is the
+    // assertion` -- and the failure mode is a *hang*, so the only thing that
+    // reported it was the suite's 180-second timeout, which kills the whole
+    // binary and names no case. A closer that never returns is now a five-second
+    // wait and a sentence. See MOLE-399.
+    std::atomic_bool closed { false };
+    std::thread closer([&stream, &closed] {
+        stream->close();
+        stream.reset();
+        closed.store(true);
+    });
+    const bool released = mole::test::waitFor([&closed] { return closed.load(); }, 5000);
+    if (released)
+        closer.join();
+    else
+        closer.detach(); // leaked deliberately: joining a stuck thread hangs the suite
+
+    QVERIFY2(released,
+        "closing a blocked stream did not release the fetch thread -- every cancelled copy "
+        "leaks one");
 }
 
 void TestStreamingDownload::aFileLongerThanOneConnectionCanCarryStillArrivesWhole()

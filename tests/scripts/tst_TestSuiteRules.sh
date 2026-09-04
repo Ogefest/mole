@@ -264,6 +264,100 @@ if [ -s "$SHELLTEST_TMP/unpaired" ]; then
     sed 's/^/    /' "$SHELLTEST_TMP/unpaired"
 fi
 
+begin "no test slot leaves without saying so, and none asserts nothing"
+# **Two shapes that make a case green without holding its claim**, and five of
+# them were in the suite.
+#
+# A bare `return` where a fixture is missing: the four neighbouring cases in the
+# same file QSKIP on the same condition, and the one that returned reported green
+# with the property it exists to prove -- its own comment says it "has to be
+# proved rather than assumed" -- unheld. A skip says so in the output and in the
+# run's summary; a return says nothing anywhere.
+#
+# And a lone `QVERIFY(true)`, which is the assertion "this line was reached". For
+# a case whose failure mode is a *hang* that is almost nothing: the only thing
+# that reported it was the suite's 180-second timeout, which kills the whole
+# binary and names no case.
+#
+# A `return` inside a branch that has already asserted is not this, and neither is
+# a `QVERIFY(true)` with a sentence beside it -- `QVERIFY2(true, "why")` is how a
+# compile-only claim is written down. What is refused is a slot whose *only*
+# assertion is that it got to the end. See MOLE-399.
+: > "$SHELLTEST_TMP/silent"
+find "$MOLE_SOURCE_DIR/tests" -name 'tst_*.cpp' | sort | while IFS= read -r file; do
+    python3 - "$file" >> "$SHELLTEST_TMP/silent" <<'PY'
+import re
+import sys
+
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+name = path.split("/")[-1]
+
+# Each slot's body: from `void TestX::slot()` to the closing brace in column 0.
+for match in re.finditer(r"(?m)^void\s+\w+::(\w+)\(\)\s*\n\{\n(.*?)^\}", text, re.S):
+    slot, body = match.group(1), match.group(2)
+    lines = body.split("\n")
+
+    # A `_data` function fills a table; QTest::newRow is what it says.
+    if slot.endswith("_data"):
+        continue
+    # A slot that also runs as the victim process: the child branch writes until
+    # it is killed and asserts nothing on purpose, and the parent branch below it
+    # is the test. See tests/support/Victim.h.
+    if "isThisProcess()" in body:
+        continue
+
+    asserts = sum(1 for line in lines if re.search(r"\bQ(VERIFY2?|COMPARE|TRY_COMPARE|FAIL)\b", line))
+    only_true = [i for i, line in enumerate(lines) if re.match(r"\s*QVERIFY\(true\);", line)]
+    if only_true and asserts == len(only_true):
+        print(f"{name}: {slot} asserts only QVERIFY(true)")
+
+    # A bare `return;` with nothing asserted before it in the same slot is a
+    # silent exit. Counted rather than positioned: a return inside a branch that
+    # has already made an assertion is a different thing.
+    for i, line in enumerate(lines):
+        if not re.match(r"\s*return;\s*$", line):
+            continue
+        before = "\n".join(lines[:i])
+        if re.search(r"\bQ(VERIFY2?|COMPARE|TRY_COMPARE|SKIP|FAIL)\b", before):
+            continue
+        print(f"{name}: {slot} returns at line {i + 1} of its body without asserting or skipping")
+
+    # And the shape that survives assertions made earlier in the slot: a
+    # *fixture* guard -- "is this available?" -- answered with a return. That is
+    # the one MOLE-399 was reported for: the video half of a case returned when
+    # there was no encoder, after the PDF half had asserted, so the case reported
+    # green with the video property unheld while four neighbours QSKIPped on the
+    # same condition. A skip appears in the output and in the summary; a return
+    # appears nowhere.
+    guard = re.compile(r"\bif\s*\(.*\b(isAvailable|Available|isSupported)\b")
+    for i, line in enumerate(lines):
+        if not re.match(r"\s*return;\s*$", line):
+            continue
+
+        # The return's own branch, back to whatever opened it. A branch that
+        # *states* the without-it case -- "and then the information viewer picks
+        # the file up instead" -- is better than a skip, and is not this.
+        branch = []
+        for back in range(i - 1, max(-1, i - 12), -1):
+            branch.append(lines[back])
+            # The branch starts at whatever opened it: a brace, or the `if` itself
+            # when it has none. Walking past a braceless `if` reads the whole slot
+            # as the branch, and then any assertion anywhere excuses the return.
+            if lines[back].rstrip().endswith("{") or re.match(r"\s*(if|else)\b", lines[back]):
+                break
+        branch_text = "\n".join(branch)
+        if re.search(r"\bQ(VERIFY2?|COMPARE|TRY_COMPARE|SKIP|FAIL)\b", branch_text):
+            continue
+        if guard.search(branch_text):
+            print(f"{name}: {slot} answers a fixture guard with a return rather than a QSKIP")
+PY
+done
+if [ -s "$SHELLTEST_TMP/silent" ]; then
+    fail "a test slot passes without holding its claim"
+    sed 's/^/    /' "$SHELLTEST_TMP/silent"
+fi
+
 begin "a shell test answers the same whether make or ctest started it"
 # `make test` exports MAKEFLAGS and MAKELEVEL to everything below it, so a `make`
 # run by a test was a recursive one: it prints "Entering directory" and "Leaving

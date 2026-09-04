@@ -172,6 +172,28 @@ bool madeUnreadable(const QString& absolutePath)
     return false;
 }
 
+bool madeUnlistable(const QString& absoluteDirectory)
+{
+    // Nothing at all, the way madeUnreadable() does it. Read-without-execute is
+    // not enough: on Unix that still allows `readdir`, so the names come back and
+    // only entering the directory fails -- which is a different fault from the one
+    // being arranged here, and it is what made the first version of this helper
+    // skip on an ordinary account.
+    if (!QFile::setPermissions(absoluteDirectory, {}))
+        return false;
+
+    // Probed by listing rather than by opening: a QFile cannot open a directory,
+    // which is why madeUnreadable() cannot answer this question.
+    QDir probe(absoluteDirectory);
+    const QStringList inside = probe.entryList(QDir::Files | QDir::NoDotAndDotDot);
+    if (inside.isEmpty())
+        return true;
+
+    QFile::setPermissions(
+        absoluteDirectory, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    return false;
+}
+
 TempTree::TempTree() = default;
 
 bool TempTree::setModified(const QString& relativePath, const QDateTime& when)

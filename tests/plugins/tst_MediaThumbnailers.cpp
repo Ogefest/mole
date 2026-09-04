@@ -45,10 +45,11 @@ private slots:
     void aVideoThatCannotBeDecodedInTimeYieldsNothing();
     void aVideoOnADriveThatIsNotLocalIsNotClaimed();
     void aVideoIsClaimedOnlyByABuildThatCanDecodeOne();
-    void bothAreAbsentFromABuildWithoutTheirDependency();
+    void theGuardsCompileInABuildWithEitherDependencyOrNeither();
     void anEmptyCodecListIsNotTheSameAsNoMultimedia();
     void theDiagnosticsSayWhichOfTheTwoHappened();
     void neitherRunsOnTheGuiThreadAndBothStopWhenTold();
+    void theVideoThumbnailerDoesNotRunOnTheGuiThread();
 
 private:
     /// A one-page PDF written by hand: a page of a known shape, and no library
@@ -440,15 +441,31 @@ void TestMediaThumbnailers::aVideoIsClaimedOnlyByABuildThatCanDecodeOne()
 #endif
 }
 
-void TestMediaThumbnailers::bothAreAbsentFromABuildWithoutTheirDependency()
+void TestMediaThumbnailers::theGuardsCompileInABuildWithEitherDependencyOrNeither()
 {
+    // **A compile-only case, and its name says so now.** Nothing here can fail at
+    // run time: what is being held is that this suite compiles under all four
+    // combinations of the two `#ifdef`s, which is a claim about the build and not
+    // about behaviour. It was called
+    // `bothAreAbsentFromABuildWithoutTheirDependency` and ended in
+    // `QVERIFY(true)`, which reads like an assertion about a build that is not
+    // this one. See MOLE-399.
 #if defined(MOLE_HAVE_QTPDF) || defined(MOLE_HAVE_MULTIMEDIA)
-    // This build has at least one of them, so what is held here is the compile
-    // itself: the guards above are what a build without either exercises, and this
-    // suite is compiled in both.
-    QVERIFY(true);
+    // At least one of them is here, so the *absent* branches are the ones the
+    // compiler checked rather than the ones this ran.
+    // Claimed by whichever is here: a PdfThumbnailer claims a .pdf and a
+    // VideoThumbnailer an .mp4, and in a build with neither there is no suite.
+    PdfThumbnailer pdf;
+    VideoThumbnailer video;
+    QVERIFY(pdf.canThumbnail(localEntry(QStringLiteral("a.pdf")))
+        || video.canThumbnail(localEntry(QStringLiteral("a.mp4"))));
 #else
-    QVERIFY2(true, "nothing to thumbnail with, and nothing broken by that");
+    // Neither: both thumbnailers still exist, still refuse every file, and the
+    // suite still links -- which is the whole of the claim.
+    PdfThumbnailer pdf;
+    VideoThumbnailer video;
+    QVERIFY(!pdf.canThumbnail(localEntry(QStringLiteral("a.pdf"))));
+    QVERIFY(!video.canThumbnail(localEntry(QStringLiteral("a.mp4"))));
 #endif
 }
 
@@ -520,14 +537,20 @@ void TestMediaThumbnailers::neitherRunsOnTheGuiThreadAndBothStopWhenTold()
     QVERIFY2(task->ranOn() != QThread::currentThread(),
         "rendering a page on the GUI thread is a window that has stopped answering");
 #endif
+}
 
+void TestMediaThumbnailers::theVideoThumbnailerDoesNotRunOnTheGuiThread()
+{
 #ifdef MOLE_HAVE_MULTIMEDIA
-    // The same for the video, and this is the one that has to be proved rather
-    // than assumed: it runs an event loop of its own, and a pool thread has none
-    // until that loop starts. If this ever stops working, a folder of videos goes
-    // back to icons in silence.
+    // **The half that used to end in a bare `return`.** It was inside the case
+    // above, after the PDF half had asserted, so on a build with Qt Multimedia
+    // and no decoder the video property -- which its own comment calls the one
+    // that "has to be proved rather than assumed" -- was reported green while
+    // nothing had been proved. The four neighbouring cases QSKIP on the same
+    // condition; a case of its own is what lets this one do the same without
+    // dropping the PDF half's assertions. See MOLE-399.
     if (!VideoThumbnailer::isAvailable() || !fixtures::videoEncoderAvailable())
-        return;
+        QSKIP("no video encoder here, so there is no clip to make a frame from");
 
     const QString clip = QDir(m_dir->path()).filePath(QStringLiteral("clip.mp4"));
     QVERIFY(fixtures::writeVideoWithBlackOpening(clip));
@@ -556,6 +579,8 @@ void TestMediaThumbnailers::neitherRunsOnTheGuiThreadAndBothStopWhenTold()
     QCOMPARE(videoTask->answeredBy(), QStringLiteral("mole.thumb.video"));
     QVERIFY2(!videoTask->image().isNull(), "a frame has to come back from a pool thread too");
     QVERIFY(videoTask->ranOn() != QThread::currentThread());
+#else
+    QSKIP("built without Qt Multimedia");
 #endif
 }
 
