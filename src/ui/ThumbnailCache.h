@@ -112,6 +112,15 @@ private:
     QHash<QString, DiskEntry> m_disk;
     qint64 m_diskBytes = 0;
     bool m_measured = false;
+    /// When the directory was last read, and the mtime it had then. Together
+    /// they answer "has another window written here since?" without a full
+    /// re-read per store. See measureDirectory() and MOLE-385.
+    qint64 m_measuredAt = 0;
+    qint64 m_measuredMtime = 0;
+    /// The shortest gap between two reconciliations. The cap is honoured within
+    /// this rather than instantly, which is the trade for not reading the whole
+    /// directory on every tile.
+    static constexpr qint64 kReconcileSeconds = 10;
 };
 
 } // namespace mole

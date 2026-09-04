@@ -37,6 +37,7 @@ private slots:
     void cancellationIsHonouredBeforeTheDecode();
 
     void aRemoteJpegWithAThumbnailInsideItCostsOneBoundedRead();
+    void aPortraitPhotographOnARemoteDriveAlsoComesBackPortrait();
     void aRemoteFileOverTheCeilingGetsNothingAndIsNotFetched();
     void aLocalFileIsDecodedInFullAndLooksIt();
     void anExifOffsetPointingOutsideThePrefixCostsThatThumbnailOnly();
@@ -297,6 +298,51 @@ void TestImageThumbnailer::aRemoteJpegWithAThumbnailInsideItCostsOneBoundedRead(
                        .arg(counted->bytesRead())
                        .arg(photograph.size())));
     QCOMPARE(counted->openReadCount(), 1);
+}
+
+/// The same photograph answered two ways depending on the drive.
+///
+/// The embedded path returns IFD1's JPEG as it stands, and the orientation is
+/// IFD0 tag 0x0112 -- not in the thumbnail's own stream, so the autotransform on
+/// the decoded path cannot see it either. So a portrait phone picture came back
+/// sideways from a remote drive and upright from a local one, which is the worst
+/// shape for a fault: it looks like the drive's doing. See MOLE-385.
+void TestImageThumbnailer::aPortraitPhotographOnARemoteDriveAlsoComesBackPortrait()
+{
+    // A camera JPEG whose embedded thumbnail is landscape and whose IFD0 says to
+    // turn it a quarter turn -- which is what a phone held upright writes.
+    QImage small(QSize(160, 120), QImage::Format_RGB32);
+    small.fill(Qt::magenta);
+    QByteArray inner;
+    {
+        QBuffer buffer(&inner);
+        buffer.open(QIODevice::WriteOnly);
+        QImageWriter writer(&buffer, "jpeg");
+        writer.write(small);
+    }
+
+    ExifBuilder exif(false);
+    exif.addShort(0x0112, 6); // rotated 90 degrees clockwise
+    exif.addThumbnail(inner);
+    const QByteArray photograph = jpegOf(texturedImage(QSize(2400, 1600)), exif.build());
+    m_fs->addFile(QStringLiteral("/portrait.jpg"), photograph);
+
+    FaultyFileSystem* counted = countingDrive();
+    const QImage tile = m_thumbnailer.thumbnail(
+        entryFor(QStringLiteral("portrait.jpg"), photograph.size()), 200, m_services, CancelToken {});
+
+    QVERIFY2(!tile.isNull(), "the picture inside the file is a tile");
+    QVERIFY2(tile.height() > tile.width(),
+        qPrintable(QStringLiteral("came back %1x%2, so the orientation was ignored")
+                       .arg(tile.width())
+                       .arg(tile.height())));
+
+    // And it is still the cheap path: turning the tile upright must not cost the
+    // whole file.
+    QVERIFY2(counted->bytesRead() <= thumbnails::kPrefixBytes,
+        qPrintable(QStringLiteral("read %1 bytes of a %2-byte file")
+                       .arg(counted->bytesRead())
+                       .arg(photograph.size())));
 }
 
 void TestImageThumbnailer::aRemoteFileOverTheCeilingGetsNothingAndIsNotFetched()

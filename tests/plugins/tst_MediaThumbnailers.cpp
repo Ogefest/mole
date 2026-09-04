@@ -11,6 +11,7 @@
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/VfsManager.h"
 #include "core/vfs/backends/LocalFileSystem.h"
+#include "core/vfs/backends/MemoryFileSystem.h"
 
 #include <QDir>
 #include <QElapsedTimer>
@@ -18,6 +19,8 @@
 #include <QGuiApplication>
 #include <QTemporaryDir>
 #include <QTest>
+
+#include <cstring>
 
 using namespace mole;
 using namespace mole::test;
@@ -36,6 +39,7 @@ private slots:
     void aPdfShowsItsFirstPage();
     void aDamagedPdfIsAnOrdinaryAnswer();
     void aPdfOnARemoteDriveOverTheCeilingIsLeftAlone();
+    void aPdfOnARemoteDriveUnderTheCeilingProducesATile();
     void aVideoShowsAFrameThatIsNotTheFirst();
     void aLongVideoIsSeekedRatherThanPlayedTo();
     void aVideoThatCannotBeDecodedInTimeYieldsNothing();
@@ -183,6 +187,107 @@ void TestMediaThumbnailers::aPdfOnARemoteDriveOverTheCeilingIsLeftAlone()
     QVERIFY(thumbnailer.canThumbnail(entry));
     QVERIFY2(thumbnailer.thumbnail(entry, 160, m_services, CancelToken {}).isNull(),
         "a 300 MB scanned book on a bucket is not worth a tile");
+#endif
+}
+
+/// The ceiling paid for the download and the tile came back empty.
+///
+/// QPdfDocument::load(QIODevice*) answers through the status rather than a
+/// return value, and the comment here used to say a device is read
+/// synchronously -- true of a file and false of a stream. For a *sequential*
+/// device Qt connects to readyRead and finishes on an event loop, and a pool
+/// thread runs none: the status stayed Loading and the tile was null. So a
+/// remote PDF under the 32 MB ceiling was fetched and yielded nothing, which is
+/// the worst of both -- the cost of the guard without its benefit.
+/// See MOLE-385.
+void TestMediaThumbnailers::aPdfOnARemoteDriveUnderTheCeilingProducesATile()
+{
+#ifndef MOLE_HAVE_QTPDF
+    QSKIP("this build has no Qt Pdf");
+#else
+    /// A stream, which is what a network read is: no seeking, no length, and
+    /// bytes only as they arrive.
+    class SequentialBytes final : public QIODevice
+    {
+    public:
+        explicit SequentialBytes(QByteArray contents)
+            : m_contents(std::move(contents))
+        {
+        }
+        bool isSequential() const override { return true; }
+
+    protected:
+        qint64 readData(char* data, qint64 maxSize) override
+        {
+            const qint64 give = qMin<qint64>(maxSize, m_contents.size() - m_at);
+            if (give <= 0)
+                return 0;
+            std::memcpy(data, m_contents.constData() + m_at, size_t(give));
+            m_at += give;
+            return give;
+        }
+        qint64 writeData(const char*, qint64) override { return -1; }
+
+    private:
+        QByteArray m_contents;
+        qint64 m_at = 0;
+    };
+
+    /// A drive whose reads are streams. Everything else is the memory drive.
+    class StreamingDrive final : public IFileSystem
+    {
+    public:
+        explicit StreamingDrive(std::shared_ptr<MemoryFileSystem> inner)
+            : m_inner(std::move(inner))
+        {
+        }
+
+        QString scheme() const override { return m_inner->scheme(); }
+        VfsCapabilities capabilities() const override { return m_inner->capabilities(); }
+        Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) override
+        {
+            return m_inner->list(dir, cancel);
+        }
+        Result<FileEntry> stat(const VfsUri& target) override { return m_inner->stat(target); }
+        Result<std::unique_ptr<QIODevice>> openRead(
+            const VfsUri& target, qint64 expectedSize, const CancelToken& cancel) override
+        {
+            Result<std::unique_ptr<QIODevice>> inner = m_inner->openRead(target, expectedSize, cancel);
+            if (!inner.ok())
+                return inner;
+            auto stream = std::make_unique<SequentialBytes>(inner.value()->readAll());
+            if (!stream->open(QIODevice::ReadOnly))
+                return Result<std::unique_ptr<QIODevice>>::failure(
+                    VfsError::IoError, QStringLiteral("could not open the stream"));
+            return Result<std::unique_ptr<QIODevice>>(std::unique_ptr<QIODevice>(stream.release()));
+        }
+
+    private:
+        std::shared_ptr<MemoryFileSystem> m_inner;
+    };
+
+    auto memory = std::make_shared<MemoryFileSystem>();
+    const QByteArray pdf = onePagePdf(400, 600);
+    memory->addFile(QStringLiteral("/books/report.pdf"), pdf);
+
+    Mount mount;
+    mount.displayName = QStringLiteral("bucket");
+    mount.root = VfsUri::fromString(QStringLiteral("mem:///"));
+    mount.fileSystem = std::make_shared<StreamingDrive>(memory);
+    QVERIFY(!m_vfs->addMount(mount).isEmpty());
+
+    FileEntry entry;
+    entry.uri = VfsUri::fromString(QStringLiteral("mem:///books/report.pdf"));
+    entry.name = QStringLiteral("report.pdf");
+    entry.size = pdf.size();
+
+    PdfThumbnailer thumbnailer;
+    QVERIFY(thumbnailer.canThumbnail(entry));
+    const QImage tile = thumbnailer.thumbnail(entry, 160, m_services, CancelToken {});
+    QVERIFY2(!tile.isNull(), "a remote PDF inside the ceiling was fetched and yielded no tile");
+    QCOMPARE(qMax(tile.width(), tile.height()), 160);
+    // The page's own shape, so it really was rendered rather than guessed at.
+    QVERIFY(tile.height() > tile.width());
 #endif
 }
 

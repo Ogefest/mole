@@ -6,6 +6,7 @@
 
 #include "core/vfs/VfsManager.h"
 
+#include <QBuffer>
 #include <QPdfDocument>
 #include <QPdfDocumentRenderOptions>
 
@@ -38,13 +39,43 @@ QImage PdfThumbnailer::thumbnail(
     if (!opened.ok() || !opened.value())
         return {};
 
-    // The device has to outlive the document: QPdfDocument reads through it while
-    // rendering rather than taking a copy.
+    // **Into a buffer first, because a remote device is sequential.**
+    //
+    // QPdfDocument::load(QIODevice*) answers through the status rather than a
+    // return value, and the comment here used to say a device is read
+    // synchronously -- which is true of a file and false of a stream. For a
+    // sequential device Qt connects to readyRead and finishes on an event loop,
+    // and a pool thread runs none: the status stayed Loading, the tile came back
+    // empty, and the download the ceiling above had just paid for bought
+    // nothing. A ceiling that costs the fetch and yields no picture is the worst
+    // of both. See MOLE-385.
+    //
+    // Bounded by the ceiling already applied above, so what is held is at most
+    // that -- and only for as long as the render takes.
     std::unique_ptr<QIODevice> device = std::move(opened.value());
+    QBuffer buffer;
+    QIODevice* source = device.get();
+    if (device->isSequential()) {
+        QByteArray whole;
+        whole.reserve(int(qMin<qint64>(entry.size > 0 ? entry.size : 0, ceiling)));
+        while (whole.size() <= ceiling) {
+            if (cancel.isCancelled())
+                return {};
+            const QByteArray piece = device->read(1 << 20);
+            if (piece.isEmpty())
+                break;
+            whole += piece;
+        }
+        if (whole.isEmpty() || whole.size() > ceiling)
+            return {};
+        buffer.setData(whole);
+        if (!buffer.open(QIODevice::ReadOnly))
+            return {};
+        source = &buffer;
+    }
+
     QPdfDocument document;
-    // load(QIODevice*) answers through the status rather than a return value, and
-    // a device is read synchronously -- there is no asynchronous state to wait on.
-    document.load(device.get());
+    document.load(source);
     if (document.status() != QPdfDocument::Status::Ready || document.error() != QPdfDocument::Error::None)
         return {}; // encrypted, damaged, or not a PDF after all
     if (document.pageCount() <= 0 || cancel.isCancelled())

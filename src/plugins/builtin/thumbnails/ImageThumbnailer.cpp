@@ -102,8 +102,19 @@ QImage ImageThumbnailer::thumbnail(
             QBuffer buffer;
             buffer.setData(embedded);
             if (buffer.open(QIODevice::ReadOnly)) {
-                if (QImage found = decodeBounded(&buffer, size, cancel); !found.isNull())
+                if (QImage found = decodeBounded(&buffer, size, cancel); !found.isNull()) {
+                    // **Turned upright before it leaves.** The small picture is
+                    // stored the way the sensor read it, and the orientation that
+                    // makes it upright is a tag in IFD0 -- not in the thumbnail's
+                    // own stream, so QImageReader's autotransform on the decoded
+                    // path cannot see it either. A portrait phone photograph came
+                    // back sideways from a remote drive and upright locally,
+                    // which is the same file answering two ways. See MOLE-385.
+                    const int orientation = ImageMetadataReader::orientationOf(prefix);
+                    if (orientation != 1)
+                        found = found.transformed(ImageMetadataReader::transformFor(orientation));
                     return found;
+                }
             }
         }
     }

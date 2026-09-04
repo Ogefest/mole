@@ -65,6 +65,10 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-385 A thumbnail follows a file replaced with its old date, instead of showing the picture of the old one
+2026-09-04 #MOLE-385 Portrait photographs on network drives come back upright
+2026-09-04 #MOLE-385 A PDF on a network drive shows its first page, instead of an empty tile
+2026-09-04 #MOLE-385 Opening the properties of a large PDF on a network drive no longer downloads all of it
 2026-09-04 #MOLE-367 A CSV with a stray quote in it no longer stalls the import
 2026-09-04 #MOLE-367 A JSON-lines file with long records opens as a grid, instead of as source
 2026-09-04 #MOLE-359 A move that finished is never reported as cancelled

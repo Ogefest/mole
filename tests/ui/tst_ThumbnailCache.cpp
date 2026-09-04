@@ -24,6 +24,7 @@ private slots:
     void aPictureStoredIsFoundInMemoryAndOnDisk();
     void aNewCacheOverTheSameDirectoryReadsWhatTheLastOneWrote();
     void aDifferentDateIsADifferentPicture();
+    void aReplacementThatKeptTheOldDateIsStillADifferentPicture();
     void anEntryRecordsWhereItCameFrom();
     void aTruncatedEntryIsAMissAndIsOverwritten();
     void writingPastTheDiskCapEvictsTheLeastRecentlyRead();
@@ -172,6 +173,41 @@ void TestThumbnailCache::aDifferentDateIsADifferentPicture()
     // And the stale one does not come back: it is a different entry, so what a
     // sweep does with it is eviction's business and not a wrong answer.
     QCOMPARE(cache.inMemory(before).pixelColor(0, 0), QColor(Qt::red));
+}
+
+/// A file replaced with its old date kept the old picture.
+///
+/// The key was the uri, the requested size and the mtime -- and `cp -p`,
+/// `rsync -a`, a tar extract and a photo re-exported over itself by a tool that
+/// keeps the mtime all replace a file and preserve its date. Two edits inside
+/// one second are indistinguishable by seconds as well. ADR-0059 chose the date
+/// over a content hash, which is right; it did not discuss the size, which is
+/// free and was already sitting on the key. See MOLE-385.
+void TestThumbnailCache::aReplacementThatKeptTheOldDateIsStillADifferentPicture()
+{
+    ThumbnailCache cache(m_cacheDir);
+
+    ThumbnailKey before = keyFor(QStringLiteral("holiday.jpg"), 64, 1000);
+    before.bytes = 240000;
+    cache.store(before, pictureOf(64, Qt::red));
+    QCOMPARE(cache.inMemory(before).pixelColor(0, 0), QColor(Qt::red));
+
+    // The same name, the same date -- rsync kept it -- and a different length.
+    ThumbnailKey after = before;
+    after.bytes = 310000;
+    QVERIFY2(cache.inMemory(after).isNull(), "a replaced file answered with the picture of the old one");
+    QVERIFY(cache.onDisk(after).isNull());
+
+    cache.store(after, pictureOf(64, Qt::blue));
+    QCOMPARE(cache.inMemory(after).pixelColor(0, 0), QColor(Qt::blue));
+    QCOMPARE(cache.inMemory(before).pixelColor(0, 0), QColor(Qt::red));
+
+    // And a caller with no size hint still finds what a caller with one stored:
+    // the size joins the key when it is there, and a nought is not a length.
+    ThumbnailKey noHint = before;
+    noHint.bytes = 0;
+    cache.store(noHint, pictureOf(64, Qt::green));
+    QCOMPARE(cache.inMemory(noHint).pixelColor(0, 0), QColor(Qt::green));
 }
 
 /// A directory of hashes nobody can explain is a directory nobody dares delete

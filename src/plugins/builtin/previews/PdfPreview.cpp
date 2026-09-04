@@ -2,6 +2,7 @@
 
 #include "plugins/builtin/previews/OpenPdfDocumentTask.h"
 #include "plugins/builtin/previews/PreviewProviders.h"
+#include "plugins/builtin/thumbnails/PdfThumbnailer.h"
 
 #include "core/platform/Staging.h"
 #include "core/tasks/TaskManager.h"
@@ -461,12 +462,33 @@ QList<FileFact> PdfMetadataReader::read(
     FileSystemPtr fs = services.vfs->resolve(entry.uri);
     if (!fs)
         return {};
+    // **And only when it is worth fetching.** This did a readAll() with no
+    // ceiling at all, where the thumbnailer bounds the very same file at the
+    // same figure -- so a 2 GB scanned book on a bucket was
+    // pulled into memory and staged to disk because somebody had the properties
+    // drawer open. IMetadataReader.h: "nothing here reads a whole file".
+    // See MOLE-385.
+    if (entry.size > PdfThumbnailer::kRemoteCeiling || entry.size <= 0)
+        return {};
+
     Result<std::unique_ptr<QIODevice>> opened = fs->openRead(entry.uri);
     if (!opened.ok() || !opened.value())
         return {};
 
-    const QByteArray bytes = opened.value()->readAll();
-    if (cancel.isCancelled())
+    // In pieces, checking the token between them: a fetch of the ceiling over a
+    // slow link is seconds, and a drawer somebody has already closed must not
+    // hold the thread for the rest of it.
+    QByteArray bytes;
+    bytes.reserve(int(qMin<qint64>(entry.size, PdfThumbnailer::kRemoteCeiling)));
+    while (bytes.size() <= PdfThumbnailer::kRemoteCeiling) {
+        if (cancel.isCancelled())
+            return {};
+        const QByteArray piece = opened.value()->read(1 << 20);
+        if (piece.isEmpty())
+            break;
+        bytes += piece;
+    }
+    if (cancel.isCancelled() || bytes.isEmpty() || bytes.size() > PdfThumbnailer::kRemoteCeiling)
         return {};
     return factsForBytes(bytes);
 }

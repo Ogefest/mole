@@ -1,8 +1,13 @@
 #include "plugins/builtin/previews/DocumentMetadata.h"
 #include "plugins/builtin/previews/PdfPreview.h"
+#include "plugins/builtin/thumbnails/PdfThumbnailer.h"
+#include "support/FaultyFileSystem.h"
 #include "support/MoleTestMain.h"
 #include "support/TestSupport.h"
 #include "support/ZipFixtures.h"
+
+#include "core/vfs/VfsManager.h"
+#include "core/vfs/backends/MemoryFileSystem.h"
 
 #include <QBuffer>
 #include <QDir>
@@ -88,6 +93,7 @@ private slots:
     void anEntityNamingALocalFileIsNotResolved();
     void aPdfNamesItsTitleAuthorAndPages();
     void aPdfThatCannotBeReadSaysSoOnOneRow();
+    void aLargeRemotePdfIsNotFetchedForTheDrawer();
 };
 
 void TestDocumentMetadata::anOfficeDocumentNamesItsAuthorAndCounts()
@@ -256,6 +262,52 @@ void TestDocumentMetadata::aPdfThatCannotBeReadSaysSoOnOneRow()
     QCOMPARE(facts.size(), 1);
     QCOMPARE(facts.first().label, QStringLiteral("Document"));
     QVERIFY2(facts.first().value.contains(QStringLiteral("cannot be read")), qPrintable(facts.first().value));
+}
+
+/// A 2 GB scanned book downloaded because a drawer was open.
+///
+/// PdfMetadataReader::read() did a readAll() on a remote PDF with no ceiling at
+/// all, and staged the result to a temporary file -- while PdfThumbnailer bounds
+/// the very same file at 32 MB. IMetadataReader.h says "nothing here reads a
+/// whole file". See MOLE-385.
+void TestDocumentMetadata::aLargeRemotePdfIsNotFetchedForTheDrawer()
+{
+    if (!PdfPreviewProvider::isAvailable())
+        QSKIP("built without Qt Pdf");
+
+    auto memory = std::make_shared<MemoryFileSystem>();
+    memory->addFile(QStringLiteral("/books/scan.pdf"), QByteArray(4096, 'x'));
+    auto counted = std::make_shared<FaultyFileSystem>(memory);
+
+    VfsManager vfs;
+    Mount mount;
+    mount.displayName = QStringLiteral("bucket");
+    mount.root = VfsUri::fromString(QStringLiteral("mem:///"));
+    mount.fileSystem = counted;
+    QVERIFY(!vfs.addMount(mount).isEmpty());
+
+    PluginServices services;
+    services.vfs = &vfs;
+
+    // What the listing says, which is what the reader has to decide from: a
+    // scanned book far past the thumbnailer's ceiling.
+    FileEntry entry;
+    entry.uri = VfsUri::fromString(QStringLiteral("mem:///books/scan.pdf"));
+    entry.name = QStringLiteral("scan.pdf");
+    entry.size = PdfThumbnailer::kRemoteCeiling + 1;
+
+    const PdfMetadataReader reader;
+    const QList<FileFact> facts = reader.read(entry, QByteArrayView(), services, CancelToken {});
+    QVERIFY2(facts.isEmpty(), "a file too big to fetch answered with facts, so it was fetched");
+    QVERIFY2(counted->bytesRead() == 0,
+        qPrintable(
+            QStringLiteral("%1 bytes were read of a file past the ceiling").arg(counted->bytesRead())));
+
+    // And one inside the ceiling is still read, so this is a bound and not a
+    // refusal of remote drives.
+    entry.size = 4096;
+    reader.read(entry, QByteArrayView(), services, CancelToken {});
+    QVERIFY2(counted->bytesRead() > 0, "a small remote PDF was not read at all");
 }
 
 // QPdfWriter wants a font database, which wants a GUI application. Offscreen,

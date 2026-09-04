@@ -59,6 +59,22 @@ public:
     /// here: both are checked against the buffer before anything follows them, so
     /// a file pointing outside itself costs this thumbnail and nothing else.
     static QByteArray embeddedThumbnail(QByteArrayView bytes);
+
+    /// The EXIF orientation this file claims, 1 to 8, and 1 when it says
+    /// nothing.
+    ///
+    /// **IFD0 tag 0x0112, which is not in the thumbnail.** The small picture
+    /// lives in IFD1 and is stored the way the sensor read it -- the orientation
+    /// that makes it upright is a tag in the *main* directory, and this reader
+    /// was already reading it for the panel and not handing it to anybody. So a
+    /// portrait phone photograph came back sideways from a remote drive and
+    /// upright locally, where the whole file is decoded and QImageReader's own
+    /// autotransform reads the same tag. See MOLE-385.
+    static int orientationOf(QByteArrayView bytes);
+
+    /// The transform that turns a picture stored with `orientation` upright.
+    /// Identity for 1 and for anything outside 1..8.
+    static QTransform transformFor(int orientation);
 };
 
 } // namespace mole

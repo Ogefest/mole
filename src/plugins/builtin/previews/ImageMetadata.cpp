@@ -511,6 +511,57 @@ QList<FileFact> ImageMetadataReader::factsFor(QByteArrayView bytes, const QStrin
     return facts;
 }
 
+int ImageMetadataReader::orientationOf(QByteArrayView bytes)
+{
+    const QByteArrayView block = exifBlock(bytes);
+    if (block.size() < 8)
+        return 1;
+
+    const bool bigEndian = block.startsWith(QByteArrayLiteral("MM"));
+    if (!bigEndian && !block.startsWith(QByteArrayLiteral("II")))
+        return 1;
+    const TiffBlock tiff(block, bigEndian);
+
+    const std::optional<quint32> firstDirectory = tiff.u32(4);
+    if (!firstDirectory)
+        return 1;
+
+    const QList<Entry> ifd0 = readDirectory(tiff, *firstDirectory);
+    const Entry* tag = find(ifd0, 0x0112);
+    if (!tag)
+        return 1;
+    const std::optional<double> orientation = asNumber(tiff, *tag);
+    if (!orientation)
+        return 1;
+    const int value = qRound(*orientation);
+    return value >= 1 && value <= 8 ? value : 1;
+}
+
+QTransform ImageMetadataReader::transformFor(int orientation)
+{
+    // The eight EXIF orientations, as the transform that undoes each. Written
+    // out rather than composed, because the four mirrored ones are the ones a
+    // composed version gets wrong.
+    switch (orientation) {
+    case 2:
+        return QTransform().scale(-1, 1);
+    case 3:
+        return QTransform().rotate(180);
+    case 4:
+        return QTransform().scale(1, -1);
+    case 5:
+        return QTransform().scale(-1, 1).rotate(270);
+    case 6:
+        return QTransform().rotate(90);
+    case 7:
+        return QTransform().scale(-1, 1).rotate(90);
+    case 8:
+        return QTransform().rotate(270);
+    default:
+        return {};
+    }
+}
+
 QByteArray ImageMetadataReader::embeddedThumbnail(QByteArrayView bytes)
 {
     const QByteArrayView block = exifBlock(bytes);

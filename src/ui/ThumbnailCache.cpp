@@ -58,8 +58,19 @@ QString ThumbnailCache::fileNameFor(const ThumbnailKey& key)
     hash.addData(QByteArray::number(key.size));
     hash.addData(QByteArrayLiteral("\0"));
     hash.addData(QByteArray::number(key.mtime));
-    // `bytes` is deliberately not in here: it is a hint about how to make the
-    // picture, not part of which picture it is.
+    // And the size, when the drive said one. **A date on its own is not enough
+    // to tell two files apart.** `cp -p`, `rsync -a`, a tar extract and a photo
+    // re-exported over itself by a tool that keeps the mtime all replace a file
+    // and preserve its date, and two edits inside one second are
+    // indistinguishable by seconds -- so the old picture stayed until eviction.
+    // ADR-0059 chose the date over a content hash, which is right; it did not
+    // discuss the size, which is free and already on the key. Left out when it
+    // is zero, so a caller that has no size hint still finds what a caller with
+    // one stored. See MOLE-385.
+    if (key.bytes > 0) {
+        hash.addData(QByteArrayLiteral("\0"));
+        hash.addData(QByteArray::number(key.bytes));
+    }
     // Half the digest is 128 bits, which is a name nobody will collide and a
     // directory listing a person can still read.
     return QString::fromLatin1(hash.result().toHex().left(32));
@@ -166,16 +177,36 @@ void ThumbnailCache::store(const ThumbnailKey& key, const QImage& image)
         m_diskBytes -= previous->bytes;
     m_disk.insert(name, entry);
     m_diskBytes += entry.bytes;
+    // Our own write moved the directory's mtime, and it is accounted for here --
+    // so the reconciliation above is about somebody else's writes and not ours.
+    m_measuredMtime = QFileInfo(m_directory).lastModified().toSecsSinceEpoch();
     evictWhileOverCap();
 }
 
 void ThumbnailCache::measureDirectory()
 {
-    if (m_measured)
-        return;
-    m_measured = true;
-
     const QDir directory(m_directory);
+    // **Measured again when somebody else has written here.** ADR-0059 says
+    // "one cache per window", and two windows share one directory: each
+    // accounted only its own writes, so the 256 MB cap was per instance and
+    // diskBytes() was a guess that only ever grew. The directory's own mtime
+    // moves whenever an entry is added or removed, which is the cheap signal
+    // for it -- and the reconciliation is rate-limited, because our own writes
+    // move it too and a full re-read per stored tile would cost more than the
+    // tile. See MOLE-385.
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    const qint64 changedAt = QFileInfo(m_directory).lastModified().toSecsSinceEpoch();
+    const bool somebodyElseWrote
+        = m_measured && changedAt != m_measuredMtime && now - m_measuredAt >= kReconcileSeconds;
+    if (m_measured && !somebodyElseWrote)
+        return;
+
+    m_measured = true;
+    m_measuredAt = now;
+    m_measuredMtime = changedAt;
+    m_disk.clear();
+    m_diskBytes = 0;
+
     if (!directory.exists())
         return;
     const QFileInfoList files = directory.entryInfoList(QDir::Files | QDir::NoDotAndDotDot);
