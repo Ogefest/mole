@@ -153,6 +153,7 @@ private slots:
     void theListingMarksReportsAndAlerts();
     void aCheckoutSaysWhichBranchAndWhatChanged();
     void filtersByTyping();
+    void aNameOutsideLatin1CanBeTypedIntoTheFilter();
     void filtersAndCopiesTableCells();
     void theFilterKeepsTheKeyboardWhileNarrowing();
     void dualPaneAndGrid();
@@ -2505,6 +2506,55 @@ void TestWalkthrough::filtersByTyping()
     QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == kRootRows; }));
 }
 
+/// Typing a name in the alphabet this application is most careful about.
+///
+/// **Nothing could type one until now.** The harness sent keystrokes through
+/// `QChar::toLatin1()`, which answers nothing for anything outside Latin-1, so
+/// every interface test typed in ASCII -- in an application whose index stores
+/// each name twice because "Łódź would never match łódź", and which is being
+/// made ready for Windows. This types the name, narrows the listing with it, and
+/// reads it back out of the field: three places a character can be lost between
+/// a key and a row. See MOLE-400.
+void TestWalkthrough::aNameOutsideLatin1CanBeTypedIntoTheFilter()
+{
+    // Polish and Japanese: one is Latin with diacritics, the other is not Latin
+    // at all, and a path that only handles the first is a path that handles
+    // neither properly.
+    const QString polish = QStringLiteral("\u0141\u00f3d\u017a-raport.txt");
+    const QString japanese = QStringLiteral("\u5199\u771f.jpg");
+    QVERIFY(m_harness->writeFile(QStringLiteral("unicode/") + polish));
+    QVERIFY(m_harness->writeFile(QStringLiteral("unicode/") + japanese));
+    QVERIFY(m_harness->writeFile(QStringLiteral("unicode/plain.txt")));
+
+    pane()->navigateTo(m_harness->fixtureUri() + QStringLiteral("/unicode"));
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 3; }));
+
+    // The first keystroke opens the filter and goes into it, the same as any
+    // other printable character.
+    m_harness->type(polish.left(4)); // "Łódź"
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 1; }));
+    QCOMPARE(pane()->files()->nameAt(0), polish);
+
+    QQuickItem* filter = m_harness->item(QStringLiteral("filterField"));
+    QVERIFY(filter);
+    QVERIFY2(filter->hasActiveFocus(), "the keyboard must move into the filter");
+    QCOMPARE(filter->property("text").toString(), polish.left(4));
+
+    // And out again, then a name with nothing Latin in it at all.
+    m_harness->key(Qt::Key_Escape);
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 3; }));
+
+    m_harness->type(japanese.left(2)); // "写真"
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 1; }));
+    QCOMPARE(pane()->files()->nameAt(0), japanese);
+    filter = m_harness->item(QStringLiteral("filterField"));
+    QVERIFY(filter);
+    QCOMPARE(filter->property("text").toString(), japanese.left(2));
+
+    m_harness->key(Qt::Key_Escape);
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 3; }));
+}
+
 void TestWalkthrough::theFilterKeepsTheKeyboardWhileNarrowing()
 {
     // Type to narrow, then act on the result -- without a detour to move the
@@ -2982,18 +3032,21 @@ void TestWalkthrough::theStripSaysHowLongIsLeftOnWhatIsRunning()
     // than a real copy: what is being checked is that a figure the task publishes
     // reaches the window, and a copy big enough to take a second would make this
     // the slowest test in the suite for no extra claim.
-    auto* task = new ScriptedTask(QStringLiteral("Copying"), [](ScriptedTask& self) {
+    auto clock = std::make_shared<FakeClock>();
+    auto* task = new ScriptedTask(QStringLiteral("Copying"), [clock](ScriptedTask& self) {
         self.setByteTotal(1000000);
-        // Four closed sampling windows, which is where the first estimate appears.
-        // The sleeps are the work taking time: a rate needs elapsed time to divide
-        // by. Nothing here waits on a clock to decide whether the test passed.
+        // Four closed sampling windows, which is where the first estimate
+        // appears. The elapsed time is handed in rather than slept through: a
+        // rate needs time to divide by, and this way the windows close at once
+        // and the figure is the same on every machine. See MOLE-400.
         for (int step = 1; step <= 4 && !self.isCancelRequested(); ++step) {
-            QThread::msleep(260);
+            clock->advance(260);
             self.setBytesDone(step * 200000);
         }
         while (!self.isCancelRequested())
             QThread::msleep(20);
     });
+    task->setElapsedSource([clock] { return clock->nowMs(); });
     m_harness->app()->services().tasks->submit(task);
 
     QQuickItem* left = m_harness->item(QStringLiteral("activeTaskTimeLeft"));

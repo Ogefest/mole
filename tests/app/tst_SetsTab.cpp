@@ -186,7 +186,15 @@ void TestSetsTab::f3PreviewsTheMemberAndReusesTheOneTab()
 
     const int before = m_harness->app()->tabs()->rowCount();
     m_harness->key(Qt::Key_F3);
-    QVERIFY2(m_harness->until([this, before] { return m_harness->app()->tabs()->rowCount() == before + 1; }),
+    // The tab and the file it is showing are two moments: the tab appears as
+    // soon as the key is handled and the uri reaches its controller a queued
+    // delivery later, so the condition has to name both. The second half of this
+    // case was already written that way. See MOLE-400.
+    QVERIFY2(m_harness->until([this, before] {
+        auto* preview = m_harness->app()->tabs()->currentController();
+        return m_harness->app()->tabs()->rowCount() == before + 1 && preview
+            && preview->property("currentUri").toString() == fixtureFile(QStringLiteral("first.txt"));
+    }),
         "F3 has to preview the member under the cursor");
     QCOMPARE(m_harness->app()->tabs()->currentController()->property("currentUri").toString(),
         fixtureFile(QStringLiteral("first.txt")));

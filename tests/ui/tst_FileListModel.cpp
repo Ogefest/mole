@@ -4,7 +4,6 @@
 #include "core/text/SizeWords.h"
 
 #include <QAbstractItemModelTester>
-#include <QElapsedTimer>
 #include <QSignalSpy>
 
 using namespace mole;
@@ -22,6 +21,41 @@ FileEntry makeEntry(const QString& name, bool isDir = false, qint64 size = 0, co
     entry.modified = modified.isValid() ? modified : QDateTime::fromSecsSinceEpoch(1700000000);
     return entry;
 }
+
+/// Everything a model tells its views, counted.
+///
+/// **The measure of "near linear" that is not a stopwatch.** A model that inserts
+/// announces each new row once and says nothing about the rows already there; one
+/// that re-sorts on every batch announces a reset, a layout change, or rows
+/// leaving and coming back -- and that is the difference the timing assertions
+/// were reaching for, countable exactly and identically on every machine. See
+/// MOLE-400.
+class Announcements
+{
+public:
+    explicit Announcements(QAbstractItemModel& model)
+    {
+        QObject::connect(&model, &QAbstractItemModel::rowsInserted, &model,
+            [this](const QModelIndex&, int first, int last) {
+                ++insertions;
+                insertedRows += last - first + 1;
+            });
+        QObject::connect(&model, &QAbstractItemModel::rowsRemoved, &model,
+            [this](const QModelIndex&, int first, int last) {
+                ++removals;
+                removedRows += last - first + 1;
+            });
+        QObject::connect(&model, &QAbstractItemModel::modelReset, &model, [this] { ++resets; });
+        QObject::connect(&model, &QAbstractItemModel::layoutChanged, &model, [this] { ++layoutChanges; });
+    }
+
+    int insertions = 0;
+    int insertedRows = 0;
+    int removals = 0;
+    int removedRows = 0;
+    int resets = 0;
+    int layoutChanges = 0;
+};
 
 QStringList namesOf(const FileListModel& model)
 {
@@ -177,30 +211,40 @@ void TestFileListModel::streamingManyResultsStaysCheap()
     // long search made the whole interface stop responding while a longer analysis,
     // which never touches a visible model, stayed smooth.
     FileListModel model;
+    Announcements said(model);
 
     FileEntryList batch;
     const int batchSize = 200;
     const int batches = 200; // 40 000 results, an ordinary answer on a big disk
 
-    QElapsedTimer clock;
-    clock.start();
     for (int b = 0; b < batches; ++b) {
         batch.clear();
         for (int i = 0; i < batchSize; ++i)
             batch.append(makeEntry(QStringLiteral("result-%1-%2.txt").arg(b).arg(i), false, 10));
         model.appendEntries(batch);
     }
-    const qint64 elapsed = clock.elapsed();
 
     QCOMPARE(model.rowCount(), batchSize * batches);
-    // Generous, because this is a debug build on whatever machine happens to run
-    // it. Quadratic behaviour does not come close to fitting inside it.
-    QVERIFY2(elapsed < 3000,
-        qPrintable(QStringLiteral("streaming %1 results in %2 batches took %3 ms; it has to stay near "
-                                  "linear or the window stops answering during a search")
-                       .arg(batchSize * batches)
-                       .arg(batches)
-                       .arg(elapsed)));
+
+    // **The work, counted rather than timed.** This used to bound the whole thing
+    // at three seconds "because it is a debug build", which is a number chosen on
+    // one machine: `make asan` is two to three times slower and `make tsan` more,
+    // and a loaded runner is slower again. What "near linear" actually means is
+    // that each row is announced once and nothing already in the model is touched
+    // -- so that is what is asserted, and the answer is the same on every
+    // machine. A re-sort per batch announces a reset or a layout change; a
+    // remove-and-reinsert announces rows leaving. See MOLE-400.
+    QCOMPARE(said.insertedRows, batchSize * batches);
+    QCOMPARE(said.removedRows, 0);
+    QCOMPARE(said.resets, 0);
+    QCOMPARE(said.layoutChanges, 0);
+
+    // And a batch whose names share a prefix lands as one stretch, so the number
+    // of insertions is the number of batches rather than the number of rows.
+    QVERIFY2(said.insertions <= batches * 2,
+        qPrintable(QStringLiteral("%1 insertions for %2 batches that each land in one place")
+                       .arg(said.insertions)
+                       .arg(batches)));
 
     // And the order is still right, which is the thing the sorting was for.
     QVERIFY(
@@ -216,13 +260,12 @@ void TestFileListModel::streamingManyResultsStaysCheap()
 void TestFileListModel::streamingScatteredResultsStaysCheap()
 {
     FileListModel model;
+    Announcements said(model);
 
     const int batchSize = 200;
     const int batches = 200;
 
     FileEntryList batch;
-    QElapsedTimer clock;
-    clock.start();
     for (int b = 0; b < batches; ++b) {
         batch.clear();
         for (int i = 0; i < batchSize; ++i) {
@@ -233,15 +276,18 @@ void TestFileListModel::streamingScatteredResultsStaysCheap()
         }
         model.appendEntries(batch);
     }
-    const qint64 elapsed = clock.elapsed();
 
     QCOMPARE(model.rowCount(), batchSize * batches);
-    QVERIFY2(elapsed < 3000,
-        qPrintable(QStringLiteral("streaming %1 scattered results in %2 batches took %3 ms; keeping the "
-                                  "view's place must not cost what the re-sort used to")
-                       .arg(batchSize * batches)
-                       .arg(batches)
-                       .arg(elapsed)));
+
+    // Counted, not timed, for the reason given above -- and here the count is the
+    // whole claim: two hundred names scattered the length of the alphabet are two
+    // hundred separate insertions, and keeping the view's place must not cost
+    // what the re-sort used to. Each row announced once, nothing removed, and
+    // no reset or layout change over the forty thousand already in the model.
+    QCOMPARE(said.insertedRows, batchSize * batches);
+    QCOMPARE(said.removedRows, 0);
+    QCOMPARE(said.resets, 0);
+    QCOMPARE(said.layoutChanges, 0);
 
     const QStringList names = namesOf(model);
     QCOMPARE(names.first(), QStringLiteral("file-00000000.txt"));

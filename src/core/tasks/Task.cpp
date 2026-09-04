@@ -207,7 +207,7 @@ void Task::scheduleDrain()
 
 void Task::drainReports()
 {
-    const qint64 nowMs = m_since.isValid() ? m_since.elapsed() : 0;
+    const qint64 nowMs = elapsedNow();
     const qint64 sinceLast = m_lastDrainMs < 0 ? kDrainIntervalMs : nowMs - m_lastDrainMs;
     if (sinceLast < kDrainIntervalMs) {
         // Too soon after the last one to be worth a repaint. Come back when the
@@ -235,7 +235,7 @@ void Task::applyPending()
         status.swap(m_pendingStatus);
         metrics.swap(m_pendingMetrics);
     }
-    m_lastDrainMs = m_since.isValid() ? m_since.elapsed() : 0;
+    m_lastDrainMs = elapsedNow();
 
     if (status && m_statusText != *status) {
         m_statusText = *status;
@@ -271,14 +271,26 @@ void Task::fail(const VfsError& error)
     setStatusText(error.message);
 }
 
+void Task::setElapsedSource(std::function<qint64()> source)
+{
+    m_elapsedSource = std::move(source);
+}
+
+qint64 Task::elapsedNow() const
+{
+    if (m_elapsedSource)
+        return m_elapsedSource();
+    return m_since.isValid() ? m_since.elapsed() : 0;
+}
+
 qint64 Task::elapsedMs() const
 {
     // From the monotonic clock rather than from the two timestamps. Subtracting
     // wall-clock readings is how a job that ran for a minute reports minus
     // fifty-nine when ntp steps the clock, and how a rate comes out negative.
-    if (!m_since.isValid())
+    if (!m_since.isValid() && !m_elapsedSource)
         return 0;
-    return m_finishedElapsedMs >= 0 ? m_finishedElapsedMs : m_since.elapsed();
+    return m_finishedElapsedMs >= 0 ? m_finishedElapsedMs : elapsedNow();
 }
 
 QString TaskMetric::format(double value, Kind kind)
@@ -411,7 +423,7 @@ void Task::setBytesDone(qint64 done)
     // reach the figure a worker asks for.
     m_bytesDone.store(done, std::memory_order_relaxed);
 
-    const qint64 nowMs = m_since.isValid() ? m_since.elapsed() : 0;
+    const qint64 nowMs = elapsedNow();
     if (m_lastSampleMs < 0) {
         m_lastSampleMs = nowMs;
         m_lastSampleBytes = done;
@@ -487,8 +499,8 @@ void Task::setState(State state)
             // retention sweep and the list always agree about when this ended.
             if (isFinished() && !m_finishedAt.isValid())
                 m_finishedAt = QDateTime::currentDateTime();
-            if (isFinished() && m_finishedElapsedMs < 0 && m_since.isValid())
-                m_finishedElapsedMs = m_since.elapsed();
+            if (isFinished() && m_finishedElapsedMs < 0 && (m_since.isValid() || m_elapsedSource))
+                m_finishedElapsedMs = elapsedNow();
             emit stateChanged();
         },
         Qt::QueuedConnection);

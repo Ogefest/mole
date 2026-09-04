@@ -348,12 +348,14 @@ void TestTaskManager::aTaskPublishesWhateverItWants()
 void TestTaskManager::byteProgressDrivesThePercentageAndTheRate()
 {
     TaskManager manager;
-    auto* task = new ScriptedTask(QStringLiteral("copy"), [](ScriptedTask& self) {
+    auto clock = std::make_shared<FakeClock>();
+    auto* task = new ScriptedTask(QStringLiteral("copy"), [clock](ScriptedTask& self) {
         self.setByteTotal(1000);
         self.setBytesDone(500);
-        QThread::msleep(300); // long enough for the rate window to close
+        clock->advance(300); // a rate window closes, without waiting for one
         self.setBytesDone(1000);
     });
+    task->setElapsedSource([clock] { return clock->nowMs(); });
     manager.submit(task);
     QVERIFY(waitForTask(task));
     drainEvents();
@@ -369,23 +371,28 @@ void TestTaskManager::byteProgressDrivesThePercentageAndTheRate()
 
 // --- how long is left -------------------------------------------------------
 //
-// The sleeps below are the work taking time, not the test waiting on a clock: a
-// rate is bytes divided by elapsed time, so a task that finishes instantly has
-// no rate to publish and nothing to estimate from. Every assertion is on what
-// the task published, never on when.
+// **A rate is bytes divided by elapsed time, and the elapsed time is handed in.**
+// These cases used to sleep through four sampling windows of 250 ms each -- about
+// five and a half seconds of every run of this suite -- to make the class's own
+// clock move. Nothing in them is a race: what is in doubt is the arithmetic, so
+// the body advances a clock of its own and the windows close at once. The
+// numbers are the same on every machine, which is what the bounds below rest on
+// now. See Task::setElapsedSource() and MOLE-400.
 
 void TestTaskManager::aTaskWithASpeedAndASizeSaysHowLongIsLeft()
 {
     TaskManager manager;
-    auto* task = new ScriptedTask(QStringLiteral("copy"), [](ScriptedTask& self) {
+    auto clock = std::make_shared<FakeClock>();
+    auto* task = new ScriptedTask(QStringLiteral("copy"), [clock](ScriptedTask& self) {
         self.setByteTotal(1000000);
         // A fifth of the file per closed sampling window. Four windows, so three
         // rate samples close and the third is where an estimate first appears.
         for (int step = 1; step <= 4 && !self.isCancelRequested(); ++step) {
-            QThread::msleep(260);
+            clock->advance(260);
             self.setBytesDone(step * 200000);
         }
     });
+    task->setElapsedSource([clock] { return clock->nowMs(); });
     manager.submit(task);
     QVERIFY(waitForTask(task));
     drainEvents();
@@ -395,12 +402,12 @@ void TestTaskManager::aTaskWithASpeedAndASizeSaysHowLongIsLeft()
     QCOMPARE(left.kind, TaskMetric::Kind::Duration);
     QCOMPARE(left.label, QStringLiteral("Left"));
 
-    // Two hundred thousand bytes left at roughly 770 kB/s is a few hundred
-    // milliseconds. Bounded generously on both sides rather than compared: the
-    // claim is that the arithmetic is the right arithmetic, and a loaded machine
-    // is allowed to be slow without turning this red.
-    QVERIFY2(left.value > 20.0 && left.value < 20000.0,
-        qPrintable(QStringLiteral("an estimate of %1 ms is not from this file").arg(left.value)));
+    // Two hundred thousand bytes at 200000 over 0.26 s is 260 ms, and with the
+    // clock handed in that is exactly what it has to say -- where the sleeping
+    // version could only bound it between 20 ms and twenty seconds and call the
+    // arithmetic checked. The smoothing leaves the figure alone here on purpose:
+    // every window moved the same bytes in the same time.
+    QCOMPARE(qRound(left.value), 260);
 
     // Right after the rate, so the two read together.
     QVERIFY(left.order > task->metric(TaskMetrics::kRate).order);
@@ -413,12 +420,14 @@ void TestTaskManager::withNoTotalThereIsNoEstimate()
     // said how much there was to move. There is no denominator, so there is
     // nothing to say -- and an estimate invented from a total nobody declared
     // would be a number read once and believed.
-    auto* task = new ScriptedTask(QStringLiteral("scan"), [](ScriptedTask& self) {
+    auto clock = std::make_shared<FakeClock>();
+    auto* task = new ScriptedTask(QStringLiteral("scan"), [clock](ScriptedTask& self) {
         for (int step = 1; step <= 4 && !self.isCancelRequested(); ++step) {
-            QThread::msleep(260);
+            clock->advance(260);
             self.setBytesDone(step * 200000);
         }
     });
+    task->setElapsedSource([clock] { return clock->nowMs(); });
     manager.submit(task);
     QVERIFY(waitForTask(task));
     drainEvents();
@@ -430,20 +439,22 @@ void TestTaskManager::withNoTotalThereIsNoEstimate()
 void TestTaskManager::aStallHoldsTheLastEstimateRatherThanShowingInfinity()
 {
     TaskManager manager;
-    auto* task = new ScriptedTask(QStringLiteral("copy"), [](ScriptedTask& self) {
+    auto clock = std::make_shared<FakeClock>();
+    auto* task = new ScriptedTask(QStringLiteral("copy"), [clock](ScriptedTask& self) {
         self.setByteTotal(1000000);
         for (int step = 1; step <= 4 && !self.isCancelRequested(); ++step) {
-            QThread::msleep(260);
+            clock->advance(260);
             self.setBytesDone(step * 200000);
         }
         // And then it stops moving, while still being asked about. The smoothed
         // rate decays towards nothing, and dividing by that gives a figure that
         // runs off to hours and then to infinity.
         for (int idle = 0; idle < 6 && !self.isCancelRequested(); ++idle) {
-            QThread::msleep(260);
+            clock->advance(260);
             self.setBytesDone(800000);
         }
     });
+    task->setElapsedSource([clock] { return clock->nowMs(); });
     manager.submit(task);
     QVERIFY(waitForTask(task));
     drainEvents();
@@ -478,20 +489,26 @@ void TestTaskManager::aCancelledTaskIsNotStillInProgress()
 
 void TestTaskManager::elapsedTimeStopsWhenTheTaskDoes()
 {
+    // A clock, tested against a clock the test winds itself. This used to sleep
+    // 60 ms inside the task and 80 ms afterwards, and then assert that the
+    // figure had not moved -- a measurement of a measurement, with both numbers
+    // chosen to be comfortably bigger than whatever the machine does. Winding
+    // the source makes both exact. See MOLE-400.
     TaskManager manager;
-    auto* task = new ScriptedTask(QStringLiteral("brief"), [](ScriptedTask&) { QThread::msleep(60); });
+    auto clock = std::make_shared<FakeClock>();
+    auto* task = new ScriptedTask(QStringLiteral("brief"), [clock](ScriptedTask&) { clock->advance(60); });
+    task->setElapsedSource([clock] { return clock->nowMs(); });
     manager.submit(task);
     QVERIFY(waitForTask(task));
     drainEvents();
 
     QVERIFY(task->startedAt().isValid());
-    const qint64 took = task->elapsedMs();
-    QVERIFY2(took >= 50, "the measurement has to cover the work");
+    QCOMPARE(task->elapsedMs(), 60);
 
     // Frozen once it ends: an elapsed time that keeps counting after the task
     // finished is not a measurement of anything.
-    QThread::msleep(80);
-    QCOMPARE(task->elapsedMs(), took);
+    clock->advance(80);
+    QCOMPARE(task->elapsedMs(), 60);
 }
 
 /// The browser cancels a listing every time the folder changes or a filter
@@ -660,12 +677,14 @@ void TestTaskManager::durationAndRateComeFromAClockThatCannotGoBackwards()
     // match. Nothing here can step the system clock, and nothing needs to: what
     // the assertion holds is that neither figure is taken from it.
     TaskManager manager;
-    auto* task = new ScriptedTask(QStringLiteral("copy"), [](ScriptedTask& self) {
+    auto clock = std::make_shared<FakeClock>();
+    auto* task = new ScriptedTask(QStringLiteral("copy"), [clock](ScriptedTask& self) {
         self.setByteTotal(2000);
         self.setBytesDone(1000);
-        QThread::msleep(300);
+        clock->advance(300);
         self.setBytesDone(2000);
     });
+    task->setElapsedSource([clock] { return clock->nowMs(); });
     manager.submit(task);
     QVERIFY(waitForTask(task));
     drainEvents();
@@ -677,7 +696,7 @@ void TestTaskManager::durationAndRateComeFromAClockThatCannotGoBackwards()
     // And it stops when the task does, rather than growing for ever against a
     // clock nobody is winding.
     const qint64 first = task->elapsedMs();
-    QThread::msleep(20);
+    clock->advance(20);
     QCOMPARE(task->elapsedMs(), first);
 }
 

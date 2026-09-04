@@ -9,7 +9,10 @@
 #include "core/CoreMetaTypes.h"
 #include "core/vfs/VfsUri.h"
 
+#include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
+#include <QEventLoop>
 #include <QFile>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -101,6 +104,14 @@ private:
     /// that findItem walks.
     QObject* findObject(const QString& objectName) const;
     void pressKey(Qt::Key key, Qt::KeyboardModifiers modifiers = Qt::NoModifier);
+    /// Presses a key and hands back once `landed` holds, answering whether it
+    /// did. **The shape every assertion after a keystroke needs**: this file
+    /// pressed a key, slept 100 ms and asserted, so on a loaded runner the model
+    /// had a duration to react in rather than a condition to reach -- and a
+    /// suite that runs on every push is exactly the loaded runner the no-clock
+    /// rule is written for. See MOLE-400 and ADR-0086.
+    bool pressKeyUntil(
+        Qt::Key key, const std::function<bool()>& landed, Qt::KeyboardModifiers modifiers = Qt::NoModifier);
     void settle();
 
     PrivateProfile m_profile;
@@ -108,6 +119,9 @@ private:
     std::unique_ptr<AppController> m_app;
     std::unique_ptr<QQmlApplicationEngine> m_engine;
     QQuickWindow* m_window = nullptr;
+    /// Whether asking for a frame produces one, so a machine with no working
+    /// surface pays the guard in settle() once rather than on every keystroke.
+    bool m_framesArrive = true;
 };
 
 void TestKeyboardNavigation::initTestCase()
@@ -189,9 +203,28 @@ QQuickItem* TestKeyboardNavigation::findItem(const QString& objectName) const
 
 void TestKeyboardNavigation::settle()
 {
-    // Let bindings, queued task results and the render loop catch up.
-    for (int i = 0; i < 5; ++i)
-        QTest::qWait(20);
+    // **Drained rather than slept**, the way QmlAppHarness::settle() is: what a
+    // keystroke leaves behind is posted events and queued signal deliveries, and
+    // those are finished when the queue is empty rather than 100 ms later. One
+    // frame after them, because a layout pass runs on the way to a frame and
+    // anything that reads an item's position needs one. See MOLE-400.
+    for (int round = 0; round < 3; ++round) {
+        QCoreApplication::sendPostedEvents();
+        QCoreApplication::processEvents(QEventLoop::AllEvents);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    }
+    if (m_window && m_window->isVisible() && m_framesArrive) {
+        bool swapped = false;
+        const QMetaObject::Connection watch = QObject::connect(
+            m_window, &QQuickWindow::frameSwapped, m_window, [&swapped] { swapped = true; });
+        m_window->requestUpdate();
+        QElapsedTimer guard;
+        guard.start();
+        while (!swapped && guard.elapsed() < 500)
+            QCoreApplication::processEvents(QEventLoop::AllEvents);
+        QObject::disconnect(watch);
+        m_framesArrive = swapped;
+    }
 }
 
 void TestKeyboardNavigation::pressKey(Qt::Key key, Qt::KeyboardModifiers modifiers)
@@ -200,19 +233,29 @@ void TestKeyboardNavigation::pressKey(Qt::Key key, Qt::KeyboardModifiers modifie
     settle();
 }
 
+bool TestKeyboardNavigation::pressKeyUntil(
+    Qt::Key key, const std::function<bool()>& landed, Qt::KeyboardModifiers modifiers)
+{
+    QTest::keyClick(m_window, key, modifiers);
+    return waitFor(landed, 10000);
+}
+
 void TestKeyboardNavigation::focusSurvivesWindowReactivation()
 {
     QVERIFY(m_window->activeFocusItem() != nullptr);
 
     // Alt-tabbing away and back must not leave the keyboard dead.
     m_window->setVisible(false);
-    QTest::qWait(50);
+    // Gone before it comes back, waited for by the window rather than by 50 ms:
+    // hiding is what the reactivation is being asked about, so a run where it
+    // had not happened yet would be testing nothing at all.
+    QVERIFY(waitFor([this] { return !m_window->isExposed(); }, 5000));
     m_window->setVisible(true);
     QVERIFY(QTest::qWaitForWindowExposed(m_window));
     settle();
 
     const int before = pane()->currentIndex();
-    pressKey(Qt::Key_Down);
+    QVERIFY(pressKeyUntil(Qt::Key_Down, [&] { return pane()->currentIndex() == before + 1; }));
     QCOMPARE(pane()->currentIndex(), before + 1);
 }
 
@@ -220,25 +263,29 @@ void TestKeyboardNavigation::downArrowMovesTheCursor()
 {
     QCOMPARE(pane()->currentIndex(), 0);
 
-    pressKey(Qt::Key_Down);
+    QVERIFY(pressKeyUntil(Qt::Key_Down, [&] { return pane()->currentIndex() == 1; }));
     QCOMPARE(pane()->currentIndex(), 1);
 
-    pressKey(Qt::Key_Down);
+    QVERIFY(pressKeyUntil(Qt::Key_Down, [&] { return pane()->currentIndex() == 2; }));
     QCOMPARE(pane()->currentIndex(), 2);
 }
 
 void TestKeyboardNavigation::upArrowMovesBack()
 {
     pressKey(Qt::Key_Down);
-    pressKey(Qt::Key_Down);
+    QVERIFY(pressKeyUntil(Qt::Key_Down, [&] { return pane()->currentIndex() == 2; }));
     QCOMPARE(pane()->currentIndex(), 2);
 
-    pressKey(Qt::Key_Up);
+    QVERIFY(pressKeyUntil(Qt::Key_Up, [&] { return pane()->currentIndex() == 1; }));
     QCOMPARE(pane()->currentIndex(), 1);
 }
 
 void TestKeyboardNavigation::cursorStopsAtBothEnds()
 {
+    // Nothing to wait for: what is being asserted is that Up at the top does
+    // *not* move, and a condition that already holds is no wait at all. The
+    // drained settle is what makes this meaningful -- it says the queue is
+    // empty, so nothing is still on its way.
     pressKey(Qt::Key_Up);
     QCOMPARE(pane()->currentIndex(), 0);
 
@@ -252,10 +299,10 @@ void TestKeyboardNavigation::cursorStopsAtBothEnds()
 
 void TestKeyboardNavigation::homeAndEndJump()
 {
-    pressKey(Qt::Key_End);
+    QVERIFY(pressKeyUntil(Qt::Key_End, [&] { return pane()->currentIndex() == 4; }));
     QCOMPARE(pane()->currentIndex(), 4);
 
-    pressKey(Qt::Key_Home);
+    QVERIFY(pressKeyUntil(Qt::Key_Home, [&] { return pane()->currentIndex() == 0; }));
     QCOMPARE(pane()->currentIndex(), 0);
 }
 
@@ -286,11 +333,11 @@ void TestKeyboardNavigation::backspaceGoesUp()
 
 void TestKeyboardNavigation::insertTicksAndAdvances()
 {
-    pressKey(Qt::Key_Insert);
+    QVERIFY(pressKeyUntil(Qt::Key_Insert, [&] { return pane()->files()->selectionCount() == 1; }));
     QCOMPARE(pane()->files()->selectionCount(), 1);
     QCOMPARE(pane()->currentIndex(), 1);
 
-    pressKey(Qt::Key_Insert);
+    QVERIFY(pressKeyUntil(Qt::Key_Insert, [&] { return pane()->files()->selectionCount() == 2; }));
     QCOMPARE(pane()->files()->selectionCount(), 2);
     QCOMPARE(pane()->currentIndex(), 2);
 }
@@ -310,6 +357,8 @@ void TestKeyboardNavigation::pathBarOwnsTheKeyboardWhileEditing()
     const QString before = pane()->currentUri();
     const int cursorBefore = pane()->currentIndex();
 
+    // Asserted after a drain rather than waited for: the claim is that the list
+    // did not move while the path bar had the keyboard.
     pressKey(Qt::Key_Down);
     QCOMPARE(pane()->currentIndex(), cursorBefore);
 
@@ -318,9 +367,8 @@ void TestKeyboardNavigation::pathBarOwnsTheKeyboardWhileEditing()
     QCOMPARE(pane()->currentUri(), before);
 
     // Escape hands the keyboard back and the list responds again.
-    pressKey(Qt::Key_Escape);
-    QVERIFY(!pathField->hasActiveFocus());
-    pressKey(Qt::Key_Down);
+    QVERIFY(pressKeyUntil(Qt::Key_Escape, [&] { return !pathField->hasActiveFocus(); }));
+    QVERIFY(pressKeyUntil(Qt::Key_Down, [&] { return pane()->currentIndex() == cursorBefore + 1; }));
     QCOMPARE(pane()->currentIndex(), cursorBefore + 1);
 }
 
@@ -388,7 +436,10 @@ void TestKeyboardNavigation::enterStillOpensFoldersAfterReactivation()
 {
     // Alt-tabbing away and back is when focus quietly moves somewhere else.
     m_window->setVisible(false);
-    QTest::qWait(50);
+    // Gone before it comes back, waited for by the window rather than by 50 ms:
+    // hiding is what the reactivation is being asked about, so a run where it
+    // had not happened yet would be testing nothing at all.
+    QVERIFY(waitFor([this] { return !m_window->isExposed(); }, 5000));
     m_window->setVisible(true);
     QVERIFY(QTest::qWaitForWindowExposed(m_window));
     settle();
@@ -516,7 +567,7 @@ void TestKeyboardNavigation::cursorStaysInStepAfterAClick()
     settle();
     QCOMPARE(fileList->property("currentIndex").toInt(), 2);
 
-    pressKey(Qt::Key_Down);
+    QVERIFY(pressKeyUntil(Qt::Key_Down, [&] { return pane()->currentIndex() == 3; }));
     QCOMPARE(pane()->currentIndex(), 3);
     QCOMPARE(fileList->property("currentIndex").toInt(), 3);
 }
@@ -551,7 +602,7 @@ void TestKeyboardNavigation::enterOpensTheRightRowAfterNavigating()
 
     // Aim one row further down and open that instead. This is the actual
     // subject: Enter must open what the cursor is on, not what it used to be on.
-    pressKey(Qt::Key_Up);
+    QVERIFY(pressKeyUntil(Qt::Key_Up, [&] { return pane()->currentIndex() == 1; }));
     QCOMPARE(pane()->currentIndex(), 1);
     QCOMPARE(pane()->files()->nameAt(1), QStringLiteral("beta"));
 
@@ -586,7 +637,7 @@ void TestKeyboardNavigation::ctrlArrowsNavigateHistory()
     // A bare Up still moves the cursor rather than navigating.
     pane()->setCurrentIndex(2);
     settle();
-    pressKey(Qt::Key_Up);
+    QVERIFY(pressKeyUntil(Qt::Key_Up, [&] { return pane()->currentIndex() == 1; }));
     QCOMPARE(pane()->currentIndex(), 1);
     QCOMPARE(pane()->currentUri(), root);
 }
@@ -631,13 +682,19 @@ void TestKeyboardNavigation::f3OpensAPreviewAndReusesTheTab()
     settle();
 
     const int before = m_app->tabs()->rowCount();
-    pressKey(Qt::Key_F3);
-    QCOMPARE(m_app->tabs()->rowCount(), before + 1);
+    const QString one = m_tree->rootUri().child(QStringLiteral("one.txt")).toString();
 
-    QObject* preview = m_app->tabs()->currentController();
-    QVERIFY(preview);
-    QCOMPARE(preview->property("currentUri").toString(),
-        m_tree->rootUri().child(QStringLiteral("one.txt")).toString());
+    // **The tab and the file it is showing are two moments**, which the fixed
+    // settle hid: the tab appears as soon as F3 is handled and the uri reaches
+    // its controller a queued delivery later. Waiting on the tab count alone
+    // read an empty uri. So the condition is what the test is actually about.
+    QVERIFY(pressKeyUntil(Qt::Key_F3, [&] {
+        QObject* opened = m_app->tabs()->currentController();
+        return m_app->tabs()->rowCount() == before + 1 && opened
+            && opened->property("currentUri").toString() == one;
+    }));
+    QCOMPARE(m_app->tabs()->rowCount(), before + 1);
+    QCOMPARE(m_app->tabs()->currentController()->property("currentUri").toString(), one);
 
     // A second F3 reuses the tab instead of piling one up per file.
     m_app->tabs()->setCurrentIndex(0);
@@ -645,11 +702,14 @@ void TestKeyboardNavigation::f3OpensAPreviewAndReusesTheTab()
     pane()->setCurrentIndex(
         pane()->files()->rowOfUri(m_tree->rootUri().child(QStringLiteral("two.txt")).toString()));
     settle();
-    pressKey(Qt::Key_F3);
+    const QString two = m_tree->rootUri().child(QStringLiteral("two.txt")).toString();
+    QVERIFY(pressKeyUntil(Qt::Key_F3, [&] {
+        QObject* opened = m_app->tabs()->currentController();
+        return opened && opened->property("currentUri").toString() == two;
+    }));
 
     QCOMPARE(m_app->tabs()->rowCount(), before + 1);
-    QCOMPARE(m_app->tabs()->currentController()->property("currentUri").toString(),
-        m_tree->rootUri().child(QStringLiteral("two.txt")).toString());
+    QCOMPARE(m_app->tabs()->currentController()->property("currentUri").toString(), two);
 }
 
 void TestKeyboardNavigation::typingInAPreviewOpensTheFindBarHoldingWhatWasTyped()
@@ -743,7 +803,7 @@ void TestKeyboardNavigation::f3OnAFolderOpensItInstead()
     // And on a file it is still a preview: a tab opens and the listing stays put.
     QVERIFY(waitFor([browser] { return browser->files()->rowCount() == 1; }, 5000));
     const QString here = browser->currentUri();
-    pressKey(Qt::Key_F3);
+    QVERIFY(pressKeyUntil(Qt::Key_F3, [&] { return m_app->tabs()->rowCount() == tabsBefore + 1; }));
     QCOMPARE(m_app->tabs()->rowCount(), tabsBefore + 1);
     QCOMPARE(browser->currentUri(), here);
 }
@@ -847,7 +907,8 @@ void TestKeyboardNavigation::previewArrowsStepThroughTheFolder()
 void TestKeyboardNavigation::newTabShortcutOpensATab()
 {
     const int before = m_app->tabs()->rowCount();
-    pressKey(Qt::Key_T, Qt::ControlModifier);
+    QVERIFY(pressKeyUntil(
+        Qt::Key_T, [&] { return m_app->tabs()->rowCount() == before + 1; }, Qt::ControlModifier));
     QCOMPARE(m_app->tabs()->rowCount(), before + 1);
 }
 
@@ -877,7 +938,7 @@ void TestKeyboardNavigation::f4MenuWalksIntoSubmenusWithTheKeyboard()
 
     // Down highlights the first heading. Without this the menu is open and inert
     // until something is clicked, which is the whole complaint.
-    pressKey(Qt::Key_Down);
+    QVERIFY(pressKeyUntil(Qt::Key_Down, [&] { return menu->property("currentIndex").toInt() == 0; }));
     QCOMPARE(menu->property("currentIndex").toInt(), 0);
 
     QObject* fileMenu = findObject(QStringLiteral("menuFile"));
@@ -890,7 +951,7 @@ void TestKeyboardNavigation::f4MenuWalksIntoSubmenusWithTheKeyboard()
     // Opening it highlights its first entry, so the keyboard is inside it and
     // the next Down moves within the submenu rather than along the headings.
     QCOMPARE(fileMenu->property("currentIndex").toInt(), 0);
-    pressKey(Qt::Key_Down);
+    QVERIFY(pressKeyUntil(Qt::Key_Down, [&] { return fileMenu->property("currentIndex").toInt() == 1; }));
     QCOMPARE(fileMenu->property("currentIndex").toInt(), 1);
 
     // Left comes back out to the headings without closing everything, which is
@@ -902,7 +963,7 @@ void TestKeyboardNavigation::f4MenuWalksIntoSubmenusWithTheKeyboard()
         "and gets the keyboard back, or the arrows do nothing from here on");
 
     // A second heading, opened with Enter this time: both keys mean "go in".
-    pressKey(Qt::Key_Down);
+    QVERIFY(pressKeyUntil(Qt::Key_Down, [&] { return menu->property("currentIndex").toInt() == 1; }));
     QCOMPARE(menu->property("currentIndex").toInt(), 1);
     pressKey(Qt::Key_Return);
     QObject* viewMenu = findObject(QStringLiteral("menuView"));
@@ -925,7 +986,7 @@ void TestKeyboardNavigation::deleteAsksWithTheFilesNamed()
     pane()->cursorToEnd();
     pressKey(Qt::Key_Insert);
     pressKey(Qt::Key_Up);
-    pressKey(Qt::Key_Insert);
+    QVERIFY(pressKeyUntil(Qt::Key_Insert, [&] { return pane()->files()->selectionCount() == 2; }));
     QCOMPARE(pane()->files()->selectionCount(), 2);
 
     pressKey(Qt::Key_Delete);
@@ -1071,11 +1132,12 @@ void TestKeyboardNavigation::gridArrowsMoveInTwoDimensions()
     QCOMPARE(pane()->currentIndex(), 0);
 
     // Sideways, which used to do nothing at all.
-    pressKey(Qt::Key_Right);
+    QVERIFY(pressKeyUntil(Qt::Key_Right, [&] { return pane()->currentIndex() == 1; }));
     QCOMPARE(pane()->currentIndex(), 1);
-    pressKey(Qt::Key_Left);
+    QVERIFY(pressKeyUntil(Qt::Key_Left, [&] { return pane()->currentIndex() == 0; }));
     QCOMPARE(pane()->currentIndex(), 0);
-    // And neither leaves the folder at either end.
+    // And neither leaves the folder at either end. Nothing to wait for here
+    // either: the claim is that the key did nothing.
     pressKey(Qt::Key_Left);
     QCOMPARE(pane()->currentIndex(), 0);
     pane()->cursorToEnd();
@@ -1086,11 +1148,11 @@ void TestKeyboardNavigation::gridArrowsMoveInTwoDimensions()
 
     // Down and up move a visual row, which is the column count -- not one entry.
     pane()->cursorToStart();
-    pressKey(Qt::Key_Down);
+    QVERIFY(pressKeyUntil(Qt::Key_Down, [&] { return pane()->currentIndex() == columns; }));
     QCOMPARE(pane()->currentIndex(), columns);
-    pressKey(Qt::Key_Down);
+    QVERIFY(pressKeyUntil(Qt::Key_Down, [&] { return pane()->currentIndex() == 2 * columns; }));
     QCOMPARE(pane()->currentIndex(), 2 * columns);
-    pressKey(Qt::Key_Up);
+    QVERIFY(pressKeyUntil(Qt::Key_Up, [&] { return pane()->currentIndex() == columns; }));
     QCOMPARE(pane()->currentIndex(), columns);
 }
 
@@ -1107,9 +1169,9 @@ void TestKeyboardNavigation::gridArrowsMoveOneEntryWhenOnlyOneColumnFits()
     settle();
 
     pane()->cursorToStart();
-    pressKey(Qt::Key_Down);
+    QVERIFY(pressKeyUntil(Qt::Key_Down, [&] { return pane()->currentIndex() == 1; }));
     QCOMPARE(pane()->currentIndex(), 1);
-    pressKey(Qt::Key_Up);
+    QVERIFY(pressKeyUntil(Qt::Key_Up, [&] { return pane()->currentIndex() == 0; }));
     QCOMPARE(pane()->currentIndex(), 0);
 
     m_window->resize(was);
@@ -1138,9 +1200,9 @@ void TestKeyboardNavigation::pagingMovesByWhatIsVisibleRatherThanFifteen()
             page > 1, qPrintable(QStringLiteral("a %1px list fits %2 rows").arg(list->height()).arg(page)));
 
         pane()->cursorToStart();
-        pressKey(Qt::Key_PageDown);
+        QVERIFY(pressKeyUntil(Qt::Key_PageDown, [&] { return pane()->currentIndex() == page; }));
         QCOMPARE(pane()->currentIndex(), page);
-        pressKey(Qt::Key_PageUp);
+        QVERIFY(pressKeyUntil(Qt::Key_PageUp, [&] { return pane()->currentIndex() == 0; }));
         QCOMPARE(pane()->currentIndex(), 0);
     }
     // The two heights have to have measured different pages, or this asserted
@@ -1193,12 +1255,12 @@ void TestKeyboardNavigation::theGalleryIsTheSamePaneWithBiggerTiles()
 
     // Selection, and Insert advancing in listing order.
     pane()->cursorToStart();
-    pressKey(Qt::Key_Insert);
+    QVERIFY(pressKeyUntil(Qt::Key_Insert, [&] { return pane()->files()->selectionCount() == 1; }));
     QCOMPARE(pane()->files()->selectionCount(), 1);
     QCOMPARE(pane()->currentIndex(), 1);
-    pressKey(Qt::Key_Space);
+    QVERIFY(pressKeyUntil(Qt::Key_Space, [&] { return pane()->files()->selectionCount() == 2; }));
     QCOMPARE(pane()->files()->selectionCount(), 2);
-    pressKey(Qt::Key_Escape);
+    QVERIFY(pressKeyUntil(Qt::Key_Escape, [&] { return pane()->files()->selectionCount() == 0; }));
     QCOMPARE(pane()->files()->selectionCount(), 0);
 
     // Filter-by-typing, with no shortcut to remember.
@@ -1245,7 +1307,7 @@ void TestKeyboardNavigation::theGalleryIsTheSamePaneWithBiggerTiles()
     pane()->setCurrentIndex(row);
     settle();
     const int tabsBefore = m_app->tabs()->rowCount();
-    pressKey(Qt::Key_F3);
+    QVERIFY(pressKeyUntil(Qt::Key_F3, [&] { return m_app->tabs()->rowCount() == tabsBefore + 1; }));
     QCOMPARE(m_app->tabs()->rowCount(), tabsBefore + 1);
     QCOMPARE(m_app->tabs()->currentController()->property("currentUri").toString(),
         m_tree->rootUri().child(QStringLiteral("one.txt")).toString());

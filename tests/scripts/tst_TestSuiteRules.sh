@@ -358,6 +358,101 @@ if [ -s "$SHELLTEST_TMP/silent" ]; then
     sed 's/^/    /' "$SHELLTEST_TMP/silent"
 fi
 
+begin "nothing in the suite waits for a fixed number of milliseconds"
+# **A test for a race waits for a condition, never for a clock.** The fast tier
+# runs on a hosted runner on every push (ADR-0086), which is the loaded machine
+# that rule is written for: a settle of 60 ms that was always enough on a laptop
+# is a coin toss there, and an intermittent test is worse than no test because it
+# teaches everybody to ignore red. This is the rule that keeps them out, since
+# every one of them was added by somebody who did not know it was a rule.
+#
+# An allowlist with a *count* per file, not a list of names: adding a second
+# fixed wait to a file that legitimately has one is red as well, so the reason
+# beside each entry has to be stretched deliberately rather than by accident.
+# Four kinds of entry are here and there is not a fifth --
+#
+#   - a sleep that is the *work* taking time inside a scripted task body, or a
+#     loop waiting to be cancelled. The test asserts on what was published.
+#   - the poll interval of a condition wait -- waitFor(), until(), a retry loop.
+#     That is a condition wait; the interval is only how often it looks.
+#   - a duration something outside this process really has: a filesystem mtime
+#     good to one second, a pty that says nothing when it is ready.
+#   - the screenshot settles, where an animation advances by elapsed time and two
+#     frames taken with no time between them are identical for the wrong reason.
+#
+# See MOLE-400, which took the other ninety-odd out.
+cat > "$SHELLTEST_TMP/wait-budget" <<'LIST'
+tests/core/tst_TaskManager.cpp 9 scripted task bodies: the work taking time, and loops waiting to be cancelled
+tests/ui/tst_TaskListModel.cpp 1 a scripted task that has to still be running when the model is read
+tests/core/tst_ChainTask.cpp 1 a step that runs until the test cancels it
+tests/app/tst_Walkthrough.cpp 1 a copy that keeps going until the test cancels it
+tests/ui/tst_ThumbnailCache.cpp 1 a filesystem mtime is good to one second and nothing can hurry it
+tests/core/tst_Terminal.cpp 1 a pty with echo off says nothing when it is ready, so there is no condition
+tests/plugins/tst_SftpFileSystem.cpp 1 the poll interval of a retry loop against a real server
+tests/plugins/tst_S3FileSystem.cpp 1 the poll interval of that suite's own until()
+tests/support/TestSupport.cpp 1 the poll interval of waitFor() itself
+tests/support/QmlAppHarness.cpp 2 the screenshot settles, and until()'s poll interval
+tests/support/OfferingFileSystem.cpp 1 a drive being slow on purpose, which is what the fixture is for
+tests/scale/HeavyPayload.cpp 1 the sampling interval of the heavy tier's memory watcher
+tests/support/Victim.cpp 1 the poll interval of Victim::waitFor(), which is a condition wait
+LIST
+
+python3 - "$SHELLTEST_TMP/wait-budget" > "$SHELLTEST_TMP/timed" <<'PY'
+import pathlib
+import re
+import sys
+
+budget = {}
+for line in pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
+    if not line.strip():
+        continue
+    name, allowed, _reason = line.split(" ", 2)
+    budget[name] = int(allowed)
+
+# qWait and the three ways of sleeping, whatever the argument: a wait behind a
+# named constant is the same wait, and hiding one there is how a rule about
+# literals gets worked around.
+waits = re.compile(r"\b(?:QTest::qWait|QThread::msleep|QThread::sleep|sleep_for)\s*\(")
+found = {}
+for path in sorted(pathlib.Path("tests").rglob("*")):
+    if path.suffix not in (".cpp", ".h"):
+        continue
+    name = str(path)
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        # Prose about a wait is not a wait. Both comment shapes, because the
+        # explanation of why a wait went away often quotes the wait.
+        bare = line.strip()
+        if bare.startswith("//") or bare.startswith("*") or bare.startswith("///"):
+            continue
+        if waits.search(line):
+            found.setdefault(name, []).append((number, bare))
+
+if not found:
+    print("the scan found no fixed wait anywhere, which means it is not looking")
+
+for name, sites in sorted(found.items()):
+    allowed = budget.get(name, 0)
+    if len(sites) <= allowed:
+        continue
+    print(f"{name}: {len(sites)} fixed waits, {allowed} allowed")
+    for number, text in sites:
+        print(f"    {name}:{number}: {text}")
+
+# And an entry that is no longer needed is worth taking out, or the allowlist
+# becomes a place waits go to be forgotten.
+for name, allowed in sorted(budget.items()):
+    if not pathlib.Path(name).exists():
+        print(f"{name}: on the allowlist and does not exist")
+    elif len(found.get(name, [])) < allowed:
+        print(f"{name}: allowed {allowed} fixed waits and has "
+              f"{len(found.get(name, []))} -- lower the budget")
+PY
+
+if [ -s "$SHELLTEST_TMP/timed" ]; then
+    fail "a fixed wait decides something in the suite -- wait for the condition instead, see MOLE-400"
+    sed 's/^/    /' "$SHELLTEST_TMP/timed"
+fi
+
 begin "a shell test answers the same whether make or ctest started it"
 # `make test` exports MAKEFLAGS and MAKELEVEL to everything below it, so a `make`
 # run by a test was a recursive one: it prints "Entering directory" and "Leaving

@@ -9,8 +9,8 @@
 #include "core/vfs/backends/LocalFileSystem.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
+#include <QBuffer>
 #include <QDir>
-#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QImageReader>
 #include <QTemporaryDir>
@@ -194,38 +194,48 @@ void TestImageThumbnailer::aPortraitPhotographComesBackPortrait()
 
 /// A 24-megapixel photograph decoded in full to make a 160-pixel tile is the
 /// difference between a gallery that opens and one that swaps.
+///
+/// **Asserted by what can and cannot be decoded, not by which was quicker.** It
+/// used to time the two decodes and require the scaled one to take under half as
+/// long, which is a comparison a scheduling pause inside either measurement can
+/// invert -- and `make asan` is two to three times slower than the build the
+/// number was chosen on. Qt refuses to allocate an image over
+/// QImageReader::allocationLimit(), so lowering that limit to less than the full
+/// picture makes the two paths answerable rather than merely faster and slower:
+/// only a reader that was told to scale can produce anything at all. See
+/// MOLE-400.
 void TestImageThumbnailer::aLargeJpegIsDecodedScaledRatherThanInFull()
 {
     const QByteArray big = jpegWithExif(QSize(4000, 3000), QByteArray());
 
-    QElapsedTimer scaled;
-    scaled.start();
-    const QImage thumbnail = thumbnailOf(QStringLiteral("big.jpg"), big, 160);
-    const qint64 scaledMs = scaled.elapsed();
-    QVERIFY(!thumbnail.isNull());
-    QCOMPARE(qMax(thumbnail.width(), thumbnail.height()), 160);
+    // 4000x3000 in ARGB32 is 48 MiB, so a whole-file decode needs more than this
+    // and a decode bounded to 160 pixels needs about a hundredth of it. Put back
+    // afterwards, because the limit is process-wide.
+    const int wasAllowed = QImageReader::allocationLimit();
+    QImageReader::setAllocationLimit(16);
 
-    // The same file decoded whole, for something honest to compare against: a
-    // bare number of milliseconds would say nothing about this machine.
-    QElapsedTimer whole;
-    whole.start();
+    const QImage thumbnail = thumbnailOf(QStringLiteral("big.jpg"), big, 160);
+
+    // The same bytes read whole, which is what this would have had to do without
+    // setScaledSize(): refused, and that refusal is the assertion.
     QImage full;
+    QString whyNot;
     {
         QBuffer buffer;
         buffer.setData(big);
-        QVERIFY(buffer.open(QIODevice::ReadOnly));
+        const bool opened = buffer.open(QIODevice::ReadOnly);
         QImageReader reader(&buffer);
-        full = reader.read();
+        full = opened ? reader.read() : QImage();
+        whyNot = reader.errorString();
     }
-    const qint64 wholeMs = whole.elapsed();
-    QCOMPARE(full.size(), QSize(4000, 3000));
+    QImageReader::setAllocationLimit(wasAllowed);
 
-    // Half is a wide margin on purpose: what is being held is that the DCT scaler
-    // was reached at all, not a ratio that would differ per machine.
-    QVERIFY2(scaledMs * 2 <= wholeMs + 1,
-        qPrintable(QStringLiteral("scaled decode took %1 ms against %2 ms for the whole file")
-                       .arg(scaledMs)
-                       .arg(wholeMs)));
+    QVERIFY2(!thumbnail.isNull(), "a bounded decode has to fit inside the limit");
+    QCOMPARE(qMax(thumbnail.width(), thumbnail.height()), 160);
+    QVERIFY2(full.isNull(),
+        qPrintable(QStringLiteral("the whole file decoded inside a 16 MiB limit, so this proves "
+                                  "nothing about scaling: %1")
+                       .arg(whyNot)));
 }
 
 void TestImageThumbnailer::aFileNothingCanDecodeIsAnOrdinaryAnswer()

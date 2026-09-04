@@ -48,8 +48,20 @@ builtin  The features that ship in the box, registered like any plugin.
 app      main() and the QML shell.
 ```
 
-`core`, `sdk`, `host` and `ui` are all headless, which is why the entire test
-suite runs without a display and finishes in under a second.
+`core`, `sdk`, `host` and `ui` are all headless, which is why the whole suite
+runs without a display. The seventy-five suites over those four layers finish in
+about nine seconds together; `make test` runs all 143 of them — including the
+interface tests, which build the real window offscreen and drive it with real
+keystrokes — in about a minute and a half on an ordinary developer machine. The
+figures are here to say what kind of number it is: a suite that runs on every
+change rather than one that gets scheduled.
+
+Those numbers stay what they are because **no test in the suite waits for a fixed
+number of milliseconds.** A test waits for the condition it is about, and
+`tests/scripts/tst_TestSuiteRules.sh` refuses a `qWait` or an `msleep` outside a
+short allowlist that gives a reason for each one — the poll interval of a
+condition wait, a filesystem mtime good to one second, the settles between two
+frames of a screenshot.
 
 ## The threading rule
 

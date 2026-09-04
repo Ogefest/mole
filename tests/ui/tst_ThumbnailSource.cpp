@@ -282,7 +282,12 @@ void TestThumbnailSource::anAnswerArrivesExactlyOnceEvenForACancelledRequest()
     // Cancelling something already answered is not an error and not a second
     // answer: by then the response may not even exist any more.
     m_pump->cancelFor(&response);
-    QTest::qWait(20);
+    // Settled from the pump's own counters rather than after 20 ms: when it is
+    // holding nothing and waiting for nothing, whatever it was going to say it
+    // has said. A fixed wait asks the same question and can only be wrong in one
+    // direction. See MOLE-400.
+    QVERIFY(waitFor([&] { return m_pump->waiting() == 0 && m_pump->outstanding() == 0; }, 10000));
+    drainEvents();
     QCOMPARE(answers.count(), 1);
 }
 
@@ -471,8 +476,15 @@ void TestThumbnailSource::onlySoManyDecodeAtOnceAndTheRestQueue()
     }
 
     QVERIFY(waitFor([&] { return log->made.load() == 2; }));
-    // And it stays at two: the other ten are asked for and not started.
-    QTest::qWait(50);
+    // And it stays at two: the other ten are asked for and not started. Read off
+    // the pump's own counters once every queued event has run, which is what
+    // "not started" means -- the thumbnailer is held on the gate, so nothing can
+    // move on from here until it is released and there is no duration to wait
+    // out. See MOLE-400.
+    QVERIFY(waitFor(
+        [&] { return m_pump->queued() == 10 && m_pump->outstanding() == 2 && m_pump->waiting() == 12; },
+        10000));
+    drainEvents();
     QCOMPARE(m_pump->outstanding(), 2);
     QCOMPARE(log->made.load(), 2);
     QCOMPARE(m_pump->queued(), 10);

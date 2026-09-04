@@ -16,6 +16,24 @@
 
 namespace mole::test {
 
+/// Elapsed milliseconds a test decides for itself.
+///
+/// **Handed to Task::setElapsedSource(), so a rate window closes when the test
+/// says so.** A rate is bytes over elapsed time, and the only way to exercise
+/// that arithmetic used to be to sleep through the windows -- five and a half
+/// seconds of every run of tst_TaskManager, spent waiting for a clock rather
+/// than for anything that could go wrong. Advanced from the task body, read from
+/// the thread that draws, which is why it is atomic. See MOLE-400.
+class FakeClock
+{
+public:
+    qint64 nowMs() const { return m_ms.load(std::memory_order_relaxed); }
+    void advance(qint64 ms) { m_ms.fetch_add(ms, std::memory_order_relaxed); }
+
+private:
+    std::atomic<qint64> m_ms { 0 };
+};
+
 /// A task whose body is supplied by the test. Shared, because "a task that takes
 /// a measurable amount of time and reports as it goes" is what several suites
 /// need and none of them should have to grow their own.

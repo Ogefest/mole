@@ -12,6 +12,7 @@
 #include <QString>
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -110,6 +111,22 @@ public:
     const QDateTime& startedAt() const { return m_startedAt; }
     /// How long it has been running, or how long it took. 0 before it starts.
     qint64 elapsedMs() const;
+
+    /// Where elapsed milliseconds come from, for a test that wants a rate
+    /// without waiting for one.
+    ///
+    /// **A rate needs elapsed time, so a test of the arithmetic had to sleep
+    /// through it**: four sampling windows of 250 ms per case, about five and a
+    /// half seconds of every run of tst_TaskManager, spent waiting for this
+    /// class's own clock. Nothing about those cases is a race -- what is in doubt
+    /// is bytes divided by time -- so the time is handed in instead, and the
+    /// suite asserts the same arithmetic on numbers it chose. Production sets
+    /// nothing and reads the monotonic clock. See MOLE-400.
+    ///
+    /// Set it before the task is submitted and never after: it is read from the
+    /// worker thread and from the thread that draws, and a function object
+    /// replaced while either is inside it is a data race.
+    void setElapsedSource(std::function<qint64()> source);
 
     // ---- what this task is reporting -------------------------------------
 
@@ -288,6 +305,9 @@ private:
     /// change: a row that has stopped must not be left showing a line -- or a
     /// count -- from the middle of its run. Called from the worker thread.
     void flushReports();
+    /// Milliseconds since the task started, from the injected source when there
+    /// is one and from the monotonic clock otherwise.
+    qint64 elapsedNow() const;
     /// Publishes how long is left, from the smoothed rate and the total. Called
     /// from setBytesDone() so every task that measures bytes gets it at once
     /// rather than each one growing its own arithmetic.
@@ -315,6 +335,8 @@ private:
     /// them is a duration that changes when the machine's clock is corrected,
     /// and a rate computed from one can come out negative or infinite.
     QElapsedTimer m_since;
+    /// Set only by a test, and only before the task runs. See setElapsedSource().
+    std::function<qint64()> m_elapsedSource;
     qint64 m_finishedElapsedMs = -1;
     /// Keyed by TaskMetric::key. Owned by the UI thread.
     QMap<QString, TaskMetric> m_metrics;

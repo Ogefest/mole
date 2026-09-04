@@ -183,6 +183,12 @@ public:
     /// Drops what dragEnter() is carrying. Does nothing without one.
     void dropAt(const QPoint& where);
     /// Lets bindings, queued task results and the render loop catch up.
+    ///
+    /// Drains the event queue rather than sleeping, and turns one frame so a
+    /// layout pass has run -- a condition rather than a duration, which is what
+    /// makes an assertion straight afterwards mean something on a loaded runner.
+    /// `rounds` is how many times the queue is drained, because draining it can
+    /// post more work. See MOLE-400.
     void settle(int rounds = 5);
     /// Spins until `predicate` holds, or the timeout expires.
     bool until(const std::function<bool()>& predicate, int timeoutMs = 10000);
@@ -242,6 +248,17 @@ private:
     /// Shared by start() and restart(), which differ only in whether the
     /// profile underneath is a new one.
     bool build(QString* errorOut);
+
+    /// Turns one frame, so a layout pass has run before anything reads a
+    /// position. See settle().
+    void renderOneFrame();
+    /// Rounds of a fixed wait, for the one caller that needs elapsed time: a
+    /// picture. See the comment on the definition.
+    void settleByTheClock(int rounds);
+
+    /// Whether asking for a frame produces one. False after one attempt that did
+    /// not, so a machine with no working surface pays the guard once.
+    bool m_framesArrive = true;
 
     Options m_options;
     std::unique_ptr<PrivateProfile> m_profile;

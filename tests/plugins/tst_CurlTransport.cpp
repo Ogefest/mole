@@ -277,8 +277,19 @@ void TestCurlTransport::aCancelTakesEffectAtOnce()
     QElapsedTimer clock;
     clock.start();
     const net::Response response = pool.perform(lease, cancel);
-    QVERIFY2(clock.elapsed() < 1000,
-        qPrintable(QStringLiteral("a cancelled transfer took %1 ms").arg(clock.elapsed())));
+    const qint64 took = clock.elapsed();
+
+    // **Six seconds, the same shape as the guard above.** What this rules out is
+    // waiting on the stall guard or on the server's half minute of silence, both
+    // of which are thirty seconds -- and the bound used to be one second, which
+    // also measured a DNS lookup and a TCP connect on whatever machine is
+    // running and left no room for a sanitized build. An order of magnitude
+    // under the thing being ruled out is the bound; anything tighter is a
+    // stopwatch on the local network. See MOLE-400.
+    QVERIFY2(took < 6000,
+        qPrintable(QStringLiteral("a cancelled transfer took %1 ms against a stall guard of thirty "
+                                  "seconds")
+                       .arg(took)));
     QVERIFY2(net::wasCancelled(response), "a cancelled transfer has to read as cancelled");
 }
 

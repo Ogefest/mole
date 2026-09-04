@@ -5,9 +5,12 @@
 #include "ui/AppController.h"
 #include "ui/models/TaskListModel.h"
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QDirIterator>
 #include <QDragEnterEvent>
+#include <QElapsedTimer>
+#include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -334,7 +337,59 @@ bool QmlAppHarness::setModified(const QString& relativePath, const QDateTime& wh
 
 void QmlAppHarness::settle(int rounds)
 {
-    for (int i = 0; i < rounds; ++i)
+    // **Drained, not slept.** What a keystroke leaves behind is posted events and
+    // queued signal deliveries, and those are finished when the queue is empty --
+    // not 20 ms later. Every round of this used to be a fixed qWait(20), so a
+    // key() cost 60 ms of wall clock and, on a loaded runner, *hoped* that 60 ms
+    // was enough: the model had a duration to update in rather than a condition
+    // to reach. Draining answers the same question without a clock in it, and a
+    // test that then asserts is asserting about a queue that is empty. See
+    // MOLE-400 and ADR-0086.
+    //
+    // The rounds are kept, because one drain can post the work the next has to
+    // run: a queued connection that queues another, which is most of what a
+    // model does when a row changes.
+    for (int round = 0; round < qMax(1, rounds); ++round) {
+        QCoreApplication::sendPostedEvents();
+        QCoreApplication::processEvents(QEventLoop::AllEvents);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    }
+    renderOneFrame();
+}
+
+void QmlAppHarness::renderOneFrame()
+{
+    // **A layout pass happens on the way to a frame, so a position read without
+    // one is the position an item had before it was placed.** That is the fault
+    // clickOn() was written for, and draining the queue does not fix it: polish
+    // is the scene graph's, not the event queue's. Waited for by the frame
+    // arriving rather than by a duration -- about four milliseconds here --
+    // and given up on rather than waited out where nothing renders at all, so a
+    // machine with no working surface pays this once instead of on every settle.
+    if (!m_window || !m_window->isVisible() || !m_framesArrive)
+        return;
+
+    bool swapped = false;
+    const QMetaObject::Connection watch
+        = QObject::connect(m_window, &QQuickWindow::frameSwapped, m_window, [&swapped] { swapped = true; });
+    m_window->requestUpdate();
+    QElapsedTimer guard;
+    guard.start();
+    while (!swapped && guard.elapsed() < 500)
+        QCoreApplication::processEvents(QEventLoop::AllEvents);
+    QObject::disconnect(watch);
+    m_framesArrive = swapped;
+}
+
+void QmlAppHarness::settleByTheClock(int rounds)
+{
+    // **The one place a duration is the right question.** A picture is compared
+    // with the frame before it to find out whether the window has stopped
+    // moving, and an animation advances by elapsed time -- so two frames taken
+    // with no time between them are identical for the wrong reason, and the
+    // picture comes out part way through a transition. That is exactly what
+    // MOLE-255 found and it is why grab() is the only caller. See MOLE-400.
+    for (int round = 0; round < rounds; ++round)
         QTest::qWait(20);
 }
 
@@ -362,8 +417,25 @@ void QmlAppHarness::type(const QString& text)
 {
     // Character by character, because that is how a filter that reacts to the
     // first keystroke has to be exercised.
+    //
+    // **The key code and the character are two different things, and this used
+    // to send only the code.** `QChar::toLatin1()` answers 0 for anything outside
+    // Latin-1, so `type("Łódź")` delivered four keystrokes carrying nothing --
+    // in an application whose index keeps every name twice because "Łódź would
+    // never match łódź", whose guide pictures are taken in the author's own
+    // locale, and which is being made ready for Windows. No interface test could
+    // type a name of the kind the code is most careful about. The text is what a
+    // field inserts, so the text is what is sent, with the code alongside it
+    // where there is one. See MOLE-400.
     for (const QChar c : text) {
-        QTest::keyClick(m_window, c.toLatin1(), Qt::NoModifier);
+        // A printable ASCII character has the key code a keyboard would report
+        // for it, which is its uppercase value -- so a handler that switches on
+        // event.key still sees what it saw before. Anything else has no key code
+        // at all, which is exactly what a real keyboard layout produces for a
+        // character reached through a compose or a dead key.
+        const Qt::Key code
+            = (c.unicode() < 0x80) ? static_cast<Qt::Key>(QChar(c).toUpper().unicode()) : Qt::Key_unknown;
+        QTest::sendKeyEvent(QTest::Click, m_window, code, QString(c), Qt::NoModifier);
         settle(1);
     }
 }
@@ -642,7 +714,7 @@ QImage QmlAppHarness::grab(Settle mode)
     QImage previous;
     int matches = 0;
     for (int attempt = 0; attempt < kGrabAttempts; ++attempt) {
-        settle(2);
+        settleByTheClock(2);
         QImage frame = m_window->grabWindow();
         if (frame.isNull())
             return frame;
