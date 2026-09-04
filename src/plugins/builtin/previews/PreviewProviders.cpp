@@ -1610,8 +1610,15 @@ SqlitePreviewController::SqlitePreviewController(PluginServices services, QObjec
         QString error;
         if (!m_database->open(&error)) {
             m_database.reset();
-            setErrorText(error);
             emit schemaChanged();
+            // **Given up rather than shown as an empty grid.** A `.db` that is a
+            // Berkeley database, or a rename, gets this far -- and ADR-0078
+            // exists because "a .png may not be a PNG". The bytes viewer and the
+            // fact list below this would have shown something; an empty grid with
+            // a sentence over it shows nothing. This was the second time this
+            // viewer decided for itself what happens on failure, which is what
+            // the ADR set out to stop. See MOLE-381.
+            decline(error.isEmpty() ? QStringLiteral("it is not a SQLite database") : error);
             return;
         }
 
@@ -1788,8 +1795,11 @@ ParquetPreviewController::ParquetPreviewController(PluginServices services, QObj
         QString error;
         if (!m_file->open(&error)) {
             m_file.reset();
-            setErrorText(error);
             emit schemaChanged();
+            // Given up rather than shown as an empty grid: a `.parquet` that is
+            // a rename gets exactly this far. See the note in the SQLite
+            // controller above and MOLE-381.
+            decline(error.isEmpty() ? QStringLiteral("it is not a Parquet file") : error);
             return;
         }
 

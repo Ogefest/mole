@@ -4,6 +4,7 @@
 
 #include "core/vfs/VfsManager.h"
 
+#include <QMimeDatabase>
 #include <QStringDecoder>
 
 #include <optional>
@@ -492,7 +493,33 @@ namespace {
 
 bool AudioMetadataReader::canRead(const FileEntry& entry) const
 {
-    return !entry.isDir && entry.mimeType.startsWith(QLatin1String("audio/"));
+    if (entry.isDir)
+        return false;
+    if (entry.mimeType.startsWith(QLatin1String("audio/")))
+        return true;
+    // The name as well. This one worked by luck: no viewer claims .mp3 by name,
+    // so the sniff always ran and always filled the type in. The moment one does
+    // -- an audio player, a waveform -- it would have gone the way the video
+    // reader had already gone. Asked of the MIME database once, the way
+    // VideoPreviewProvider::videoSuffixes() does. See MOLE-381.
+    static const QStringList suffixes = audioSuffixes();
+    return suffixes.contains(entry.uri.suffix());
+}
+
+QStringList AudioMetadataReader::audioSuffixes()
+{
+    QStringList suffixes;
+    const QList<QMimeType> types = QMimeDatabase().allMimeTypes();
+    for (const QMimeType& type : types) {
+        if (!type.name().startsWith(QLatin1String("audio/")))
+            continue;
+        for (const QString& suffix : type.suffixes()) {
+            const QString lower = suffix.toLower();
+            if (!suffixes.contains(lower))
+                suffixes.append(lower);
+        }
+    }
+    return suffixes;
 }
 
 QList<FileFact> AudioMetadataReader::factsFor(QByteArrayView head, QByteArrayView tail, qint64 fileSize)

@@ -248,24 +248,32 @@ void PdfPreviewController::documentOpened(const OpenPdfDocumentTask::Contents& c
         m_documentPath.clear();
         // Said plainly rather than as an enum: a reader wants to know whether the
         // file is broken or simply locked.
+        QString why;
         switch (error) {
         case QPdfDocument::Error::IncorrectPassword:
-            setErrorText(QStringLiteral("This document is password-protected"));
+            why = QStringLiteral("this document is password-protected");
             break;
         case QPdfDocument::Error::UnsupportedSecurityScheme:
-            setErrorText(QStringLiteral("This document uses a security scheme Qt cannot open"));
+            why = QStringLiteral("this document uses a security scheme Qt cannot open");
             break;
         case QPdfDocument::Error::FileNotFound:
-            setErrorText(QStringLiteral("The file is no longer there"));
+            why = QStringLiteral("the file is no longer there");
             break;
         case QPdfDocument::Error::InvalidFileFormat:
-            setErrorText(QStringLiteral("This is not a PDF, or it is damaged beyond reading"));
+            why = QStringLiteral("this is not a PDF, or it is damaged beyond reading");
             break;
         default:
-            setErrorText(QStringLiteral("The document could not be opened"));
+            why = QStringLiteral("the document could not be opened");
             break;
         }
         emit documentChanged();
+        // **Given up rather than shown as a blank page.** A `.pdf` that is
+        // PostScript reaches exactly this line, and ADR-0078 exists because "a
+        // .png may not be a PNG". Even the password case is better said by the
+        // fact list -- "encrypted, needs a password", beside the generic facts --
+        // than by an empty page with a sentence over it, and the reason travels
+        // with the decline so the strip still says it. See MOLE-381.
+        decline(why);
         return;
     }
 

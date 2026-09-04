@@ -115,6 +115,33 @@ QByteArray mp4File()
     return out + QByteArray(2048, 'v');
 }
 
+/// The same, with an index in it: a movie header saying how long the film is.
+///
+/// Enough of the ISO structure for VideoMetadataReader to answer, and no more --
+/// tst_MediaMetadata is where every box is exercised. What this file is for is
+/// the *drawer*: whether the reader is asked at all. See MOLE-381.
+QByteArray mp4WithADuration()
+{
+    const auto be32 = [](quint32 value) {
+        QByteArray out(4, '\0');
+        for (int i = 0; i < 4; ++i)
+            out[i] = char((value >> (8 * (3 - i))) & 0xff);
+        return out;
+    };
+    const auto box = [&be32](const char* type, const QByteArray& payload) {
+        return be32(quint32(payload.size() + 8)) + QByteArray(type, 4) + payload;
+    };
+
+    QByteArray mvhd = be32(0) + be32(0) + be32(0);
+    mvhd += be32(1000) + be32(187000); // a timescale, and 187 seconds of ticks
+    mvhd += QByteArray(80, '\0');
+
+    const QByteArray ftyp
+        = box("ftyp", QByteArrayLiteral("isom") + be32(512) + QByteArrayLiteral("isomavc1"));
+    const QByteArray moov = box("moov", box("mvhd", mvhd));
+    return ftyp + moov + box("mdat", QByteArray(2048, 'v'));
+}
+
 QByteArray mp3File()
 {
     QByteArray out = QByteArrayLiteral("ID3") + QByteArray(1, '\x04') + QByteArray(2, '\0')
@@ -126,6 +153,33 @@ QByteArray mp3File()
     for (int i = 0; i < 8; ++i)
         out += frame + QByteArray(413, '\0');
     return out;
+}
+
+/// A real SQLite database, as bytes.
+///
+/// Built rather than faked, because the viewer now gives up a file it cannot
+/// open -- so a header followed by rubbish steps down to the fact list, which is
+/// right and is not what "a .sqlite keeps its viewer" is about. See MOLE-381.
+QByteArray realSqliteFile()
+{
+    QTemporaryDir scratch;
+    if (!scratch.isValid())
+        return {};
+    const QString path = QDir(scratch.path()).filePath(QStringLiteral("made.sqlite"));
+    {
+        const QString name = QStringLiteral("mole-preview-fixture");
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), name);
+        db.setDatabaseName(path);
+        if (db.open()) {
+            QSqlQuery query(db);
+            query.exec(QStringLiteral("CREATE TABLE readings (id INTEGER PRIMARY KEY, note TEXT)"));
+            query.exec(QStringLiteral("INSERT INTO readings (note) VALUES ('one')"));
+            db.close();
+        }
+        QSqlDatabase::removeDatabase(name);
+    }
+    QFile made(path);
+    return made.open(QIODevice::ReadOnly) ? made.readAll() : QByteArray();
 }
 
 QByteArray docxFile()
@@ -203,6 +257,8 @@ private slots:
 
     // ---- what a file says about itself ------------------------------------
     void everyReaderThatClaimsAFileContributes();
+    void aVideosDurationIsInTheDrawerInEveryBuild();
+    void aFileThatIsNotWhatItsNameSaysStepsDownRatherThanShowingNothing();
     void nothingIsReadUntilTheDetailsAreOpened();
     void theDetailsAreOneSettingForEveryFile();
     void aValueCanBeCopiedOutOfTheDetails();
@@ -728,6 +784,95 @@ void TestPreview::everyReaderThatClaimsAFileContributes()
     QCOMPARE(detailNamed(preview, QStringLiteral("First")), QStringLiteral("sooner"));
 }
 
+/// A video's facts appeared only in builds that could not play video.
+///
+/// FileEntry::mimeType is written by exactly one place -- the content sniff in
+/// identifyThenShow() -- and that runs only when the *name-based* provider was
+/// the text viewer or the fact list. In a build that can play video the video
+/// provider claims .mp4 by name, so no sniff ran, mimeType stayed empty, and
+/// readersFor() left the video reader out: the drawer showed the eight generic
+/// facts. And when the player declined, the fact list it stepped down to had no
+/// duration either -- which is the exact thing ADR-0078 says stepping down is
+/// for, and what MOLE-135 built. See MOLE-381.
+void TestPreview::aVideosDurationIsInTheDrawerInEveryBuild()
+{
+    QVERIFY(m_tree->writeFile(QStringLiteral("film.mp4"), mp4WithADuration()));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("film.mp4"));
+    QVERIFY(preview);
+    preview->setDetailsOpen(true);
+    QVERIFY(waitFor([preview] { return !preview->isDetailsLoading(); }, 5000));
+
+    const QStringList labels = detailLabels(preview);
+    QVERIFY2(labels.contains(QStringLiteral("Duration")),
+        qPrintable(
+            QStringLiteral("the drawer on a video showed only: %1").arg(labels.join(QLatin1Char(',')))));
+    QCOMPARE(detailNamed(preview, QStringLiteral("Duration")), QStringLiteral("3:07"));
+    // Whichever viewer is on screen: in a multimedia build the player has it, in
+    // one without it the fact list does, and the drawer says the same either way.
+}
+
+/// Three viewers answered a failed open with an empty pane.
+///
+/// ADR-0078 introduced decline() because "a .png may not be a PNG", and the
+/// image and video controllers use it. The SQLite, Parquet and PDF controllers
+/// answered a failed open with setErrorText() and an empty grid or page -- a
+/// `.db` that is a Berkeley database, a `.parquet` that is a rename, a `.pdf`
+/// that is PostScript. The bytes viewer and the fact list below them would have
+/// shown something. It was the second time each of those viewers decided for
+/// itself what happens on failure, which is what the ADR set out to stop.
+/// See MOLE-381.
+void TestPreview::aFileThatIsNotWhatItsNameSaysStepsDownRatherThanShowingNothing()
+{
+    struct Case
+    {
+        QString fileName;
+        QByteArray contents;
+        QString claimedBy;
+    };
+
+    // Each one is claimed on its name and is not what the name says.
+    const QList<Case> pretenders {
+        // A Berkeley DB header, which is what a .db often really is.
+        { QStringLiteral("index.sqlite"), QByteArray("\x00\x06\x15\x61", 4) + QByteArray(600, '\x11'),
+            QStringLiteral("mole.preview.sqlite") },
+        { QStringLiteral("rows.parquet"), QByteArray("not a parquet file at all") + QByteArray(600, 'x'),
+            QStringLiteral("mole.preview.parquet") },
+        // PostScript under a PDF's name, which is the classic one.
+        { QStringLiteral("report.pdf"), QByteArrayLiteral("%!PS-Adobe-3.0\n") + QByteArray(600, 'p'),
+            QStringLiteral("mole.preview.pdf") },
+    };
+
+    for (const Case& pretender : pretenders) {
+        QVERIFY(m_tree->writeFile(pretender.fileName, pretender.contents));
+        PreviewTabController* preview = openPreview(pretender.fileName);
+        QVERIFY(preview);
+
+        // The viewer that claimed it reads the bytes and gives up, and the tab
+        // steps down: what must not happen is staying on a pane with nothing in
+        // it. Waited on the condition, because the open is a task.
+        QVERIFY2(waitFor([preview] { return preview->providerId() != QString(); }, 5000),
+            qPrintable(pretender.fileName));
+        QVERIFY2(
+            waitFor([preview, &pretender] { return preview->providerId() != pretender.claimedBy; }, 10000),
+            qPrintable(QStringLiteral("%1 kept the pane; the viewer was %2 and it said \"%3\"")
+                           .arg(pretender.fileName, preview->providerId(),
+                               preview->viewer() ? preview->viewer()->property("errorText").toString()
+                                                 : QString())));
+
+        // And the reason the viewer gave is still said, rather than being lost
+        // with the pane it was written into.
+        QVERIFY2(!preview->fallbackNote().isEmpty(),
+            qPrintable(QStringLiteral("%1 gave up silently").arg(pretender.fileName)));
+
+        // Something is showing, and it has the file's facts underneath it.
+        QVERIFY(preview->viewer());
+        preview->setDetailsOpen(true);
+        QVERIFY(waitFor([preview] { return !preview->isDetailsLoading(); }, 5000));
+        QVERIFY2(detailLabels(preview).contains(QStringLiteral("Size")), qPrintable(pretender.fileName));
+    }
+}
+
 void TestPreview::nothingIsReadUntilTheDetailsAreOpened()
 {
     // The panel is where an expensive reader's cost falls, so it must fall on
@@ -1108,9 +1253,7 @@ void TestPreview::bytesAreShownForWhatNothingElseClaims_data()
         << "Jenkinsfile" << QByteArray("pipeline { agent any }\n") << "mole.preview.text";
     // And a format with a viewer of its own keeps it: the hex viewer sits below
     // every one of them.
-    QTest::newRow("a database") << "index.sqlite"
-                                << (QByteArray("SQLite format 3\0", 16) + QByteArray(400, '\x02'))
-                                << "mole.preview.sqlite";
+    QTest::newRow("a database") << "index.sqlite" << realSqliteFile() << "mole.preview.sqlite";
 }
 
 void TestPreview::bytesAreShownForWhatNothingElseClaims()

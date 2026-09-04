@@ -1,5 +1,7 @@
 #include "plugins/builtin/previews/MediaMetadata.h"
 
+#include "plugins/builtin/previews/VideoPreview.h"
+
 #include "core/vfs/VfsManager.h"
 
 #include <QHash>
@@ -669,7 +671,26 @@ QString durationText(double seconds)
 
 bool VideoMetadataReader::canRead(const FileEntry& entry) const
 {
-    return !entry.isDir && entry.mimeType.startsWith(QLatin1String("video/"));
+    if (entry.isDir)
+        return false;
+    if (entry.mimeType.startsWith(QLatin1String("video/")))
+        return true;
+    // **And the name, which is the only thing there usually is.**
+    //
+    // FileEntry::mimeType is written by exactly one place -- the content sniff
+    // in PreviewTabController::identifyThenShow() -- and that runs only when the
+    // *name-based* provider was the text viewer or the fact list. In a build
+    // that can play video the video provider claims .mp4 and .mkv by name, so no
+    // sniff ever runs, mimeType stays empty, and readersFor() left this reader
+    // out: the drawer on a video showed the eight generic facts. And when the
+    // player declined, the fact list it stepped down to had no duration, codec
+    // or dimensions -- which is the exact thing ADR-0078 says stepping down is
+    // for. So the facts appeared only in builds that could not play video.
+    //
+    // The image and document readers have always matched on the suffix as well;
+    // this is that, through the same list the provider computes. See MOLE-381.
+    static const QStringList suffixes = VideoPreviewProvider::videoSuffixes();
+    return suffixes.contains(entry.uri.suffix());
 }
 
 bool VideoMetadataReader::wantsTail(QByteArrayView head)

@@ -26,6 +26,10 @@ public:
     QString id() const override { return QStringLiteral("mole.metadata.audio"); }
     int priority() const override { return 100; }
     bool canRead(const FileEntry& entry) const override;
+
+    /// Every suffix the MIME database calls audio. Read once, because the
+    /// database walk is not free and the answer does not change.
+    static QStringList audioSuffixes();
     QList<FileFact> read(const FileEntry& entry, QByteArrayView head, PluginServices services,
         const CancelToken& cancel) const override;
 
