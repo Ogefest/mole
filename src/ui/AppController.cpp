@@ -1,6 +1,7 @@
 #include "ui/AppController.h"
 
 #include "host/ActionRegistry.h"
+#include "host/ArchiveRegistry.h"
 #include "host/FeatureRegistry.h"
 #include "host/MetadataRegistry.h"
 #include "host/PluginManager.h"
@@ -11,6 +12,7 @@
 #include "ui/DragSource.h"
 #include "ui/FileLauncher.h"
 #include "ui/SessionStore.h"
+#include "ui/UpdateCheck.h"
 #include "ui/models/CommandPaletteModel.h"
 #include "ui/models/DriveListModel.h"
 #include "ui/models/FileListModel.h"
@@ -26,12 +28,6 @@
 #include "core/index/IndexSummary.h"
 #include "core/index/ScanTask.h"
 #include "core/sets/FileSetStore.h"
-#ifdef MOLE_HAVE_ARCHIVE
-#include "plugins/archive/CompressTask.h"
-#endif
-
-#include "ui/UpdateCheck.h"
-
 #include "core/settings/Preferences.h"
 #include "core/tasks/DriveCheckTask.h"
 #include "core/tasks/FolderSizesTask.h"
@@ -274,6 +270,7 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     m_metadata = new MetadataRegistry(this);
     m_thumbnails = new ThumbnailRegistry(this);
     m_actions = new ActionRegistry(this);
+    m_archives = new ArchiveRegistry(this);
 
     m_index = std::make_unique<IndexDatabase>(IndexDatabase::defaultFilePath());
     if (Result<void> opened = m_index->open(); !opened.ok()) {
@@ -380,6 +377,7 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     destinations.metadata = m_metadata;
     destinations.thumbnails = m_thumbnails;
     destinations.actions = m_actions;
+    destinations.archives = m_archives;
 
     m_plugins = new PluginManager(m_services, destinations, this);
 
@@ -2618,38 +2616,42 @@ QVariantList AppController::compressionTargets() const
 
 bool AppController::formatSupportsPassword(const QString& format) const
 {
-#ifdef MOLE_HAVE_ARCHIVE
-    // Only zip carries a password. A tar is a container with no notion of one, and
-    // gzip and xz encrypt nothing -- so the box is not offered rather than being
-    // offered and ignored.
-    return CompressTask::formatSupportsPassword(CompressTask::formatFromName(format));
-#else
-    Q_UNUSED(format);
-    return false;
-#endif
+    // Asked of whatever writes that format rather than known here. Only zip
+    // carries a password -- a tar has no notion of one and gzip and xz encrypt
+    // nothing -- but which kinds those are is the archiver's fact, not the
+    // shell's. See ADR-0101.
+    return m_archives && m_archives->format(format).takesPassword;
 }
 
 bool AppController::canCompress() const
 {
-#ifdef MOLE_HAVE_ARCHIVE
-    return true;
-#else
-    return false;
-#endif
+    // A runtime question now, and it used to be a compile-time one: `#ifdef
+    // MOLE_HAVE_ARCHIVE`, decided by whether the library was there when mole_ui
+    // was built. Nothing registered means nothing can pack, which is what a build
+    // without libarchive produces -- its archive plugin is not built either.
+    return m_archives && m_archives->canCompress();
 }
 
 QStringList AppController::compressionFormats() const
 {
-#ifdef MOLE_HAVE_ARCHIVE
-    return CompressTask::formatNames();
-#else
-    return {};
-#endif
+    QStringList names;
+    if (!m_archives)
+        return names;
+    for (const IArchiver::Format& format : m_archives->formats())
+        names.append(format.id);
+    return names;
 }
 
 QString AppController::suggestedArchiveName(const QString& format) const
 {
-#ifdef MOLE_HAVE_ARCHIVE
+    if (!m_archives)
+        return {};
+    const IArchiver::Format kind = m_archives->format(format);
+    if (kind.id.isEmpty())
+        return {};
+
+    // The base name is the shell's own business -- it is about what is selected
+    // and where -- and only the suffix comes from whatever writes the format.
     const QStringList targets = currentTargetsOrCursor();
     const QString here = currentLocation();
     // One item takes its own name; several take the folder's, because "3 items.zip"
@@ -2666,40 +2668,60 @@ QString AppController::suggestedArchiveName(const QString& format) const
     const int dot = base.lastIndexOf(QLatin1Char('.'));
     if (dot > 0)
         base = base.left(dot);
-    return base + CompressTask::suffixFor(CompressTask::formatFromName(format));
-#else
-    Q_UNUSED(format);
-    return {};
-#endif
+    return base + kind.suffix;
 }
 
 QString AppController::archiveNameForFormat(const QString& currentName, const QString& format) const
 {
-#ifdef MOLE_HAVE_ARCHIVE
-    const QString renamed = CompressTask::nameWithSuffix(currentName, CompressTask::formatFromName(format));
-    // Only when there is nothing to keep does it fall back to suggesting one.
-    return renamed.isEmpty() ? suggestedArchiveName(format) : renamed;
-#else
-    Q_UNUSED(currentName);
-    Q_UNUSED(format);
-    return {};
-#endif
+    if (!m_archives)
+        return {};
+    const IArchiver::Format kind = m_archives->format(format);
+    if (kind.id.isEmpty())
+        return {};
+
+    // The base is kept -- including any dots in it -- because changing the kind
+    // must not throw away a name somebody typed. Which suffixes are suffixes
+    // rather than part of a name is read off what can be written, longest first
+    // so `.tar.gz` is recognised before `.gz`.
+    QString base = currentName.trimmed();
+    if (base.isEmpty())
+        return suggestedArchiveName(format);
+
+    QStringList suffixes;
+    for (const IArchiver::Format& known : m_archives->formats()) {
+        if (!known.suffix.isEmpty())
+            suffixes.append(known.suffix);
+    }
+    std::sort(suffixes.begin(), suffixes.end(),
+        [](const QString& a, const QString& b) { return a.size() > b.size(); });
+    for (const QString& suffix : std::as_const(suffixes)) {
+        if (base.endsWith(suffix, Qt::CaseInsensitive)) {
+            base.chop(suffix.size());
+            break;
+        }
+    }
+    if (base.isEmpty())
+        return suggestedArchiveName(format);
+    return base + kind.suffix;
 }
 
 bool AppController::formatTakesOneFileOnly(const QString& format) const
 {
-#ifdef MOLE_HAVE_ARCHIVE
-    return CompressTask::takesOneFileOnly(CompressTask::formatFromName(format));
-#else
-    Q_UNUSED(format);
-    return false;
-#endif
+    return m_archives && m_archives->format(format).holdsOneFileOnly;
 }
 
 void AppController::compressSelection(
     const QString& archiveName, const QString& format, const QString& passphrase, bool removeSources)
 {
-#ifdef MOLE_HAVE_ARCHIVE
+    if (!m_archives || !m_archives->canCompress()) {
+        // The same words as before, and they are still the reason: a build
+        // without libarchive builds no archive plugin, so nothing registers an
+        // archiver and there is nothing here that could pack anything.
+        emit notification(static_cast<int>(EventBus::Severity::Warning), QStringLiteral("Cannot compress"),
+            QStringLiteral("This build was made without libarchive"));
+        return;
+    }
+
     QStringList targets = currentTargetsOrCursor();
     const QString here = currentLocation();
     if (targets.isEmpty() && !here.isEmpty())
@@ -2707,50 +2729,21 @@ void AppController::compressSelection(
     if (targets.isEmpty() || archiveName.trimmed().isEmpty())
         return;
 
-    CompressTask::Request request;
-    request.format = CompressTask::formatFromName(format);
+    IArchiver::Request request;
+    request.formatId = format;
     request.passphrase = passphrase;
     request.removeSourcesWhenDone = removeSources;
     for (const QString& uri : targets)
         request.sources.append(VfsUri::fromString(uri));
 
-    request.sourceFileSystem = m_vfs->resolve(request.sources.first());
     // Beside what is being packed, which is where anyone would look for it.
     const VfsUri folder = here.isEmpty() ? request.sources.first().parent() : VfsUri::fromString(here);
     request.target = folder.child(archiveName.trimmed());
-    request.targetFileSystem = m_vfs->resolve(request.target);
 
-    if (!request.sourceFileSystem || !request.targetFileSystem) {
+    if (!m_archives->compress(request)) {
         emit notification(static_cast<int>(EventBus::Severity::Warning), QStringLiteral("Cannot compress"),
-            QStringLiteral("No drive is mounted for this"));
-        return;
+            QStringLiteral("Nothing here can write a %1").arg(format));
     }
-
-    auto* task = new CompressTask(request);
-    const QString targetUri = request.target.toString();
-    connect(task, &Task::finished, this, [this, task, targetUri] {
-        if (task->state() == Task::State::Failed) {
-            emit notification(static_cast<int>(EventBus::Severity::Warning),
-                QStringLiteral("Compression failed"), task->error().message);
-            return;
-        }
-        if (task->state() != Task::State::Succeeded)
-            return;
-        // Anything deleted afterwards is announced entry by entry, so a second pane
-        // on the same folder stops showing files that are no longer there.
-        for (const VfsUri& removed : task->removedSources())
-            m_events->postEntryRemoved(removed);
-        // The listing has a new file in it, and whoever asked wants to see it.
-        m_events->postDirectoryChanged(VfsUri::fromString(targetUri).parent());
-    });
-    m_taskManager->submit(task);
-#else
-    Q_UNUSED(archiveName);
-    Q_UNUSED(format);
-    Q_UNUSED(removeSources);
-    emit notification(static_cast<int>(EventBus::Severity::Warning), QStringLiteral("Cannot compress"),
-        QStringLiteral("This build was made without libarchive"));
-#endif
 }
 
 void AppController::measureFolderSizes()

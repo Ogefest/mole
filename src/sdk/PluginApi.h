@@ -1,5 +1,6 @@
 #pragma once
 
+#include "sdk/IArchiver.h"
 #include "sdk/IFeature.h"
 #include "sdk/IMetadataReader.h"
 #include "sdk/IPreviewProvider.h"
@@ -26,7 +27,7 @@
 /// so `qobject_cast<IPlugin*>` accepted every one of them and the only check left
 /// was one that had to speak to the plugin to find out whether it could be spoken
 /// to. See ADR-0098.
-#define MOLE_PLUGIN_API_VERSION 12
+#define MOLE_PLUGIN_API_VERSION 13
 
 #define MOLE_STRINGIFY_INNER(number) #number
 #define MOLE_STRINGIFY(number) MOLE_STRINGIFY_INNER(number)
@@ -68,7 +69,7 @@ struct PluginMetadata
 /// `services().scheduler`, so adding one of those adds no method here -- and
 /// both arrived that way, with no version bump, while this comment said adding
 /// an extension point means doing both. ARCHITECTURE.md's table is the list of
-/// all eight.
+/// all nine.
 ///
 /// Adding a method here does mean bumping kPluginApiVersion: it changes this
 /// class's vtable, which every plugin built against the old one has a copy of
@@ -110,6 +111,13 @@ public:
     /// Contribute an entry to the application menu. Most plugins want
     /// MenuAction::Section::Workflows.
     virtual bool addMenuAction(MenuAction action) = 0;
+
+    /// Contribute the ability to pack files into one file. What the shell then
+    /// knows is that *something* can write a `.zip`, never which plugin -- so
+    /// the compress dialog is filled in from what is registered here rather than
+    /// from a table in `src/ui`. A second plugin adding a format is a plugin
+    /// registering another one of these. See IArchiver.h and ADR-0101.
+    virtual bool addArchiver(std::unique_ptr<IArchiver> archiver) = 0;
 
     /// The host services this plugin may use. Valid for the plugin's lifetime.
     virtual const PluginServices& services() const = 0;

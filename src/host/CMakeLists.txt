@@ -11,6 +11,8 @@ add_library(mole_host STATIC
     ThumbnailRegistry.cpp
     ActionRegistry.h
     ActionRegistry.cpp
+    ArchiveRegistry.h
+    ArchiveRegistry.cpp
     PluginManager.h
     PluginManager.cpp
 )

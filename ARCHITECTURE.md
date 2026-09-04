@@ -1,6 +1,6 @@
 # Architecture
 
-Mole is built around eight extension points — six on `PluginRegistry` and two
+Mole is built around nine extension points — seven on `PluginRegistry` and two
 reached through `PluginServices`. Almost everything the application does is
 reached through one of them, including the parts that ship in the box.
 
@@ -18,6 +18,7 @@ the number is read off it.
 | Metadata reader | what a file **says about itself** (EXIF, tags, document authors) — every claimant contributes | `IMetadataReader` |
 | Thumbnailer | a small **picture** of a file — one winner per file | `IThumbnailer` |
 | Menu action | an entry under **File / View / Operations / Workflows / Bookmarks / Help** | `MenuAction` |
+| Archiver | the ability to **pack files into one file**, and the kinds it can write | `IArchiver` |
 | Chain step kind | an operation a **chain** can be built from, registered on `services().chains` | `ChainRegistry` |
 | Scheduled job kind | work the host **repeats on a schedule**, registered on `services().scheduler` | `Scheduler` |
 

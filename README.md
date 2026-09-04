@@ -472,7 +472,7 @@ wrong, `3` a drive could not be reached, `130` interrupted.
 - [`docs/WRITING_PLUGINS.md`](docs/WRITING_PLUGINS.md) — adding a drive, a tab, a
   viewer, a reader, a thumbnailer or a menu entry, and where a plugin is built.
 
-The extension points — six on `PluginRegistry`, two through `PluginServices`:
+The extension points — seven on `PluginRegistry`, two through `PluginServices`:
 
 | To add | Implement |
 |---|---|
@@ -482,6 +482,7 @@ The extension points — six on `PluginRegistry`, two through `PluginServices`:
 | what a file says about itself (EXIF, tags) | `IMetadataReader` |
 | a small picture of a file | `IThumbnailer` |
 | a menu entry under File / View / Operations / Workflows / Bookmarks / Help | `MenuAction` |
+| packing files into one file, and the kinds it can write | `IArchiver` |
 | a step a chain can be built from | `ChainRegistry`, via `services().chains` |
 | work repeated on a schedule | `Scheduler`, via `services().scheduler` |
 

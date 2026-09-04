@@ -1,4 +1,5 @@
 #include "plugins/archive/ArchiveFileSystem.h"
+#include "plugins/archive/CompressArchiver.h"
 #include "sdk/PluginApi.h"
 
 namespace mole {
@@ -23,14 +24,18 @@ public:
         data.name = QStringLiteral("Archive drives");
         data.version = QStringLiteral(MOLE_VERSION);
         data.author = QStringLiteral("Mole");
-        data.description
-            = QStringLiteral("Mount zip, tar, 7z and other archives as browsable drives (read-only).");
+        data.description = QStringLiteral(
+            "Mount zip, tar, 7z and other archives as browsable drives, and pack files into new ones.");
         return data;
     }
 
     void registerExtensions(PluginRegistry& registry) override
     {
         registry.addFileSystemFactory(std::make_unique<ArchiveFileSystemFactory>());
+        // Reading an archive and writing one are two contributions from one
+        // plugin: a drive to browse what is inside, and an archiver the compress
+        // dialog is filled in from. The shell knows neither by name.
+        registry.addArchiver(std::make_unique<CompressArchiver>(registry.services()));
     }
 };
 

@@ -264,6 +264,41 @@ void TestQmlConventions::nothingInTheShellNamesADriveOrAFilesystem()
     std::sort(offenders.begin(), offenders.end());
     QVERIFY2(offenders.isEmpty(),
         qPrintable(QStringLiteral("the shell names a drive: %1").arg(offenders.join(QStringLiteral(", ")))));
+
+    // **And it names no plugin's class, and is not compiled differently because a
+    // plugin's library was there.** AppController held seven members behind
+    // `#ifdef MOLE_HAVE_ARCHIVE`, each calling a static of the archive plugin's
+    // own CompressTask, so the shell knew which plugin writes archives and knew
+    // its format table -- the one contribution that did not arrive through the
+    // SDK. See ADR-0101 and MOLE-415.
+    static const char* plugins[]
+        = { "CompressTask", "MOLE_HAVE_ARCHIVE", "ArchiveFileSystem", "plugins/archive", "plugins/network" };
+    QStringList named;
+    for (const char* symbol : plugins) {
+        for (auto it = m_shellSources.constBegin(); it != m_shellSources.constEnd(); ++it) {
+            // Only src/ui and src/app: the built-ins are plugins themselves and
+            // may name their own parts.
+            if (!it.key().startsWith(QStringLiteral("ui/")) && !it.key().startsWith(QStringLiteral("app/")))
+                continue;
+            const QStringList lines = it.value().split(QLatin1Char('\n'));
+            for (int i = 0; i < lines.size(); ++i) {
+                QString code = lines.at(i);
+                const int comment = code.indexOf(QLatin1String("//"));
+                if (comment >= 0)
+                    code.truncate(comment);
+                if (code.contains(QLatin1String(symbol))) {
+                    named.append(QStringLiteral("%1:%2 names %3")
+                                     .arg(it.key())
+                                     .arg(i + 1)
+                                     .arg(QString::fromLatin1(symbol)));
+                }
+            }
+        }
+    }
+    std::sort(named.begin(), named.end());
+    QVERIFY2(named.isEmpty(),
+        qPrintable(
+            QStringLiteral("the shell knows a plugin by name: %1").arg(named.join(QStringLiteral(", ")))));
 }
 
 void TestQmlConventions::everyKeyTheMenuAdvertisesIsAKeyTheWindowDeclares()

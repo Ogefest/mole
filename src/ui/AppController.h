@@ -40,6 +40,7 @@ class PluginManager;
 class FileLauncher;
 class DragSource;
 class ActionRegistry;
+class ArchiveRegistry;
 class SessionStore;
 class ScheduleStore;
 class Scheduler;
@@ -562,6 +563,9 @@ public:
     /// ActionRegistry::declareShortcut() and MOLE-416.
     Q_INVOKABLE void declareShortcut(const QString& target, QObject* shortcut);
     ActionRegistry* actions() const { return m_actions; }
+    /// What can pack files into one file. Null before initialise(); empty when no
+    /// plugin offers it, which is what a build without libarchive produces.
+    ArchiveRegistry* archives() const { return m_archives; }
     /// The small things the application remembers about how somebody likes to
     /// work, including whether it looks for a newer version of itself.
     Preferences* preferences() const { return m_preferences; }
@@ -767,6 +771,9 @@ private:
     FileLauncher* m_launcher = nullptr;
     DragSource* m_dragSource = nullptr;
     ActionRegistry* m_actions = nullptr;
+    /// What can pack files into one file, if anything can. Asked by the compress
+    /// dialog; never a plugin this file knows the name of. See ADR-0101.
+    ArchiveRegistry* m_archives = nullptr;
     TerminalController* m_terminal = nullptr;
     ScheduleStore* m_schedules = nullptr;
     Scheduler* m_scheduler = nullptr;

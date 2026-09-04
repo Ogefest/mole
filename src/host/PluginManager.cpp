@@ -1,6 +1,7 @@
 #include "host/PluginManager.h"
 
 #include "host/ActionRegistry.h"
+#include "host/ArchiveRegistry.h"
 #include "host/FeatureRegistry.h"
 #include "host/MetadataRegistry.h"
 #include "host/PreviewRegistry.h"
@@ -130,6 +131,22 @@ namespace {
             const QString id = thumbnailer->id();
             if (!m_destinations.thumbnails->addThumbnailer(std::move(thumbnailer))) {
                 reportError(QStringLiteral("thumbnailer id '%1' is already taken").arg(id));
+                return false;
+            }
+            return true;
+        }
+
+        bool addArchiver(std::unique_ptr<IArchiver> archiver) override
+        {
+            if (!archiver) {
+                reportError(QStringLiteral("rejected a null archiver"));
+                return false;
+            }
+            if (!m_destinations.archives)
+                return nowhereToPutIt(QStringLiteral("archiver"));
+            if (!m_destinations.archives->addArchiver(std::move(archiver))) {
+                reportError(QStringLiteral("the archiver offers no format, or every format it offers "
+                                           "is already written by another"));
                 return false;
             }
             return true;

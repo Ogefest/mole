@@ -1,3 +1,4 @@
+#include "host/ArchiveRegistry.h"
 #include "host/FeatureRegistry.h"
 #include "host/PreviewRegistry.h"
 #include "plugins/builtin/BrowserFeature.h"
@@ -75,6 +76,8 @@ private slots:
     void aFolderResultAndAFileResultShareTheOneBrowserTab();
     void previewingFromASearchLeavesTheRevealTabAlone();
     void compressActsOnTheCursorWhenNothingIsTicked();
+    void theCompressDialogsAnswersComeFromWhateverWritesTheArchive();
+    void withNothingAbleToPackTheOfferIsWithdrawnAndSaysWhy();
     void textPreviewProviderClaimsTextFiles();
     void archivePluginMountsAZip();
     void anArchiveMountGoesWhenTheLastTabInsideItDoes();
@@ -1113,6 +1116,82 @@ void TestAppIntegration::compressActsOnTheCursorWhenNothingIsTicked()
     QVERIFY(m_app->formatSupportsPassword(QStringLiteral("zip")));
     QVERIFY(!m_app->formatSupportsPassword(QStringLiteral("tar.gz")));
     QVERIFY(!m_app->formatSupportsPassword(QStringLiteral("tar.xz")));
+}
+
+void TestAppIntegration::theCompressDialogsAnswersComeFromWhateverWritesTheArchive()
+{
+    // **Asked of the plugin through the SDK, not known here.** Seven members of
+    // AppController used to call statics on the archive plugin's own CompressTask
+    // behind `#ifdef MOLE_HAVE_ARCHIVE`, so the shell knew which plugin writes
+    // archives and knew its format table. Now it asks what is registered -- and
+    // what the dialog says has to be what that answers, format by format. See
+    // ADR-0101 and MOLE-415.
+    QVERIFY2(m_app->canCompress(), "the archive plugin is not loaded, so this case holds nothing");
+    ArchiveRegistry* archives = m_app->archives();
+    QVERIFY(archives);
+
+    const QStringList offered = m_app->compressionFormats();
+    QVERIFY2(offered.size() >= 3, qPrintable(QStringLiteral("only %1 formats offered").arg(offered.size())));
+
+    QStringList registered;
+    for (const IArchiver::Format& format : archives->formats())
+        registered.append(format.id);
+    QCOMPARE(offered, registered);
+
+    for (const QString& id : offered) {
+        const IArchiver::Format format = archives->format(id);
+        QCOMPARE(m_app->formatSupportsPassword(id), format.takesPassword);
+        QCOMPARE(m_app->formatTakesOneFileOnly(id), format.holdsOneFileOnly);
+
+        // And the name the dialog completes wears the suffix that format asked
+        // for -- the one thing the shell keeps for itself is the base name.
+        const QString renamed = m_app->archiveNameForFormat(QStringLiteral("holiday.zip"), id);
+        QCOMPARE(renamed, QStringLiteral("holiday") + format.suffix);
+        QVERIFY(m_app->suggestedArchiveName(id).endsWith(format.suffix));
+    }
+
+    // The two facts the dialog is built around, stated once so that a table which
+    // silently emptied would fail here rather than pass by agreeing with itself.
+    QVERIFY2(archives->format(QStringLiteral("zip")).takesPassword, "zip carries a password");
+    QVERIFY2(!archives->format(QStringLiteral("tar.gz")).takesPassword, "a tar has no notion of one");
+    QVERIFY2(archives->format(QStringLiteral("xz")).holdsOneFileOnly, "a bare xz stream holds one file");
+    QVERIFY2(!archives->format(QStringLiteral("zip")).holdsOneFileOnly, "a zip holds as many as you like");
+
+    // A kind nothing writes is not offered and answers nothing, rather than being
+    // quietly treated as a zip.
+    QVERIFY(!offered.contains(QStringLiteral("tar.bz2")));
+    QVERIFY(!m_app->formatSupportsPassword(QStringLiteral("tar.bz2")));
+    QVERIFY(m_app->suggestedArchiveName(QStringLiteral("tar.bz2")).isEmpty());
+}
+
+void TestAppIntegration::withNothingAbleToPackTheOfferIsWithdrawnAndSaysWhy()
+{
+    // **What a build without libarchive looks like**, which is the behaviour
+    // easiest to lose in this change: no archive plugin is built, so nothing
+    // registers an archiver, the operation is not offered, and asking for it
+    // anyway says why in the words it has always used. Reproduced by pointing the
+    // loader at an empty directory rather than by building without the library.
+    QTemporaryDir empty;
+    QVERIFY(empty.isValid());
+    const QByteArray path = qgetenv("MOLE_PLUGIN_PATH");
+    qputenv("MOLE_PLUGIN_PATH", empty.path().toUtf8());
+
+    AppController bare;
+    QString error;
+    QVERIFY2(bare.initialise(builtIns(), &error), qPrintable(error));
+    qputenv("MOLE_PLUGIN_PATH", path);
+
+    QVERIFY2(!bare.canCompress(), "nothing is registered, so nothing can pack");
+    QVERIFY(bare.compressionFormats().isEmpty());
+    QVERIFY(bare.suggestedArchiveName(QStringLiteral("zip")).isEmpty());
+    QVERIFY(!bare.formatSupportsPassword(QStringLiteral("zip")));
+    QVERIFY(!bare.formatTakesOneFileOnly(QStringLiteral("xz")));
+
+    QSignalSpy said(&bare, &AppController::notification);
+    bare.compressSelection(QStringLiteral("anything.zip"), QStringLiteral("zip"));
+    QCOMPARE(said.count(), 1);
+    QCOMPARE(said.first().at(1).toString(), QStringLiteral("Cannot compress"));
+    QCOMPARE(said.first().at(2).toString(), QStringLiteral("This build was made without libarchive"));
 }
 
 void TestAppIntegration::textPreviewProviderClaimsTextFiles()

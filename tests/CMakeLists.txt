@@ -407,6 +407,7 @@ add_dependencies(tst_MoleTasks mole-tasks)
 # --- host: the extension system ---------------------------------------------
 mole_add_test(tst_PluginManager     SOURCES host/tst_PluginManager.cpp  LIBS mole_host)
 mole_add_test(tst_ActionRegistry    SOURCES host/tst_ActionRegistry.cpp LIBS mole_host)
+mole_add_test(tst_ArchiveRegistry   SOURCES host/tst_ArchiveRegistry.cpp LIBS mole_host)
 # The three winner-takes-most registries and how a plugin path is read. None of it
 # had a host-level test, and every rule in it is a promise made to somebody outside
 # the project. See MOLE-365.

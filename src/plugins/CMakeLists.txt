@@ -180,7 +180,7 @@ if(MOLE_HAVE_ARCHIVE)
 
     # Qt 6.4's qt_add_plugin() ignores trailing source arguments, which yields a
     # library with no code and no metadata. Sources have to be added separately.
-    target_sources(mole_plugin_archive PRIVATE archive/ArchivePlugin.cpp)
+    target_sources(mole_plugin_archive PRIVATE archive/ArchivePlugin.cpp archive/CompressArchiver.cpp)
 
     target_include_directories(mole_plugin_archive PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     target_link_libraries(mole_plugin_archive
@@ -190,14 +190,24 @@ if(MOLE_HAVE_ARCHIVE)
     set_target_properties(mole_plugin_archive PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins")
 
-    # Writing archives is an operation on the files in front of you rather than a
-    # kind of drive, so the writer is linked where the operation lives -- with
-    # AppController in mole_ui -- while the loadable plugin stays the thin wrapper
-    # that publishes the filesystem. No layering is inverted: the backend sits on
-    # mole_core like mole_ui does, and knows nothing about the interface.
-    # See docs/adr/0007-writing-archives.md.
-    target_link_libraries(mole_ui PUBLIC mole_archive_backend)
-    target_compile_definitions(mole_ui PUBLIC MOLE_HAVE_ARCHIVE)
+    # **The built-ins link it for their own reason**: the document metadata reader
+    # opens .docx and .odt, which are zip containers. That reason has nothing to do
+    # with the compress dialog, and it used to arrive by inheritance -- mole_ui
+    # linked the backend PUBLIC for the dialog, and mole_builtin links mole_ui --
+    # so when the dialog stopped linking it, this had to be said out loud. See
+    # MOLE-415.
+    target_link_libraries(mole_builtin PRIVATE mole_archive_backend)
+    target_compile_definitions(mole_builtin PRIVATE MOLE_HAVE_ARCHIVE)
+
+    # **The writer is the plugin's, and mole_ui no longer links it.** It used to:
+    # the compress dialog is the shell's, so the writer was linked beside
+    # AppController and seven of its members called CompressTask's statics behind
+    # `#ifdef MOLE_HAVE_ARCHIVE`. That made src/ui know a plugin by name, know its
+    # format table, and compile differently depending on whether a library was
+    # installed. The plugin answers those questions through IArchiver now, so this
+    # target is the only thing that links the backend and the shell asks what is
+    # registered. See docs/adr/0101-a-plugin-says-what-it-can-pack.md and
+    # docs/adr/0007-writing-archives.md.
 
     set(MOLE_HAVE_ARCHIVE_PLUGIN ON CACHE INTERNAL "")
 else()

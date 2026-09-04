@@ -17,6 +17,7 @@ class PreviewRegistry;
 class MetadataRegistry;
 class ThumbnailRegistry;
 class ActionRegistry;
+class ArchiveRegistry;
 
 /// Loads plugins and wires whatever they contribute into the host.
 ///
@@ -54,6 +55,10 @@ public:
         MetadataRegistry* metadata = nullptr;
         ThumbnailRegistry* thumbnails = nullptr;
         ActionRegistry* actions = nullptr;
+        /// Null in a host that has no compress dialog -- `mole-tasks` wires none
+        /// -- and an archiver offered to it is reported as having nowhere to go
+        /// rather than as a failure.
+        ArchiveRegistry* archives = nullptr;
     };
 
     PluginManager(PluginServices services, Destinations destinations, QObject* parent = nullptr);
