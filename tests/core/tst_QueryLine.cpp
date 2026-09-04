@@ -25,6 +25,8 @@ private slots:
     void anUnclosedQuoteIsAnErrorWithAPlace();
     void aKeyWithNothingAfterItIsAnError();
     void printingWhatWasParsedGivesTheLineBack();
+    void aQuoteInsideAValueSurvivesTheRoundTrip();
+    void aDashOnItsOwnIsRefusedRatherThanSearchedFor();
 
 private:
     static QueryTerm only(const QString& line)
@@ -141,6 +143,15 @@ void TestQueryLine::printingWhatWasParsedGivesTheLineBack()
         QStringLiteral("ext:cpp,h content:\"TODO(perf)\""),
         QStringLiteral("name:/^IMG_\\d{4}/ -path:node_modules"),
         QStringLiteral("modified<=30d depth:0"),
+        // A quote inside a quoted value. This printed back as `content:"say
+        // "hi""` and re-parsed as three terms, so a search somebody typed once
+        // became a different search the moment the form rewrote the line.
+        // See MOLE-405.
+        QStringLiteral("content:\"say \\\"hi\\\"\""),
+        QStringLiteral("content:\"a backslash \\\\ and a quote \\\"\""),
+        // A name that begins with a dash, which is not a negation and printed as
+        // if it were.
+        QStringLiteral("name:\"-fix\""),
     };
 
     for (const QString& line : lines) {
@@ -161,6 +172,67 @@ void TestQueryLine::printingWhatWasParsedGivesTheLineBack()
         }
         QCOMPARE(printQueryLine(second.terms), printed);
     }
+}
+
+/// The escape, stated on its own rather than only inside the round-trip loop.
+///
+/// The header calls the round trip load-bearing: the form rewrites the line from
+/// the fields on every change, so a value the printer cannot represent is a
+/// search that silently becomes a different search. See MOLE-405.
+void TestQueryLine::aQuoteInsideAValueSurvivesTheRoundTrip()
+{
+    QueryTerm term;
+    term.key = QStringLiteral("content");
+    term.value = QStringLiteral("say \"hi\"");
+    term.wasQuoted = true;
+
+    const QString printed = printQueryLine({ term });
+    QCOMPARE(printed, QStringLiteral("content:\"say \\\"hi\\\"\""));
+
+    const ParsedQueryLine parsed = parseQueryLine(printed);
+    QVERIFY2(parsed.ok(), qPrintable(printed));
+    QCOMPARE(parsed.terms.size(), 1);
+    QCOMPARE(parsed.terms.first().value, QStringLiteral("say \"hi\""));
+
+    // A backslash is itself escaped, or the escape could not be searched for.
+    QueryTerm slashed;
+    slashed.value = QStringLiteral("C:\\path");
+    const ParsedQueryLine back = parseQueryLine(printQueryLine({ slashed }));
+    QVERIFY(back.ok());
+    QCOMPARE(back.terms.size(), 1);
+    QCOMPARE(back.terms.first().value, QStringLiteral("C:\\path"));
+
+    // A single quote closes a single-quoted value and nothing else, so a value
+    // holding one needs no escape when the printer used double quotes.
+    const ParsedQueryLine single = parseQueryLine(QStringLiteral("content:'it\"s'"));
+    QVERIFY(single.ok());
+    QCOMPARE(single.terms.first().value, QStringLiteral("it\"s"));
+}
+
+/// "A dash on its own matches nothing" used to be unreachable.
+///
+/// A `-` followed by a space, or at the end of the line, was not read as a
+/// negation -- so it fell through to the bare-word branch, became the word `-`,
+/// and was searched for. The message existed and no input could produce it.
+/// See MOLE-405.
+void TestQueryLine::aDashOnItsOwnIsRefusedRatherThanSearchedFor()
+{
+    for (const QString& line :
+        { QStringLiteral("-"), QStringLiteral("report -"), QStringLiteral("- report") }) {
+        const ParsedQueryLine parsed = parseQueryLine(line);
+        QVERIFY2(!parsed.ok(), qPrintable(line));
+        QCOMPARE(parsed.errors.size(), 1);
+        QCOMPARE(parsed.errors.first().message, QStringLiteral("A dash on its own matches nothing"));
+        QCOMPARE(parsed.errors.first().length, 1);
+        QCOMPARE(line.mid(parsed.errors.first().position, 1), QStringLiteral("-"));
+    }
+
+    // And there are still two ways to look for the character itself.
+    QCOMPARE(only(QStringLiteral("name:-")).value, QStringLiteral("-"));
+    QCOMPARE(only(QStringLiteral("\"-\"")).value, QStringLiteral("-"));
+    // A dash that negates, and one inside a word, are untouched.
+    QVERIFY(only(QStringLiteral("-path:node_modules")).negate);
+    QCOMPARE(only(QStringLiteral("annual-report")).value, QStringLiteral("annual-report"));
 }
 
 MOLE_TEST_MAIN(TestQueryLine)

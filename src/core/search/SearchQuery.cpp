@@ -609,13 +609,15 @@ ContentMatch findInContents(
     if (!predicate.includeBinary && !FileType::looksLikeText(head))
         return give(ContentSkip::Binary);
 
-    // The byte order mark decides the encoding, and a decoder is kept across
+    // Read the way the sniffer above decided, and a decoder is kept across
     // windows so a character split by one is not mangled by the next.
-    auto decoder = QStringDecoder(QStringDecoder::Utf8);
-    if (head.startsWith(QByteArrayLiteral("\xff\xfe")) || head.startsWith(QByteArrayLiteral("\xfe\xff")))
-        decoder = QStringDecoder(QStringDecoder::Utf16);
-    else if (head.startsWith(QByteArrayLiteral("\xef\xbb\xbf")))
-        decoder = QStringDecoder(QStringDecoder::Utf8);
+    //
+    // This used to be UTF-8 unless there was a byte order mark, while
+    // looksLikeText() deliberately admits a Latin-1 log -- so a file this offered
+    // to look inside was then skipped as Undecodable, and the two halves of one
+    // search disagreed about what text is. One function answers it now.
+    // See MOLE-405.
+    auto decoder = QStringDecoder(FileType::encodingFor(head));
 
     const auto options = predicate.caseSensitive ? QRegularExpression::NoPatternOption
                                                  : QRegularExpression::CaseInsensitiveOption;
@@ -685,8 +687,11 @@ ContentMatch findInContents(
         carried = tail;
     }
 
-    if (entry.size > ceiling)
-        return give(ContentSkip::TooBig);
+    // No TooBig here. The ceiling is min(io.ceiling, size), so a file over
+    // io.ceiling has already been refused at the top and nothing that reaches
+    // this line can be larger than the window it was read through. It used to
+    // say otherwise, which read as a second case and was one no input could
+    // produce. See MOLE-405.
     return give(ContentSkip::None);
 }
 

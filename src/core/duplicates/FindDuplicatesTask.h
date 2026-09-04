@@ -83,8 +83,15 @@ public:
     /// round.
     int linksLeftOut() const { return m_links; }
 
-    /// Called the instant a group is confirmed, on whichever thread confirmed it,
+    /// Called the instant a group is confirmed, on the task's own run thread,
     /// once the group is in the box the window is told from.
+    ///
+    /// The run thread and no other: buckets are settled several at a time, but
+    /// their outcomes are taken back in the order they went out and confirmed
+    /// here, which is what keeps this function and the list it builds free of
+    /// locks. The comment used to say "whichever thread confirmed it", which
+    /// invited an observer to be ready for several at once and to take a lock it
+    /// does not need. See ADR-0046 and MOLE-405.
     ///
     /// Not a signal, and deliberately not one: a per-group event out of a worker
     /// thread is unbounded by construction, which is what groupsFound() exists
@@ -179,8 +186,9 @@ private:
     int m_links = 0;
     std::function<void(const DuplicateGroup&, int)> m_onConfirmed;
 
-    // --- the box: filled by whichever thread confirms, emptied by the drawing
-    // one on Task's drain. Same mechanism as the status line, same bound.
+    // --- the box: filled by the run thread as it confirms, emptied by the
+    // drawing one on Task's drain. Same mechanism as the status line, same
+    // bound. The lock is for the two threads, not for several writers.
     mutable QMutex m_pendingGuard;
     QList<DuplicateGroup> m_pendingGroups;
     QList<int> m_pendingPositions;

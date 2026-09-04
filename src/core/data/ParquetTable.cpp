@@ -65,9 +65,14 @@ struct ParquetTable::Private
         // difference the reader is usually looking for.
         if (array->IsNull(index))
             return QStringLiteral("NULL");
-        return QString::fromStdString(array->GetScalar(index).ValueOr(nullptr)
-                ? array->GetScalar(index).ValueUnsafe()->ToString()
-                : std::string());
+        // Asked once. Written as GetScalar(index).ValueOr(nullptr) ? ... it was
+        // asked twice per cell, and GetScalar allocates a Scalar -- so every
+        // page of the grid built two of everything it showed and threw one away.
+        // See MOLE-405.
+        const arrow::Result<std::shared_ptr<arrow::Scalar>> scalar = array->GetScalar(index);
+        if (!scalar.ok() || !scalar.ValueUnsafe())
+            return {};
+        return QString::fromStdString(scalar.ValueUnsafe()->ToString());
     }
 
     /// Walks rows from `firstRow`, handing each one's cells to `visit`, and stops

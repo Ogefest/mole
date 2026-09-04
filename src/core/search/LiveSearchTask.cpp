@@ -78,9 +78,18 @@ void LiveSearchTask::run()
         sinceLastEmit.restart();
     };
 
-    // What matched inside the directory being listed right now, so the rows an
-    // index claimed for it can be checked off against what is really there.
-    QSet<QString> matchedHere;
+    // Every uri kept so far, so the rows an index claimed for a directory can be
+    // checked off against what is really there.
+    //
+    // Not cleared per directory any more. A candidate that needs the file is
+    // kept when readPending() runs, which is *after* the directory it came from
+    // finished -- so its uri used to land in the next directory's set, where
+    // nothing was looking for it. Bounded by the result limit, because that is
+    // what bounds the hits. See MOLE-405.
+    QSet<QString> matched;
+    // Directories whose claimed rows cannot be judged yet, because candidates
+    // from them are still waiting to be read.
+    QStringList awaiting;
 
     // A criterion that needs the file itself gets one, and only for the entries
     // that survived everything cheaper -- which is the whole point of the plan
@@ -111,10 +120,39 @@ void LiveSearchTask::run()
     const auto keep = [&](const FileEntry& entry, const ContentMatch& why) {
         batch.append(entry);
         reasons.append(why);
-        matchedHere.insert(entry.uri.toString());
+        matched.insert(entry.uri.toString());
         ++m_hitCount;
         if (batch.size() >= kEmitBatchSize || sinceLastEmit.elapsed() >= kEmitIntervalMs)
             flush();
+    };
+
+    // What an index claimed for a directory and the walk did not find: taken back,
+    // but only once everything the walk might still find there has been looked at.
+    //
+    // This used to run the instant a directory's entries had been *visited*,
+    // which for a `content:` or `type:` search is well before its candidates
+    // have been *read* -- they sit in `pending` until there are 32 of them or
+    // the walk ends. So every indexed row in such a directory was taken back and
+    // then re-added by the very next batch: rows vanishing and reappearing while
+    // somebody reads the list, which ADR-0043 calls teaching people not to
+    // believe it. See MOLE-405.
+    const auto judgeAwaiting = [&] {
+        if (awaiting.isEmpty())
+            return;
+        QStringList gone;
+        for (const QString& dir : awaiting) {
+            for (const QString& uri : m_indexedByParent.value(dir)) {
+                if (!matched.contains(uri))
+                    gone.append(uri);
+            }
+        }
+        awaiting.clear();
+        if (gone.isEmpty())
+            return;
+        // Sent before the batch that would otherwise arrive first, so a row is
+        // never removed after the walk has just re-found it.
+        flush();
+        emit hitsGone(gone);
     };
 
     // The files still to be opened, and the reading of them.
@@ -147,6 +185,9 @@ void LiveSearchTask::run()
             if (outcome.kept)
                 keep(outcome.entry, outcome.why);
         }
+        // Nothing is pending now, so every directory that was waiting on a read
+        // has its answer.
+        judgeAwaiting();
     };
     DirectoryWalker::Options options;
     options.maxDepth = m_query.maxDepth;
@@ -211,22 +252,20 @@ void LiveSearchTask::run()
             return DirectoryWalker::Action::Continue;
         },
         [&](const VfsUri& dir, const FileEntryList&) {
-            const QStringList claimed = m_indexedByParent.value(dir.toString());
-            QStringList gone;
-            for (const QString& uri : claimed) {
-                if (!matchedHere.contains(uri))
-                    gone.append(uri);
-            }
-            matchedHere.clear();
-            if (gone.isEmpty())
-                return;
-            // Sent before the batch that would otherwise arrive first, so a row
-            // is never removed after the walk has just re-found it.
-            flush();
-            emit hitsGone(gone);
+            if (!m_indexedByParent.contains(dir.toString()))
+                return; // the index claimed nothing here, so there is nothing to take back
+            awaiting.append(dir.toString());
+            // Answered now when there is nothing left to read, which is every
+            // search that does not open files -- the common case, and the one
+            // this always got right.
+            if (pending.isEmpty())
+                judgeAwaiting();
         });
 
     readPending();
+    // A directory whose candidates never filled a batch is judged here, at the
+    // end of the walk, rather than never.
+    judgeAwaiting();
     flush();
 
     // Hitting the result cap is a normal outcome, not an error -- the UI just

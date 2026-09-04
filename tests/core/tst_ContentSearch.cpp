@@ -1,6 +1,7 @@
 #include "support/MoleTestMain.h"
 #include "support/TestSupport.h"
 
+#include "core/data/FileType.h"
 #include "core/search/LiveSearchTask.h"
 #include "core/search/SearchQuery.h"
 #include "core/tasks/TaskManager.h"
@@ -31,7 +32,7 @@ private slots:
     void aMatchAcrossAWindowBoundaryIsStillFound();
     void aBinaryFileIsSkippedUnlessAskedForAndTheSnifferDecides();
     void aFileOverTheCeilingIsSkippedAndSaidToBe();
-    void aUtf16FileIsSearchedAndAMangledOneIsSkipped();
+    void theEncodingIsReadFromTheFileAndOnlyOneThatStopsDecodingIsSkipped();
     void cancellingStopsTheReading();
     void contentIsEvaluatedLastSoOnlyThePdfsAreOpened();
 
@@ -222,7 +223,18 @@ void TestContentSearch::aFileOverTheCeilingIsSkippedAndSaidToBe()
     QVERIFY2(m_opened.isEmpty(), "a file over the ceiling must not be opened at all");
 }
 
-void TestContentSearch::aUtf16FileIsSearchedAndAMangledOneIsSkipped()
+/// Which encoding a file is read as, and the one case that is left alone.
+///
+/// This used to decode UTF-8 unless there was a byte order mark, and skip
+/// anything else as Undecodable -- while FileType::looksLikeText() deliberately
+/// admits a file that is not UTF-8 but reads as a single-byte encoding. So the
+/// sniffer offered a Latin-1 log to the search and the search would not look
+/// inside it: the two halves disagreed about what text is. The encoding now
+/// comes from FileType::encodingFor(), which is the same answer the sniffer
+/// itself gives, and a single-byte fallback cannot fail -- so Undecodable is
+/// left meaning one thing only: a file whose head decoded cleanly and whose
+/// middle did not. See MOLE-405.
+void TestContentSearch::theEncodingIsReadFromTheFileAndOnlyOneThatStopsDecodingIsSkipped()
 {
     QByteArray utf16 = QByteArrayLiteral("\xff\xfe");
     for (const QChar ch : QStringLiteral("the invoice number\n")) {
@@ -233,17 +245,27 @@ void TestContentSearch::aUtf16FileIsSearchedAndAMangledOneIsSkipped()
     QByteArray withBom = QByteArrayLiteral("\xef\xbb\xbf");
     withBom.append(QByteArrayLiteral("the invoice number\n"));
 
-    // Text by the sniffer's reckoning and not valid UTF-8: bytes in the C1
-    // range with no NUL and few controls. Mangling it into replacement
-    // characters and searching that would be worse than not searching it.
-    QByteArray broken = QByteArrayLiteral("plain enough to look like text ");
-    broken.append(QByteArray(40, static_cast<char>(0xC3)));
-    broken.append('\n');
+    // Text by the sniffer's reckoning and not valid UTF-8, which is what a
+    // Latin-1 log is. Read as Latin-1, where every byte is a character, so the
+    // words in it are findable rather than the file being passed over.
+    QByteArray singleByte = QByteArrayLiteral("the invoice number ");
+    singleByte.append(QByteArray(40, static_cast<char>(0xC3)));
+    singleByte.append('\n');
+
+    // Clean UTF-8 for the whole of the sample the encoding is chosen from, and
+    // broken UTF-8 after it. This is the file nothing can read as what it claims
+    // to be, and the only one Undecodable is now about.
+    QByteArray stopsDecoding;
+    while (stopsDecoding.size() < FileType::kSampleBytes + 100)
+        stopsDecoding.append(QByteArrayLiteral("a line of perfectly ordinary text\n"));
+    stopsDecoding.append(QByteArray(40, static_cast<char>(0xC3)));
+    stopsDecoding.append('\n');
 
     const QHash<QString, QByteArray> files {
         { QStringLiteral("mem:///wide.txt"), utf16 },
         { QStringLiteral("mem:///bom.txt"), withBom },
-        { QStringLiteral("mem:///broken.txt"), broken },
+        { QStringLiteral("mem:///latin1.txt"), singleByte },
+        { QStringLiteral("mem:///stops.txt"), stopsDecoding },
     };
     const SearchIo io = ioOver(files);
     const SearchPredicate looking = SearchPredicate::content(QStringLiteral("invoice"));
@@ -252,10 +274,17 @@ void TestContentSearch::aUtf16FileIsSearchedAndAMangledOneIsSkipped()
     QVERIFY(looking.matches(entryFor(QStringLiteral("mem:///bom.txt"), files), io));
 
     ContentSkip why = ContentSkip::None;
-    findInContents(entryFor(QStringLiteral("mem:///broken.txt"), files),
-        SearchPredicate::content(QStringLiteral("plain")), io, &why);
-    QVERIFY2(why == ContentSkip::Undecodable || why == ContentSkip::Binary,
-        "a file that will not decode is left alone rather than searched as nonsense");
+    const FileEntry latin1 = entryFor(QStringLiteral("mem:///latin1.txt"), files);
+    QVERIFY2(FileType::looksLikeText(singleByte), "the sniffer has to admit this or the fault is elsewhere");
+    const ContentMatch found = findInContents(latin1, looking, io, &why);
+    QCOMPARE(why, ContentSkip::None);
+    QVERIFY2(found.isValid(), "a file the sniffer calls text was skipped by the search");
+
+    const ContentMatch none = findInContents(entryFor(QStringLiteral("mem:///stops.txt"), files),
+        SearchPredicate::content(QStringLiteral("ordinary")), io, &why);
+    QVERIFY(!none.isValid());
+    QVERIFY2(why == ContentSkip::Undecodable,
+        "a file that stopped decoding half way is left alone rather than searched as nonsense");
 }
 
 void TestContentSearch::cancellingStopsTheReading()

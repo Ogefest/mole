@@ -38,7 +38,13 @@ protected:
 
         const Result<QList<IndexVolume>> volumes = m_index->volumes();
         if (!volumes.ok()) {
-            setStatusText(volumes.error().message);
+            // Failed rather than finished quietly. This used to set a status
+            // line on a background, one-of-many task -- which is a line nobody
+            // is shown -- and return, leaving the snapshot's isKnown() false for
+            // ever: every caller renders that as "no answer yet", so a database
+            // that cannot be read looked exactly like one that had not answered
+            // yet, permanently. See MOLE-405.
+            fail(volumes.error());
             return;
         }
 
@@ -100,8 +106,15 @@ void IndexSummary::refresh()
     connect(task, &ReadIndexSummaryTask::ready, this, &IndexSummary::adopt);
     // Whether it answered or not, the flight is over -- a failed read must not
     // leave this permanently unable to try again.
-    connect(task, &Task::finished, this, [this] {
+    connect(task, &Task::finished, this, [this, task] {
         m_inFlight = false;
+        // A read that failed is remembered, and said out loud: isKnown() stays
+        // false because nothing *is* known, so without this the third state and
+        // "the database is broken" are the same state to every caller.
+        if (task->state() == Task::State::Failed) {
+            m_lastError = task->error().message;
+            emit changed();
+        }
         if (std::exchange(m_askedAgain, false))
             refresh();
     });
@@ -112,6 +125,7 @@ void IndexSummary::adopt(const IndexOverview& overview)
 {
     m_overview = overview;
     m_known = true;
+    m_lastError.clear();
     ++m_reads;
     emit changed();
 }

@@ -36,6 +36,11 @@ public:
     /// been delivered.
     QChar separator() const { return m_separator; }
     qint64 importedRows() const { return m_importedRows; }
+    /// Whether any bytes could not be read as the encoding the head of the file
+    /// said it was. The cells hold U+FFFD where they could not, and the status
+    /// line says so -- an import that quietly replaced every accented character
+    /// is worse than one that admits it. See MOLE-405.
+    bool someBytesCouldNotBeRead() const { return m_undecodedBytes; }
 
 signals:
     /// Emitted once the shape of the file has been settled, before the first
@@ -56,6 +61,7 @@ private:
     QChar m_separator;
     bool m_firstRowIsHeader = true;
     qint64 m_importedRows = 0;
+    bool m_undecodedBytes = false;
 };
 
 } // namespace mole

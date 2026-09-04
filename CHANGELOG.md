@@ -65,6 +65,9 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-405 Rows no longer vanish and reappear while a search of a partly indexed folder runs
+2026-09-04 #MOLE-405 A search inside files reads a text file that is not UTF-8, instead of skipping it
+2026-09-04 #MOLE-405 A CSV or JSON file that is not UTF-8 imports with its characters intact
 2026-09-04 #MOLE-376 `modified:<a date` on the search line means before that date, instead of after it
 2026-09-04 #MOLE-376 The search form's "modified to" field survives the next keystroke on the search line
 2026-09-04 #MOLE-376 A size the form cannot read is refused, instead of quietly meaning no limit

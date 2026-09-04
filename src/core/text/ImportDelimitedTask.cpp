@@ -1,5 +1,6 @@
 #include "core/text/ImportDelimitedTask.h"
 
+#include "core/data/FileType.h"
 #include "core/text/DelimitedStore.h"
 #include "core/text/DelimitedStreamParser.h"
 #include "core/text/DelimitedText.h"
@@ -8,6 +9,7 @@
 #include <QStringDecoder>
 
 #include <algorithm>
+#include <optional>
 
 namespace mole {
 namespace {
@@ -81,7 +83,13 @@ void ImportDelimitedTask::run()
         return;
     }
 
-    QStringDecoder decoder(QStringDecoder::Utf8);
+    // The encoding comes from the head of the file rather than being assumed.
+    // This was UTF-8 outright, and never checked hasError() either -- so a
+    // cp1252 export imported with U+FFFD in place of every accented character
+    // and said nothing about it. FileType::encodingFor() is the same answer the
+    // sniffer gives, so what the preview calls text and what this reads are one
+    // decision. See MOLE-405.
+    std::optional<QStringDecoder> decoder;
     DelimitedStreamParser parser;
     QString pending;
     qint64 bytesRead = 0;
@@ -113,7 +121,16 @@ void ImportDelimitedTask::run()
             break;
         bytesRead += chunk.size();
 
-        pending += decoder.decode(chunk);
+        if (!decoder) {
+            decoder.emplace(FileType::encodingFor(
+                QByteArrayView(chunk).first(qMin<qsizetype>(chunk.size(), FileType::kSampleBytes))));
+        }
+        pending += decoder->decode(chunk);
+        // Sticky, and reported at the end: a file with one bad byte in it is
+        // still worth importing, and a reader has to be told the cells they are
+        // looking at are not what the file said.
+        if (decoder->hasError())
+            m_undecodedBytes = true;
 
         // The separator is guessed once, from the head of the file, and then
         // held. Re-guessing per chunk would silently change the shape of the
@@ -211,7 +228,9 @@ void ImportDelimitedTask::run()
     }
 
     setProgress(100);
-    setStatusText(QStringLiteral("%1 rows").arg(m_importedRows));
+    setStatusText(m_undecodedBytes
+            ? QStringLiteral("%1 rows · some characters could not be read").arg(m_importedRows)
+            : QStringLiteral("%1 rows").arg(m_importedRows));
 }
 
 } // namespace mole

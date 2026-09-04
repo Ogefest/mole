@@ -56,6 +56,11 @@ public:
     /// The columns, once the shape has been settled. Empty before that.
     QStringList headers() const { return m_headers; }
     qint64 importedRows() const { return m_importedRows; }
+    /// Whether any bytes could not be read as the encoding the head of the file
+    /// said it was. The cells hold U+FFFD where they could not, and the status
+    /// line says so -- an import that quietly replaced every accented character
+    /// is worse than one that admits it. See MOLE-405.
+    bool someBytesCouldNotBeRead() const { return m_undecodedBytes; }
     /// Lines that were not a JSON object: malformed JSON, and valid JSON that is
     /// a number, a string or an array. Counted and not shown -- refusing the file
     /// outright would leave it unviewable, which is the reasoning that pads a
@@ -95,6 +100,7 @@ private:
     std::shared_ptr<DelimitedStore> m_store;
     QStringList m_headers;
     qint64 m_importedRows = 0;
+    bool m_undecodedBytes = false;
     qint64 m_skippedLines = 0;
     qint64 m_keysWithoutAColumn = 0;
     bool m_looksLikeRecords = false;

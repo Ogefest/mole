@@ -921,6 +921,17 @@ QStringList LiveSearchController::factKeys() const
 
 QString LiveSearchController::coverageNote() const
 {
+    // A read that failed, said rather than rendered as coverage. isKnown() is
+    // false both before the first answer and after a read that could not be
+    // made, and "not indexed -- names, sizes, dates and contents only" is a
+    // confident false statement about a folder that may well be indexed. Said
+    // over a snapshot that did land, too: what is on screen is then from before
+    // the fault, and repeating it as current would be the same claim one step
+    // removed. See MOLE-405.
+    if (m_services.indexSummary && !m_services.indexSummary->lastError().isEmpty()) {
+        return QStringLiteral("the index could not be read — %1").arg(m_services.indexSummary->lastError());
+    }
+
     const bool withMetadata = !factKeys().isEmpty();
 
     if (m_everywhere) {

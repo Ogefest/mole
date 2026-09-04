@@ -105,8 +105,6 @@ public:
     /// collision here costs one extra file read at the last stage, which then
     /// separates them, so this stage is free to use the fastest hash there is.
     ///
-    /// How much the second stage reads.
-    ///
     /// A megabyte, raised from 16 kB on 2026-08-18 because 16 kB was not enough to
     /// separate the files people actually have a lot of. A video container, a RAW
     /// photograph, a PDF and a virtual disk image all carry headers and index

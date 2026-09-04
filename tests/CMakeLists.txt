@@ -492,7 +492,7 @@ mole_add_test(tst_IndexesTab        SOURCES app/tst_IndexesTab.cpp     LIBS mole
 # The rule that the interface never reads the index on the thread that draws it,
 # which is enforced by IndexDatabase rather than remembered -- see ADR-0066.
 mole_add_test(tst_IndexOffTheDrawingThread SOURCES app/tst_IndexOffTheDrawingThread.cpp
-                                           LIBS mole_builtin)
+                                           LIBS mole_builtin Qt6::Sql)
 
 # The same rule for drives: nothing the interface does may touch storage on the
 # thread that draws it. Enforced by IFileSystem rather than remembered, and this

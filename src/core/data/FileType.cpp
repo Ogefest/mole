@@ -77,15 +77,28 @@ bool FileType::looksLikeText(QByteArrayView sample)
     if (tooMany(c0Controls, sample.size()))
         return false;
 
-    QStringDecoder utf8(QStringConverter::Utf8);
-    const QString decoded = utf8.decode(sample);
-    Q_UNUSED(decoded);
-    if (!utf8.hasError())
+    // Asked through encodingFor(), so the sniffer and everything that then reads
+    // the file are deciding once rather than twice. Anything but the Latin-1
+    // fallback means the bytes decoded cleanly.
+    if (encodingFor(sample) != QStringConverter::Latin1)
         return true;
 
     // Not UTF-8, so read as Latin-1, where the C1 range is control characters as
     // well. A Latin-1 log has none of them; binary data is full of them.
     return !tooMany(c1Controls, sample.size());
+}
+
+QStringConverter::Encoding FileType::encodingFor(QByteArrayView sample)
+{
+    // The byte order mark first, and Qt's own answer for it -- which also spots
+    // UTF-16 and UTF-32 without one from the NUL pattern.
+    if (const std::optional<QStringConverter::Encoding> marked = QStringConverter::encodingForData(sample))
+        return *marked;
+
+    QStringDecoder utf8(QStringConverter::Utf8);
+    const QString decoded = utf8.decode(sample);
+    Q_UNUSED(decoded);
+    return utf8.hasError() ? QStringConverter::Latin1 : QStringConverter::Utf8;
 }
 
 QString FileType::identify(const QString& name, QByteArrayView head)

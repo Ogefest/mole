@@ -2,6 +2,7 @@
 
 #include <QByteArrayView>
 #include <QString>
+#include <QStringConverter>
 
 namespace mole {
 
@@ -78,6 +79,24 @@ public:
     /// An empty sample is text. Nothing in an empty file is binary, and an empty
     /// text viewer says more about it than a list of properties does.
     static bool looksLikeText(QByteArrayView sample);
+
+    /// Which encoding to read a text file with, from the same sample.
+    ///
+    /// **The decision looksLikeText() already makes, said out loud**, because two
+    /// places were making it separately and disagreeing: the sniffer admits a
+    /// Latin-1 log as text and the content search then decoded it as UTF-8 and
+    /// reported it as undecodable -- so a file the search offered to look inside
+    /// was skipped, and the two halves of the application disagreed about what
+    /// text is. See MOLE-405.
+    ///
+    /// A byte order mark decides it outright. Failing that, bytes that decode as
+    /// UTF-8 are UTF-8 and bytes that do not are Latin-1, which is the fallback
+    /// that cannot fail -- every byte sequence is valid Latin-1. That is a guess
+    /// and not a detection: a cp1252 or a KOI8-R file comes back as Latin-1,
+    /// which is right about the ASCII range and wrong in the same places any
+    /// single-byte guess is wrong. It is still much better than U+FFFD, which is
+    /// what a UTF-8 decoder produces for every non-ASCII character in the file.
+    static QStringConverter::Encoding encodingFor(QByteArrayView sample);
 
     /// Whether this name is a single compressed stream rather than a container:
     /// `.gz`, `.xz`, `.bz2` or `.zst`, and not `.tgz` or `.tar.gz`.

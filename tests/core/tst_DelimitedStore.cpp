@@ -2,6 +2,7 @@
 #include "support/SqliteFaults.h"
 #include "support/TestSupport.h"
 
+#include "core/data/FileType.h"
 #include "core/tasks/TaskManager.h"
 #include "core/text/DelimitedStore.h"
 #include "core/text/DelimitedStreamParser.h"
@@ -52,6 +53,7 @@ private slots:
     void importsAFileLargerThanOneChunk();
     void widensTheTableToTheWidestRow();
     void detectsTheSeparator();
+    void aFileThatIsNotUtf8ImportsWithItsCharactersIntact();
 
     // ---- the same store, from a file of json records ----
     void theColumnsAreTheKeysInTheOrderTheFileWritesThem();
@@ -345,6 +347,60 @@ void TestDelimitedStore::detectsTheSeparator()
     QCOMPARE(task->separator(), QLatin1Char(';'));
     QCOMPARE(store->columnCount(), 3);
     QCOMPARE(store->rows(0, 1).first().at(1), QStringLiteral("1,50"));
+}
+
+/// A cp1252 export imported as U+FFFD, and said nothing.
+///
+/// The importer built a UTF-8 decoder outright and never asked
+/// decoder.hasError(), so every accented character in a spreadsheet exported by
+/// anything Windows became a replacement character in the grid, with nothing on
+/// the status line to say the file had not been read as it was written. The
+/// encoding now comes from the head of the file, the way the preview and the
+/// content search get theirs. See MOLE-405.
+void TestDelimitedStore::aFileThatIsNotUtf8ImportsWithItsCharactersIntact()
+{
+    // "name,city / Müller,Köln" in Latin-1, which is what cp1252 is in this
+    // range -- bytes that are not valid UTF-8 where they stand.
+    QByteArray csv = QByteArrayLiteral("name,city\nM");
+    csv += char(0xFC); // u with diaeresis
+    csv += QByteArrayLiteral("ller,K");
+    csv += char(0xF6); // o with diaeresis
+    csv += QByteArrayLiteral("ln\n");
+    QVERIFY(m_tree->writeFile(QStringLiteral("windows.csv"), csv));
+
+    auto store = std::make_shared<DelimitedStore>(QDir(m_dir->path()).filePath(QStringLiteral("t.sqlite")));
+    QVERIFY(store->open());
+
+    ImportDelimitedTask* task = importFile(QStringLiteral("windows.csv"), store);
+    QVERIFY(task);
+
+    QCOMPARE(store->totalRows(), 1);
+    const QStringList row = store->rows(0, 1).first();
+    QCOMPARE(row.at(0), QString::fromLatin1("M\xfcller"));
+    QCOMPARE(row.at(1), QString::fromLatin1("K\xf6ln"));
+    QVERIFY2(!row.join(QString()).contains(QChar(QChar::ReplacementCharacter)),
+        "the file was read as the wrong encoding");
+    QVERIFY(!task->someBytesCouldNotBeRead());
+
+    // And a file that really cannot be read as what its head said says so,
+    // rather than replacing characters in silence. The head decides the
+    // encoding, so the disagreement has to be past it: plain ASCII for the first
+    // sample and a byte that is not valid UTF-8 well after it.
+    QByteArray mixed = QByteArrayLiteral("name,city\n");
+    while (mixed.size() < FileType::kSampleBytes * 2)
+        mixed += QByteArrayLiteral("Smith,Manchester\n");
+    mixed += QByteArrayLiteral("Br");
+    mixed += char(0xFC);
+    mixed += QByteArrayLiteral("ck,Bonn\n");
+    QVERIFY(m_tree->writeFile(QStringLiteral("mixed.csv"), mixed));
+
+    auto second = std::make_shared<DelimitedStore>(QDir(m_dir->path()).filePath(QStringLiteral("m.sqlite")));
+    QVERIFY(second->open());
+    ImportDelimitedTask* broken = importFile(QStringLiteral("mixed.csv"), second);
+    QVERIFY(broken);
+    QVERIFY2(broken->someBytesCouldNotBeRead(), "a byte that could not be decoded was passed over");
+    QVERIFY2(
+        broken->statusText().contains(QStringLiteral("could not be read")), qPrintable(broken->statusText()));
 }
 
 // ------------------------------------------------- a file of json records

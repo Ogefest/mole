@@ -1,6 +1,7 @@
 #include "support/MoleTestMain.h"
 #include "support/TestSupport.h"
 
+#include "core/data/FileType.h"
 #include "core/index/IndexSearchTask.h"
 #include "core/index/ScanTask.h"
 #include "core/search/LiveSearchTask.h"
@@ -48,6 +49,7 @@ private slots:
     void hiddenIsACriterionOfItsOwn();
     void aTypeClassComesFromWhatIsInTheFile();
     void aTypeClassWithNothingToReadMatchesNothing();
+    void aLatin1LogTheSnifferCallsTextIsSearchedRatherThanSkipped();
     void datesPeopleTypeBecomeMoments();
     void aDateNobodyCanParseNarrowsNothingRatherThanEverything();
     void createdAndAccessedAreAbsentRatherThanTheEpoch();
@@ -361,6 +363,68 @@ void TestSearchQuery::aTypeClassComesFromWhatIsInTheFile()
     const FileEntry folder = entryFor(QStringLiteral("mem:///archive"), 0, true);
     QVERIFY(SearchPredicate::typeClasses({ QStringLiteral("folder") }).matches(folder, reader));
     QVERIFY(!images.matches(folder, reader));
+}
+
+/// The sniffer and the content search disagreeing about what text is.
+///
+/// FileType::looksLikeText() deliberately admits a file that is not UTF-8 but
+/// reads as Latin-1 -- a log with an accented word in it, which is most European
+/// logs written by anything older than about 2005 (ADR-0033). findInContents()
+/// then decoded with a UTF-8 decoder and reported the file as Undecodable, so a
+/// search offered to look inside a file and then did not. See MOLE-405.
+void TestSearchQuery::aLatin1LogTheSnifferCallsTextIsSearchedRatherThanSkipped()
+{
+    // "Fehlermeldung: Größe überschritten" in Latin-1, where 0xF6 and 0xDF are
+    // not valid UTF-8 in these positions.
+    QByteArray latin1 = QByteArrayLiteral("start of log\nFehlermeldung: Gr");
+    latin1 += char(0xF6); // o with diaeresis
+    latin1 += char(0xDF); // sharp s
+    latin1 += QByteArrayLiteral("e ");
+    latin1 += char(0xFC); // u with diaeresis
+    latin1 += QByteArrayLiteral("berschritten\nend of log\n");
+
+    QVERIFY2(FileType::looksLikeText(latin1), "the sniffer has to admit this, or the fault is elsewhere");
+    QCOMPARE(FileType::encodingFor(latin1), QStringConverter::Latin1);
+
+    SearchIo io;
+    io.read = [&latin1](const VfsUri&, qint64 offset, qint64 bytes) -> QByteArray {
+        return latin1.mid(offset, bytes);
+    };
+    const FileEntry log = entryFor(QStringLiteral("mem:///var/log/app.log"), latin1.size());
+
+    // The ASCII half, which is what a UTF-8 decoder made unreachable.
+    ContentSkip why = ContentSkip::None;
+    ContentMatch found
+        = findInContents(log, SearchPredicate::content(QStringLiteral("Fehlermeldung")), io, &why);
+    QCOMPARE(why, ContentSkip::None);
+    QVERIFY2(found.isValid(), "a file the sniffer calls text was skipped by the search");
+    QCOMPARE(found.lineNumber, 2);
+
+    // And the half that needed the right decoder: the line comes back readable
+    // rather than as replacement characters.
+    found = findInContents(log, SearchPredicate::content(QStringLiteral("berschritten")), io, &why);
+    QCOMPARE(why, ContentSkip::None);
+    QVERIFY(found.isValid());
+    QCOMPARE(found.line,
+        QString::fromLatin1("Fehlermeldung: ")
+            + QString::fromLatin1(latin1.mid(latin1.indexOf(QByteArrayLiteral("Gr")), 19)));
+    QVERIFY2(!found.line.contains(QChar(QChar::ReplacementCharacter)),
+        "the matched line was decoded as the wrong encoding");
+
+    // Binary is still binary: this is about a file that reads as text, not about
+    // reading everything as Latin-1.
+    QByteArray binary = QByteArrayLiteral("\x7f\x45LF");
+    binary += QByteArray(200, '\0');
+    QVERIFY(!FileType::looksLikeText(binary));
+    SearchIo readBinary;
+    readBinary.read = [&binary](const VfsUri&, qint64 offset, qint64 bytes) -> QByteArray {
+        return binary.mid(offset, bytes);
+    };
+    const FileEntry elf = entryFor(QStringLiteral("mem:///bin/tool"), binary.size());
+    const ContentMatch inBinary
+        = findInContents(elf, SearchPredicate::content(QStringLiteral("ELF")), readBinary, &why);
+    QVERIFY(!inBinary.isValid());
+    QCOMPARE(why, ContentSkip::Binary);
 }
 
 void TestSearchQuery::aTypeClassWithNothingToReadMatchesNothing()

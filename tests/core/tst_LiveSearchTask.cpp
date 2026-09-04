@@ -30,6 +30,7 @@ private slots:
     void depthStopsTheWalkAtTheFolderItWasGiven();
     void aTypeClassOpensOnlyWhatSurvivedEverythingElse();
     void aContentSearchCarriesItsReasonAndSaysWhatItLeft();
+    void aRowThePrimedListAlreadyHasIsNeverTakenBackAndGivenStraightBack();
     void cancellationStopsSearch();
     void missingBackendFailsTask();
 
@@ -359,6 +360,68 @@ void TestLiveSearchTask::aContentSearchCarriesItsReasonAndSaysWhatItLeft()
     QVERIFY2(task->statusText().contains(QStringLiteral("read")),
         "a search that opens files says how many it opened, not just how many it found");
     QCOMPARE(task->candidatesRead(), 2);
+}
+
+/// Rows vanishing and coming back during a primed search.
+///
+/// A search over a partly-indexed folder is primed from the index and then
+/// corrected by the walk, and supersede() tells the walk which rows the index
+/// claimed for each directory so it can take back the ones that are no longer
+/// there. For a `content:` search the candidates that need the file are held in
+/// a batch and only counted as found when that batch is read -- which is after
+/// the directory they came from was finished. So every claimed row in the
+/// directory was taken back and then re-added by the next batch: the list
+/// flickering under somebody reading it, which ADR-0043 calls teaching people
+/// not to believe it. See MOLE-405.
+void TestLiveSearchTask::aRowThePrimedListAlreadyHasIsNeverTakenBackAndGivenStraightBack()
+{
+    // Two directories, so a row from one cannot be checked off against the
+    // other's claims, and few enough files that the read batch never fills --
+    // which is exactly the case the deferred answer has to cover.
+    m_fs->addFile(QStringLiteral("/one/alpha.txt"), QByteArrayLiteral("the invoice is here\n"));
+    m_fs->addFile(QStringLiteral("/one/beta.txt"), QByteArrayLiteral("the invoice is here too\n"));
+    m_fs->addFile(QStringLiteral("/two/gamma.txt"), QByteArrayLiteral("another invoice\n"));
+    // Claimed by the index and really gone, which is the row hitsGone exists for.
+    const QString stale = QStringLiteral("mem:///two/deleted.txt");
+
+    SearchQuery query;
+    query.add(SearchPredicate::content(QStringLiteral("invoice")));
+    query.add(SearchPredicate::kind(false));
+
+    auto* task = new LiveSearchTask(m_fs, VfsUri::fromString(QStringLiteral("mem:///")), query);
+    task->supersede({
+        { QStringLiteral("mem:///one"),
+            { QStringLiteral("mem:///one/alpha.txt"), QStringLiteral("mem:///one/beta.txt") } },
+        { QStringLiteral("mem:///two"), { QStringLiteral("mem:///two/gamma.txt"), stale } },
+    });
+
+    QStringList takenBack;
+    connect(task, &LiveSearchTask::hitsGone, this,
+        [&takenBack](const QStringList& gone) { takenBack.append(gone); });
+    connect(task, &LiveSearchTask::hitsFound, this,
+        [this](const FileEntryList& batch, const QList<ContentMatch>& why) {
+            m_hits.append(batch);
+            m_reasons.append(why);
+        });
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task));
+
+    QStringList found;
+    for (const FileEntry& entry : m_hits)
+        found.append(entry.uri.toString());
+    found.sort();
+    QCOMPARE(found,
+        QStringList({ QStringLiteral("mem:///one/alpha.txt"), QStringLiteral("mem:///one/beta.txt"),
+            QStringLiteral("mem:///two/gamma.txt") }));
+
+    // The whole of the claim: nothing the walk found was ever taken back.
+    for (const QString& uri : takenBack) {
+        QVERIFY2(!found.contains(uri),
+            qPrintable(QStringLiteral("%1 was taken back and then found again").arg(uri)));
+    }
+    // And the row that really is gone still goes, or the deferral would have
+    // turned a flicker into a list that never corrects itself.
+    QCOMPARE(takenBack, QStringList { stale });
 }
 
 void TestLiveSearchTask::cancellationStopsSearch()

@@ -15,6 +15,9 @@
 
 #include <QFile>
 #include <QGuiApplication>
+#include <QSqlDatabase>
+#include <QSqlError>
+#include <QSqlQuery>
 #include <QTest>
 
 #include <atomic>
@@ -55,6 +58,7 @@ private slots:
     void forgettingAnIndexDoesNotWaitForAScanToStopWriting();
     void aRemovalThatFailsLeavesTheRowAndSaysSo();
     void anAnswerThatHasNotArrivedDoesNotSayTheFolderIsUnindexed();
+    void aReadThatFailedIsNotTheSameStateAsOneThatHasNotArrived();
 
 private:
     /// Writes a finished scan of `label` straight into the index. Does **not**
@@ -461,6 +465,60 @@ void TestIndexOffTheDrawingThread::aRemovalThatFailsLeavesTheRowAndSaysSo()
     // And the row is still there, because the index it names still is.
     drainEvents();
     QCOMPARE(tab->volumeCount(), 1);
+}
+
+/// The fourth state, which used to be indistinguishable from the third.
+///
+/// isKnown() is false before the first answer *and* after a read that could not
+/// be made, and the failed read said so by setting a status line on a
+/// background, one-of-many task -- a line nobody is ever shown. So a database
+/// that could not be read looked exactly like one that had not answered yet, for
+/// as long as the fault lasted, and every caller went on rendering "no answer
+/// yet". See MOLE-405.
+void TestIndexOffTheDrawingThread::aReadThatFailedIsNotTheSameStateAsOneThatHasNotArrived()
+{
+    QVERIFY(seed(QStringLiteral("photos")));
+    QVERIFY(refreshIndexSummary(m_app->services().indexSummary));
+    QVERIFY(m_app->services().indexSummary->isKnown());
+    QVERIFY(m_app->services().indexSummary->lastError().isEmpty());
+
+    // The table the read needs, taken out from under it through a connection of
+    // this test's own -- which is how a real index gets broken: something else
+    // wrote to the file.
+    const QString name = QStringLiteral("break_the_index");
+    {
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), name);
+        db.setDatabaseName(QString::fromLocal8Bit(qgetenv("MOLE_INDEX_PATH")));
+        QVERIFY(db.open());
+        QSqlQuery query(db);
+        QVERIFY2(query.exec(QStringLiteral("DROP TABLE volumes")), qPrintable(query.lastError().text()));
+    }
+    QSqlDatabase::removeDatabase(name);
+
+    IndexSummary* summary = m_app->services().indexSummary;
+    const qint64 before = summary->reads();
+    summary->refresh();
+    QVERIFY(waitFor(
+        [summary, before] {
+            return !summary->isReading() && (summary->reads() > before || !summary->lastError().isEmpty());
+        },
+        10000));
+
+    // Nothing is known, which is honest -- and *why* nothing is known is now
+    // something a caller can ask about rather than guess at.
+    QVERIFY2(!summary->lastError().isEmpty(), "a read that could not be made said nothing");
+    QVERIFY2(summary->lastError().contains(QStringLiteral("volumes")), qPrintable(summary->lastError()));
+
+    // And the search form says it, instead of telling somebody their tree is not
+    // indexed.
+    LiveSearchController* search = openSearch();
+    QVERIFY(search);
+    search->setRootUri(fixtureUri() + QStringLiteral("/photos"));
+    drainEvents();
+    QVERIFY2(search->coverageNote().contains(QStringLiteral("could not be read")),
+        qPrintable(search->coverageNote()));
+    QVERIFY2(
+        !search->coverageNote().contains(QStringLiteral("not indexed")), qPrintable(search->coverageNote()));
 }
 
 void TestIndexOffTheDrawingThread::anAnswerThatHasNotArrivedDoesNotSayTheFolderIsUnindexed()

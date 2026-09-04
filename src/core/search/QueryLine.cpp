@@ -23,8 +23,18 @@ namespace {
 
         if (at < text.size() && (text.at(at) == QLatin1Char('"') || text.at(at) == QLatin1Char('\''))) {
             const QChar quote = text.at(at++);
-            while (at < text.size() && text.at(at) != quote)
+            while (at < text.size() && text.at(at) != quote) {
+                // A backslash before the quote or before another backslash is
+                // the escape and not part of the value. Without it a value
+                // holding a quote printed back as `"say "hi""` and re-parsed as
+                // three terms, and the round trip is what the header calls
+                // load-bearing. See MOLE-405.
+                if (text.at(at) == QLatin1Char('\\') && at + 1 < text.size()
+                    && (text.at(at + 1) == quote || text.at(at + 1) == QLatin1Char('\\'))) {
+                    ++at;
+                }
                 out += text.at(at++);
+            }
             if (at >= text.size())
                 return false;
             ++at; // the closing quote
@@ -70,6 +80,15 @@ ParsedQueryLine parseQueryLine(const QString& text)
         const int termStart = at;
         QueryTerm term;
 
+        // A dash on its own is a line somebody is still typing, and searching for
+        // the character would match nearly every file on the disk. Refused here
+        // rather than below: below could never see it, because a `-` with nothing
+        // after it was read as the bare word `-` and the refusal was unreachable.
+        // `name:-` and `"-"` still find a file called that. See MOLE-405.
+        if (text.at(at) == QLatin1Char('-') && (at + 1 >= text.size() || text.at(at + 1).isSpace())) {
+            parsed.errors.append({ QStringLiteral("A dash on its own matches nothing"), at, 1 });
+            return parsed;
+        }
         if (text.at(at) == QLatin1Char('-') && at + 1 < text.size() && !text.at(at + 1).isSpace()) {
             term.negate = true;
             ++at;
@@ -125,11 +144,13 @@ ParsedQueryLine parseQueryLine(const QString& text)
         term.position = at - valueLength;
         term.length = valueLength;
 
-        // `-` on its own, or a key with nothing after it.
+        // A key with nothing after it. A bare value cannot be empty and unquoted
+        // -- the loop above skipped the whitespace -- and the lone dash, which is
+        // the only other way this used to be reached, is refused where it can
+        // actually be seen.
         if (term.value.isEmpty() && !term.wasQuoted) {
-            parsed.errors.append({ hasKey ? QStringLiteral("%1 was given nothing to match").arg(term.key)
-                                          : QStringLiteral("A dash on its own matches nothing"),
-                termStart, qMax(1, at - termStart) });
+            parsed.errors.append({ QStringLiteral("%1 was given nothing to match").arg(term.key), termStart,
+                qMax(1, at - termStart) });
             return parsed;
         }
 
@@ -167,12 +188,20 @@ QString printQueryLine(const QList<QueryTerm>& terms)
             }
         }
 
-        if (term.isRegex)
+        if (term.isRegex) {
             one += QLatin1Char('/') + term.value + QLatin1Char('/');
-        else if (term.wasQuoted || term.value.contains(QLatin1Char(' ')) || term.value.isEmpty())
-            one += QLatin1Char('"') + term.value + QLatin1Char('"');
-        else
+        } else if (term.wasQuoted || term.value.contains(QLatin1Char(' ')) || term.value.isEmpty()
+            || term.value.contains(QLatin1Char('"')) || term.value.contains(QLatin1Char('\\'))
+            || (term.key.isEmpty() && !term.negate && term.value.startsWith(QLatin1Char('-')))) {
+            // The backslash first, or escaping the quotes would then be escaped
+            // in turn. readValue() undoes exactly this.
+            QString escaped = term.value;
+            escaped.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+            escaped.replace(QLatin1Char('"'), QStringLiteral("\\\""));
+            one += QLatin1Char('"') + escaped + QLatin1Char('"');
+        } else {
             one += term.value;
+        }
 
         out.append(one);
     }

@@ -77,6 +77,17 @@ public:
     /// Whether a read is in flight now.
     bool isReading() const { return m_inFlight; }
 
+    /// Why the last read failed, or empty when the last one did not.
+    ///
+    /// **This is what separates the third state from a fourth.** isKnown() is
+    /// false both before the first answer and after a read that could not be
+    /// made, and those are not the same thing to say to somebody: the first is
+    /// "not yet" and the second is "this database cannot be read". A caller that
+    /// renders both as nothing tells a person their tree is not indexed for as
+    /// long as the fault lasts. Cleared by the next read that lands.
+    /// See MOLE-405.
+    QString lastError() const { return m_lastError; }
+
 signals:
     /// The snapshot changed, or arrived for the first time.
     void changed();
@@ -91,6 +102,7 @@ private:
     bool m_known = false;
     bool m_inFlight = false;
     bool m_askedAgain = false;
+    QString m_lastError;
 };
 
 } // namespace mole

@@ -1,5 +1,6 @@
 #include "core/text/ImportJsonLinesTask.h"
 
+#include "core/data/FileType.h"
 #include "core/text/DelimitedStore.h"
 
 #include <QJsonArray>
@@ -8,6 +9,8 @@
 #include <QScopeGuard>
 #include <QSet>
 #include <QStringDecoder>
+
+#include <optional>
 
 namespace mole {
 namespace {
@@ -222,7 +225,13 @@ void ImportJsonLinesTask::run()
         return;
     }
 
-    QStringDecoder decoder(QStringDecoder::Utf8);
+    // The encoding comes from the head of the file rather than being assumed.
+    // This was UTF-8 outright, and never checked hasError() either -- so a
+    // cp1252 export imported with U+FFFD in place of every accented character
+    // and said nothing about it. FileType::encodingFor() is the same answer the
+    // sniffer gives, so what the preview calls text and what this reads are one
+    // decision. See MOLE-405.
+    std::optional<QStringDecoder> decoder;
     QString pending;
     qint64 bytesRead = 0;
     bool started = false;
@@ -299,7 +308,16 @@ void ImportJsonLinesTask::run()
         if (chunk.isEmpty())
             break;
         bytesRead += chunk.size();
-        pending += decoder.decode(chunk);
+        if (!decoder) {
+            decoder.emplace(FileType::encodingFor(
+                QByteArrayView(chunk).first(qMin<qsizetype>(chunk.size(), FileType::kSampleBytes))));
+        }
+        pending += decoder->decode(chunk);
+        // Sticky, and reported at the end: a file with one bad byte in it is
+        // still worth importing, and a reader has to be told the cells they are
+        // looking at are not what the file said.
+        if (decoder->hasError())
+            m_undecodedBytes = true;
 
         if (!started) {
             if (pending.size() < kSampleBytes && !device->atEnd())
@@ -336,6 +354,9 @@ void ImportJsonLinesTask::run()
         return;
     }
     setProgress(100);
+    setStatusText(m_undecodedBytes
+            ? QStringLiteral("%1 records · some characters could not be read").arg(m_importedRows)
+            : QStringLiteral("%1 records").arg(m_importedRows));
 }
 
 } // namespace mole
