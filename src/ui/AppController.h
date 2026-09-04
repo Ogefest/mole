@@ -653,6 +653,10 @@ private:
     /// leave one browser tab, not twenty, and the search itself has to be
     /// waiting where it was when the user comes back to it.
     int browserTabForCurrent();
+    /// Navigates the current tab when it can navigate, and opens a browser tab
+    /// otherwise. The rule goTo() has always followed, shared so that opening an
+    /// archive follows it too -- see MOLE-393.
+    void navigateHereOrOpenABrowser(const QString& uri);
     /// Restores the previous tabs, or opens a default one. Returns false when
     /// there was nothing to restore.
     bool restoreSession();

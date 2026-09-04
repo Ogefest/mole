@@ -3,6 +3,7 @@
 #include "support/FakePlugin.h"
 #include "support/MoleTestMain.h"
 #include "support/TestSupport.h"
+#include "ui/SessionStore.h"
 #include "ui/models/TabsModel.h"
 
 #include <QAbstractItemModelTester>
@@ -57,6 +58,8 @@ private slots:
     void controllerRenameUpdatesTheTabLabel();
     void exposesViewSourceForTheShell();
     void rowOfFeatureFindsTheFirstTabOfAKind();
+    void aRestoredTabWasNotOpenedFromItsNeighbour();
+    void theRestoredSelectionSurvivesAFeatureThatIsGone();
 
 private:
     FeatureRegistry* m_registry = nullptr;
@@ -278,6 +281,78 @@ void TestTabsModel::rowOfFeatureFindsTheFirstTabOfAKind()
     QCOMPARE(tabs.rowOfFeature(QStringLiteral("test.fake")), 1);
     tabs.closeTab(1);
     QCOMPARE(tabs.rowOfFeature(QStringLiteral("test.fake")), -1);
+}
+
+/// A lineage that never existed.
+///
+/// openTab() records the current tab as the opener and then selects the row it
+/// made, and restoreSession() called it once per saved tab in file order -- so
+/// tab N came back recorded as opened from tab N-1. Everything built on that
+/// relation then answered wrongly: rowOpenedFromCurrent() said "the tab next to
+/// this one", so AppController::browserTabForCurrent() navigated a browser the
+/// user had left somewhere instead of opening one, and closing a tab handed them
+/// back to a tab they had never come from. ARCHITECTURE.md's "Tabs" section
+/// describes the mechanism as leaving one browser behind and never touching the
+/// search tab, which is what this restores. See MOLE-393.
+void TestTabsModel::aRestoredTabWasNotOpenedFromItsNeighbour()
+{
+    TabsModel tabs(m_registry);
+    Session session;
+    session.tabs.append(TabSession { QStringLiteral("test.fake"), {} });
+    session.tabs.append(TabSession { QStringLiteral("test.renaming"), {} });
+    session.tabs.append(TabSession { QStringLiteral("test.fake"), {} });
+    session.currentIndex = 1;
+
+    QCOMPARE(tabs.restoreSession(session), 3);
+    QCOMPARE(tabs.rowCount(), 3);
+
+    // From every one of them, nothing was opened from here.
+    for (int row = 0; row < tabs.rowCount(); ++row) {
+        tabs.setCurrentIndex(row);
+        QCOMPARE(tabs.rowOpenedFromCurrent(QStringLiteral("test.fake")), -1);
+        QCOMPARE(tabs.rowOpenedFromCurrent(QStringLiteral("test.renaming")), -1);
+    }
+
+    // And a tab opened by hand afterwards does have a lineage, because that is
+    // the relation this is about.
+    tabs.setCurrentIndex(0);
+    const int opened = tabs.openTab(QStringLiteral("test.renaming"));
+    QVERIFY(opened > 0);
+    tabs.setCurrentIndex(0);
+    QCOMPARE(tabs.rowOpenedFromCurrent(QStringLiteral("test.renaming")), opened);
+}
+
+/// The saved index counts tabs that did not come back.
+///
+/// It indexes the *saved* list, and a tab whose feature nobody provides is
+/// skipped -- so [gone, A, B] with the index on B selected position 2, which was
+/// clamped to the last row and handed back A. See MOLE-393.
+void TestTabsModel::theRestoredSelectionSurvivesAFeatureThatIsGone()
+{
+    TabsModel tabs(m_registry);
+    Session session;
+    session.tabs.append(TabSession { QStringLiteral("test.uninstalled"), {} });
+    session.tabs.append(TabSession { QStringLiteral("test.fake"), {} });
+    session.tabs.append(TabSession { QStringLiteral("test.renaming"), {} });
+    session.currentIndex = 2;
+
+    QCOMPARE(tabs.restoreSession(session), 2);
+    QCOMPARE(tabs.rowCount(), 2);
+    QCOMPARE(tabs.index(tabs.currentIndex(), 0).data(TabsModel::FeatureIdRole).toString(),
+        QStringLiteral("test.renaming"));
+
+    // A saved index naming the tab that is gone lands on the nearest one before
+    // it rather than on whatever the clamp produced.
+    Session onTheMissingOne;
+    onTheMissingOne.tabs.append(TabSession { QStringLiteral("test.fake"), {} });
+    onTheMissingOne.tabs.append(TabSession { QStringLiteral("test.uninstalled"), {} });
+    onTheMissingOne.tabs.append(TabSession { QStringLiteral("test.renaming"), {} });
+    onTheMissingOne.currentIndex = 1;
+
+    TabsModel second(m_registry);
+    QCOMPARE(second.restoreSession(onTheMissingOne), 2);
+    QCOMPARE(second.index(second.currentIndex(), 0).data(TabsModel::FeatureIdRole).toString(),
+        QStringLiteral("test.fake"));
 }
 
 MOLE_TEST_MAIN(TestTabsModel)

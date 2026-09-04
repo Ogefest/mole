@@ -62,6 +62,14 @@ QHash<int, QByteArray> TabsModel::roleNames() const
 
 int TabsModel::openTab(const QString& featureId)
 {
+    // Recorded before the insert, while m_currentIndex still points at the tab
+    // the user opened this one from.
+    return openTabFrom(
+        featureId, m_currentIndex >= 0 && m_currentIndex < m_tabs.size() ? m_tabs.at(m_currentIndex).id : -1);
+}
+
+int TabsModel::openTabFrom(const QString& featureId, int openedFromId)
+{
     if (!m_registry)
         return -1;
     IFeature* feature = m_registry->feature(featureId);
@@ -77,10 +85,7 @@ int TabsModel::openTab(const QString& featureId)
         return -1;
 
     tab.id = m_nextTabId++;
-    // Recorded before the insert, while m_currentIndex still points at the tab
-    // the user opened this one from.
-    tab.openedFromId
-        = m_currentIndex >= 0 && m_currentIndex < m_tabs.size() ? m_tabs.at(m_currentIndex).id : -1;
+    tab.openedFromId = openedFromId;
 
     // The controller owns its label, so a browser tab can rename itself to the
     // folder it is showing without the shell knowing what a folder is.
@@ -190,12 +195,18 @@ int TabsModel::restoreSession(const Session& session)
     m_carried.clear();
     int restored = 0;
     int at = -1;
+    // Where each saved tab ended up, so the saved current index can be mapped
+    // through the ones that were skipped. -1 for a tab that did not come back.
+    QList<int> rowForSaved;
     for (const TabSession& tab : session.tabs) {
         ++at;
         // A feature merged into another leaves its id in every session written
         // before the merge. Those tabs reopen as their successor; only a tab
         // whose feature nobody provides at all is skipped.
-        const int row = openTab(m_registry ? m_registry->currentIdFor(tab.featureId) : tab.featureId);
+        //
+        // Opened from nowhere, deliberately: see openTabFrom().
+        const int row = openTabFrom(m_registry ? m_registry->currentIdFor(tab.featureId) : tab.featureId, -1);
+        rowForSaved.append(row);
         if (row < 0) {
             // The plugin that provided this tab is gone -- this time. Kept, so
             // the next save puts it back rather than writing it out of the file;
@@ -208,8 +219,20 @@ int TabsModel::restoreSession(const Session& session)
         ++restored;
     }
 
-    if (restored > 0)
-        setCurrentIndex(session.currentIndex >= 0 ? session.currentIndex : 0);
+    if (restored == 0)
+        return restored;
+
+    // The saved index is a position in the *saved* list, and a tab whose feature
+    // is gone is not in the restored one -- so [gone, A, B] with the index on B
+    // used to select position 2, be clamped to 1, and hand back A. The tab
+    // before it when the one it names did not come back, which is the nearest
+    // thing to where somebody was.
+    int selected = 0;
+    for (int saved = 0; saved <= session.currentIndex && saved < rowForSaved.size(); ++saved) {
+        if (rowForSaved.at(saved) >= 0)
+            selected = rowForSaved.at(saved);
+    }
+    setCurrentIndex(selected);
     return restored;
 }
 

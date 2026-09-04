@@ -154,6 +154,21 @@ property. It never learns a browser from a duplicate finder.
 A `FeatureController` owns its tab's label, so a browser tab renames itself to
 the folder it is showing without the shell knowing what a folder is.
 
+**A tab remembers the tab it was opened from**, and two behaviours rest on it.
+Examining a search's results leaves *one* browser behind rather than one per
+result, because `AppController::browserTabForCurrent()` reuses the browser this
+tab has already opened — and the search tab itself is never navigated, so its
+results and its scroll position are still there to come back to. Closing a tab
+hands the user back to the tab they opened it from rather than to whichever tab
+happens to sit next to it.
+
+The relation is only ever "somebody opened this from that", so **a restored
+session records none of it**: `restoreSession()` opens each saved tab from
+nowhere. It used to open them through the ordinary path, which selects each tab
+as it makes it, so tab N came back claiming it was opened from tab N-1 — a
+lineage that never existed, and one that made every restored tab navigate its
+neighbour (MOLE-393).
+
 ## The menu
 
 One hamburger, four sections fixed by `MenuAction::Section`. Entries come from

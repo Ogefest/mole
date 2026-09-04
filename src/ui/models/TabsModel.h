@@ -101,6 +101,17 @@ private:
         int openedFromId = -1;
     };
 
+    /// Opens a tab and records what it was opened from, whatever the current
+    /// tab is.
+    ///
+    /// **restoreSession() passes -1**, because a restore is not somebody opening
+    /// a tab from another one. It called the public form once per saved tab in
+    /// file order, and each of those selected the row it made -- so tab N came
+    /// back recorded as opened from tab N-1, a lineage that never existed, and
+    /// browserTabForCurrent() then answered "the browser next to this one" for
+    /// every restored tab in the file. See MOLE-393.
+    int openTabFrom(const QString& featureId, int openedFromId);
+
     void emitRowChanged(const FeatureController* controller, const QList<int>& roles);
     int rowOfTabId(int id) const;
     /// Selects a row and always notifies, even when the number is unchanged:

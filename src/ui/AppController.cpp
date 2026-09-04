@@ -1393,15 +1393,27 @@ bool AppController::goTo(const QString& uri)
         return false;
     }
 
+    navigateHereOrOpenABrowser(uri);
+    return true;
+}
+
+void AppController::navigateHereOrOpenABrowser(const QString& uri)
+{
+    // Reuse the current tab when it knows how to navigate; otherwise the caller
+    // asked to go somewhere this tab cannot take them, so open a browser.
+    //
+    // One function because two callers need the same rule and used to differ:
+    // opening an archive went straight to browserTabForCurrent(), so activating
+    // a .zip row in a browser navigated *another* tab -- whichever one had been
+    // opened from this one -- and switched to it, throwing away wherever that
+    // tab was. Every other row activation moves the pane the row is in.
+    // See MOLE-393.
     QObject* current = m_tabs->currentController();
-    // Reuse the current tab when it knows how to navigate; otherwise the user
-    // asked to go somewhere a search tab cannot take them, so open a browser.
     if (current && current->metaObject()->indexOfMethod("navigateActive(QString)") >= 0) {
         QMetaObject::invokeMethod(current, "navigateActive", Q_ARG(QString, uri));
-        return true;
+        return;
     }
     openLocation(uri);
-    return true;
 }
 
 bool AppController::openPlace(const QString& kind, const QString& target)
@@ -1666,7 +1678,7 @@ QString AppController::openArchive(const QString& archiveUri)
             if (existing.internal)
                 continue;
             if (existing.root == root) {
-                openLocation(root.toString());
+                navigateHereOrOpenABrowser(root.toString());
                 return root.toString();
             }
         }
@@ -1679,7 +1691,7 @@ QString AppController::openArchive(const QString& archiveUri)
             return {};
         }
 
-        openLocation(m_vfs->mount(id).root.toString());
+        navigateHereOrOpenABrowser(m_vfs->mount(id).root.toString());
         return m_vfs->mount(id).root.toString();
     }
 

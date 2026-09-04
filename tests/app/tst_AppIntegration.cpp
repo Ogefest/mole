@@ -78,6 +78,7 @@ private slots:
     void textPreviewProviderClaimsTextFiles();
     void archivePluginMountsAZip();
     void anArchiveMountGoesWhenTheLastTabInsideItDoes();
+    void openingAnArchiveMovesTheTabTheRowWasActivatedIn();
     void aUriIntoAnArchiveWithNoMountRebuildsIt();
     void thePreviewsOwnMountIsInternalAndNotAnUnlistedOne();
     void aScanIndexesWhatIsInsideAnArchive();
@@ -1162,6 +1163,66 @@ void TestAppIntegration::archivePluginMountsAZip()
     QCOMPARE(m_app->openArchive(archiveUri), root);
     QCOMPARE(m_app->services().vfs->mounts().size(), mountsBefore + 1);
     QCOMPARE(m_app->drives()->rowCount(), drivesBefore);
+}
+
+/// Opening an archive used to navigate a different tab.
+///
+/// openArchive() went straight to browserTabForCurrent(), which answers "the
+/// browser this tab has already opened" -- so from browser A, if the user had
+/// ever pressed Ctrl+T while on A, activating a .zip row in A navigated *B* into
+/// the archive and switched to it, throwing away wherever B was. Every other row
+/// activation moves the pane the row is in, and goTo() has always navigated the
+/// current tab when it can. It now follows the same rule. See MOLE-393.
+void TestAppIntegration::openingAnArchiveMovesTheTabTheRowWasActivatedIn()
+{
+    if (!QDir(QStringLiteral(MOLE_TEST_PLUGIN_DIR)).exists())
+        QSKIP("archive plugin was not built");
+    const QString zip = QStandardPaths::findExecutable(QStringLiteral("zip"));
+    if (zip.isEmpty())
+        QSKIP("zip is not available to build a fixture");
+
+    QVERIFY(m_tree->makeDirs(QStringLiteral("packed")));
+    QVERIFY(m_tree->writeFile(QStringLiteral("packed/inside.txt"), QByteArray("hello")));
+    const QString archivePath = m_tree->absolute(QStringLiteral("bundle.zip"));
+    QProcess pack;
+    pack.setWorkingDirectory(m_tree->absolute(QStringLiteral("packed")));
+    pack.start(zip, { QStringLiteral("-qr"), archivePath, QStringLiteral(".") });
+    QVERIFY(pack.waitForFinished(30000));
+    QCOMPARE(pack.exitCode(), 0);
+
+    // Browser A, and browser B opened from it -- which is what Ctrl+T does and
+    // what gives B a lineage back to A.
+    const int rowA = m_app->tabs()->openTab(QStringLiteral("mole.browser"));
+    QVERIFY(rowA >= 0);
+    auto* browserA = qobject_cast<BrowserController*>(m_app->tabs()->controllerAt(rowA));
+    QVERIFY(browserA);
+    const QString reports = m_tree->rootUri().child(QStringLiteral("reports")).toString();
+    browserA->activePane()->navigateTo(reports);
+    QVERIFY(waitFor([browserA, reports] { return browserA->activePane()->currentUri() == reports; }, 5000));
+
+    const int rowB = m_app->tabs()->openTab(QStringLiteral("mole.browser"));
+    QVERIFY(rowB >= 0);
+    auto* browserB = qobject_cast<BrowserController*>(m_app->tabs()->controllerAt(rowB));
+    QVERIFY(browserB);
+    const QString elsewhere = m_tree->rootUri().toString();
+    browserB->activePane()->navigateTo(elsewhere);
+    QVERIFY(
+        waitFor([browserB, elsewhere] { return browserB->activePane()->currentUri() == elsewhere; }, 5000));
+    QCOMPARE(m_app->tabs()->rowOpenedFromCurrent(QStringLiteral("mole.browser")), -1);
+
+    // Back to A, which is where the user is when they double-click the archive.
+    m_app->tabs()->setCurrentIndex(rowA);
+    QCOMPARE(m_app->tabs()->rowOpenedFromCurrent(QStringLiteral("mole.browser")), rowB);
+    const int tabsBefore = m_app->tabs()->rowCount();
+
+    const QString root = m_app->openArchive(VfsUri::fromLocalPath(archivePath).toString());
+    QVERIFY(!root.isEmpty());
+    QVERIFY(waitFor([browserA, root] { return browserA->activePane()->currentUri() == root; }, 5000));
+
+    // A is inside the archive, B is where it was, and no tab was made.
+    QCOMPARE(browserB->activePane()->currentUri(), elsewhere);
+    QCOMPARE(m_app->tabs()->currentIndex(), rowA);
+    QCOMPARE(m_app->tabs()->rowCount(), tabsBefore);
 }
 
 /// An archive is somewhere to stand, and it goes away when nobody is standing in

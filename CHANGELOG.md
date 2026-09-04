@@ -65,6 +65,9 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-393 Opening a search result after a restart no longer navigates a tab you were working in
+2026-09-04 #MOLE-393 Opening an archive moves the pane you activated the row in, instead of another tab
+2026-09-04 #MOLE-393 A restart puts you back on the tab you were on, even when a plugin's tab is gone
 2026-09-04 #MOLE-377 A bulk rename refuses a name that another file in the batch is keeping
 2026-09-04 #MOLE-377 A bulk rename says which renames failed and keeps the rules that produced them
 2026-09-04 #MOLE-377 A bulk rename across two drives judges each name by its own drive's rules
