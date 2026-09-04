@@ -105,6 +105,16 @@ bool ActionRegistry::trigger(const QString& id)
     return true;
 }
 
+void ActionRegistry::declareShortcut(const QString& target, const QString& nativeText)
+{
+    if (target.isEmpty())
+        return;
+    if (nativeText.isEmpty())
+        m_declaredShortcuts.remove(target);
+    else
+        m_declaredShortcuts.insert(target, nativeText);
+}
+
 QVariantList ActionRegistry::buildModel() const
 {
     // The order the headings appear in. Operations before Workflows because the
@@ -132,7 +142,15 @@ QVariantList ActionRegistry::buildModel() const
             QVariantMap entry;
             entry[QStringLiteral("id")] = action->id;
             entry[QStringLiteral("title")] = action->title;
-            entry[QStringLiteral("shortcut")] = action->shortcut;
+            // The label comes from whatever declared the key: this entry's own
+            // id, or -- for the entries that open a kind of tab -- the feature
+            // the key opens. What an action was registered with is the fallback,
+            // which is now only the two labels that are not keys at all. See
+            // declareShortcut().
+            QString key = m_declaredShortcuts.value(action->id);
+            if (key.isEmpty() && !action->opensFeature.isEmpty())
+                key = m_declaredShortcuts.value(action->opensFeature);
+            entry[QStringLiteral("shortcut")] = key.isEmpty() ? action->shortcut : key;
             entry[QStringLiteral("iconText")] = action->iconText;
             // A divider at the very top of a menu is just a stray line.
             entry[QStringLiteral("separatorBefore")] = action->separatorBefore && !first;

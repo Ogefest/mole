@@ -119,3 +119,32 @@ that was adding nothing.
   which is what the gaps in their numbers were always for.
 - ADR-0003's Operations/Workflows split is untouched and now easier to state: the File
   section is what you open from nothing, Workflows is what you open onto something.
+
+## Amendment, 2026-09-05: the shell may name a tool, and may not copy a key
+
+This record accepts the shell naming a standing tool by id -- `openPreviewTab()`
+asks for `mole.preview`, `openReportFor()` for `mole.analysis`, and the File
+section is built by asking every feature whether it opens from nothing. That is
+the arrangement here and it stands: an id is how the shell reaches something
+without knowing what it is, which is what makes the feature a plugin rather than
+a special case.
+
+**What it does not cover, and what is now refused, is a second copy of something
+QML declares.** `buildActions()` kept a hash of three feature ids to key text --
+`mole.browser` to `Ctrl+T`, `mole.commander` to `Ctrl+Shift+T`, `mole.livesearch`
+to `Ctrl+F` -- used for nothing but the label beside a menu entry, while the
+accelerators that actually fire are `Shortcut` items in QML. Every other label was
+a string in the same function. A copy is wrong the moment either side moves, and
+it had been: MOLE-396 found five entries advertising a key
+that was not bound or did something else, and one key printed beside two entries.
+
+So the window declares each key for the thing it reaches --
+`App.declareShortcut("mole.tools.analyse", this)` from the `Shortcut` that binds
+it -- and the shell holds no key text at all. Two labels stay in `buildActions()`
+and are not an exception: "type to filter" and "type to find, or /" are not keys,
+nothing else spells them, and there is nothing for them to disagree with.
+
+A member on `IFeature` was the other reading, and would make a shortcut something
+a plugin can claim. It was dropped for what it costs against nothing yet asking
+for it: an SDK change, a `kPluginApiVersion` bump, and a rule about two plugins
+claiming one key. See MOLE-416.

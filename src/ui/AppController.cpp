@@ -50,6 +50,7 @@
 #include <QFontDatabase>
 #include <QFutureWatcher>
 #include <QGuiApplication>
+#include <QKeySequence>
 #include <QLocale>
 #include <QRegularExpression>
 #include <QScreen>
@@ -1768,13 +1769,18 @@ void AppController::registerShellActions()
     // duplicates view whose own first line says "Open this from a folder to search
     // it", and a sync with neither endpoint set. See ADR-0032.
     //
-    // Shortcut labels mirror the Shortcut items declared in QML; they are display
-    // only.
-    static const QHash<QString, QString> knownShortcuts {
-        { QStringLiteral("mole.browser"), QStringLiteral("Ctrl+T") },
-        { QStringLiteral("mole.commander"), QStringLiteral("Ctrl+Shift+T") },
-        { QStringLiteral("mole.livesearch"), QStringLiteral("Ctrl+F") },
-    };
+    // **No key text anywhere in this function.** Every label beside a menu entry
+    // used to be a string here -- including a hash of three feature ids to key
+    // text, kept for nothing but the label -- while the accelerators that fire
+    // are Shortcut items in QML. A copy is wrong the moment either side moves,
+    // which is how MOLE-396 found five entries advertising a key that was not
+    // bound or did something else, and one key printed beside two entries. The
+    // window declares each key for the thing it reaches; see
+    // ActionRegistry::declareShortcut() and MOLE-416.
+    //
+    // The two exceptions are not keys: "type to filter" and "type to find, or /"
+    // say how something is reached where no accelerator exists, and there is
+    // nothing anywhere else for them to disagree with.
 
     // In the order somebody reaches for them -- the two browsers, then the two
     // searches -- rather than in the order the plugins happened to load, which is
@@ -1798,7 +1804,6 @@ void AppController::registerShellActions()
         action.section = MenuAction::Section::File;
         action.title = QStringLiteral("New %1 tab").arg(feature->title());
         action.iconText = feature->iconText();
-        action.shortcut = knownShortcuts.value(feature->id());
         action.sortOrder = order;
         action.opensFeature = feature->id();
         const QString featureId = feature->id();
@@ -1812,7 +1817,6 @@ void AppController::registerShellActions()
         action.id = QStringLiteral("mole.file.closeTab");
         action.section = MenuAction::Section::File;
         action.title = QStringLiteral("Close tab");
-        action.shortcut = QStringLiteral("Ctrl+W");
         action.sortOrder = 200;
         action.separatorBefore = true;
         action.enabled = [this] { return m_tabs->rowCount() > 0; };
@@ -1824,7 +1828,6 @@ void AppController::registerShellActions()
         action.id = QStringLiteral("mole.file.quit");
         action.section = MenuAction::Section::File;
         action.title = QStringLiteral("Quit");
-        action.shortcut = QStringLiteral("Ctrl+Q");
         action.sortOrder = 900;
         action.separatorBefore = true;
         action.trigger = [] { QCoreApplication::quit(); };
@@ -1965,7 +1968,6 @@ void AppController::registerShellActions()
         action.id = QStringLiteral("mole.path.copyFolder");
         action.section = MenuAction::Section::Operations;
         action.title = QStringLiteral("Copy path of this folder");
-        action.shortcut = QStringLiteral("Ctrl+Shift+C");
         action.sortOrder = 60;
         action.enabled = [this] { return !currentLocation().isEmpty(); };
         action.trigger = [this] { copyCurrentFolderPath(); };
@@ -1979,7 +1981,6 @@ void AppController::registerShellActions()
         // Ctrl+Shift+F rather than the Ctrl+Alt+C other file managers use: Ctrl+Alt
         // is AltGr on Polish and many other layouts, where AltGr+C is a letter
         // people type.
-        action.shortcut = QStringLiteral("Ctrl+Shift+F");
         action.sortOrder = 61;
         // Off when a folder is under the cursor rather than quietly copying that
         // folder: the entry above is what does folders.
@@ -2013,7 +2014,6 @@ void AppController::registerShellActions()
         action.opensFeature = QStringLiteral("mole.preview");
         action.section = MenuAction::Section::Operations;
         action.title = QStringLiteral("Preview this file");
-        action.shortcut = QStringLiteral("F3");
         action.sortOrder = 10;
         action.enabled = [this] { return !currentFile().isEmpty(); };
         action.trigger = [this] { previewFile(currentFile()); };
@@ -2025,7 +2025,6 @@ void AppController::registerShellActions()
         action.opensFeature = QStringLiteral("mole.analysis");
         action.section = MenuAction::Section::Workflows;
         action.title = QStringLiteral("Analyse folder");
-        action.shortcut = QStringLiteral("Ctrl+Shift+A");
         action.sortOrder = 10;
         action.enabled = [this] { return !currentLocation().isEmpty(); };
         action.trigger = [this] { analyseSelection(); };
@@ -2046,7 +2045,6 @@ void AppController::registerShellActions()
         action.id = QStringLiteral("mole.tools.terminal");
         action.section = MenuAction::Section::Operations;
         action.title = QStringLiteral("Terminal here");
-        action.shortcut = QStringLiteral("Ctrl+`");
         action.sortOrder = 20;
         action.enabled = [this] { return m_terminal && m_terminal->isAvailable(); };
         action.trigger = [this] {
@@ -2120,7 +2118,6 @@ void AppController::registerShellActions()
         action.opensFeature = QStringLiteral("core.bulkrename");
         action.section = MenuAction::Section::Workflows;
         action.title = QStringLiteral("Bulk rename");
-        action.shortcut = QStringLiteral("Ctrl+Shift+R");
         action.sortOrder = 30;
         action.enabled = [this] { return !currentTargets().isEmpty(); };
         action.trigger = [this] { openFeatureTab(QStringLiteral("core.bulkrename")); };
@@ -2189,7 +2186,6 @@ void AppController::registerShellActions()
         action.opensFeature = QStringLiteral("core.alerts");
         action.section = MenuAction::Section::Workflows;
         action.title = QStringLiteral("Alerts");
-        action.shortcut = QStringLiteral("Ctrl+Shift+L");
         action.sortOrder = 60;
         action.enabled = [] { return true; };
         action.trigger = [this] { openStandingTab(QStringLiteral("core.alerts")); };
@@ -2201,7 +2197,6 @@ void AppController::registerShellActions()
         action.opensFeature = QStringLiteral("core.automation");
         action.section = MenuAction::Section::Workflows;
         action.title = QStringLiteral("Scheduled jobs");
-        action.shortcut = QStringLiteral("Ctrl+Shift+J");
         action.sortOrder = 70;
         // Always available: the reason to open it is usually that something is
         // failing, which is exactly when nothing else points you at it.
@@ -2228,7 +2223,6 @@ void AppController::registerShellActions()
         action.id = QStringLiteral("mole.tools.folderSizes");
         action.section = MenuAction::Section::Operations;
         action.title = QStringLiteral("Folder sizes");
-        action.shortcut = QStringLiteral("Ctrl+Shift+S");
         action.iconText = QStringLiteral("\u2211");
         action.sortOrder = 35;
         action.enabled = [this] { return !currentLocation().isEmpty(); };
@@ -2266,16 +2260,16 @@ void AppController::registerShellActions()
     //
     // The two dialogs live in QML, so these only announce that they were
     // picked and the shell opens the right one.
-    for (const auto& [id, title, shortcut, sortOrder] :
-        { std::tuple { QStringLiteral("mole.help.shortcuts"), QStringLiteral("Keyboard shortcuts"),
-              QStringLiteral("F1"), 10 },
-            std::tuple { QStringLiteral("mole.help.plugins"), QStringLiteral("Plugins"), QString(), 20 },
-            std::tuple { QStringLiteral("mole.help.about"), QStringLiteral("About"), QString(), 30 } }) {
+    // F1 is not named here either: the window declares it for
+    // mole.help.shortcuts, the same as every other key.
+    for (const auto& [id, title, sortOrder] :
+        { std::tuple { QStringLiteral("mole.help.shortcuts"), QStringLiteral("Keyboard shortcuts"), 10 },
+            std::tuple { QStringLiteral("mole.help.plugins"), QStringLiteral("Plugins"), 20 },
+            std::tuple { QStringLiteral("mole.help.about"), QStringLiteral("About"), 30 } }) {
         MenuAction action;
         action.id = id;
         action.section = MenuAction::Section::Help;
         action.title = title;
-        action.shortcut = shortcut;
         action.sortOrder = sortOrder;
         const QString actionId = id;
         action.trigger = [this, actionId] { emit dialogRequested(actionId); };
@@ -2993,7 +2987,6 @@ void AppController::refreshBookmarkActions()
         action.id = QStringLiteral("mole.bookmarks.add");
         action.section = MenuAction::Section::Bookmarks;
         action.title = aboutASet ? QStringLiteral("Add this set") : QStringLiteral("Add current folder");
-        action.shortcut = QStringLiteral("Ctrl+D");
         action.sortOrder = 10;
         // The predicates read the tab again rather than trusting the title: the
         // title is a label rebuilt on a tab change, and these decide what happens.
@@ -3078,6 +3071,52 @@ QVariantList AppController::buildMenu()
     // a menu is opened rarely and read once.
     refreshDriveActions();
     return m_actions ? m_actions->buildModel() : QVariantList {};
+}
+
+namespace {
+
+    /// One entry of a Shortcut's `sequences`, as this platform spells it.
+    ///
+    /// A list holds either a string -- "Ctrl+Shift+T" -- or a StandardKey, and what
+    /// the second means is Qt's answer and this machine's: `StandardKey.AddTab` is
+    /// Ctrl+T here and ⌘T on a Mac. Empty for anything else, so a form nobody has
+    /// used yet leaves the label empty rather than inventing one.
+    QString keyTextOf(const QVariant& sequence)
+    {
+        if (sequence.canConvert<QKeySequence>() && sequence.metaType().id() != QMetaType::Int
+            && sequence.metaType().id() != QMetaType::UInt) {
+            return sequence.value<QKeySequence>().toString(QKeySequence::NativeText);
+        }
+        if (sequence.metaType().id() == QMetaType::QString)
+            return QKeySequence(sequence.toString()).toString(QKeySequence::NativeText);
+
+        bool isNumber = false;
+        const int standard = sequence.toInt(&isNumber);
+        if (!isNumber)
+            return {};
+        const QList<QKeySequence> bound
+            = QKeySequence::keyBindings(static_cast<QKeySequence::StandardKey>(standard));
+        return bound.isEmpty() ? QString() : bound.first().toString(QKeySequence::NativeText);
+    }
+
+} // namespace
+
+void AppController::declareShortcut(const QString& target, QObject* shortcut)
+{
+    if (!m_actions || !shortcut)
+        return;
+
+    // `nativeText` is the answer where there is one. It is empty for a Shortcut
+    // that used `sequences:` rather than `sequence:`, which is how the two keys
+    // that come from StandardKey are written -- so the list is resolved here
+    // instead, by the class that knows what a StandardKey means on this machine.
+    QString text = shortcut->property("nativeText").toString();
+    if (text.isEmpty()) {
+        const QVariantList sequences = shortcut->property("sequences").toList();
+        if (!sequences.isEmpty())
+            text = keyTextOf(sequences.first());
+    }
+    m_actions->declareShortcut(target, text);
 }
 
 bool AppController::triggerAction(const QString& id)

@@ -548,6 +548,19 @@ public:
     /// and greyed-out entries reflect the tab that is open right now.
     Q_INVOKABLE QVariantList buildMenu();
     Q_INVOKABLE bool triggerAction(const QString& id);
+    /// What key reaches `target` -- an action id, or a feature id for the
+    /// entries that open a kind of tab -- told to the shell by the window that
+    /// binds it.
+    ///
+    /// Called from the `Shortcut` items themselves, handing over `this`, so a
+    /// menu label and the accelerator that fires are one declaration rather than
+    /// two lists that can drift. The object rather than a string because a
+    /// Shortcut spells its keys in two ways and only one of them has a
+    /// `nativeText`: `sequence: "Ctrl+D"` does, `sequences: [StandardKey.AddTab]`
+    /// answers empty. Resolving both belongs in one place, and QKeySequence is
+    /// what knows how a platform spells either. See
+    /// ActionRegistry::declareShortcut() and MOLE-416.
+    Q_INVOKABLE void declareShortcut(const QString& target, QObject* shortcut);
     ActionRegistry* actions() const { return m_actions; }
     /// The small things the application remembers about how somebody likes to
     /// work, including whether it looks for a newer version of itself.

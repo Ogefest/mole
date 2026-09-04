@@ -73,6 +73,7 @@ private slots:
     void typingInAPreviewOpensTheFindBarHoldingWhatWasTyped();
     void copyingFromAPreviewTakesTheTextAndNotTheLineNumbers();
     void newTabShortcutOpensATab();
+    void theKeyBesideAMenuEntryIsTheKeyThatOpensThatTab();
     void f4MenuWalksIntoSubmenusWithTheKeyboard();
 
     void f3AndCtrlUpWorkWithTheKeyboardOutsideThePane();
@@ -920,6 +921,62 @@ void TestKeyboardNavigation::newTabShortcutOpensATab()
     QVERIFY(pressKeyUntil(
         Qt::Key_T, [&] { return m_app->tabs()->rowCount() == before + 1; }, Qt::ControlModifier));
     QCOMPARE(m_app->tabs()->rowCount(), before + 1);
+}
+
+void TestKeyboardNavigation::theKeyBesideAMenuEntryIsTheKeyThatOpensThatTab()
+{
+    // **The label and the accelerator, held against each other by pressing it.**
+    // The shell used to keep its own hash of feature id to key text for these
+    // three labels, so the menu could advertise a key that opened something else
+    // -- which is what MOLE-396 was reported for, and it left no test behind.
+    // The window declares each key now, and this is the assertion that the
+    // declaration is the one that fires: whatever the menu prints beside "New …
+    // tab", pressing it opens a tab of that kind. See MOLE-416.
+    const QVariantList sections = m_app->buildMenu();
+    QVERIFY2(!sections.isEmpty(), "the menu is empty, so this case is holding nothing");
+
+    int checked = 0;
+    for (const QVariant& section : sections) {
+        const QVariantList entries = section.toMap().value(QStringLiteral("actions")).toList();
+        for (const QVariant& row : entries) {
+            const QVariantMap entry = row.toMap();
+            const QString feature = entry.value(QStringLiteral("opensFeature")).toString();
+            const QString label = entry.value(QStringLiteral("shortcut")).toString();
+            // The entries that open a kind of tab from nothing, which is what
+            // these three keys do. "Preview this file" also names a feature and
+            // is not one of them: it opens what the cursor is on, so pressing F3
+            // with every tab closed correctly opens nothing. See ADR-0032.
+            if (!entry.value(QStringLiteral("id")).toString().startsWith(QStringLiteral("mole.file.newTab."))
+                || feature.isEmpty() || label.isEmpty()) {
+                continue;
+            }
+
+            // The label as a key, read by the same class that binds it. A label
+            // that is not a key sequence at all fails here rather than being
+            // skipped: the menu would be printing something nobody can press.
+            const QKeySequence sequence(label, QKeySequence::NativeText);
+            QVERIFY2(sequence.count() == 1,
+                qPrintable(QStringLiteral("%1 is printed beside \"%2\" and is not one key")
+                               .arg(label, entry.value(QStringLiteral("title")).toString())));
+
+            while (m_app->tabs()->rowCount() > 0)
+                m_app->tabs()->closeTab(0);
+            settle();
+
+            const QKeyCombination combination = sequence[0];
+            QTest::keyClick(m_window, combination.key(), combination.keyboardModifiers());
+            QVERIFY2(waitFor([this, feature] { return m_app->tabs()->rowOfFeature(feature) >= 0; }, 10000),
+                qPrintable(QStringLiteral("the menu says %1 opens \"%2\", and it did not")
+                               .arg(label, entry.value(QStringLiteral("title")).toString())));
+            ++checked;
+        }
+    }
+
+    // The three that open a kind of tab. A menu that stopped carrying keys
+    // beside them would otherwise pass this without pressing anything.
+    QVERIFY2(checked >= 3,
+        qPrintable(
+            QStringLiteral("only %1 menu entries advertise a key for the tab they open").arg(checked)));
 }
 
 QObject* TestKeyboardNavigation::findObject(const QString& objectName) const

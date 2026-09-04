@@ -138,24 +138,35 @@ ApplicationWindow {
     // Window-level shortcuts. Anything that depends on which pane has focus
     // is handled inside FilePane instead -- a key only means something
     // relative to what it is aimed at.
+    // The three keys that open a kind of tab, and **the menu's labels for them
+    // come from here**. The shell used to keep its own hash of feature id to key
+    // text for the label beside those entries -- a second copy of what these
+    // declare, wrong the moment either side moved, which is how MOLE-396 found
+    // five entries advertising keys that did nothing. `nativeText` rather than a
+    // string of our own, so a platform that spells StandardKey.AddTab as ⌘T says
+    // that in the menu as well. See MOLE-416.
     Shortcut {
         sequences: [StandardKey.AddTab]          // Ctrl+T
         // By name rather than by id: App.openFeatureTab("...") with an id
         // nothing knows returns -1 in silence, so a rename broke this key with
         // no diagnostic anywhere. See MOLE-396.
         onActivated: App.openNewBrowser()
+        Component.onCompleted: App.declareShortcut("mole.browser", this)
     }
     Shortcut {
         sequence: "Ctrl+Shift+T"
         onActivated: App.openNewCommander()
+        Component.onCompleted: App.declareShortcut("mole.commander", this)
     }
     Shortcut {
         sequences: [StandardKey.Close]           // Ctrl+W
         onActivated: App.tabs.closeCurrentTab()
+        Component.onCompleted: App.declareShortcut("mole.file.closeTab", this)
     }
     Shortcut {
         sequences: [StandardKey.Find]            // Ctrl+F
         onActivated: App.openSearchHere()
+        Component.onCompleted: App.declareShortcut("mole.livesearch", this)
     }
     Shortcut {
         // The one key that reaches everything. It used to be Refresh's, which was
@@ -170,6 +181,7 @@ ApplicationWindow {
         // answers into the listing.
         sequence: "Ctrl+Shift+S"
         onActivated: App.triggerAction("mole.tools.folderSizes")
+        Component.onCompleted: App.declareShortcut("mole.tools.folderSizes", this)
     }
     Shortcut {
         // The same search, asked of everywhere that has been scanned. There used
@@ -184,10 +196,12 @@ ApplicationWindow {
     Shortcut {
         sequence: "Ctrl+Shift+C"
         onActivated: App.triggerAction("mole.path.copyFolder")
+        Component.onCompleted: App.declareShortcut("mole.path.copyFolder", this)
     }
     Shortcut {
         sequence: "Ctrl+Shift+F"
         onActivated: App.triggerAction("mole.path.copyFile")
+        Component.onCompleted: App.declareShortcut("mole.path.copyFile", this)
     }
     // **The four the comment above was written about, and which were in exactly
     // that state**: the menu printed them and nothing declared them, so they were
@@ -198,18 +212,22 @@ ApplicationWindow {
     Shortcut {
         sequence: "Ctrl+Shift+A"
         onActivated: App.triggerAction("mole.tools.analyse")
+        Component.onCompleted: App.declareShortcut("mole.tools.analyse", this)
     }
     Shortcut {
         sequence: "Ctrl+Shift+R"
         onActivated: App.triggerAction("mole.tools.bulkRename")
+        Component.onCompleted: App.declareShortcut("mole.tools.bulkRename", this)
     }
     Shortcut {
         sequence: "Ctrl+Shift+L"
         onActivated: App.triggerAction("mole.tools.alerts")
+        Component.onCompleted: App.declareShortcut("mole.tools.alerts", this)
     }
     Shortcut {
         sequence: "Ctrl+Shift+J"
         onActivated: App.triggerAction("mole.tools.automation")
+        Component.onCompleted: App.declareShortcut("mole.tools.automation", this)
     }
     Shortcut {
         sequences: [StandardKey.NextChild, "Ctrl+PgDown"]
@@ -227,6 +245,7 @@ ApplicationWindow {
         // reason. See MOLE-396.
         sequences: [StandardKey.Quit, "Ctrl+Q"]
         onActivated: Qt.quit()
+        Component.onCompleted: App.declareShortcut("mole.file.quit", this)
     }
     // --- the keys that act on the pane in front of you ---------------------
     //
@@ -258,6 +277,7 @@ ApplicationWindow {
             }
             App.previewCurrent()
         }
+        Component.onCompleted: App.declareShortcut("mole.tools.preview", this)
     }
     Shortcut {
         sequence: "Ctrl+Up"
@@ -284,6 +304,7 @@ ApplicationWindow {
     Shortcut {
         sequence: "Ctrl+D"
         onActivated: App.triggerAction("mole.bookmarks.add")
+        Component.onCompleted: App.declareShortcut("mole.bookmarks.add", this)
     }
     Shortcut {
         // Ctrl+G to type a destination; Ctrl+L is the same thing under the
@@ -317,10 +338,12 @@ ApplicationWindow {
         // The key every IDE uses for this, and one no listing wants.
         sequence: "Ctrl+`"
         onActivated: App.triggerAction("mole.tools.terminal")
+        Component.onCompleted: App.declareShortcut("mole.tools.terminal", this)
     }
     Shortcut {
         sequences: [StandardKey.HelpContents]    // F1
         onActivated: shortcutDialog.open()
+        Component.onCompleted: App.declareShortcut("mole.help.shortcuts", this)
     }
 
     // Ctrl+1..9 jumps straight to a tab.
