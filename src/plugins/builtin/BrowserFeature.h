@@ -154,7 +154,17 @@ signals:
 
 private:
     void refreshLabels();
-    void refreshFolderFacts();
+    /// The tags under the listing: a report, alerts, the index, and access.
+    ///
+    /// `askTheDrive` says whether the drive is asked what this account may do
+    /// here. It used to be asked every time, and this runs on every alert-rule
+    /// write and every index refresh as well as on every navigation --
+    /// `AlertsController::runCheck()` puts one rule per result and
+    /// `AlertStore::put()` announces each, so `Check all` over twenty rules with
+    /// four tabs open was eighty stats for an answer that had not changed. Only a
+    /// change of location can change it. See MOLE-380.
+    enum class AskTheDrive { No, Yes };
+    void refreshFolderFacts(AskTheDrive askTheDrive = AskTheDrive::No);
     void applyAccess(const AccessInfo& access);
     void startTransfer(bool move, const QString& targetName, const QString& conflict);
 

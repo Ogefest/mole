@@ -39,10 +39,15 @@ ReportsController::ReportsController(PluginServices services, AnalysisStore* sto
     , m_store(store)
 {
     // A run filed by the scheduler, or by an analysis tab, appears here without
-    // the user reopening the tab.
-    if (m_services.events) {
-        connect(m_services.events, &EventBus::directoryChanged, this, [this](const VfsUri&) { refresh(); });
-    }
+    // the user reopening the tab -- and now that is true rather than nearly true.
+    // This listened to EventBus::directoryChanged, which is neither necessary nor
+    // sufficient: it fires for every copy, delete and refresh anywhere, each of
+    // which re-parsed every report of every analysed folder on the thread that
+    // draws; and it does not fire when the scheduler files a report, so the
+    // sentence above held only when some directory also happened to change.
+    // See MOLE-380.
+    if (m_store)
+        connect(m_store, &AnalysisStore::changed, this, [this](const QString&) { rebuild(); });
     rebuild();
 }
 
@@ -87,6 +92,10 @@ void ReportsController::rebuild()
 
 void ReportsController::refresh()
 {
+    // The one place that goes back to disk: somebody pressing refresh is
+    // somebody saying they think the directory has changed underneath us.
+    if (m_store)
+        m_store->forgetSummaries();
     rebuild();
 }
 

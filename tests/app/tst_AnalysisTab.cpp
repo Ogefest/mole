@@ -6,6 +6,8 @@
 #include "ui/models/TabsModel.h"
 
 #include "core/CoreMetaTypes.h"
+#include "core/analysis/AnalysisStore.h"
+#include "core/events/EventBus.h"
 
 #include <QDir>
 #include <QFile>
@@ -39,6 +41,10 @@ private slots:
     void theLibraryListsEverySavedReport();
     void theLibraryShowsHowEachRunChanged();
     void forgettingAFolderRemovesItFromTheLibrary();
+    void aReportFiledWithNoDirectoryChangingAppearsAtOnce();
+    void theLibraryDoesNotReadTheStoreOnEveryDirectoryChange();
+    void theGuardItselfNoticesADirectRead();
+    void nothingTheInterfaceDoesReadsTheStoreOnTheDrawingThread();
 
 private:
     AnalysisTabController* openAnalysis(const QStringList& uris);
@@ -346,6 +352,132 @@ void TestAnalysisTab::theLibraryShowsHowEachRunChanged()
         runs.first().toMap().value(QStringLiteral("changeText")).toString().startsWith(QStringLiteral("+")));
     // The oldest has nothing before it to compare against.
     QCOMPARE(runs.last().toMap().value(QStringLiteral("changeText")).toString(), QString());
+}
+
+void TestAnalysisTab::aReportFiledWithNoDirectoryChangingAppearsAtOnce()
+{
+    // The Reports tab rebuilt on EventBus::directoryChanged and on nothing else,
+    // so the comment "a run filed by the scheduler appears here without the user
+    // reopening the tab" was true only when some directory also happened to
+    // change. AnalysisJob::reportStored had no listener anywhere in the tree.
+    // See MOLE-380.
+    const QString media = m_tree->rootUri().child(QStringLiteral("media")).toString();
+
+    ReportsController* library = openLibrary();
+    QVERIFY(library);
+    QCOMPARE(library->folderCount(), 0);
+
+    // Filed straight into the store, which is what the scheduler does. No
+    // directory is touched and no bus event is posted.
+    AnalysisStore* store = m_app->services().reports;
+    QVERIFY(store);
+    AnalysisReport report;
+    report.id = QStringLiteral("20260101-000000-000");
+    report.rootUri = media;
+    report.label = QStringLiteral("media");
+    report.createdAt = QDateTime::currentDateTime();
+    report.fileCount = 3;
+    report.totalBytes = 10500;
+    QVERIFY(store->save(report));
+
+    QVERIFY2(waitFor([library] { return library->folderCount() == 1; }, 5000),
+        "a filed report did not reach the Reports tab");
+    QCOMPARE(library->reportCount(), 1);
+    QCOMPARE(library->selectedRoot(), media);
+}
+
+void TestAnalysisTab::theLibraryDoesNotReadTheStoreOnEveryDirectoryChange()
+{
+    // history() opens and parses every report of a folder, and this happened on
+    // every directoryChanged -- a copy, a delete, a rename, a refresh, anywhere.
+    // With fifty reports of a large tree that is megabytes of JSON on the thread
+    // that draws, per bus event. Counted by watching the files: a read touches
+    // them, and a cache does not.
+    const QString media = m_tree->rootUri().child(QStringLiteral("media")).toString();
+
+    AnalysisTabController* tab = openAnalysis({ media });
+    QVERIFY(tab);
+    waitForReports(tab);
+
+    ReportsController* library = openLibrary();
+    QVERIFY(library);
+    QCOMPARE(library->folderCount(), 1);
+
+    // Make the store's own files unreadable-looking by taking them away. A read
+    // would now find nothing; a cache still answers. Cruder than counting opens
+    // and it needs no instrumentation in shipped code.
+    const QString analysisDir = QString::fromLocal8Bit(qgetenv("MOLE_ANALYSIS_PATH"));
+    QVERIFY(!analysisDir.isEmpty());
+    QVERIFY(QDir(analysisDir).removeRecursively());
+
+    // Fifty directory changes, which used to be fifty full re-reads.
+    for (int i = 0; i < 50; ++i)
+        m_app->services().events->postDirectoryChanged(m_tree->rootUri());
+    drainEvents();
+
+    QVERIFY2(library->folderCount() == 1, "the library went back to disk on a directory change");
+
+    // And pressing refresh does go back to disk, which is the escape hatch.
+    library->refresh();
+    QCOMPARE(library->folderCount(), 0);
+}
+
+void TestAnalysisTab::theGuardItselfNoticesADirectRead()
+{
+    // A guard that cannot fire is not a guard, so this is the case that proves
+    // the one below is worth reading. The same shape tst_IndexOffTheDrawingThread
+    // opens with. See MOLE-380.
+    AnalysisStore* store = m_app->services().reports;
+    QVERIFY(store);
+
+    const QString media = m_tree->rootUri().child(QStringLiteral("media")).toString();
+    AnalysisReport report;
+    report.id = QStringLiteral("20260101-000000-000");
+    report.rootUri = media;
+    report.createdAt = QDateTime::currentDateTime();
+    QVERIFY(store->save(report));
+    // save() invalidated what was kept, so the next ask goes to disk.
+
+    CapturedWarnings warnings;
+    (void)store->history(media);
+    QVERIFY2(warnings.contains(QStringLiteral("Report store read on the thread that draws")),
+        qPrintable(QStringLiteral("the guard said nothing: %1").arg(warnings.joined())));
+}
+
+void TestAnalysisTab::nothingTheInterfaceDoesReadsTheStoreOnTheDrawingThread()
+{
+    // The claim the whole change rests on. Three callers parsed every saved
+    // report on this thread: the Reports tab on every EventBus::directoryChanged,
+    // the browser's folder facts on every navigation, every alert-rule write and
+    // every index refresh, and the analysis tab at session restore for every
+    // remembered folder.
+    const QString media = m_tree->rootUri().child(QStringLiteral("media")).toString();
+    const QString docs = m_tree->rootUri().child(QStringLiteral("docs")).toString();
+
+    AnalysisTabController* tab = openAnalysis({ media, docs });
+    QVERIFY(tab);
+    waitForReports(tab);
+    ReportsController* library = openLibrary();
+    QVERIFY(library);
+    QCOMPARE(library->folderCount(), 2);
+
+    // Everything the interface does that used to reach the store, after the
+    // priming task has been and gone.
+    CapturedWarnings warnings;
+    for (int i = 0; i < 20; ++i)
+        m_app->services().events->postDirectoryChanged(m_tree->rootUri());
+    library->setSelectedRoot(media);
+    library->setSelectedRoot(docs);
+    library->setFilter(QStringLiteral("media"));
+    library->setFilter(QString());
+    (void)library->folders();
+    (void)library->runs();
+    tab->setCurrentIndex(0);
+    tab->setCurrentIndex(1);
+    drainEvents();
+
+    QVERIFY2(!warnings.contains(QStringLiteral("Report store read on the thread that draws")),
+        qPrintable(warnings.joined()));
 }
 
 void TestAnalysisTab::forgettingAFolderRemovesItFromTheLibrary()

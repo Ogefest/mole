@@ -65,6 +65,10 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-380 A report filed by a schedule appears in the Reports tab at once, instead of waiting for some folder to change
+2026-09-04 #MOLE-380 Nightly runs keep the same report history as manual ones, instead of throwing away everything past thirty
+2026-09-04 #MOLE-380 Copying, deleting or refreshing a folder no longer re-reads every saved report on the thread that draws
+2026-09-04 #MOLE-380 Checking every alert no longer asks each open folder what it may do there
 2026-09-04 #MOLE-363 The terminal panel reports the shell's real exit code, instead of 0 whatever happened
 2026-09-04 #MOLE-363 Closing a terminal panel leaves nothing behind, instead of a stopped process per panel
 2026-09-04 #MOLE-363 A long paste into the terminal arrives whole, instead of being cut off after a few kilobytes

@@ -15,10 +15,6 @@
 namespace mole {
 namespace {
 
-    /// How many runs to keep per directory. Enough to see a trend, not enough
-    /// to become a slow leak.
-    constexpr int kHistoryKept = 50;
-
     QVariantMap bucketToVariant(const BucketStat& bucket, qint64 peak)
     {
         return { { QStringLiteral("label"), bucket.label }, { QStringLiteral("count"), bucket.count },
@@ -42,6 +38,20 @@ AnalysisTarget::AnalysisTarget(
     if (m_label.isEmpty()) {
         const VfsUri uri = VfsUri::fromString(m_rootUri);
         m_label = uri.fileName().isEmpty() ? uri.toString() : uri.fileName();
+    }
+
+    // A run filed by the scheduler for this folder shows up here rather than
+    // leaving yesterday's numbers on screen. AnalysisJob emits reportStored() and
+    // nothing in the tree listened to it; the store says it now, for a report
+    // from any source. See MOLE-380.
+    if (m_store) {
+        connect(m_store, &AnalysisStore::changed, this, [this](const QString& rootUri) {
+            // Not while a walk of our own is running: it is about to say
+            // something newer, and reloading under it would show the old report
+            // for as long as it takes.
+            if (rootUri == m_rootUri && !m_busy)
+                loadLatest();
+        });
     }
 }
 
@@ -94,7 +104,7 @@ void AnalysisTarget::refresh()
         // store has said why in the log; the tab's own history list is what
         // shows the gap.
         if (m_store && m_store->save(report))
-            m_store->prune(m_rootUri, kHistoryKept);
+            m_store->prune(m_rootUri, AnalysisStore::kHistoryKept);
         setReport(report);
         emit historyChanged();
     });

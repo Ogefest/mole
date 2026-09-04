@@ -2,13 +2,12 @@
 
 #include "sdk/PluginServices.h"
 
+#include "core/analysis/AnalysisStore.h"
 #include "core/automation/Scheduler.h"
 
 #include <QObject>
 
 namespace mole {
-
-class AnalysisStore;
 
 /// Runs a directory report on a schedule, without a tab being open.
 ///
@@ -32,6 +31,13 @@ public:
     bool start(const ScheduleRule& rule, std::function<void(bool, QString)> done) override;
 
     /// How many reports a scheduled run keeps per folder.
+    ///
+    /// Defaults to AnalysisStore::kHistoryKept, which is the analysis tab's
+    /// figure too. It used to default to 30 while the tab kept 50 and nothing
+    /// ever called this, so a folder with 45 manual runs lost runs 31 to 45 the
+    /// first night its schedule fired -- and the header below says the job
+    /// "deliberately shares the store with the analysis tab … or the two would
+    /// drift apart and the diffs would lie". See MOLE-380.
     void setHistoryKept(int kept) { m_historyKept = kept; }
 
 signals:
@@ -42,7 +48,7 @@ signals:
 private:
     PluginServices m_services;
     AnalysisStore* m_store = nullptr;
-    int m_historyKept = 30;
+    int m_historyKept = AnalysisStore::kHistoryKept;
 };
 
 } // namespace mole

@@ -253,6 +253,8 @@ AppController::~AppController()
     m_taskManager = nullptr;
     if (m_index)
         m_index->doNotQueryFrom(nullptr);
+    if (m_reports)
+        m_reports->doNotReadFrom(nullptr);
     m_index.reset();
     IFileSystem::doNotCallFrom(nullptr);
 }
@@ -349,6 +351,13 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
     // touch: ARCHITECTURE.md's first rule, and seven places were breaking it.
     // See IFileSystem::doNotCallFrom() and MOLE-360.
     IFileSystem::doNotCallFrom(QThread::currentThread());
+    // And for the report store, which is a directory of JSON files that three
+    // tabs were parsing whole on this thread on every bus event. Primed on a
+    // task; everything after that reads what it kept. See MOLE-380.
+    if (m_reports) {
+        m_reports->doNotReadFrom(QThread::currentThread());
+        m_taskManager->submit(new ReadReportSummariesTask(m_reports.get()));
+    }
     m_indexSummary->refresh();
 
     // The mount table is the source of truth; the bus just broadcasts it so

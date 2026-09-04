@@ -9,15 +9,18 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMutexLocker>
 #include <QSaveFile>
 #include <QStandardPaths>
+#include <QThread>
 
 #include <algorithm>
 
 namespace mole {
 
-AnalysisStore::AnalysisStore(QString directory)
-    : m_directory(std::move(directory))
+AnalysisStore::AnalysisStore(QString directory, QObject* parent)
+    : QObject(parent)
+    , m_directory(std::move(directory))
 {
 }
 
@@ -58,7 +61,7 @@ QString AnalysisStore::folderFor(const QString& rootUri) const
     return QDir(m_directory).filePath(folderNameFor(rootUri));
 }
 
-bool AnalysisStore::save(const AnalysisReport& report) const
+bool AnalysisStore::save(const AnalysisReport& report)
 {
     if (!report.isValid())
         return false;
@@ -73,10 +76,76 @@ bool AnalysisStore::save(const AnalysisReport& report) const
     }
 
     JsonFile file(QDir(folder).filePath(report.id + QStringLiteral(".json")));
-    return file.write(QJsonDocument(report.toJson()), nullptr);
+    if (!file.write(QJsonDocument(report.toJson()), nullptr))
+        return false;
+
+    // What was kept about this folder is now out of date, and whoever is showing
+    // it wants to know -- including when the scheduler filed this from a job
+    // nobody is looking at.
+    {
+        QMutexLocker hold(&m_lock);
+        m_history.remove(report.rootUri);
+        m_rootsKnown = false;
+    }
+    emit changed(report.rootUri);
+    return true;
 }
 
 QList<ReportSummary> AnalysisStore::history(const QString& rootUri) const
+{
+    {
+        QMutexLocker hold(&m_lock);
+        const auto kept = m_history.constFind(rootUri);
+        if (kept != m_history.constEnd())
+            return *kept;
+    }
+
+    // Outside the lock: this opens and parses every report in the folder, and
+    // holding the lock through it would make one slow folder stop every other
+    // answer. Two callers racing here read the same directory twice, which costs
+    // a read and cannot be wrong.
+    checkNotOnTheDrawingThread("history");
+    const QList<ReportSummary> read = readHistory(rootUri);
+
+    QMutexLocker hold(&m_lock);
+    m_history.insert(rootUri, read);
+    return read;
+}
+
+void AnalysisStore::forgetSummaries()
+{
+    QMutexLocker hold(&m_lock);
+    m_history.clear();
+    m_roots.clear();
+    m_rootsKnown = false;
+}
+
+void AnalysisStore::readEverything()
+{
+    const QStringList roots = analysedRoots();
+    for (const QString& root : roots)
+        (void)history(root);
+}
+
+void AnalysisStore::doNotReadFrom(QThread* thread)
+{
+    m_noReadsFrom = thread;
+}
+
+void AnalysisStore::checkNotOnTheDrawingThread(const char* what) const
+{
+    if (m_noReadsFrom.load() != QThread::currentThread())
+        return;
+    // Not qCWarning: a programming fault rather than an operational fact, and it
+    // should be visible without anybody turning a category on. The same shape
+    // IndexDatabase::checkNotOnTheDrawingThread() has.
+    qWarning("Report store read on the thread that draws the window: %s. It parses every "
+             "saved report -- prime it with a ReadReportSummariesTask and read what it kept. "
+             "See MOLE-380.",
+        what);
+}
+
+QList<ReportSummary> AnalysisStore::readHistory(const QString& rootUri) const
 {
     QList<ReportSummary> out;
 
@@ -132,6 +201,23 @@ QSet<QString> AnalysisStore::storedFolderNames() const
 
 QStringList AnalysisStore::analysedRoots() const
 {
+    {
+        QMutexLocker hold(&m_lock);
+        if (m_rootsKnown)
+            return m_roots;
+    }
+
+    checkNotOnTheDrawingThread("analysedRoots");
+    const QStringList roots = readRoots();
+
+    QMutexLocker hold(&m_lock);
+    m_roots = roots;
+    m_rootsKnown = true;
+    return roots;
+}
+
+QStringList AnalysisStore::readRoots() const
+{
     QStringList roots;
     QDir base(m_directory);
     if (!base.exists())
@@ -179,12 +265,20 @@ AnalysisReport AnalysisStore::latest(const QString& rootUri) const
     return load(rootUri, summaries.first().id);
 }
 
-bool AnalysisStore::remove(const QString& rootUri, const QString& id) const
+bool AnalysisStore::remove(const QString& rootUri, const QString& id)
 {
-    return QFile::remove(QDir(folderFor(rootUri)).filePath(id + QStringLiteral(".json")));
+    if (!QFile::remove(QDir(folderFor(rootUri)).filePath(id + QStringLiteral(".json"))))
+        return false;
+    {
+        QMutexLocker hold(&m_lock);
+        m_history.remove(rootUri);
+        m_rootsKnown = false;
+    }
+    emit changed(rootUri);
+    return true;
 }
 
-int AnalysisStore::prune(const QString& rootUri, int keep) const
+int AnalysisStore::prune(const QString& rootUri, int keep)
 {
     if (keep < 0)
         return 0;
@@ -192,10 +286,36 @@ int AnalysisStore::prune(const QString& rootUri, int keep) const
     const QList<ReportSummary> summaries = history(rootUri);
     int removed = 0;
     for (int i = keep; i < summaries.size(); ++i) {
-        if (remove(rootUri, summaries.at(i).id))
+        // remove() announces each one, which is one signal per pruned report on
+        // a rebuild that would coalesce them anyway. Deleted by hand here so the
+        // announcement is once, at the end, and only when something went.
+        if (QFile::remove(QDir(folderFor(rootUri)).filePath(summaries.at(i).id + QStringLiteral(".json"))))
             ++removed;
     }
+    if (removed > 0) {
+        {
+            QMutexLocker hold(&m_lock);
+            m_history.remove(rootUri);
+            m_rootsKnown = false;
+        }
+        emit changed(rootUri);
+    }
     return removed;
+}
+
+ReadReportSummariesTask::ReadReportSummariesTask(AnalysisStore* store, QObject* parent)
+    : Task(QStringLiteral("Read the saved reports"), parent)
+    , m_store(store)
+{
+    // Housekeeping the user did not ask for: it happens once, when a tab that
+    // needs the summaries opens, and it has no business in the task strip.
+    setBackground(true);
+}
+
+void ReadReportSummariesTask::run()
+{
+    if (m_store)
+        m_store->readEverything();
 }
 
 } // namespace mole

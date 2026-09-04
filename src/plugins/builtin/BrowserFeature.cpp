@@ -44,13 +44,23 @@ BrowserController::BrowserController(
         connect(pane->files(), &FileListModel::selectionChanged, this,
             &BrowserController::transferAvailabilityChanged);
 
-        connect(pane, &BrowserPaneController::locationChanged, this, &BrowserController::refreshFolderFacts);
+        connect(pane, &BrowserPaneController::locationChanged, this,
+            [this] { refreshFolderFacts(AskTheDrive::Yes); });
     }
 
-    // A report filed by a scheduled run, or an alert added from another tab,
-    // has to show up here without the user navigating away and back.
+    // An alert added from another tab has to show up here without the user
+    // navigating away and back. The drive is not asked again: an alert being
+    // written says nothing about what this account may do in this folder.
     if (m_services.alerts) {
-        connect(m_services.alerts, &AlertStore::rulesChanged, this, &BrowserController::refreshFolderFacts);
+        connect(m_services.alerts, &AlertStore::rulesChanged, this, [this] { refreshFolderFacts(); });
+    }
+
+    // And a report filed by a scheduled run, on the store's own announcement.
+    // This used to arrive through EventBus::directoryChanged, which fires for
+    // every copy anywhere and not at all when a report is filed. See MOLE-380.
+    if (m_services.reports) {
+        connect(m_services.reports, &AnalysisStore::changed, this,
+            [this](const QString&) { refreshFolderFacts(); });
     }
 
     // The index tag arrives a moment after the listing, like the access tag
@@ -58,8 +68,7 @@ BrowserController::BrowserController(
     // anything, so without this the tag would be missing until the next folder
     // change.
     if (m_services.indexSummary) {
-        connect(
-            m_services.indexSummary, &IndexSummary::changed, this, &BrowserController::refreshFolderFacts);
+        connect(m_services.indexSummary, &IndexSummary::changed, this, [this] { refreshFolderFacts(); });
     }
 
     // React to the world changing underneath us instead of making the user
@@ -79,7 +88,7 @@ BrowserController::BrowserController(
         m_right->navigateTo(startUri);
     }
     refreshLabels();
-    refreshFolderFacts();
+    refreshFolderFacts(AskTheDrive::Yes);
 }
 
 QStringList BrowserController::openLocations() const
@@ -168,7 +177,7 @@ bool BrowserController::canTransfer() const
     return otherPane()->isWritable();
 }
 
-void BrowserController::refreshFolderFacts()
+void BrowserController::refreshFolderFacts(AskTheDrive askTheDrive)
 {
     const QString here = activePane() ? activePane()->currentUri() : QString();
 
@@ -178,9 +187,14 @@ void BrowserController::refreshFolderFacts()
     m_triggeredAlertCount = 0;
     m_indexedFiles = 0;
     m_indexedText.clear();
-    m_accessText.clear();
-    m_accessDetail.clear();
-    m_readOnlyHere = false;
+    // The access tags are kept unless the drive is being asked again: they belong
+    // to this folder and nothing but moving changes them, so clearing them on an
+    // alert write would blank the tag and leave it blank.
+    if (askTheDrive == AskTheDrive::Yes) {
+        m_accessText.clear();
+        m_accessDetail.clear();
+        m_readOnlyHere = false;
+    }
 
     if (here.isEmpty()) {
         emit folderFactsChanged();
@@ -242,7 +256,9 @@ void BrowserController::refreshFolderFacts()
     // Access comes from storage, so it goes through a task like everything else
     // that does. The tag appears a moment after the listing, which is fine --
     // it is context, not something being waited on.
-    if (m_services.tasks && m_services.vfs) {
+    //
+    // Only when the location changed. See AskTheDrive.
+    if (askTheDrive == AskTheDrive::Yes && m_services.tasks && m_services.vfs) {
         const VfsUri uri = VfsUri::fromString(here);
         if (FileSystemPtr fs = m_services.vfs->resolve(uri)) {
             auto* task = new QueryAccessTask(std::move(fs), uri);

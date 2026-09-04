@@ -46,6 +46,7 @@ private slots:
     void nothingScheduledRunsWhileTheWindowIsStillComingUp();
     void aRunKilledPartWayIsNotDueAgainImmediately();
     void aRuleThatHasGenuinelyNeverRunIsStillDueNow();
+    void aScheduledRunKeepsAsMuchHistoryAsAManualOne();
 
 private:
     /// The search tab, which is where a folder is put on a clock for indexing.
@@ -270,6 +271,55 @@ void TestAutomation::aRuleThatHasGenuinelyNeverRunIsStillDueNow()
     QVERIFY(!rule.lastRunAt.isValid());
     QVERIFY2(rule.isDueAt(QDateTime::currentDateTime()),
         "a rule that has never run has to be due, or a missed night is skipped entirely");
+}
+
+/// A scheduled run and a manual one keep the same history.
+///
+/// `AnalysisFeature.cpp` kept 50 and `AnalysisJob.h` defaulted to 30, and nothing
+/// ever called `setHistoryKept()` -- so a folder with 45 manual runs lost runs 31
+/// to 45 the first night its schedule fired. History is the reason reports are
+/// kept at all, and `AnalysisJob.h`'s own header says the job "deliberately shares
+/// the store with the analysis tab … or the two would drift apart and the diffs
+/// would lie". The depth is the one parameter that drifted. See MOLE-380.
+void TestAutomation::aScheduledRunKeepsAsMuchHistoryAsAManualOne()
+{
+    AnalysisStore* store = m_app->services().reports;
+    QVERIFY(store);
+    const QString root = m_tree->rootUri().toString();
+
+    // More reports than the job's old default of thirty, filed the way a manual
+    // run files them.
+    constexpr int kFiled = 40;
+    for (int i = 0; i < kFiled; ++i) {
+        AnalysisReport report;
+        report.id = QStringLiteral("2026010%1-0000%2-000").arg(i / 10).arg(i, 2, 10, QLatin1Char('0'));
+        report.rootUri = root;
+        report.label = QStringLiteral("fixture");
+        report.createdAt = QDateTime::currentDateTime().addSecs(-3600 * (kFiled - i));
+        report.fileCount = i;
+        QVERIFY(store->save(report));
+    }
+    QCOMPARE(store->history(root).size(), kFiled);
+
+    // What the scheduler prunes to, asked of the job itself rather than of a
+    // number typed here.
+    AnalysisJob job(m_app->services(), store);
+    bool finished = false;
+    QVERIFY(job.start(
+        [&] {
+            ScheduleRule rule;
+            rule.id = QStringLiteral("nightly");
+            rule.jobKind = AnalysisJob::kind();
+            rule.parameters.insert(AnalysisJob::rootUriParameter(), root);
+            return rule;
+        }(),
+        [&finished](bool, const QString&) { finished = true; }));
+    QVERIFY(waitFor([&finished] { return finished; }, 20000));
+
+    // One more report than were filed, and none of the old ones gone: the depth
+    // the tab keeps is the depth the job keeps.
+    QCOMPARE(store->history(root).size(), kFiled + 1);
+    QVERIFY(AnalysisStore::kHistoryKept > kFiled);
 }
 
 /// A start that has work waiting must still put the window up first.
