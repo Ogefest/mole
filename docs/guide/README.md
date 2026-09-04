@@ -60,6 +60,11 @@ A drive list on the left, tabs across the top, and a listing in the middle. The
 search box in the title bar is the one thing worth learning first: **`Ctrl+R`** opens
 it, and it can reach every command, bookmark and drive by typing part of its name.
 
+![A window with nothing open](images/09-no-tabs.png)
+
+Close the last tab and the window says what a tab is for rather than going blank,
+with a button for each kind that does not need a file or a folder to make sense.
+
 ## Keeping this guide honest
 
 The pictures come from `make screenshots`, which drives the real application

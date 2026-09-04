@@ -64,7 +64,7 @@ Item {
             color: App.colour.textMuted
             wrapMode: Text.WordWrap
             text: "Nothing is indexed yet.\n\n" +
-                  "Index a folder — Tools ▸ Index this folder, or the button in a search tab — and " +
+                  "Index a folder — Operations ▸ Index this folder, or the button in a search tab — and " +
                   "searching it afterwards never touches the disk again. That is the difference " +
                   "between instant and a walk of the whole tree on a slow drive.\n\n" +
                   "An index goes out of date on its own, so put one on a clock and it keeps itself " +

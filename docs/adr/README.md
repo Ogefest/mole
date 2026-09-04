@@ -14,6 +14,22 @@ point.
 
 Records are written in English, like everything else in the repository.
 
+**Two records were given 0035 on the same day**, which is the one thing this
+naming rule cannot survive: a reference to "ADR-0035" could not be followed.
+The later of the two was renumbered to
+[0100](0100-the-details-are-a-drawer-and-one-setting.md) on 2026-09-04 and says
+so at the top, and `tests/scripts/tst_Documents.sh` now refuses a number that
+appears twice, so the next collision is caught before it is committed rather
+than a year later. See MOLE-402.
+
+**The reasoning section may be one named question rather than a heading called
+`Reason`.** Three records ask theirs directly -- "Why not a row of its own",
+"Whether *keep* or *remove* is the honest verb" -- and that is better writing
+than a generic heading, not a deviation. What is not optional is that the
+alternatives are named and disqualified somewhere: a record that only says what
+was decided leaves the next reader unable to tell whether the reasoning still
+holds, which is the whole purpose of keeping these.
+
 ## Template
 
 ```markdown

@@ -243,7 +243,7 @@ project, and a contributor should never hit a wall of text they cannot read.
   changing four passing tests on a hunch. `clickOn` has no double-click twin yet,
   which is what `tst_SetsTab` would need.
 
-- **Nine of the guide's pictures cannot be identical twice running, and they are
+- **Seven of the guide's pictures cannot be identical twice running, and they are
   named in `scripts/check-screenshots.sh`.** Three are of something in motion on
   purpose — a folder still loading, a CSV part-read, a transfer in flight — and
   photographing the settled state instead would lose the point of the picture. Three

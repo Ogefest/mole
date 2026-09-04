@@ -1,8 +1,7 @@
 # ADR-0045: A grid shows a page of a table, and the page is a fixed five thousand rows
 
-Date: 2026-08-18
-
-Status: accepted
+- **Date:** 2026-08-18
+- **Status:** Accepted
 
 ## Context
 

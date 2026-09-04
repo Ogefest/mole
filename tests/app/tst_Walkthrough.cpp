@@ -4786,6 +4786,23 @@ void TestWalkthrough::emptyWindowExplainsItself()
     m_harness->settle(6);
 
     QCOMPARE(m_harness->app()->tabs()->rowCount(), 0);
+
+    // What the picture in the guide's front page is of, asserted rather than only
+    // photographed: the window explains itself, which was the whole claim in this
+    // case's name and was held by nothing. See MOLE-402.
+    QQuickItem* empty = m_harness->item(QStringLiteral("emptyState"));
+    QVERIFY2(empty, "closing the last tab has to leave something rather than a blank");
+    QVERIFY(m_harness->until([empty] { return empty->isVisible(); }));
+
+    // A button for each kind of tab that makes sense with nothing open. A preview
+    // needs a file and a report needs a folder, so those are not offered.
+    int offered = 0;
+    for (QQuickItem* child : m_harness->items(QStringLiteral("emptyStateButton"))) {
+        if (child->isVisible())
+            ++offered;
+    }
+    QVERIFY2(offered >= 2, qPrintable(QStringLiteral("the empty window offers %1 ways in").arg(offered)));
+
     m_harness->screenshot(QStringLiteral("09-no-tabs"));
 }
 

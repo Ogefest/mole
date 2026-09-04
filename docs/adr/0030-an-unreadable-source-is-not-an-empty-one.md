@@ -50,7 +50,7 @@ deletion, arriving later.
 **Cancellation counts as unreadable.** A cancelled listing is not a picture of
 the source either, and a plan built from one must not act on the difference.
 
-## Alternatives
+## Reason
 
 **Abandon the whole plan when any directory fails.** Safe, and unusable: one
 locked folder anywhere in a large tree would mean no backup at all that night,

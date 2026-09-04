@@ -1,8 +1,7 @@
 # ADR-0046: A duplicate is proved by comparison, not by a digest, and the reads are overlapped
 
-Date: 2026-08-19
-
-Status: accepted
+- **Date:** 2026-08-19
+- **Status:** Accepted
 
 ## Context
 

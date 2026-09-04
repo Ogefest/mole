@@ -124,6 +124,20 @@ private:
     bool m_framesArrive = true;
 };
 
+/// Whether a preview tab for `uri` is the current one, tab and file together.
+///
+/// **The two are separate moments.** The tab appears as soon as F3 is handled and
+/// the uri reaches its controller a queued delivery later, so a wait on the tab
+/// count alone reads an empty uri -- once in a while on an idle machine, and
+/// reliably under load, which is the worst kind of test there is. Four cases here
+/// made the same claim and three of them were written the shorter way. See
+/// MOLE-400 and MOLE-402.
+static bool previewIsOpenOn(TabsModel* tabs, int expectedCount, const QString& uri)
+{
+    QObject* opened = tabs->currentController();
+    return tabs->rowCount() == expectedCount && opened && opened->property("currentUri").toString() == uri;
+}
+
 void TestKeyboardNavigation::initTestCase()
 {
     QVERIFY(m_profile.isValid());
@@ -688,11 +702,7 @@ void TestKeyboardNavigation::f3OpensAPreviewAndReusesTheTab()
     // settle hid: the tab appears as soon as F3 is handled and the uri reaches
     // its controller a queued delivery later. Waiting on the tab count alone
     // read an empty uri. So the condition is what the test is actually about.
-    QVERIFY(pressKeyUntil(Qt::Key_F3, [&] {
-        QObject* opened = m_app->tabs()->currentController();
-        return m_app->tabs()->rowCount() == before + 1 && opened
-            && opened->property("currentUri").toString() == one;
-    }));
+    QVERIFY(pressKeyUntil(Qt::Key_F3, [&] { return previewIsOpenOn(m_app->tabs(), before + 1, one); }));
     QCOMPARE(m_app->tabs()->rowCount(), before + 1);
     QCOMPARE(m_app->tabs()->currentController()->property("currentUri").toString(), one);
 
@@ -845,10 +855,10 @@ void TestKeyboardNavigation::f3PreviewsTheResultUnderTheCursor()
     const int before = m_app->tabs()->rowCount();
     pressKey(Qt::Key_F3);
 
-    QVERIFY2(waitFor([this, before] { return m_app->tabs()->rowCount() == before + 1; }, 5000),
+    const QString one = m_tree->rootUri().child(QStringLiteral("one.txt")).toString();
+    QVERIFY2(waitFor([this, before, one] { return previewIsOpenOn(m_app->tabs(), before + 1, one); }, 5000),
         "F3 in a search result has to preview the row under the cursor");
-    QCOMPARE(m_app->tabs()->currentController()->property("currentUri").toString(),
-        m_tree->rootUri().child(QStringLiteral("one.txt")).toString());
+    QCOMPARE(m_app->tabs()->currentController()->property("currentUri").toString(), one);
 }
 
 void TestKeyboardNavigation::f3OnAFolderInTheResultsOpensIt()
@@ -1065,10 +1075,10 @@ void TestKeyboardNavigation::f3AndCtrlUpWorkWithTheKeyboardOutsideThePane()
 
     const int before = m_app->tabs()->rowCount();
     pressKey(Qt::Key_F3);
-    QVERIFY2(waitFor([this, before] { return m_app->tabs()->rowCount() == before + 1; }),
+    const QString one = m_tree->rootUri().child(QStringLiteral("one.txt")).toString();
+    QVERIFY2(waitFor([this, before, one] { return previewIsOpenOn(m_app->tabs(), before + 1, one); }),
         "F3 has to preview the file under the pane's cursor with the keyboard in the sidebar");
-    QCOMPARE(m_app->tabs()->currentController()->property("currentUri").toString(),
-        m_tree->rootUri().child(QStringLiteral("one.txt")).toString());
+    QCOMPARE(m_app->tabs()->currentController()->property("currentUri").toString(), one);
 }
 
 // ------------------------------------------------------- the grid's own keys
@@ -1307,10 +1317,10 @@ void TestKeyboardNavigation::theGalleryIsTheSamePaneWithBiggerTiles()
     pane()->setCurrentIndex(row);
     settle();
     const int tabsBefore = m_app->tabs()->rowCount();
-    QVERIFY(pressKeyUntil(Qt::Key_F3, [&] { return m_app->tabs()->rowCount() == tabsBefore + 1; }));
+    const QString one = m_tree->rootUri().child(QStringLiteral("one.txt")).toString();
+    QVERIFY(pressKeyUntil(Qt::Key_F3, [&] { return previewIsOpenOn(m_app->tabs(), tabsBefore + 1, one); }));
     QCOMPARE(m_app->tabs()->rowCount(), tabsBefore + 1);
-    QCOMPARE(m_app->tabs()->currentController()->property("currentUri").toString(),
-        m_tree->rootUri().child(QStringLiteral("one.txt")).toString());
+    QCOMPARE(m_app->tabs()->currentController()->property("currentUri").toString(), one);
 }
 
 void TestKeyboardNavigation::theKeyboardKeepsWorkingWhileAnErrorIsOnScreen()

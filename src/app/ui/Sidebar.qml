@@ -154,7 +154,7 @@ Rectangle {
 
         ToolTip.visible: hovered
         ToolTip.text: {
-            var lines = [row.dead ? qsTr("This set has been deleted") : target]
+            var lines = [row.dead ? "This set has been deleted" : target]
             if (row.stateCaption !== "")
                 lines.push(row.stateCaption)
             if (capacityKnown)

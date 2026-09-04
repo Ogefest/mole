@@ -29,14 +29,38 @@ private slots:
     void noIconOnlyControlIsSmallerThanTheFloor();
     void everyDialogIsBuiltOnTheOneBase();
     void noImageDecodeIsBoundToALiveSize();
+    void theMenuHeadingsAreTheOnesTheDocumentsAndTheTooltipsName();
 
 private:
+    /// A file under src/, read whole. For the rules that ask about a layer the
+    /// two hashes above do not cover.
+    static QString readSource(const QString& relativePath);
+    /// A document from the top of the repository -- README.md, ARCHITECTURE.md.
+    static QString readDocument(const QString& name);
+
     /// path -> contents, for every .qml shipped with the application.
     QHash<QString, QString> m_sources;
     /// The same for the shell's own source: src/ui and src/app, markup and C++
     /// alike. A rule about what the interface may know is not a rule about QML.
     QHash<QString, QString> m_shellSources;
 };
+
+QString TestQmlConventions::readSource(const QString& relativePath)
+{
+    QFile file(QStringLiteral(MOLE_SHELL_SOURCE_DIR) + QLatin1Char('/') + relativePath);
+    if (!file.open(QIODevice::ReadOnly))
+        return {};
+    return QString::fromUtf8(file.readAll());
+}
+
+QString TestQmlConventions::readDocument(const QString& name)
+{
+    // MOLE_SHELL_SOURCE_DIR is the src directory, so the repository is above it.
+    QFile file(QDir(QStringLiteral(MOLE_SHELL_SOURCE_DIR)).filePath(QStringLiteral("../") + name));
+    if (!file.open(QIODevice::ReadOnly))
+        return {};
+    return QString::fromUtf8(file.readAll());
+}
 
 void TestQmlConventions::initTestCase()
 {
@@ -475,6 +499,61 @@ void TestQmlConventions::everyDialogIsBuiltOnTheOneBase()
              QStringLiteral("Math.min(preferredWidth") }) {
         QVERIFY2(
             base.contains(line), qPrintable(QStringLiteral("ui/MoleDialog.qml does not say: %1").arg(line)));
+    }
+}
+
+void TestQmlConventions::theMenuHeadingsAreTheOnesTheDocumentsAndTheTooltipsName()
+{
+    // **The menu has six headings and four documents said four.** README.md and
+    // ARCHITECTURE.md listed "File / View / Tools / Help" long after Tools was
+    // split into Operations and Workflows, the searching guide told the reader to
+    // look under "Tools ▸", and five tooltips *in the window* pointed at that
+    // heading too -- so the application itself sent people to a menu that has not
+    // existed for months. Nothing compared the two, which is how it lasted. See
+    // MOLE-402 and MOLE-392.
+    const QString registry = readSource(QStringLiteral("host/ActionRegistry.cpp"));
+    QVERIFY2(!registry.isEmpty(), "the action registry's own source was not read");
+
+    // The headings, in the order sectionTitle() answers them, which is the order
+    // the menu is built in.
+    static const QRegularExpression titles(
+        QStringLiteral(R"rx(case MenuAction::Section::\w+:\s*\n\s*return QStringLiteral\("([^"]+)"\))rx"));
+    QStringList headings;
+    auto found = titles.globalMatch(registry);
+    while (found.hasNext())
+        headings.append(found.next().captured(1));
+    QVERIFY2(headings.size() >= 5,
+        qPrintable(QStringLiteral("found %1 menu headings, which is not the menu").arg(headings.size())));
+
+    // Every document that names the set has to name all of it. Read as one line
+    // each, because both write it as a table cell.
+    for (const QString& document : { QStringLiteral("README.md"), QStringLiteral("ARCHITECTURE.md") }) {
+        const QString text = readDocument(document);
+        QVERIFY2(!text.isEmpty(), qPrintable(document));
+        static const QRegularExpression names(QStringLiteral(R"(entry under ([^|\n]+))"));
+        const QRegularExpressionMatch match = names.match(text);
+        QVERIFY2(match.hasMatch(),
+            qPrintable(QStringLiteral("%1 does not say what the menu headings are").arg(document)));
+        const QString said = match.captured(1);
+        for (const QString& heading : headings) {
+            QVERIFY2(said.contains(heading),
+                qPrintable(QStringLiteral("%1 lists the menu headings as \"%2\" and leaves out %3")
+                               .arg(document, said.trimmed(), heading)));
+        }
+    }
+
+    // And nothing in the window points at a heading that is not one of them. The
+    // form is the one the tooltips use: "Operations ▸ Index this folder".
+    static const QRegularExpression pointsAt(QStringLiteral(R"(([A-Z][A-Za-z]+) \x{25b8})"));
+    for (auto it = m_shellSources.constBegin(); it != m_shellSources.constEnd(); ++it) {
+        auto mentions = pointsAt.globalMatch(it.value());
+        while (mentions.hasNext()) {
+            const QString named = mentions.next().captured(1);
+            QVERIFY2(headings.contains(named),
+                qPrintable(QStringLiteral("%1 sends the reader to \"%2 \u25b8\", and there is no such "
+                                          "menu heading")
+                               .arg(it.key(), named)));
+        }
     }
 }
 

@@ -47,7 +47,7 @@ Scheme, authority and a path prefix ending at a separator. Comparing the two
 `FileSystemPtr`s would miss exactly the case that loses the data, because two
 mounts of one drive are two objects.
 
-## Alternatives
+## Reason
 
 **Delete the source of a skipped file anyway**, on the grounds that the user
 asked for a move and a file of that name now exists at the destination. Rejected:

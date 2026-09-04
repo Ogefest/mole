@@ -1,8 +1,7 @@
 # ADR-0048: Windows shares through libsmbclient, and one session for the process
 
-Date: 2026-08-19
-
-Status: accepted
+- **Date:** 2026-08-19
+- **Status:** Accepted
 
 ## Context
 

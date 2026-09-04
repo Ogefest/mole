@@ -276,7 +276,7 @@ Item {
                         color: App.colour.textMuted
                         wrapMode: Text.WordWrap
                         text: "This set is empty. Select files in a browser tab and use " +
-                              "Tools ▸ Add to set."
+                              "Operations ▸ Add to set."
                     }
 
                     ListView {

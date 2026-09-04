@@ -17,7 +17,7 @@ the number is read off it.
 | Preview provider | a new kind of **viewer** (text, PDF, SQLite, Parquet) | `IPreviewProvider` + `PreviewController` |
 | Metadata reader | what a file **says about itself** (EXIF, tags, document authors) — every claimant contributes | `IMetadataReader` |
 | Thumbnailer | a small **picture** of a file — one winner per file | `IThumbnailer` |
-| Menu action | an entry under **File / View / Operations / Workflows / Bookmarks** | `MenuAction` |
+| Menu action | an entry under **File / View / Operations / Workflows / Bookmarks / Help** | `MenuAction` |
 | Chain step kind | an operation a **chain** can be built from, registered on `services().chains` | `ChainRegistry` |
 | Scheduled job kind | work the host **repeats on a schedule**, registered on `services().scheduler` | `Scheduler` |
 
@@ -35,7 +35,7 @@ and [docs/WRITING_PLUGINS.md](docs/WRITING_PLUGINS.md).
 Strictly acyclic, each depending only on the ones above it:
 
 ```
-core     VFS, tasks, event bus, index.  Links QtCore + QtSql only.
+core     VFS, tasks, event bus, index.  Links QtCore, QtSql, QtConcurrent.
   ↓
 sdk      The published plugin API.  What third-party code is allowed to see.
   ↓
@@ -241,10 +241,15 @@ current, and the list of its neighbours so the arrows can step through the
 folder. Everything about *how* a file looks comes from an `IPreviewProvider`,
 chosen by priority — a plugin adding a viewer touches nothing in the tab.
 
-Four ship in the box: table (CSV/TSV), image, text (with JSON and XML
-coloured), and a file-information fallback that accepts everything at the
-lowest priority. That last one is why "nothing happens" is never the answer to
-F3; an unrecognised file gets described instead of ignored.
+Ten ship in the box, in priority order: document (PDF), database (SQLite),
+Parquet, table (CSV/TSV), records (JSON Lines), image, video, text (with JSON
+and XML coloured), bytes (a hex view of anything), and a file-information
+fallback that accepts everything at the lowest priority. That last one is why
+"nothing happens" is never the answer to F3; an unrecognised file gets described
+instead of ignored. Three of the ten need a library that may not be installed --
+see [Optional dependencies](#optional-dependencies) -- and where it is missing
+the provider declines and the file falls through, which is the same path an
+unrecognised file takes.
 
 Two rules the providers follow:
 
@@ -266,8 +271,12 @@ Two different things that look alike, kept apart on purpose:
   results in, and can be cancelled. It gets a tab because it takes time and
   produces its own list.
 
-Giving the cheap one the shortcut people press without thinking (`Ctrl+F`) is
-deliberate.
+**`Ctrl+F` is the expensive one**, which is the opposite of what this paragraph
+used to say. It opens a search of the folder in a new tab; filtering has no
+shortcut at all, because the first printable key you type opens the bar and goes
+into it -- there is nothing to remember and nothing to press first. Somebody
+reading the old sentence would have "fixed" the binding to match it. See
+`Main.qml`'s `StandardKey.Find` and `FilePane.qml`'s key handler.
 
 ## File operations
 
@@ -570,3 +579,12 @@ domain?* The gaps below are instances of it, not separate opinions.
   abstraction already gives identical operations on every drive.
 - Full-text search over the index. `instr()` over an indexed column is fine at
   the current scale; FTS5 is the upgrade path and needs no API change.
+- **Translation.** The interface is English and is not wrapped for translation:
+  there is no `tr()` in the C++ and no `qsTr()` in the QML, and adding either to
+  one string would be worse than none -- a window half in the reader's language
+  is harder to use than one consistently in a language they can look up. Sizes,
+  dates and numbers go through `QLocale`, so they follow the machine: a Polish
+  locale reads "wtorek, 10 marca 2026" beside an English column heading, and that
+  is deliberate rather than an oversight. What would change this is somebody
+  wanting to do the work, and it is a change of shape rather than a sweep of
+  strings -- every string on screen is a literal today.

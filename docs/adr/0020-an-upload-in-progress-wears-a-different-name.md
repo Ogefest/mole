@@ -65,7 +65,7 @@ leaves no object at all. Adding a rename there would mean copying the object to
 a second key, which is the expensive way to buy something the protocol already
 gives away.
 
-## Alternatives
+## Reason
 
 **A hidden name — `.mole-partial-<name>` — rather than a suffix.** Rejected
 because it hides the wreckage from exactly the person who needs to see it. The

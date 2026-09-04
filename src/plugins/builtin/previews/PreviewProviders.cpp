@@ -1899,8 +1899,6 @@ PreviewController* TablePreviewProvider::createController(QObject* parent)
     return new TablePreviewController(m_services, parent);
 }
 
-// ------------------------------------------------------------- file info
-
 // -------------------------------------------------------------- json lines
 
 JsonLinesPreviewController::JsonLinesPreviewController(PluginServices services, QObject* parent)
@@ -2171,6 +2169,8 @@ PreviewController* JsonLinesPreviewProvider::createController(QObject* parent)
 {
     return new JsonLinesPreviewController(m_services, parent);
 }
+
+// ------------------------------------------------------------- file info
 
 FileInfoPreviewController::FileInfoPreviewController(PluginServices services, QObject* parent)
     : PreviewController(parent)

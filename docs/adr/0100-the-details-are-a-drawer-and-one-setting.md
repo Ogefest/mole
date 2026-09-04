@@ -1,4 +1,12 @@
-# ADR-0035: The details are a drawer, and whether it is open is one setting
+# ADR-0100: The details are a drawer, and whether it is open is one setting
+
+> **Written as ADR-0035 and renumbered on 2026-09-04.** Two records were given
+> 0035 on the same day -- this one and
+> [ADR-0035](0035-a-scan-is-swapped-in-not-cleared-and-refilled.md), which was
+> committed a few hours earlier and keeps the number. Renumbering is against the
+> rule in [README.md](README.md), and a number belonging to two records is worse:
+> a reference to "ADR-0035" could not be followed. Nothing outside this
+> directory linked to it. See MOLE-402.
 
 - **Date:** 2026-08-11
 - **Status:** Accepted. Supersedes part of

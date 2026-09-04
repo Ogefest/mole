@@ -1,8 +1,7 @@
 # ADR-0044: A keep rule says what it did, applies per group as well as globally, and *keep* and *remove* are both said out loud
 
-Date: 2026-08-18
-
-Status: accepted
+- **Date:** 2026-08-18
+- **Status:** Accepted
 
 ## Context
 

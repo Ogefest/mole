@@ -1,8 +1,7 @@
 # ADR-0043: A duplicate group is reported when it is confirmed, and the list stays in order as it fills
 
-Date: 2026-08-18
-
-Status: accepted
+- **Date:** 2026-08-18
+- **Status:** Accepted
 
 ## Context
 
@@ -36,7 +35,7 @@ property the staged design exists for.
 Nothing partial is ever announced. A row that appears and then vanishes is worse
 than a row that appears late — it teaches people not to believe the list.
 
-## Ordering: inserted in place, not appended and re-sorted
+## Why inserted in place rather than appended and re-sorted
 
 `groups()` returns largest reclaimable first, *because that is the order anybody
 clearing space wants them in*. Arriving progressively and staying sorted are in

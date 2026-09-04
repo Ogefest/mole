@@ -1,8 +1,7 @@
 # ADR-0049: The transport owns its transfer loop, so a guard is Mole's decision
 
-Date: 2026-08-19
-
-Status: accepted
+- **Date:** 2026-08-19
+- **Status:** Accepted
 
 ## Context
 

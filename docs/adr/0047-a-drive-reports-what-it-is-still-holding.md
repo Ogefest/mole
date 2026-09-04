@@ -1,8 +1,7 @@
 # ADR-0047: A drive reports what it is still holding, and the shell offers to clear it
 
-Date: 2026-08-19
-
-Status: accepted
+- **Date:** 2026-08-19
+- **Status:** Accepted
 
 ## Context
 

@@ -713,6 +713,7 @@ ApplicationWindow {
                     Repeater {
                         model: App.features
                         delegate: Button {
+                            objectName: "emptyStateButton"
                             required property string featureId
                             required property string title
                             required property string description

@@ -155,7 +155,7 @@ An index is what makes everything above mean anything: it walks a tree once in t
 background and records it, and searching that folder afterwards never touches the disk.
 
 **There are two ways to the same dialog**, and they are the same operation. In a search tab,
-*Scan a folder…* opens it empty. From a listing, Tools ▸ *Index this folder* (or the command
+*Scan a folder…* opens it empty. From a listing, Operations ▸ *Index this folder* (or the command
 palette) opens it on the folder you are looking at, already filled in — it does not start a
 scan behind your back, because what a scan is asked for is worth a decision rather than a
 default nobody sees.
@@ -187,7 +187,7 @@ a tree indexed with metadata is not quietly re-indexed without it a week later.
 
 ### The indexes you have
 
-An index is a claim about a tree, and a claim goes out of date. The *Indexes* tab — Tools ▸
+An index is a claim about a tree, and a claim goes out of date. The *Indexes* tab — Workflows ▸
 *Indexes* — lists every one you have, stalest first, so how much any search can be trusted is
 something you can look at rather than guess.
 

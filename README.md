@@ -412,7 +412,7 @@ and ticking rows are about the thing you are looking at, and `F2` `F5` `F6` `F7`
 ## Layout
 
 ```
-src/core       VFS, tasks, event bus, index      (headless, QtCore + QtSql)
+src/core       VFS, tasks, event bus, index      (headless, QtCore + QtSql + QtConcurrent)
 src/sdk        the published plugin API
 src/host       plugin loader and registries
 src/ui         list models and controllers       (headless)
@@ -481,7 +481,7 @@ The extension points — six on `PluginRegistry`, two through `PluginServices`:
 | a viewer (PDF, SQLite, Parquet, bytes) | `IPreviewProvider` + `PreviewController` |
 | what a file says about itself (EXIF, tags) | `IMetadataReader` |
 | a small picture of a file | `IThumbnailer` |
-| a menu entry under File / View / Operations / Workflows / Bookmarks | `MenuAction` |
+| a menu entry under File / View / Operations / Workflows / Bookmarks / Help | `MenuAction` |
 | a step a chain can be built from | `ChainRegistry`, via `services().chains` |
 | work repeated on a schedule | `Scheduler`, via `services().scheduler` |
 
@@ -494,6 +494,8 @@ that third-party code uses, so the API cannot quietly rot.
 |---|---|
 | `MOLE_PLUGIN_PATH` | extra directories to search for plugins (`:`-separated) |
 | `MOLE_INDEX_PATH` | where the SQLite index lives, instead of the user profile |
+| `MOLE_PREFERENCES_PATH` | where the preferences file lives, instead of the user profile |
+| `MOLE_THUMBNAILS_PATH` | where the thumbnail cache's disk tier lives, instead of the user profile |
 | `MOLE_SESSION_PATH` | where the open-tabs file lives, instead of the user profile |
 | `MOLE_BOOKMARKS_PATH` | where the bookmarks file lives, instead of the user profile |
 | `MOLE_ANALYSIS_PATH` | where saved reports live, instead of the user profile |
@@ -503,7 +505,6 @@ that third-party code uses, so the API cannot quietly rot.
 | `MOLE_SETS_PATH` | where file sets live, instead of the user profile |
 | `MOLE_SECRETS_PATH` | where encrypted credentials live, instead of the user profile |
 | `MOLE_REMOTES_PATH` | where configured drives live, instead of the user profile |
-| `MOLE_PLUGIN_PATH` | extra directories to load plugins from |
 | `MOLE_LOG_PATH` | where the session log is written, instead of the user profile |
 | `MOLE_STAGING_DIR` | where a payload is staged while it is written, instead of the temporary directory |
 | `MOLE_UPDATE_MANIFEST` | where to ask what the newest release is, instead of the published manifest |
@@ -544,6 +545,10 @@ export MOLE_TEST_FTP_HOST=…  MOLE_TEST_FTP_USER=…  MOLE_TEST_FTP_PASS=…
 export MOLE_TEST_S3_KEY_ID=… MOLE_TEST_S3_SECRET=… MOLE_TEST_S3_BUCKET=…
 export MOLE_TEST_S3_REGION=… MOLE_TEST_S3_ENDPOINT=…
 export MOLE_TEST_WEBDAV_URL=… MOLE_TEST_WEBDAV_USER=… MOLE_TEST_WEBDAV_PASS=…
+export MOLE_TEST_SMB_HOST=… MOLE_TEST_SMB_SHARE=… MOLE_TEST_SMB_USER=… MOLE_TEST_SMB_PASS=…
+export MOLE_TEST_SMB_DOMAIN=…  # only where the server wants one
+export MOLE_TEST_NFS_HOST=… MOLE_TEST_NFS_EXPORT=…   # an export, and no account: NFS
+                                                     # trusts the client's own uid
 make test
 ```
 
@@ -564,8 +569,9 @@ met the server is not a pass.
 
 Each suite works under a uniquely named directory or key prefix and removes it
 afterwards, so it is safe to point at a bucket or share that holds real files.
-`MOLE_TEST_SFTP_BASE`, `MOLE_TEST_FTP_BASE` and `MOLE_TEST_FTP_PORT` override where
-it works and how it connects. Use a throwaway account: these are test credentials
+`MOLE_TEST_SFTP_BASE`, `MOLE_TEST_FTP_BASE`, `MOLE_TEST_SMB_BASE`,
+`MOLE_TEST_NFS_BASE` and `MOLE_TEST_FTP_PORT` override where it works and how it
+connects. Use a throwaway account: these are test credentials
 in a shell history.
 
 One more of the same shape, and it is a path rather than an account.

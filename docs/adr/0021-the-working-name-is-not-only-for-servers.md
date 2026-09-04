@@ -48,7 +48,7 @@ arrived during the write, which is data this write was never asked to touch, and
 it is refused. Only the caller can tell those apart, and only because it looked
 before it started.
 
-## Alternatives
+## Reason
 
 **Leave the local case alone; `Truncate` is what everyone does.** Rejected on
 the evidence. It is what everyone does and it loses the file being overwritten,

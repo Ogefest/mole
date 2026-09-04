@@ -55,7 +55,7 @@ Item {
             color: App.colour.textMuted
             wrapMode: Text.WordWrap
             text: "No reports have been saved yet.\n\n" +
-                  "Analyse a folder — Tools ▸ Analyse folder, or Ctrl+Shift+A — and the run is " +
+                  "Analyse a folder — Workflows ▸ Analyse folder, or Ctrl+Shift+A — and the run is " +
                   "kept here. Run it again later and the two can be compared, which is where " +
                   "the value is: one report says how big a folder is, a series says what is " +
                   "happening to it.\n\n" +

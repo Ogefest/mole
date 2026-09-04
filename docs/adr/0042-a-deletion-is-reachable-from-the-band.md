@@ -1,8 +1,7 @@
 # ADR-0042: A listing shows what is on disk, so a deletion is reachable from the band
 
-Date: 2026-08-18
-
-Status: accepted
+- **Date:** 2026-08-18
+- **Status:** Accepted
 
 ## Context
 

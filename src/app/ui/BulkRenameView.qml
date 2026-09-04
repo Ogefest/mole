@@ -78,7 +78,7 @@ Item {
                 wrapMode: Text.WordWrap
                 text: "Nothing to rename.\n\n" +
                       "Select files in a browser tab, or open a set, then open this from " +
-                      "Tools ▸ Bulk rename."
+                      "Workflows ▸ Bulk rename."
             }
 
             RowLayout {

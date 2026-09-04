@@ -100,6 +100,93 @@ if [ -s "$SHELLTEST_TMP/headers" ]; then
 fi
 
 begin "both hosts export their symbols, so a plugin has one core in either"
+begin "every picture the guide shows exists, and every picture it keeps is shown"
+# **Three pictures were in the repository and on no page**, taken by the
+# walkthrough and copied in by `make guide-images`, so every regeneration put
+# three binary files in front of a reviewer for nothing. The other direction is
+# worse and was not checked either: a link to a picture that is not there renders
+# as a broken image on GitHub. Both are one rule -- the set on disk and the set
+# linked to are the same set. See MOLE-402.
+: > "$SHELLTEST_TMP/pictures"
+shown=$(grep -rhoE '\(images/[A-Za-z0-9._-]+\)' docs/guide/*.md | tr -d '()' | sed 's|images/||' | sort -u)
+[ -n "$shown" ] || fail "no picture is linked from the guide at all, so this is not looking"
+
+for name in $shown; do
+    [ -f "docs/guide/images/$name" ] \
+        || echo "the guide links to images/$name, which is not there" >> "$SHELLTEST_TMP/pictures"
+done
+for f in docs/guide/images/*; do
+    name=$(basename "$f")
+    printf '%s\n' "$shown" | grep -qx "$name" \
+        || echo "images/$name is kept and shown on no page" >> "$SHELLTEST_TMP/pictures"
+done
+
+if [ -s "$SHELLTEST_TMP/pictures" ]; then
+    fail "the pictures on disk and the pictures the guide shows are not the same set"
+    sed 's/^/    /' "$SHELLTEST_TMP/pictures"
+fi
+
+begin "every architecture decision carries a number of its own, a date and its reasoning"
+# **Two records were given 0035**, in a directory whose own README says numbers are
+# never reused -- so "see ADR-0035" named two different decisions and could not be
+# followed. Nine more were off the template: `Date: 2026-08-18` as a bare line
+# rather than the bullet the template asks for, four with their reasoning under
+# `## Alternatives`, and three with no such heading at all. None of it is a fault a
+# user meets; each one sends the next reader the wrong way, which is what these
+# records exist to prevent. See MOLE-402.
+: > "$SHELLTEST_TMP/adrs"
+count=0
+for f in docs/adr/[0-9]*.md; do
+    count=$((count + 1))
+    name=$(basename "$f")
+    number=${name%%-*}
+
+    grep -q '^- \*\*Date:\*\* [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$' "$f" \
+        || echo "$name: no dated line in the template's shape" >> "$SHELLTEST_TMP/adrs"
+    grep -q '^- \*\*Status:\*\*' "$f" \
+        || echo "$name: does not say whether it still stands" >> "$SHELLTEST_TMP/adrs"
+    # The reasoning, under the template's heading or as a named question -- see the
+    # note in docs/adr/README.md. What is refused is a record with neither.
+    grep -qE '^## (Reason|Why|Whether|Alternatives)' "$f" \
+        || echo "$name: names no alternative and no reason, so nobody can tell whether it still holds" \
+             >> "$SHELLTEST_TMP/adrs"
+
+    # The title says its own number, or a reference to it lands on another record.
+    grep -q "^# ADR-$number: " "$f" \
+        || echo "$name: its title is not ADR-$number" >> "$SHELLTEST_TMP/adrs"
+done
+
+[ "$count" -ge 90 ] || fail "found only $count decision records, which is not this directory"
+
+# One number, one record.
+twice=$(ls docs/adr/[0-9]*.md | sed 's|.*/\([0-9]*\)-.*|\1|' | sort | uniq -d)
+[ -z "$twice" ] || echo "these numbers belong to more than one record: $twice" >> "$SHELLTEST_TMP/adrs"
+
+if [ -s "$SHELLTEST_TMP/adrs" ]; then
+    fail "a decision record cannot be followed or cannot be judged"
+    sed 's/^/    /' "$SHELLTEST_TMP/adrs"
+fi
+
+begin "TODO.md's count of the unstable pictures is the one the check uses"
+# **A number in prose beside a list in a script is a number that goes stale**, and
+# this one had: TODO.md said nine, `check-screenshots.sh` named seven, and TODO's
+# own paragraph then walked through seven. Whoever reads the note next has to be
+# able to trust it, so the two are held together here rather than by somebody
+# remembering to edit both. See MOLE-402.
+expected=$(sed -n "s/^EXPECTED='\(.*\)'$/\1/p" scripts/check-screenshots.sh)
+[ -n "$expected" ] || fail "cannot find the list of unstable pictures in check-screenshots.sh"
+named=$(printf '%s' "$expected" | tr ',' '\n' | grep -c .)
+
+# The word, because the sentence is prose. Written out to twelve, which is well
+# past the number anybody should be willing to live with.
+words=(zero One Two Three Four Five Six Seven Eight Nine Ten Eleven Twelve)
+word="${words[$named]:-}"
+[ -n "$word" ] || fail "$named pictures cannot be photographed twice, which is too many to write out"
+
+said=$(sed -n "s/^- \*\*\([A-Za-z]*\) of the guide's pictures cannot be identical twice running.*/\1/p" TODO.md)
+[ -n "$said" ] || fail "TODO.md no longer says how many pictures cannot be photographed twice"
+[ "$said" = "$word" ] || fail "TODO.md says $said and check-screenshots.sh names $named ($word)"
+
 # A plugin statically links mole_core, so it carries its own copy. The host's
 # exported symbols are what make the dynamic linker resolve the plugin's
 # references to the host's copy -- one core in the process rather than two, with

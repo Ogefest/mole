@@ -26,6 +26,15 @@ Nothing here needs a mouse.
 nothing to preview and a key that does nothing is indistinguishable from one that is
 broken.
 
+![Filtering a listing by typing](images/04-filter.png)
+
+**Filtering has no shortcut on purpose**: the first letter you type opens the bar
+and goes into it, and the listing narrows as you type. It hides rows that are
+already loaded, so it touches no drive and cannot be slow — which is why it is a
+bar rather than a tab. `Escape` puts the listing back. (`Ctrl+F` is the other
+thing: a *search* of the folder, in a tab of its own, because walking a tree takes
+time. See [Finding things](searching.md).)
+
 ## Four ways of looking at a folder
 
 ![Two panes](images/05-dual-pane.png)

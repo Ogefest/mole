@@ -306,7 +306,7 @@ Item {
                         tint: App.colour.textFaint
                         label: "not indexed"
                         ToolTip.visible: hovered
-                        ToolTip.text: "Tools ▸ Index this folder makes it searchable instantly"
+                        ToolTip.text: "Operations ▸ Index this folder makes it searchable instantly"
                     }
                 }
 

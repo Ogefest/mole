@@ -1,8 +1,7 @@
 # ADR-0050: NFS through libnfs, and a mount that is leased rather than owned
 
-Date: 2026-08-19
-
-Status: accepted
+- **Date:** 2026-08-19
+- **Status:** Accepted
 
 ## Context
 

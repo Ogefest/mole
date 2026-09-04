@@ -150,6 +150,12 @@ For the quick question — *which of these five folders is the big one* — use
 `Ctrl+Shift+S` from [browsing](browsing.md) instead. It answers in the listing without
 opening anything.
 
+![An analysis tab with nothing analysed yet](images/07c-analysis-empty.png)
+
+Opened from the menu rather than from a folder, the tab says what it is waiting
+for instead of showing an empty chart: a report is about a folder, and there is no
+honest chart to draw until one has been chosen.
+
 ## Duplicates
 
 ![Duplicates](images/19-duplicates.png)
