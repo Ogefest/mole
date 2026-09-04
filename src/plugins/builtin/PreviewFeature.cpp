@@ -4,6 +4,7 @@
 #include "sdk/IMetadataReader.h"
 
 #include "core/data/FileType.h"
+#include "core/events/EventBus.h"
 #include "core/settings/Preferences.h"
 #include "core/tasks/InvokeFileActionTask.h"
 #include "core/tasks/ListDirectoryTask.h"
@@ -32,6 +33,20 @@ PreviewTabController::PreviewTabController(PluginServices services, QObject* par
     : FeatureController(QStringLiteral("Preview"), parent)
     , m_services(services)
 {
+    // **The neighbours follow the folder.** ARCHITECTURE.md says this tab owns
+    // two things: which file is current, and the list of its neighbours so the
+    // arrows can step through the folder. The list was built once, on open(),
+    // and nothing subscribed to this -- so a file deleted, renamed or added
+    // while the preview was open left the arrows stepping through a list that no
+    // longer matched: a deleted neighbour gave a read error, a new one was
+    // unreachable, and "3 of 17" was stale. See MOLE-384.
+    if (m_services.events) {
+        connect(m_services.events, &EventBus::directoryChanged, this, [this](const VfsUri& directory) {
+            if (!m_current.uri.isValid() || directory != m_current.uri.parent())
+                return;
+            loadSiblings(directory, m_current.uri);
+        });
+    }
 }
 
 PreviewTabController::~PreviewTabController()
@@ -77,6 +92,20 @@ void PreviewTabController::open(const QString& uri)
         setSubtitle(QStringLiteral("Application services are not available"));
         return;
     }
+
+    // **What the tab was asked to show, recorded before anything can fail.**
+    //
+    // open() returned below on an unmounted drive with m_current still empty, so
+    // saveState() wrote {"uri": ""} -- and a session saved after a restore with
+    // an S3 or SFTP drive not yet connected lost the file for good, even though
+    // the drive comes back later. It shows up on the *second* restart, by which
+    // time nothing points at the cause. The browser pane's lost location was the
+    // same shape.
+    //
+    // Kept beside m_current rather than in it, deliberately: currentUri() means
+    // "the file this tab has settled on", and callers wait on it. Being asked
+    // about a file is not the same as showing one. See MOLE-384.
+    m_askedFor = target;
 
     FileSystemPtr fs = m_services.vfs->resolve(target);
     if (!fs) {
@@ -709,8 +738,17 @@ void PreviewTabController::loadSiblings(const VfsUri& directory, const VfsUri& s
             if (m_listing != task)
                 return;
 
-            // Files only, in the same order the browser shows them, so
-            // stepping matches what the user just saw.
+            // Files only, by name.
+            //
+            // The comment here said "in the same order the browser shows them",
+            // and that was not true: a browser sorted by date or by size steps
+            // in a different order from the one the reader had just been looking
+            // at. Taking the browser's order would mean the browser handing it
+            // over -- there is no ordering to read off a uri -- and the tab is
+            // reachable from a set, from a search result and from the command
+            // palette, none of which has one. So the claim goes rather than the
+            // sort: by name, always, which is at least an order a person can
+            // predict. See MOLE-384.
             m_siblings.clear();
             for (const FileEntry& entry : entries) {
                 if (!entry.isDir)
@@ -784,7 +822,10 @@ QStringList PreviewTabController::openLocations() const
 
 QVariantMap PreviewTabController::saveState() const
 {
-    return { { QStringLiteral("uri"), currentUri() } };
+    // What it settled on, or what it was asked for when it never got that far:
+    // a drive that was not connected must not cost the file. See open().
+    const QString uri = m_current.uri.isValid() ? currentUri() : m_askedFor.toString();
+    return { { QStringLiteral("uri"), uri } };
 }
 
 void PreviewTabController::restoreState(const QVariantMap& state)

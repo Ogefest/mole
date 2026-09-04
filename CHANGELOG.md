@@ -65,6 +65,8 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-384 A preview tab keeps its file across a restart when its drive is not yet connected
+2026-09-04 #MOLE-384 The preview arrows follow files added to or removed from the folder while it is open
 2026-09-04 #MOLE-383 An audio file's comment is shown, instead of the language code in front of it
 2026-09-04 #MOLE-383 An MP3 with an extended tag header shows its tags, instead of none of them
 2026-09-04 #MOLE-383 A lossless .m4a is described as ALAC, instead of as AAC

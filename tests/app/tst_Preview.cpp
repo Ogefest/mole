@@ -19,6 +19,8 @@
 #include "ui/AppController.h"
 #include "ui/models/TabsModel.h"
 
+#include "core/events/EventBus.h"
+
 #ifdef MOLE_TEST_HAVE_ARCHIVE
 #include "plugins/archive/ArchiveFileSystem.h"
 #endif
@@ -257,6 +259,8 @@ private slots:
 
     // ---- what a file says about itself ------------------------------------
     void everyReaderThatClaimsAFileContributes();
+    void aPreviewOfAFileOnADriveThatIsNotThereStillRemembersIt();
+    void theArrowsFollowWhatHappensInTheFolder();
     void aVideosDurationIsInTheDrawerInEveryBuild();
     void aFileThatIsNotWhatItsNameSaysStepsDownRatherThanShowingNothing();
     void nothingIsReadUntilTheDetailsAreOpened();
@@ -871,6 +875,88 @@ void TestPreview::aFileThatIsNotWhatItsNameSaysStepsDownRatherThanShowingNothing
         QVERIFY(waitFor([preview] { return !preview->isDetailsLoading(); }, 5000));
         QVERIFY2(detailLabels(preview).contains(QStringLiteral("Size")), qPrintable(pretender.fileName));
     }
+}
+
+/// A preview tab lost its file when its drive was not connected.
+///
+/// open() returned before m_current was assigned, so saveState() wrote
+/// {"uri": ""} -- and a session saved after a restore with an S3 or SFTP drive
+/// not yet connected lost the file for good, even though the drive comes back
+/// later. It only shows up on the *second* restart, by which time nothing points
+/// at the cause. The browser pane's lost location was the same shape.
+/// See MOLE-384.
+void TestPreview::aPreviewOfAFileOnADriveThatIsNotThereStillRemembersIt()
+{
+    const int row = m_app->openFeatureTab(QStringLiteral("mole.preview"));
+    QVERIFY(row >= 0);
+    auto* preview = qobject_cast<PreviewTabController*>(m_app->tabs()->controllerAt(row));
+    QVERIFY(preview);
+
+    // A scheme nothing is mounted for, which is what a configured drive looks
+    // like before it has been connected.
+    const QString uri = QStringLiteral("nosuchdrive://bucket/books/scan.pdf");
+    preview->restoreState(QVariantMap { { QStringLiteral("uri"), uri } });
+
+    // It has not settled on the file -- there is no drive to ask -- and it still
+    // knows which file it was.
+    QVERIFY(preview->currentUri().isEmpty());
+    QCOMPARE(preview->saveState().value(QStringLiteral("uri")).toString(), uri);
+
+    // And it round-trips again, so a second restart does not lose it either.
+    auto* second = qobject_cast<PreviewTabController*>(
+        m_app->tabs()->controllerAt(m_app->openFeatureTab(QStringLiteral("mole.preview"))));
+    QVERIFY(second);
+    second->restoreState(preview->saveState());
+    QCOMPARE(second->saveState().value(QStringLiteral("uri")).toString(), uri);
+}
+
+/// The arrows stepped through a list of the folder as it used to be.
+///
+/// ARCHITECTURE.md says this tab owns two things: which file is current, and the
+/// list of its neighbours so the arrows can step through the folder.
+/// loadSiblings() built the list on open() and never again, and nothing
+/// subscribed to directoryChanged -- so a file deleted, renamed or added while
+/// the preview was open left the arrows stepping through a list that no longer
+/// matched: a deleted neighbour gave a read error, a new one was unreachable,
+/// and "3 of 17" was stale. See MOLE-384.
+void TestPreview::theArrowsFollowWhatHappensInTheFolder()
+{
+    QVERIFY(m_tree->makeDirs(QStringLiteral("gallery")));
+    QVERIFY(m_tree->writeFile(QStringLiteral("gallery/a.txt"), QByteArray("first")));
+    QVERIFY(m_tree->writeFile(QStringLiteral("gallery/b.txt"), QByteArray("second")));
+    QVERIFY(m_tree->writeFile(QStringLiteral("gallery/c.txt"), QByteArray("third")));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("gallery/a.txt"));
+    QVERIFY(preview);
+    QVERIFY(waitFor([preview] { return preview->siblingCount() == 3; }, 5000));
+    QCOMPARE(preview->position(), 1);
+    QVERIFY(preview->canGoNext());
+
+    // Something else adds a file, and says so the way every other writer does.
+    QVERIFY(m_tree->writeFile(QStringLiteral("gallery/d.txt"), QByteArray("fourth")));
+    m_app->services().events->postDirectoryChanged(m_tree->rootUri().child(QStringLiteral("gallery")));
+    QVERIFY2(waitFor([preview] { return preview->siblingCount() == 4; }, 5000),
+        "a file added under an open preview never reached the arrows");
+    // And the tab is still on the same file, at the same place in the list.
+    QCOMPARE(preview->position(), 1);
+    QCOMPARE(preview->currentUri(), m_tree->rootUri().child(QStringLiteral("gallery/a.txt")).toString());
+
+    // And two of them go away, including the last one -- so canGoNext() has to
+    // follow as well as the count.
+    QVERIFY(QFile::remove(m_tree->absolute(QStringLiteral("gallery/c.txt"))));
+    QVERIFY(QFile::remove(m_tree->absolute(QStringLiteral("gallery/d.txt"))));
+    m_app->services().events->postDirectoryChanged(m_tree->rootUri().child(QStringLiteral("gallery")));
+    QVERIFY2(waitFor([preview] { return preview->siblingCount() == 2; }, 5000),
+        "files deleted under an open preview were still in the arrows' list");
+    QCOMPARE(preview->position(), 1);
+    QVERIFY(preview->canGoNext());
+
+    // Stepping now lands on what is really there, rather than on a name that is
+    // gone.
+    preview->next();
+    const QString expected = m_tree->rootUri().child(QStringLiteral("gallery/b.txt")).toString();
+    QVERIFY(waitFor([preview, expected] { return preview->currentUri() == expected; }, 5000));
+    QVERIFY(!preview->canGoNext());
 }
 
 void TestPreview::nothingIsReadUntilTheDetailsAreOpened()

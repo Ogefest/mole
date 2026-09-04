@@ -230,6 +230,9 @@ private:
     /// The file in the folder: what the arrows step through, what the session
     /// records, and what the subtitle names.
     FileEntry m_current;
+    /// The uri this tab was asked to show, whether or not it got there. What
+    /// saveState() falls back to -- see open() and MOLE-384.
+    VfsUri m_askedFor;
     /// What the viewer was given, which is the same thing unless a wrapper was
     /// opened -- then it is the member inside it. Every question about *what is
     /// on screen* is asked of this one: which provider, which options, which
