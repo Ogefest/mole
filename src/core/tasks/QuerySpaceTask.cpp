@@ -1,5 +1,7 @@
 #include "core/tasks/QuerySpaceTask.h"
 
+#include "core/text/SizeWords.h"
+
 namespace mole {
 
 QuerySpaceTask::QuerySpaceTask(FileSystemPtr fileSystem, VfsUri root, QString mountId, QObject* parent)
@@ -36,9 +38,8 @@ void QuerySpaceTask::run()
     }
 
     m_info = result.value();
-    setStatusText(QStringLiteral("%1 of %2 used")
-                      .arg(QLocale().formattedDataSize(m_info.usedBytes()),
-                          QLocale().formattedDataSize(m_info.totalBytes)));
+    setStatusText(
+        QStringLiteral("%1 of %2 used").arg(sizeInWords(m_info.usedBytes()), sizeInWords(m_info.totalBytes)));
     emit spaceReady(m_mountId, m_info);
 }
 

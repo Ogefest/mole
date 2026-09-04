@@ -25,7 +25,7 @@ int FileSet::driveCount() const
     for (const QString& uri : uris) {
         const VfsUri parsed = VfsUri::fromString(uri);
         if (parsed.isValid())
-            drives.insert(parsed.scheme() + QLatin1Char('/') + parsed.authority());
+            drives.insert(parsed.driveKey());
     }
     return static_cast<int>(drives.size());
 }

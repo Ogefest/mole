@@ -1,6 +1,8 @@
 #include "support/MoleTestMain.h"
 #include "ui/models/FileListModel.h"
 
+#include "core/text/SizeWords.h"
+
 #include <QAbstractItemModelTester>
 #include <QElapsedTimer>
 #include <QSignalSpy>
@@ -307,7 +309,7 @@ void TestFileListModel::exposesRolesQmlNeeds()
     QCOMPARE(index.data(FileListModel::UriRole).toString(), QStringLiteral("file:///data/report.pdf"));
     QCOMPARE(index.data(FileListModel::ParentUriRole).toString(), QStringLiteral("file:///data"));
     QCOMPARE(index.data(FileListModel::SuffixRole).toString(), QStringLiteral("pdf"));
-    QCOMPARE(index.data(FileListModel::SizeTextRole).toString(), QStringLiteral("2.0 kB"));
+    QCOMPARE(index.data(FileListModel::SizeTextRole).toString(), QStringLiteral("2.00 KiB"));
     QVERIFY(!index.data(FileListModel::IconTextRole).toString().isEmpty());
 }
 
@@ -340,14 +342,20 @@ void TestFileListModel::formatsSizes_data()
     QTest::addColumn<qint64>("bytes");
     QTest::addColumn<QString>("expected");
 
-    QTest::newRow("zero") << qint64(0) << "0 B";
-    QTest::newRow("bytes") << qint64(512) << "512 B";
-    QTest::newRow("just under kB") << qint64(1023) << "1023 B";
-    QTest::newRow("one kB") << qint64(1024) << "1.0 kB";
-    QTest::newRow("large kB") << qint64(20480) << "20 kB";
-    QTest::newRow("MB") << qint64(1024 * 1024) << "1.0 MB";
-    QTest::newRow("GB") << qint64(3LL * 1024 * 1024 * 1024) << "3.0 GB";
-    QTest::newRow("TB") << qint64(2LL * 1024 * 1024 * 1024 * 1024) << "2.0 TB";
+    // **IEC, which is what the divisor always meant.** This table said "1.0 kB"
+    // for 1024 bytes -- a 1024 divisor with an SI label, the one combination that
+    // is simply wrong, and the reason the same file read "1.5 GB" in the listing
+    // and "1.5 GiB" in the task strip beneath it. See core/text/SizeWords.h and
+    // MOLE-403.
+    QTest::newRow("zero") << qint64(0) << "0 bytes";
+    QTest::newRow("bytes") << qint64(512) << "512 bytes";
+    // Grouped by the locale, which is the other half of the decision.
+    QTest::newRow("just under a KiB") << qint64(1023) << "1,023 bytes";
+    QTest::newRow("one KiB") << qint64(1024) << "1.00 KiB";
+    QTest::newRow("large KiB") << qint64(20480) << "20.00 KiB";
+    QTest::newRow("MiB") << qint64(1024 * 1024) << "1.00 MiB";
+    QTest::newRow("GiB") << qint64(3LL * 1024 * 1024 * 1024) << "3.00 GiB";
+    QTest::newRow("TiB") << qint64(2LL * 1024 * 1024 * 1024 * 1024) << "2.00 TiB";
     QTest::newRow("negative") << qint64(-1) << "";
 }
 
@@ -355,7 +363,7 @@ void TestFileListModel::formatsSizes()
 {
     QFETCH(qint64, bytes);
     QFETCH(QString, expected);
-    QCOMPARE(FileListModel::formatSize(bytes), expected);
+    QCOMPARE(sizeInWords(bytes), expected);
 }
 
 void TestFileListModel::selectionTracksFilesNotRows()

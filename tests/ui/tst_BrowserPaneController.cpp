@@ -684,7 +684,7 @@ void TestBrowserPaneController::targetsAreListedByNameAndNotJustCounted()
     QVERIFY2(folder.value(QStringLiteral("isDir")).toBool(), "a folder says so");
     QVERIFY2(!file.value(QStringLiteral("isDir")).toBool(), "a file says so");
 
-    QCOMPARE(file.value(QStringLiteral("detail")).toString(), QStringLiteral("3 B"));
+    QCOMPARE(file.value(QStringLiteral("detail")).toString(), QStringLiteral("3 bytes"));
     // A folder's own size says nothing about what is inside it, so it claims nothing.
     QCOMPARE(folder.value(QStringLiteral("detail")).toString(), QString());
 

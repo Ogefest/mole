@@ -1,5 +1,7 @@
 #include "core/sync/SyncTask.h"
 
+#include "core/text/SizeWords.h"
+
 #include <QHash>
 #include <QLocale>
 
@@ -291,7 +293,7 @@ void SyncTask::run()
                 ? QStringLiteral("already in step")
                 : QStringLiteral("%1 changes · %2 (nothing written)")
                       .arg(m_plan.steps().size() - m_plan.countOf(SyncPlan::Action::Skip))
-                      .arg(locale.formattedDataSize(m_plan.bytesToTransfer())));
+                      .arg(sizeInWords(m_plan.bytesToTransfer())));
         return;
     }
 

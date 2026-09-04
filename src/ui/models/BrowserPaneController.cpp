@@ -14,6 +14,7 @@
 #include "core/tasks/QueryFolderActionsTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/tasks/TransferTask.h"
+#include "core/text/SizeWords.h"
 #include "core/vcs/ReadRepositoryTask.h"
 #include "core/vcs/ReadStatusTask.h"
 #include "core/vfs/VfsManager.h"
@@ -572,7 +573,7 @@ QVariantList BrowserPaneController::targetDetails() const
             // A folder's own size says nothing about what is inside it, and a
             // dialog that showed "4 kB" next to a tree of ten thousand files
             // would be worse than showing nothing.
-            { QStringLiteral("detail"), entry.isDir ? QString() : FileListModel::formatSize(entry.size) } });
+            { QStringLiteral("detail"), entry.isDir ? QString() : sizeInWords(entry.size) } });
     }
     return out;
 }
@@ -761,7 +762,7 @@ QVariantMap BrowserPaneController::dropPlan(const QStringList& urls) const
             if (info.isFile())
                 bytes += info.size();
         }
-        plan.insert(QStringLiteral("sizeText"), QLocale().formattedDataSize(bytes));
+        plan.insert(QStringLiteral("sizeText"), sizeInWords(bytes));
     } else {
         plan.insert(QStringLiteral("sizeText"), QString());
     }

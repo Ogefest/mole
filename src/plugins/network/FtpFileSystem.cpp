@@ -4,6 +4,7 @@
 #include "plugins/network/UnixListing.h"
 
 #include "core/platform/Staging.h"
+#include "core/vfs/PathWords.h"
 
 #include <QTemporaryFile>
 
@@ -61,8 +62,9 @@ VfsCapabilities FtpFileSystem::capabilities() const
 QString FtpFileSystem::remotePath(const VfsUri& uri) const
 {
     QString root = m_settings.remoteRoot;
-    while (root.endsWith(QLatin1Char('/')))
-        root.chop(1);
+    // All of them, including a lone one: a root of "/" becomes empty here so
+    // that root + path is "/x" and not "//x". See core/vfs/PathWords.h.
+    root = withoutAnyTrailingSlash(root);
     const QString path = uri.path().isEmpty() ? QStringLiteral("/") : uri.path();
     const QString joined = root + path;
     return joined.isEmpty() ? QStringLiteral("/") : joined;
@@ -202,7 +204,7 @@ Result<FileEntryList> FtpFileSystem::listRaw(const VfsUri& dir, const CancelToke
         entry.uri = dir.child(row.name);
         entry.isDir = row.isDir;
         entry.isSymlink = row.isSymlink;
-        entry.isHidden = row.name.startsWith(QLatin1Char('.'));
+        entry.isHidden = looksHidden(row.name);
         entry.size = row.size;
         entry.modified = row.modified;
         entry.permissions = row.permissions;

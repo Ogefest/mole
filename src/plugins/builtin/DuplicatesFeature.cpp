@@ -5,6 +5,7 @@
 #include "core/sets/FileSetStore.h"
 #include "core/tasks/TaskManager.h"
 #include "core/tasks/TransferTask.h"
+#include "core/text/SizeWords.h"
 #include "core/vfs/VfsManager.h"
 
 #include <QLocale>
@@ -102,7 +103,7 @@ QString DuplicatesController::summary() const
     // confirmation, and there may be five hundred groups by the end.
     const QString found = QStringLiteral("%1 groups · %2 could be freed")
                               .arg(m_groups->rowCount())
-                              .arg(QLocale().formattedDataSize(m_groups->reclaimableBytes()));
+                              .arg(sizeInWords(m_groups->reclaimableBytes()));
 
     // Groups arrive as they are confirmed, so a scan in flight has something to
     // say about itself beyond "scanning…" -- and what it has found so far is
@@ -153,7 +154,7 @@ QVariantList DuplicatesController::selectedDetails() const
                 // rows go into is what then has to delete exactly these rows.
                 // See deleteSelected() and MOLE-339.
                 { QStringLiteral("uri"), entry.uri.toString() }, { QStringLiteral("isDir"), false },
-                { QStringLiteral("detail"), locale.formattedDataSize(entry.size) } });
+                { QStringLiteral("detail"), sizeInWords(entry.size) } });
         }
     }
     return out;
@@ -176,7 +177,7 @@ void DuplicatesController::setRuleText(const QString& text)
 
 QString DuplicatesController::selectedSizeText() const
 {
-    return QLocale().formattedDataSize(m_groups->selectedBytes());
+    return sizeInWords(m_groups->selectedBytes());
 }
 
 void DuplicatesController::scan()
@@ -392,7 +393,7 @@ void DuplicatesController::deleteSelected(const QStringList& uris)
     for (const QString& uri : ticked) {
         const VfsUri parsed = VfsUri::fromString(uri);
         if (parsed.isValid())
-            byDrive[parsed.scheme() + QLatin1Char('/') + parsed.authority()].append(parsed);
+            byDrive[parsed.driveKey()].append(parsed);
     }
 
     m_deleteFailures.clear();

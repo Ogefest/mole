@@ -3,6 +3,7 @@
 #include "core/settings/Preferences.h"
 #include "core/tasks/QuerySpaceTask.h"
 #include "core/tasks/TaskManager.h"
+#include "core/text/SizeWords.h"
 #include "core/vfs/SystemVolumes.h"
 
 #include <QLocale>
@@ -575,11 +576,11 @@ QVariant DriveListModel::data(const QModelIndex& index, int role) const
     case UsedFractionRole:
         return info.usedFraction();
     case TotalTextRole:
-        return info.isValid() ? QLocale().formattedDataSize(info.totalBytes) : QString();
+        return info.isValid() ? sizeInWords(info.totalBytes) : QString();
     case FreeTextRole:
-        return info.isValid() ? QLocale().formattedDataSize(info.freeBytes) : QString();
+        return info.isValid() ? sizeInWords(info.freeBytes) : QString();
     case UsedTextRole:
-        return info.isValid() ? QLocale().formattedDataSize(info.usedBytes()) : QString();
+        return info.isValid() ? sizeInWords(info.usedBytes()) : QString();
     default:
         return {};
     }

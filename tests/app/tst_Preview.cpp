@@ -1,6 +1,7 @@
 #include "host/MetadataRegistry.h"
 #include "host/PreviewRegistry.h"
 #include "plugins/builtin/BuiltinPlugin.h"
+#include "plugins/builtin/ImageFormats.h"
 #include "plugins/builtin/PreviewFeature.h"
 #include "plugins/builtin/previews/DocumentMetadata.h"
 #include "plugins/builtin/previews/MarkdownStyle.h"
@@ -1968,7 +1969,7 @@ void TestPreview::imageProviderOnlyClaimsWhatQtCanDecode()
 {
     // Claiming a format this build has no plugin for would show an empty frame
     // instead of the file's details, so the list comes from Qt itself.
-    const QStringList supported = ImagePreviewProvider::imageSuffixes();
+    const QStringList supported = imageSuffixes();
     QVERIFY(!supported.isEmpty());
     QVERIFY2(supported.contains(QStringLiteral("png")), "PNG is built into QtGui");
 

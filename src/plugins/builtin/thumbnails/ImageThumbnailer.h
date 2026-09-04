@@ -39,11 +39,6 @@ public:
     QImage thumbnail(const FileEntry& entry, int size, const PluginServices& services,
         const CancelToken& cancel) const override;
 
-    /// What this Qt build can decode, asked of Qt rather than hard-coded: which
-    /// formats exist depends on which image plugins are installed, and claiming
-    /// one we cannot read would replace an icon with an empty tile.
-    static QStringList imageSuffixes();
-
     /// How big a file on a drive that is not local is worth fetching **whole**
     /// when it has no thumbnail of its own inside it.
     ///

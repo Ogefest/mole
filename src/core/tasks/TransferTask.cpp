@@ -1,6 +1,7 @@
 #include "core/tasks/TransferTask.h"
 
 #include "core/diagnostics/Diagnostics.h"
+#include "core/text/SizeWords.h"
 #include "core/vfs/DirectoryWalker.h"
 
 #include <QElapsedTimer>
@@ -731,8 +732,7 @@ void TransferTask::run()
         payload += job.size;
     setByteTotal(payload);
 
-    setStatusText(
-        QStringLiteral("%1 item(s), %2").arg(jobs.size()).arg(QLocale().formattedDataSize(payload)));
+    setStatusText(QStringLiteral("%1 item(s), %2").arg(jobs.size()).arg(sizeInWords(payload)));
 
     int done = 0;
     int files = 0;

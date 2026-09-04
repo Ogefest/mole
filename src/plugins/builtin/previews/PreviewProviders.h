@@ -596,10 +596,6 @@ public:
     QUrl viewSource() const override;
     PreviewController* createController(QObject* parent) override;
 
-    /// What this Qt build can actually decode, so an unsupported format falls
-    /// through to a viewer that can say something useful.
-    static QStringList imageSuffixes();
-
 private:
     PluginServices m_services;
 };

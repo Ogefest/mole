@@ -1,6 +1,9 @@
 #include "plugins/builtin/ReportsFeature.h"
 
+#include "ui/TimeWords.h"
+
 #include "core/events/EventBus.h"
+#include "core/text/SizeWords.h"
 
 #include <QLocale>
 
@@ -8,19 +11,6 @@
 
 namespace mole {
 namespace {
-
-    QString relativeTime(const QDateTime& when)
-    {
-        if (!when.isValid())
-            return QStringLiteral("unknown");
-        const qint64 seconds = when.secsTo(QDateTime::currentDateTime());
-        if (seconds < 3600)
-            return QStringLiteral("%1 min ago").arg(std::max<qint64>(1, seconds / 60));
-        if (seconds < 86400)
-            return QStringLiteral("%1 h ago").arg(seconds / 3600);
-        const qint64 days = seconds / 86400;
-        return days == 1 ? QStringLiteral("yesterday") : QStringLiteral("%1 days ago").arg(days);
-    }
 
     /// The bit of a uri worth reading. A column of identical prefixes tells nobody
     /// which folder is which.
@@ -117,9 +107,9 @@ QVariantList ReportsController::folders() const
             { QStringLiteral("rootUri"), folder.rootUri },
             { QStringLiteral("label"), folder.label },
             { QStringLiteral("runCount"), folder.runs.size() },
-            { QStringLiteral("latestText"), relativeTime(latest.createdAt) },
+            { QStringLiteral("latestText"), ageInWords(latest.createdAt) },
             { QStringLiteral("latestAt"), latest.createdAt.toString(QStringLiteral("yyyy-MM-dd HH:mm")) },
-            { QStringLiteral("sizeText"), locale.formattedDataSize(latest.totalBytes) },
+            { QStringLiteral("sizeText"), sizeInWords(latest.totalBytes) },
             { QStringLiteral("fileCountText"), locale.toString(latest.fileCount) },
             // The number as well as the formatted text: a view that wants "3
             // files" rather than "3" needs the figure to choose the word. See
@@ -159,7 +149,7 @@ QVariantList ReportsController::runs() const
                     change = QStringLiteral("no change");
                 else
                     change = QStringLiteral("%1%2").arg(delta > 0 ? QStringLiteral("+") : QStringLiteral("−"),
-                        locale.formattedDataSize(std::llabs(delta)));
+                        sizeInWords(std::llabs(delta)));
             }
             previousBytes = run.totalBytes;
 
@@ -167,8 +157,8 @@ QVariantList ReportsController::runs() const
                 { QStringLiteral("id"), run.id },
                 { QStringLiteral("rootUri"), run.rootUri },
                 { QStringLiteral("takenAt"), run.createdAt.toString(QStringLiteral("yyyy-MM-dd HH:mm")) },
-                { QStringLiteral("whenText"), relativeTime(run.createdAt) },
-                { QStringLiteral("sizeText"), locale.formattedDataSize(run.totalBytes) },
+                { QStringLiteral("whenText"), ageInWords(run.createdAt) },
+                { QStringLiteral("sizeText"), sizeInWords(run.totalBytes) },
                 { QStringLiteral("fileCountText"), locale.toString(run.fileCount) },
                 { QStringLiteral("fileCount"), qint64(run.fileCount) },
                 { QStringLiteral("changeText"), change },
@@ -217,7 +207,7 @@ QString ReportsController::totalSizeText() const
     qint64 bytes = 0;
     for (const Folder& folder : m_folders)
         bytes += folder.runs.first().totalBytes;
-    return QLocale().formattedDataSize(bytes);
+    return sizeInWords(bytes);
 }
 
 bool ReportsController::removeRun(const QString& rootUri, const QString& id)

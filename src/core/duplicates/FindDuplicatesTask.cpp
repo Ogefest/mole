@@ -1,6 +1,7 @@
 #include "core/duplicates/FindDuplicatesTask.h"
 
 #include "core/search/SearchQuery.h"
+#include "core/text/SizeWords.h"
 #include "core/vfs/DirectoryWalker.h"
 #include "core/vfs/VfsManager.h"
 
@@ -68,7 +69,7 @@ void FindDuplicatesTask::run()
         FileSystemPtr fs = m_vfs->resolve(root);
         if (!fs)
             continue;
-        drives.insert(root.scheme() + QLatin1Char('/') + root.authority(), fs);
+        drives.insert(root.driveKey(), fs);
 
         DirectoryWalker walker(fs);
         walker.walk(root, cancelToken(), [&](const FileEntry& entry, int) {
@@ -90,9 +91,8 @@ void FindDuplicatesTask::run()
     if (isCancelRequested())
         return;
 
-    const auto driveFor = [&](const FileEntry& entry) -> IFileSystem* {
-        return drives.value(entry.uri.scheme() + QLatin1Char('/') + entry.uri.authority()).get();
-    };
+    const auto driveFor
+        = [&](const FileEntry& entry) -> IFileSystem* { return drives.value(entry.uri.driveKey()).get(); };
 
     // ---- narrow, stage by stage ---------------------------------------
 
@@ -146,7 +146,7 @@ void FindDuplicatesTask::run()
     QString said = m_groups.isEmpty() ? QStringLiteral("no duplicates")
                                       : QStringLiteral("%1 groups · %2 could be freed")
                                             .arg(m_groups.size())
-                                            .arg(QLocale().formattedDataSize(m_reclaimable));
+                                            .arg(sizeInWords(m_reclaimable));
     // Said in the same sentence as the answer, because it qualifies the answer.
     // "no duplicates · 3 places could not be read" is a different statement from
     // "no duplicates", and the second one is what a scan of a tree with an

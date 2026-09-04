@@ -7,6 +7,7 @@
 #include "core/automation/Scheduler.h"
 #include "core/events/EventBus.h"
 #include "core/tasks/TaskManager.h"
+#include "core/text/SizeWords.h"
 #include "core/vfs/VfsManager.h"
 
 #include <QCryptographicHash>
@@ -19,7 +20,7 @@ namespace {
     {
         return { { QStringLiteral("label"), bucket.label }, { QStringLiteral("count"), bucket.count },
             { QStringLiteral("bytes"), bucket.bytes },
-            { QStringLiteral("sizeText"), FileListModel::formatSize(bucket.bytes) },
+            { QStringLiteral("sizeText"), sizeInWords(bucket.bytes) },
             { QStringLiteral("peakShare"),
                 peak > 0 ? static_cast<double>(bucket.count) / static_cast<double>(peak) : 0.0 } };
     }
@@ -249,8 +250,8 @@ QVariantMap AnalysisTarget::headline() const
         { QStringLiteral("files"), m_report.fileCount },
         { QStringLiteral("folders"), m_report.folderCount },
         { QStringLiteral("bytes"), m_report.totalBytes },
-        { QStringLiteral("sizeText"), FileListModel::formatSize(m_report.totalBytes) },
-        { QStringLiteral("averageText"), FileListModel::formatSize(m_report.averageFileBytes()) },
+        { QStringLiteral("sizeText"), sizeInWords(m_report.totalBytes) },
+        { QStringLiteral("averageText"), sizeInWords(m_report.averageFileBytes()) },
         { QStringLiteral("kinds"), static_cast<qint64>(m_report.extensions.size()) },
         { QStringLiteral("depth"), m_report.maxDepth },
         { QStringLiteral("unreadable"), m_report.unreadableFolders },
@@ -272,7 +273,7 @@ QVariantList AnalysisTarget::topFolders() const
         out.append(
             QVariantMap { { QStringLiteral("name"), folder.name }, { QStringLiteral("uri"), folder.uri },
                 { QStringLiteral("count"), folder.count }, { QStringLiteral("bytes"), folder.bytes },
-                { QStringLiteral("sizeText"), FileListModel::formatSize(folder.bytes) },
+                { QStringLiteral("sizeText"), sizeInWords(folder.bytes) },
                 { QStringLiteral("peakShare"),
                     peak > 0 ? static_cast<double>(folder.bytes) / static_cast<double>(peak) : 0.0 } });
     }
@@ -284,7 +285,7 @@ QVariantList AnalysisTarget::largestFiles() const
     QVariantList out;
     for (const FileStat& file : m_report.largestFiles) {
         out.append(QVariantMap { { QStringLiteral("name"), file.name }, { QStringLiteral("uri"), file.uri },
-            { QStringLiteral("sizeText"), FileListModel::formatSize(file.bytes) },
+            { QStringLiteral("sizeText"), sizeInWords(file.bytes) },
             { QStringLiteral("modifiedText"),
                 file.modified.isValid() ? QLocale().toString(file.modified, QLocale::ShortFormat)
                                         : QString() } });
@@ -326,7 +327,7 @@ QVariantList AnalysisTarget::history() const
         out.append(QVariantMap { { QStringLiteral("id"), summary.id },
             { QStringLiteral("takenAt"), QLocale().toString(summary.createdAt, QLocale::ShortFormat) },
             { QStringLiteral("files"), summary.fileCount },
-            { QStringLiteral("sizeText"), FileListModel::formatSize(summary.totalBytes) },
+            { QStringLiteral("sizeText"), sizeInWords(summary.totalBytes) },
             { QStringLiteral("current"), summary.id == m_report.id } });
     }
     return out;
@@ -338,7 +339,7 @@ QVariantMap AnalysisTarget::diffHeadline() const
         return {};
 
     const auto signedSize = [](qint64 bytes) {
-        const QString text = FileListModel::formatSize(std::abs(bytes));
+        const QString text = sizeInWords(std::abs(bytes));
         return bytes > 0 ? QStringLiteral("+%1").arg(text)
             : bytes < 0  ? QStringLiteral("-%1").arg(text)
                          : QStringLiteral("no change");
@@ -373,7 +374,7 @@ QVariantList AnalysisTarget::diffRows() const
                 delta.extension.isEmpty() ? QStringLiteral("(no extension)") : delta.extension },
             { QStringLiteral("countDelta"), delta.countDelta() },
             { QStringLiteral("bytesDelta"), delta.bytesDelta() },
-            { QStringLiteral("bytesDeltaText"), FileListModel::formatSize(std::abs(delta.bytesDelta())) },
+            { QStringLiteral("bytesDeltaText"), sizeInWords(std::abs(delta.bytesDelta())) },
             { QStringLiteral("grew"), delta.bytesDelta() > 0 }, { QStringLiteral("isNew"), delta.isNew() },
             { QStringLiteral("isGone"), delta.isGone() },
             { QStringLiteral("peakShare"),

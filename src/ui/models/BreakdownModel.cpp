@@ -2,6 +2,8 @@
 
 #include "ui/models/FileListModel.h"
 
+#include "core/text/SizeWords.h"
+
 #include <algorithm>
 
 namespace mole {
@@ -116,7 +118,7 @@ QVariant BreakdownModel::data(const QModelIndex& index, int role) const
     case BytesRole:
         return stat.bytes;
     case SizeTextRole:
-        return FileListModel::formatSize(stat.bytes);
+        return sizeInWords(stat.bytes);
     case ShareRole: {
         const qint64 total = m_byCount ? m_visibleCount : m_visibleBytes;
         return total > 0 ? static_cast<double>(value) / static_cast<double>(total) : 0.0;

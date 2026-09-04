@@ -33,6 +33,8 @@ add_library(mole_ui STATIC
     ThumbnailSource.h
     ThumbnailSource.cpp
 
+    TimeWords.h
+    TimeWords.cpp
     models/RepositoryInfo.h
     models/RepositoryInfo.cpp
     models/DriveListModel.h

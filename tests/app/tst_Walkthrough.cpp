@@ -21,6 +21,7 @@
 #include "support/TestSupport.h"
 #include "ui/AppController.h"
 #include "ui/Palette.h"
+#include "ui/TimeWords.h"
 #include "ui/models/BookmarkModel.h"
 #include "ui/models/BrowserPaneController.h"
 #include "ui/models/CommandPaletteModel.h"
@@ -38,6 +39,7 @@
 #include "core/automation/Scheduler.h"
 #include "core/sets/FileSet.h"
 #include "core/sets/FileSetStore.h"
+#include "core/text/SizeWords.h"
 #include "core/vfs/VfsManager.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
@@ -129,6 +131,7 @@ private slots:
     void theIconOnlyControlsAreBigEnoughToHit();
     void spaceMeansTheSameThingInEveryViewer();
     void oneOfSomethingReadsAsOne();
+    void aSizeAndAnAgeReadTheSameWayEverywhere();
     void theSidebarRowsAreEvenlyTallAndHoldStill();
     void theCopyPathKeysActuallyCopyAPath();
     void theCommandPaletteFindsAndRunsThings();
@@ -1222,6 +1225,43 @@ void TestWalkthrough::theListingTakesItsTypeSizeFromTheScale()
 
     const QFont font = name->property("font").value<QFont>();
     QCOMPARE(font.pixelSize(), m_harness->app()->textSize());
+}
+
+void TestWalkthrough::aSizeAndAnAgeReadTheSameWayEverywhere()
+{
+    // **The same file was "1.5 GB" in the pane and "1.5 GiB" in the strip
+    // beneath it.** Nineteen files asked QLocale::formattedDataSize -- IEC units,
+    // locale digits -- and four asked FileListModel::formatSize, which divided by
+    // 1024 and then labelled the answer kB/MB/GB with no locale: the one
+    // combination that is simply wrong. And "3 days ago" was spelled six times in
+    // three wordings, so a folder's age read one way in the browser and another
+    // in the reports list.
+    //
+    // One formatter each now -- core/text/SizeWords.h and ui/TimeWords.h -- and
+    // this is the assertion that the window agrees with itself. See MOLE-403.
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() > 0; }));
+
+    // A size the two formatters would have disagreed about: over a kibibyte, so
+    // there is a unit to get wrong.
+    QVERIFY(m_harness->writeFile(QStringLiteral("sized/big.bin"), QByteArray(3000, 'x')));
+    pane()->navigateTo(pane()->currentUri() + QStringLiteral("/sized"));
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 1; }));
+    m_harness->settle();
+
+    const QString listed
+        = pane()->files()->data(pane()->files()->index(0, 0), FileListModel::SizeTextRole).toString();
+    QVERIFY2(listed.contains(QStringLiteral("KiB")),
+        qPrintable(QStringLiteral("the listing says %1, which is not what the rest of the window "
+                                  "says")
+                       .arg(listed)));
+    QCOMPARE(listed, sizeInWords(3000));
+
+    // And the age: one wording, whatever asks.
+    QCOMPARE(ageInWords(QDateTime::currentDateTime().addSecs(-7200)), QStringLiteral("2 h ago"));
+    QCOMPARE(ageInWords(QDateTime::currentDateTime().addDays(-2)), QStringLiteral("yesterday"));
+    QCOMPARE(ageInWords(QDateTime()), QStringLiteral("never"));
+    QCOMPARE(timeInWords(QDateTime::currentDateTime().addSecs(14400), QDateTime::currentDateTime()),
+        QStringLiteral("in 4 h"));
 }
 
 void TestWalkthrough::oneOfSomethingReadsAsOne()

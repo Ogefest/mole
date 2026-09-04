@@ -17,14 +17,14 @@ add_library(mole_builtin STATIC
     builtin/IndexScanJob.cpp
     builtin/AutomationFeature.h
     builtin/AutomationFeature.cpp
+    builtin/ImageFormats.h
+    builtin/ImageFormats.cpp
     builtin/AlertsFeature.h
     builtin/AlertsFeature.cpp
     builtin/ReportsFeature.h
     builtin/ReportsFeature.cpp
     builtin/IndexesFeature.h
     builtin/IndexesFeature.cpp
-    builtin/TimeWords.h
-    builtin/TimeWords.cpp
     builtin/FileSetsFeature.h
     builtin/FileSetsFeature.cpp
     builtin/BulkRenameFeature.h

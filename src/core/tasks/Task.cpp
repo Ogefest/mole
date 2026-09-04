@@ -1,6 +1,7 @@
 #include "core/tasks/Task.h"
 
 #include "core/diagnostics/Diagnostics.h"
+#include "core/text/SizeWords.h"
 
 #include <QDateTime>
 #include <QElapsedTimer>
@@ -286,11 +287,9 @@ QString TaskMetric::format(double value, Kind kind)
     case Kind::Count:
         return QLocale().toString(static_cast<qlonglong>(value));
     case Kind::Bytes:
-        return QLocale().formattedDataSize(static_cast<qint64>(value));
+        return sizeInWords(static_cast<qint64>(value));
     case Kind::Rate:
-        return value <= 0.0
-            ? QString()
-            : QStringLiteral("%1/s").arg(QLocale().formattedDataSize(static_cast<qint64>(value)));
+        return value <= 0.0 ? QString() : rateInWords(value);
     case Kind::Duration: {
         // A negative duration is "not known" rather than a number: an estimate
         // before the rate has settled, or after there is nothing left to

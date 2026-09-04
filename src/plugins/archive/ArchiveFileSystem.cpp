@@ -1,6 +1,7 @@
 #include "plugins/archive/ArchiveFileSystem.h"
 
 #include "core/data/FileType.h"
+#include "core/vfs/PathWords.h"
 
 #include <QBuffer>
 #include <QFileInfo>
@@ -535,12 +536,15 @@ ArchiveFileSystem::ArchiveFileSystem(QString archivePath)
 
 QString ArchiveFileSystem::authorityFor(const QString& archivePath)
 {
-    return QString::fromLatin1(QUrl::toPercentEncoding(archivePath));
+    // The encoding itself is in core, where the uri is: two layers above this
+    // decoded it by hand because they cannot see this file. See
+    // core/vfs/PathWords.h and MOLE-403.
+    return authorityFromLocalPath(archivePath);
 }
 
 QString ArchiveFileSystem::archivePathFromAuthority(const QString& authority)
 {
-    return QUrl::fromPercentEncoding(authority.toLatin1());
+    return localPathFromAuthority(authority);
 }
 
 VfsCapabilities ArchiveFileSystem::capabilities() const
@@ -752,7 +756,7 @@ FileEntry ArchiveFileSystem::entryFor(const VfsUri& uri, const QString& name, co
     entry.isDir = node.isDir;
     entry.isSymlink = node.isSymlink;
     entry.special = node.special;
-    entry.isHidden = name.startsWith(QLatin1Char('.'));
+    entry.isHidden = looksHidden(name);
     entry.isWritable = false;
     entry.size = node.size;
     entry.modified = node.modified;

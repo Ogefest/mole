@@ -366,6 +366,11 @@ size_t VfsUri::hash(size_t seed, Qt::CaseSensitivity sensitivity) const
         seed, m_scheme, foldedIf(m_authority, sensitivity), foldedIf(m_path, sensitivity), m_version);
 }
 
+QString VfsUri::driveKey() const
+{
+    return m_scheme + QLatin1Char('/') + m_authority;
+}
+
 QString VfsUri::canonicalKey() const
 {
     const Qt::CaseSensitivity sensitivity = caseSensitivityFor(m_scheme);

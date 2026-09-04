@@ -1,3 +1,4 @@
+#include "plugins/builtin/ImageFormats.h"
 #include "plugins/builtin/thumbnails/ImageThumbnailer.h"
 #include "support/FaultyFileSystem.h"
 #include "support/ImageFixtures.h"
@@ -256,8 +257,8 @@ void TestImageThumbnailer::claimsWhatThisBuildCanRead()
 
     // Asked of Qt rather than hard-coded, so a build without the WebP plugin does
     // not claim WebP.
-    QVERIFY(ImageThumbnailer::imageSuffixes().contains(QStringLiteral("png")));
-    QCOMPARE(ImageThumbnailer::imageSuffixes().contains(QStringLiteral("webp")),
+    QVERIFY(imageSuffixes().contains(QStringLiteral("png")));
+    QCOMPARE(imageSuffixes().contains(QStringLiteral("webp")),
         QImageReader::supportedImageFormats().contains(QByteArray("webp")));
 }
 

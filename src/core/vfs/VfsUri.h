@@ -118,6 +118,18 @@ public:
     /// than by the value. Two uris that are equal() have the same key.
     QString canonicalKey() const;
 
+    /// One spelling per *drive* -- the scheme and the authority, and nothing
+    /// below them.
+    ///
+    /// What a caller wants when it is grouping by "which drive is this on": a
+    /// duplicate scan holds one backend per drive, a file set counts the drives
+    /// its members are spread over, and a delete walks one drive at a time. It
+    /// was spelled out four times -- `scheme() + '/' + authority()` in
+    /// FindDuplicatesTask twice, in FileSet and in DuplicatesFeature -- which is
+    /// four places to change the day a uri grows a third part that matters. See
+    /// MOLE-403.
+    QString driveKey() const;
+
     /// What a scheme's paths do about case on this platform, in the absence of a
     /// backend to ask. A local path follows the platform -- NTFS and a default
     /// APFS volume fold, ext4 does not -- and every remote scheme is

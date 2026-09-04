@@ -2,6 +2,7 @@
 
 #include "core/analysis/AnalysisReport.h"
 #include "core/analysis/AnalysisStore.h"
+#include "core/text/SizeWords.h"
 #include "core/vfs/DirectoryWalker.h"
 #include "core/vfs/VfsManager.h"
 
@@ -28,7 +29,7 @@ namespace {
     {
         const QString unit = alertMetricUnit(metric);
         if (unit == QLatin1String("bytes"))
-            return QLocale().formattedDataSize(static_cast<qint64>(value));
+            return sizeInWords(static_cast<qint64>(value));
         if (unit == QLatin1String("%"))
             return QStringLiteral("%1%").arg(QLocale().toString(value, 'f', 1));
         if (unit.isEmpty())

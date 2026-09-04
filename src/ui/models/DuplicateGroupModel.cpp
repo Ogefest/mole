@@ -1,5 +1,7 @@
 #include "ui/models/DuplicateGroupModel.h"
 
+#include "core/text/SizeWords.h"
+
 namespace mole {
 
 DuplicateGroupModel::DuplicateGroupModel(QObject* parent)
@@ -31,9 +33,9 @@ QVariant DuplicateGroupModel::data(const QModelIndex& index, int role) const
     case CopiesRole:
         return static_cast<int>(group.files.size());
     case SizeTextRole:
-        return group.files.isEmpty() ? QString {} : m_locale.formattedDataSize(group.files.first().size);
+        return group.files.isEmpty() ? QString {} : sizeInWords(group.files.first().size);
     case ReclaimableTextRole:
-        return m_locale.formattedDataSize(group.reclaimable);
+        return sizeInWords(group.reclaimable);
     case FilesRole: {
         // Built here rather than kept, and therefore built for the rows a view
         // has on screen instead of for every file in the result every time
@@ -44,7 +46,7 @@ QVariant DuplicateGroupModel::data(const QModelIndex& index, int role) const
             const QString uri = entry.uri.toString();
             files.append(QVariantMap { { QStringLiteral("uri"), uri }, { QStringLiteral("name"), entry.name },
                 { QStringLiteral("location"), entry.uri.parent().toString() },
-                { QStringLiteral("sizeText"), m_locale.formattedDataSize(entry.size) },
+                { QStringLiteral("sizeText"), sizeInWords(entry.size) },
                 { QStringLiteral("modifiedText"),
                     entry.modified.toString(QStringLiteral("yyyy-MM-dd HH:mm")) },
                 { QStringLiteral("selected"), m_selected.contains(uri) } });

@@ -1,8 +1,8 @@
 #include "plugins/builtin/SearchFeatures.h"
 
 #include "plugins/builtin/IndexScanJob.h"
-#include "plugins/builtin/TimeWords.h"
 #include "sdk/ScanReaders.h"
+#include "ui/TimeWords.h"
 #include "ui/models/FileListModel.h"
 
 #include "core/automation/ScheduleStore.h"
@@ -13,6 +13,8 @@
 #include "core/index/ScanTask.h"
 #include "core/sets/FileSetStore.h"
 #include "core/tasks/TaskManager.h"
+#include "core/text/SizeWords.h"
+#include "core/vfs/PathWords.h"
 #include "core/vfs/VfsManager.h"
 
 #include <QIODevice>
@@ -854,9 +856,9 @@ void LiveSearchController::rewriteQueryLine()
     add(QStringLiteral("ext"), m_extension);
     add(QStringLiteral("type"), m_typeClasses.join(QLatin1Char(',')));
     if (m_minSize >= 0)
-        add(QStringLiteral("size"), FileListModel::formatSize(m_minSize), QueryTerm::Op::AtLeast);
+        add(QStringLiteral("size"), sizeInWords(m_minSize), QueryTerm::Op::AtLeast);
     if (m_maxSize >= 0)
-        add(QStringLiteral("size"), FileListModel::formatSize(m_maxSize), QueryTerm::Op::AtMost);
+        add(QStringLiteral("size"), sizeInWords(m_maxSize), QueryTerm::Op::AtMost);
     add(QStringLiteral("modified"), m_modifiedFrom);
     // The other end of the range, which the line never carried -- so the form's
     // own "modified to" field was cleared by the next keystroke on the line.
@@ -1015,7 +1017,7 @@ FileSystemPtr LiveSearchController::backendFor(const VfsUri& uri) const
         // configForFile takes the path of the file being opened, which is what
         // the authority encodes; the factory is the only thing that knows how.
         if (FileSystemPtr built
-            = factory->create(factory->configForFile(QUrl::fromPercentEncoding(host.toUtf8())), &error)) {
+            = factory->create(factory->configForFile(localPathFromAuthority(host)), &error)) {
             return built;
         }
     }

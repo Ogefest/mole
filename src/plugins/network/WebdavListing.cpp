@@ -2,6 +2,8 @@
 
 #include "plugins/network/CurlTransport.h"
 
+#include "core/vfs/PathWords.h"
+
 #include <QUrl>
 #include <QXmlStreamReader>
 
@@ -22,14 +24,6 @@ namespace {
     }
 
 } // namespace
-
-QString withoutTrailingSlash(const QString& path)
-{
-    QString out = path;
-    while (out.size() > 1 && out.endsWith(QLatin1Char('/')))
-        out.chop(1);
-    return out;
-}
 
 QString nameFromPath(const QString& path)
 {

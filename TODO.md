@@ -422,12 +422,20 @@ project, and a contributor should never hit a wall of text they cannot read.
   or the markers. Left out rather than deferred: the band answers "what state is this
   folder in", and reading a diff is a different question that already has a good answer
   one keystroke away in the terminal panel.
-- **"3 days ago" is spelled out in four places.** `ReportsFeature`, `BrowserFeature`,
-  `SearchFeatures` and now `RepositoryInfo` each have their own copy of the same
-  relative-time formatting, and the wordings have already drifted apart slightly. Not
-  extracted yet because each one's exact strings are asserted by its own suite, so the
-  extraction is a change to four sets of expectations rather than a move. Whoever next
-  has reason to touch one of them should take the other three with it.
+- **"3 days ago" is said in one place, since MOLE-403.** `ui/TimeWords.h`, and it
+  is worth knowing how this note read before that: it named four sites --
+  `ReportsFeature`, `BrowserFeature`, `SearchFeatures` and `RepositoryInfo` -- and
+  said "whoever next has reason to touch one of them should take the other three
+  with it". By the time anybody did there were **six**, in three wordings: one of
+  the four had moved, two had not, and `AutomationFeature` and `AlertsFeature` had
+  arrived since. "minutes ago" against "min ago", "yesterday" in three of six, and
+  one that could say "in 4 hours", so the same file's age read two ways in
+  adjacent tabs.
+
+  **A note that asks the next person to do the work is not a plan**, and this is
+  the evidence: the copies outgrew the note faster than anybody read it. What
+  worked was one extraction with one caller list, which is the shape the other
+  five duplications in MOLE-403 took as well.
 - **A git status walk cannot be interrupted part way, only abandoned.** libgit2 offers
   no hook inside the stat pass: `git_status_list_new` does the whole of the work
   before the first entry is available, and `git_status_foreach_ext` is that same call

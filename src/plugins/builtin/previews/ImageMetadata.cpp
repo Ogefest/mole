@@ -1,5 +1,6 @@
 #include "plugins/builtin/previews/ImageMetadata.h"
 
+#include "plugins/builtin/ImageFormats.h"
 #include "plugins/builtin/previews/PreviewProviders.h"
 
 #include "core/vfs/VfsManager.h"
@@ -485,7 +486,7 @@ bool ImageMetadataReader::canRead(const FileEntry& entry) const
         return false;
     if (entry.mimeType.startsWith(QLatin1String("image/")))
         return true;
-    static const QStringList suffixes = ImagePreviewProvider::imageSuffixes();
+    static const QStringList suffixes = mole::imageSuffixes();
     return suffixes.contains(entry.uri.suffix());
 }
 

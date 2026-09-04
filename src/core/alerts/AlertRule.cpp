@@ -1,5 +1,7 @@
 #include "core/alerts/AlertRule.h"
 
+#include "core/text/SizeWords.h"
+
 #include <QLocale>
 
 namespace mole {
@@ -164,7 +166,7 @@ QString AlertRule::describe() const
     const QString unit = alertMetricUnit(metric);
     QString amount;
     if (unit == QLatin1String("bytes"))
-        amount = QLocale().formattedDataSize(static_cast<qint64>(threshold));
+        amount = sizeInWords(static_cast<qint64>(threshold));
     else if (unit.isEmpty())
         amount = QLocale().toString(threshold, 'g', 6);
     else

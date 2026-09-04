@@ -1,5 +1,6 @@
 #include "plugins/builtin/thumbnails/ImageThumbnailer.h"
 
+#include "plugins/builtin/ImageFormats.h"
 #include "plugins/builtin/previews/ImageMetadata.h"
 
 #include "core/vfs/VfsManager.h"
@@ -9,23 +10,13 @@
 
 namespace mole {
 
-QStringList ImageThumbnailer::imageSuffixes()
-{
-    QStringList suffixes;
-    const QList<QByteArray> formats = QImageReader::supportedImageFormats();
-    suffixes.reserve(formats.size());
-    for (const QByteArray& format : formats)
-        suffixes.append(QString::fromLatin1(format).toLower());
-    return suffixes;
-}
-
 bool ImageThumbnailer::canThumbnail(const FileEntry& entry) const
 {
     if (entry.isDir)
         return false;
     // No I/O: the suffix and nothing else, because this is asked once per file
     // while a folder is being laid out.
-    static const QStringList supported = imageSuffixes();
+    static const QStringList supported = mole::imageSuffixes();
     return supported.contains(entry.uri.suffix());
 }
 

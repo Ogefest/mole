@@ -1,5 +1,6 @@
 #include "plugins/builtin/BrowserFeature.h"
 
+#include "ui/TimeWords.h"
 #include "ui/models/FileListModel.h"
 
 #include "core/alerts/AlertStore.h"
@@ -10,6 +11,7 @@
 #include "core/tasks/QueryAccessTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/tasks/TransferTask.h"
+#include "core/text/SizeWords.h"
 #include "core/vfs/VfsManager.h"
 
 #include <QLocale>
@@ -205,10 +207,9 @@ void BrowserController::refreshFolderFacts(AskTheDrive askTheDrive)
         const QList<ReportSummary> history = m_services.reports->history(here);
         if (!history.isEmpty()) {
             m_hasReport = true;
-            const qint64 days = history.first().createdAt.daysTo(QDateTime::currentDateTime());
-            m_reportAgeText = days <= 0 ? QStringLiteral("today")
-                : days == 1             ? QStringLiteral("yesterday")
-                                        : QStringLiteral("%1 days ago").arg(days);
+            // The one wording, which also makes this more precise than "today":
+            // a report from an hour ago says so. See ui/TimeWords.h and MOLE-403.
+            m_reportAgeText = ageInWords(history.first().createdAt);
         }
     }
 
@@ -244,12 +245,9 @@ void BrowserController::refreshFolderFacts(AskTheDrive askTheDrive)
         }
         if (best) {
             m_indexedFiles = best->fileCount;
-            const qint64 days
-                = best->lastScan.isValid() ? best->lastScan.daysTo(QDateTime::currentDateTime()) : -1;
-            m_indexedText = days < 0 ? QStringLiteral("indexed")
-                : days == 0          ? QStringLiteral("indexed today")
-                : days == 1          ? QStringLiteral("indexed yesterday")
-                                     : QStringLiteral("indexed %1 days ago").arg(days);
+            m_indexedText = best->lastScan.isValid()
+                ? QStringLiteral("indexed %1").arg(ageInWords(best->lastScan))
+                : QStringLiteral("indexed");
         }
     }
 
@@ -379,7 +377,7 @@ QVariantMap BrowserController::transferPlan() const
     }
 
     plan.insert(QStringLiteral("collisions"), collisions);
-    plan.insert(QStringLiteral("sizeText"), QLocale().formattedDataSize(bytes));
+    plan.insert(QStringLiteral("sizeText"), sizeInWords(bytes));
     return plan;
 }
 

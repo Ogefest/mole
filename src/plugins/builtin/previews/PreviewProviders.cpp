@@ -1,9 +1,11 @@
 #include "plugins/builtin/previews/PreviewProviders.h"
 
+#include "plugins/builtin/ImageFormats.h"
 #include "plugins/builtin/previews/ReadImageHeaderTask.h"
 
 #include "core/platform/Staging.h"
 #include "core/tasks/TaskManager.h"
+#include "core/text/SizeWords.h"
 #include "core/vfs/VfsManager.h"
 
 #include <QClipboard>
@@ -350,7 +352,7 @@ QString TextPreviewController::languageName() const
 
 QString TextPreviewController::sizeText() const
 {
-    return m_fileSize >= 0 ? QLocale().formattedDataSize(m_fileSize) : QString();
+    return m_fileSize >= 0 ? sizeInWords(m_fileSize) : QString();
 }
 
 QString TextPreviewController::positionText() const
@@ -362,8 +364,8 @@ QString TextPreviewController::positionText() const
 
     const QLocale locale;
     return QStringLiteral("%1 – %2 of %3")
-        .arg(locale.formattedDataSize(m_windowOffset),
-            locale.formattedDataSize(m_windowOffset + m_windowBytes), locale.formattedDataSize(m_fileSize));
+        .arg(sizeInWords(m_windowOffset), sizeInWords(m_windowOffset + m_windowBytes),
+            sizeInWords(m_fileSize));
 }
 
 void TextPreviewController::setViewerOption(const QString& key, const QString& value)
@@ -977,7 +979,7 @@ int HexPreviewController::offsetDigits() const
 
 QString HexPreviewController::sizeText() const
 {
-    return m_fileSize >= 0 ? QLocale().formattedDataSize(m_fileSize) : QString();
+    return m_fileSize >= 0 ? sizeInWords(m_fileSize) : QString();
 }
 
 QString HexPreviewController::positionText() const
@@ -989,8 +991,8 @@ QString HexPreviewController::positionText() const
 
     const QLocale locale;
     return QStringLiteral("%1 – %2 of %3")
-        .arg(locale.formattedDataSize(m_windowOffset),
-            locale.formattedDataSize(m_windowOffset + windowBytes()), locale.formattedDataSize(m_fileSize));
+        .arg(sizeInWords(m_windowOffset), sizeInWords(m_windowOffset + windowBytes()),
+            sizeInWords(m_fileSize));
 }
 
 QString HexPreviewController::selectionSummary() const
@@ -1377,23 +1379,11 @@ ImagePreviewProvider::ImagePreviewProvider(PluginServices services)
 {
 }
 
-QStringList ImagePreviewProvider::imageSuffixes()
-{
-    // Asked of Qt rather than hard-coded: which formats exist depends on which
-    // image plugins the build has, and claiming one we cannot decode would
-    // show an empty frame instead of the file's details.
-    QStringList suffixes;
-    const QList<QByteArray> formats = QImageReader::supportedImageFormats();
-    for (const QByteArray& format : formats)
-        suffixes.append(QString::fromLatin1(format).toLower());
-    return suffixes;
-}
-
 bool ImagePreviewProvider::canPreview(const FileEntry& entry) const
 {
     if (entry.isDir)
         return false;
-    static const QStringList supported = imageSuffixes();
+    static const QStringList supported = mole::imageSuffixes();
     return supported.contains(entry.uri.suffix());
 }
 

@@ -3,6 +3,7 @@
 #include "plugins/network/TransferStreams.h"
 
 #include "core/platform/Staging.h"
+#include "core/vfs/PathWords.h"
 
 #include <QTemporaryFile>
 #include <QUrl>
@@ -101,25 +102,25 @@ namespace {
     int indexOfSelf(const QList<net::WebdavEntry>& entries, const QString& asked)
     {
         for (int i = 0; i < entries.size(); ++i) {
-            if (net::withoutTrailingSlash(entries.at(i).path) == asked)
+            if (withoutTrailingSlash(entries.at(i).path) == asked)
                 return i;
         }
 
         int shortest = -1;
         for (int i = 0; i < entries.size(); ++i) {
             if (shortest < 0
-                || net::withoutTrailingSlash(entries.at(i).path).size()
-                    < net::withoutTrailingSlash(entries.at(shortest).path).size())
+                || withoutTrailingSlash(entries.at(i).path).size()
+                    < withoutTrailingSlash(entries.at(shortest).path).size())
                 shortest = i;
         }
         if (shortest < 0)
             return -1;
 
-        const QString parent = net::withoutTrailingSlash(entries.at(shortest).path);
+        const QString parent = withoutTrailingSlash(entries.at(shortest).path);
         for (int i = 0; i < entries.size(); ++i) {
             if (i == shortest)
                 continue;
-            if (!net::withoutTrailingSlash(entries.at(i).path).startsWith(parent + QLatin1Char('/')))
+            if (!withoutTrailingSlash(entries.at(i).path).startsWith(parent + QLatin1Char('/')))
                 return -1;
         }
         return shortest;
@@ -138,7 +139,7 @@ QString WebdavSettings::origin() const
 
 QString WebdavSettings::basePath() const
 {
-    return net::withoutTrailingSlash(QUrl(baseUrl).path());
+    return withoutTrailingSlash(QUrl(baseUrl).path());
 }
 
 WebdavFileSystem::WebdavFileSystem(QString scheme, WebdavSettings settings)
@@ -160,7 +161,7 @@ VfsCapabilities WebdavFileSystem::capabilities() const
 
 QString WebdavFileSystem::remotePath(const VfsUri& uri) const
 {
-    QString root = net::withoutTrailingSlash(m_settings.remoteRoot);
+    QString root = withoutTrailingSlash(m_settings.remoteRoot);
     if (!root.isEmpty() && !root.startsWith(QLatin1Char('/')))
         root.prepend(QLatin1Char('/'));
 
@@ -265,7 +266,7 @@ Result<FileEntryList> WebdavFileSystem::list(const VfsUri& dir, const CancelToke
     // learn that the target is a file: a PROPFIND on a file answers with exactly
     // one entry, itself, which would otherwise read as an empty directory.
     const QList<net::WebdavEntry>& responses = answer.value();
-    const int self = indexOfSelf(responses, net::withoutTrailingSlash(remotePath(dir)));
+    const int self = indexOfSelf(responses, withoutTrailingSlash(remotePath(dir)));
 
     bool selfIsCollection = false;
     bool sawSelf = false;
@@ -290,7 +291,7 @@ Result<FileEntryList> WebdavFileSystem::list(const VfsUri& dir, const CancelToke
         // than the absence of one.
         out.size = entry.isCollection ? 0 : entry.size;
         out.modified = entry.modified;
-        out.isHidden = out.name.startsWith(QLatin1Char('.'));
+        out.isHidden = looksHidden(out.name);
         out.isWritable = true;
         entries.append(out);
     }
@@ -679,8 +680,9 @@ WebdavSettings WebdavFileSystemFactory::settingsFrom(const QVariantMap& config)
     settings.verifyTls = config.value(QStringLiteral("verifyTls"), true).toBool();
 
     QString root = config.value(QStringLiteral("__root")).toString().trimmed();
-    while (root.endsWith(QLatin1Char('/')))
-        root.chop(1);
+    // All of them, including a lone one: a root of "/" becomes empty here so
+    // that root + path is "/x" and not "//x". See core/vfs/PathWords.h.
+    root = withoutAnyTrailingSlash(root);
     settings.remoteRoot = root;
 
     return settings;

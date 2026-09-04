@@ -3,6 +3,7 @@
 #include "core/events/EventBus.h"
 #include "core/sets/VerifySetTask.h"
 #include "core/tasks/TaskManager.h"
+#include "core/text/SizeWords.h"
 #include "core/vfs/VfsManager.h"
 
 #include <QLocale>
@@ -147,7 +148,7 @@ QString FileSetsController::summary() const
     for (auto it = m_sizes.constBegin(); it != m_sizes.constEnd(); ++it)
         bytes += it.value();
     if (bytes > 0)
-        text += QStringLiteral(" · %1").arg(QLocale().formattedDataSize(bytes));
+        text += QStringLiteral(" · %1").arg(sizeInWords(bytes));
     if (missingCount() > 0)
         text += QStringLiteral(" · %1 missing").arg(missingCount());
     return text;
@@ -175,7 +176,7 @@ QVariantList FileSetsController::members() const
                 // broken before anything had looked.
                 { QStringLiteral("missing"), checked && !m_present.value(uri) },
                 { QStringLiteral("sizeText"),
-                    m_sizes.contains(uri) ? QLocale().formattedDataSize(m_sizes.value(uri)) : QString() } });
+                    m_sizes.contains(uri) ? sizeInWords(m_sizes.value(uri)) : QString() } });
     }
     return out;
 }

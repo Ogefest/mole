@@ -1,5 +1,7 @@
 #include "plugins/builtin/AlertsFeature.h"
 
+#include "ui/TimeWords.h"
+
 #include "core/alerts/CheckAlertsTask.h"
 #include "core/analysis/AnalysisStore.h"
 #include "core/tasks/TaskManager.h"
@@ -13,20 +15,6 @@
 
 namespace mole {
 namespace {
-
-    QString relativeTime(const QDateTime& when, const QDateTime& now)
-    {
-        if (!when.isValid())
-            return QStringLiteral("never");
-        const qint64 seconds = std::llabs(when.secsTo(now));
-        if (seconds < 60)
-            return QStringLiteral("just now");
-        if (seconds < 3600)
-            return QStringLiteral("%1 min ago").arg(seconds / 60);
-        if (seconds < 86400)
-            return QStringLiteral("%1 h ago").arg(seconds / 3600);
-        return QStringLiteral("%1 d ago").arg(seconds / 86400);
-    }
 
     QString stateLabel(AlertState state)
     {
@@ -200,7 +188,7 @@ QVariantList AlertsController::alerts() const
             { QStringLiteral("value"), rule.lastValue },
             { QStringLiteral("message"), rule.message },
             { QStringLiteral("threshold"), rule.threshold },
-            { QStringLiteral("lastCheckedText"), relativeTime(rule.lastCheckedAt, now) },
+            { QStringLiteral("lastCheckedText"), timeInWords(rule.lastCheckedAt, now) },
         });
     }
     return out;
@@ -224,7 +212,7 @@ QVariantList AlertsController::history() const
                 event.state == AlertState::Triggered || event.state == AlertState::Failed },
             { QStringLiteral("value"), event.value },
             { QStringLiteral("message"), event.message },
-            { QStringLiteral("whenText"), relativeTime(event.at, now) },
+            { QStringLiteral("whenText"), timeInWords(event.at, now) },
             { QStringLiteral("at"), event.at.toString(QStringLiteral("yyyy-MM-dd HH:mm")) },
         });
     }

@@ -14,6 +14,7 @@
 #include "core/tasks/DriveCheckTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/tasks/TransferTask.h"
+#include "core/text/SizeWords.h"
 #include "core/vfs/VfsManager.h"
 
 #ifdef MOLE_HAVE_ARCHIVE
@@ -233,7 +234,7 @@ namespace {
 
     QString formattedSize(qint64 bytes)
     {
-        return QLocale().formattedDataSize(bytes);
+        return sizeInWords(bytes);
     }
 
     /// Says what an option would have accepted, and returns BadUsage.

@@ -2,7 +2,9 @@
 
 #include "ui/ThumbnailSource.h"
 
+#include "core/text/SizeWords.h"
 #include "core/vcs/Repository.h"
+#include "core/vfs/PathWords.h"
 
 #include <QCollator>
 #include <QLocale>
@@ -73,25 +75,6 @@ namespace {
 FileListModel::FileListModel(QObject* parent)
     : QAbstractListModel(parent)
 {
-}
-
-QString FileListModel::formatSize(qint64 bytes)
-{
-    if (bytes < 0)
-        return {};
-    if (bytes < 1024)
-        return QStringLiteral("%1 B").arg(bytes);
-
-    static const QStringList units { QStringLiteral("kB"), QStringLiteral("MB"), QStringLiteral("GB"),
-        QStringLiteral("TB"), QStringLiteral("PB") };
-
-    double value = static_cast<double>(bytes) / 1024.0;
-    int unit = 0;
-    while (value >= 1024.0 && unit + 1 < units.size()) {
-        value /= 1024.0;
-        ++unit;
-    }
-    return QStringLiteral("%1 %2").arg(value, 0, 'f', value < 10.0 ? 1 : 0).arg(units.at(unit));
 }
 
 void FileListModel::setEntries(FileEntryList entries)
@@ -502,7 +485,7 @@ QVariant FileListModel::data(const QModelIndex& index, int role) const
         // an answer, so the row says which file it came out of.
         if (entry.uri.authority().isEmpty() || entry.uri.scheme() == QLatin1String("file"))
             return QString();
-        const QString host = QUrl::fromPercentEncoding(entry.uri.authority().toUtf8());
+        const QString host = localPathFromAuthority(entry.uri.authority());
         return host.contains(QLatin1Char('/')) ? host.section(QLatin1Char('/'), -1) : QString();
     }
     case IsDirRole:
@@ -519,9 +502,9 @@ QVariant FileListModel::data(const QModelIndex& index, int role) const
         return entry.size;
     case SizeTextRole: {
         if (!entry.isDir)
-            return formatSize(entry.size);
+            return sizeInWords(entry.size);
         const qint64 measured = measuredSize(entry.uri.toString());
-        return measured >= 0 ? formatSize(measured) : QString();
+        return measured >= 0 ? sizeInWords(measured) : QString();
     }
     case ModifiedRole:
         return entry.modified;

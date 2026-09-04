@@ -3,6 +3,7 @@
 #include "plugins/network/TransferStreams.h"
 
 #include "core/platform/Staging.h"
+#include "core/vfs/PathWords.h"
 
 #include <QBuffer>
 #include <QSet>
@@ -148,8 +149,7 @@ QString S3FileSystem::keyFor(const VfsUri& uri) const
         path.remove(0, 1);
 
     QString prefix = m_settings.prefix;
-    while (prefix.endsWith(kSeparator))
-        prefix.chop(1);
+    prefix = withoutAnyTrailingSlash(prefix);
     while (prefix.startsWith(kSeparator))
         prefix.remove(0, 1);
 
@@ -163,8 +163,7 @@ QString S3FileSystem::keyFor(const VfsUri& uri) const
 QString S3FileSystem::rootKey() const
 {
     QString prefix = m_settings.prefix;
-    while (prefix.endsWith(kSeparator))
-        prefix.chop(1);
+    prefix = withoutAnyTrailingSlash(prefix);
     while (prefix.startsWith(kSeparator))
         prefix.remove(0, 1);
     return prefix;
@@ -565,7 +564,7 @@ Result<FileEntryList> S3FileSystem::list(const VfsUri& dir, const CancelToken& c
             // drive reports for a folder -- not the unknown a missing Size means.
             entry.size = entry.isDir ? 0 : object.size;
             entry.modified = object.modified;
-            entry.isHidden = entry.name.startsWith(QLatin1Char('.'));
+            entry.isHidden = looksHidden(entry.name);
             entry.isWritable = true;
             entries.append(entry);
         }
@@ -1486,8 +1485,7 @@ S3Settings S3FileSystemFactory::settingsFrom(const QVariantMap& config)
     // kinder than refusing it.
     endpoint.remove(QStringLiteral("https://"));
     endpoint.remove(QStringLiteral("http://"));
-    while (endpoint.endsWith(kSeparator))
-        endpoint.chop(1);
+    endpoint = withoutAnyTrailingSlash(endpoint);
     settings.endpoint = endpoint;
 
     settings.pathStyleAddressing
@@ -1498,8 +1496,7 @@ S3Settings S3FileSystemFactory::settingsFrom(const QVariantMap& config)
     QString prefix = config.value(QStringLiteral("__root")).toString().trimmed();
     while (prefix.startsWith(kSeparator))
         prefix.remove(0, 1);
-    while (prefix.endsWith(kSeparator))
-        prefix.chop(1);
+    prefix = withoutAnyTrailingSlash(prefix);
     settings.prefix = prefix;
 
     return settings;

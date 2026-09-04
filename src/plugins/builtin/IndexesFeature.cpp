@@ -1,8 +1,8 @@
 #include "plugins/builtin/IndexesFeature.h"
 
 #include "plugins/builtin/IndexScanJob.h"
-#include "plugins/builtin/TimeWords.h"
 #include "sdk/ScanReaders.h"
+#include "ui/TimeWords.h"
 
 #include "core/automation/ScheduleStore.h"
 #include "core/automation/Scheduler.h"

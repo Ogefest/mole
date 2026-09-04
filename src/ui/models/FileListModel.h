@@ -228,10 +228,6 @@ public:
     QVariant data(const QModelIndex& index, int role) const override;
     QHash<int, QByteArray> roleNames() const override;
 
-    /// Shared by the models and the status line so sizes read the same
-    /// everywhere in the app.
-    static QString formatSize(qint64 bytes);
-
 signals:
     void countChanged();
     void showHiddenChanged();

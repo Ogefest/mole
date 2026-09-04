@@ -35,9 +35,4 @@ bool parseMultistatus(const QByteArray& xml, QList<WebdavEntry>* entries, QStrin
 /// The last segment of a path, which is what a listing shows as a name.
 QString nameFromPath(const QString& path);
 
-/// A path with any trailing slash removed, for comparing a listed href against
-/// the path that was asked about. A collection is reported with a trailing slash
-/// by some servers and without by others.
-QString withoutTrailingSlash(const QString& path);
-
 } // namespace mole::net

@@ -1,6 +1,7 @@
 #include "plugins/network/SmbFileSystem.h"
 
 #include "core/vfs/PartialWrite.h"
+#include "core/vfs/PathWords.h"
 
 #include <QDateTime>
 #include <QIODevice>
@@ -235,8 +236,7 @@ namespace {
 QString SmbSettings::origin() const
 {
     QString bare = host.trimmed();
-    while (bare.endsWith(kSeparator))
-        bare.chop(1);
+    bare = withoutAnyTrailingSlash(bare);
     return QStringLiteral("smb://") + bare + kSeparator + share;
 }
 
@@ -362,8 +362,7 @@ VfsCapabilities SmbFileSystem::capabilities() const
 QString SmbFileSystem::urlFor(const VfsUri& uri) const
 {
     QString root = m_settings.remoteRoot;
-    while (root.endsWith(kSeparator))
-        root.chop(1);
+    root = withoutAnyTrailingSlash(root);
     while (root.startsWith(kSeparator))
         root.remove(0, 1);
 
@@ -733,8 +732,7 @@ SmbSettings SmbFileSystemFactory::settingsFrom(const QVariantMap& config)
         settings.host = share.section(kSeparator, 0, 0);
         share = share.section(kSeparator, 1);
     }
-    while (share.endsWith(kSeparator))
-        share.chop(1);
+    share = withoutAnyTrailingSlash(share);
     settings.share = share;
     return settings;
 }

@@ -185,6 +185,10 @@ add_library(mole_core STATIC
     text/DelimitedText.cpp
     text/DelimitedStreamParser.h
     text/DelimitedStreamParser.cpp
+    vfs/PathWords.h
+    vfs/PathWords.cpp
+    text/SizeWords.h
+    text/SizeWords.cpp
     text/DelimitedStore.h
     text/DelimitedStore.cpp
     text/ImportDelimitedTask.h

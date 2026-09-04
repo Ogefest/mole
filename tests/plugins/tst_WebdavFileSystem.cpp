@@ -5,6 +5,8 @@
 #include "support/MoleTestMain.h"
 #include "support/ScriptedHttpServer.h"
 
+#include "core/vfs/PathWords.h"
+
 #include <QUrl>
 
 #include <algorithm>

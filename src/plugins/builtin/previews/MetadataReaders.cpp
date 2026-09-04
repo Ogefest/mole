@@ -2,6 +2,7 @@
 
 #include "core/data/FileType.h"
 #include "core/diagnostics/Diagnostics.h"
+#include "core/text/SizeWords.h"
 
 #include <QLocale>
 #include <QMimeDatabase>
@@ -29,9 +30,7 @@ QList<FileFact> GenericMetadataReader::read(const FileEntry& entry, QByteArrayVi
         type.isValid() && !type.isDefault() ? type.comment() : QStringLiteral("Unknown") });
     facts.append({ QStringLiteral("MIME type"), type.name() });
     facts.append({ QStringLiteral("Size"),
-        QStringLiteral("%1 (%2 bytes)")
-            .arg(locale.formattedDataSize(entry.size))
-            .arg(locale.toString(entry.size)) });
+        QStringLiteral("%1 (%2 bytes)").arg(sizeInWords(entry.size)).arg(locale.toString(entry.size)) });
     if (entry.modified.isValid())
         facts.append({ QStringLiteral("Modified"), locale.toString(entry.modified, QLocale::LongFormat) });
     facts.append({ QStringLiteral("Location"), entry.uri.parent().toString() });

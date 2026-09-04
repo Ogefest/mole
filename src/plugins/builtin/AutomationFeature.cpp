@@ -1,33 +1,11 @@
 #include "plugins/builtin/AutomationFeature.h"
 
+#include "ui/TimeWords.h"
+
 #include "core/automation/ScheduleStore.h"
 
 namespace mole {
 namespace {
-
-    /// "in 4 hours", "3 days ago", "just now" -- a schedule is read as a distance
-    /// from now far more often than as a date.
-    QString relativeTime(const QDateTime& when, const QDateTime& now)
-    {
-        if (!when.isValid())
-            return QStringLiteral("never");
-
-        const qint64 seconds = now.secsTo(when);
-        const qint64 magnitude = std::llabs(seconds);
-        const bool future = seconds > 0;
-
-        QString amount;
-        if (magnitude < 60)
-            return future ? QStringLiteral("in a moment") : QStringLiteral("just now");
-        else if (magnitude < 3600)
-            amount = QStringLiteral("%1 min").arg(magnitude / 60);
-        else if (magnitude < 86400)
-            amount = QStringLiteral("%1 h").arg(magnitude / 3600);
-        else
-            amount = QStringLiteral("%1 d").arg(magnitude / 86400);
-
-        return future ? QStringLiteral("in %1").arg(amount) : QStringLiteral("%1 ago").arg(amount);
-    }
 
     QString statusLabel(RunStatus status)
     {
@@ -129,11 +107,11 @@ QVariantList AutomationController::rules() const
                     && (rule.lastStatus == RunStatus::Failed || rule.lastStatus == RunStatus::Skipped) },
             { QStringLiteral("message"), rule.lastMessage },
             { QStringLiteral("consecutiveFailures"), rule.consecutiveFailures },
-            { QStringLiteral("lastRunText"), relativeTime(rule.lastRunAt, now) },
+            { QStringLiteral("lastRunText"), timeInWords(rule.lastRunAt, now) },
             { QStringLiteral("nextDueText"),
                 !rule.enabled ? QStringLiteral("paused")
                               : (!rule.lastRunAt.isValid() ? QStringLiteral("as soon as possible")
-                                                           : relativeTime(rule.dueAt(), now)) },
+                                                           : timeInWords(rule.dueAt(), now)) },
         });
     }
     return out;
@@ -156,7 +134,7 @@ QVariantList AutomationController::history() const
             { QStringLiteral("failed"),
                 record.status == RunStatus::Failed || record.status == RunStatus::Skipped },
             { QStringLiteral("message"), record.message },
-            { QStringLiteral("whenText"), relativeTime(record.startedAt, now) },
+            { QStringLiteral("whenText"), timeInWords(record.startedAt, now) },
             { QStringLiteral("startedAt"), record.startedAt.toString(QStringLiteral("yyyy-MM-dd HH:mm")) },
             { QStringLiteral("durationText"),
                 record.durationMs() < 1000 ? QStringLiteral("%1 ms").arg(record.durationMs())

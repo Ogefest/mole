@@ -1,5 +1,7 @@
 #include "core/vfs/backends/MemoryFileSystem.h"
 
+#include "core/vfs/PathWords.h"
+
 #include <QBuffer>
 #include <QMutexLocker>
 #include <QStringList>
@@ -299,7 +301,7 @@ Result<FileEntryList> MemoryFileSystem::list(const VfsUri& dir, const CancelToke
         entry.isDir = it->isDir;
         entry.isSymlink = it->isSymlink;
         entry.isShortcut = it->isShortcut;
-        entry.isHidden = entry.name.startsWith(QLatin1Char('.'));
+        entry.isHidden = looksHidden(entry.name);
         entry.isWritable = true;
         entry.size = it->isDir ? 0 : it->contents.size();
         entry.modified = it->modified;

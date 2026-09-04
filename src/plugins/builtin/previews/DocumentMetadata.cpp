@@ -1,5 +1,6 @@
 #include "plugins/builtin/previews/DocumentMetadata.h"
 
+#include "core/text/SizeWords.h"
 #include "core/vfs/VfsManager.h"
 
 #include <QDateTime>
@@ -271,7 +272,7 @@ QList<FileFact> DocumentMetadataReader::read(const FileEntry& entry, QByteArrayV
     // is further in. See MOLE-383.
     if (facts.isEmpty() && prefix.size() >= kPrefixBytes && looksLikeADocumentContainer(prefix)) {
         facts.append({ QStringLiteral("Properties"),
-            QStringLiteral("not in the first %1").arg(QLocale().formattedDataSize(kPrefixBytes)) });
+            QStringLiteral("not in the first %1").arg(sizeInWords(kPrefixBytes)) });
     }
     return facts;
 }

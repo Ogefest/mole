@@ -2,6 +2,7 @@
 
 #include "core/events/EventBus.h"
 #include "core/tasks/TaskManager.h"
+#include "core/text/SizeWords.h"
 #include "core/vfs/VfsManager.h"
 
 #include <QLocale>
@@ -203,8 +204,7 @@ QVariantList SyncController::deletions() const
             continue;
         out.append(
             QVariantMap { { QStringLiteral("name"), step.relativePath }, { QStringLiteral("isDir"), false },
-                { QStringLiteral("detail"),
-                    step.bytes > 0 ? locale.formattedDataSize(step.bytes) : QString() } });
+                { QStringLiteral("detail"), step.bytes > 0 ? sizeInWords(step.bytes) : QString() } });
     }
     return out;
 }
@@ -217,7 +217,7 @@ QVariantList SyncController::steps() const
     for (const SyncPlan::Step& step : steps) {
         out.append(QVariantMap { { QStringLiteral("action"), SyncPlan::actionLabel(step.action) },
             { QStringLiteral("path"), step.relativePath }, { QStringLiteral("reason"), step.reason },
-            { QStringLiteral("sizeText"), step.bytes > 0 ? locale.formattedDataSize(step.bytes) : QString() },
+            { QStringLiteral("sizeText"), step.bytes > 0 ? sizeInWords(step.bytes) : QString() },
             { QStringLiteral("destructive"),
                 step.action == SyncPlan::Action::Delete || step.action == SyncPlan::Action::Overwrite },
             { QStringLiteral("skipped"), step.action == SyncPlan::Action::Skip } });
@@ -258,7 +258,7 @@ QString SyncController::planSummary() const
 
     QString text = parts.join(QStringLiteral(" · "));
     if (m_plan.bytesToTransfer() > 0)
-        text += QStringLiteral(" · %1").arg(locale.formattedDataSize(m_plan.bytesToTransfer()));
+        text += QStringLiteral(" · %1").arg(sizeInWords(m_plan.bytesToTransfer()));
     if (m_lastWasDryRun)
         text += QStringLiteral("  (nothing written yet)");
     return text;

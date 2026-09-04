@@ -1,6 +1,7 @@
 #include "plugins/network/NfsFileSystem.h"
 
 #include "core/vfs/PartialWrite.h"
+#include "core/vfs/PathWords.h"
 
 #include <QDateTime>
 #include <QHash>
@@ -503,8 +504,7 @@ VfsCapabilities NfsFileSystem::capabilities() const
 QString NfsFileSystem::pathFor(const VfsUri& uri) const
 {
     QString root = m_settings.remoteRoot;
-    while (root.endsWith(kSeparator))
-        root.chop(1);
+    root = withoutAnyTrailingSlash(root);
     while (root.startsWith(kSeparator))
         root.remove(0, 1);
 
