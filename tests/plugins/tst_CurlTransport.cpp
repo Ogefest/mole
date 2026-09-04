@@ -48,6 +48,8 @@ private slots:
     void theSystemsOwnReasonsMapOntoTheVocabulary_data();
     void theSystemsOwnReasonsMapOntoTheVocabulary();
 
+    void aSecondTransferOnOnePoolReusesTheConnection();
+
     void nothingWithACredentialInItReachesTheLog();
 };
 
@@ -602,6 +604,65 @@ void TestCurlTransport::theSystemsOwnReasonsMapOntoTheVocabulary()
     QFETCH(int, expected);
     const std::error_code failed(errnoValue, std::generic_category());
     QCOMPARE(int(LocalFileSystem::codeForSystemError(failed)), expected);
+}
+
+/// The pool kept no connections at all.
+///
+/// In libcurl the connection cache belongs to the *multi* handle:
+/// curl_multi_add_handle() points the easy handle's cache at the multi's, and
+/// curl_multi_cleanup() closes every connection in it. perform() makes a multi
+/// per transfer -- deliberately, so the decision to stop is ours (ADR-0049) --
+/// so the connection each transfer used was closed before the lease came back
+/// and the idle handles carried nothing. The class comment promised "a warm
+/// connection to come back to" and ARCHITECTURE.md said the pool "keeps
+/// libcurl's connection cache, which is what stops an SFTP drive renegotiating
+/// SSH for every listing"; neither was true. At 0.58 s a handshake (ADR-0013)
+/// and four or five handshakes per small SFTP upload, that is what a folder of
+/// ten thousand files cost. See MOLE-369.
+void TestCurlTransport::aSecondTransferOnOnePoolReusesTheConnection()
+{
+    ScriptedHttpServer server([](const ScriptedHttpServer::Request&) {
+        ScriptedHttpServer::Reply reply;
+        reply.body = "hello";
+        // A server that closed every connection would make this test pass or
+        // fail for its own reasons rather than the pool's.
+        reply.keepAlive = true;
+        return reply;
+    });
+    QVERIFY2(server.start(), "could not take a port for the scripted server");
+
+    net::TransportOptions options;
+    net::CurlPool pool(options);
+
+    const auto fetch = [&] {
+        net::CurlPool::Lease lease = pool.take();
+        Q_ASSERT(lease);
+        lease.setUrl((server.url() + QStringLiteral("/thing")).toUtf8());
+        return pool.perform(lease, CancelToken());
+    };
+
+    const net::Response first = fetch();
+    QVERIFY2(!net::errorFor(first, QStringLiteral("Reading /thing")).isError(), "the first fetch failed");
+    QCOMPARE(first.connectionsOpened, 1L);
+
+    // The second one must find the first one's connection still there. This is
+    // the whole assertion: it read 1 before the share handle existed, on every
+    // transfer, including a second listing of the same directory.
+    const net::Response second = fetch();
+    QVERIFY2(!net::errorFor(second, QStringLiteral("Reading /thing")).isError(), "the second fetch failed");
+    QCOMPARE(second.connectionsOpened, 0L);
+
+    // And a third, because "the second reuses it" could be true of a cache that
+    // holds exactly one transfer's worth.
+    QCOMPARE(fetch().connectionsOpened, 0L);
+
+    // A pool of its own starts cold, which is what says the cache belongs to the
+    // pool rather than to the process.
+    net::CurlPool other(options);
+    net::CurlPool::Lease lease = other.take();
+    QVERIFY(lease);
+    lease.setUrl((server.url() + QStringLiteral("/thing")).toUtf8());
+    QCOMPARE(other.perform(lease, CancelToken()).connectionsOpened, 1L);
 }
 
 void TestCurlTransport::nothingWithACredentialInItReachesTheLog()

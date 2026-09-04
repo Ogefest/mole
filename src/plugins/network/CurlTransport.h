@@ -78,10 +78,16 @@ struct TransportOptions
 /// SSH layer is not blocking libcurl's loop, which was the standing guess; the
 /// low-speed check simply never reaches a verdict on that protocol.
 ///
-/// It is applied here instead, in the progress callback, which is called
-/// throughout -- that is the whole reason this works. A transfer that neither
+/// It is applied by CurlPool::perform()'s own loop instead, once per poll,
+/// against the handle's own byte counters -- and that is the whole reason this
+/// works: the loop runs whatever the protocol is doing. A transfer that neither
 /// finishes nor fails is the one outcome a file manager may not produce: a job
 /// that is going to fail must fail while somebody is still watching.
+///
+/// (It began life in the progress callback, and this comment said so long after
+/// the loop had taken over. The callback is still there and still notices a
+/// cancellation, because it is called more often than the poll; it decides
+/// nothing about stalling. See MOLE-369.)
 ///
 /// **This ends a connection, not a transfer.** Aborting from the callback does
 /// not even make `curl_easy_perform` return while the thread is inside the SSH
@@ -155,6 +161,12 @@ struct Response
     /// end, so this is how a caller finds out it asked for a directory without
     /// paying for a PROPFIND to ask.
     QByteArray effectiveUrl;
+
+    /// How many connections this transfer had to open. Zero means it reused one
+    /// the pool already had, which is the whole claim of the share handle -- see
+    /// CurlPool::m_share. Exposed so a test can assert it rather than a person
+    /// reading MOLE_LOG=net. See MOLE-369.
+    long connectionsOpened = 0;
 
     /// Case-insensitive lookup; empty when absent.
     QByteArray header(const char* name) const;
@@ -306,6 +318,28 @@ private:
     TransportOptions m_options;
     std::mutex m_mutex;
     std::vector<CURL*> m_idle;
+    /// **Where the connections actually live.**
+    ///
+    /// In libcurl the connection cache belongs to the *multi* handle:
+    /// curl_multi_add_handle() points the easy handle's cache at the multi's,
+    /// and curl_multi_cleanup() closes every connection in it. perform() makes a
+    /// multi per transfer -- deliberately, so the decision to stop is ours
+    /// (ADR-0049) -- so the connection each transfer used was closed before the
+    /// lease was even returned to this pool, and the idle handles here carried
+    /// nothing. Every SFTP operation renegotiated SSH at 0.58 s a handshake, and
+    /// a stat() is a parent listing while an openWrite() is stat, spans, stat,
+    /// rename: four or five handshakes for one small upload. Every WebDAV
+    /// request paid the CURLAUTH_ANY 401 round trip again, auth state being per
+    /// connection.
+    ///
+    /// A share handle survives the multi, which is what puts the cache back
+    /// where the class comment above has always claimed it was. Its lock
+    /// callbacks take m_mutex, because a share is used from every thread that
+    /// holds a lease. See MOLE-369.
+    CURLSH* m_share = nullptr;
+    /// Held by the share's lock callbacks, one per lockable kind. Recursive
+    /// because libcurl may take one while another is held.
+    std::recursive_mutex m_shareGuards[8];
 };
 
 /// How to read Response::status for a given protocol.

@@ -315,6 +315,7 @@ private slots:
     void aDirectoryStillListsItsChildrenAndNotItsDotRows();
 
     void itSatisfiesTheConformanceSuite();
+    void aSecondListingCostsNoHandshake();
     void aLargeFileArrivesWhole();
     void aLargeFileGoesUpWhole();
     void aReadWhoseConnectionIsCutDoesNotLookLikeAWholeFile();
@@ -666,6 +667,63 @@ void TestSftpFileSystem::aReadWhoseConnectionIsCutDoesNotLookLikeAWholeFile()
                        .arg(read)
                        .arg(payload.size())
                        .arg(whatWasDone)));
+}
+
+/// Every SFTP operation renegotiated SSH.
+///
+/// In libcurl the connection cache belongs to the multi handle, and
+/// CurlPool::perform() makes one per transfer -- so the connection each transfer
+/// used was closed before the lease came back, and the pool of easy handles
+/// carried nothing. ADR-0013 measured an SSH handshake at 0.58 s, and a stat() is
+/// a parent listing while an openWrite() is stat, spans, stat, rename: four or
+/// five handshakes for one small upload, and hours of them for a folder of ten
+/// thousand files. See MOLE-369.
+///
+/// Timed rather than counted, because the handshake is not visible from up here
+/// and its cost is the whole point. Against a real server, because a scripted
+/// one cannot make an SSH handshake cost anything --
+/// tst_CurlTransport::aSecondTransferOnOnePoolReusesTheConnection holds the
+/// structural half offline.
+void TestSftpFileSystem::aSecondListingCostsNoHandshake()
+{
+    const Account account = accountFromEnvironment();
+    if (!account.isConfigured()) {
+        QSKIP("No SFTP account in the environment; set MOLE_TEST_SFTP_HOST, "
+              "MOLE_TEST_SFTP_USER and MOLE_TEST_SFTP_PASS to run this against a real server.");
+    }
+
+    SftpSettings settings;
+    settings.host = account.host;
+    settings.port = account.port;
+    settings.username = account.user;
+    settings.password = account.password;
+    settings.remoteRoot = QStringLiteral("/");
+
+    auto fileSystem = std::make_shared<SftpFileSystem>(QStringLiteral("sftp"), settings);
+    const VfsUri root(QStringLiteral("sftp"), QString(), QStringLiteral("/"));
+
+    // The first listing pays for the connection: resolve, connect, handshake,
+    // authenticate. Nothing here asserts how long that takes -- it depends on
+    // the link and on the server's key sizes.
+    QElapsedTimer clock;
+    clock.start();
+    QVERIFY(fileSystem->list(root, CancelToken()).ok());
+    const qint64 cold = clock.elapsed();
+
+    // The second is the same question over a connection that is already there.
+    clock.restart();
+    QVERIFY(fileSystem->list(root, CancelToken()).ok());
+    const qint64 warm = clock.elapsed();
+
+    // Half is a generous bar for something that should be an order of magnitude:
+    // what is being ruled out is a second handshake, and a handshake is the
+    // largest part of a small listing. Generous rather than tight because this
+    // runs against whatever server the environment names.
+    QVERIFY2(warm * 2 <= cold + 5,
+        qPrintable(QStringLiteral("a cold listing took %1 ms and a warm one %2 ms, so the connection "
+                                  "was not reused")
+                       .arg(cold)
+                       .arg(warm)));
 }
 
 void TestSftpFileSystem::aLargeFileArrivesWhole()

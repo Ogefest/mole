@@ -30,11 +30,15 @@ constexpr qint64 kStreamBufferBytes = 8 * 1024 * 1024;
 /// A write stream that collects the whole payload locally and ships it when it
 /// is closed.
 ///
-/// Every protocol here wants it this way. S3 must know the length before it can
-/// sign the request, WebDAV servers are unreliable about chunked PUT, and a
-/// resumable upload is a feature rather than a stream. Buffering to a temporary
-/// file rather than to memory is what keeps a ten-gigabyte copy from being a
-/// ten-gigabyte allocation.
+/// **For a payload small enough to hold, which is what is left of the original
+/// reason.** S3 must know the length before it can sign the request, so a small
+/// object is staged and signed; WebDAV was said here to be "unreliable about
+/// chunked PUT", which stopped being the reason when it started streaming above
+/// 64 MiB through a chunked PUT (MOLE-34) -- what it stages now is what is
+/// cheaper to stage. Buffering to a temporary file rather than to memory is what
+/// keeps a ten-gigabyte copy from being a ten-gigabyte allocation, and what makes
+/// the threshold about scratch space rather than about RAM. See MOLE-369 for the
+/// correction.
 ///
 /// Because the send happens in close(), and QIODevice::close() cannot report a
 /// failure, the outcome is left in commitError() and in errorString(). Callers

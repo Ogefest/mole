@@ -208,34 +208,26 @@ namespace {
     }
 
     /// What the progress callback needs for its two jobs.
+    /// What the progress callback needs, which since perform() took over the
+    /// loop is only the token.
+    ///
+    /// It used to carry a StallWatch built with zero patience -- so switched off
+    /// -- and a `stalled` flag nothing read: machinery for a decision that moved
+    /// to the loop and left its shape behind. See MOLE-369.
     struct ProgressWatch
     {
         const CancelToken* cancel = nullptr;
-        StallWatch stall { 0 };
-        QElapsedTimer since;
-        /// Set when this callback is what stopped the transfer because nothing
-        /// was moving. libcurl reports a cancellation and a stall the same way --
-        /// CURLE_ABORTED_BY_CALLBACK -- and they are not the same thing to
-        /// report to somebody.
-        bool stalled = false;
     };
 
-    /// Polled by libcurl during the transfer; a non-zero return aborts it. This
-    /// is what turns a CancelToken into a transfer that actually stops, rather
-    /// than one that finishes and is then thrown away -- and, since libcurl's own
-    /// low-speed guard does not fire for SFTP, it is also where a transfer that
-    /// has stopped moving is given up on. See StallWatch.
-    int reportProgress(void* userData, curl_off_t, curl_off_t received, curl_off_t, curl_off_t sent)
+    /// Polled by libcurl during the transfer; a non-zero return aborts it.
+    ///
+    /// It is here because it is called more often than perform()'s poll comes
+    /// round, so a cancellation takes effect sooner. It decides nothing about
+    /// stalling: the loop does that, against the handle's own counters.
+    int reportProgress(void* userData, curl_off_t, curl_off_t, curl_off_t, curl_off_t)
     {
         auto* watch = static_cast<ProgressWatch*>(userData);
-        if (watch->cancel->isCancelled())
-            return 1;
-        if (watch->stall.hasStalled(
-                static_cast<qint64>(received) + static_cast<qint64>(sent), watch->since.elapsed())) {
-            watch->stalled = true;
-            return 1;
-        }
-        return 0;
+        return watch && watch->cancel && watch->cancel->isCancelled() ? 1 : 0;
     }
 
     /// Host key policy, stated once: a host we have not met is accepted and
@@ -347,16 +339,59 @@ void CurlPool::Lease::useOwnConnection()
 
 // ---- CurlPool --------------------------------------------------------------
 
+namespace {
+
+    /// The share's locks, taken and released by libcurl around its cache.
+    ///
+    /// A share is used from every thread that holds a lease, and libcurl does no
+    /// locking of its own -- CURLSHOPT_LOCKFUNC exists for exactly this. One
+    /// mutex per lockable kind rather than one for the lot, because libcurl may
+    /// hold one while it takes another.
+    void lockShare(CURL*, curl_lock_data data, curl_lock_access, void* userData)
+    {
+        auto* guards = static_cast<std::recursive_mutex*>(userData);
+        guards[int(data) % 8].lock();
+    }
+
+    void unlockShare(CURL*, curl_lock_data data, void* userData)
+    {
+        auto* guards = static_cast<std::recursive_mutex*>(userData);
+        guards[int(data) % 8].unlock();
+    }
+
+} // namespace
+
 CurlPool::CurlPool(TransportOptions options)
     : m_options(std::move(options))
 {
     ensureCurlInitialised();
+
+    // The connection cache, kept where it can outlive a transfer's multi handle.
+    // See the note on m_share: without this every transfer opened a connection
+    // of its own, whatever the pool of easy handles did.
+    m_share = curl_share_init();
+    if (m_share) {
+        curl_share_setopt(m_share, CURLSHOPT_LOCKFUNC, lockShare);
+        curl_share_setopt(m_share, CURLSHOPT_UNLOCKFUNC, unlockShare);
+        curl_share_setopt(m_share, CURLSHOPT_USERDATA, m_shareGuards);
+        curl_share_setopt(m_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_CONNECT);
+        // The DNS cache and the TLS session cache as well: a drive is one host,
+        // so both are answered once rather than per transfer. Neither carries
+        // credentials, and both are dropped with the pool.
+        curl_share_setopt(m_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_DNS);
+        curl_share_setopt(m_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_SSL_SESSION);
+    }
 }
 
 CurlPool::~CurlPool()
 {
+    // The handles first: a share must outlive every easy handle using it, and
+    // curl_share_cleanup() refuses while one still does.
     for (CURL* handle : m_idle)
         curl_easy_cleanup(handle);
+    m_idle.clear();
+    if (m_share)
+        curl_share_cleanup(m_share);
 }
 
 CurlPool::Lease CurlPool::take()
@@ -399,6 +434,12 @@ void CurlPool::give(CURL* handle)
 void CurlPool::prepare(CURL* handle) const
 {
     curl_easy_reset(handle);
+
+    // Before anything else, because it is what makes the rest of this handle's
+    // connection worth setting up: the cache it draws from lives on the pool
+    // rather than on the multi perform() builds and throws away.
+    if (m_share)
+        curl_easy_setopt(handle, CURLOPT_SHARE, m_share);
 
     curl_easy_setopt(handle, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 1L);
@@ -506,8 +547,7 @@ Response CurlPool::perform(const Lease& lease, const CancelToken& cancel, QIODev
     // cancellation noticed there takes effect before the next poll comes round.
     // It is no longer the only way out, and it no longer decides anything about
     // stalling -- the loop below does that, against the handle's own counters.
-    ProgressWatch watch { &cancel, StallWatch(0), {}, false };
-    watch.since.start();
+    ProgressWatch watch { &cancel };
     curl_easy_setopt(handle, CURLOPT_XFERINFOFUNCTION, reportProgress);
     curl_easy_setopt(handle, CURLOPT_XFERINFODATA, &watch);
 
@@ -620,6 +660,7 @@ Response CurlPool::perform(const Lease& lease, const CancelToken& cancel, QIODev
     curl_easy_getinfo(handle, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &announced);
     curl_easy_getinfo(handle, CURLINFO_SIZE_UPLOAD_T, &sent);
     curl_easy_getinfo(handle, CURLINFO_NUM_CONNECTS, &connects);
+    response.connectionsOpened = connects;
 
     if (sink) {
         // Only for a download into a device, which is the one case where both

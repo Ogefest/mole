@@ -34,7 +34,20 @@ public:
         data.name = QStringLiteral("Standard network drives");
         data.version = QStringLiteral(MOLE_VERSION);
         data.author = QStringLiteral("Mole");
-        data.description = QStringLiteral("Connect to SFTP, FTP, S3-compatible object stores and WebDAV.");
+        // The two optional ones are named only where they were built, because a
+        // description listing a drive kind this build does not offer is a
+        // description that misleads. It said four when six ship. See MOLE-369.
+        QStringList kinds { QStringLiteral("SFTP"), QStringLiteral("FTP"),
+            QStringLiteral("S3-compatible object stores"), QStringLiteral("WebDAV") };
+#ifdef MOLE_HAVE_SMB
+        kinds.append(QStringLiteral("Windows shares"));
+#endif
+#ifdef MOLE_HAVE_NFS
+        kinds.append(QStringLiteral("NFS"));
+#endif
+        const QString last = kinds.takeLast();
+        data.description
+            = QStringLiteral("Connect to %1 and %2.").arg(kinds.join(QStringLiteral(", ")), last);
         return data;
     }
 

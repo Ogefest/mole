@@ -99,19 +99,22 @@ void ScriptedHttpServer::serve(QTcpServer& server)
         std::unique_ptr<QTcpSocket> socket(server.nextPendingConnection());
         if (!socket)
             continue;
-        answerOne(*socket);
+        // One answer, or several down the same socket when the handler asks for
+        // keep-alive. A client that reuses connections cannot be told apart from
+        // one that does not by a server that closes every one.
+        while (answerOne(*socket) && !m_stopping && socket->state() == QAbstractSocket::ConnectedState) { }
         socket->disconnectFromHost();
         if (socket->state() != QAbstractSocket::UnconnectedState)
             socket->waitForDisconnected(1000);
     }
 }
 
-void ScriptedHttpServer::answerOne(QTcpSocket& socket)
+bool ScriptedHttpServer::answerOne(QTcpSocket& socket)
 {
     QByteArray head;
     while (!head.contains("\r\n\r\n")) {
         if (!socket.waitForReadyRead(kSocketWaitMs))
-            return;
+            return false;
         head += socket.readAll();
     }
 
@@ -167,10 +170,10 @@ void ScriptedHttpServer::answerOne(QTcpSocket& socket)
     for (const QByteArray& header : reply.headers)
         out += header + "\r\n";
     out += "Content-Length: " + QByteArray::number(claimed) + "\r\n";
-    // Every answer closes the connection. Keep-alive would be one more thing to
-    // get right in a fixture whose whole job is to be wrong in exactly one way
-    // at a time.
-    out += "Connection: close\r\n\r\n";
+    // Closing is the default, because keep-alive is one more thing to get right
+    // in a fixture whose whole job is to be wrong in exactly one way at a time.
+    // The case that is about connection reuse asks for the other behaviour.
+    out += reply.keepAlive ? "Connection: keep-alive\r\n\r\n" : "Connection: close\r\n\r\n";
 
     const qint64 send
         = reply.hangUpAfter >= 0 ? std::min<qint64>(reply.hangUpAfter, reply.body.size()) : reply.body.size();
@@ -187,13 +190,16 @@ void ScriptedHttpServer::answerOne(QTcpSocket& socket)
         quiet.start();
         while (quiet.elapsed() < reply.stayQuietMs && socket.state() == QAbstractSocket::ConnectedState)
             socket.waitForReadyRead(50);
-        return;
+        return false;
     }
 
     out += reply.body.left(static_cast<int>(send));
 
     socket.write(out);
     socket.waitForBytesWritten(kSocketWaitMs);
+    // Only a whole answer on a keep-alive connection can be followed by another:
+    // a body cut short leaves the client's parser mid-message.
+    return reply.keepAlive && reply.hangUpAfter < 0;
 }
 
 } // namespace mole::test

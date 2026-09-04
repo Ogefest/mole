@@ -82,7 +82,8 @@ is driving.
   reaches the same outcome `useOwnConnection()` already had.
 - **A multi handle per transfer**, created and destroyed around each one. Measured
   against the four live backend suites and the interference tier with no change in
-  any figure worth reporting.
+  any figure worth reporting. **That measurement was wrong — see the amendment
+  below.**
 - **The guard is now testable without a server.** `ScriptedHttpServer` grew a
   reply that sends part of a body and then holds the connection open sending
   nothing — the neighbour of `hangUpAfter`, and the harder case, because a
@@ -94,3 +95,51 @@ is driving.
   whole transfer may go without progress, across however many connections. This
   guard is how patient one connection is. ADR-0013's second amendment is where
   conflating the two is written up.
+
+## Amendment, 2026-09-04 (MOLE-369)
+
+**"No change in any figure worth reporting" was measured on fixtures too small to
+show the change.** In libcurl the connection cache belongs to the *multi* handle:
+`curl_multi_add_handle()` points the easy handle's cache at the multi's, and
+`curl_multi_cleanup()` closes every connection in it. So a multi per transfer
+means a **connection** per transfer. The connection each transfer used was closed
+before its lease was even returned to the pool, and the idle `CURL*` handles the
+pool kept carried nothing at all.
+
+The claim the code made all along was the opposite. `CurlTransport.h` promised "a
+warm connection to come back to"; ARCHITECTURE.md said the pool "keeps libcurl's
+connection cache, which is what stops an SFTP drive renegotiating SSH for every
+listing". Neither was true from the day this loop landed.
+
+What it cost, on the two protocols where a connection is expensive: every SFTP
+operation renegotiated SSH, at the 0.58 s per handshake ADR-0013 measured — and
+one operation is rarely one transfer, because a `stat()` is a listing of the
+parent and an `openWrite()` is stat, spans, stat, rename. Four or five handshakes
+for one small upload, and a folder of ten thousand files is hours of them. Every
+WebDAV request paid the `CURLAUTH_ANY` 401 round trip again, auth state being per
+connection and the handle being `curl_easy_reset` on every `take()`. The live
+suites did not show it because their fixtures are kilobytes: a handshake is
+invisible beside nothing.
+
+**The decision stands; the cache moves.** Owning the loop is what makes stopping
+Mole's decision, and that is unchanged. A `CURLSH` share handle per `CurlPool`,
+with `CURL_LOCK_DATA_CONNECT`, holds the connection cache outside any multi —
+plus the DNS and TLS session caches, since a drive is one host and neither
+carries a credential. Its lock callbacks are required: a share is used from every
+thread holding a lease and libcurl does no locking of its own.
+
+`Response::connectionsOpened` carries `CURLINFO_NUM_CONNECTS` so this is
+assertable rather than something to read out of `MOLE_LOG=net`.
+`tst_CurlTransport::aSecondTransferOnOnePoolReusesTheConnection` holds it
+offline — and needed `ScriptedHttpServer` to learn keep-alive, because a server
+that closes every connection cannot tell a client that reuses them from one that
+does not. `tst_SftpFileSystem::aSecondListingCostsNoHandshake` holds it against a
+real server, by timing, because the handshake is not visible from above and its
+cost is the whole point.
+
+**And three comments this loop left behind have been corrected**, since a comment
+describing the design before a change is worse than none: `StallWatch`'s header
+said the stall was decided "in the progress callback" when the loop had taken it
+over, `ProgressWatch` carried a switched-off `StallWatch` and a `stalled` flag
+nothing read, and `BufferedUpload`'s reason cited WebDAV being "unreliable about
+chunked PUT" when WebDAV has streamed through a chunked PUT since MOLE-34.

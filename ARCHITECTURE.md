@@ -419,8 +419,13 @@ the design went out of its way to forbid it.
 
 A curl handle is not thread-safe and `IFileSystem` must tolerate concurrent calls,
 so each backend keeps a small pool and lends one out per call. That satisfies the
-contract and keeps libcurl's connection cache, which is what stops an SFTP drive
-renegotiating SSH for every listing.
+contract. The **connection** cache is a second thing the pool holds, in a `CURLSH`
+share handle, and it is what stops an SFTP drive renegotiating SSH for every
+listing — it has to live there rather than on a handle because libcurl attaches
+the cache to whichever *multi* handle drives the transfer, and `perform()` builds
+one of those per transfer so that stopping is Mole's decision. The pool of handles
+alone kept no connections at all until MOLE-369; ADR-0049's amendment has the
+measurement.
 
 SMB and NFS each bring a library of their own — Samba's `libsmbclient` and `libnfs`
 — and each is optional at configure time, so a machine without one gets the other

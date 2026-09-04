@@ -86,6 +86,17 @@ public:
         /// answering 411 does not, and a caller has to cope with being refused
         /// before it has finished talking.
         bool readRequestBody = true;
+
+        /// Answer with `Connection: keep-alive` and keep the socket open for
+        /// another request.
+        ///
+        /// Off by default, deliberately: every other case here is about one
+        /// answer being wrong in one way, and a connection that lingers is one
+        /// more thing for those to get wrong. It is on for the case that is
+        /// *about* reuse -- a client that opens a connection per request cannot
+        /// be told apart from one that reuses them by a server that closes every
+        /// one. See MOLE-369.
+        bool keepAlive = false;
     };
 
     /// Runs on the server's thread, once per request. Keep it to deciding what
@@ -111,7 +122,9 @@ public:
 
 private:
     void serve(QTcpServer& server);
-    void answerOne(QTcpSocket& socket);
+    /// Answers one request. True when the connection may carry another, which
+    /// is only ever the case for a whole answer the handler marked keepAlive.
+    bool answerOne(QTcpSocket& socket);
 
     Handler m_handler;
     /// Owned by the serving thread, which is also where it is created. A

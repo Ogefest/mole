@@ -65,6 +65,7 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-369 SFTP and WebDAV drives reuse their connection between operations, instead of reconnecting for each
 2026-09-04 #MOLE-370 A large file on an S3 or WebDAV drive can be read on a machine with no room for a copy of it
 2026-09-04 #MOLE-370 Previewing a large object on an S3 or WebDAV drive no longer downloads all of it
 2026-09-04 #MOLE-373 A permission problem on a remote drive is reported as one, instead of as an unknown failure
