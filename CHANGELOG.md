@@ -65,6 +65,9 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-396 The keys the menu names are the keys that work: Analyse, Bulk rename, Alerts, Scheduled jobs and Quit
+2026-09-04 #MOLE-396 Add to set no longer advertises the key that measures folder sizes
+2026-09-04 #MOLE-396 A text preview hands back nine more window keys instead of swallowing them
 2026-09-04 #MOLE-395 A file with no application to open it no longer marks its drive unreachable
 2026-09-04 #MOLE-395 Analyse folder reuses the tab already showing that folder
 2026-09-04 #MOLE-395 A window left on a screen above or left of the primary one comes back there

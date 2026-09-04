@@ -2,6 +2,8 @@
 
 #include <QDirIterator>
 #include <QFile>
+#include <QKeySequence>
+#include <QMetaEnum>
 #include <QRegularExpression>
 #include <QTest>
 
@@ -22,6 +24,7 @@ private slots:
     void nothingNamesAColourByHand();
     void nothingBuildsOrTakesApartAUriByHand();
     void nothingInTheShellNamesADriveOrAFilesystem();
+    void everyKeyTheMenuAdvertisesIsAKeyTheWindowDeclares();
 
 private:
     /// path -> contents, for every .qml shipped with the application.
@@ -219,5 +222,134 @@ void TestQmlConventions::nothingInTheShellNamesADriveOrAFilesystem()
         qPrintable(QStringLiteral("the shell names a drive: %1").arg(offenders.join(QStringLiteral(", ")))));
 }
 
-MOLE_TEST_MAIN(TestQmlConventions)
+void TestQmlConventions::everyKeyTheMenuAdvertisesIsAKeyTheWindowDeclares()
+{
+    // **`MenuAction::shortcut` is display-only**, and Main.qml's own comment says
+    // a key named in the menu and not declared there "would be advertised and do
+    // nothing". Five were in exactly that state: Ctrl+Shift+A (Analyse),
+    // Ctrl+Shift+R (Bulk rename), Ctrl+Shift+L (Alerts) and Ctrl+Shift+J
+    // (Scheduled jobs) were bound to nothing at all, and Ctrl+Shift+S was
+    // printed beside two entries -- so somebody reading the menu and pressing it
+    // to add a file to a set started a folder-size measurement of everything in
+    // view. The command palette repeated the same wrong hint.
+    //
+    // Nothing compared the two lists, which is how five accumulated. Read from
+    // the source because that is where both halves live: a label in
+    // AppController::buildActions() and a `sequence:` in the window's QML. No
+    // window is needed to ask whether they agree. See MOLE-396.
+    const QString menu = m_shellSources.value(QStringLiteral("ui/AppController.cpp"));
+    QVERIFY2(!menu.isEmpty(), "the menu's own source was not read");
+
+    // Cut into one chunk per action first, and only then look for a label inside
+    // it: an expression that reaches from an id to "the next shortcut" pairs an
+    // action that has no key with a label belonging to a later one, which is a
+    // report naming the wrong entry.
+    static const QRegularExpression declaresAnId(
+        QStringLiteral("action\\.id = QStringLiteral\\(\"([^\"]+)\"\\)"));
+    static const QRegularExpression declaresAShortcut(
+        QStringLiteral("action\\.shortcut = QStringLiteral\\(\"([^\"]+)\"\\)"));
+
+    QList<QPair<QString, QString>> labelledActions; // id -> key, one per action
+    {
+        QList<QPair<int, QString>> starts;
+        auto ids = declaresAnId.globalMatch(menu);
+        while (ids.hasNext()) {
+            const QRegularExpressionMatch match = ids.next();
+            starts.append({ static_cast<int>(match.capturedStart()), match.captured(1) });
+        }
+        for (int i = 0; i < starts.size(); ++i) {
+            const int from = starts.at(i).first;
+            const int to = i + 1 < starts.size() ? starts.at(i + 1).first : menu.size();
+            const QRegularExpressionMatch key = declaresAShortcut.match(menu.mid(from, to - from));
+            if (key.hasMatch())
+                labelledActions.append({ starts.at(i).second, key.captured(1) });
+        }
+    }
+
+    // What the window declares, read from the `sequence:` and `sequences:`
+    // properties themselves -- not from anywhere a key is merely mentioned. The
+    // in-window key dialog lists the same strings as prose, so a check that
+    // looked for the text anywhere in the file called every advertised key
+    // declared, including the four that did nothing.
+    QSet<QString> declaredKeys;
+    {
+        static const QRegularExpression property(
+            QStringLiteral("sequences?\\s*:\\s*(\\[[^\\]]*\\]|\"[^\"]*\")"));
+        static const QRegularExpression quoted(QStringLiteral("\"([^\"]+)\""));
+        static const QRegularExpression standardKey(QStringLiteral("StandardKey\\.([A-Za-z]+)"));
+        const QMetaEnum standard = QMetaEnum::fromType<QKeySequence::StandardKey>();
+        QVERIFY2(standard.isValid(), "QKeySequence::StandardKey is not a readable enum here");
+
+        for (auto it = m_sources.cbegin(); it != m_sources.cend(); ++it) {
+            auto properties = property.globalMatch(it.value());
+            while (properties.hasNext()) {
+                const QString value = properties.next().captured(1);
+
+                auto strings = quoted.globalMatch(value);
+                while (strings.hasNext())
+                    declaredKeys.insert(strings.next().captured(1));
+
+                // A StandardKey is resolved through Qt rather than through the
+                // comment beside it: Ctrl+Q is `StandardKey.Quit` here, and what
+                // that means is Qt's answer and this platform's.
+                auto named = standardKey.globalMatch(value);
+                while (named.hasNext()) {
+                    bool known = false;
+                    const int enumerator
+                        = standard.keyToValue(named.next().captured(1).toUtf8().constData(), &known);
+                    if (!known)
+                        continue;
+                    const QList<QKeySequence> bound
+                        = QKeySequence::keyBindings(static_cast<QKeySequence::StandardKey>(enumerator));
+                    for (const QKeySequence& sequence : bound)
+                        declaredKeys.insert(sequence.toString(QKeySequence::PortableText));
+                }
+            }
+        }
+    }
+    QVERIFY2(declaredKeys.size() >= 10,
+        qPrintable(QStringLiteral("only %1 keys are declared anywhere in the window; the parse has "
+                                  "stopped working")
+                       .arg(declaredKeys.size())));
+
+    QHash<QString, QString> advertisedBy; // key sequence -> action id
+    QStringList clashes;
+    QStringList undeclared;
+
+    // A key sequence rather than a sentence: "type to find, or /" and "type to
+    // filter" are prose in the same field, and are not claims about a binding.
+    static const QRegularExpression looksLikeAKey(QStringLiteral("^(Ctrl|Alt|Shift|Meta)\\+|^F[0-9]{1,2}$"));
+
+    int labels = 0;
+    for (const auto& [id, key] : std::as_const(labelledActions)) {
+        if (!looksLikeAKey.match(key).hasMatch())
+            continue;
+        ++labels;
+
+        if (advertisedBy.contains(key) && advertisedBy.value(key) != id) {
+            clashes.append(
+                QStringLiteral("%1 is printed beside both %2 and %3").arg(key, advertisedBy.value(key), id));
+        } else {
+            advertisedBy.insert(key, id);
+        }
+
+        if (!declaredKeys.contains(key))
+            undeclared.append(QStringLiteral("%1 (%2)").arg(key, id));
+    }
+
+    // The guard: a parse that found nothing would pass this without reading a
+    // thing, and the two expressions above are exactly the kind that stop
+    // matching when somebody reformats the file.
+    QVERIFY2(labels >= 8,
+        qPrintable(QStringLiteral("only %1 shortcut labels were found in the menu; the parse has "
+                                  "stopped working")
+                       .arg(labels)));
+
+    QVERIFY2(clashes.isEmpty(), qPrintable(clashes.join(QStringLiteral("; "))));
+    QVERIFY2(undeclared.isEmpty(),
+        qPrintable(QStringLiteral("the menu advertises keys the window does not declare: %1")
+                       .arg(undeclared.join(QStringLiteral(", ")))));
+}
+
+MOLE_TEST_MAIN_GUI(TestQmlConventions)
 #include "tst_QmlConventions.moc"

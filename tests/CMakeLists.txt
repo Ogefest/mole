@@ -254,7 +254,11 @@ set_target_properties(compare-shots PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_
 mole_add_test(tst_VfsUri            SOURCES core/tst_VfsUri.cpp)
 mole_add_test(tst_SystemVolumes     SOURCES core/tst_SystemVolumes.cpp)
 mole_add_test(tst_NameRules         SOURCES core/tst_NameRules.cpp)
-mole_add_test(tst_QmlConventions    SOURCES app/tst_QmlConventions.cpp)
+# Qt6::Gui, because one case asks Qt what a StandardKey means and that answer
+# comes out of the platform theme -- which a QCoreApplication has not got. It
+# reads sources and opens no window; the offscreen platform every suite runs with
+# is enough. See MOLE-396.
+mole_add_test(tst_QmlConventions    SOURCES app/tst_QmlConventions.cpp  LIBS Qt6::Gui)
 mole_add_test(tst_LocalFileSystem   SOURCES core/tst_LocalFileSystem.cpp)
 
 # Earlier states of a file, where the filesystem already keeps them. The shape is

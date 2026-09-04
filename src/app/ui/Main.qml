@@ -136,11 +136,14 @@ ApplicationWindow {
     // relative to what it is aimed at.
     Shortcut {
         sequences: [StandardKey.AddTab]          // Ctrl+T
-        onActivated: root.openFeature("mole.browser")
+        // By name rather than by id: App.openFeatureTab("...") with an id
+        // nothing knows returns -1 in silence, so a rename broke this key with
+        // no diagnostic anywhere. See MOLE-396.
+        onActivated: App.openNewBrowser()
     }
     Shortcut {
         sequence: "Ctrl+Shift+T"
-        onActivated: root.openFeature("mole.commander")
+        onActivated: App.openNewCommander()
     }
     Shortcut {
         sequences: [StandardKey.Close]           // Ctrl+W
@@ -148,7 +151,7 @@ ApplicationWindow {
     }
     Shortcut {
         sequences: [StandardKey.Find]            // Ctrl+F
-        onActivated: root.openFeature("mole.livesearch")
+        onActivated: App.openSearchHere()
     }
     Shortcut {
         // The one key that reaches everything. It used to be Refresh's, which was
@@ -182,6 +185,28 @@ ApplicationWindow {
         sequence: "Ctrl+Shift+F"
         onActivated: App.triggerAction("mole.path.copyFile")
     }
+    // **The four the comment above was written about, and which were in exactly
+    // that state**: the menu printed them and nothing declared them, so they were
+    // advertised and did nothing. Ctrl+Shift+A was in the in-window key list as
+    // well. tst_QmlConventions compares the two lists now, so a label without a
+    // key here fails a suite rather than reaching somebody's fingers. See
+    // MOLE-396.
+    Shortcut {
+        sequence: "Ctrl+Shift+A"
+        onActivated: App.triggerAction("mole.tools.analyse")
+    }
+    Shortcut {
+        sequence: "Ctrl+Shift+R"
+        onActivated: App.triggerAction("mole.tools.bulkRename")
+    }
+    Shortcut {
+        sequence: "Ctrl+Shift+L"
+        onActivated: App.triggerAction("mole.tools.alerts")
+    }
+    Shortcut {
+        sequence: "Ctrl+Shift+J"
+        onActivated: App.triggerAction("mole.tools.automation")
+    }
     Shortcut {
         sequences: [StandardKey.NextChild, "Ctrl+PgDown"]
         onActivated: root.cycleTab(1)
@@ -191,7 +216,12 @@ ApplicationWindow {
         onActivated: root.cycleTab(-1)
     }
     Shortcut {
-        sequences: [StandardKey.Quit]            // Ctrl+Q
+        // **Both, and the literal is not decoration.** `QKeySequence::Quit` has
+        // no binding at all on X11 -- Qt defines one on macOS and Windows -- so
+        // this declared nothing here while the menu printed Ctrl+Q beside Quit.
+        // The same shape as the two tab-cycling keys above, and for the same
+        // reason. See MOLE-396.
+        sequences: [StandardKey.Quit, "Ctrl+Q"]
         onActivated: Qt.quit()
     }
     // --- the keys that act on the pane in front of you ---------------------

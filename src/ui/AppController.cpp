@@ -1241,6 +1241,102 @@ int AppController::browserTabForCurrent()
     return m_tabs->openTab(QStringLiteral("mole.browser"));
 }
 
+int AppController::openNewBrowser()
+{
+    return m_tabs ? m_tabs->openTab(QStringLiteral("mole.browser")) : -1;
+}
+
+int AppController::openNewCommander()
+{
+    return m_tabs ? m_tabs->openTab(QStringLiteral("mole.commander")) : -1;
+}
+
+int AppController::openSearchHere()
+{
+    return openFeatureTab(QStringLiteral("mole.livesearch"));
+}
+
+bool AppController::relayWindowKey(int key, int modifiers)
+{
+    // Ctrl is the whole of the claim: everything relayed is a Ctrl key, and a
+    // view that wants one of them keeps it by not calling this.
+    if ((modifiers & Qt::ControlModifier) == 0)
+        return false;
+
+    const bool shift = (modifiers & Qt::ShiftModifier) != 0;
+    const auto act = [this](const char* id) {
+        triggerAction(QString::fromLatin1(id));
+        return true;
+    };
+
+    switch (key) {
+    case Qt::Key_W:
+        if (m_tabs)
+            m_tabs->closeCurrentTab();
+        return true;
+    case Qt::Key_T:
+        if (shift)
+            openNewCommander();
+        else
+            openNewBrowser();
+        return true;
+    case Qt::Key_F:
+        openSearchHere();
+        return true;
+    case Qt::Key_D:
+        return act("mole.bookmarks.add");
+    case Qt::Key_Tab:
+    case Qt::Key_Backtab:
+        if (m_tabs && m_tabs->rowCount() > 0) {
+            const int step = (shift || key == Qt::Key_Backtab) ? -1 : 1;
+            const int count = m_tabs->rowCount();
+            m_tabs->setCurrentIndex(((m_tabs->currentIndex() + step) % count + count) % count);
+        }
+        return true;
+
+    // The keys the QML switch did not have, and every one of them is a menu
+    // action this layer already triggers. A viewer swallowed all of them.
+    case Qt::Key_I:
+        if (!shift)
+            return false;
+        openSearchEverywhere();
+        return true;
+    case Qt::Key_S:
+        return shift ? act("mole.tools.folderSizes") : false;
+    case Qt::Key_C:
+        // Only with Shift: plain Ctrl+C is the viewer's own copy.
+        return shift ? act("mole.path.copyFolder") : false;
+    case Qt::Key_A:
+        // The same rule -- plain Ctrl+A selects all in the viewer.
+        return shift ? act("mole.tools.analyse") : false;
+    case Qt::Key_R:
+        return shift ? act("mole.tools.bulkRename") : false;
+    case Qt::Key_L:
+        return shift ? act("mole.tools.alerts") : false;
+    case Qt::Key_J:
+        return shift ? act("mole.tools.automation") : false;
+    case Qt::Key_QuoteLeft:
+        return act("mole.tools.terminal");
+    default:
+        break;
+    }
+
+    // Ctrl+1..9 jumps straight to a tab.
+    if (key >= Qt::Key_1 && key <= Qt::Key_9 && m_tabs) {
+        const int index = key - Qt::Key_1;
+        if (index < m_tabs->rowCount())
+            m_tabs->setCurrentIndex(index);
+        return true;
+    }
+
+    // What is deliberately not here: Ctrl+R for the command palette, and
+    // Ctrl+PgUp/PgDn -- the palette is a QML object and the paging keys are what
+    // a preview uses to turn its own pages, which is why ViewerKeys has a
+    // `reserved` list. Ctrl+Shift+F is the path copy in the window and Find in a
+    // viewer, so the viewer keeps it.
+    return false;
+}
+
 int AppController::openSearchEverywhere()
 {
     const int row = openFeatureTab(QStringLiteral("mole.livesearch"));
@@ -2035,7 +2131,12 @@ void AppController::registerShellActions()
         action.opensFeature = QStringLiteral("core.filesets");
         action.section = MenuAction::Section::Operations;
         action.title = QStringLiteral("Add to set");
-        action.shortcut = QStringLiteral("Ctrl+Shift+S");
+        // No key, deliberately. This carried Ctrl+Shift+S, which is the window's
+        // binding for Folder sizes -- so the menu advertised it beside two
+        // entries and somebody pressing it to add a file to a set started a
+        // measurement of everything in view. A key of its own is a decision
+        // about somebody's fingers rather than a fix for a wrong label, so the
+        // label goes and the menu tells the truth. See MOLE-396.
         action.sortOrder = 30;
         action.enabled = [this] { return !currentTargets().isEmpty(); };
         action.trigger = [this] {

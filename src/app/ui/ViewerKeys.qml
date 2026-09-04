@@ -35,45 +35,20 @@ QtObject {
 
     /// Returns true when the key was handled, in which case the caller should
     /// mark the event accepted so the text control never sees it.
+    ///
+    /// **One table, and it is in C++.** This was a switch over Qt.Key_* here --
+    /// a second copy of the window's key table, which already disagreed with
+    /// Main.qml about nine keys: Ctrl+R, Ctrl+Shift+I/S/C/F, Ctrl+G/L, Ctrl+`,
+    /// Ctrl+Q and Ctrl+PgUp/PgDn were all swallowed by a viewer and never handed
+    /// back. `App.relayWindowKey()` is the one list now, beside the actions it
+    /// triggers; what it deliberately leaves alone is written down there. See
+    /// MOLE-396 and ADR-0002.
     function relay(event) {
         if ((event.modifiers & Qt.ControlModifier) === 0 || isReserved(event))
             return false
-
-        const shift = (event.modifiers & Qt.ShiftModifier) !== 0
-
-        switch (event.key) {
-        case Qt.Key_W:
-            App.tabs.closeCurrentTab()
-            event.accepted = true
-            return true
-        case Qt.Key_T:
-            App.openFeatureTab(shift ? "mole.commander" : "mole.browser")
-            event.accepted = true
-            return true
-        case Qt.Key_F:
-            App.openFeatureTab("mole.livesearch")
-            event.accepted = true
-            return true
-        case Qt.Key_D:
-            App.triggerAction("mole.bookmarks.add")
-            event.accepted = true
-            return true
-        case Qt.Key_Tab:
-            App.tabs.currentIndex = (App.tabs.currentIndex + (shift ? -1 : 1)
-                                     + App.tabs.count) % App.tabs.count
-            event.accepted = true
-            return true
-        }
-
-        // Ctrl+1..9 jumps straight to a tab.
-        if (event.key >= Qt.Key_1 && event.key <= Qt.Key_9) {
-            const index = event.key - Qt.Key_1
-            if (index < App.tabs.count)
-                App.tabs.currentIndex = index
-            event.accepted = true
-            return true
-        }
-
-        return false
+        if (!App.relayWindowKey(event.key, event.modifiers))
+            return false
+        event.accepted = true
+        return true
     }
 }

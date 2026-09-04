@@ -399,6 +399,35 @@ public:
     /// on it -- a preset, not a second tool. Returns the row, or -1.
     Q_INVOKABLE int openSearchEverywhere();
 
+    /// The three standing tabs, by name rather than by id.
+    ///
+    /// **QML spelled `mole.browser`, `mole.commander` and `mole.livesearch` as
+    /// string literals**, in two files, beside a fourth key that called
+    /// openSearchEverywhere() -- and `openFeatureTab()` with an id nothing knows
+    /// returns -1 in silence, so a rename broke two keys with no diagnostic
+    /// anywhere. The id belongs in the layer that knows what a feature is. See
+    /// MOLE-396 and ADR-0032, which is why the shell may know these three at all.
+    Q_INVOKABLE int openNewBrowser();
+    Q_INVOKABLE int openNewCommander();
+    Q_INVOKABLE int openSearchHere();
+
+    /// One of the window's keys, handed back by a view that had to steal it.
+    ///
+    /// A read-only `TextArea` is still an editor as far as Qt's shortcut
+    /// override is concerned, so it swallows every key in the standard editing
+    /// bindings -- `Ctrl+W` is DeleteStartOfWord, and clicking into a preview
+    /// stopped Ctrl+W from closing the tab. `ViewerKeys.qml` hands those back,
+    /// and it did it with **a second copy of the window's key table written as a
+    /// QML switch**: one that already disagreed with Main.qml about nine keys.
+    /// ADR-0002 accepted the duplication as the lesser evil; this is the same
+    /// arrangement with the table in the layer that owns the actions, so the two
+    /// lists can be compared and a key added to the window is one line.
+    ///
+    /// Returns true when the key was acted on, in which case the caller marks
+    /// the event accepted so the text control never sees it. Only keys a viewer
+    /// has no use for: Ctrl+C, Ctrl+A and Ctrl+Home are left alone.
+    Q_INVOKABLE bool relayWindowKey(int key, int modifiers);
+
     /// Opens a preview tab for `uri`, reusing one that is already open rather
     /// than piling up a tab per file.
     Q_INVOKABLE void previewFile(const QString& uri);

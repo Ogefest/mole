@@ -100,6 +100,7 @@ private slots:
     void everyNameTheShellSeedsIsOneTheControllerHas_data();
     void everyNameTheShellSeedsIsOneTheControllerHas();
     void aRefusedDriveSaveLeavesThePassphraseDialogAlone();
+    void aViewerHandsTheWindowsKeysBack();
     void menuHasTheClassicSections();
     void theTypeScaleIsOrderedAndAboveTheFloor();
     void menuOffersANewTabOnlyForWhatOpensFromNothing();
@@ -1827,6 +1828,39 @@ void TestAppIntegration::aRefusedDriveSaveLeavesThePassphraseDialogAlone()
 
     QVERIFY2(m_app->credentialsError().isEmpty(),
         qPrintable(QStringLiteral("the passphrase dialog would now say: %1").arg(m_app->credentialsError())));
+}
+
+void TestAppIntegration::aViewerHandsTheWindowsKeysBack()
+{
+    // A read-only TextArea is still an editor as far as Qt's shortcut override
+    // is concerned, so a preview swallows every key in the standard editing
+    // bindings -- Ctrl+W is DeleteStartOfWord, and clicking into one stopped
+    // Ctrl+W from closing the tab. ViewerKeys.qml hands them back, and it did it
+    // with a second copy of the window's key table written as a QML switch,
+    // which already disagreed with Main.qml about nine keys. One table now, in
+    // the layer that owns the actions. See MOLE-396 and ADR-0002.
+    const int before = m_app->tabs()->rowCount();
+
+    // A key the window binds, relayed: a new browser tab.
+    QVERIFY(m_app->relayWindowKey(Qt::Key_T, Qt::ControlModifier));
+    QCOMPARE(m_app->tabs()->rowCount(), before + 1);
+
+    // And one it does not: plain Ctrl+C is the viewer's own copy, and a relay
+    // that took it would break copying out of a preview.
+    QVERIFY(!m_app->relayWindowKey(Qt::Key_C, Qt::ControlModifier));
+    // Anything without Ctrl is the viewer's, whatever it is.
+    QVERIFY(!m_app->relayWindowKey(Qt::Key_T, Qt::NoModifier));
+
+    // Closing, which is the key the whole mechanism exists for.
+    const int now = m_app->tabs()->rowCount();
+    QVERIFY(m_app->relayWindowKey(Qt::Key_W, Qt::ControlModifier));
+    QCOMPARE(m_app->tabs()->rowCount(), now - 1);
+
+    // One of the nine the QML copy was missing: Ctrl+Shift+A analyses, and it
+    // reaches the same action the menu entry does.
+    const int tabs = m_app->tabs()->rowCount();
+    QVERIFY(m_app->relayWindowKey(Qt::Key_A, Qt::ControlModifier | Qt::ShiftModifier));
+    QCOMPARE(m_app->tabs()->rowCount(), tabs + 1);
 }
 
 void TestAppIntegration::openExternallyGoesThroughTheLauncher()
