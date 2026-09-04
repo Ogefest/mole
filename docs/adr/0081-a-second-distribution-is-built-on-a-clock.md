@@ -96,3 +96,53 @@ alternative is the same work at a release, with a tag half cut.
 A weekly job also means a fault can be four days old before anything says so.
 Anybody touching an optional-library path can ask for the answer immediately with
 `workflow_dispatch` rather than waiting for Monday.
+
+## Amendment, 2026-09-04 (MOLE-389)
+
+**`fedora:40` was itself the pinned image this decision rejected.** The Reason
+above turns down "a pinned container image built here" because *pinning the image
+is pinning the very thing being tested*, and then the Decision names a release
+number — which is the same pin reached by a different road. Fedora 40 left support
+on 2025-05-13; the job kept running every Monday against a distribution whose
+libraries had stopped moving, so the check written to be told when the distribution
+moves was asking a question that could no longer have a new answer. Nothing was
+red, and nothing being red was the failure.
+
+The `.rpm` was worse than idle, because an `.rpm` records the sonames its binaries
+link and the build container decides them. A Fedora 40 build asks for
+`libgit2.so.1.7()(64bit)` and `libarrow.so.1500()(64bit)`; the current Fedora
+provides 1.9 and 2300 and `dnf install` answers *nothing provides* and installs
+nothing at all. Measured, not inferred. So the published package installed on no
+Fedora anybody was running, while `README.md` sold it for "Fedora and RHEL" — and
+RHEL 9 is further behind still.
+
+What changes:
+
+- `scripts/package-rpm.sh` and `second-family.yml` follow `fedora:latest`. A
+  release transition is now allowed to break the weekly job, and **a red run is a
+  task rather than a tag**: pinning the image back is how four releases of movement
+  went unseen.
+- The release workflow installs the `.rpm` in
+  `registry.fedoraproject.org/fedora-minimal:latest` — a different image from the
+  one that built it, and a much smaller package set, so the requirements have to be
+  satisfiable rather than already present. Installing it in the build image asked
+  whether a package installs on the system that made it, which has one answer.
+- `README.md` says what an `.rpm` can promise: the release it was built on, and not
+  RHEL. Anywhere else, the tarball is the artefact that works.
+
+**The first build on the moving tag found two faults, which is the case for the
+decision restated.** Neither could ever have appeared here: `qt_add_plugin`'s
+`CLASS_NAME mole::ArchivePlugin` stopped the configure outright, because Qt 6.10
+validates that argument as a C++ identifier and Qt 6.4 stored whatever it was
+given; and libnfs 6.0 swapped the last two arguments of `nfs_read` and `nfs_write`
+into POSIX order, which no version macro announces and only a compiler with the
+other header reports. Both were in `main`, both stop `make packages`, and both were
+invisible for as long as the only second environment was a distribution that had
+stopped moving. That is what four releases of pin cost, measured.
+
+The second Arrow this job was partly chosen for is still a second Arrow — 23 on
+Fedora 44 against 25 built from source here — but the gap is now a version rather
+than eight, and the compile-against-old-Arrow question that started this has
+largely gone with it. That is worth knowing before this job is asked to carry more
+than it does: if an old Arrow is what matters, it wants naming as its own decision
+rather than arriving as a side effect of which distribution is current.

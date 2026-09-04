@@ -274,8 +274,22 @@ jobs:
             test -f /usr/share/applications/mole.desktop
             apt-get remove -y -qq mole >/dev/null
             test ! -e /usr/bin/mole"
+          # **Fedora, and deliberately not the image that built the package.** The
+          # check used to run in `fedora:40`, which is what `make rpm` built in --
+          # so it asked whether a package installs on the machine that made it, and
+          # that question has one answer. An .rpm records the sonames its binaries
+          # link and the build container decides them, so what has to be shown is
+          # that a *different* system can satisfy them.
+          #
+          # fedora-minimal is the same release stream and a much smaller package
+          # set: the base image carries a few hundred packages that could satisfy a
+          # requirement by accident, and the minimal one does not. If the two tags
+          # ever disagree about the release this fails, and that is the honest
+          # answer for a package whose requirements name minor versions rather than
+          # a flake to pin around. See MOLE-389.
           echo "--- Fedora ---"
-          docker run --rm -v "$PWD/build/packages:/pkg:ro" fedora:40 bash -c "
+          docker run --rm -v "$PWD/build/packages:/pkg:ro" \
+            registry.fedoraproject.org/fedora-minimal:latest bash -c "
             set -e
             dnf install -y -q /pkg/mole-${version}-1.x86_64.rpm >/dev/null
             QT_QPA_PLATFORM=offscreen mole --plugins | tee /tmp/said

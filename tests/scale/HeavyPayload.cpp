@@ -11,6 +11,14 @@
 #include <algorithm>
 #include <chrono>
 
+// sysconf is POSIX and /proc is Linux's. Guarded rather than assumed: a file that
+// names sysconf without this does not compile wherever a Qt header stops pulling
+// unistd.h in behind it -- which is what a newer Qt does, and how this was found.
+// tst_ArchiveFileSystem.cpp has the same pair, for the same reason. See MOLE-389.
+#ifdef Q_OS_UNIX
+#include <unistd.h>
+#endif
+
 namespace mole::test {
 namespace {
 
@@ -44,6 +52,7 @@ namespace {
 
     qint64 residentBytes()
     {
+#ifdef Q_OS_UNIX
         QFile statm(QStringLiteral("/proc/self/statm"));
         if (!statm.open(QIODevice::ReadOnly))
             return 0;
@@ -51,6 +60,11 @@ namespace {
         if (fields.size() < 2)
             return 0;
         return fields.at(1).toLongLong() * qint64(sysconf(_SC_PAGESIZE));
+#else
+        // Zero is what every caller already treats as "the platform will not say":
+        // the growth check compares against a baseline of zero and passes.
+        return 0;
+#endif
     }
 
     /// Every entry directly in the temporary directory, and inside any directory

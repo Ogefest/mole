@@ -7,6 +7,13 @@
 # `make packages` and the release workflow are for, and both were run by hand
 # against clean containers of each family before this landed.
 #
+# **Two of the cases here are about compiling somewhere else rather than about a
+# package.** They are here because `make rpm` is the only cross-distribution build
+# this project has, and both faults it found stop the .rpm being built at all: a
+# plugin class name Qt 6.10 refuses, and a libnfs whose read and write swapped
+# their arguments in 6.0. Neither can fail on this machine, which is the whole
+# reason they are read rather than compiled. See MOLE-389.
+#
 # What is worth holding here is the part that goes stale silently. CPack packs what
 # `make install` installs, so the layout cannot drift -- but the dependencies a
 # package declares can, in one specific place: Qt loads the QML modules and the SQL
@@ -140,6 +147,85 @@ if [ -s "$SHELLTEST_TMP/native-rpm" ]; then
 fi
 grep -q 'CURL_OPENSSL_4' scripts/package-rpm.sh \
     || fail "the script does not say why it uses a container"
+
+begin "the .rpm is installed somewhere other than the image that built it"
+# The install check ran in fedora:40 and `make rpm` built in fedora:40, so what it
+# asked was whether a package installs on the system that made it -- a fixture that
+# cannot be false, TODO.md rule four. An .rpm records the sonames its binaries link
+# and the build container decides them, so the only question worth the docker pull
+# is whether a *different* system can satisfy them. See MOLE-389.
+build_image=$(sed -n 's/^IMAGE="${MOLE_RPM_IMAGE:-\(.*\)}"$/\1/p' scripts/package-rpm.sh)
+[ -n "$build_image" ] || fail "cannot tell which image scripts/package-rpm.sh builds in"
+
+# The images actually handed to docker, rather than every one the file mentions --
+# rule three, skip the file's own account of itself: the comment beside the check
+# names the retired image it used to use, and that is prose about the fault.
+grep -A2 -E '\bdocker run\b' .github/workflows/release.yml \
+    | grep -oE '(registry\.fedoraproject\.org/)?fedora[a-z-]*:[a-z0-9.]+' \
+    | sort -u > "$SHELLTEST_TMP/install-images"
+[ -s "$SHELLTEST_TMP/install-images" ] \
+    || fail "the release workflow installs the .rpm in no Fedora container at all"
+while read -r image; do
+    [ "$image" != "$build_image" ] \
+        || fail "the .rpm is only installed in $image, which is what built it"
+done < "$SHELLTEST_TMP/install-images"
+
+begin "every plugin class name is a name C++ could compile"
+# `CLASS_NAME mole::ArchivePlugin` sat in src/plugins/CMakeLists.txt for months and
+# configured cleanly, because Qt 6.4 stores whatever it is handed and only a static
+# plugin ever uses it. Qt 6.10 validates it, and refused to configure at all --
+# found by moving the .rpm off a Fedora that had stopped moving, which is the whole
+# argument for not pinning one. The value is only ever the argument of a
+# `Q_IMPORT_PLUGIN(...)`, and what moc exports for a namespaced plugin class is the
+# unqualified symbol, so a qualified name was never a name that could work. Here
+# rather than in a compile: on Qt 6.4 there is nothing to compile, which is exactly
+# how it went unnoticed. See MOLE-389.
+grep -rh --include=CMakeLists.txt "CLASS_NAME" src CMakeLists.txt 2>/dev/null \
+    | sed 's/^ *//' | sort -u > "$SHELLTEST_TMP/class-names"
+[ -s "$SHELLTEST_TMP/class-names" ] || fail "no plugin declares a CLASS_NAME, so this case reads nothing"
+while read -r line; do
+    name=${line##*CLASS_NAME }
+    name=${name%% *}
+    printf '%s' "$name" | grep -qE '^[A-Za-z_][A-Za-z0-9_]*$' \
+        || fail "CLASS_NAME $name is not a C++ identifier, and Qt 6.10 refuses to configure"
+done < "$SHELLTEST_TMP/class-names"
+
+begin "libnfs's read and write go through the pair that knows both orders"
+# libnfs 6.0 put the buffer before the count, POSIX order, where 5.x took the count
+# first. Both are `nfs_read`, both take a uint64 and a pointer, and there is no
+# version macro to test -- so the only report is a compiler with the other header
+# refusing the call, which happened the first time anything was built on a Fedora
+# that had moved. `nfsRead` and `nfsWrite` in NfsFileSystem.cpp ask the declaration
+# which order it has; a call written directly compiles here and nowhere newer.
+# See MOLE-389.
+grep -rn --include="*.cpp" --include="*.h" -E '\bnfs_(read|write)\(' src \
+    | grep -vE 'nfs_(read|write)\(context, handle,' > "$SHELLTEST_TMP/direct-nfs"
+if [ -s "$SHELLTEST_TMP/direct-nfs" ]; then
+    fail "a libnfs read or write is called directly, and its argument order moved in 6.0"
+    sed 's/^/    /' "$SHELLTEST_TMP/direct-nfs"
+fi
+# And the pair is still there to be called: a rule whose subject has been renamed
+# passes by finding nothing.
+grep -q 'int nfsRead(' src/plugins/network/NfsFileSystem.cpp \
+    || fail "nothing in NfsFileSystem.cpp adapts libnfs's read"
+grep -q 'int nfsWrite(' src/plugins/network/NfsFileSystem.cpp \
+    || fail "nothing in NfsFileSystem.cpp adapts libnfs's write"
+
+begin "nothing in the packaging is pinned to a Fedora release number"
+# A release number is a pin with an expiry date, and this expired: the .rpm, the
+# install check and the weekly job all named fedora:40, whose support ended more
+# than a year before anybody noticed. Nothing was red -- an unsupported release
+# stops moving, so the job that exists to notice movement kept answering the same
+# question -- while the published .rpm would not install on any Fedora a user has.
+# ADR-0081 rejected a pinned image for this reason and a release number is that pin
+# by another route. See MOLE-389.
+second_family=$(sed -n 's/^ *container: *\([^ ]*\).*$/\1/p' .github/workflows/second-family.yml)
+[ -n "$second_family" ] || fail "cannot tell which image the weekly job runs in"
+for image in "$build_image" "$second_family" $(cat "$SHELLTEST_TMP/install-images"); do
+    case "${image##*:}" in
+        *[0-9]*) fail "$image names a release, and a release goes out of support" ;;
+    esac
+done
 
 begin "the AppImage's floor is written where a downloader can find it"
 # What it was built on decides what it runs on, so the floor is a promise. A promise

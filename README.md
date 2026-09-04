@@ -167,15 +167,16 @@ make packages    # a .deb, an .rpm and an AppImage, each for the family it insta
 | `make optimised` | — | 127 MB | yes | — | running on this machine |
 | `make install` | — | 196 MB | yes | — | your own machine |
 | `.deb` | 3.7 MB | 10 MB | yes, from the archive | no Parquet grid | Debian and Ubuntu |
-| `.rpm` | 2.5 MB | 11 MB | yes, from the archive | — | Fedora and RHEL |
+| `.rpm` | 2.5 MB | 11 MB | yes, from the archive | will not install on any release but the one it was built on | the current Fedora |
 | tarball (`make bundle`) | 79 MB | 209 MB | **no** | no Windows shares; video needs the host's ffmpeg | handing it to someone else |
 | AppImage | 110 MB | 294 MB | **no** | no Parquet grid; no Windows shares; video needs the host's ffmpeg | any distribution from 2021 onwards — it **runs on glibc 2.34** and upwards |
 
 **Where those figures come from, because a size is not a property of the program.**
 Measured on 2026-09-01 from the artefacts the release workflow builds, against Qt
-6.4 on Ubuntu 24.04 — except the `.rpm`, built on Fedora 40, and the AppImage, built
-on AlmaLinux 9 for the glibc floor (see `TODO.md`). MB means 10⁶ bytes; *on disk* is
-the apparent size of the unpacked tree, which is what your filesystem has to hold.
+6.4 on Ubuntu 24.04 — except the `.rpm`, built in a Fedora container, and the
+AppImage, built on AlmaLinux 9 for the glibc floor (see `TODO.md`). MB means 10⁶
+bytes; *on disk* is the apparent size of the unpacked tree, which is what your
+filesystem has to hold.
 The tarball moved twice on 2026-09-01 and ended smaller than it started: up by
 about 85 MB when it gained a media backend it had never had, then down by 80 when the
 whole codec stack was left to the host for the licence reason under *Video previews*
@@ -185,6 +186,16 @@ A build finds what a machine has, so yours will differ: leaving Arrow out takes 
 of megabytes off, and the two figures for `make optimised` and `make install` are
 large because neither strips debug information — the packages, the tarball and the
 AppImage all do.
+
+**The `.rpm` row carries the narrowest promise here, and it is not a choice.** An
+`.rpm` records the sonames its binaries link, and those carry minor versions:
+built where `libgit2.so.1.9` and `libarrow.so.2300` are what the distribution has,
+it asks its installer for exactly those, and `dnf` on a release with 1.7 and 1500
+answers *nothing provides libgit2.so.1.9* and installs nothing at all. So the
+package is for the Fedora that was current when it was built — not for older
+Fedoras, and not for RHEL, which is several years behind on both. Anywhere else,
+the tarball is the artefact that works: it carries its own libraries and answers to
+nobody's archive.
 
 The AppImage's row carries the one promise that is not about size: **it runs on
 glibc 2.34** — Ubuntu 22.04, Debian 12, RHEL 9 and anything newer — because that is

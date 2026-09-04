@@ -346,7 +346,11 @@ project, and a contributor should never hit a wall of text they cannot read.
     refuses a missing directory, which is a claim about Qt and untrue.
     `test::madeUnreadable()` makes those four skip rather than pass, and the Fedora
     job runs them as an account that can be refused — a machine that is not this
-    one is what asks a fixture whether it meant it.
+    one is what asks a fixture whether it meant it. The release workflow then
+    turned out to be doing it too: it installed the `.rpm` in the container that
+    had built it, so it asked whether a package installs on the system that made
+    it. A package records the sonames its binaries link, and that question has one
+    answer. `tst_Packages.sh` now holds the two images apart (MOLE-389).
 
 - **`shellcheck` is not in the suite, and the rules it would enforce are held by
   hand instead.** `shellcheck` flags the class of fault MOLE-233 was about — a
@@ -584,6 +588,19 @@ project, and a contributor should never hit a wall of text they cannot read.
   green against Arrow 15.0.2, as an unprivileged account with no locale. Its weekly
   schedule therefore stays enabled; a red one would have been switched off, for the
   reason the Windows job is dispatch-only.
+
+  **That job follows `fedora:latest` since MOLE-389, and a release transition is
+  allowed to break it.** It sat on `fedora:40` until a year after that release left
+  support, where a distribution whose libraries have stopped moving cannot give the
+  job a new answer — so nothing was red, and nothing being red was the failure.
+  **A red run there is a task and not a reason to pin the image back**: it means
+  something this project builds against has changed, which is the whole of what the
+  job is for. The first build on the moving tag found two of those at once — a
+  plugin class name Qt 6.10 refuses, and a libnfs whose read and write swapped
+  their arguments — neither of which can fail on a machine with Qt 6.4 and libnfs
+  5. The same applies to the `.rpm`, built in the same moving tag: the
+  package is for the release it was built on, and `README.md` says so rather than
+  offering it to RHEL.
 
   **The Windows and macOS jobs have deliberately not been dispatched, and the
   reason is the code rather than the runners.** The author's call, in their words:

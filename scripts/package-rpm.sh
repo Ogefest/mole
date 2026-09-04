@@ -18,13 +18,21 @@
 # Usage:
 #   scripts/package-rpm.sh [output directory]
 #
+# **The image is a moving tag and must stay one.** An .rpm records the sonames its
+# binaries link, and the container decides them: a package built on Fedora 40
+# requires `libgit2.so.1.7()(64bit)` and `libarrow.so.1500()(64bit)`, and the
+# current Fedora provides 1.9 and 2300. `dnf install` refuses it with "nothing
+# provides", which is not a warning and not a downgrade -- the package does not
+# install at all. So a pin to a release number is a pin to the day it was written,
+# and it expires the moment that release does. See MOLE-389.
+#
 # MOLE_RPM_IMAGE overrides the distribution. Fedora because it is the family's
 # reference and its Qt 6 packages are current; anything with cmake, a compiler and
 # rpm-build will do.
 #
 set -uo pipefail
 
-IMAGE="${MOLE_RPM_IMAGE:-fedora:40}"
+IMAGE="${MOLE_RPM_IMAGE:-fedora:latest}"
 SOURCE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${1:-$SOURCE/build/packages}"
 
@@ -54,6 +62,10 @@ docker run --rm \
 # check written as something | grep or something | tail cannot fail this script.
 # TODO.md rule one. See MOLE-387.
 set -eo pipefail
+# Which release this turned out to be, on the record: `latest` is a moving tag, so
+# the log is the only record of what the requirements were taken from.
+. /etc/os-release
+echo "  on Fedora $VERSION_ID"
 dnf install -y -q gcc-c++ cmake ninja-build pkgconf-pkg-config rpm-build \
     qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qttools-devel qt6-qtsvg-devel \
     qt6-qtmultimedia-devel qt6-qtpdf-devel libarchive-devel libcurl-devel \
@@ -79,6 +91,23 @@ cmake --build /build --parallel "$(nproc)"
 cd /build && cpack -G RPM
 cp /build/*.rpm /out/
 chown "$CALLER" /out/*.rpm
+
+# The sonames the package will ask its installer for, printed rather than left to
+# be discovered by whoever runs dnf. This is the floor: every one of these has to
+# be provided by the release the package is installed on, and a minor version in a
+# soname means that release and not a later one.
+#
+# After the package has been handed over, so that nothing about reporting can lose
+# one, and the grep cannot fail the script -- but an empty answer is said out loud,
+# because a package that links nothing would mean something has gone very wrong.
+# See MOLE-389.
+linked=$(rpm -qp --requires /build/*.rpm | grep -E "\.so\." | sort || true)
+echo "  it requires:"
+if [ -n "$linked" ]; then
+    printf "%s\n" "$linked" | sed "s/^/    /"
+else
+    echo "    nothing, which cannot be right for a package with binaries in it"
+fi
 '
 status=$?
 [ "$status" = 0 ] || {

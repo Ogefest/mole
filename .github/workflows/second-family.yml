@@ -11,12 +11,27 @@
 # author's workstation. See MOLE-297.
 #
 # **Fedora, because that is where both faults surfaced**, `scripts/package-rpm.sh`
-# already pulls it, and it packages an older Arrow than this project can otherwise
-# get, so a second Arrow is exercised for free.
+# already pulls it, and it packages a different Arrow from the one this machine
+# has, so a second Arrow is exercised for free.
 #
 # **This is not a build matrix and is not to grow into one.** One second family, on a
 # clock, is the cheapest thing that would have caught both of those on the day they
 # landed. A matrix is a different decision with a different cost.
+#
+# **`fedora:latest`, because a release number is a pin with an expiry date.** This
+# ran in `fedora:40` for long enough that the release went out of support under it,
+# and a container of a distribution nobody is updating asks nothing at all: the
+# libraries stopped moving, so the job that exists to notice movement answered the
+# same question every Monday. ADR-0081 chose Fedora to be told when the
+# distribution moves and rejected a pinned image for exactly this reason -- a
+# release that has stopped receiving updates is that pin by another route. So the
+# tag moves, and a release transition is allowed to break this job.
+#
+# **When it goes red, that is the job working, and the answer is a task and not a
+# tag.** Pinning the image back is what hid four releases of movement, two of which
+# stopped this project compiling at all; a red run means something it builds
+# against has changed, and somebody has to decide what to do about that. See
+# MOLE-389.
 name: Second family
 
 on:
@@ -43,7 +58,8 @@ jobs:
   fedora:
     name: Configure, build and the fast tier on Fedora
     runs-on: ubuntu-24.04
-    container: fedora:40
+    # The current release, whatever it is on the day -- see the note at the top.
+    container: fedora:latest
 
     steps:
       # Everything the build and the suite need, named here rather than in an image

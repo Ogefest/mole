@@ -149,9 +149,16 @@ if(LibArchive_FOUND)
         PUBLIC mole_core
         PRIVATE LibArchive::LibArchive mole_flags)
 
+    # CLASS_NAME is the *unqualified* name, and Qt is right to insist. It is only
+    # ever used to build a `Q_IMPORT_PLUGIN(...)` for a static plugin, and what moc
+    # exports for `mole::ArchivePlugin` is `qt_static_plugin_ArchivePlugin` -- a
+    # qualified name could not name that symbol even if the macro accepted one. Qt
+    # 6.4 stored whatever it was given, so `mole::ArchivePlugin` sat here unnoticed
+    # until Qt 6.10 began validating it and refused to configure at all. See
+    # MOLE-389.
     qt_add_plugin(mole_plugin_archive
         SHARED
-        CLASS_NAME mole::ArchivePlugin
+        CLASS_NAME ArchivePlugin
     )
 
     # Qt 6.4's qt_add_plugin() ignores trailing source arguments, which yields a
@@ -272,7 +279,8 @@ if(CURL_FOUND AND OpenSSL_FOUND)
 
     qt_add_plugin(mole_plugin_network
         SHARED
-        CLASS_NAME mole::NetworkPlugin
+        # Unqualified, for the reason beside the archive plugin above.
+        CLASS_NAME NetworkPlugin
     )
 
     # Qt 6.4's qt_add_plugin() ignores trailing source arguments, exactly as it

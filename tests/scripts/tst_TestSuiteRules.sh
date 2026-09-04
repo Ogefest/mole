@@ -239,6 +239,31 @@ if [ -s "$SHELLTEST_TMP/unguarded" ]; then
     sed "s|$MOLE_SOURCE_DIR/||" "$SHELLTEST_TMP/unguarded" | sed 's/^/    /'
 fi
 
+begin "a suite that calls a POSIX function includes the header that declares it"
+# The rule above reads includes, so a file that names `sysconf` and includes
+# nothing at all went straight past it -- which is what HeavyPayload.cpp did. It
+# compiled here only because a Qt header pulled unistd.h in behind it, and the
+# first build against a Qt that had stopped doing that failed to compile the whole
+# scale tier. The include-and-guard pair is what tst_ArchiveFileSystem.cpp already
+# has for the same two lines.
+#
+# The names are the unambiguous ones: `kill` and `getpid` are also methods on Qt
+# classes, and `victim.kill()` is not this. A preceding dot, arrow or word
+# character is what tells them apart. See MOLE-389.
+posix_call='(^|[^A-Za-z0-9_.>])(sysconf|fork|execvp|execlp|dup2|waitpid|mkfifo|geteuid|openpty)[[:space:]]*\(|_SC_[A-Z]'
+posix_header='^[[:space:]]*#[[:space:]]*include[[:space:]]*<((unistd|signal|pty|termios|poll|fcntl|dlfcn|pwd)[.]h|sys/)'
+: > "$SHELLTEST_TMP/unpaired"
+find "$MOLE_SOURCE_DIR/tests" -name '*.cpp' -o -name '*.h' | sort | while IFS= read -r file; do
+    grep -qE "$posix_call" "$file" || continue
+    grep -qE "$posix_header" "$file" && continue
+    named=$(grep -oE "$posix_call" "$file" | head -1 | tr -d ' (')
+    printf '%s: %s\n' "${file#"$MOLE_SOURCE_DIR/"}" "$named" >> "$SHELLTEST_TMP/unpaired"
+done
+if [ -s "$SHELLTEST_TMP/unpaired" ]; then
+    fail "a suite calls a POSIX function and includes no header that declares one, so it builds only where something else happens to have included it"
+    sed 's/^/    /' "$SHELLTEST_TMP/unpaired"
+fi
+
 begin "a shell test answers the same whether make or ctest started it"
 # `make test` exports MAKEFLAGS and MAKELEVEL to everything below it, so a `make`
 # run by a test was a recursive one: it prints "Entering directory" and "Leaving

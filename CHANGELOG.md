@@ -65,6 +65,8 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-389 Configure works again on Qt 6.10 and newer
+2026-09-04 #MOLE-389 The .rpm is built on the current Fedora, and installs there
 2026-09-04 #MOLE-404 A file set's "missing" count belongs to the set on screen
 2026-09-04 #MOLE-404 A photograph with no camera information is read once rather than twice on a network drive
 2026-09-04 #MOLE-404 Typing in a source file's search box no longer re-highlights the whole window per keystroke

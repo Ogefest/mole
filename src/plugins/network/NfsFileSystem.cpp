@@ -40,6 +40,37 @@ namespace {
     /// discovered.
     constexpr qint64 kReadChunkBytes = 1 << 20;
 
+    /// libnfs 6.0 swapped the last two arguments of its read and write, and it
+    /// swapped them into POSIX order: `(buf, count)` where 5.x took
+    /// `(count, buf)`. Both are still called `nfs_read`, so there is no version to
+    /// test for and nothing at all to notice until a compiler with the other
+    /// header refuses the call -- which is how this was found: everything here is
+    /// built against 5.0 and the current Fedora carries 6.0.
+    ///
+    /// Asked of the declaration rather than of a version macro. libnfs has no
+    /// header macro that moves with this, and a version number read out of
+    /// pkg-config would put the answer in the build system for a question the
+    /// compiler can answer exactly. The template parameters are what makes it
+    /// work: a discarded `if constexpr` branch is only left uninstantiated inside
+    /// a template. See MOLE-389.
+    template<typename Context, typename Handle>
+    int nfsRead(Context context, Handle handle, char* data, uint64_t want)
+    {
+        if constexpr (requires { nfs_read(context, handle, static_cast<void*>(data), size_t(want)); })
+            return nfs_read(context, handle, data, want);
+        else
+            return nfs_read(context, handle, want, data);
+    }
+
+    template<typename Context, typename Handle>
+    int nfsWrite(Context context, Handle handle, const char* data, uint64_t want)
+    {
+        if constexpr (requires { nfs_write(context, handle, static_cast<const void*>(data), size_t(want)); })
+            return nfs_write(context, handle, data, want);
+        else
+            return nfs_write(context, handle, want, data);
+    }
+
     /// Whether this is the server answering a question about a file, rather than
     /// the connection underneath failing.
     ///
@@ -369,7 +400,7 @@ namespace {
             if (maxSize <= 0 || !m_handle)
                 return maxSize <= 0 ? 0 : -1;
             const uint64_t want = uint64_t(qMin(maxSize, kReadChunkBytes));
-            const int got = nfs_read(m_mount.context(), m_handle, want, data);
+            const int got = nfsRead(m_mount.context(), m_handle, data, want);
             if (got < 0) {
                 note(got);
                 return -1;
@@ -382,7 +413,7 @@ namespace {
             if (size <= 0 || !m_handle)
                 return size <= 0 ? 0 : -1;
             const uint64_t want = uint64_t(qMin(size, kReadChunkBytes));
-            const int put = nfs_write(m_mount.context(), m_handle, want, data);
+            const int put = nfsWrite(m_mount.context(), m_handle, data, want);
             if (put < 0) {
                 note(put);
                 return -1;
