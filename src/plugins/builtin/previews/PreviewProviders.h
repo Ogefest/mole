@@ -15,6 +15,7 @@
 #include "core/text/ImportJsonLinesTask.h"
 
 #include <QPointer>
+#include <QStringConverter>
 #include <QTemporaryDir>
 
 #include <memory>
@@ -321,6 +322,10 @@ private:
     /// Derived from m_text and the chosen mode, computed once per change rather
     /// than on every read.
     QString m_displayText;
+    /// Decided from the first window's byte order mark and kept for the file: a
+    /// BOM is at offset 0 and nowhere else, so a later window asked on its own
+    /// would answer UTF-8 for a UTF-16 file. See MOLE-358.
+    QStringConverter::Encoding m_encoding = QStringConverter::Utf8;
     /// Whether deriving it had to break long runs up. A property of the window
     /// rather than of the file: paging on to one with lines in it clears it.
     bool m_longLinesFolded = false;

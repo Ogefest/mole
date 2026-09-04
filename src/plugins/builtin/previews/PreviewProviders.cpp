@@ -54,14 +54,24 @@ namespace {
         return false;
     }
 
-    /// The longest run of consecutive lines that begin with a table's pipe.
+    /// The longest run of consecutive lines that could be rows of one table.
     ///
-    /// A GFM table row starts with `|`, and so does the `|---|` rule under the
-    /// header, so a run is the header, the rule and the body counted together.
-    /// Leading whitespace is skipped, because a table inside a list item is
-    /// indented, and nothing else about the line is looked at: this is a cost
-    /// estimate and not a parse. Qt's importer decides what a table is; the only
-    /// question here is roughly how many rows it is about to be handed.
+    /// **A line with an unescaped `|` in it, outside a fenced block.** It used to
+    /// be a line whose first non-space character is `|`, which is how most people
+    /// write a table and is not what GFM or Qt's md4c importer require: `a | b`
+    /// over `--|--` is a legal table, several generators produce exactly that, and
+    /// a two-thousand-row one written that way scored 0, was rendered, and cost
+    /// the 2.6-second stall this exists to prevent. See MOLE-358.
+    ///
+    /// Nothing else about the line is looked at: this is a cost estimate and not
+    /// a parse. Qt's importer decides what a table is; the only question here is
+    /// roughly how many rows it is about to be handed. A run of prose lines that
+    /// happen to contain a pipe would be counted -- and four hundred consecutive
+    /// ones would have to, before the file is shown as source, which is a shape
+    /// nothing but a table has.
+    ///
+    /// A fence is tracked because a code block full of pipes is a common thing in
+    /// a Markdown file and costs the importer nothing at all.
     ///
     /// One pass and no allocation, which is the same trade hasOverlongLine()
     /// makes beside it -- a scan of a quarter of a megabyte against an import
@@ -71,6 +81,7 @@ namespace {
         qsizetype longest = 0;
         qsizetype run = 0;
         qsizetype i = 0;
+        bool inFence = false;
         while (i < text.size()) {
             qsizetype end = i;
             while (end < text.size() && !isLineBreak(text.at(end)))
@@ -80,10 +91,31 @@ namespace {
             while (first < end && text.at(first).isSpace())
                 ++first;
 
-            if (first < end && text.at(first) == u'|')
-                longest = std::max(longest, ++run);
-            else
+            const bool fenceMark = first + 2 < end
+                && ((text.at(first) == u'`' && text.at(first + 1) == u'`' && text.at(first + 2) == u'`')
+                    || (text.at(first) == u'~' && text.at(first + 1) == u'~' && text.at(first + 2) == u'~'));
+            if (fenceMark) {
+                inFence = !inFence;
                 run = 0;
+            } else if (inFence) {
+                run = 0;
+            } else {
+                bool row = false;
+                for (qsizetype at = first; at < end; ++at) {
+                    if (text.at(at) == u'\\') {
+                        ++at; // whatever follows is escaped, the pipe included
+                        continue;
+                    }
+                    if (text.at(at) == u'|') {
+                        row = true;
+                        break;
+                    }
+                }
+                if (row)
+                    longest = std::max(longest, ++run);
+                else
+                    run = 0;
+            }
 
             // A CRLF ends one line, not two.
             i = end;
@@ -95,27 +127,49 @@ namespace {
         return longest;
     }
 
-    /// Breaks every run longer than `limit` into pieces of `limit` characters.
+    /// Whether a document starts a new block here. `\r\n` is one break, so a
+    /// caller stepping through the text has to skip the `\n` after an `\r`.
+    ///
+    /// Narrower than isLineBreak(), which decides where a *fold* may go: U+2028
+    /// and a vertical tab are line breaks inside a block rather than block
+    /// boundaries, so counting them would put a number beside no row at all.
+    bool startsNewBlock(QChar c)
+    {
+        return c == u'\n' || c == u'\r' || c == QChar::ParagraphSeparator;
+    }
+
     /// The file's line numbers, one per row of `text` as a document lays it out.
     ///
-    /// Counting `\n` and nothing else. isLineBreak() is wider on purpose -- it
-    /// decides where a *fold* may go -- but a number in a gutter has to agree with
-    /// every other tool the reader owns, and those count newlines.
+    /// **Every block break, not every `\n`.** QTextDocument starts a block at
+    /// `\n`, at a lone `\r`, at `\r\n` taken as one, and at U+2029. Counting
+    /// newlines alone gave a classic-Mac file forty rows and a one-entry gutter,
+    /// and gave a file that mixes lone `\r` with `\n` numbers that drift
+    /// downwards -- a plausible number beside the wrong line, which is worse than
+    /// no number at all.
+    ///
+    /// This used to say the opposite, on the argument that a gutter has to agree
+    /// with `wc -l`. For a file with no `\n` in it there is no number that
+    /// satisfies both, and a gutter is a per-row model: what it is beside is the
+    /// thing it has to be right about. See MOLE-309 for the first half of this and
+    /// MOLE-358 for the correction.
     QList<int> lineNumbersFor(const QString& text)
     {
         QList<int> rows;
         rows.reserve(text.count(u'\n') + 1);
         int number = 1;
         rows.append(number);
-        for (const QChar c : text) {
-            if (c == u'\n')
-                rows.append(++number);
+        for (qsizetype i = 0; i < text.size(); ++i) {
+            if (!startsNewBlock(text.at(i)))
+                continue;
+            if (text.at(i) == u'\r' && i + 1 < text.size() && text.at(i + 1) == u'\n')
+                ++i; // one break, not two
+            rows.append(++number);
         }
-        // A file ending in a newline has one row after it with nothing in it, and
-        // that row is not a line of the file: `wc -l` says forty for forty lines
+        // A file ending in a break has one row after it with nothing in it, and
+        // that row is not a line of the file: forty lines are forty numbers
         // however the last one ends, and a gutter that said forty-one would be
-        // arguing with the tool the reader checked it against.
-        if (text.endsWith(u'\n') && rows.size() > 1)
+        // numbering the empty row a trailing break leaves behind.
+        if (!text.isEmpty() && startsNewBlock(text.back()) && rows.size() > 1)
             rows.last() = 0;
         return rows;
     }
@@ -140,12 +194,20 @@ namespace {
         }
 
         qsizetype run = 0;
-        for (const QChar c : text) {
+        for (qsizetype i = 0; i < text.size(); ++i) {
+            const QChar c = text.at(i);
             if (isLineBreak(c)) {
                 folded.append(c);
                 run = 0;
-                if (rowsOut && c == u'\n')
+                // The same rule as lineNumbersFor(): a row per block break, with
+                // CRLF counted once. A fold and a gutter have to agree about what
+                // a row is or the numbers walk away from the text.
+                if (rowsOut && startsNewBlock(c)) {
+                    if (c == u'\r' && i + 1 < text.size() && text.at(i + 1) == u'\n') {
+                        folded.append(text.at(++i));
+                    }
                     rowsOut->append(++number);
+                }
                 continue;
             }
             if (run >= limit) {
@@ -170,9 +232,9 @@ namespace {
             folded.append(c);
             ++run;
         }
-        // The same trailing row as above: what a final newline leaves behind is
+        // The same trailing row as above: what a final break leaves behind is
         // not a line.
-        if (rowsOut && text.endsWith(u'\n') && rowsOut->size() > 1)
+        if (rowsOut && !text.isEmpty() && startsNewBlock(text.back()) && rowsOut->size() > 1)
             rowsOut->last() = 0;
         return folded;
     }
@@ -352,11 +414,29 @@ QString TextPreviewController::withoutExternalReferences(const QString& html)
     static const QRegularExpression handlers(
         QStringLiteral("\\son[a-z]+\\s*=\\s*(\"[^\"]*\"|'[^']*'|[^\\s>]+)"),
         QRegularExpression::CaseInsensitiveOption);
+    // The hole the tag list left. Qt's engine loads an image for the `background`
+    // attribute of <body>, <table>, <td> and <th> --
+    // QTextFormat::BackgroundImageUrl, resolved through loadResource, which under
+    // QQuickTextEdit reaches the network for an http: url. No tag on the list
+    // above is involved, so <table background="…/pixel.png"> passed untouched and
+    // a table cell is an entirely ordinary thing for a page to hold. See MOLE-358.
+    static const QRegularExpression backgrounds(
+        QStringLiteral("\\sbackground\\s*=\\s*(\"[^\"]*\"|'[^']*'|[^\\s>]+)"),
+        QRegularExpression::CaseInsensitiveOption);
+    // And a style attribute that names a url, which is the same fetch by another
+    // spelling. The whole attribute goes rather than the url inside it: blunt, for
+    // the reason at the top of this function.
+    static const QRegularExpression styledUrls(
+        QStringLiteral("\\sstyle\\s*=\\s*(\"[^\"]*url\\([^\"]*\"|'[^']*url\\([^']*'"
+                       "|[^\\s>]*url\\([^\\s>]*)"),
+        QRegularExpression::CaseInsensitiveOption);
 
     QString safe = html;
     safe.remove(tags);
     safe.remove(closers);
     safe.remove(handlers);
+    safe.remove(backgrounds);
+    safe.remove(styledUrls);
     return safe;
 }
 
@@ -671,16 +751,33 @@ void TextPreviewController::readWindow(qint64 offset)
         setLoading(false);
 
         if (task->state() == Task::State::Failed) {
+            // Emptied as well as reported, the way the hex viewer empties its
+            // grid: the previous window under a message about this one is a lie
+            // about both, and its gutter numbers lines nobody read.
+            m_text.clear();
+            m_displayText.clear();
+            m_lineRows.clear();
             setErrorText(task->error().message);
+            emit textChanged();
+            emit windowChanged();
             return;
         }
         if (task->state() != Task::State::Succeeded)
             return;
 
+        // The encoding is decided once, from the first window, and reused for the
+        // rest of the file: a byte order mark is at offset 0 and nowhere else, so
+        // asking each window on its own would read window one as UTF-16 and every
+        // window after it as UTF-8. Windows .reg files, PowerShell transcripts and
+        // several CSV exports are UTF-16, and all of them used to arrive as
+        // interleaved replacement characters. See MOLE-358.
+        if (task->actualOffset() == 0) {
+            m_encoding = QStringConverter::encodingForData(task->contents()).value_or(QStringConverter::Utf8);
+        }
         // Undecodable bytes become replacement characters. A preview of a
         // mostly-text file still beats refusing to show anything -- and a
         // window cut mid-character is expected when paging by bytes.
-        QStringDecoder decoder(QStringDecoder::Utf8);
+        QStringDecoder decoder(m_encoding);
         m_text = decoder.decode(task->contents());
         updateDisplayText();
         // Whether this window is folded decides whether it is coloured, so the

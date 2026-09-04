@@ -50,6 +50,7 @@
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <QStandardPaths>
+#include <QStringEncoder>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTextBlock>
@@ -241,6 +242,8 @@ private slots:
     void htmlCanBeShownAsSourceOrAsAPage();
     void aRenderedPageReachesForNothingOffTheDisk();
     void theChoiceIsRememberedPerFileType();
+    void aWindowThatCouldNotBeReadShowsNoStaleText();
+    void aFileWithAUtf16ByteOrderMarkIsReadAsUtf16();
 
     // --- syntax highlighting ---
     void recognisesHighlightableLanguages_data();
@@ -282,11 +285,13 @@ private slots:
     void aFileJustOverAWindowGetsNoGutterAndTheSameFileJustUnderOneDoes();
     void aFoldedLongLineTakesOneNumberRatherThanSeveral();
     void aRenderedPageHasNoNumbersAndTheSameFileAsSourceDoes();
+    void aFileWithOldMacLineEndingsNumbersEveryRow();
 
     // --- markdown the window cannot afford to render ---
     void aMarkdownFileWithAHugeTableOpensAsSourceAndSaysWhy();
     void aMarkdownFileUnderTheBudgetIsRenderedAsBefore();
     void theBudgetIsTableRowsRatherThanTheSizeOfTheFile();
+    void aTableWrittenWithoutLeadingPipesCostsTheSame();
     void askingForThePageRendersADeclinedFile();
     void askingForTheSourceOfAnOrdinaryMarkdownFileIsObeyed();
     void markdownOffersThePageByDefaultAndTheSourceOnRequest();
@@ -2035,6 +2040,27 @@ void TestPreview::aRenderedPageReachesForNothingOffTheDisk()
     QVERIFY(!safe.contains(QStringLiteral("onload"), Qt::CaseInsensitive));
     QVERIFY(!safe.contains(QStringLiteral("onerror"), Qt::CaseInsensitive));
 
+    // The hole the tag list left. Qt's engine loads an image for the `background`
+    // attribute of body, table, td and th -- QTextFormat::BackgroundImageUrl,
+    // resolved through loadResource, which under QQuickTextEdit reaches the
+    // network for an http: url. No tag on the list above is involved, so
+    // <table background="…/pixel.png"> passed untouched, and a table cell is a
+    // perfectly ordinary thing for a page to contain. The same goes for a
+    // background-image in a style attribute.
+    const QString withBackgrounds
+        = QStringLiteral("<body background=\"http://example.invalid/body.png\">"
+                         "<table background='http://example.invalid/table.png'>"
+                         "<tr><td BACKGROUND=http://example.invalid/cell.png>Cell text</td>"
+                         "<th style=\"background-image: url(http://example.invalid/head.png)\">Head</th>"
+                         "</tr></table></body>");
+
+    const QString scrubbed = TextPreviewController::withoutExternalReferences(withBackgrounds);
+    QVERIFY2(!scrubbed.contains(QStringLiteral("http"), Qt::CaseInsensitive), qPrintable(scrubbed));
+    QVERIFY2(!scrubbed.contains(QStringLiteral("background"), Qt::CaseInsensitive), qPrintable(scrubbed));
+    // And the table itself survives: this strips references, not content.
+    QVERIFY(scrubbed.contains(QStringLiteral("Cell text")));
+    QVERIFY(scrubbed.contains(QStringLiteral("<table")));
+
     // What the document actually says still gets shown -- this strips references,
     // not content.
     QVERIFY(safe.contains(QStringLiteral("Heading")));
@@ -2068,6 +2094,76 @@ void TestPreview::theChoiceIsRememberedPerFileType()
     QVERIFY(other);
     QCOMPARE(other->viewerOptions().first().toMap().value(QStringLiteral("chosen")).toString(),
         QStringLiteral("Source"));
+}
+
+void TestPreview::aWindowThatCouldNotBeReadShowsNoStaleText()
+{
+    // The hex viewer empties its grid on a failure -- "rows from the last window
+    // under a message about this one would be a lie about both" -- and the text
+    // viewer only set the error and left the previous window on screen, with its
+    // gutter, under a message about a window nobody could read.
+    QByteArray source;
+    for (int i = 1; source.size() < 2 * TextPreviewController::kWindowBytes; ++i)
+        source += QByteArray("line ") + QByteArray::number(i) + " of a long file\n";
+    QVERIFY(m_tree->writeFile(QStringLiteral("long.txt"), source));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("long.txt"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY2(viewer, qPrintable(preview->viewerName()));
+    QVERIFY(waitFor([viewer] { return !viewer->text().isEmpty(); }, 10000));
+    QVERIFY(viewer->isPaged());
+    QVERIFY(viewer->text().contains(QStringLiteral("line 1 of a long file")));
+
+    // The file goes away between one window and the next, which is the ordinary
+    // way a paged read fails: a log being rotated under a reader, a share that
+    // dropped, a scratch file somebody tidied up.
+    QVERIFY(QFile::remove(m_tree->absolute(QStringLiteral("long.txt"))));
+    viewer->nextWindow();
+    QVERIFY(waitFor([viewer] { return !viewer->errorText().isEmpty(); }, 10000));
+
+    // text() is what the view is bound to, so this is the window on screen.
+    QVERIFY2(viewer->text().isEmpty(), qPrintable(viewer->text().left(80)));
+    // And the gutter with it. A paged file has none to begin with -- that is what
+    // isNumbered() says -- so this cannot fail today; it is here because the two
+    // are one state and clearing one without the other is how it comes back.
+    QVERIFY(viewer->lineNumbers().isEmpty());
+}
+
+void TestPreview::aFileWithAUtf16ByteOrderMarkIsReadAsUtf16()
+{
+    // Windows .reg files, PowerShell transcripts and several CSV exports carry a
+    // UTF-16 BOM. The decoder was QStringDecoder(Utf8) unconditionally, so all of
+    // them rendered as interleaved replacement characters -- and the BOM answers
+    // the question at no cost.
+    const QString content = QStringLiteral("Windows Registry Editor Version 5.00\n\n"
+                                           "[HKEY_CURRENT_USER\\Software\\Mole]\n"
+                                           "\"Greeting\"=\"h\u00e9llo w\u00f6rld\"\n");
+    QByteArray encoded = QStringEncoder(QStringEncoder::Utf16LE)(content);
+    encoded.prepend(QByteArrayLiteral("\xff\xfe")); // the byte order mark itself
+    QVERIFY(m_tree->writeFile(QStringLiteral("settings.reg"), encoded));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("settings.reg"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY2(viewer, qPrintable(preview->viewerName()));
+    QVERIFY(waitFor([viewer] { return !viewer->text().isEmpty(); }, 5000));
+
+    QVERIFY2(viewer->text().contains(QStringLiteral("Windows Registry Editor")),
+        qPrintable(viewer->text().left(120)));
+    QVERIFY2(viewer->text().contains(QStringLiteral("h\u00e9llo w\u00f6rld")),
+        qPrintable(viewer->text().left(120)));
+    QVERIFY2(!viewer->text().contains(QChar(QChar::ReplacementCharacter)),
+        "the text still has replacement characters in it");
+
+    // A UTF-8 file is unaffected, which is the case that must not regress.
+    QVERIFY(m_tree->writeFile(QStringLiteral("plain.txt"), QByteArray("h\xc3\xa9llo w\xc3\xb6rld\n")));
+    PreviewTabController* plain = openPreview(QStringLiteral("plain.txt"));
+    QVERIFY(plain);
+    auto* plainViewer = qobject_cast<TextPreviewController*>(plain->viewer());
+    QVERIFY(plainViewer);
+    QVERIFY(waitFor([plainViewer] { return !plainViewer->text().isEmpty(); }, 5000));
+    QVERIFY(plainViewer->text().contains(QStringLiteral("h\u00e9llo w\u00f6rld")));
 }
 
 // ---------------------------------------------------------- highlighting
@@ -2461,6 +2557,51 @@ void TestPreview::aRenderedPageHasNoNumbersAndTheSameFileAsSourceDoes()
     QVERIFY(waitFor([viewer] { return !viewer->isMarkdown(); }, 5000));
     QVERIFY2(viewer->isNumbered(), "the same file as source was left without one");
     QCOMPARE(viewer->lineCount(), 3);
+}
+
+void TestPreview::aFileWithOldMacLineEndingsNumbersEveryRow()
+{
+    // QTextDocument starts a block at \r as well as at \n, and the gutter counted
+    // \n alone. A classic-Mac file laid out forty blocks and got a one-entry
+    // gutter; a file mixing lone \r with \n got numbers that drifted downwards --
+    // a plausible number beside the wrong line, which is worse than none.
+    //
+    // A gutter is a per-row model, so agreeing with the rows is the requirement.
+    // `wc -l` would say 0 for the first file below and there is no number that
+    // satisfies both; the rows are what the reader is looking at.
+    QByteArray classic;
+    for (int i = 1; i <= 40; ++i)
+        classic += QByteArray("line ") + QByteArray::number(i) + "\r";
+    QVERIFY(m_tree->writeFile(QStringLiteral("classic.txt"), classic));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("classic.txt"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY2(viewer, qPrintable(preview->viewerName()));
+    QVERIFY(waitFor([viewer] { return !viewer->text().isEmpty(); }, 5000));
+
+    QVERIFY(viewer->isNumbered());
+    const QVariantList numbers = viewer->lineNumbers();
+    QCOMPARE(numbers.size(), 41); // forty lines and the empty row after the last break
+    QCOMPARE(numbers.first().toInt(), 1);
+    QCOMPARE(numbers.at(39).toInt(), 40);
+    QCOMPARE(numbers.at(40).toInt(), 0);
+
+    // And the mixed file, which is the one that drifts: a CRLF is one break and a
+    // lone CR is another, so eight lines are eight rows however they are spelled.
+    QVERIFY(m_tree->writeFile(
+        QStringLiteral("mixed.txt"), QByteArray("one\r\ntwo\rthree\nfour\r\nfive\rsix\nseven\reight")));
+
+    PreviewTabController* second = openPreview(QStringLiteral("mixed.txt"));
+    QVERIFY(second);
+    auto* mixed = qobject_cast<TextPreviewController*>(second->viewer());
+    QVERIFY(mixed);
+    QVERIFY(waitFor([mixed] { return !mixed->text().isEmpty(); }, 5000));
+
+    const QVariantList mixedNumbers = mixed->lineNumbers();
+    QCOMPARE(mixedNumbers.size(), 8);
+    for (int i = 0; i < mixedNumbers.size(); ++i)
+        QCOMPARE(mixedNumbers.at(i).toInt(), i + 1);
 }
 
 void TestPreview::coloursFilesWhoseNameIsTheirType_data()
@@ -3165,6 +3306,55 @@ void TestPreview::theBudgetIsTableRowsRatherThanTheSizeOfTheFile()
     QVERIFY(waitFor([tableViewer] { return !tableViewer->text().isEmpty(); }, 5000));
 
     QVERIFY(tableViewer->markdownDeclined());
+}
+
+void TestPreview::aTableWrittenWithoutLeadingPipesCostsTheSame()
+{
+    // The guard counted lines whose first non-space character is a pipe. GFM and
+    // Qt's md4c importer both accept a row written without the leading one --
+    //
+    //     a | b
+    //     --|--
+    //     1 | 2
+    //
+    // -- which several generators produce, so a 2,000-row table written that way
+    // scored 0, was rendered, and cost the 2.6 s stall the budget exists to
+    // prevent. By a perfectly legal file.
+    const int rows = static_cast<int>(TextPreviewController::kMarkdownTableRows) + 1;
+    QByteArray out = QByteArrayLiteral("# Freshness\n\nOne row per record.\n\n");
+    out += QByteArrayLiteral("column 0 | column 1 | column 2 | column 3\n");
+    out += QByteArrayLiteral("---|---|---|---\n");
+    for (int r = 0; r < rows; ++r) {
+        out += QByteArrayLiteral("record-") + QByteArray::number(r) + QByteArrayLiteral("-0 | ")
+            + QByteArrayLiteral("record-") + QByteArray::number(r) + QByteArrayLiteral("-1 | ")
+            + QByteArrayLiteral("record-") + QByteArray::number(r) + QByteArrayLiteral("-2 | ")
+            + QByteArrayLiteral("record-") + QByteArray::number(r) + QByteArrayLiteral("-3\n");
+    }
+    QVERIFY(m_tree->writeFile(QStringLiteral("pipeless.md"), out));
+
+    PreviewTabController* preview = openPreview(QStringLiteral("pipeless.md"));
+    QVERIFY(preview);
+    auto* viewer = qobject_cast<TextPreviewController*>(preview->viewer());
+    QVERIFY(viewer);
+    QVERIFY(waitFor([viewer] { return !viewer->text().isEmpty(); }, 5000));
+
+    QVERIFY2(viewer->markdownDeclined(), "a pipe-less table was rendered whatever it cost");
+    QVERIFY(viewer->markdownTableRows() > TextPreviewController::kMarkdownTableRows);
+
+    // And a fenced block full of pipes is not a table: a run inside a fence must
+    // not decline a file that would render in no time at all.
+    QByteArray fenced = QByteArrayLiteral("# Notes\n\n```\n");
+    for (int r = 0; r < rows; ++r)
+        fenced += QByteArrayLiteral("a | b | c\n");
+    fenced += QByteArrayLiteral("```\n\nAfter the block.\n");
+    QVERIFY(m_tree->writeFile(QStringLiteral("fenced.md"), fenced));
+
+    PreviewTabController* second = openPreview(QStringLiteral("fenced.md"));
+    QVERIFY(second);
+    auto* fencedViewer = qobject_cast<TextPreviewController*>(second->viewer());
+    QVERIFY(fencedViewer);
+    QVERIFY(waitFor([fencedViewer] { return !fencedViewer->text().isEmpty(); }, 5000));
+    QVERIFY2(!fencedViewer->markdownDeclined(), "a code block full of pipes was counted as a table");
 }
 
 void TestPreview::askingForThePageRendersADeclinedFile()

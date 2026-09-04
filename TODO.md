@@ -29,6 +29,18 @@ project, and a contributor should never hit a wall of text they cannot read.
 
 ## Notes
 
+- **The text preview reads UTF-8 and UTF-16, and nothing else by name.** The
+  decoder is chosen from the byte order mark at the front of the first window --
+  `QStringConverter::encodingForData()`, which answers for UTF-8, UTF-16 and
+  UTF-32 and costs nothing -- and falls back to UTF-8 for everything with no mark.
+  So a **Latin-1 or Windows-1252 file with a byte above 0x7F in it shows a
+  replacement character** where that byte is. That is accepted rather than
+  overlooked: guessing an eight-bit encoding from content is a heuristic that is
+  wrong often enough to be worse than a visible replacement character, and the
+  file is still readable. If it ever earns its place, the shape is a choice in the
+  viewer strip beside *Rendered / Source*, remembered per file type the way that
+  one is -- not a guess. See MOLE-358.
+
 - **Finding the drives is a text read on Linux and a `statvfs` per mount
   everywhere else, and the second of those can still hang a start-up.**
   `SystemVolumes::enumerate()` reads `/proc/self/mounts`, which touches none of the

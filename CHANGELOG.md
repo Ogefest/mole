@@ -65,6 +65,11 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-358 A rendered page fetches nothing for a table or cell background, so previewing one still puts nothing on the network
+2026-09-04 #MOLE-358 A text preview reads a UTF-16 file, instead of showing it as replacement characters
+2026-09-04 #MOLE-358 Line numbers stay beside their lines in a file with old-Mac or mixed line endings
+2026-09-04 #MOLE-358 A Markdown table written without leading pipes is costed like any other, so a huge one opens as source instead of stalling the window
+2026-09-04 #MOLE-358 A window that could not be read shows the message and nothing else, instead of the previous window underneath it
 2026-09-04 #MOLE-355 The release notices name every library the artefacts carry, and the licence texts for all of them travel with a build
 2026-09-04 #MOLE-355 A dependency added without a row in the notices, or a Qt module nobody has checked the licence of, fails the release
 2026-09-04 #MOLE-355 The "no Qt inside the binary" check reads a table stripping does not remove, so it can fail on the artefacts it is for
