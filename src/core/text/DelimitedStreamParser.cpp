@@ -16,6 +16,8 @@ void DelimitedStreamParser::reset()
     m_fieldStarted = false;
     m_pendingQuote = false;
     m_lastWasCarriageReturn = false;
+    m_fieldOverran = false;
+    m_malformedRows = 0;
 }
 
 QList<QStringList> DelimitedStreamParser::feed(const QString& text)
@@ -40,8 +42,25 @@ QList<QStringList> DelimitedStreamParser::feed(const QString& text)
                 m_pendingQuote = true;
                 continue;
             }
-            m_field.append(c);
-            continue;
+            // The quote is disbelieved rather than honoured for ever. See
+            // kMaxFieldChars: with nothing here, one stray quote turned the rest
+            // of the file into one field. The text from here on is read as
+            // unquoted -- so separators and line breaks mean what they say
+            // again -- and the row is reported as malformed.
+            if (m_field.size() >= kMaxFieldChars) {
+                m_inQuotes = false;
+                m_pendingQuote = false;
+                if (!m_fieldOverran) {
+                    m_fieldOverran = true;
+                    ++m_malformedRows;
+                }
+                // `c` is handled below as ordinary text, which is what it is
+                // now: falling through rather than dropping it, because the
+                // character that tipped the field over is still data.
+            } else {
+                m_field.append(c);
+                continue;
+            }
         }
 
         if (c == m_quote && !m_fieldStarted) {
@@ -54,6 +73,8 @@ QList<QStringList> DelimitedStreamParser::feed(const QString& text)
             m_row.append(m_field);
             m_field.clear();
             m_fieldStarted = false;
+            m_fieldOverran = false;
+            m_fieldOverran = false;
             m_lastWasCarriageReturn = false;
             continue;
         }
@@ -62,6 +83,8 @@ QList<QStringList> DelimitedStreamParser::feed(const QString& text)
             m_row.append(m_field);
             m_field.clear();
             m_fieldStarted = false;
+            m_fieldOverran = false;
+            m_fieldOverran = false;
             completed.append(m_row);
             m_row.clear();
             m_lastWasCarriageReturn = true;
@@ -77,6 +100,8 @@ QList<QStringList> DelimitedStreamParser::feed(const QString& text)
             m_row.append(m_field);
             m_field.clear();
             m_fieldStarted = false;
+            m_fieldOverran = false;
+            m_fieldOverran = false;
             completed.append(m_row);
             m_row.clear();
             continue;
@@ -107,6 +132,7 @@ QStringList DelimitedStreamParser::finish()
     m_row.clear();
     m_field.clear();
     m_fieldStarted = false;
+    m_fieldOverran = false;
     return last;
 }
 

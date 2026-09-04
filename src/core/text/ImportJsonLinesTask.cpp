@@ -256,6 +256,19 @@ void ImportJsonLinesTask::run()
     // The columns, from the head of the file and then held. Fails the import only
     // when the store refuses; a file with no records in its sample is not a
     // failure, it is a file to show the source of.
+    // The head of the file, ending on a line break wherever there is one past
+    // the sample size: the shape comes from complete records, so a sample that
+    // ends mid-record contributes a truncated object and nothing else.
+    const auto sampleOf = [](const QString& text) {
+        const qsizetype breakAt = text.indexOf(QLatin1Char('\n'), kSampleBytes);
+        if (breakAt >= 0)
+            return text.left(breakAt + 1);
+        // No break after the sample: either the file is shorter than one, or it
+        // is the one this refuses -- and in both cases everything there is is
+        // what there is to decide from.
+        return text;
+    };
+
     const auto settleShape = [&](const QString& sample) -> bool {
         m_headers = keysIn(sample, &m_looksLikeRecords);
         if (!m_looksLikeRecords || m_headers.isEmpty())
@@ -320,9 +333,16 @@ void ImportJsonLinesTask::run()
             m_undecodedBytes = true;
 
         if (!started) {
-            if (pending.size() < kSampleBytes && !device->atEnd())
+            // Enough to decide from, which is a sample *and* at least one whole
+            // line: a first record longer than the sample used to be cut in half
+            // and read as "not JSONL". The ceiling is what keeps a file with no
+            // newline at all -- a pretty-printed document under the wrong name --
+            // from being read whole. See kSampleBytes and MOLE-367.
+            const bool haveALine = pending.contains(QLatin1Char('\n'));
+            const bool waitedLongEnough = pending.size() >= kMostToWaitForALine;
+            if ((pending.size() < kSampleBytes || !haveALine) && !waitedLongEnough && !device->atEnd())
                 continue;
-            if (!settleShape(pending.left(kSampleBytes)))
+            if (!settleShape(sampleOf(pending)))
                 return;
         }
 
@@ -341,7 +361,7 @@ void ImportJsonLinesTask::run()
 
     // A file smaller than the sample never entered the branch above, and a file
     // with no trailing newline has one last record.
-    if (!started && !settleShape(pending.left(kSampleBytes)))
+    if (!started && !settleShape(sampleOf(pending)))
         return;
     takeCompleteLines(true);
 

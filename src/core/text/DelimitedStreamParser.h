@@ -41,6 +41,29 @@ public:
     /// would be data rather than a row break.
     bool isInsideQuotes() const { return m_inQuotes; }
 
+    /// The most one field may hold before the quote around it is disbelieved.
+    ///
+    /// **The whole-file parser's rule is "an unterminated quote runs to the
+    /// end", and there it is bounded by the viewer's 512 kB window. Here there
+    /// was nothing.** One `"` at the start of a field with no closing quote --
+    /// a hand-edited export, a field like `"5 inch, 3 pcs` -- turned everything
+    /// after it in a 40 GB file into a single field, and the field grew to twice
+    /// the remaining file in UTF-16 until the process was killed. The design
+    /// TODO.md describes, "1 MB chunks, 5,000-row batches, nothing held whole",
+    /// was defeated by one byte, and it looked like a hang. See MOLE-367.
+    ///
+    /// 16 MB rather than something small: a legitimate quoted field can be a
+    /// pasted document, and cutting one of those short would be a wrong answer
+    /// where this is a refusal of something that cannot be right.
+    static constexpr int kMaxFieldChars = 16 * 1024 * 1024;
+
+    /// How many rows had a quoted field that ran past kMaxFieldChars.
+    ///
+    /// Reported rather than counted silently: the rows after such a quote are
+    /// split on separators the file's author never meant as separators, so the
+    /// caller has something to say about why the grid looks odd.
+    int malformedRows() const { return m_malformedRows; }
+
 private:
     QChar m_separator;
     QChar m_quote;
@@ -54,6 +77,10 @@ private:
     bool m_pendingQuote = false;
     /// So "\r\n" is one break and not two.
     bool m_lastWasCarriageReturn = false;
+    /// Set when the field being built has already overrun, so the overrun is
+    /// counted once per row rather than once per character.
+    bool m_fieldOverran = false;
+    int m_malformedRows = 0;
 };
 
 } // namespace mole

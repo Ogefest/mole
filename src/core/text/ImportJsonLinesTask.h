@@ -51,7 +51,25 @@ public:
     /// How much of the file the columns are decided from. The delimited
     /// importer's own sample, for the same reason: re-guessing further down would
     /// silently change the shape of the table halfway through it.
+    ///
+    /// **A floor rather than a cap.** The shape is settled from complete
+    /// *lines*, and the sample used to be the first 64 K characters regardless of
+    /// where the lines fell -- so a file whose first record was longer than that
+    /// (one carrying an embedded document, a base64 blob, a large nested array:
+    /// ordinary in log and ML exports) had its one truncated object parsed,
+    /// `sawAnObject` left false, and the whole valid file shown as source. The
+    /// refusal was indistinguishable from "this is not JSONL", which the header
+    /// says is for a pretty-printed document under the wrong name and for a file
+    /// of arrays. See MOLE-367.
     static constexpr int kSampleBytes = 64 * 1024;
+
+    /// The most the shape will wait for one complete line before giving up.
+    ///
+    /// A ceiling is still needed -- a pretty-printed 40 GB document has no
+    /// newline in it at all, and that is exactly the file this must refuse
+    /// rather than read whole. Sixteen megabytes is far past any real record and
+    /// far short of anything that matters to hold.
+    static constexpr int kMostToWaitForALine = 16 * 1024 * 1024;
 
     /// The columns, once the shape has been settled. Empty before that.
     QStringList headers() const { return m_headers; }

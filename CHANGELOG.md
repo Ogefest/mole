@@ -65,6 +65,8 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-367 A CSV with a stray quote in it no longer stalls the import
+2026-09-04 #MOLE-367 A JSON-lines file with long records opens as a grid, instead of as source
 2026-09-04 #MOLE-359 A move that finished is never reported as cancelled
 2026-09-04 #MOLE-359 A bookmark asking for an earlier version of a file can no longer be made to open the current one
 2026-09-04 #MOLE-369 SFTP and WebDAV drives reuse their connection between operations, instead of reconnecting for each

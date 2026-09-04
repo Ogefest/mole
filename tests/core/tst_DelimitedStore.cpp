@@ -54,6 +54,8 @@ private slots:
     void widensTheTableToTheWidestRow();
     void detectsTheSeparator();
     void aFileThatIsNotUtf8ImportsWithItsCharactersIntact();
+    void aStrayQuoteDoesNotSwallowTheRestOfTheFile();
+    void aRecordLongerThanTheSampleIsStillRecognisedAsRecords();
 
     // ---- the same store, from a file of json records ----
     void theColumnsAreTheKeysInTheOrderTheFileWritesThem();
@@ -403,12 +405,121 @@ void TestDelimitedStore::aFileThatIsNotUtf8ImportsWithItsCharactersIntact()
         broken->statusText().contains(QStringLiteral("could not be read")), qPrintable(broken->statusText()));
 }
 
+/// One stray quote turned a 40 GB file into one field.
+///
+/// DelimitedStreamParser::feed() appended every character inside quotes with
+/// nothing bounding it. The whole-file parser's rule -- "an unterminated quote
+/// runs to the end" -- is bounded there by the viewer's 512 kB window; the
+/// streaming parser inherited the rule with no bound. So a `"` at the start of a
+/// field with no closing quote (a hand-edited export, a field like `"5 inch, 3
+/// pcs`) turned everything after it into a single field, growing to twice the
+/// remaining file in UTF-16 until the process was killed. The design TODO.md
+/// describes -- 1 MB chunks, 5,000-row batches, nothing held whole -- was
+/// defeated by one byte, and it looked like a hang. See MOLE-367.
+void TestDelimitedStore::aStrayQuoteDoesNotSwallowTheRestOfTheFile()
+{
+    // The parser directly rather than through the import: it is the thing with
+    // the fault, and the import is a loop around it. Fed in chunks, because that
+    // is how the import feeds it and the state that overran lives across calls.
+    DelimitedStreamParser parser;
+    parser.setSeparator(QLatin1Char(','));
+
+    int rows = 0;
+    qsizetype widestField = 0;
+    const auto note = [&](const QList<QStringList>& completed) {
+        for (const QStringList& row : completed) {
+            ++rows;
+            for (const QString& field : row)
+                widestField = std::max(widestField, field.size());
+        }
+    };
+
+    // A header, and then a row whose second field opens a quote and never
+    // closes it -- which is the file as reported: a hand-edited export, or a
+    // field like `"5 inch, 3 pcs`.
+    note(parser.feed(QStringLiteral("name,note\n")));
+    note(parser.feed(QStringLiteral("widget,\"5 inch, 3 pcs\n")));
+
+    // Ordinary rows after it, sized from the cap itself so this case follows the
+    // constant rather than restating it. One chunk built once and fed many
+    // times: what is under test is the parser's state across calls.
+    QString chunk;
+    int rowsPerChunk = 0;
+    while (chunk.size() < 1024 * 1024) {
+        chunk += QStringLiteral("bolt%1,fine\n").arg(rowsPerChunk);
+        ++rowsPerChunk;
+    }
+    const int chunks = int(DelimitedStreamParser::kMaxFieldChars / chunk.size()) + 3;
+    for (int i = 0; i < chunks; ++i)
+        note(parser.feed(chunk));
+    const QStringList last = parser.finish();
+    if (!last.isEmpty())
+        ++rows;
+
+    // The rows after the cap are rows again, rather than all of them being one
+    // field of one row: two chunks' worth at the very least.
+    QVERIFY2(rows > rowsPerChunk,
+        qPrintable(QStringLiteral("%1 rows came back; a chunk holds %2").arg(rows).arg(rowsPerChunk)));
+    // And nothing is held whole: the field is bounded by the cap and not by the
+    // length of the file.
+    QVERIFY2(widestField <= DelimitedStreamParser::kMaxFieldChars + chunk.size(),
+        qPrintable(QStringLiteral("the widest field was %1 characters").arg(widestField)));
+    QVERIFY2(parser.malformedRows() > 0, "a quote that ran past the cap was not reported");
+}
+
 // ------------------------------------------------- a file of json records
 //
 // The same store with a different parser in front of it. What is under test here
 // is the shape of the table -- which columns there are, and what happens to a
 // value that has no column and a line that is not a record -- because those are
 // the answers a reader is silently trusting when they read the grid.
+
+/// A valid JSONL file shown as source because its first record was long.
+///
+/// The shape was settled from `pending.left(kSampleBytes)` -- the first 64 K
+/// characters regardless of where the lines fell. If no newline fell inside
+/// that (one record carrying an embedded document, a base64 blob, a large
+/// nested array: ordinary in log and ML exports) then keysIn() parsed one
+/// truncated object, `sawAnObject` stayed false, settleShape() returned false,
+/// and run() finished *successfully* with looksLikeRecords() false. The viewer
+/// showed the source of a perfectly good file, and the refusal was
+/// indistinguishable from "this is not JSONL" -- which the header reserves for a
+/// pretty-printed document under the wrong name and for a file of arrays.
+/// See MOLE-367.
+void TestDelimitedStore::aRecordLongerThanTheSampleIsStillRecognisedAsRecords()
+{
+    // One record past the sample, then short ones. 100 KB of payload in the
+    // first record is what the ticket describes; sized from the constant so this
+    // follows it.
+    const QByteArray blob(ImportJsonLinesTask::kSampleBytes + 40 * 1024, 'x');
+    QByteArray file = "{\"id\":1,\"payload\":\"" + blob + "\"}\n";
+    for (int i = 2; i <= 5; ++i)
+        file += "{\"id\":" + QByteArray::number(i) + ",\"payload\":\"short\"}\n";
+    QVERIFY(m_tree->writeFile(QStringLiteral("long.jsonl"), file));
+
+    auto store = std::make_shared<DelimitedStore>(QDir(m_dir->path()).filePath(QStringLiteral("l.sqlite")));
+    QVERIFY(store->open());
+
+    ImportJsonLinesTask* task = importRecords(QStringLiteral("long.jsonl"), store);
+    QVERIFY(task);
+
+    QVERIFY2(task->looksLikeRecords(), "a valid JSONL file was refused because its first record was long");
+    QCOMPARE(task->headers(), QStringList({ QStringLiteral("id"), QStringLiteral("payload") }));
+    QCOMPARE(store->totalRows(), 5);
+    // The long one arrived whole, which is the other half: recognising the shape
+    // is no use if the record it was recognised from was cut.
+    QCOMPARE(store->rows(0, 1).first().at(1).size(), blob.size());
+
+    // And a file with no line break at all is still refused, which is what the
+    // ceiling is for: a pretty-printed document under the wrong name.
+    QByteArray pretty = "{\n  \"id\": 1,\n  \"payload\": \"a document\"\n}\n";
+    QVERIFY(m_tree->writeFile(QStringLiteral("pretty.json"), pretty));
+    auto second = std::make_shared<DelimitedStore>(QDir(m_dir->path()).filePath(QStringLiteral("p.sqlite")));
+    QVERIFY(second->open());
+    ImportJsonLinesTask* refused = importRecords(QStringLiteral("pretty.json"), second);
+    QVERIFY(refused);
+    QVERIFY2(!refused->looksLikeRecords(), "a pretty-printed document was read as records");
+}
 
 void TestDelimitedStore::theColumnsAreTheKeysInTheOrderTheFileWritesThem()
 {
