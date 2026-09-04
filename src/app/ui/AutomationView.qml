@@ -19,7 +19,7 @@ Item {
         if (status === "succeeded")
             return App.colour.ok
         if (status === "running")
-            return Material.accent
+            return App.colour.accent
         return App.colour.textMuted
     }
 

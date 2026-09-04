@@ -142,10 +142,13 @@ Item {
                             width: ListView.view.width
                             implicitHeight: ruleBody.implicitHeight + 18
                             radius: 6
-                            color: App.colour.panel
+                            // A rule that is switched off says so in its ground
+                            // rather than by fading the whole card, which faded
+                            // its text with it and left the words at a contrast
+                            // nobody chose. See MOLE-397.
+                            color: modelData.enabled ? App.colour.panel : App.colour.window
                             border.width: 1
                             border.color: App.colour.border
-                            opacity: modelData.enabled ? 1.0 : 0.55
 
                             ColumnLayout {
                                 id: ruleBody

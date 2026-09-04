@@ -114,7 +114,7 @@ Item {
                             selectByMouse: true
                             wrapMode: TextEdit.Wrap
                             color: App.colour.textSecondary
-                            selectionColor: Material.accent
+                            selectionColor: App.colour.accent
                             font.pixelSize: App.smallTextSize
                         }
                     }

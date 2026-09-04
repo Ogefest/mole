@@ -331,9 +331,11 @@ Item {
             handle: Rectangle {
                 implicitWidth: 6
                 implicitHeight: 6
-                color: SplitHandle.pressed
-                       ? App.colour.window
-                       : Qt.lighter(App.colour.window, SplitHandle.hovered ? 1.2 : 1.1)
+                // The divider token, which is a step away from the window's
+                // ground in whichever direction is visible on this polarity --
+                // `Qt.lighter` was a step towards white on a light theme, and so
+                // towards invisible. See MOLE-397.
+                color: SplitHandle.pressed ? App.colour.window : App.colour.divider
 
                 Rectangle {
                     color: Material.secondaryTextColor

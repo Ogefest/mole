@@ -162,7 +162,7 @@ Item {
 
                     Label {
                         text: controller ? controller.viewerName : ""
-                        color: Material.accent
+                        color: App.colour.accent
                         font.pixelSize: App.smallTextSize
                     }
 
@@ -240,7 +240,7 @@ Item {
 
                 handle: Rectangle {
                     implicitWidth: 5
-                    color: SplitHandle.pressed ? Material.accent
+                    color: SplitHandle.pressed ? App.colour.accent
                                                : (SplitHandle.hovered ? App.colour.border : App.colour.hover)
                     // Written when the divider is let go rather than as it moves:
                     // a preference is a file on disk.

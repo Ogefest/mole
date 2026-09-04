@@ -43,7 +43,10 @@ Button {
                 return App.colour.border
             if (!control.filled)
                 return control.down ? App.colour.hover : "transparent"
-            return control.down ? Qt.darker(App.colour.accent, 1.3) : App.colour.accent
+            // A token, not a derivation: `Qt.darker(accent, 1.3)` on a dark
+            // theme walks towards black, which is the wrong direction. See
+            // App.colour.accentPressed and MOLE-397.
+            return control.down ? App.colour.accentPressed : App.colour.accent
         }
         border.width: control.activeFocus ? 2 : (control.filled ? 0 : 1)
         border.color: control.activeFocus ? App.colour.window : App.colour.border

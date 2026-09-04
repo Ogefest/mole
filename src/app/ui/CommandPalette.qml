@@ -125,7 +125,7 @@ Popup {
                     Label {
                         Layout.preferredWidth: 20
                         text: iconText
-                        color: Material.accent
+                        color: App.colour.accent
                         font.pixelSize: App.secondaryTextSize
                     }
                     Label {

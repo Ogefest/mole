@@ -542,7 +542,7 @@ ApplicationWindow {
             implicitHeight: 6
             color: SplitHandle.pressed
                    ? App.colour.window
-                   : Qt.lighter(App.colour.window, SplitHandle.hovered ? 1.2 : 1.1)
+                   : App.colour.divider
 
             Rectangle {
                 color: Material.secondaryTextColor
@@ -898,7 +898,7 @@ ApplicationWindow {
                     Label {
                         text: modelData.heading
                         font.bold: true
-                        color: Material.accent
+                        color: App.colour.accent
                         font.pixelSize: 12
                     }
 

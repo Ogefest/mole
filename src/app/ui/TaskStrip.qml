@@ -21,7 +21,7 @@ Rectangle {
         anchors.right: parent.right
         anchors.top: parent.top
         height: 2
-        color: Material.accent
+        color: App.colour.accent
         visible: strip.working
     }
 

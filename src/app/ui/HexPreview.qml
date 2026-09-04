@@ -206,8 +206,11 @@ Item {
 
                         Rectangle {
                             visible: selectedFrom >= 0
-                            color: Material.accent
-                            opacity: 0.28
+                            // The mark token rather than an accent at 0.28: an
+                            // opacity leaves the result depending on whatever is
+                            // underneath, and what is underneath here is text.
+                            // See MOLE-397.
+                            color: App.colour.mark
                             x: view.hexColumn(selectedFrom) * view.cellWidth
                             width: view.hexSpan(selectedFrom, selectedCount) * view.cellWidth
                             height: parent.height
@@ -227,8 +230,7 @@ Item {
 
                         Rectangle {
                             visible: selectedFrom >= 0
-                            color: Material.accent
-                            opacity: 0.28
+                            color: App.colour.mark
                             x: selectedFrom * view.cellWidth
                             width: selectedCount * view.cellWidth
                             height: parent.height

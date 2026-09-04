@@ -4698,10 +4698,27 @@ void TestWalkthrough::theViewMenuChoosesHowMoleLooks()
     m_harness->key(Qt::Key_Escape);
     QVERIFY(m_harness->until([menu] { return !menu->property("opened").toBool(); }));
 
+    // **And the theme reaches the file names, which for a long time it did not.**
+    // Both FilePane delegates painted `Material.foreground` -- the Material
+    // style's computed text colour for the polarity, not `App.colour.text` -- so
+    // a theme that set `text` to anything but Material's default had no effect on
+    // the most-read words in the application. `tst_Palette`'s contrast table
+    // asserted text against pane, a pair the listing never painted. See MOLE-397.
+    QQuickItem* firstName = m_harness->item(QStringLiteral("fileName"));
+    QVERIFY2(firstName, "the listing has no file name to read");
+    const QColor beforeTheme = firstName->property("color").value<QColor>();
+    QCOMPARE(beforeTheme, m_harness->app()->colour()->text());
+
     // The one extra assertion, and the light window it buys.
     QVERIFY(m_harness->app()->triggerAction(QStringLiteral("mole.view.theme.paper")));
     QCOMPARE(m_harness->app()->colour()->theme(), QStringLiteral("Paper"));
     QVERIFY2(m_harness->app()->colour()->isLight(), "Paper is a light theme and has to say so");
+
+    const QColor afterTheme = firstName->property("color").value<QColor>();
+    QCOMPARE(afterTheme, m_harness->app()->colour()->text());
+    QVERIFY2(afterTheme != beforeTheme,
+        qPrintable(
+            QStringLiteral("the file name is still %1 after the theme changed").arg(afterTheme.name())));
     m_harness->screenshot(QStringLiteral("28b-paper"));
 
     // Put back, so nothing after this is photographed in anything else.

@@ -30,6 +30,7 @@ private slots:
     void midnightIsWhatMoleAlreadyLookedLike();
     void everyShippedThemeIsAWholePalette();
     void everyThemeMeetsAStatedContrastFloor();
+    void everyDerivedTokenIsVisibleOnBothPolarities();
 };
 
 namespace {
@@ -244,6 +245,68 @@ void TestPalette::everyShippedThemeIsAWholePalette()
 /// a colour. So this is a table of the pairs that actually meet on screen, with a
 /// floor per pair and the reason for the floor beside it, run over every theme.
 /// Anything added after these four is held to the same numbers.
+void TestPalette::everyDerivedTokenIsVisibleOnBothPolarities()
+{
+    // **The derivations used to live in the views, and nobody had looked at them
+    // on both grounds.** `Qt.lighter(App.colour.window, 1.1)` for a split handle
+    // is a step towards white, which on a light theme is a step towards
+    // invisible; `Qt.darker(App.colour.accent, 1.3)` for a pressed button walks
+    // towards black on a dark theme, where it should walk away from it; and a
+    // chart's `Qt.hsla(..., 0.45, 0.58, 1.0)` has one fixed lightness for every
+    // theme there is. They are computed in the palette now, from the sixteen, and
+    // this is the case that says they can be seen. See MOLE-397.
+    QStringList failures;
+    for (const QString& name : Palette::themeNames()) {
+        Palette palette;
+        QVERIFY(palette.setTheme(name));
+        const Palette::Tokens t = Palette::tokensFor(name);
+
+        // A grip has to be distinguishable from the ground it sits in. 1.15 is
+        // the floor a hairline is held to, and this is the same kind of mark.
+        const double divider = contrast(palette.divider(), t.window);
+        if (divider + 0.005 < 1.15)
+            failures.append(QStringLiteral("%1: divider on window is %2:1").arg(name).arg(divider));
+
+        // A pressed button is still a button: it has to be visible against the
+        // window the way the accent is, and it has to *look* pressed -- a press
+        // that leaves the colour where it was is a button that does not answer.
+        // Which pair carries the label is ActionButton's business and not this
+        // token's, which is why the floor here is the graphic one.
+        const double pressedOnWindow = contrast(palette.accentPressed(), t.window);
+        if (pressedOnWindow + 0.005 < 3.0) {
+            failures.append(
+                QStringLiteral("%1: accentPressed on window is %2:1").arg(name).arg(pressedOnWindow));
+        }
+        if (palette.accentPressed() == t.accent)
+            failures.append(QStringLiteral("%1: accentPressed is the accent itself").arg(name));
+
+        // A mark laid over text has to leave the text readable, which is the
+        // whole reason it is not the accent itself.
+        const double marked = contrast(t.text, palette.mark());
+        if (marked + 0.005 < 3.0)
+            failures.append(QStringLiteral("%1: text on mark is %2:1").arg(name).arg(marked));
+
+        // Every category has to be visible on the ground a chart is drawn on, and
+        // distinguishable from the one before it.
+        const QVariantList categorical = palette.categorical();
+        if (categorical.size() < 4)
+            failures.append(QStringLiteral("%1: only %2 chart colours").arg(name).arg(categorical.size()));
+        for (int i = 0; i < categorical.size(); ++i) {
+            const QColor colour = categorical.at(i).value<QColor>();
+            const double onPanel = contrast(colour, t.panel);
+            if (onPanel + 0.005 < 1.6) {
+                failures.append(
+                    QStringLiteral("%1: chart colour %2 on panel is %3:1").arg(name).arg(i).arg(onPanel));
+            }
+            if (i > 0 && colour == categorical.at(i - 1).value<QColor>())
+                failures.append(
+                    QStringLiteral("%1: chart colours %2 and %3 are the same").arg(name).arg(i - 1).arg(i));
+        }
+    }
+
+    QVERIFY2(failures.isEmpty(), qPrintable(failures.join(QStringLiteral("\n"))));
+}
+
 void TestPalette::everyThemeMeetsAStatedContrastFloor()
 {
     struct Pair

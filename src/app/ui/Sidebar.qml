@@ -31,7 +31,7 @@ Rectangle {
     // unreachable. See docs/adr/0052-a-drives-dot-says-what-it-is-doing.md.
     function stateColor(severity) {
         if (severity === "using")
-            return Material.accent
+            return App.colour.accent
         // Work going through. Green, and flickering rather than breathing -- see
         // the dot below and the 2026-08-19 revision in ADR-0052. Not a new colour:
         // it is the green this sidebar used to paint for *connected*, put to a job
@@ -266,7 +266,7 @@ Rectangle {
                     // From the scale, not a literal: the mark sits beside the name
                     // and has to keep sitting beside it when the scale changes.
                     font.pixelSize: App.secondaryTextSize
-                    color: row.dead ? App.colour.textMuted : Material.foreground
+                    color: row.dead ? App.colour.textMuted : App.colour.text
                     Layout.alignment: Qt.AlignVCenter
                 }
                 Label {
@@ -281,7 +281,7 @@ Rectangle {
                     // bookmark whose set has gone reads the same way, for the same
                     // reason: still listed, not somewhere to go.
                     color: row.dead || (row.actionable && row.connectable) ? App.colour.textMuted
-                                                                          : Material.foreground
+                                                                          : App.colour.text
                 }
                 Label {
                     // Shown whether or not the pointer is here. It used to be

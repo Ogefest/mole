@@ -110,3 +110,52 @@ fault this record exists to close.
 - The drag badge in `main.cpp` is painted with `QPainter` rather than by the scene
   graph, and reads the same tokens. Anything else outside `src/app/ui` that paints
   part of this window should do the same.
+
+## Amendment, 2026-09-04 (MOLE-397)
+
+**"A view names a token and may derive from one in two shapes. Nothing else" was
+enforced by a grep for `#rrggbb`**, so every other way round the token layer
+passed the check — and five of them were in the tree.
+
+- `Material.foreground` painted **the most-read text in the application**: the
+  file name in both `FilePane.qml` delegates and the sidebar's labels. It is the
+  Material style's computed text colour for the polarity, not `App.colour.text`,
+  so a theme that set `text` to anything but Material's default had no effect on
+  the listing at all. ADR-0073 says "no view changes when one is chosen"; this was
+  a view that did not change when it should have. `tst_Palette`'s contrast table
+  asserted `text` against `pane` — a pair the listing never painted.
+- `Material.accent` was a colour *value* in twenty-four places across twelve
+  files, tracking the theme only because `Main.qml` binds it — and those same
+  files named `App.colour.accent` elsewhere, so one file named one token two ways.
+- Derivations in four shapes the ADR does not allow:
+  `Qt.lighter(App.colour.window, 1.1)` for the two split handles,
+  `Qt.darker(App.colour.accent, 1.3)` in `ActionButton.qml` and
+  `ConfirmButtons.qml`, and `Qt.hsla((index * 0.13) % 1.0, 0.45, 0.58, 1.0)` for
+  the analysis chart — a generated categorical palette with one fixed lightness
+  for every theme there is, never looked at on a light ground.
+- An opacity standing in for a token: the accent at 0.18 where `selection`
+  exists, a pane at 0.85 for an inactive frame, two hex marks at 0.28, and
+  disabled words at 0.4.
+
+**Derivations are allowed, and they live in the palette.** `divider`,
+`accentPressed`, `mark` and `categorical` are computed from the sixteen, once,
+with the polarity in hand — so a theme still repaints everything at once and a
+view still names a token. The two shapes the original decision allowed in a view
+are now none: a view that wants a derived colour asks for a derived token, the
+same way it would argue for a seventeenth.
+
+What that bought, measured rather than asserted: `divider` is the hairline colour,
+because a three-quarter step from the window towards it left 1.12:1 on the light
+theme — under the floor a hairline itself is held to. `accentPressed` moves *away*
+from the ground rather than always darker, which is what `Qt.darker` got wrong on
+a dark theme. `categorical` is five tokens and not six: `busy` is a ground and at
+1.13:1 against the panel it would have been a bar nobody could see.
+
+`tst_QmlConventions::nothingPaintsWithTheStyleOrADerivation` refuses all of it now
+— reading `Material.accent`/`foreground`/`primary`, `Qt.hsla`, `Qt.lighter`,
+`Qt.darker`, and an opacity on something that paints a colour. Setting the style's
+own properties from tokens is untouched, which is what `Main.qml` does and what
+makes Qt's own controls follow the theme. Two allowances are named in the test:
+`Qt.rgba` for a veil over whatever is behind it (`DimVeil.qml`), and a
+translucency over the terminal's own sixteen colours, where seeing the character
+under the cursor is the requirement rather than a colour nobody chose.

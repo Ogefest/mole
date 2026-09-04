@@ -226,7 +226,7 @@ Item {
                 color: grid.isSelected(row, column) ? App.colour.selection
                      : (row % 2 === 0 ? App.colour.pane : App.colour.panel)
                 border.width: grid.cursorRow === row && grid.cursorColumn === column ? 1 : 0
-                border.color: Material.accent
+                border.color: App.colour.accent
 
                 Label {
                     anchors.fill: parent

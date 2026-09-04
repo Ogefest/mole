@@ -48,6 +48,66 @@ Palette::Palette(QObject* parent)
 {
 }
 
+namespace {
+
+    /// `from` moved `towards` another colour, by `fraction`.
+    QColor blended(const QColor& from, const QColor& to, double fraction)
+    {
+        const auto mix = [fraction](int a, int b) { return static_cast<int>(a + (b - a) * fraction); };
+        return QColor(mix(from.red(), to.red()), mix(from.green(), to.green()), mix(from.blue(), to.blue()));
+    }
+
+} // namespace
+
+QColor Palette::divider() const
+{
+    // Towards the hairline colour, which is the token already held to being
+    // visible on these grounds -- so a grip is visible by construction on every
+    // theme, including the ones nobody has written yet.
+    //
+    // Two views wrote `Qt.lighter(App.colour.window, 1.1)`, which on a light
+    // theme is a step towards white and therefore towards invisible; on a dark
+    // one it was a 1.05:1 difference, which is nothing.
+    // All the way to the hairline colour: on the light theme a
+    // three-quarter step left it at 1.12:1, which is under the floor a
+    // hairline itself is held to. A grip is the same kind of mark, so it
+    // gets the same colour rather than an approximation of it.
+    return m_tokens.border;
+}
+
+QColor Palette::accentPressed() const
+{
+    return m_light ? m_tokens.accent.darker(130) : m_tokens.accent.lighter(125);
+}
+
+QColor Palette::mark() const
+{
+    // Between the accent and the pane, which is what an accent at 0.28 opacity
+    // was reaching for -- except that an opacity leaves the result depending on
+    // whatever happens to be underneath, and what is underneath here is text.
+    return blended(m_tokens.pane, m_tokens.accent, 0.35);
+}
+
+QVariantList Palette::categorical() const
+{
+    // Six, in order, and each one chosen against both grounds rather than
+    // generated: `Qt.hsla((index * 0.13) % 1.0, 0.45, 0.58, 1.0)` has a fixed
+    // lightness, so on a light theme the pale ones were text-on-white and on a
+    // dark one the dark ones vanished. The accent leads, because the first
+    // category is the one the chart is about.
+    // Five, and every one of them is a token the contrast table already holds
+    // against the grounds a chart is drawn on. `busy` is deliberately not here:
+    // it is a *ground* -- the task strip's -- and at 1.13:1 against the panel it
+    // would be a bar nobody could see.
+    QVariantList out;
+    out.append(m_tokens.accent);
+    out.append(m_tokens.ok);
+    out.append(m_tokens.warn);
+    out.append(m_tokens.bad);
+    out.append(m_tokens.link);
+    return out;
+}
+
 QStringList Palette::themeNames()
 {
     QStringList names;

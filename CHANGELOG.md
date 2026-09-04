@@ -65,6 +65,8 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-397 Choosing a theme now changes the file listing too
+2026-09-04 #MOLE-397 The analysis chart's colours can be seen on a light theme
 2026-09-04 #MOLE-403 Sizes read the same everywhere in the window, in IEC units
 2026-09-04 #MOLE-403 A file's age is worded the same way in every tab
 2026-09-04 #MOLE-398 The keyboard keeps working while an error message is on screen

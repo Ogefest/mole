@@ -27,7 +27,7 @@ Item {
         required property string label
         required property string valueText
         required property double fraction
-        property color barColor: Material.accent
+        property color barColor: App.colour.accent
         property string note: ""
 
         spacing: 8
@@ -298,7 +298,7 @@ Item {
                                         text: modelData.value
                                         font.pixelSize: 17
                                         font.bold: true
-                                        color: Material.accent
+                                        color: App.colour.accent
                                     }
                                     Label {
                                         Layout.alignment: Qt.AlignHCenter
@@ -454,7 +454,12 @@ Item {
                                         required property int index
                                         width: parent.width * share
                                         height: parent.height
-                                        color: Qt.hsla((index * 0.13) % 1.0, 0.45, 0.58, 1.0)
+                                        // A set chosen against both grounds,
+                                        // where Qt.hsla had a fixed lightness
+                                        // that vanished on one of them. See
+                                        // MOLE-397.
+                                        color: App.colour.categorical[
+                                            index % App.colour.categorical.length]
                                     }
                                 }
                             }
@@ -472,7 +477,8 @@ Item {
                                 label: extension
                                 valueText: sizeText
                                 fraction: peakShare
-                                barColor: Qt.hsla((index * 0.13) % 1.0, 0.45, 0.58, 1.0)
+                                barColor: App.colour.categorical[
+                                    index % App.colour.categorical.length]
                                 note: fileCount.toLocaleString(Qt.locale(), 'f', 0) + " ×"
                             }
                         }
@@ -567,7 +573,7 @@ Item {
                                     Layout.preferredWidth: 80
                                     horizontalAlignment: Text.AlignRight
                                     text: modelData.sizeText
-                                    color: Material.accent
+                                    color: App.colour.accent
                                     font.pixelSize: 12
                                 }
                                 ToolButton {

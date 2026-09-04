@@ -52,6 +52,12 @@ DialogButtonBox {
     property string keyboardOn: (dismissOnly || destructive) ? "reject" : "accept"
 
     readonly property color actingColour: destructive ? App.colour.bad : App.colour.accent
+    /// The same under a press. A token rather than `Qt.darker(…, 1.3)`, which
+    /// walks towards black on a dark theme where it should walk away from it.
+    /// The destructive one has no pressed token of its own yet, so it keeps its
+    /// colour and the button's own ripple says it was pressed. See MOLE-397.
+    readonly property color actingPressedColour: destructive ? App.colour.bad
+                                                             : App.colour.accentPressed
     readonly property bool holdsKeyboard: keyboardOn !== "none"
 
     // Three scopes deep, and every one of them has to be holding the keyboard for the
@@ -147,7 +153,7 @@ DialogButtonBox {
             radius: 4
             color: !acceptButton.enabled
                    ? App.colour.border
-                   : acceptButton.down ? Qt.darker(box.actingColour, 1.3) : box.actingColour
+                   : acceptButton.down ? box.actingPressedColour : box.actingColour
             border.width: acceptButton.activeFocus ? 2 : 0
             border.color: App.colour.window
         }

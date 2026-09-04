@@ -22,6 +22,7 @@ private slots:
     void initTestCase();
     void nothingNamesAFontFamilyByHand();
     void nothingNamesAColourByHand();
+    void nothingPaintsWithTheStyleOrADerivation();
     void nothingBuildsOrTakesApartAUriByHand();
     void nothingInTheShellNamesADriveOrAFilesystem();
     void everyKeyTheMenuAdvertisesIsAKeyTheWindowDeclares();
@@ -516,6 +517,94 @@ void TestQmlConventions::noImageDecodeIsBoundToALiveSize()
         qPrintable(QStringLiteral("an image decode is bound to a live size, so a drag re-decodes "
                                   "on every pixel: %1")
                        .arg(live.join(QStringLiteral(", ")))));
+}
+
+void TestQmlConventions::nothingPaintsWithTheStyleOrADerivation()
+{
+    // **`nothingNamesAColourByHand` greps for "#rrggbb", so every other way of
+    // bypassing the token layer passed it** -- and several did.
+    //
+    // `Material.foreground` painted the most-read text in the application: the
+    // file name in both FilePane delegates and the sidebar's labels. It is the
+    // Material style's computed text colour for the polarity, not
+    // `App.colour.text`, so a theme that set `text` to anything but Material's
+    // default had no effect on the listing at all. `Material.accent` was used as
+    // a colour value in twenty-four places across twelve files, tracking the
+    // theme only because Main.qml binds it -- and those same files named
+    // `App.colour.accent` elsewhere, so one file named one token two ways.
+    //
+    // Then the derivations ADR-0072 does not allow: `Qt.lighter(window, 1.1)` for
+    // a split handle, `Qt.darker(accent, 1.3)` for a pressed button, and
+    // `Qt.hsla((index * 0.13) % 1.0, 0.45, 0.58, 1.0)` for a chart -- a fixed
+    // lightness never looked at on a light ground. And an opacity standing in for
+    // a token: an accent at 0.18 where `selection` exists, a pane at 0.85 for an
+    // inactive frame, two hex marks at 0.28, and disabled words at 0.4.
+    //
+    // See MOLE-397, ADR-0072 and its amendment. What is still allowed is listed
+    // below, each with its reason.
+    QStringList offenders;
+    for (auto it = m_sources.cbegin(); it != m_sources.cend(); ++it) {
+        const QStringList lines = it.value().split(QLatin1Char('\n'));
+        for (int i = 0; i < lines.size(); ++i) {
+            const QString line = lines.at(i);
+            const QString trimmed = line.trimmed();
+            if (trimmed.startsWith(QStringLiteral("//")))
+                continue;
+            const auto complain = [&](const QString& what) {
+                offenders.append(QStringLiteral("%1:%2 %3").arg(it.key()).arg(i + 1).arg(what));
+            };
+
+            // Reading the style's colours. Setting them is the opposite: Main.qml
+            // hands Material its accent *from* a token, which is what makes Qt's
+            // own controls follow the theme, and a Material.background: is a
+            // ground named the way ADR-0074 asks.
+            static const QRegularExpression readsTheStyle(
+                QStringLiteral("(?<!Material\\.)\\bMaterial\\.(accent|foreground|primary)\\b"));
+            if (line.contains(readsTheStyle) && !trimmed.startsWith(QStringLiteral("Material.")))
+                complain(QStringLiteral("paints with Material.accent/foreground/primary"));
+
+            // A generated colour has no polarity and nobody has looked at it.
+            if (line.contains(QStringLiteral("Qt.hsla(")) || line.contains(QStringLiteral("Qt.hsva(")))
+                complain(QStringLiteral("generates a colour with Qt.hsla"));
+
+            // Deriving in the view. `Qt.rgba` is left alone: DimVeil and the
+            // terminal use it for a veil over whatever is behind them, which is
+            // not one of the window's colours written down twice.
+            if (line.contains(QStringLiteral("Qt.lighter(")) || line.contains(QStringLiteral("Qt.darker(")))
+                complain(QStringLiteral("derives a colour in the view"));
+
+            // An opacity on something that paints a colour is a token nobody
+            // named: the result depends on whatever happens to be underneath.
+            static const QRegularExpression fadedColour(
+                QStringLiteral("^\\s*opacity:\\s*(0\\.[0-9]+|[^\\n]*\\?[^\\n]*0\\.[0-9]+)"));
+            if (line.contains(fadedColour)) {
+                // Only when the same block paints a colour. A fade of an icon, a
+                // grip appearing on hover or a whole panel sliding in is motion,
+                // not a colour choice.
+                bool paints = false;
+                bool ownPalette = false;
+                for (int at = i; at >= 0 && at > i - 8; --at) {
+                    if (lines.at(at).contains(QStringLiteral("color:")))
+                        paints = true;
+                    // A colour from the *screen's* own sixteen is not one of the
+                    // window's tokens, and the terminal cursor is translucent so
+                    // that the character underneath can still be read -- which is
+                    // a requirement rather than a colour nobody named.
+                    if (lines.at(at).contains(QStringLiteral("colourFor(")))
+                        ownPalette = true;
+                    if (lines.at(at).trimmed().endsWith(QLatin1Char('{')))
+                        break;
+                }
+                if (paints && !ownPalette)
+                    complain(QStringLiteral("fades a painted colour instead of naming a token"));
+            }
+        }
+    }
+
+    std::sort(offenders.begin(), offenders.end());
+    QVERIFY2(offenders.isEmpty(),
+        qPrintable(QStringLiteral("the token layer is bypassed at:\n    %1")
+                       .arg(offenders.join(QStringLiteral("\n    ")))));
 }
 
 MOLE_TEST_MAIN_GUI(TestQmlConventions)

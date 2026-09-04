@@ -210,9 +210,12 @@ FocusScope {
         id: frame
         anchors.fill: parent
         color: App.colour.pane
-        border.color: pane.active ? Material.accent : App.colour.border
+        // The inactive pane's frame is a *colour*, not the pane at 85 percent:
+        // fading the whole rectangle faded the ground it paints as well, so an
+        // inactive pane was a slightly different grey from an active one for no
+        // stated reason. See MOLE-397.
+        border.color: pane.active ? App.colour.accent : App.colour.border
         border.width: 1
-        opacity: pane.active ? 1.0 : 0.85
     }
 
     // The cursor lives in the controller and nowhere else.
@@ -577,7 +580,7 @@ FocusScope {
                 text: paneController
                       ? paneController.files.count + " of " + paneController.files.totalCount
                       : ""
-                color: Material.accent
+                color: App.colour.accent
                 font.pixelSize: App.secondaryTextSize
             }
 
@@ -776,8 +779,9 @@ FocusScope {
                 Rectangle {
                     anchors.fill: parent
                     visible: selected
-                    color: Material.accent
-                    opacity: 0.18
+                    // The selection token, which exists for exactly this and was
+                    // being approximated with an accent at 0.18. See MOLE-397.
+                    color: App.colour.selection
                 }
 
                 RowLayout {
@@ -795,7 +799,7 @@ FocusScope {
                         elide: Text.ElideMiddle
                         font.pixelSize: App.textSize
                         font.bold: selected
-                        color: selected ? Material.accent : Material.foreground
+                        color: selected ? App.colour.accent : App.colour.text
                     }
 
                     Label {
@@ -928,7 +932,7 @@ FocusScope {
                     // act; a second highlight trailing the pointer made it
                     // ambiguous which of the two that was.
                     color: highlighted ? App.colour.selection : "transparent"
-                    border.color: selected ? Material.accent : "transparent"
+                    border.color: selected ? App.colour.accent : "transparent"
                     border.width: selected ? 1 : 0
                 }
 
@@ -1022,7 +1026,7 @@ FocusScope {
                         wrapMode: Text.Wrap
                         font.pixelSize: App.smallTextSize
                         font.bold: selected
-                        color: selected ? Material.accent : Material.foreground
+                        color: selected ? App.colour.accent : App.colour.text
                     }
                     Label {
                         objectName: "tileCaption"
@@ -1051,7 +1055,7 @@ FocusScope {
                 }
                 color: paneController && paneController.files
                        && paneController.files.selectionCount > 0
-                       ? Material.accent : App.colour.textMuted
+                       ? App.colour.accent : App.colour.textMuted
                 font.pixelSize: App.smallTextSize
             }
 
@@ -1143,7 +1147,7 @@ FocusScope {
             anchors.bottomMargin: 34
             radius: 4
             color: App.colour.panel
-            border.color: Material.accent
+            border.color: App.colour.accent
             border.width: 1
             implicitWidth: dropHintText.implicitWidth + 24
             implicitHeight: dropHintText.implicitHeight + 16

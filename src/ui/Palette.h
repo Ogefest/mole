@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QVariantList>
 
 namespace mole {
 
@@ -60,6 +61,26 @@ class Palette : public QObject
     /// See ADR-0074.
     Q_PROPERTY(bool light READ isLight NOTIFY changed)
 
+    /// **Derived tokens, and they are here rather than in the views for the
+    /// reason the sixteen are.** ADR-0072 allowed a view to derive from a token
+    /// "in two shapes" and nothing else, and then eight views derived in four
+    /// other shapes: `Qt.lighter(App.colour.window, 1.1)` for a split handle,
+    /// `Qt.darker(App.colour.accent, 1.3)` for a pressed button, an accent at
+    /// 0.18 opacity where a selection token exists, and
+    /// `Qt.hsla((index * 0.13) % 1.0, 0.45, 0.58, 1.0)` for a chart -- a fixed
+    /// lightness that had never been looked at on a light ground.
+    ///
+    /// A derivation that lives in a view is a value nobody chose and nobody can
+    /// repaint. These are computed from the sixteen, once, on the polarity in
+    /// hand -- so a theme still repaints everything at once, and a view still
+    /// names a token. See MOLE-397 and ADR-0072's amendment.
+    Q_PROPERTY(QColor divider READ divider NOTIFY changed)
+    Q_PROPERTY(QColor accentPressed READ accentPressed NOTIFY changed)
+    Q_PROPERTY(QColor mark READ mark NOTIFY changed)
+    /// Colours for a chart's categories, in order, looked at on both polarities.
+    /// A view takes `categorical[index % categorical.length]`.
+    Q_PROPERTY(QVariantList categorical READ categorical NOTIFY changed)
+
 public:
     /// One theme's worth of values. Sixteen fields in the order the tokens are
     /// documented, so a theme reads as a table rather than as sixteen assignments.
@@ -96,6 +117,17 @@ public:
     QColor textMuted() const { return m_tokens.textMuted; }
     QColor textFaint() const { return m_tokens.textFaint; }
     QColor accent() const { return m_tokens.accent; }
+
+    /// The grip between two panes: a step away from the window's own ground,
+    /// away from it whichever polarity this is.
+    QColor divider() const;
+    /// An accent under the pointer's press. Darker on a light theme and lighter
+    /// on a dark one, which is the half a `Qt.darker()` in a view got wrong.
+    QColor accentPressed() const;
+    /// A mark laid over text -- the hex view's two -- readable on the pane it is
+    /// drawn on rather than an accent at 0.28 opacity.
+    QColor mark() const;
+    QVariantList categorical() const;
     QColor link() const { return m_tokens.link; }
     QColor ok() const { return m_tokens.ok; }
     QColor warn() const { return m_tokens.warn; }

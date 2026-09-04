@@ -104,7 +104,7 @@ Menu {
                 // Empty rather than hidden: a RowLayout gives an invisible item no
                 // width at all, which is how the column came to collapse.
                 text: modelData.checkable || !modelData.iconText ? "" : modelData.iconText
-                color: Material.accent
+                color: App.colour.accent
                 font.pixelSize: 12
             }
 
@@ -113,7 +113,10 @@ Menu {
                 Layout.fillWidth: true
                 Layout.minimumWidth: implicitWidth
                 text: modelData.title
-                opacity: modelData.enabled ? 1.0 : 0.4
+                // A token for the disabled word rather than 0.4 opacity over
+                // whatever the menu's ground happens to be: textFaint is the
+                // floor and exists for this. See MOLE-397.
+                color: modelData.enabled ? App.colour.text : App.colour.textFaint
                 font.pixelSize: 13
             }
 
