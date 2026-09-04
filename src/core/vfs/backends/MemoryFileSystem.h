@@ -162,6 +162,10 @@ public:
     /// How many times this drive was really asked. "At most once per drive per
     /// session" is a claim, and counting is what checks it.
     int probeCallCount() const;
+    /// How many times stat() has been reached. For the claim that a gesture costs
+    /// no request at all -- on a real remote drive a stat is a round trip, and a
+    /// count is the only way to say "none" rather than "few".
+    int statCallCount() const;
     /// Whether a probe is inside the drive right now. What a test waits for.
     bool isProbing() const;
 
@@ -217,6 +221,7 @@ private:
     qint64 m_throttleBytes = 0;
     int m_throttleDelayMs = 0;
     mutable int m_listCalls = 0;
+    mutable int m_statCalls = 0;
     QStringList m_offers;
     VfsError::Code m_probeFault = VfsError::None;
     int m_probeDelayMs = 0;

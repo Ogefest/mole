@@ -207,9 +207,8 @@ void FileListModel::mergeEntries(const FileEntryList& entries)
             continue;
         }
 
-        // The walk found what the scan remembered. The row keeps its place --
-        // moving it would pull the list out from under whoever is reading it --
-        // and stops being a memory: these are the facts on disk.
+        // The walk found what the scan remembered: the row stops being a memory,
+        // because these are the facts on disk.
         const int offset = known->offset;
         m_indexed.erase(known);
         if (offset < 0 || offset >= m_all.size())
@@ -219,11 +218,59 @@ void FileListModel::mergeEntries(const FileEntryList& entries)
         const int row = static_cast<int>(m_visible.indexOf(offset));
         if (row < 0)
             continue;
-        const QModelIndex changed = index(row, 0);
+
+        // **And it moves if its sort key changed.** This used to keep the row
+        // where it sat, on the grounds that moving it would pull the list out
+        // from under whoever is reading it -- but under a size or date sort the
+        // replaced row is then in the wrong place, and appendEntries() bisects on
+        // the premise that the visible list is ordered. The next batch of
+        // streamed results was therefore inserted at positions computed from a
+        // false premise: rows landing out of order, and an upper_bound that can
+        // step past where it should have stopped. A mixed search (ADR-0038) is
+        // exactly the path that merges and then goes on streaming. One row moving
+        // is what the view is told about and can follow; an unordered list is
+        // not. See MOLE-394.
+        const int landed = moveIntoPlace(row);
+        const QModelIndex changed = index(landed, 0);
         emit dataChanged(changed, changed);
     }
 
     appendEntries(fresh);
+}
+
+int FileListModel::moveIntoPlace(int row)
+{
+    if (row < 0 || row >= m_visible.size())
+        return row;
+
+    const int offset = m_visible.at(row);
+    const auto order = [this](int a, int b) { return lessThan(m_all.at(a), m_all.at(b)); };
+
+    // Where it belongs among the rows that are not it. Walked rather than
+    // bisected, because this row is the one element the list is not sorted by --
+    // which is the whole reason this function exists. Stable: it stops only at a
+    // row it sorts strictly before, so an equal key keeps it after the rows
+    // already on screen, the way appendEntries() places one.
+    qsizetype at = 0;
+    for (qsizetype i = 0; i < m_visible.size(); ++i) {
+        if (i == row)
+            continue;
+        if (order(offset, m_visible.at(i)))
+            break;
+        ++at;
+    }
+    if (at == row)
+        return row;
+
+    // beginMoveRows() takes the destination in the coordinates *before* the
+    // move, so a row going down the list is announced one past where it lands.
+    const int destination = static_cast<int>(at > row ? at + 1 : at);
+    if (!beginMoveRows(QModelIndex(), row, row, QModelIndex(), destination))
+        return row;
+    m_visible.removeAt(row);
+    m_visible.insert(at, offset);
+    endMoveRows();
+    return static_cast<int>(at);
 }
 
 void FileListModel::removeEntries(const QStringList& uris)

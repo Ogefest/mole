@@ -242,6 +242,14 @@ signals:
 private:
     void rebuildVisible();
     int annotationFor(const QString& uri) const { return m_annotations.value(uri, NoAnnotation); }
+    /// Puts one visible row back where the sort order says it belongs, as a
+    /// single move the view can follow. Returns the row it ended up at.
+    ///
+    /// For mergeEntries(): a superseded row whose size or date changed is the one
+    /// element the list is no longer sorted by, and appendEntries() bisects on
+    /// the premise that it is. See MOLE-394.
+    int moveIntoPlace(int row);
+
     bool lessThan(const FileEntry& a, const FileEntry& b) const;
 
     QHash<QString, int> m_annotations;

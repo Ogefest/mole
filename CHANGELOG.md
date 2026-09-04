@@ -65,6 +65,9 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-394 Enter in the filter box opens the row it names, wherever the cursor was before
+2026-09-04 #MOLE-394 A mixed search stays in order when the list is sorted by size or date
+2026-09-04 #MOLE-394 Moving the cursor on a remote drive no longer asks about every row it passes
 2026-09-04 #MOLE-393 Opening a search result after a restart no longer navigates a tab you were working in
 2026-09-04 #MOLE-393 Opening an archive moves the pane you activated the row in, instead of another tab
 2026-09-04 #MOLE-393 A restart puts you back on the tab you were on, even when a plugin's tab is gone

@@ -207,6 +207,9 @@ private:
     /// Cheap to call: a drive that has nothing to offer answers with nothing,
     /// and an answer for a row the cursor has already left is dropped.
     void refreshDriveActions();
+    /// Puts the cursor back on the row it was on after the list is rebuilt --
+    /// filtered, re-sorted, refreshed. See MOLE-394.
+    void reanchorCursor();
     /// Asks the drive, once for the folder in view, which of its entries it has
     /// something for. Nothing at all when the drive offers nothing.
     void refreshFolderMarks();
@@ -286,6 +289,12 @@ private:
     QStringList m_history;
     int m_historyIndex = -1;
     int m_currentIndex = -1;
+    /// The uri under the cursor when the list started being rebuilt, so the
+    /// cursor can be put back on that row rather than on that row *number*.
+    QString m_cursorWas;
+    /// Set while a whole new listing is being installed, which places the cursor
+    /// itself from what was remembered for the folder.
+    bool m_installingListing = false;
     bool m_loading = false;
     QString m_errorText;
     QPointer<ListDirectoryTask> m_pending;

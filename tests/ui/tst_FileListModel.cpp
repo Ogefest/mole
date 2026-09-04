@@ -66,6 +66,7 @@ private slots:
     void filterCombinesWithHiddenFiles();
     void filterReportsHowMuchItHid();
     void clearingTheFilterRestoresEverything();
+    void aSupersededRowMovesSoTheNextBatchLandsInOrder();
 };
 
 void TestFileListModel::obeysTheModelContract()
@@ -534,6 +535,72 @@ void TestFileListModel::clearingTheFilterRestoresEverything()
     model.setFilterText(QStringLiteral("zzz"));
     QCOMPARE(model.rowCount(), 0);
     QCOMPARE(model.totalCount(), 2);
+}
+
+/// The precondition appendEntries() bisects on.
+///
+/// A mixed search (ADR-0038) shows what the index remembers, then corrects it
+/// with what the walk finds, and goes on streaming while it does.
+/// mergeEntries() replaced a remembered row's size and date and left it where it
+/// sat, so under a size or date sort the visible list was no longer ordered --
+/// and appendEntries() positions each new stretch with std::upper_bound, which
+/// requires that it is. The next batch was then inserted at positions computed
+/// from a false premise. Every existing test here sorts by name, where a
+/// replaced row keeps its key and nothing shows. See MOLE-394.
+void TestFileListModel::aSupersededRowMovesSoTheNextBatchLandsInOrder()
+{
+    FileListModel model;
+    QAbstractItemModelTester tester(&model, QAbstractItemModelTester::FailureReportingMode::Warning);
+    model.setSortKey(FileListModel::SortKey::Size);
+
+    const auto sizesOf = [&model] {
+        QList<qint64> out;
+        for (int row = 0; row < model.rowCount(); ++row)
+            out.append(model.data(model.index(row, 0), FileListModel::SizeRole).toLongLong());
+        return out;
+    };
+    const auto isOrdered = [&sizesOf] {
+        const QList<qint64> sizes = sizesOf();
+        for (qsizetype i = 1; i < sizes.size(); ++i) {
+            if (sizes.at(i) < sizes.at(i - 1))
+                return false;
+        }
+        return true;
+    };
+
+    // What the index remembered, smallest first.
+    model.setEntries({ makeEntry(QStringLiteral("a"), false, 10), makeEntry(QStringLiteral("b"), false, 20),
+        makeEntry(QStringLiteral("c"), false, 30), makeEntry(QStringLiteral("d"), false, 40) });
+    model.markFromIndex({ QStringLiteral("file:///data/a"), QStringLiteral("file:///data/b"),
+                            QStringLiteral("file:///data/c"), QStringLiteral("file:///data/d") },
+        QDateTime::fromSecsSinceEpoch(1600000000));
+    QVERIFY(isOrdered());
+
+    // The walk reaches "a" and it has grown since the scan -- so the row that
+    // was first now belongs last.
+    model.mergeEntries({ makeEntry(QStringLiteral("a"), false, 500) });
+    QCOMPARE(model.rowCount(), 4);
+    QVERIFY2(isOrdered(), "the replaced row was left where the index had put it");
+    QCOMPARE(namesOf(model),
+        QStringList({ QStringLiteral("b"), QStringLiteral("c"), QStringLiteral("d"), QStringLiteral("a") }));
+
+    // And the streaming that follows lands in order, which is what the premise
+    // was for.
+    model.appendEntries({ makeEntry(QStringLiteral("e"), false, 25),
+        makeEntry(QStringLiteral("f"), false, 600), makeEntry(QStringLiteral("g"), false, 5) });
+    QCOMPARE(model.rowCount(), 7);
+    QVERIFY2(isOrdered(), "a batch was inserted at positions computed from an unsorted list");
+    QCOMPARE(namesOf(model),
+        QStringList({ QStringLiteral("g"), QStringLiteral("b"), QStringLiteral("e"), QStringLiteral("c"),
+            QStringLiteral("d"), QStringLiteral("a"), QStringLiteral("f") }));
+
+    // A name sort is untouched: the key did not change, so the row does not move.
+    FileListModel byName;
+    byName.setEntries(
+        { makeEntry(QStringLiteral("a"), false, 10), makeEntry(QStringLiteral("b"), false, 20) });
+    byName.markFromIndex({ QStringLiteral("file:///data/a") }, QDateTime::fromSecsSinceEpoch(1600000000));
+    byName.mergeEntries({ makeEntry(QStringLiteral("a"), false, 500) });
+    QCOMPARE(namesOf(byName), QStringList({ QStringLiteral("a"), QStringLiteral("b") }));
 }
 
 MOLE_TEST_MAIN(TestFileListModel)

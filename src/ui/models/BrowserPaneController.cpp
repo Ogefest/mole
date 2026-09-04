@@ -34,6 +34,19 @@ BrowserPaneController::BrowserPaneController(PluginServices services, QObject* p
     , m_statusFloor(new QTimer(this))
     , m_gitWatcher(new QFileSystemWatcher(this))
 {
+    // **The cursor follows the row, not the row number.** FileListModel already
+    // tracks the *selection* by uri so a re-sort or a refresh does not move it
+    // onto other files; the cursor was a plain int, re-anchored only by
+    // setCurrentIndex() and load(), and nothing listened to the model's reset.
+    // So a filter typed with the cursor on row 7 of forty left the cursor on
+    // "row 7" of two rows: currentName() empty, F3 and "copy path" greyed out,
+    // and Enter in the filter field -- which FilePane.qml calls "open that one",
+    // the headline browsing gesture -- calling openRow(7) with nothing there.
+    // See MOLE-394.
+    connect(m_files, &QAbstractItemModel::modelAboutToBeReset, this,
+        [this] { m_cursorWas = m_files->uriAt(m_currentIndex); });
+    connect(m_files, &QAbstractItemModel::modelReset, this, [this] { reanchorCursor(); });
+
     m_statusFloor->setSingleShot(true);
     m_statusFloor->setInterval(kStatusFloorMs);
     connect(m_statusFloor, &QTimer::timeout, this, [this] {
@@ -370,6 +383,33 @@ void BrowserPaneController::navigateTo(const QString& uri)
         return;
     }
     load(target, true);
+}
+
+void BrowserPaneController::reanchorCursor()
+{
+    if (m_installingListing)
+        return;
+
+    // Where the cursor was, if that row is still visible; the first row when it
+    // is not, because a list with rows in it and no cursor is a list nothing can
+    // be done to. No cursor at all only when there are no rows.
+    const int rows = m_files->rowCount();
+    if (rows == 0) {
+        if (m_currentIndex == -1)
+            return;
+        m_currentIndex = -1;
+        emit currentIndexChanged();
+        refreshDriveActions();
+        return;
+    }
+
+    const int row = m_cursorWas.isEmpty() ? -1 : m_files->rowOfUri(m_cursorWas);
+    const int landed = row >= 0 ? row : qBound(0, m_currentIndex, rows - 1);
+    if (m_currentIndex == landed)
+        return;
+    m_currentIndex = landed;
+    emit currentIndexChanged();
+    refreshDriveActions();
 }
 
 void BrowserPaneController::setCurrentIndex(int index)
@@ -956,8 +996,16 @@ void BrowserPaneController::load(const VfsUri& uri, bool recordHistory)
                 return;
             // A filter belongs to the folder it was typed in; carrying it
             // into the next one looks like an empty directory.
+            // A whole new listing places the cursor itself, a few lines below,
+            // from what was remembered for this folder -- so the re-anchoring
+            // that follows a filter or a re-sort must stay out of the way rather
+            // than putting an interim cursor somewhere and asking the drive
+            // about it.
+            m_installingListing = true;
             m_files->setFilterText(QString());
             m_files->setEntries(entries);
+            m_installingListing = false;
+            m_cursorWas.clear();
 
             // Back on whatever the cursor was last on here, if it still
             // exists; the first row otherwise.
@@ -1050,8 +1098,20 @@ void BrowserPaneController::refreshDriveActions()
     FileSystemPtr fs = m_services.vfs->resolve(target);
     if (!fs)
         return;
+    // A drive that offers nothing is not asked at all: no task, no query, no
+    // work -- the same gate refreshFolderMarks() has always had, and ADR-0076
+    // states for both. This one did not, and it runs on *every cursor step*: a
+    // stat per row, over the network, for an answer that was always going to be
+    // empty. Until the probe has answered there is nothing to ask about either;
+    // load() asks again when it does.
+    if (fs->offers().state == DriveOffers::State::Unasked || fs->offers().ids.isEmpty())
+        return;
 
-    auto* task = new QueryFileActionsTask(std::move(fs), target);
+    // The row itself, which the listing in front of the user already holds, so
+    // the task has nothing to stat.
+    auto* task = m_currentIndex >= 0 && m_currentIndex < m_files->rowCount()
+        ? new QueryFileActionsTask(std::move(fs), target, m_files->entryAt(m_currentIndex))
+        : new QueryFileActionsTask(std::move(fs), target);
     m_driveActionsPending = task;
     connect(task, &Task::finished, this, [this, task] {
         if (m_driveActionsPending != task)

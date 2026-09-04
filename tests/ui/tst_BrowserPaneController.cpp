@@ -81,6 +81,8 @@ private slots:
 
     void cursorStaysInsideTheListing();
     void cursorResetsWhenTheListingChanges();
+    void theCursorFollowsItsRowThroughAFilter();
+    void movingTheCursorOnADriveThatOffersNothingCostsNoRequests();
     void insertTicksAndAdvances();
     void targetsAreListedByNameAndNotJustCounted();
     void targetDetailsFollowTheCursorWhenNothingIsTicked();
@@ -546,6 +548,93 @@ void TestBrowserPaneController::cursorResetsWhenTheListingChanges()
     // Landing in a new folder with the cursor pointing at row 1 of the old one
     // would be arbitrary; start at the top.
     QCOMPARE(pane->currentIndex(), 0);
+}
+
+/// "Type to filter, Enter to open" only worked near the top of the list.
+///
+/// FileListModel tracks the *selection* by uri so re-sorting or refreshing does
+/// not move it onto other files. The cursor was a plain int, re-anchored only by
+/// setCurrentIndex() and load(), and nothing listened to the model's reset. So
+/// with the cursor on row 7 of forty, a filter leaving two rows left it pointing
+/// at "row 7": currentName() empty, AppController::currentFile() empty -- F3 and
+/// "copy path" greyed out -- and Enter in the filter field, which FilePane.qml
+/// calls "open that one", calling openRow(7) on nothing and returning in
+/// silence. See MOLE-394.
+void TestBrowserPaneController::theCursorFollowsItsRowThroughAFilter()
+{
+    for (int i = 0; i < 12; ++i)
+        m_fs->addFile(QStringLiteral("/many/file-%1.txt").arg(i, 2, 10, QLatin1Char('0')));
+    m_fs->addFile(QStringLiteral("/many/needle.txt"));
+
+    BrowserPaneController* pane = makePane();
+    pane->navigateTo(QStringLiteral("mem:///many"));
+    QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() == 13; }));
+
+    pane->cursorToEnd();
+    const QString wasOn = pane->currentName();
+    QVERIFY(!wasOn.isEmpty());
+    QCOMPARE(pane->currentIndex(), 12);
+
+    // One row left, and it is not the one the cursor was on.
+    pane->files()->setFilterText(QStringLiteral("file-03"));
+    QCOMPARE(pane->files()->rowCount(), 1);
+    QCOMPARE(pane->currentIndex(), 0);
+    QCOMPARE(pane->currentName(), QStringLiteral("file-03.txt"));
+    QVERIFY2(!pane->files()->uriAt(pane->currentIndex()).isEmpty(),
+        "the cursor pointed at a row that is not there");
+
+    // A filter that keeps the row the cursor was on keeps the cursor on it,
+    // which is the other half of the claim: it follows the row, not the number.
+    pane->files()->setFilterText(QString());
+    QVERIFY(waitFor([pane] { return pane->files()->rowCount() == 13; }));
+    pane->cursorToEnd();
+    QCOMPARE(pane->currentName(), wasOn);
+    pane->files()->setFilterText(QStringLiteral("needle"));
+    QCOMPARE(pane->files()->rowCount(), 1);
+    QCOMPARE(pane->currentName(), wasOn);
+
+    // And an empty result leaves no cursor rather than a stale one.
+    pane->files()->setFilterText(QStringLiteral("nothing matches this"));
+    QCOMPARE(pane->files()->rowCount(), 0);
+    QCOMPARE(pane->currentIndex(), -1);
+    QVERIFY(pane->currentName().isEmpty());
+}
+
+/// A stat per cursor step, on a drive with nothing to offer.
+///
+/// refreshDriveActions() submitted a QueryFileActionsTask on every
+/// setCurrentIndex(), and the task's run() stat()ed before asking. Its sibling
+/// refreshFolderMarks() is gated -- "a drive that offers nothing is not asked at
+/// all: no task, no query, no work" (ADR-0076) -- and this one was not. Holding
+/// Down through five thousand rows of an object store was five thousand HEAD
+/// requests, for a drive whose offers() had already answered with nothing.
+/// See MOLE-394.
+void TestBrowserPaneController::movingTheCursorOnADriveThatOffersNothingCostsNoRequests()
+{
+    for (int i = 0; i < 20; ++i)
+        m_fs->addFile(QStringLiteral("/plain/file-%1.txt").arg(i, 2, 10, QLatin1Char('0')));
+
+    BrowserPaneController* pane = makePane();
+    pane->navigateTo(QStringLiteral("mem:///plain"));
+    QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() == 20; }));
+    // The listing, the probe and anything else the arrival costs are all before
+    // the count starts: what is under test is the cost of *moving*.
+    QVERIFY(waitFor([this] { return m_tasks->activeCount() == 0; }, 8000));
+    drainEvents();
+    const int statsBefore = m_fs->statCallCount();
+
+    // One step at a time, waiting for the pool between them, because that is
+    // what holding Down is: nineteen questions asked and answered. Stepping
+    // nineteen times in a row would cancel eighteen of them before they ran and
+    // measure almost nothing.
+    for (int step = 0; step < 19; ++step) {
+        pane->moveCursor(1);
+        QVERIFY(waitFor([this] { return m_tasks->activeCount() == 0; }, 8000));
+        drainEvents();
+    }
+    QCOMPARE(pane->currentIndex(), 19);
+
+    QCOMPARE(m_fs->statCallCount(), statsBefore);
 }
 
 void TestBrowserPaneController::insertTicksAndAdvances()

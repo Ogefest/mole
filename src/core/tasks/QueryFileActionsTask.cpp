@@ -12,10 +12,26 @@ QueryFileActionsTask::QueryFileActionsTask(FileSystemPtr fileSystem, VfsUri targ
     setBackground(true);
 }
 
+QueryFileActionsTask::QueryFileActionsTask(
+    FileSystemPtr fileSystem, VfsUri target, FileEntry known, QObject* parent)
+    : QueryFileActionsTask(std::move(fileSystem), std::move(target), parent)
+{
+    m_known = std::move(known);
+    m_haveEntry = true;
+}
+
 void QueryFileActionsTask::run()
 {
     if (!m_fileSystem)
         return;
+
+    // Handed the row, so nothing to ask. This is the whole of the difference
+    // between a cursor step that costs a request and one that costs nothing.
+    if (m_haveEntry) {
+        m_actions = m_fileSystem->actionsFor(m_target, m_known);
+        setProgress(100);
+        return;
+    }
 
     const Result<FileEntry> entry = m_fileSystem->stat(m_target);
     if (!entry.ok()) {

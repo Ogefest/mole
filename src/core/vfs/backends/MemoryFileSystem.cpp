@@ -162,6 +162,12 @@ int MemoryFileSystem::listCallCount() const
     return m_listCalls;
 }
 
+int MemoryFileSystem::statCallCount() const
+{
+    QMutexLocker lock(&m_mutex);
+    return m_statCalls;
+}
+
 int MemoryFileSystem::probeCallCount() const
 {
     QMutexLocker lock(&m_mutex);
@@ -298,6 +304,7 @@ Result<FileEntry> MemoryFileSystem::stat(const VfsUri& target)
     checkNotOnTheDrawingThread("stat");
     waitAsASlowDriveWould();
     QMutexLocker lock(&m_mutex);
+    ++m_statCalls;
     // The stored spelling, not the one asked for: a case-insensitive volume
     // finds the file however it is typed and then reports the name it holds.
     const QString path = resolve(target.path());
