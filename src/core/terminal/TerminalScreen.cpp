@@ -169,9 +169,24 @@ namespace {
 #endif
 
 TerminalScreen::TerminalScreen(QObject* parent)
+    : TerminalScreen(Emulator::Best, parent)
+{
+}
+
+TerminalScreen::TerminalScreen(Emulator emulator, QObject* parent)
     : QObject(parent)
+    , m_emulator(emulator)
 {
     resize(m_columns, m_rows);
+}
+
+bool TerminalScreen::usingBuiltInParser() const
+{
+#ifdef MOLE_HAVE_VTERM
+    return m_emulator == Emulator::BuiltIn;
+#else
+    return true;
+#endif
 }
 
 TerminalScreen::~TerminalScreen() = default;
@@ -194,7 +209,9 @@ void TerminalScreen::resize(int columns, int rows)
         line.resize(m_columns);
 
 #ifdef MOLE_HAVE_VTERM
-    if (!m_vterm) {
+    if (usingBuiltInParser()) {
+        // Nothing to size: this screen is parsed here.
+    } else if (!m_vterm) {
         m_vterm = std::make_unique<Vterm>();
         m_vterm->term = vterm_new(m_rows, m_columns);
         vterm_set_utf8(m_vterm->term, 1);
@@ -217,6 +234,14 @@ void TerminalScreen::resize(int columns, int rows)
 
     m_cursorRow = std::min(m_cursorRow, m_rows - 1);
     m_cursorColumn = std::min(m_cursorColumn, m_columns - 1);
+    // The *saved* cursor as well. A resize to fewer rows clamped the live one and
+    // left this alone, so a later CSI u restored a row past the end of the grid
+    // and the next CSI K wrote through m_grid[m_cursorRow] unchecked -- an assert
+    // in a debug build and memory corruption in a release one. `CSI s` is emitted
+    // by ordinary programs, so it takes a `cat` of the wrong file and a drag of
+    // the splitter. See MOLE-363.
+    m_savedRow = std::clamp(m_savedRow, 0, m_rows - 1);
+    m_savedColumn = std::clamp(m_savedColumn, 0, m_columns - 1);
     emit changed();
 }
 
@@ -233,16 +258,18 @@ void TerminalScreen::readBackFromVterm()
             const VTermPos position { row, column };
             vterm_screen_get_cell(m_vterm->screen, position, &source);
 
-            TerminalCell& target = cellAt(row, column);
-            target.character
+            TerminalCell* target = cellAt(row, column);
+            if (!target)
+                continue;
+            target->character
                 = source.chars[0] != 0 ? QChar(static_cast<char32_t>(source.chars[0])) : QLatin1Char(' ');
-            target.bold = source.attrs.bold != 0;
-            target.inverse = source.attrs.reverse != 0;
+            target->bold = source.attrs.bold != 0;
+            target->inverse = source.attrs.reverse != 0;
 
             // Only indexed colours are carried; a true-colour cell keeps the
             // default rather than being approximated to the nearest of 256.
-            target.foreground = VTERM_COLOR_IS_INDEXED(&source.fg) ? source.fg.indexed.idx : -1;
-            target.background = VTERM_COLOR_IS_INDEXED(&source.bg) ? source.bg.indexed.idx : -1;
+            target->foreground = VTERM_COLOR_IS_INDEXED(&source.fg) ? source.fg.indexed.idx : -1;
+            target->background = VTERM_COLOR_IS_INDEXED(&source.bg) ? source.bg.indexed.idx : -1;
         }
     }
 
@@ -261,18 +288,24 @@ void TerminalScreen::clear()
         line.fill(TerminalCell {});
     m_cursorRow = 0;
     m_cursorColumn = 0;
+    m_savedRow = 0;
+    m_savedColumn = 0;
+    // The parser too, decoder included: a screen reused for a new shell used to
+    // inherit whatever the last one left half-decoded or half-parsed.
+    m_state = State::Ground;
+    m_pending.clear();
+    m_decoder.resetState();
     emit changed();
 }
 
-TerminalCell& TerminalScreen::cellAt(int row, int column)
+TerminalCell* TerminalScreen::cellAt(int row, int column)
 {
-    static TerminalCell scratch;
     if (row < 0 || row >= m_grid.size())
-        return scratch;
+        return nullptr;
     QList<TerminalCell>& line = m_grid[row];
     if (column < 0 || column >= line.size())
-        return scratch;
-    return line[column];
+        return nullptr;
+    return &line[column];
 }
 
 QList<TerminalCell> TerminalScreen::row(int index) const
@@ -333,19 +366,27 @@ void TerminalScreen::putCharacter(QChar c)
         carriageReturn();
         newline();
     }
-    TerminalCell& cell = cellAt(m_cursorRow, m_cursorColumn);
-    cell.character = c;
-    cell.foreground = m_pen.foreground;
-    cell.background = m_pen.background;
-    cell.bold = m_pen.bold;
-    cell.inverse = m_pen.inverse;
+    TerminalCell* cell = cellAt(m_cursorRow, m_cursorColumn);
+    if (!cell)
+        return;
+    cell->character = c;
+    cell->foreground = m_pen.foreground;
+    cell->background = m_pen.background;
+    cell->bold = m_pen.bold;
+    cell->inverse = m_pen.inverse;
     ++m_cursorColumn;
 }
 
 void TerminalScreen::eraseInLine(int mode)
 {
+    // Bounds-checked, unlike cellAt() beside it. A saved cursor restored past the
+    // end of a shrunken grid, or a CSI B whose parameter overflowed into a
+    // negative row, reached m_grid[m_cursorRow] straight through this line. See
+    // MOLE-363.
+    if (m_cursorRow < 0 || m_cursorRow >= m_grid.size())
+        return;
     QList<TerminalCell>& line = m_grid[m_cursorRow];
-    const int from = mode == 0 ? m_cursorColumn : 0;
+    const int from = std::max(0, mode == 0 ? m_cursorColumn : 0);
     const int to = mode == 1 ? m_cursorColumn : m_columns - 1;
     for (int i = from; i <= to && i < line.size(); ++i)
         line[i] = TerminalCell {};
@@ -357,7 +398,7 @@ void TerminalScreen::eraseInDisplay(int mode)
         clear();
         return;
     }
-    const int from = mode == 0 ? m_cursorRow : 0;
+    const int from = std::max(0, mode == 0 ? m_cursorRow : 0);
     const int to = mode == 1 ? m_cursorRow : m_rows - 1;
     for (int i = from; i <= to && i < m_grid.size(); ++i)
         m_grid[i].fill(TerminalCell {});
@@ -459,8 +500,10 @@ void TerminalScreen::handleControlSequence(char final, const QList<int>& paramet
         m_savedColumn = m_cursorColumn;
         break;
     case 'u':
-        m_cursorRow = m_savedRow;
-        m_cursorColumn = m_savedColumn;
+        // Clamped as well as clamping the saved pair on resize, because the grid
+        // may have shrunk between the save and the restore by more than one path.
+        m_cursorRow = std::clamp(m_savedRow, 0, m_rows - 1);
+        m_cursorColumn = std::clamp(m_savedColumn, 0, m_columns - 1);
         break;
     default:
         // Anything else is left alone. Guessing at a sequence is how a screen
@@ -473,7 +516,7 @@ void TerminalScreen::handleControlSequence(char final, const QList<int>& paramet
 void TerminalScreen::feed(const QByteArray& data)
 {
 #ifdef MOLE_HAVE_VTERM
-    if (m_vterm && m_vterm->term) {
+    if (!usingBuiltInParser() && m_vterm && m_vterm->term) {
         QByteArray whole = m_vterm->partial + data;
         m_vterm->partial = takeIncompleteTail(whole);
 
@@ -484,10 +527,7 @@ void TerminalScreen::feed(const QByteArray& data)
     }
 #endif
 
-    // Decoded incrementally: a multi-byte character can arrive split across two
-    // reads, and decoding each read on its own would corrupt it.
-    static thread_local QStringDecoder decoder(QStringDecoder::Utf8);
-    const QString text = decoder.decode(data);
+    const QString text = m_decoder.decode(data);
 
     for (const QChar c : text) {
         switch (m_state) {
@@ -518,11 +558,21 @@ void TerminalScreen::feed(const QByteArray& data)
             } else if (c == QLatin1Char(']')) {
                 m_state = State::OperatingSystemCommand;
                 m_pending.clear();
+            } else if (c == QLatin1Char('(') || c == QLatin1Char(')') || c == QLatin1Char('*')
+                || c == QLatin1Char('+') || c == QLatin1Char('#')) {
+                // A character-set designator, whose second byte is part of the
+                // sequence. `ESC ( B` is what `tput sgr0` emits, so most prompts
+                // send it -- and the B fell through to Ground and printed.
+                m_state = State::SwallowOne;
             } else {
                 // Two-character escapes. Only the ones that matter here are
                 // acted on; the rest are consumed so they do not print.
                 m_state = State::Ground;
             }
+            break;
+
+        case State::SwallowOne:
+            m_state = State::Ground;
             break;
 
         case State::ControlSequence:
@@ -532,8 +582,16 @@ void TerminalScreen::feed(const QByteArray& data)
 
                 QList<int> parameters;
                 const QList<QByteArray> pieces = body.split(';');
-                for (const QByteArray& piece : pieces)
-                    parameters.append(piece.toInt());
+                for (const QByteArray& piece : pieces) {
+                    // Capped, because `m_cursorRow + parameter` is signed
+                    // arithmetic: `CSI 2147483647 B` overflowed it into a
+                    // negative row, which is undefined behaviour on the way to
+                    // an unchecked write. 65535 is past any screen anybody has
+                    // and every clamp below still holds. toInt() answers 0 for
+                    // something that does not fit at all, which is the same as
+                    // absent -- and absent means "one" wherever it matters.
+                    parameters.append(std::clamp(piece.toInt(), 0, 65535));
+                }
 
                 handleControlSequence(static_cast<char>(c.unicode()), parameters, question);
                 m_state = State::Ground;
@@ -544,8 +602,11 @@ void TerminalScreen::feed(const QByteArray& data)
             break;
 
         case State::OperatingSystemCommand:
-            // Terminated by BEL or ST. Only the window title is read from it.
+            // Terminated by BEL or by ST, which is ESC \ -- so an ESC here ends
+            // the string and starts an escape sequence, and dropping straight to
+            // Ground printed the backslash.
             if (c == QLatin1Char('\a') || c == QLatin1Char('\x1b')) {
+                const bool byEscape = c == QLatin1Char('\x1b');
                 const QByteArray body = m_pending;
                 const int semicolon = body.indexOf(';');
                 if (semicolon >= 0) {
@@ -555,7 +616,7 @@ void TerminalScreen::feed(const QByteArray& data)
                         emit titleChanged();
                     }
                 }
-                m_state = State::Ground;
+                m_state = byEscape ? State::Escape : State::Ground;
                 m_pending.clear();
             } else {
                 m_pending.append(static_cast<char>(c.unicode()));

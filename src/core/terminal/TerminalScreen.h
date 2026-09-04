@@ -3,6 +3,7 @@
 #include <QList>
 #include <QObject>
 #include <QString>
+#include <QStringDecoder>
 
 #include <memory>
 
@@ -37,7 +38,24 @@ class TerminalScreen : public QObject
     Q_OBJECT
 
 public:
+    /// Which of the two maintains the screen.
+    enum class Emulator {
+        /// libvterm where this build has it, the built-in parser otherwise. What
+        /// the panel asks for.
+        Best,
+        /// The built-in parser, whatever this build has.
+        ///
+        /// For a test, and it earns its place: the fallback is a shipped
+        /// configuration -- libvterm is optional and a build without it parses
+        /// everything this way -- and with libvterm present it is code no test on
+        /// the machine can reach. The faults MOLE-363 found in it include writing
+        /// outside the grid from a sequence `cat` of the wrong file produces, so
+        /// it has to be reachable whatever the build found.
+        BuiltIn,
+    };
+
     explicit TerminalScreen(QObject* parent = nullptr);
+    explicit TerminalScreen(Emulator emulator, QObject* parent = nullptr);
     /// Out of line, because the emulator it holds is only a forward declaration
     /// here -- destroying it needs the definition.
     ~TerminalScreen() override;
@@ -91,11 +109,21 @@ private:
     void applyGraphicRendition(const QList<int>& parameters);
     void eraseInDisplay(int mode);
     void eraseInLine(int mode);
-    TerminalCell& cellAt(int row, int column);
+    /// The cell, or null when there is none there.
+    ///
+    /// A pointer rather than a reference to a shared scratch cell: the scratch
+    /// was `static`, so two screens wrote to the same one, and returning it made
+    /// an out-of-range write silently succeed. A caller that cannot see the
+    /// difference between a cell and nowhere is a caller that will get it wrong.
+    TerminalCell* cellAt(int row, int column);
+    /// Whether the built-in parser is the one running. False only when this build
+    /// has libvterm *and* Emulator::Best was asked for.
+    bool usingBuiltInParser() const;
 #ifdef MOLE_HAVE_VTERM
     void readBackFromVterm();
 #endif
 
+    Emulator m_emulator = Emulator::Best;
     int m_columns = 80;
     int m_rows = 24;
     QList<QList<TerminalCell>> m_grid;
@@ -113,9 +141,18 @@ private:
 
     /// Parser state. A sequence can arrive split across reads, so this survives
     /// between calls to feed().
-    enum class State { Ground, Escape, ControlSequence, OperatingSystemCommand };
+    ///
+    /// `SwallowOne` is for the two-byte designators -- `ESC ( B`, which `tput
+    /// sgr0` emits and therefore most prompts do -- whose second byte used to
+    /// fall through to Ground and print. `SwallowOne` eats it.
+    enum class State { Ground, Escape, SwallowOne, ControlSequence, OperatingSystemCommand };
     State m_state = State::Ground;
     QByteArray m_pending;
+    /// Decoded incrementally, because a multi-byte character can arrive split
+    /// across two reads. A member and not `static thread_local`: two screens on
+    /// one thread shared the partial state and corrupted each other's, and a new
+    /// shell inherited whatever the last one left half-decoded.
+    QStringDecoder m_decoder { QStringDecoder::Utf8 };
     QString m_title;
     bool m_sawUnsupported = false;
 };

@@ -148,8 +148,20 @@ void TerminalController::open(const QString& directory)
     m_screen.clear();
     m_workingDirectory = path;
 
+    Pty::Options options;
+    // A development and screenshot hook, in the shape every other MOLE_* variable
+    // here has: the arguments the shell is started with instead of the bare `-i`.
+    // The screenshot harness sets it to "--norc --noprofile -i" so the pictures
+    // carry a prompt belonging to the project rather than to whoever ran the
+    // suite; it used to write a wrapper script and exec bash out of it, which is
+    // a second way of starting a shell that behaves differently from this one.
+    // See MOLE-255 for why the prompt matters and MOLE-363 for the wrapper.
+    const QString extraArguments = QString::fromLocal8Bit(qgetenv("MOLE_TERMINAL_ARGUMENTS"));
+    if (!extraArguments.isEmpty())
+        options.arguments = extraArguments.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+
     QString error;
-    if (!m_pty.start(path, {}, &error))
+    if (!m_pty.start(path, {}, options, &error))
         m_errorText = error;
 
     m_pty.resize(m_screen.columns(), m_screen.rows());

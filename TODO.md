@@ -280,9 +280,13 @@ project, and a contributor should never hit a wall of text they cannot read.
 - **A picture can leak what a text file would never be allowed to.** `10-terminal.png`
   carried a real user name and a real machine name into a public repository for as
   long as it existed, because the terminal panel starts `$SHELL` and that was
-  whoever ran the suite. The panel now starts a shell with no rc files and a prompt
-  of its own. Worth remembering when adding a picture of anything that shows an
-  environment: the rule in CLAUDE.md about host names applies to pixels too.
+  whoever ran the suite. **The panel still starts `$SHELL -i` with your own rc
+  files** — that is the point of a terminal panel, and this note used to claim
+  otherwise. What changed is that the *screenshot harness* asks for something
+  else: `MOLE_TERMINAL_ARGUMENTS=--norc --noprofile -i` with `SHELL=/bin/bash` and
+  a `PS1` of the project's own, so a picture carries no machine's name. Worth
+  remembering when adding a picture of anything that shows an environment: the
+  rule in CLAUDE.md about host names applies to pixels too. See MOLE-363.
 
 - **The sweep spares a run on another machine by its open files, not by its pid.**
   A payload is named `mole-<what>-<pid>`, and that pid belongs to the test binary

@@ -148,23 +148,15 @@ bool QmlAppHarness::build(QString* errorOut)
     // checkout. And the prompt's length decided whether the echoed command line
     // wrapped, so the panel had scrolled by one line in one run and not the next.
     //
-    // A wrapper rather than `SHELL=/bin/bash`, because the panel passes only `-i`
-    // and there is no way to add `--norc` from here. `\w` keeps the folder in the
-    // prompt, which is the whole claim the picture is evidence for. See MOLE-255.
-    const QString shell = m_profile->filePath(QStringLiteral("guide-shell"));
-    {
-        QFile wrapper(shell);
-        if (wrapper.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-            wrapper.write("#!/bin/sh\n"
-                          "# Written by QmlAppHarness. No rc files, so the prompt is the one\n"
-                          "# exported below rather than the one belonging to whoever ran this.\n"
-                          "exec /bin/bash --norc --noprofile -i\n");
-            wrapper.close();
-            wrapper.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
-            qputenv("SHELL", shell.toLocal8Bit());
-            qputenv("PS1", "mole:\\w\\$ ");
-        }
-    }
+    // Asked for directly, rather than through a wrapper script this harness used
+    // to write and exec bash out of. The panel takes the shell's arguments from
+    // MOLE_TERMINAL_ARGUMENTS, so the harness and the product now start a shell
+    // the same way -- one code path instead of two that behaved differently.
+    // `\w` keeps the folder in the prompt, which is the whole claim the picture is
+    // evidence for. See MOLE-255 and MOLE-363.
+    qputenv("SHELL", "/bin/bash");
+    qputenv("MOLE_TERMINAL_ARGUMENTS", "--norc --noprofile -i");
+    qputenv("PS1", "mole:\\w\\$ ");
 
     // A drive list that came from the fixture rather than from whichever desk
     // this is running on. Every picture in the user guide is one of these
