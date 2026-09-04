@@ -65,6 +65,8 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-375 A content search across every index reads each file from its own drive, instead of through whichever drive the tab was pointed at
+2026-09-04 #MOLE-375 A content search still reads files when the folder the tab was pointed at is not connected
 2026-09-04 #MOLE-372 An indexed search finds facts written in any alphabet, instead of only ASCII ones
 2026-09-04 #MOLE-372 A search for files without a given fact answers the same from an index as from a walk, instead of the opposite
 2026-09-04 #MOLE-372 A metadata criterion works on a folder no scan has touched, instead of matching nothing

@@ -499,17 +499,28 @@ SearchQuery LiveSearchController::buildQuery() const
     return query;
 }
 
-SearchIo LiveSearchController::searchIoFor(const FileSystemPtr& fileSystem, const VfsUri& root) const
+SearchIo LiveSearchController::searchIoFor(const VfsUri& root) const
 {
-    if (!fileSystem)
-        return {};
-
     SearchIo io;
-    // Resolved per uri rather than captured once, because a hit can live inside
-    // an archive that nobody has mounted -- and a member is a file like any
-    // other once something can open the container.
-    io.read = [this, fileSystem, root](const VfsUri& uri, qint64 offset, qint64 bytes) -> QByteArray {
-        FileSystemPtr backend = uri.scheme() == root.scheme() ? fileSystem : backendFor(uri);
+    // **Every uri through backendFor(), and never through the root's own drive.**
+    //
+    // This used to pick `uri.scheme() == root.scheme() ? fileSystem :
+    // backendFor(uri)` -- one backend per scheme. With `everywhere:yes` the index
+    // answers across every volume, so two SFTP or SMB volumes on different hosts
+    // both produce hits with scheme `sftp`, and the hits from host B were opened
+    // with host A's backend and host B's path. No network backend looks at
+    // authority(), so host A simply opened that path: a wrong file, or NotFound,
+    // and the content predicate was then evaluated against the wrong bytes. Two
+    // `archive://` volumes misfired the same way. And when the root's own drive
+    // was not mounted this whole function returned an empty SearchIo, so no
+    // content check ran for any hit at all -- in the scope the feature exists
+    // for. See MOLE-375.
+    //
+    // backendFor() resolves the mount for that uri and, failing that, builds one
+    // for a container nobody has mounted -- which is the case the shortcut was
+    // written for and the only one it got right.
+    io.read = [this](const VfsUri& uri, qint64 offset, qint64 bytes) -> QByteArray {
+        FileSystemPtr backend = backendFor(uri);
         if (!backend)
             return {};
         Result<std::unique_ptr<QIODevice>> stream = backend->openRead(uri, offset + bytes);
@@ -520,9 +531,18 @@ SearchIo LiveSearchController::searchIoFor(const FileSystemPtr& fileSystem, cons
         }
         return stream.value()->read(bytes);
     };
+    // What a file says about itself, for a criterion SQL cannot state -- a
+    // whole-word metadata demand is left for the evaluator, and an evaluator with
+    // no fact source answers every file the same way whatever it holds.
+    if (auto reader = factReaderFor(m_services, backendFor(root))) {
+        io.facts = [reader](const FileEntry& entry) { return reader(entry, CancelToken()); };
+    }
     // On anything but the local disk a read is a download, so a file has to be
-    // worth much less before it is opened.
-    io.ceiling = root.scheme() == QLatin1String("file") ? SearchIo::kLocalCeiling : SearchIo::kRemoteCeiling;
+    // worth much less before it is opened. Searching everywhere may land on any
+    // drive, so it takes the smaller of the two: a ceiling is a promise about
+    // what will not be fetched, and the root says nothing about where a hit is.
+    io.ceiling = !m_everywhere && root.scheme() == QLatin1String("file") ? SearchIo::kLocalCeiling
+                                                                         : SearchIo::kRemoteCeiling;
     return io;
 }
 
@@ -993,7 +1013,7 @@ void LiveSearchController::startIndexSearch(const SearchQuery& query, const QStr
     // hits that survived everything the database could state.
     if (planSearch(query, SearchSource::Index).needsFile() && m_services.vfs) {
         const VfsUri root = VfsUri::fromString(m_rootUri);
-        indexTask->setSearchIo(searchIoFor(m_services.vfs->resolve(root), root));
+        indexTask->setSearchIo(searchIoFor(root));
     }
     m_indexTask = indexTask;
 

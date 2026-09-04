@@ -317,7 +317,12 @@ private:
     /// How to read a file, for the criteria an entry cannot answer. The ceiling
     /// is smaller for anything that is not the local disk, where reading is
     /// downloading.
-    SearchIo searchIoFor(const FileSystemPtr& fileSystem, const VfsUri& root) const;
+    /// How a hit is read, whichever drive it turns out to be on.
+    ///
+    /// `root` decides only the read ceiling. Every uri goes through
+    /// backendFor(), because with `everywhere:yes` a hit can be on any volume
+    /// and one backend per scheme opened host B's path on host A. See MOLE-375.
+    SearchIo searchIoFor(const VfsUri& root) const;
     /// Everything the form is asking a scan for. `incremental` is the caller's,
     /// because "full rescan" is a button and not a checkbox; the other two are
     /// the form's own.

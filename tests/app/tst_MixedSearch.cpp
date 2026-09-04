@@ -53,6 +53,7 @@ private slots:
     void theLineAndTheFormAreOneQuerySeenTwice();
     void aLineNobodyCanReadSaysSoAndDoesNotRun();
     void theLineCanBeLeftEmptyAndTheFormUsedAlone();
+    void aContentSearchEverywhereReadsEachHitFromItsOwnDrive();
 
 private:
     /// The search tab, aimed at `root`, with the index allowed.
@@ -601,6 +602,66 @@ void TestMixedSearch::theLineCanBeLeftEmptyAndTheFormUsedAlone()
     QVERIFY(runToEnd(search));
     QCOMPARE(urisIn(search->results()).size(), 4);
     QVERIFY(search->queryLineError().isEmpty());
+}
+
+/// Two volumes of one scheme, and a hit read through the wrong one.
+///
+/// `searchIoFor()` chose the backend with `uri.scheme() == root.scheme() ?
+/// fileSystem : backendFor(uri)` -- one backend per scheme. With
+/// `everywhere:yes` the index answers across every volume, so two SFTP or SMB
+/// volumes on different hosts both produce hits with scheme `sftp`, and the hits
+/// from host B were opened with host A's backend and host B's path. No network
+/// backend looks at `authority()`, so host A simply opened that path: a wrong
+/// file, or NotFound, and the content predicate was then evaluated against the
+/// wrong bytes -- in the case the scope was added for. See MOLE-375.
+///
+/// Two in-memory volumes with the *same path* on each is the smallest shape that
+/// has it: whichever drive answers, the read succeeds, and only the bytes say
+/// which volume it came from.
+void TestMixedSearch::aContentSearchEverywhereReadsEachHitFromItsOwnDrive()
+{
+    auto alpha = std::make_shared<MemoryFileSystem>();
+    alpha->addFile(QStringLiteral("/docs/report.txt"), QByteArray("a needle in here"));
+    Mount first;
+    first.id = QStringLiteral("alpha");
+    first.displayName = QStringLiteral("Alpha");
+    first.root = VfsUri::fromString(QStringLiteral("mem://alpha/"));
+    first.fileSystem = alpha;
+    QVERIFY(!m_app->services().vfs->addMount(first).isEmpty());
+
+    auto beta = std::make_shared<MemoryFileSystem>();
+    beta->addFile(QStringLiteral("/docs/report.txt"), QByteArray("only hay in here"));
+    Mount second;
+    second.id = QStringLiteral("beta");
+    second.displayName = QStringLiteral("Beta");
+    second.root = VfsUri::fromString(QStringLiteral("mem://beta/"));
+    second.fileSystem = beta;
+    QVERIFY(!m_app->services().vfs->addMount(second).isEmpty());
+
+    QVERIFY(index(QStringLiteral("mem://alpha/"), QStringLiteral("alpha")));
+    QVERIFY(index(QStringLiteral("mem://beta/"), QStringLiteral("beta")));
+
+    // Aimed at beta and asked to look everywhere, so the hit that matches is on
+    // the *other* volume -- which is exactly the shortcut's blind spot.
+    LiveSearchController* search = searchOver(QStringLiteral("mem://beta/"));
+    QVERIFY(search);
+    search->setQueryText(QStringLiteral("report"));
+    search->setContentText(QStringLiteral("needle"));
+    search->setEverywhere(true);
+    QVERIFY(runToEnd(search));
+
+    QCOMPARE(urisIn(search->results()), QStringList({ QStringLiteral("mem://alpha/docs/report.txt") }));
+
+    // And the other way round, to show it is not the order of the mounts: aimed
+    // at alpha, looking for what only beta holds.
+    LiveSearchController* other = searchOver(QStringLiteral("mem://alpha/"));
+    QVERIFY(other);
+    other->setQueryText(QStringLiteral("report"));
+    other->setContentText(QStringLiteral("hay"));
+    other->setEverywhere(true);
+    QVERIFY(runToEnd(other));
+
+    QCOMPARE(urisIn(other->results()), QStringList({ QStringLiteral("mem://beta/docs/report.txt") }));
 }
 
 MOLE_TEST_MAIN(TestMixedSearch)
