@@ -668,8 +668,8 @@ bool ImageMetadataReader::wantsMore(QByteArrayView bytes, const QString& fileNam
     return exifBlock(bytes, &why).isEmpty() && why == NoExif::Truncated;
 }
 
-QList<FileFact> ImageMetadataReader::read(
-    const FileEntry& entry, QByteArrayView head, PluginServices services, const CancelToken& cancel) const
+QList<FileFact> ImageMetadataReader::read(const FileEntry& entry, QByteArrayView head,
+    const PluginServices& services, const CancelToken& cancel) const
 {
     QByteArray owned;
     QByteArrayView bytes = head;

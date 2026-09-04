@@ -190,7 +190,7 @@ public:
     QString id() const override { return QStringLiteral("mole.metadata.pdf"); }
     int priority() const override { return 100; }
     bool canRead(const FileEntry& entry) const override;
-    QList<FileFact> read(const FileEntry& entry, QByteArrayView head, PluginServices services,
+    QList<FileFact> read(const FileEntry& entry, QByteArrayView head, const PluginServices& services,
         const CancelToken& cancel) const override;
 
     /// The facts of a document already in memory, for a test that would rather

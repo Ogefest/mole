@@ -280,9 +280,16 @@ always deliver on the UI thread.
    topics all share a global namespace; a clash is refused and logged with your
    plugin's name in the message.
 3. **Never change a released id.** Open tabs are persisted by feature id.
-4. **`apiVersion` must match the host.** Leave the default and rebuild against
-   the SDK you target; a mismatch is refused at load with a clear message
-   instead of crashing later.
+4. **`apiVersion` must match the host, and the version is in the interface
+   identifier.** Leave the default and rebuild against the SDK you target. The
+   refusal happens twice: `MOLE_PLUGIN_IID` carries the version, so a library
+   built against another one is refused from its Qt metadata — before its
+   constructor runs, let alone before it is asked what it is — and
+   `PluginMetadata::apiVersion` is checked again on the object. The first of
+   those is what makes this a promise rather than a hope: until MOLE-366 the host
+   read the version *by calling into the plugin*, which is asking a question in a
+   shape the plugin may not have. See
+   [ADR-0098](adr/0098-the-plugin-api-version-is-checked-before-the-plugin-runs.md).
 5. **Errors, not exceptions.** Return `Result<T>` with a `VfsError`.
 6. **Registration is not initialisation.** `registerExtensions()` should be
    nearly instant; startup waits for it.

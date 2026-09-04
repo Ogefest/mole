@@ -30,7 +30,7 @@ public:
     /// Above the generic reader, so the picture's own facts come first.
     int priority() const override { return 100; }
     bool canRead(const FileEntry& entry) const override;
-    QList<FileFact> read(const FileEntry& entry, QByteArrayView head, PluginServices services,
+    QList<FileFact> read(const FileEntry& entry, QByteArrayView head, const PluginServices& services,
         const CancelToken& cancel) const override;
 
     /// The most the reader will ever hold of an image. Every header worth

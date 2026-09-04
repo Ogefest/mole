@@ -17,20 +17,17 @@ class AnalysisStore;
 class FileSetStore;
 class Preferences;
 
-/// The host services a plugin is allowed to use.
+/// **A copy of PluginServices as it was two appends ago, for one fixture.**
 ///
-/// This struct is part of the plugin ABI surface: fields may be appended, but
-/// never removed or reordered without bumping kPluginApiVersion.
+/// tests/support/plugins/ShortServicesPlugin.cpp is compiled with this
+/// directory ahead of src/, so that translation unit sees a struct two pointers
+/// shorter than the one the host has -- which is exactly the position a plugin
+/// built against an older SDK is in. The promise at the top of the real header
+/// is that appending is safe; this is what makes that promise assertable rather
+/// than assumed. See MOLE-366 and ADR-0098.
 ///
-/// **What makes appending safe is that the host hands this over by reference.**
-/// A plugin built against an older SDK reads the host's own object through a
-/// shorter view of it, and the prefix of a struct is the same struct. Passed by
-/// value -- which IMetadataReader::read() and IThumbnailer::thumbnail() did
-/// until MOLE-366 -- the promise above held only because a trivially copyable
-/// struct of this size goes in memory on every current ABI, which is a property
-/// of the signature rather than of appending. See ADR-0098, and
-/// tests/support/plugins/ShortServicesPlugin.cpp, which is a plugin compiled
-/// against a shorter copy of this file.
+/// Not generated from the real header: a fixture that followed it would stop
+/// being shorter the moment somebody appended again.
 ///
 /// Passing services explicitly rather than exposing globals is what makes both
 /// plugins and features testable -- a test hands over an in-memory backend and
@@ -76,23 +73,6 @@ struct PluginServices
     /// plugin reads and writes it without the shell knowing what the keys mean.
     /// See docs/adr/0006-preview-options-and-preferences.md.
     Preferences* preferences = nullptr;
-    /// What the interface knows about the index, answered from memory and kept
-    /// up to date from the task layer. Ask this rather than `index` from
-    /// anything on the drawing thread, and check `isKnown()` before reading an
-    /// empty answer as "nothing is indexed". See
-    /// docs/adr/0066-the-interface-reads-the-index-from-a-snapshot.md.
-    ///
-    /// Appended rather than placed next to `index`, because this struct is a
-    /// plugin ABI surface: a field inserted in the middle moves every one after
-    /// it, which is what the note at the top of the file is about.
-    IndexSummary* indexSummary = nullptr;
-
-    /// The step kinds a chain can be built from. Register one here to have an
-    /// operation offered as a step; the chains that use it outlive the plugin,
-    /// which is why a kind may be replaced rather than only added. Appended for
-    /// the reason above. See
-    /// docs/adr/0082-a-chain-is-a-line-and-a-list-of-uris-passes-along-it.md.
-    ChainRegistry* chains = nullptr;
 
     bool isValid() const { return vfs && tasks && index && events; }
 };

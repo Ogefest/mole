@@ -31,7 +31,7 @@ public:
     QString id() const override { return QStringLiteral("mole.metadata.document"); }
     int priority() const override { return 100; }
     bool canRead(const FileEntry& entry) const override;
-    QList<FileFact> read(const FileEntry& entry, QByteArrayView head, PluginServices services,
+    QList<FileFact> read(const FileEntry& entry, QByteArrayView head, const PluginServices& services,
         const CancelToken& cancel) const override;
 
     /// How much of a container is ever read. A quarter of a megabyte holds the

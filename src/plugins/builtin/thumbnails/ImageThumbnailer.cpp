@@ -75,7 +75,7 @@ namespace {
 } // namespace
 
 QImage ImageThumbnailer::thumbnail(
-    const FileEntry& entry, int size, PluginServices services, const CancelToken& cancel) const
+    const FileEntry& entry, int size, const PluginServices& services, const CancelToken& cancel) const
 {
     if (size <= 0 || !services.vfs || cancel.isCancelled())
         return {};

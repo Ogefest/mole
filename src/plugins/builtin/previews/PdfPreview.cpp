@@ -446,8 +446,8 @@ QList<FileFact> PdfMetadataReader::factsForBytes(const QByteArray& document)
     return factsOf(opened, status);
 }
 
-QList<FileFact> PdfMetadataReader::read(
-    const FileEntry& entry, QByteArrayView head, PluginServices services, const CancelToken& cancel) const
+QList<FileFact> PdfMetadataReader::read(const FileEntry& entry, QByteArrayView head,
+    const PluginServices& services, const CancelToken& cancel) const
 {
     Q_UNUSED(head);
     if (cancel.isCancelled())
@@ -509,8 +509,8 @@ QList<FileFact> PdfMetadataReader::factsForBytes(const QByteArray& document)
     return {};
 }
 
-QList<FileFact> PdfMetadataReader::read(
-    const FileEntry& entry, QByteArrayView head, PluginServices services, const CancelToken& cancel) const
+QList<FileFact> PdfMetadataReader::read(const FileEntry& entry, QByteArrayView head,
+    const PluginServices& services, const CancelToken& cancel) const
 {
     Q_UNUSED(entry);
     Q_UNUSED(head);

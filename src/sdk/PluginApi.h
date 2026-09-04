@@ -14,23 +14,49 @@
 
 #include <memory>
 
+/// Bumped whenever anything a plugin can see changes shape: PluginMetadata, the
+/// interfaces in `sdk/`, PluginServices, or the meaning of any of it.
+///
+/// **A macro, because the number is pasted into the Qt interface identifier as
+/// well as compared as a number.** That is what makes the check work before any
+/// plugin code runs: the identifier is in the library's Qt metadata, which
+/// QPluginLoader reads without loading the library, so a plugin built against
+/// another version is refused before its constructor -- let alone before its
+/// `metadata()`. The identifier said `/1.0` while this number went 8, 9, 10, 11,
+/// so `qobject_cast<IPlugin*>` accepted every one of them and the only check left
+/// was one that had to speak to the plugin to find out whether it could be spoken
+/// to. See ADR-0098.
+#define MOLE_PLUGIN_API_VERSION 12
+
+#define MOLE_STRINGIFY_INNER(number) #number
+#define MOLE_STRINGIFY(number) MOLE_STRINGIFY_INNER(number)
+
+/// The Qt interface identifier, carrying the version above.
+#define MOLE_PLUGIN_IID "io.github.ogefest.mole.Plugin/" MOLE_STRINGIFY(MOLE_PLUGIN_API_VERSION)
+
 namespace mole {
 
-/// Bumped whenever anything a plugin can see changes shape. The host refuses
-/// to load a plugin built against a different major version, which turns a
-/// mysterious crash into a clear message at startup.
-inline constexpr int kPluginApiVersion = 11;
+inline constexpr int kPluginApiVersion = MOLE_PLUGIN_API_VERSION;
 
 struct PluginMetadata
 {
+    /// **First, and deliberately.** The host reads this field out of a struct the
+    /// plugin returned, so the two have to agree about where it is before they
+    /// can agree about anything else. Last -- after five QStrings -- it moved
+    /// whenever a field was appended in front of it, and the natural append
+    /// (another QString after `description`) would have put an old plugin's
+    /// version where the host reads a pointer. First, an append can never move
+    /// it, so the version check survives the change that makes it necessary.
+    /// See ADR-0098.
+    ///
+    /// Must equal kPluginApiVersion of the host, or the plugin is rejected.
+    int apiVersion = kPluginApiVersion;
     /// Reverse-DNS and unique, e.g. "org.example.gitlab".
     QString id;
     QString name;
     QString version;
     QString author;
     QString description;
-    /// Must equal kPluginApiVersion of the host, or the plugin is rejected.
-    int apiVersion = kPluginApiVersion;
 };
 
 /// Handed to a plugin during registration. Everything a plugin contributes
@@ -122,7 +148,5 @@ public:
 };
 
 } // namespace mole
-
-#define MOLE_PLUGIN_IID "io.github.ogefest.mole.Plugin/1.0"
 
 Q_DECLARE_INTERFACE(mole::IPlugin, MOLE_PLUGIN_IID)

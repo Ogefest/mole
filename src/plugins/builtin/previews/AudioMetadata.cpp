@@ -650,8 +650,8 @@ QList<FileFact> AudioMetadataReader::factsFor(QByteArrayView head, QByteArrayVie
     return facts;
 }
 
-QList<FileFact> AudioMetadataReader::read(
-    const FileEntry& entry, QByteArrayView head, PluginServices services, const CancelToken& cancel) const
+QList<FileFact> AudioMetadataReader::read(const FileEntry& entry, QByteArrayView head,
+    const PluginServices& services, const CancelToken& cancel) const
 {
     QByteArray front = head.toByteArray();
     FileSystemPtr fs = services.vfs ? services.vfs->resolve(entry.uri) : nullptr;

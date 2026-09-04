@@ -62,7 +62,7 @@ public:
     QString id() const override { return QStringLiteral("mole.metadata.video"); }
     int priority() const override { return 100; }
     bool canRead(const FileEntry& entry) const override;
-    QList<FileFact> read(const FileEntry& entry, QByteArrayView head, PluginServices services,
+    QList<FileFact> read(const FileEntry& entry, QByteArrayView head, const PluginServices& services,
         const CancelToken& cancel) const override;
 
     /// The head is enough for a file written for streaming; the tail is where an

@@ -30,7 +30,7 @@ public:
     /// Every suffix the MIME database calls audio. Read once, because the
     /// database walk is not free and the answer does not change.
     static QStringList audioSuffixes();
-    QList<FileFact> read(const FileEntry& entry, QByteArrayView head, PluginServices services,
+    QList<FileFact> read(const FileEntry& entry, QByteArrayView head, const PluginServices& services,
         const CancelToken& cancel) const override;
 
     static constexpr qint64 kHeadBytes = 64 * 1024;

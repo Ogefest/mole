@@ -58,8 +58,10 @@ public:
     /// `cancel` must be polled: a folder scrolled past leaves its decodes
     /// pointless, and a view that cannot stop them is a view that is always
     /// behind.
+    /// `services` by reference rather than by value, for the ABI reason spelled
+    /// out beside IMetadataReader::read() and in ADR-0098.
     virtual QImage thumbnail(
-        const FileEntry& entry, int size, PluginServices services, const CancelToken& cancel) const
+        const FileEntry& entry, int size, const PluginServices& services, const CancelToken& cancel) const
         = 0;
 };
 

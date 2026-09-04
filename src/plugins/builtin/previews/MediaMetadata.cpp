@@ -769,8 +769,8 @@ QList<FileFact> VideoMetadataReader::factsFor(QByteArrayView head, QByteArrayVie
     return facts;
 }
 
-QList<FileFact> VideoMetadataReader::read(
-    const FileEntry& entry, QByteArrayView head, PluginServices services, const CancelToken& cancel) const
+QList<FileFact> VideoMetadataReader::read(const FileEntry& entry, QByteArrayView head,
+    const PluginServices& services, const CancelToken& cancel) const
 {
     QByteArray front = head.toByteArray();
     FileSystemPtr fs = services.vfs ? services.vfs->resolve(entry.uri) : nullptr;

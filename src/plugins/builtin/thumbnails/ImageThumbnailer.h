@@ -36,8 +36,8 @@ public:
     QString id() const override { return QStringLiteral("mole.thumb.image"); }
 
     bool canThumbnail(const FileEntry& entry) const override;
-    QImage thumbnail(
-        const FileEntry& entry, int size, PluginServices services, const CancelToken& cancel) const override;
+    QImage thumbnail(const FileEntry& entry, int size, const PluginServices& services,
+        const CancelToken& cancel) const override;
 
     /// What this Qt build can decode, asked of Qt rather than hard-coded: which
     /// formats exist depends on which image plugins are installed, and claiming

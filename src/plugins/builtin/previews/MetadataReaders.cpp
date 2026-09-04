@@ -9,8 +9,8 @@
 
 namespace mole {
 
-QList<FileFact> GenericMetadataReader::read(
-    const FileEntry& entry, QByteArrayView head, PluginServices services, const CancelToken& cancel) const
+QList<FileFact> GenericMetadataReader::read(const FileEntry& entry, QByteArrayView head,
+    const PluginServices& services, const CancelToken& cancel) const
 {
     Q_UNUSED(head);
     Q_UNUSED(services);

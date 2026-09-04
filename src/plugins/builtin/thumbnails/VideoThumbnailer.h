@@ -28,8 +28,8 @@ public:
     int priority() const override { return 100; }
 
     bool canThumbnail(const FileEntry& entry) const override;
-    QImage thumbnail(
-        const FileEntry& entry, int size, PluginServices services, const CancelToken& cancel) const override;
+    QImage thumbnail(const FileEntry& entry, int size, const PluginServices& services,
+        const CancelToken& cancel) const override;
 
     /// Whether this build can decode any video at all. Asked of Qt, like the video
     /// viewer's own availability, because a build with the module and no codecs

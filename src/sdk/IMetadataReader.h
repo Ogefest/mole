@@ -90,8 +90,17 @@ public:
     ///
     /// Returning nothing is normal -- a reader that claimed a file and then
     /// found no tags in it costs its own rows and nobody else's.
-    virtual QList<FileFact> read(
-        const FileEntry& entry, QByteArrayView head, PluginServices services, const CancelToken& cancel) const
+    /// **`services` is a reference and not a copy, and that is an ABI decision.**
+    /// PluginServices says of itself that fields may be appended without a
+    /// version bump, and it has been appended to twice. Passed by value, that
+    /// promise rested on an accident: a plugin compiled against a shorter struct
+    /// reads a copy the host laid out from a longer one, which works only because
+    /// every current ABI passes a trivially copyable struct of this size in
+    /// memory. By reference the plugin reads the host's own object and reads only
+    /// the fields it knows about, which is what "append-only" was always meant to
+    /// mean. The host owns it and it outlives every call. See ADR-0098.
+    virtual QList<FileFact> read(const FileEntry& entry, QByteArrayView head, const PluginServices& services,
+        const CancelToken& cancel) const
         = 0;
 };
 

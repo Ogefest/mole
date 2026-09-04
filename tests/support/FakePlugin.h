@@ -121,7 +121,7 @@ public:
         return !entry.isDir && (m_suffix.isEmpty() || entry.uri.suffix() == m_suffix);
     }
 
-    QList<FileFact> read(const FileEntry& entry, QByteArrayView head, PluginServices services,
+    QList<FileFact> read(const FileEntry& entry, QByteArrayView head, const PluginServices& services,
         const CancelToken& cancel) const override
     {
         Q_UNUSED(entry);
@@ -195,8 +195,8 @@ public:
         return !entry.isDir && (m_suffix.isEmpty() || entry.uri.suffix() == m_suffix);
     }
 
-    QImage thumbnail(
-        const FileEntry& entry, int size, PluginServices services, const CancelToken& cancel) const override
+    QImage thumbnail(const FileEntry& entry, int size, const PluginServices& services,
+        const CancelToken& cancel) const override
     {
         Q_UNUSED(entry);
         Q_UNUSED(services);

@@ -27,7 +27,7 @@ class CameraReader final : public IMetadataReader
 public:
     QString id() const override { return QStringLiteral("test.camera"); }
     bool canRead(const FileEntry& entry) const override { return entry.uri.suffix() == QLatin1String("jpg"); }
-    QList<FileFact> read(const FileEntry& entry, QByteArrayView head, PluginServices services,
+    QList<FileFact> read(const FileEntry& entry, QByteArrayView head, const PluginServices& services,
         const CancelToken& cancel) const override
     {
         Q_UNUSED(entry);

@@ -46,9 +46,15 @@ private slots:
     void aPluginThatThrowsWhileRegisteringIsReportedAndSkipped();
     void aPluginThatThrowsWhenAskedWhatItIsIsReportedAndSkipped();
     void aHostWithNowhereToPutSomethingSaysSoWithoutCallingItAFault();
+    void aPluginBuiltAgainstAnotherApiIsRefusedWithoutBeingAsked();
+    void aPluginBuiltAgainstAShorterServicesReadsTheFieldsItKnows();
 
 private:
     PluginManager* makeManager();
+    /// One fixture plugin, copied into a directory of its own -- the loader takes
+    /// a directory, so two fixtures in one place would be one case asking two
+    /// questions. Empty when it was not built, which is a core-only build.
+    QString fixtureAlone(const QString& name);
 
     std::unique_ptr<QTemporaryDir> m_dir;
     VfsManager* m_vfs = nullptr;
@@ -104,6 +110,24 @@ void TestPluginManager::cleanup()
     m_actions = nullptr;
     m_index.reset();
     m_dir.reset();
+}
+
+QString TestPluginManager::fixtureAlone(const QString& name)
+{
+    const QDir built(QStringLiteral(MOLE_TEST_FIXTURE_PLUGIN_DIR));
+    const QString library = built.filePath(QStringLiteral("libmole_test_plugin_%1.so").arg(name));
+    if (!QFile::exists(library))
+        return {};
+
+    const QString alone = QDir(m_dir->path()).filePath(name);
+    if (!QDir().mkpath(alone))
+        return {};
+    const QString copy = QDir(alone).filePath(QStringLiteral("libfixture.so"));
+    if (QFile::exists(copy))
+        QFile::remove(copy);
+    if (!QFile::copy(library, copy))
+        return {};
+    return alone;
 }
 
 PluginManager* TestPluginManager::makeManager()
@@ -497,6 +521,87 @@ void TestPluginManager::aHostWithNowhereToPutSomethingSaysSoWithoutCallingItAFau
     QVERIFY2(said.contains(QStringLiteral("nowhere to put a feature")), qPrintable(said));
     QVERIFY2(said.contains(QStringLiteral("nowhere to put a preview provider")), qPrintable(said));
     QVERIFY2(!said.contains(QStringLiteral("null")), qPrintable(said));
+}
+
+void TestPluginManager::aPluginBuiltAgainstAnotherApiIsRefusedWithoutBeingAsked()
+{
+    // **The check that decided whether a plugin could be spoken to was made by
+    // speaking to it.** `plugin->metadata()` is a virtual call through the
+    // plugin's own vtable, returning a struct by value whose `apiVersion` was the
+    // last field after five QStrings -- so a plugin built against another version
+    // was asked a question in a shape it did not have, and had IPlugin ever gained
+    // a virtual before `metadata()`, the call would have gone somewhere else
+    // entirely. Neither of the two mechanisms built for this was doing anything:
+    // the interface identifier said `/1.0` while the version went 8, 9, 10, 11,
+    // and QPluginLoader::metaData() -- readable before anything in the library
+    // runs -- was never consulted.
+    //
+    // The fixture declares `…Plugin/1` and aborts if it is asked what it is or
+    // told to register, so **this case reaching its assertions at all is the
+    // assertion**: a version read from the library's metadata means nothing in the
+    // library ran. See MOLE-366 and ADR-0098.
+    const QString alone = fixtureAlone(QStringLiteral("stale_api"));
+    if (alone.isEmpty())
+        QSKIP("the stale-API fixture plugin was not built");
+
+    PluginManager* manager = makeManager();
+    QCOMPARE(manager->loadFromDirectory(alone), 0);
+    QVERIFY(manager->loaded().empty());
+
+    const QString said = manager->errors().join(QLatin1Char('\n'));
+    QVERIFY2(said.contains(QStringLiteral("built against plugin API 1,")), qPrintable(said));
+    QVERIFY2(said.contains(QString::number(kPluginApiVersion)), qPrintable(said));
+}
+
+void TestPluginManager::aPluginBuiltAgainstAShorterServicesReadsTheFieldsItKnows()
+{
+    // PluginServices says fields may be appended without a version bump, and it
+    // has been appended to twice since the version last moved. The fixture is
+    // compiled against the struct as it was two appends ago -- twelve pointers
+    // where the host has fourteen -- so it is in the position a plugin built
+    // against an older SDK is in.
+    //
+    // It reports the address it read for every field it knows about, and this
+    // compares each one with what the host was handed. Addresses rather than
+    // which-ones-were-set, because a *reordering* leaves the same fields non-null
+    // and moves them: only the values say so. That is what "append-only" has to
+    // mean to be worth writing down, and what passing PluginServices to a
+    // plugin-implemented virtual by reference rather than by value makes true
+    // rather than accidental. See MOLE-366 and ADR-0098.
+    const QString alone = fixtureAlone(QStringLiteral("short_services"));
+    if (alone.isEmpty())
+        QSKIP("the shorter-services fixture plugin was not built");
+
+    PluginManager* manager = makeManager();
+    QCOMPARE(manager->loadFromDirectory(alone), 1);
+
+    const QString said = manager->errors().join(QLatin1Char('\n'));
+    // The twelve fields the fixture's header knows about, in its order, with the
+    // addresses this test handed the host.
+    const QList<QPair<QString, const void*>> expected = {
+        { QStringLiteral("vfs"), m_services.vfs },
+        { QStringLiteral("tasks"), m_services.tasks },
+        { QStringLiteral("index"), m_services.index },
+        { QStringLiteral("events"), m_services.events },
+        { QStringLiteral("previews"), m_services.previews },
+        { QStringLiteral("metadata"), m_services.metadata },
+        { QStringLiteral("thumbnails"), m_services.thumbnails },
+        { QStringLiteral("scheduler"), m_services.scheduler },
+        { QStringLiteral("alerts"), m_services.alerts },
+        { QStringLiteral("reports"), m_services.reports },
+        { QStringLiteral("sets"), m_services.sets },
+        { QStringLiteral("preferences"), m_services.preferences },
+    };
+    for (const auto& field : expected) {
+        const QString wanted = QStringLiteral("%1=%2").arg(
+            field.first, QString::number(reinterpret_cast<quintptr>(field.second), 16));
+        QVERIFY2(said.contains(wanted),
+            qPrintable(QStringLiteral("expected %1, and it reported: %2").arg(wanted, said)));
+    }
+
+    // And it is a plugin the host accepted, not one it tolerated.
+    QCOMPARE(manager->loaded().size(), 1);
+    QCOMPARE(manager->loaded().front().metadata.id, QStringLiteral("test.short-services"));
 }
 
 MOLE_TEST_MAIN(TestPluginManager)

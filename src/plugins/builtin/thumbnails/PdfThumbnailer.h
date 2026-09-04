@@ -27,8 +27,8 @@ public:
     int priority() const override { return 100; }
 
     bool canThumbnail(const FileEntry& entry) const override;
-    QImage thumbnail(
-        const FileEntry& entry, int size, PluginServices services, const CancelToken& cancel) const override;
+    QImage thumbnail(const FileEntry& entry, int size, const PluginServices& services,
+        const CancelToken& cancel) const override;
 
     /// How big a document on a drive where reading is downloading is worth
     /// fetching. Unlike a photograph there is nothing small inside a PDF to read

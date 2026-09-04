@@ -10,6 +10,7 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QJsonObject>
 #include <QLibrary>
 #include <QPluginLoader>
 #include <QProcessEnvironment>
@@ -19,6 +20,20 @@
 
 namespace mole {
 namespace {
+
+    /// What a library says it was built against, read from its Qt metadata --
+    /// which QPluginLoader has without loading the library, so nothing in the
+    /// plugin has run when this answers.
+    ///
+    /// Empty when the identifier is not a Mole one at all. The version is the
+    /// part after the last `/`, which is where MOLE_PLUGIN_IID puts it.
+    QString moleApiVersionOf(const QString& iid)
+    {
+        const QString prefix = QStringLiteral("io.github.ogefest.mole.Plugin/");
+        if (!iid.startsWith(prefix))
+            return {};
+        return iid.mid(prefix.size());
+    }
 
     /// The concrete PluginRegistry handed to one plugin during registration.
     /// Scoping it per plugin lets errors name the culprit.
@@ -240,8 +255,11 @@ bool PluginManager::acceptPlugin(IPlugin* plugin, const QString& filePath, bool 
         return false;
     }
 
-    // Refusing a mismatched API version turns a future crash deep inside a
-    // vtable into one clear line at startup.
+    // The second line, and it is a second line rather than the only one: the
+    // identifier check in loadFromDirectory() has already refused a library built
+    // against another version, before anything in it ran. This one catches a
+    // built-in -- which has no identifier to read -- and a plugin whose metadata
+    // says something other than what it was compiled with. See ADR-0098.
     if (metadata.apiVersion != kPluginApiVersion) {
         m_errors.append(QStringLiteral("%1: built against plugin API %2, host provides %3")
                             .arg(metadata.id)
@@ -306,6 +324,34 @@ int PluginManager::loadFromDirectory(const QString& directory)
             continue;
 
         auto* loader = new QPluginLoader(path, this);
+
+        // **What it was built against, before any of its code runs.** The check
+        // that decides whether a plugin may be spoken to used to be made by
+        // speaking to it: `plugin->metadata()` is a virtual call through the
+        // plugin's own vtable, returning a struct by value, so a plugin built
+        // against a different API was asked a question in a shape it did not
+        // have -- and if IPlugin had ever gained a virtual before `metadata()`,
+        // the call itself would have gone somewhere else entirely. The version
+        // is in the interface identifier now, and QPluginLoader has the
+        // identifier out of the library's Qt metadata without loading it. See
+        // ADR-0098 and MOLE-366.
+        const QString declaredIid = loader->metaData().value(QStringLiteral("IID")).toString();
+        if (declaredIid != QLatin1String(MOLE_PLUGIN_IID)) {
+            const QString version = moleApiVersionOf(declaredIid);
+            if (version.isEmpty()) {
+                m_errors.append(
+                    QStringLiteral("%1: does not implement the Mole plugin "
+                                   "interface (it declares %2)")
+                        .arg(path, declaredIid.isEmpty() ? QStringLiteral("nothing") : declaredIid));
+            } else {
+                m_errors.append(QStringLiteral("%1: built against plugin API %2, host provides %3")
+                                    .arg(path, version)
+                                    .arg(kPluginApiVersion));
+            }
+            delete loader;
+            continue;
+        }
+
         QObject* instance = loader->instance();
         if (!instance) {
             m_errors.append(QStringLiteral("%1: %2").arg(path, loader->errorString()));

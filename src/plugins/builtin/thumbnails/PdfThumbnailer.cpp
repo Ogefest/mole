@@ -22,7 +22,7 @@ bool PdfThumbnailer::canThumbnail(const FileEntry& entry) const
 }
 
 QImage PdfThumbnailer::thumbnail(
-    const FileEntry& entry, int size, PluginServices services, const CancelToken& cancel) const
+    const FileEntry& entry, int size, const PluginServices& services, const CancelToken& cancel) const
 {
     if (size <= 0 || !services.vfs || cancel.isCancelled())
         return {};

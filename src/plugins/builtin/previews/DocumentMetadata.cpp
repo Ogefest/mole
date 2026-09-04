@@ -239,8 +239,8 @@ QList<FileFact> DocumentMetadataReader::factsFor(QByteArrayView prefix)
     return facts;
 }
 
-QList<FileFact> DocumentMetadataReader::read(
-    const FileEntry& entry, QByteArrayView head, PluginServices services, const CancelToken& cancel) const
+QList<FileFact> DocumentMetadataReader::read(const FileEntry& entry, QByteArrayView head,
+    const PluginServices& services, const CancelToken& cancel) const
 {
     if (!isAvailable())
         return {};

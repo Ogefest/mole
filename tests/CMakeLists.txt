@@ -91,6 +91,13 @@ target_compile_definitions(mole_test_support
 target_compile_definitions(mole_test_support
     PUBLIC MOLE_TEST_PLUGIN_DIR="${CMAKE_BINARY_DIR}/plugins")
 
+# And where the two fixture plugins were built. A directory of their own, and one
+# each: the loader takes a directory rather than a file, so two fixtures in one
+# place would be one case testing two things. Empty when this is a core-only
+# build, where the cases skip. See MOLE-366.
+target_compile_definitions(mole_test_support
+    PUBLIC MOLE_TEST_FIXTURE_PLUGIN_DIR="${CMAKE_BINARY_DIR}/tests/fixture-plugins")
+
 # The console runner lands next to the application rather than next to the test
 # binaries, and one test starts it for real.
 target_compile_definitions(mole_test_support
@@ -597,6 +604,39 @@ qt_add_resources(tst_KeyboardNavigation "app_qml"
     PREFIX "/qt/qml/Mole"
     BASE "${CMAKE_SOURCE_DIR}/src/app"
     FILES ${MOLE_APP_QML})
+
+# --- The two fixture plugins ------------------------------------------------
+#
+# Real shared libraries, loaded through QPluginLoader like any other, because what
+# they are for cannot be faked in-process: one declares an older interface
+# identifier and aborts if anything asks it what it is, which is the assertion
+# that the version is read from a library's metadata rather than from the library;
+# the other is compiled against a PluginServices two fields shorter than the
+# host's, which is the position a plugin built against an older SDK is in.
+#
+# They link Qt and nothing of Mole: both only implement the interface headers, and
+# a fixture that linked the host's core would hold two definitions of
+# PluginServices for reasons unrelated to the question. See MOLE-366.
+if(NOT MOLE_CORE_ONLY)
+    qt_add_plugin(mole_test_plugin_stale_api SHARED CLASS_NAME StaleApiPlugin)
+    target_sources(mole_test_plugin_stale_api PRIVATE support/plugins/StaleApiPlugin.cpp)
+    target_include_directories(mole_test_plugin_stale_api PRIVATE "${CMAKE_SOURCE_DIR}/src")
+    target_link_libraries(mole_test_plugin_stale_api PRIVATE Qt6::Core Qt6::Gui)
+
+    qt_add_plugin(mole_test_plugin_short_services SHARED CLASS_NAME ShortServicesPlugin)
+    target_sources(mole_test_plugin_short_services PRIVATE support/plugins/ShortServicesPlugin.cpp)
+    # BEFORE, and this is the whole fixture: its own sdk/PluginServices.h is found
+    # ahead of the real one, so this translation unit sees the shorter struct.
+    target_include_directories(mole_test_plugin_short_services BEFORE PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/support/plugins/older-sdk"
+        "${CMAKE_SOURCE_DIR}/src")
+    target_link_libraries(mole_test_plugin_short_services PRIVATE Qt6::Core Qt6::Gui)
+
+    set_target_properties(mole_test_plugin_stale_api mole_test_plugin_short_services PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests/fixture-plugins")
+    add_dependencies(tst_PluginManager
+        mole_test_plugin_stale_api mole_test_plugin_short_services)
+endif()
 
 if(MOLE_HAVE_ARCHIVE_PLUGIN)
     add_dependencies(tst_AppIntegration mole_plugin_archive)

@@ -21,7 +21,7 @@ public:
     /// says it first.
     int priority() const override { return -1000; }
     bool canRead(const FileEntry& entry) const override { return !entry.isDir; }
-    QList<FileFact> read(const FileEntry& entry, QByteArrayView head, PluginServices services,
+    QList<FileFact> read(const FileEntry& entry, QByteArrayView head, const PluginServices& services,
         const CancelToken& cancel) const override;
 };
 

@@ -39,7 +39,7 @@ bool VideoThumbnailer::canThumbnail(const FileEntry& entry) const
 }
 
 QImage VideoThumbnailer::thumbnail(
-    const FileEntry& entry, int size, PluginServices services, const CancelToken& cancel) const
+    const FileEntry& entry, int size, const PluginServices& services, const CancelToken& cancel) const
 {
     Q_UNUSED(services);
     if (size <= 0 || cancel.isCancelled() || !isAvailable())
