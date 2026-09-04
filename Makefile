@@ -227,10 +227,17 @@ appimage:
 	@scripts/package-appimage.sh $(PACKAGE_DIR) || true
 
 ## bundle: self-contained folder in dist/ that runs on machines without Qt
+##         Built in its own directory with MOLE_WITH_SMB=OFF: libsmbclient is
+##         GPL-3.0-or-later, and a self-contained artefact carrying it would be a
+##         combined work Mole's Apache-2.0 licence cannot absorb. A local release
+##         build, a .deb and an .rpm all keep Windows shares, because there the
+##         library comes from the distribution. See ADR-0094.
 bundle:
-	@$(MAKE) build PRESET=release
+	@cmake -S . -B build/bundle -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+		-DMOLE_BUILD_TESTS=OFF -DMOLE_WITH_SMB=OFF >/dev/null
+	@cmake --build build/bundle --parallel $(JOBS)
 	@rm -rf dist && mkdir -p dist
-	@cmake --install build/release --prefix dist/usr >/dev/null
+	@cmake --install build/bundle --prefix dist/usr >/dev/null
 	@# Both binaries, not `mole` by name: mole-tasks was installed unstripped and
 	@# carried 51 MB of debug symbols into every bundle -- about a third of the
 	@# tarball -- because this line named one of the two. Found by measuring the

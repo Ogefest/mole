@@ -243,6 +243,30 @@ while IFS= read -r -d '' plugin; do
     rm -f "$plugin"
 done < <(find "$PLUGINDIR" -name '*.so' -print0 2>/dev/null)
 
+# Nothing GPL-3 may travel inside an Apache-2.0 artefact.
+#
+# libsmbclient is GPL-3.0-or-later and is linked into the network plugin, so this
+# cannot be an exclusion the way the codec stack is: leaving the library out and
+# keeping the plugin would make the plugin unloadable and take SFTP, FTP, S3 and
+# WebDAV with it. The answer is upstream of here -- configure with
+# -DMOLE_WITH_SMB=OFF -- and this is the guard that says so, because a bundle is
+# assembled by whoever runs the script and the licence question is not theirs to
+# get wrong. See ADR-0094, and MOLE-322 for the same call about the codecs.
+smb_needed=""
+while IFS= read -r -d '' object; do
+    grep -q 'NEEDED.*libsmbclient' <<<"$(objdump -p "$object" 2>/dev/null)" \
+        && smb_needed="${object#"$DIST"/}" && break
+done < <(find "$DIST/usr/bin" $MOLE_PLUGIN_DIRS -type f \
+              \( -name '*.so*' -o -perm -u+x \) -print0 2>/dev/null)
+if [[ -n "$smb_needed" ]]; then
+    echo "  $smb_needed links libsmbclient, which is GPL-3.0-or-later."
+    echo "  A self-contained artefact carrying it would be a combined work Mole's"
+    echo "  Apache-2.0 licence cannot absorb, and leaving the library out would make"
+    echo "  the whole network plugin unloadable. Configure this build with"
+    echo "  -DMOLE_WITH_SMB=OFF and run again. See docs/adr/0094-smb-in-the-self-contained-artefacts.md."
+    exit 1
+fi
+
 # The one plugin that is not optional: without a platform plugin the application
 # aborts on start rather than falling back to anything.
 if [[ ! -e "$PLUGINDIR/platforms/libqxcb.so" ]]; then

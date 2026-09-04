@@ -65,6 +65,10 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-355 The release notices name every library the artefacts carry, and the licence texts for all of them travel with a build
+2026-09-04 #MOLE-355 A dependency added without a row in the notices, or a Qt module nobody has checked the licence of, fails the release
+2026-09-04 #MOLE-355 The "no Qt inside the binary" check reads a table stripping does not remove, so it can fail on the artefacts it is for
+2026-09-04 #MOLE-355 The tarball and the AppImage no longer carry Windows-share support, which is GPL-3; the .deb and the .rpm still have it
 2026-09-04 #MOLE-374 An SFTP drive that logs in with a private key can read, write, rename and delete, not only browse
 2026-09-04 #MOLE-374 A private key written as ~/.ssh/id_ed25519 is found, instead of being refused as a bad credential
 2026-09-04 #MOLE-391 mole-tasks reaches a rooted drive at the address the window uses, instead of one folder deeper

@@ -1,0 +1,21 @@
+GNU General Public License, version 2, with the linking exception used by
+libgit2. The full text of the GNU General Public License version 2 is in
+`GPL-2.0.txt` beside this file; what follows is the exception that accompanies
+it, as stated by libgit2 itself.
+
+    libgit2 is Copyright (C) 2009-2011 the libgit2 contributors, unless
+    otherwise stated. See the AUTHORS file for details.
+
+    Note that the only valid version of the GPL as far as this project is
+    concerned is _this_ particular version of the license (ie v2, not v2.2 or
+    v3.x or whatever), unless explicitly otherwise stated.
+
+               LINKING EXCEPTION
+
+    In addition to the permissions in the GNU General Public License, the
+    authors give you unlimited permission to link the compiled version of this
+    library into combinations with other programs, and to distribute those
+    combinations without any restriction coming from the use of this file.
+    (The General Public License restrictions do apply in other respects; for
+    example, they cover modification of the file, and distribution when not
+    linked into a combined executable.)

@@ -168,8 +168,8 @@ make packages    # a .deb, an .rpm and an AppImage, each for the family it insta
 | `make install` | — | 196 MB | yes | — | your own machine |
 | `.deb` | 3.7 MB | 10 MB | yes, from the archive | no Parquet grid | Debian and Ubuntu |
 | `.rpm` | 2.5 MB | 11 MB | yes, from the archive | — | Fedora and RHEL |
-| tarball (`make bundle`) | 79 MB | 209 MB | **no** | video needs the host's ffmpeg | handing it to someone else |
-| AppImage | 110 MB | 294 MB | **no** | no Parquet grid; video needs the host's ffmpeg | any distribution from 2021 onwards — it **runs on glibc 2.34** and upwards |
+| tarball (`make bundle`) | 79 MB | 209 MB | **no** | no Windows shares; video needs the host's ffmpeg | handing it to someone else |
+| AppImage | 110 MB | 294 MB | **no** | no Parquet grid; no Windows shares; video needs the host's ffmpeg | any distribution from 2021 onwards — it **runs on glibc 2.34** and upwards |
 
 **Where those figures come from, because a size is not a property of the program.**
 Measured on 2026-09-01 from the artefacts the release workflow builds, against Qt
@@ -234,6 +234,16 @@ ship, and on Ubuntu that includes `libx264`, `libx265`, `libxvidcore` and `libzv
 self-contained artefact carrying any of them would be one nobody could
 redistribute. What Mole carries is decided here rather than by somebody's packaging
 policy, so the whole codec stack is the host's.
+
+**And they deliberately do not carry Windows shares, for the same reason.**
+`libsmbclient` is Samba, which is GPL-3.0-or-later, and it is *linked* into the
+network plugin rather than loaded by it — so leaving the library out of the bundle
+would make the whole plugin unloadable and take SFTP, FTP, S3, WebDAV and NFS with
+it. The tarball and the AppImage are therefore built without SMB
+(`-DMOLE_WITH_SMB=OFF`) and `smb://` is not offered in them. The `.deb`, the
+`.rpm` and anything you build yourself keep it, because there the library comes
+from your distribution and nothing of Samba is being redistributed by this
+project. See [ADR-0094](docs/adr/0094-smb-in-the-self-contained-artefacts.md).
 
 Qt's ffmpeg *plugin* is in both artefacts — it is LGPL, like the rest of Qt. It
 loads where the host has the libraries and does not where it has not. On any desktop

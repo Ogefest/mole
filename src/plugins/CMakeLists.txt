@@ -227,7 +227,9 @@ if(CURL_FOUND AND OpenSSL_FOUND)
     # rather than failing to configure. See ADR-0048.
     find_package(PkgConfig QUIET)
     if(PkgConfig_FOUND)
-        pkg_check_modules(SMBCLIENT QUIET smbclient)
+        if(MOLE_WITH_SMB)
+            pkg_check_modules(SMBCLIENT QUIET smbclient)
+        endif()
     endif()
     if(SMBCLIENT_FOUND)
         target_sources(mole_network_backends PRIVATE
@@ -238,6 +240,10 @@ if(CURL_FOUND AND OpenSSL_FOUND)
         target_link_directories(mole_network_backends PRIVATE ${SMBCLIENT_LIBRARY_DIRS})
         target_link_libraries(mole_network_backends PRIVATE ${SMBCLIENT_LIBRARIES})
         message(STATUS "Windows shares: smb (libsmbclient ${SMBCLIENT_VERSION})")
+    elseif(NOT MOLE_WITH_SMB)
+        # Off for the self-contained artefacts and on everywhere else. See
+        # ADR-0094 and the MOLE_WITH_SMB option in the top-level CMakeLists.txt.
+        message(STATUS "Windows shares: not built (MOLE_WITH_SMB is OFF)")
     else()
         message(STATUS "Windows shares: unavailable (install libsmbclient-dev)")
     endif()

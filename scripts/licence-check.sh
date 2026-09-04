@@ -38,25 +38,90 @@ note() { printf '  \033[33m--\033[0m    %s\n' "$1"; }
 
 # ---------------------------------------------------------------- the source tree
 
-# 3. Only LGPL Qt modules. Charts, DataVisualization, VirtualKeyboard and friends
-#    are GPL-or-commercial and would change the answer entirely.
+# Every Qt module this build is allowed to ask for, because each one has been
+# looked up and is LGPL-3.0.
+#
+# **An allowlist, not a blocklist.** It used to be a fixed list of five
+# GPL-or-commercial names -- Charts, DataVisualization, VirtualKeyboard, Lottie,
+# Quick3DAssetImport -- so Qt Quick 3D, Qt Graphs and every add-on released since
+# passed unexamined. A list of what is forbidden goes stale the day upstream adds
+# something; a list of what is permitted cannot, because the failure lands on
+# whoever adds a module rather than on whoever ships it.
+#
+# Adding a Qt module to the build therefore means adding it here, having checked
+# what it is licensed under. That is the point.
+readonly QT_MODULES_ALLOWED=(
+    Core Gui Network Qml Quick QuickControls2 Sql Concurrent Test Pdf Multimedia
+)
+
+# Libraries the CMake files may name without a row in the notices, because they
+# are not libraries that get linked or shipped.
+readonly NOT_A_SHIPPED_LIBRARY=(PkgConfig Qt6)
+
+# 3. Which Qt modules the build uses, and whether every linked library is named
+#    in the notices.
 #
 #    Asked of $SOURCE and not of `.`: run from inside an AppDir -- which is how the
 #    AppImage invokes this -- a search of the working directory finds no
-#    CMakeLists.txt at all and reports no GPL-only modules, which is a pass by
-#    absence.
+#    CMakeLists.txt at all and reports nothing at all, which is a pass by absence.
 check_source_tree() {
     if [[ ! -f "$SOURCE/CMakeLists.txt" ]]; then
         bad "cannot find the source tree at $SOURCE, so which Qt modules the build uses is unanswered"
         return
     fi
-    local gpl_only
-    gpl_only=$(grep -rhoE 'Qt6::(Charts|DataVisualization|VirtualKeyboard|Lottie|Quick3DAssetImport)' \
-        --include=CMakeLists.txt "$SOURCE" | sort -u)
-    if [[ -z "$gpl_only" ]]; then
-        ok "no GPL-only Qt modules are used"
+
+    # Every component named on a find_package(Qt6 … COMPONENTS a b c) line.
+    local modules unknown=()
+    modules=$(grep -rhoE 'find_package\(Qt6[^)]*COMPONENTS[^)]*' \
+        --include=CMakeLists.txt --include='*.cmake' "$SOURCE" \
+        | sed -E 's/.*COMPONENTS//' | tr ' \t' '\n\n' | grep -E '^[A-Za-z0-9]+$' | sort -u)
+    local module allowed
+    for module in $modules; do
+        allowed=0
+        for known in "${QT_MODULES_ALLOWED[@]}"; do
+            [[ "$module" == "$known" ]] && allowed=1 && break
+        done
+        ((allowed)) || unknown+=("$module")
+    done
+    if ((${#unknown[@]} == 0)); then
+        ok "every Qt module the build asks for is on the LGPL allowlist"
     else
-        bad "GPL-only Qt module in use: $gpl_only"
+        bad "Qt module not on the LGPL allowlist: ${unknown[*]} -- check its licence and add it to QT_MODULES_ALLOWED"
+    fi
+
+    # And every other library the build looks for has a row in the notices. A
+    # dependency added without one ships unnamed, which is how libsmbclient,
+    # libgit2, libnfs, libvterm, Arrow and Parquet came to be absent from a file
+    # whose whole job is to list them.
+    local notices="$SOURCE/THIRD-PARTY-NOTICES.md"
+    if [[ ! -f "$notices" ]]; then
+        bad "no THIRD-PARTY-NOTICES.md in the source tree, so nothing can be checked against it"
+        return
+    fi
+
+    local names unnamed=()
+    names=$( { grep -rhoE 'find_package\([A-Za-z0-9_]+' --include=CMakeLists.txt --include='*.cmake' \
+                    "$SOURCE" | sed -E 's/find_package\(//'
+               grep -rhoE 'pkg_check_modules\([A-Za-z0-9_]+ +(QUIET +)?[A-Za-z0-9_.-]+' \
+                    --include=CMakeLists.txt --include='*.cmake' "$SOURCE" | awk '{print $NF}'
+             } | sort -u)
+    local name bare skip
+    for name in $names; do
+        skip=0
+        for ignored in "${NOT_A_SHIPPED_LIBRARY[@]}"; do
+            [[ "$name" == "$ignored" ]] && skip=1 && break
+        done
+        ((skip)) && continue
+        # A leading "lib" is a packaging habit rather than a name: the notices
+        # call libxxhash "xxHash" and libnfs "libnfs", and both are the same
+        # library.
+        bare="${name#lib}"
+        grep -qi -- "$bare" "$notices" || unnamed+=("$name")
+    done
+    if ((${#unnamed[@]} == 0)); then
+        ok "every library the build looks for has a row in THIRD-PARTY-NOTICES.md"
+    else
+        bad "linked but not named in THIRD-PARTY-NOTICES.md: ${unnamed[*]}"
     fi
 }
 
@@ -76,8 +141,17 @@ check_binary() {
     fi
 
     # 2. Qt symbols must live in the shared libraries, not inside our binary.
-    if grep -qE ' T (QQuickItem|QQmlEngine|QCoreApplication)::' \
-            <<<"$(nm -C --defined-only "$bin" 2>/dev/null)"; then
+    #
+    #    `nm -D`, not `nm --defined-only`. The latter reads the symbol table that
+    #    `strip` removes, and every published binary is stripped -- by the
+    #    Makefile, by CPACK_STRIP_FILES and by package-appimage.sh -- before this
+    #    check ever sees it. So the check reported "none" by absence on exactly
+    #    the artefacts it exists for, and could only fail on an unstripped build.
+    #    The dynamic symbol table survives stripping, and the executable is built
+    #    with ENABLE_EXPORTS, so a statically linked Qt would still show in
+    #    .dynsym. See MOLE-355.
+    if grep -qE ' [TW] (QQuickItem|QQmlEngine|QCoreApplication)::' \
+            <<<"$(nm -DC --defined-only "$bin" 2>/dev/null)"; then
         bad "Qt symbols are defined inside the binary -- Qt appears to be static"
     else
         ok "no Qt symbols compiled into the binary"
@@ -110,14 +184,35 @@ root_for() {
 }
 
 # 4. The paperwork has to travel with the build.
+#
+#    Which licence texts that means is read out of the notices themselves rather
+#    than written here. It used to be a fixed list of five files, so the four
+#    libraries whose texts were never added -- LGPL-2.1, GPL-2 with the linking
+#    exception, MIT, BSD -- could not fail the check that exists to notice them.
+#    The notices name what has to travel; this only enforces it. See MOLE-355.
 check_paperwork() {
     local root="$1" docdir
     if ! docdir=$(docdir_for "$root"); then
         bad "no licence paperwork under $root (looked at $root/ and $root/usr/share/doc/mole/)"
         return
     fi
+
     local f
-    for f in LICENSE NOTICE THIRD-PARTY-NOTICES.md licenses/LGPL-3.0.txt licenses/Apache-2.0.txt; do
+    for f in LICENSE NOTICE THIRD-PARTY-NOTICES.md; do
+        [[ -f "$docdir/$f" ]] && ok "present: $docdir/$f" || bad "missing: $docdir/$f"
+    done
+
+    if [[ ! -f "$docdir/THIRD-PARTY-NOTICES.md" ]]; then
+        return # already reported; there is nothing to derive the list from
+    fi
+
+    local texts
+    texts=$(grep -oE 'licenses/[A-Za-z0-9._-]+\.txt' "$docdir/THIRD-PARTY-NOTICES.md" | sort -u)
+    if [[ -z "$texts" ]]; then
+        bad "$docdir/THIRD-PARTY-NOTICES.md names no licence text at all, so nothing can be required"
+        return
+    fi
+    for f in $texts; do
         [[ -f "$docdir/$f" ]] && ok "present: $docdir/$f" || bad "missing: $docdir/$f"
     done
 }

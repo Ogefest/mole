@@ -53,6 +53,22 @@ option(MOLE_ENABLE_THREAD_SANITIZER "Enable ThreadSanitizer" OFF)
 # the concurrency suites need. See ADR-0055.
 option(MOLE_CORE_ONLY "Build core, host, ui and their headless tests only" OFF)
 
+# Windows shares, through libsmbclient.
+#
+# **On by default and off for the self-contained artefacts.** libsmbclient is
+# GPL-3.0-or-later and Mole is Apache-2.0. Where the library comes from the
+# distribution -- a .deb, an .rpm, a Flatpak, a local build -- there is nothing to
+# reconcile and SMB is built. The AppImage and `make bundle` copy their libraries
+# in beside the application, and that combined artefact is what somebody is handed;
+# so those two are built without it, the same call MOLE-322 made about a
+# distribution's video codecs.
+#
+# A build switch rather than an exclusion in the bundler, because libsmbclient is
+# linked into the network plugin: leaving the library out of the bundle would make
+# the whole plugin unloadable and take SFTP, FTP, S3 and WebDAV with it. See
+# ADR-0094.
+option(MOLE_WITH_SMB "Build Windows-share support (libsmbclient, GPL-3.0-or-later)" ON)
+
 # Qt 6.4 is the baseline (Ubuntu 24.04 ships 6.4.2). Do not use newer APIs
 # without bumping this number first -- it is what keeps the port to
 # Windows/macOS honest.

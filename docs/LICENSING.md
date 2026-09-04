@@ -11,15 +11,16 @@ Verified against the current build:
 
 | Requirement | Status | How it was checked |
 |---|---|---|
-| Qt is dynamically linked, never static | **OK** | `ldd` shows 11 `libQt6*.so`; `nm` finds no Qt symbols inside the binary |
-| Only LGPL-licensed Qt modules are used | **OK** | Core, Gui, Network, Qml, Quick, QuickControls2, Sql, Pdf — all LGPL-3.0. Qt Pdf embeds PDFium under permissive terms; see `THIRD-PARTY-NOTICES.md` |
-| No GPL-only Qt module (Charts, DataVisualization, …) | **OK** | none referenced in any `CMakeLists.txt` |
+| Qt is dynamically linked, never static | **OK** | `ldd` finds `libQt6*.so`; `nm -D` finds no Qt symbol in the binary's own dynamic table |
+| Every Qt module the build asks for is LGPL | **OK** | Core, Gui, Network, Qml, Quick, QuickControls2, Sql, Concurrent, and Pdf, Multimedia and Test where present — all LGPL-3.0. Qt Pdf embeds PDFium under permissive terms; see `THIRD-PARTY-NOTICES.md` |
+| A Qt module nobody has checked cannot slip in | **OK** | the check reads every `find_package(Qt6 … COMPONENTS …)` line and refuses anything not on an allowlist, so adding a module means looking its licence up |
 | Qt is unmodified | **OK** | no Qt source is vendored; the system Qt is used as installed |
 | The user can replace Qt with their own build | **OK** | see *Relinking* below |
-| LGPL-3.0 text is shipped | **OK** | `licenses/LGPL-3.0.txt` |
+| Every linked library has a row in the notices | **OK** | the check reads every `find_package` and `pkg_check_modules` name and refuses one the notices do not mention |
+| Every licence text the notices name is shipped | **OK** | the required list is derived from `THIRD-PARTY-NOTICES.md` rather than written down twice |
 | Qt use is stated prominently | **OK** | `NOTICE`, the README, and Help → About in the app |
-| libarchive (BSD-2-Clause) attribution | **OK** | `THIRD-PARTY-NOTICES.md` |
 | PDFium attribution, as shipped inside Qt Pdf | **OK** | `THIRD-PARTY-NOTICES.md` |
+| The GPL-3 library the network plugin links | **decided** | libsmbclient; see `THIRD-PARTY-NOTICES.md` and [ADR-0094](adr/0094-smb-in-the-self-contained-artefacts.md) |
 
 Re-run the check any time with:
 
@@ -33,6 +34,18 @@ scripts/licence-check.sh <binary> [<artefact root>] # one of them
 about its own paperwork, and one it cannot unpack here — the `.rpm`, on a machine
 with no `rpm2cpio` — is *named as unasked* rather than passed over. The release
 workflow asks all four, which is why it installs `rpm` and `cpio` on the runner.
+
+Two of those rows were added because the check could not fail for them. The
+required licence texts were a fixed list of five files, so the four texts that had
+never been written to `licenses/` — LGPL-2.1, GPL-2 with the linking exception,
+MIT and BSD — could not be reported missing; they are now derived from the notices
+themselves. The GPL-only Qt rule was a fixed list of five module names, so Qt Quick
+3D, Qt Graphs and every add-on released since passed unexamined; it is now an
+allowlist, and adding a module to the build means adding it there. And the
+"no Qt symbols in the binary" question read `nm --defined-only`, which reads the
+symbol table `strip` removes — and every published binary is stripped before the
+check sees it, so on exactly the artefacts it exists for it answered "none" by
+absence. It reads `nm -D` now, which survives stripping. See MOLE-355.
 
 The script asks two kinds of question and keeps them apart, which it did not always
 do. **Which Qt modules the build uses** is a question about the source tree, and it
@@ -75,7 +88,9 @@ for, and it is worth not breaking it later for the sake of a tidier layout.
 
 - **Ship `LICENSE`, `NOTICE`, `THIRD-PARTY-NOTICES.md` and `licenses/`** with
   every build. The `make bundle` target copies them in; a hand-assembled
-  archive will not.
+  archive will not. Which texts `licenses/` has to hold is decided by the
+  notices: every `licenses/…` path in that table has to be there, and
+  `make licence-check` says which one is not.
 - **Be able to supply the Qt sources you linked against.** In practice: record
   the exact Qt version, and either link to the matching upstream tarball or
   keep a copy. Distribution packages (`.deb`, RPM, Flatpak) inherit this from

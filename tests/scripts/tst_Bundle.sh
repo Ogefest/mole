@@ -170,4 +170,39 @@ else
     done
 fi
 
+begin "a GPL-3 library cannot travel inside the bundle, and the reason is written down"
+# libsmbclient is GPL-3.0-or-later and Mole is Apache-2.0. It cannot be an
+# exclusion the way the codec stack is -- it is linked into the network plugin, so
+# leaving the .so out would make the plugin unloadable and take SFTP, FTP, S3 and
+# WebDAV with it. The answer is upstream, at configure time, and this is the guard
+# that says so. See ADR-0094.
+grep -q 'libsmbclient' "$BUNDLE" \
+    || fail "nothing stops a bundle carrying libsmbclient"
+grep -q 'MOLE_WITH_SMB=OFF' "$BUNDLE" \
+    || fail "the guard does not name the option that fixes it, so it is a dead end"
+grep -q 'GPL-3' "$BUNDLE" \
+    || fail "the licence reason for refusing libsmbclient is not stated where the refusal is"
+
+begin "the self-contained artefacts are configured without SMB"
+# Asserted of both, because the fault is one of them quietly finding the library.
+grep -q 'MOLE_WITH_SMB=OFF' "$MOLE_SOURCE_DIR/Makefile" \
+    || fail "make bundle builds with Windows shares, so the tarball would carry libsmbclient"
+grep -q 'MOLE_WITH_SMB=OFF' "$MOLE_SOURCE_DIR/scripts/package-appimage.sh" \
+    || fail "the AppImage builds with Windows shares, so it would carry libsmbclient"
+grep -q 'Windows shares: not built' "$MOLE_SOURCE_DIR/scripts/package-appimage.sh" \
+    || fail "the AppImage does not assert the absence, so dropping the flag would go unnoticed"
+
+begin "a bundle on this machine carries no libsmbclient"
+# The behavioural half, where there is something to look at.
+if [ ! -d dist/usr ]; then
+    echo "  skipped: no bundle in dist/ -- run make bundle"
+else
+    found=$(find dist -name 'libsmbclient*' 2>/dev/null | head -1)
+    [ -z "$found" ] || fail "the bundle carries $found, which is GPL-3.0-or-later"
+    while IFS= read -r object; do
+        grep -q 'NEEDED.*libsmbclient' <<<"$(objdump -p "$object" 2>/dev/null)" \
+            && fail "$object still asks for libsmbclient, so the bundle is short of it"
+    done < <(find dist/usr -name '*.so' -o -type f -perm -u+x 2>/dev/null)
+fi
+
 done_testing

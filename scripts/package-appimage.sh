@@ -82,7 +82,13 @@ dnf install -y -q gcc-c++ cmake ninja-build pkgconf-pkg-config file which findut
 # without a feature is the fault MOLE-120 built its own check for; this is the same
 # question asked on the oldest distribution.
 echo "--- what this build found ---"
+#
+# MOLE_WITH_SMB is off here and nowhere else. libsmbclient is GPL-3.0-or-later and
+# an AppImage is one artefact somebody is handed; the .deb and the .rpm keep
+# Windows shares, because there the library comes from the distribution. The same
+# call MOLE-322 made about the video codecs a distribution ships. See ADR-0094.
 cmake -S /src -B /build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMOLE_BUILD_TESTS=OFF \
+    -DMOLE_WITH_SMB=OFF \
     2>&1 | tee /tmp/configure.log \
     | grep -E "Parquet|Terminal|Git state|Network drives|Credential|Windows shares|NFS exports|Qt6 Pdf|Multimedia|libarchive" || true
 
@@ -94,9 +100,14 @@ cmake -S /src -B /build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMOLE_BUILD_
 missing=0
 for wanted in "Terminal: libvterm" "Git state: libgit2" \
     "Credential store: OpenSSL" "Network drives: sftp, ftp, s3, webdav" \
-    "Windows shares: smb" "NFS exports: nfs"; do
+    "NFS exports: nfs"; do
     grep -qF "$wanted" /tmp/configure.log || { echo "missing: $wanted"; missing=1; }
 done
+# The one feature this artefact is deliberately without, asserted as an absence:
+# libsmbclient-devel is installed above, so a build that stopped passing
+# -DMOLE_WITH_SMB=OFF would silently find it and go out carrying GPL-3 code.
+grep -qF "Windows shares: not built" /tmp/configure.log \
+    || { echo "this AppImage was built with Windows shares, which is GPL-3 in an Apache-2.0 artefact"; missing=1; }
 for refused in "Qt6 Pdf not found" "Qt6 Multimedia not found" "libarchive not found"; do
     grep -qF "$refused" /tmp/configure.log && { echo "not built with: $refused"; missing=1; }
 done
