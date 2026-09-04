@@ -242,4 +242,27 @@ for forbidden in ("git push", "git tag", "gh release", "GITHUB_TOKEN"):
 sys.exit(0)
 PY
 
+begin "every workflow declares the shell its steps run in"
+# A Linux runner's default is `bash -e {0}` -- `-e` without `-o pipefail`, so a
+# pipeline takes the status of its last command and a step written as
+# `something | tee log` cannot fail however `something` ended. release.yml carried
+# a comment saying "there is no continue-on-error anywhere in this file", which
+# was true of the keyword and not of the pipelines. `shell: bash` gets
+# `bash --noprofile --norc -eo pipefail {0}`.
+#
+# windows.yml declares `pwsh` instead, and that is not an exception being waved
+# through: that job is written in PowerShell -- backtick continuations,
+# $env:GITHUB_ENV, Select-String -- which is the Windows runner's own default, so
+# what it needed was the declaration and not a change. See MOLE-387.
+for workflow in "$MOLE_SOURCE_DIR"/.github/workflows/*.yml; do
+    name="$(basename "$workflow")"
+    python3 - "$workflow" "$name" <<'PY' || fail "$name does not declare a shell with pipefail"
+import sys, yaml
+document = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+shell = ((document.get("defaults") or {}).get("run") or {}).get("shell")
+wanted = "pwsh" if sys.argv[2] == "windows.yml" else "bash"
+sys.exit(0 if shell == wanted else 1)
+PY
+done
+
 done_testing

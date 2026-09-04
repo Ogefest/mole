@@ -185,7 +185,10 @@ install:
 ## uninstall: remove what `make install` put in place
 uninstall:
 	@xargs -a build/release/install_manifest.txt rm -f 2>/dev/null || true
-	@rm -rf $(DESTDIR)$(PREFIX)/lib/mole
+	@# lib or lib64, whichever the install used: GNUInstallDirs picks lib64 on
+	@# every RPM distribution, so a hard-coded lib/mole left the plugins behind
+	@# on exactly the systems the .rpm installs on. See MOLE-387.
+	@find $(DESTDIR)$(PREFIX) -maxdepth 3 -type d -path '*/mole' -prune -exec rm -rf {} + 2>/dev/null || true
 	@echo "removed"
 
 # Where the distribution packages are built, and why it is not build/release.
@@ -202,7 +205,14 @@ PACKAGE_FLAGS := -DCMAKE_DISABLE_FIND_PACKAGE_Arrow=ON -DCMAKE_DISABLE_FIND_PACK
 ## packages: build the .deb and the .rpm, each on the family it is for
 ##           Both come from the install rules, through CPack, so the package and
 ##           `make install` cannot come apart. Skips one with a reason rather than
-##           failing when the tool for it is not on the machine.
+##           failing when the tool for it is not on the machine -- and **only**
+##           for that: both scripts exit 3 with a printed `skipped:` when the tool
+##           is absent and non-zero for every other failure, and these recipes
+##           ended in `|| true`, which swallowed both alike. So release.yml's
+##           "The .deb, the .rpm and the AppImage" step was green whatever the
+##           three builds did, and the release stopped two steps later when
+##           `dnf install` could not find a file -- naming the wrong fault.
+##           See MOLE-387.
 packages: deb rpm appimage
 
 ## deb: the .deb, built here, from what this distribution's archive can satisfy
@@ -210,21 +220,22 @@ deb:
 	@command -v dpkg-deb >/dev/null || { echo "  skipped: no dpkg-deb on this machine"; exit 0; }
 	@cmake -S . -B $(PACKAGE_DIR) -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo 		-DMOLE_BUILD_TESTS=OFF $(PACKAGE_FLAGS) >/dev/null
 	@cmake --build $(PACKAGE_DIR) --parallel $(JOBS) >/dev/null
-	@cd $(PACKAGE_DIR) && cpack -G DEB | tail -1
+	@cd $(PACKAGE_DIR) && cpack -G DEB >cpack-deb.log 2>&1 || { cat cpack-deb.log; exit 1; }
+	@tail -1 $(PACKAGE_DIR)/cpack-deb.log
 
 ## rpm: the .rpm, built in a container of the family it installs on
 ##      An .rpm built on Debian cannot be installed on an RPM system: rpmbuild
 ##      records what the binaries link, and Debian's libcurl carries symbol
 ##      versions no RPM distribution provides. See scripts/package-rpm.sh.
 rpm:
-	@scripts/package-rpm.sh $(PACKAGE_DIR) || true
+	@scripts/package-rpm.sh $(PACKAGE_DIR); status=$$?; 		[ $$status = 0 ] || [ $$status = 3 ] || exit $$status
 
 ## appimage: the AppImage, built on the oldest distribution Mole runs on
 ##           AlmaLinux 9, so glibc 2.34: what it is built on decides what it runs
 ##           on, and that is a promise rather than a build detail. The figure is in
 ##           TODO.md and in the release notes as well as in the script.
 appimage:
-	@scripts/package-appimage.sh $(PACKAGE_DIR) || true
+	@scripts/package-appimage.sh $(PACKAGE_DIR); status=$$?; 		[ $$status = 0 ] || [ $$status = 3 ] || exit $$status
 
 ## bundle: self-contained folder in dist/ that runs on machines without Qt
 ##         Built in its own directory with MOLE_WITH_SMB=OFF: libsmbclient is
@@ -238,11 +249,11 @@ bundle:
 	@cmake --build build/bundle --parallel $(JOBS)
 	@rm -rf dist && mkdir -p dist
 	@cmake --install build/bundle --prefix dist/usr >/dev/null
-	@# Both binaries, not `mole` by name: mole-tasks was installed unstripped and
-	@# carried 51 MB of debug symbols into every bundle -- about a third of the
-	@# tarball -- because this line named one of the two. Found by measuring the
-	@# artefacts for MOLE-296.
-	@strip dist/usr/bin/* dist/usr/lib/mole/plugins/*.so 2>/dev/null || true
+	@# The stripping is scripts/make-bundle.sh's, over the plugin directories it
+	@# discovers. This line named `dist/usr/lib/mole/plugins` -- and GNUInstallDirs
+	@# gives lib64 on every RPM distribution, so on one of those it matched nothing
+	@# and `|| true` hid it. Two copies of a path that the bundler already works
+	@# out for itself. See MOLE-296 for what unstripped plugins cost, and MOLE-387.
 	@scripts/make-bundle.sh dist
 	@cp LICENSE NOTICE THIRD-PARTY-NOTICES.md dist/
 	@cp -r licenses dist/

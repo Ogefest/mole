@@ -210,8 +210,26 @@ fi
 echo "  resolving shared libraries"
 collect_deps
 
+# Mole plugins with the rest of them, and over the directories the scan at the top
+# of this file discovered rather than a path spelled out.
+#
+# package-appimage.sh and `make bundle` each had a strip line of their own naming
+# lib/mole/plugins -- and the AppImage is built on AlmaLinux 9, where
+# GNUInstallDirs gives **lib64**. So those globs matched nothing, `|| true` hid
+# the complaint, and both plugins shipped with their debug sections: they
+# statically link their backend and mole_core, so that is MOLE-296 "51 MB of debug
+# symbols in an artefact people download" in a second place, two lines below a
+# comment citing MOLE-296. Here it cannot go wrong, because the find that
+# discovers the directories is the one that strips them. See MOLE-387.
 echo "  stripping"
-find "$LIBDIR" "$PLUGINDIR" "$QMLDIR" -name '*.so*' -type f -exec strip --strip-unneeded {} + 2>/dev/null || true
+for dir in "$LIBDIR" "$PLUGINDIR" "$QMLDIR" $MOLE_PLUGIN_DIRS; do
+    [ -d "$dir" ] || continue
+    echo "    $dir"
+    find "$dir" -name '*.so*' -type f -exec strip --strip-unneeded {} + 2>/dev/null || true
+done
+# And the binaries. strip on an already-stripped file is a no-op, so this is
+# idempotent whatever the caller did before.
+find "$DIST/usr/bin" -type f -exec strip --strip-unneeded {} + 2>/dev/null || true
 
 # The launcher is what makes the bundle relocatable. Qt looks these up at
 # startup and there is no way to set them from inside main() early enough.

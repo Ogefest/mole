@@ -50,7 +50,10 @@ docker run --rm \
     -v "$OUT:/out" \
     -e CALLER="$(id -u):$(id -g)" \
     "$IMAGE" bash -c '
-set -e
+# pipefail as well as -e: a pipeline takes the status of its last command, so any
+# check written as something | grep or something | tail cannot fail this script.
+# TODO.md rule one. See MOLE-387.
+set -eo pipefail
 dnf install -y -q gcc-c++ cmake ninja-build pkgconf-pkg-config rpm-build \
     qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qttools-devel qt6-qtsvg-devel \
     qt6-qtmultimedia-devel qt6-qtpdf-devel libarchive-devel libcurl-devel \

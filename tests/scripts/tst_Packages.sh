@@ -191,6 +191,80 @@ done
 # against this repository.
 grep -q 'licence-check.sh' scripts/package-appimage.sh || fail "the AppImage skips the licence check"
 
+begin "a packaging script that fails fails the build"
+# `make rpm` and `make appimage` ended in `|| true`, written for "the tool is not
+# on this machine" -- and both scripts already exit 3 with a printed `skipped:`
+# for exactly that, and non-zero for every other failure. The Makefile swallowed
+# them alike, so release.yml's "The .deb, the .rpm and the AppImage" step was
+# green whatever the three builds did, and the release stopped two steps later
+# when `dnf install` could not find a file, naming the wrong fault. TODO.md rule
+# one: a check has to be able to fail. See MOLE-387.
+#
+# Driven with stubs rather than by building anything: what is under test is the
+# Makefile, and the two real scripts need docker and twenty minutes.
+stubs="$(mktemp -d)"
+trap 'rm -rf "$stubs"' EXIT
+mkdir -p "$stubs/scripts"
+for one in package-rpm package-appimage; do
+    printf '#!/bin/sh\necho "boom" >&2\nexit 1\n' > "$stubs/scripts/$one.sh"
+    chmod +x "$stubs/scripts/$one.sh"
+done
+cp Makefile "$stubs/Makefile"
+if make -C "$stubs" rpm >/dev/null 2>&1; then
+    fail "make rpm passed with a packaging script that exited 1"
+fi
+if make -C "$stubs" appimage >/dev/null 2>&1; then
+    fail "make appimage passed with a packaging script that exited 1"
+fi
+# And exit 3 -- the tool is not here -- is still a skip rather than a failure,
+# which is the whole reason the `|| true` was there.
+for one in package-rpm package-appimage; do
+    printf '#!/bin/sh\necho "skipped: no tool here" >&2\nexit 3\n' > "$stubs/scripts/$one.sh"
+done
+make -C "$stubs" rpm >/dev/null 2>&1 || fail "make rpm failed on a skip"
+make -C "$stubs" appimage >/dev/null 2>&1 || fail "make appimage failed on a skip"
+
+begin "every container script can fail"
+# A pipeline takes the status of its last command, so `set -e` alone does not stop
+# a script whose checks end in tee, tail or grep. Both packaging scripts run a
+# body through `bash -c`, and both bodies said `set -e`. See MOLE-387.
+for script in scripts/package-rpm.sh scripts/package-appimage.sh; do
+    grep -q 'set -eo pipefail' "$script" \
+        || fail "the container body in $script does not set pipefail"
+done
+# And the packer's own status is not thrown away by a pipe into tail.
+grep -q 'appimagetool "$APPDIR" "$image"' scripts/package-appimage.sh \
+    || fail "appimagetool is not called with its status kept"
+grep -qF '[ -s "$image" ]' scripts/package-appimage.sh \
+    || fail "nothing checks that an image was actually produced"
+
+begin "the bundler strips the plugin directories it discovered"
+# package-appimage.sh and `make bundle` each had a strip line naming
+# usr/lib/mole/plugins -- and the AppImage is built on AlmaLinux 9, where
+# GNUInstallDirs gives lib64. The glob matched nothing and `|| true` hid it, so
+# both plugins shipped with their debug sections: they statically link their
+# backend and mole_core, which is MOLE-296 all over again. See MOLE-387.
+grep -q 'for dir in "$LIBDIR" "$PLUGINDIR" "$QMLDIR" $MOLE_PLUGIN_DIRS' scripts/make-bundle.sh \
+    || fail "the bundler does not strip over the plugin directories it found"
+grep -qE '^\s*strip .*lib/mole' scripts/package-appimage.sh \
+    && fail "the AppImage packer still strips a hard-coded lib/mole path"
+grep -qE '^\t@strip .*usr/lib/mole' Makefile \
+    && fail "make bundle still has a hard-coded lib/mole/plugins strip"
+
+begin "the feature summary is written once"
+# Three consumers were carrying their own copy -- release.yml, the AppImage packer
+# and tst_ReleaseWorkflow.sh -- and the two that mattered had already drifted: the
+# AppImage's was missing xxhash and the Multimedia QML module. See MOLE-387.
+[ -f scripts/feature-summary.sh ] || fail "there is no shared feature summary"
+grep -q 'feature-summary.sh' scripts/package-appimage.sh \
+    || fail "the AppImage packer does not read the shared feature summary"
+grep -q 'feature-summary.sh' .github/workflows/release.yml \
+    || fail "the release workflow does not read the shared feature summary"
+# And the artefact-specific exemptions are named in it rather than being the
+# difference between two lists.
+grep -q 'Windows shares: not built' scripts/feature-summary.sh \
+    || fail "the AppImage exemption is not named in the shared list"
+
 begin "all three packaging targets exist and are declared"
 for target in packages deb rpm appimage; do
     grep -qE "^$target:" Makefile || fail "there is no target called $target"

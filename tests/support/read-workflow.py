@@ -10,6 +10,8 @@ Each subcommand prints one thing and exits non-zero only when it cannot answer.
 """
 
 import subprocess
+import pathlib
+import shlex
 import sys
 import tempfile
 from pathlib import Path
@@ -109,25 +111,40 @@ def condition(document, needle):
 
 
 def summary_strings(document):
-    """The configure-summary words the workflow looks for.
+    """The configure-summary words a release build is checked against.
 
-    Read out of the two bash arrays rather than kept in a second list here: the
-    workflow is where the decision lives, and a copy in the test would be the
+    Read out of scripts/feature-summary.sh rather than kept in a list here: that
+    file is where the decision lives now, and a copy in the test would be the
     thing that goes stale.
+
+    It used to be read out of two bash arrays inside the workflow -- and there
+    were three copies of those arrays, one per consumer, two of which had already
+    drifted. The `document` argument is kept so the question has the same shape as
+    every other one here. See MOLE-387.
     """
+    del document
+    here = pathlib.Path(__file__).resolve().parents[2]
+    text = (here / "scripts" / "feature-summary.sh").read_text(encoding="utf-8")
+
     wanted = []
-    for _job, _index, step in steps_of(document):
-        script = step.get("run") or ""
-        collecting = False
-        for line in script.splitlines():
-            stripped = line.strip()
-            if stripped in ("wanted=(", "refused=("):
-                collecting = True
+    collecting = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped in ("MOLE_WANTED=()", "MOLE_REFUSED=()"):
+            continue  # the declaration at the top of the file, which holds nothing
+        if stripped.startswith(("MOLE_WANTED=(", "MOLE_REFUSED=(")):
+            collecting = True
+            continue
+        if stripped.startswith(("MOLE_WANTED+=(", "MOLE_REFUSED+=(")):
+            # A one-line append: everything between the parentheses.
+            inside = stripped[stripped.index("(") + 1 : stripped.rindex(")")]
+            wanted.extend(piece.strip('"') for piece in shlex.split(inside))
+            continue
+        if collecting:
+            if stripped == ")":
+                collecting = False
                 continue
-            if collecting:
-                if stripped == ")":
-                    collecting = False
-                    continue
+            if stripped and not stripped.startswith("#"):
                 wanted.append(stripped.strip('"'))
     return "\n".join(wanted)
 

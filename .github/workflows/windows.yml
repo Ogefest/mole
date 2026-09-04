@@ -25,6 +25,20 @@ name: Windows
 on:
   workflow_dispatch:
 
+# The shell, stated rather than trusted -- and **pwsh here, not bash**.
+#
+# Every other workflow in this directory declares `bash`, because a Linux
+# runner's default is `bash -e {0}`: `-e` without `-o pipefail`, so a pipeline
+# takes the status of its last command and a step written as `something | tee log`
+# cannot fail however `something` ended. This job is written in PowerShell --
+# backtick continuations, `$env:GITHUB_ENV`, `Select-String` -- which is the
+# Windows runner's own default, so what it needs is the declaration and not a
+# change. GitHub's pwsh wrapper sets `$ErrorActionPreference = 'stop'` and exits
+# on `$LASTEXITCODE`. See MOLE-387.
+defaults:
+  run:
+    shell: pwsh
+
 jobs:
   windows:
     name: Configure, build and the fast tier on Windows

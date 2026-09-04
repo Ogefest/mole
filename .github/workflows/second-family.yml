@@ -29,6 +29,16 @@ on:
   # for the answer instead of waiting for Monday.
   workflow_dispatch:
 
+# Every `run:` is bash with pipefail, stated once here rather than trusted.
+#
+# The default shell for a Linux runner is `bash -e {0}` -- `-e` without
+# `-o pipefail`, so a pipeline takes the status of its last command and a step
+# written as `something | tee log` cannot fail however `something` ended. `shell: bash` gets
+# `bash --noprofile --norc -eo pipefail {0}`. See MOLE-387.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   fedora:
     name: Configure, build and the fast tier on Fedora

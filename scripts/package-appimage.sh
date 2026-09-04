@@ -52,7 +52,11 @@ docker run --rm \
     -e CALLER="$(id -u):$(id -g)" \
     -e TOOL_URL="$TOOL_URL" \
     "$IMAGE" bash -c '
-set -e
+# pipefail as well as -e. Every check below ended in tee, tail or grep, whose
+# status is the one the shell sees -- so a failing configure or a failing packer
+# did not stop this script, and the failure surfaced two steps later as something
+# else. TODO.md rule one: a check has to be able to fail. See MOLE-387.
+set -eo pipefail
 
 # EPEL for Qt 6 and CRB for what its devel packages need. Named here rather than in
 # a Dockerfile so that what the artefact was built against is readable in one place.
@@ -89,28 +93,26 @@ echo "--- what this build found ---"
 # call MOLE-322 made about the video codecs a distribution ships. See ADR-0094.
 cmake -S /src -B /build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMOLE_BUILD_TESTS=OFF \
     -DMOLE_WITH_SMB=OFF \
-    2>&1 | tee /tmp/configure.log \
-    | grep -E "Parquet|Terminal|Git state|Network drives|Credential|Windows shares|NFS exports|Qt6 Pdf|Multimedia|libarchive" || true
+    >/tmp/configure.log 2>&1 || {
+    cat /tmp/configure.log
+    echo "configure failed" >&2
+    exit 1
+}
+# The summary lines, out of the log. This was a pipeline ending in `grep … || true`,
+# so a configure that printed its summaries and then died -- every FATAL_ERROR in
+# src/app/CMakeLists.txt comes *after* them -- passed both this and the
+# wanted/refused checks below, and failed later with an unrelated error.
+# See MOLE-387.
+grep -E "Parquet|Terminal|Git state|Network drives|Credential|Windows shares|NFS exports|Qt6 Pdf|Multimedia|libarchive" \
+    /tmp/configure.log || true
 
-# Everything the distribution can give, which is everything except the Parquet
-# grid: EPEL 9 ships Arrow 9.0.0 and no ParquetConfig.cmake at all, so
-# find_package(Parquet) cannot succeed there whatever is installed. That one
-# absence is a property of the oldest distribution Mole runs on, and it is written
-# in TODO.md and in the release notes rather than discovered by a downloader.
+# What this artefact has to have, from the one list all three consumers read.
+# The exemptions -- no Parquet grid, and no Windows shares on purpose -- are named
+# in that file rather than being the difference between two lists that drifted.
+# See scripts/feature-summary.sh and MOLE-387.
+. /src/scripts/feature-summary.sh
 missing=0
-for wanted in "Terminal: libvterm" "Git state: libgit2" \
-    "Credential store: OpenSSL" "Network drives: sftp, ftp, s3, webdav" \
-    "NFS exports: nfs"; do
-    grep -qF "$wanted" /tmp/configure.log || { echo "missing: $wanted"; missing=1; }
-done
-# The one feature this artefact is deliberately without, asserted as an absence:
-# libsmbclient-devel is installed above, so a build that stopped passing
-# -DMOLE_WITH_SMB=OFF would silently find it and go out carrying GPL-3 code.
-grep -qF "Windows shares: not built" /tmp/configure.log \
-    || { echo "this AppImage was built with Windows shares, which is GPL-3 in an Apache-2.0 artefact"; missing=1; }
-for refused in "Qt6 Pdf not found" "Qt6 Multimedia not found" "libarchive not found"; do
-    grep -qF "$refused" /tmp/configure.log && { echo "not built with: $refused"; missing=1; }
-done
+mole_check_summary appimage /tmp/configure.log || missing=1
 [ "$missing" = 0 ] || { echo "this AppImage would go out missing something the distribution has"; exit 1; }
 
 cmake --build /build --parallel "$(nproc)"
@@ -121,7 +123,10 @@ APPDIR=/appdir
 cmake --install /build --prefix "$APPDIR/usr" >/dev/null
 # Both binaries: naming `mole` alone left mole-tasks unstripped, which is 51 MB of
 # debug symbols in an artefact people download. See MOLE-296.
-strip "$APPDIR/usr/bin/"* "$APPDIR/usr/lib/mole/plugins/"*.so 2>/dev/null || true
+# The stripping belongs to make-bundle.sh, over the plugin directories it
+# discovers -- this had a path with lib/mole in it, which matches nothing on
+# a lib64 distribution, which is every RPM one including the AlmaLinux this runs
+# on. See MOLE-387.
 /src/scripts/make-bundle.sh "$APPDIR"
 cp /src/LICENSE /src/NOTICE /src/THIRD-PARTY-NOTICES.md "$APPDIR/"
 cp -r /src/licenses "$APPDIR/"
@@ -152,9 +157,26 @@ version=$(sed -n "s/^ *VERSION \([0-9][0-9.]*\)$/\1/p" /src/CMakeLists.txt)
 # Extracted rather than mounted: appimagetool is itself an AppImage and a container
 # has no FUSE.
 export APPIMAGE_EXTRACT_AND_RUN=1
-ARCH=x86_64 /tmp/appimagetool "$APPDIR" "/out/mole-$version-x86_64.AppImage" 2>&1 | tail -3
+image="/out/mole-$version-x86_64.AppImage"
+# The whole of the output on failure, the last lines on success: the packer says a
+# great deal and only the tail is worth reading when it worked. Redirected to a
+# file rather than piped, so the status this script sees belongs to the packer --
+# with a pipe it belonged to tail, and a failing packer did not stop the script.
+if ! ARCH=x86_64 /tmp/appimagetool "$APPDIR" "$image" >/tmp/appimagetool.log 2>&1; then
+    cat /tmp/appimagetool.log
+    echo "appimagetool failed" >&2
+    exit 1
+fi
+tail -3 /tmp/appimagetool.log
 
-chown "$CALLER" /out/*.AppImage
+# And there really is an image. The chown below was the only check against a
+# packer that exits 0 having written nothing -- and it passes on a partial file.
+[ -s "$image" ] || {
+    echo "appimagetool produced no image at $image" >&2
+    exit 1
+}
+
+chown "$CALLER" "$image"
 '
 status=$?
 [ "$status" = 0 ] || {

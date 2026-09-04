@@ -189,8 +189,13 @@ grep -q 'MOLE_WITH_SMB=OFF' "$MOLE_SOURCE_DIR/Makefile" \
     || fail "make bundle builds with Windows shares, so the tarball would carry libsmbclient"
 grep -q 'MOLE_WITH_SMB=OFF' "$MOLE_SOURCE_DIR/scripts/package-appimage.sh" \
     || fail "the AppImage builds with Windows shares, so it would carry libsmbclient"
-grep -q 'Windows shares: not built' "$MOLE_SOURCE_DIR/scripts/package-appimage.sh" \
-    || fail "the AppImage does not assert the absence, so dropping the flag would go unnoticed"
+# The assertion itself now lives in the one feature list all three consumers read
+# -- see scripts/feature-summary.sh and MOLE-387 -- so both halves are checked:
+# the list says it, and the packer reads the list.
+grep -q 'Windows shares: not built' "$MOLE_SOURCE_DIR/scripts/feature-summary.sh" \
+    || fail "the feature list does not assert the absence, so dropping the flag would go unnoticed"
+grep -q 'feature-summary.sh' "$MOLE_SOURCE_DIR/scripts/package-appimage.sh" \
+    || fail "the AppImage packer does not check itself against the feature list"
 
 begin "a bundle on this machine carries no libsmbclient"
 # The behavioural half, where there is something to look at.
@@ -203,6 +208,48 @@ else
         grep -q 'NEEDED.*libsmbclient' <<<"$(objdump -p "$object" 2>/dev/null)" \
             && fail "$object still asks for libsmbclient, so the bundle is short of it"
     done < <(find dist/usr -name '*.so' -o -type f -perm -u+x 2>/dev/null)
+fi
+
+begin "the bundler strips over the directories it discovered, not a spelled-out path"
+# The structural half. `make bundle` and package-appimage.sh each carried a strip
+# line naming lib/mole/plugins, and the AppImage is built on AlmaLinux 9 where
+# GNUInstallDirs gives lib64 -- so those globs matched nothing, `|| true` hid the
+# complaint, and both plugins shipped with their debug sections. They statically
+# link their backend and mole_core, so that is MOLE-296 "51 MB of debug symbols in
+# an artefact people download" in a second place. See MOLE-387.
+grep -q 'MOLE_PLUGIN_DIRS' scripts/make-bundle.sh \
+    || fail "the bundler has no discovered plugin directories"
+stripping="$(awk '/^echo "  stripping"/,/^# The launcher/' scripts/make-bundle.sh)"
+grep -q 'MOLE_PLUGIN_DIRS' <<<"$stripping" \
+    || fail "the stripping step does not cover the plugin directories it found"
+# And the two copies are gone.
+grep -qE '^\t@strip .*lib/mole' Makefile \
+    && fail "make bundle still strips a hard-coded lib/mole path"
+grep -qE '^\s*strip .*lib/mole' scripts/package-appimage.sh \
+    && fail "the AppImage packer still strips a hard-coded lib/mole path"
+
+begin "the published plugins are stripped"
+# The behavioural half, where there is a bundle to look at. A stripped object has
+# no .debug_info section; an unstripped plugin here is a third of the tarball.
+plugins=$(find dist/usr -type d -path '*/mole/plugins' 2>/dev/null | head -1)
+if [ -z "$plugins" ]; then
+    echo "  skipped: no bundle in dist/ -- run make bundle"
+elif ! command -v readelf >/dev/null; then
+    echo "  skipped: no readelf on this machine"
+else
+    while IFS= read -r object; do
+        [ -n "$object" ] || continue
+        sections="$(readelf -S "$object" 2>/dev/null)"
+        grep -q 'debug_info' <<<"$sections" \
+            && fail "$object still carries its debug sections"
+    done < <(find "$plugins" -name '*.so' 2>/dev/null)
+    # And the binaries beside them, which is what MOLE-296 was about.
+    while IFS= read -r object; do
+        [ -n "$object" ] || continue
+        sections="$(readelf -S "$object" 2>/dev/null)"
+        grep -q 'debug_info' <<<"$sections" \
+            && fail "$object still carries its debug sections"
+    done < <(find dist/usr/bin -type f 2>/dev/null)
 fi
 
 done_testing

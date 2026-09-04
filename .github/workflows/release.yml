@@ -58,6 +58,18 @@ on:
 permissions:
   contents: write
 
+# Every `run:` is bash with pipefail, stated once here rather than trusted.
+#
+# The default shell for a Linux runner is `bash -e {0}` -- `-e` without
+# `-o pipefail`, so a pipeline takes the status of its last command and a step
+# written as `something | tee log` cannot fail however `something` ended. This
+# file used to carry a comment saying "there is no continue-on-error anywhere",
+# which was true of the keyword and not of the pipelines. `shell: bash` gets
+# `bash --noprofile --norc -eo pipefail {0}`. See MOLE-387.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   linux:
     name: Test, bundle and publish
@@ -174,32 +186,14 @@ jobs:
       - name: Refuse a build with a feature missing
         run: |
           cmake --preset release 2>&1 | tee configure.log
+          # The list lives in scripts/feature-summary.sh, which the AppImage
+          # packer and tst_ReleaseWorkflow.sh read as well. Three copies had
+          # already drifted -- the AppImage's was missing xxhash and the
+          # Multimedia QML module -- and only one of the three was ever checked
+          # against the CMake messages. See MOLE-387.
+          . scripts/feature-summary.sh
           missing=0
-          # An array rather than a heredoc: inside a YAML block scalar every line
-          # carries the block's indentation, and a heredoc keeps it -- so each of
-          # these would have been searched for with ten spaces in front of it.
-          wanted=(
-            "Parquet preview: enabled"
-            "Terminal: libvterm"
-            "Git state: libgit2"
-            "Duplicate scan head: xxhash"
-            "Credential store: OpenSSL"
-            "Network drives: sftp, ftp, s3, webdav"
-            "Windows shares: smb"
-            "NFS exports: nfs"
-          )
-          refused=(
-            "Qt6 Pdf not found"
-            "Qt6 Multimedia not found"
-            "its QML module is not"
-            "libarchive not found"
-          )
-          for line in "${wanted[@]}"; do
-            grep -qF "$line" configure.log || { echo "missing: $line"; missing=1; }
-          done
-          for line in "${refused[@]}"; do
-            grep -qF "$line" configure.log && { echo "not built with: $line"; missing=1; }
-          done
+          mole_check_summary full configure.log || missing=1
           [ "$missing" = 0 ] || { echo "::error::this build is missing something a release is supposed to have"; exit 1; }
 
       # make bundle installs, strips, brings the Qt libraries in through
@@ -218,7 +212,10 @@ jobs:
       - name: Every plugin that was built is in the artefact
         run: |
           built=$(find build/release/plugins -name '*.so' -printf '%f\n' | sort)
-          shipped=$(find dist/usr/lib/mole/plugins -name '*.so' -printf '%f\n' | sort)
+          # Found rather than spelled out: GNUInstallDirs gives lib64 on every
+          # RPM distribution, and a path with `lib` in it is a path that is right
+          # on one family only. See MOLE-387.
+          shipped=$(find dist/usr -type d -path '*/mole/plugins' -exec find {} -name '*.so' -printf '%f\n' \; | sort)
           if [ "$built" != "$shipped" ]; then
             echo "built:   $built"
             echo "shipped: $shipped"
