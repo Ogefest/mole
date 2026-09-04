@@ -14,6 +14,7 @@ SweepLeftoversTask::SweepLeftoversTask(const QString& driveName, FileSystemPtr f
     , m_olderThan(olderThan)
     , m_discard(discard)
 {
+    noteRunsOn(m_fileSystem);
 }
 
 void SweepLeftoversTask::run()

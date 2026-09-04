@@ -7,6 +7,7 @@ QueryAccessTask::QueryAccessTask(FileSystemPtr fileSystem, VfsUri target, QObjec
     , m_fileSystem(std::move(fileSystem))
     , m_target(std::move(target))
 {
+    noteRunsOn(m_fileSystem);
     setBackground(true);
 }
 

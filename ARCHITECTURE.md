@@ -49,6 +49,15 @@ plumbing at all.
 `Task` object itself lives on the UI thread and marshals progress back through
 queued invocations. Subclasses touch only their own private data inside `run()`.
 
+**One rule is not enough on its own, and that is the second half.** A call on a
+mount that has stopped answering blocks in the kernel and the cooperative cancel
+token cannot reach it, so with one unbounded pool a single dead drive in the
+sidebar took every thread in under ten minutes — the window still painting and
+nothing else able to run, which is the freeze moved rather than removed. So each
+task declares the drive it runs on and `TaskManager` lets no drive hold more than
+half the pool; a task past the limit queues in its lane rather than on a thread.
+See [ADR-0095](docs/adr/0095-no-one-drive-may-hold-more-than-half-the-pool.md).
+
 **And the rule is enforced rather than remembered.** `IFileSystem::doNotCallFrom()`
 names the thread that draws, and a drive call arriving from it warns — the same
 mechanism `IndexDatabase` has had since [ADR-0066](docs/adr/0066-the-interface-reads-the-index-from-a-snapshot.md),

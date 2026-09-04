@@ -5,9 +5,11 @@
 
 #include <QHash>
 #include <QMutex>
+#include <QSemaphore>
 #include <QStringList>
 
 #include <atomic>
+#include <memory>
 
 namespace mole {
 
@@ -82,6 +84,23 @@ public:
     /// Sleeps this long inside list() -- used to test cancellation and to keep
     /// the UI honest about slow backends.
     void setListDelayMs(int ms) { m_listDelayMs = ms; }
+    /// Holds every listing until the test releases the semaphore, and says how
+    /// many are being held.
+    ///
+    /// A condition rather than a clock, which is the difference between a test
+    /// that says what it means and one that passes on this machine: "a drive that
+    /// has stopped answering" is a listing that has not come back, not a listing
+    /// that takes 200 ms. A mount whose server has gone waits for the kernel's
+    /// timeout -- about fifteen minutes for a hard NFS mount, or for ever -- and
+    /// there is no duration a suite can stand in for that. See MOLE-362.
+    ///
+    /// Null clears it. A held listing is inside list() with the drive's own mutex
+    /// *not* taken, so the rest of the drive still answers -- which is what a real
+    /// blocking call does.
+    void setListGate(std::shared_ptr<QSemaphore> gate);
+    /// How many listings are being held by the gate right now. Wait for this,
+    /// never for a duration.
+    int listsInProgress() const;
     /// The same for openRead(), because the honest way to test what a view does
     /// while a file is slow to arrive is to have one that is.
     void setReadDelayMs(int ms) { m_readDelayMs = ms; }
@@ -169,6 +188,13 @@ private:
     QHash<QString, Node> m_nodes;
     QHash<QString, VfsError::Code> m_faults;
     int m_listDelayMs = 0;
+    /// The gate every listing waits at, and how many are waiting. Guarded by
+    /// m_gateMutex rather than m_mutex: a held listing must not hold the drive's
+    /// own lock, or the fixture would stop the rest of the drive answering and
+    /// stop being a model of a blocking call.
+    mutable QMutex m_gateMutex;
+    std::shared_ptr<QSemaphore> m_listGate;
+    std::atomic_int m_listsHeld { 0 };
     int m_readDelayMs = 0;
     int m_operationDelayMs = 0;
     qint64 m_throttleBytes = 0;

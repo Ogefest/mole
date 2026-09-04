@@ -10,6 +10,7 @@ InvokeFileActionTask::InvokeFileActionTask(
     , m_title(std::move(title))
     , m_target(std::move(target))
 {
+    noteRunsOn(m_fileSystem);
 }
 
 void InvokeFileActionTask::run()

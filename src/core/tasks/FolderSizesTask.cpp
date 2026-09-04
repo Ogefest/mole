@@ -13,6 +13,7 @@ FolderSizesTask::FolderSizesTask(FileSystemPtr fileSystem, QList<VfsUri> folders
     , m_fileSystem(std::move(fileSystem))
     , m_folders(std::move(folders))
 {
+    noteRunsOn(m_fileSystem);
     // Nobody is waiting on this to carry on working, so it belongs with the
     // background jobs rather than in front of the window.
     setBackground(true);

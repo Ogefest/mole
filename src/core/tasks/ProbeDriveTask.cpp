@@ -7,6 +7,7 @@ ProbeDriveTask::ProbeDriveTask(FileSystemPtr fileSystem, VfsUri target, QObject*
     , m_fileSystem(std::move(fileSystem))
     , m_target(std::move(target))
 {
+    noteRunsOn(m_fileSystem);
     // One of a crowd, and nobody's business: this is submitted on every
     // navigation and does nothing at all on all but the first per drive.
     setOneOfMany(true);

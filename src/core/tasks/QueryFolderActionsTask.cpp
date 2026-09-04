@@ -7,6 +7,7 @@ QueryFolderActionsTask::QueryFolderActionsTask(FileSystemPtr fileSystem, VfsUri 
     , m_fileSystem(std::move(fileSystem))
     , m_directory(std::move(directory))
 {
+    noteRunsOn(m_fileSystem);
     setOneOfMany(true);
     setBackground(true);
 }

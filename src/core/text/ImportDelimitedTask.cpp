@@ -50,6 +50,7 @@ ImportDelimitedTask::ImportDelimitedTask(
     , m_target(std::move(target))
     , m_store(std::move(store))
 {
+    noteRunsOn(m_fileSystem);
 }
 
 void ImportDelimitedTask::run()

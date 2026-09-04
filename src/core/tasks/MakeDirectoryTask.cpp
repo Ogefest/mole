@@ -7,6 +7,7 @@ MakeDirectoryTask::MakeDirectoryTask(FileSystemPtr fileSystem, VfsUri target, QO
     , m_fileSystem(std::move(fileSystem))
     , m_target(std::move(target))
 {
+    noteRunsOn(m_fileSystem);
     noteTouching(m_target);
 }
 

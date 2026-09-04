@@ -20,7 +20,8 @@ DriveListModel::DriveListModel(
     // A minute is often enough to notice a disk filling up and rare enough
     // that nobody will ever see it happen.
     m_refreshTimer.setInterval(60000);
-    connect(&m_refreshTimer, &QTimer::timeout, this, &DriveListModel::refreshSpace);
+    // The timer asks about everything; a reload asks only about what is new.
+    connect(&m_refreshTimer, &QTimer::timeout, this, [this] { refreshSpace(SpaceRefresh::All); });
 
     if (m_vfs)
         connect(m_vfs, &VfsManager::mountsChanged, this, &DriveListModel::reload);
@@ -125,7 +126,7 @@ void DriveListModel::reload()
     }
     m_space = kept;
 
-    refreshSpace();
+    refreshSpace(SpaceRefresh::NewMounts);
 }
 
 DriveListModel::State DriveListModel::stateOf(const Row& row) const
@@ -406,7 +407,7 @@ QString DriveListModel::stateSeverity(State state)
     return QStringLiteral("idle");
 }
 
-void DriveListModel::refreshSpace()
+void DriveListModel::refreshSpace(SpaceRefresh which)
 {
     if (!m_tasks)
         return;
@@ -425,9 +426,28 @@ void DriveListModel::refreshSpace()
         if (!mount.fileSystem || !mount.fileSystem->capabilities().testFlag(VfsCapability::ReportsSpace)) {
             continue; // nothing to ask, and nothing to draw
         }
+        // A reload asks only about a mount nobody has measured. Browsing into a
+        // .zip adds an unlisted mount, which reloads, and pruning it reloads
+        // again -- so one gesture used to fire two rounds of queries at every
+        // disk in the sidebar, including one that has stopped answering.
+        if (which == SpaceRefresh::NewMounts && m_space.contains(mount.id))
+            continue;
+        // And never a second question while the first is still out. On a dead
+        // mount every one of them is a pool thread waiting on the same statvfs
+        // for as long as the kernel takes.
+        if (const QPointer<QuerySpaceTask> pending = m_spaceQueries.value(mount.id); !pending.isNull()) {
+            if (!pending->isFinished())
+                continue;
+        }
 
         auto* task = new QuerySpaceTask(mount.fileSystem, mount.root, mount.id);
+        m_spaceQueries.insert(mount.id, task);
         connect(task, &QuerySpaceTask::spaceReady, this, &DriveListModel::onSpaceReady);
+        // Cleared whatever the outcome: a query that failed or was cancelled has
+        // to leave the way clear for the next one, or a mount that answered badly
+        // once is never asked again.
+        const QString mountId = mount.id;
+        connect(task, &Task::finished, this, [this, mountId] { m_spaceQueries.remove(mountId); });
         m_tasks->submit(task);
     }
 }

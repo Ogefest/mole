@@ -1,11 +1,18 @@
 #include "support/MoleTestMain.h"
 #include "support/TestSupport.h"
 
+#include "core/tasks/ListDirectoryTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
+#include <QDir>
+#include <QDirIterator>
+#include <QFile>
+#include <QFileInfo>
 #include <QLocale>
 #include <QLoggingCategory>
+#include <QRegularExpression>
+#include <QSemaphore>
 #include <QSignalSpy>
 #include <QThread>
 
@@ -58,6 +65,12 @@ private slots:
     void aCountReportedPerItemIsCoalescedTheSameWay();
     void theLastReadingOfATaskThatGoesQuietStillArrives();
     void aTaskOutlivesTheDriveItWasGiven();
+
+    // ---- one dead drive must not take the pool ----
+    void oneDriveThatStoppedAnsweringDoesNotHoldEveryThread();
+    void aCancelThatArrivedWhileQueuedIsAnsweredBeforeTheCall();
+    void aTaskThatNamesNoDriveIsNotBoundedByOne();
+    void everyTaskHandedADriveDeclaresIt();
 };
 
 void TestTaskManager::runsTaskOffTheCallingThread()
@@ -830,6 +843,176 @@ void TestTaskManager::aTaskOutlivesTheDriveItWasGiven()
     QVERIFY(waitForTask(task));
     QCOMPARE(task->state(), Task::State::Succeeded);
     drainEvents();
+}
+
+// ------------------------------- one dead drive must not take the pool
+
+void TestTaskManager::oneDriveThatStoppedAnsweringDoesNotHoldEveryThread()
+{
+    // The fault, in the smallest shape that has it. A backend call on a mount
+    // that has gone -- an NFS server switched off, a yanked USB disk -- blocks in
+    // the kernel and the cooperative token cannot reach it, so each one holds a
+    // pool thread for as long as the kernel takes. Eight of them took the whole
+    // pool and every listing, copy, preview and search on every *other* drive
+    // queued behind. The window kept painting and the application had stopped.
+    TaskManager manager;
+    manager.setMaxThreadCount(2);
+    QCOMPARE(manager.perDriveLimit(), 1);
+
+    auto stalled = std::make_shared<MemoryFileSystem>();
+    stalled->addDirectory(QStringLiteral("/slow"));
+    // A held listing rather than a slept one: the drive stays inside list()
+    // until the test lets it go, so nothing here depends on a duration.
+    auto gate = std::make_shared<QSemaphore>();
+    stalled->setListGate(gate);
+
+    auto answering = std::make_shared<MemoryFileSystem>();
+    answering->addFile(QStringLiteral("/fine/file.txt"), QByteArray("x"));
+
+    QList<ListDirectoryTask*> queued;
+    for (int i = 0; i < 8; ++i) {
+        auto* task = new ListDirectoryTask(stalled, VfsUri::fromString(QStringLiteral("mem:///slow")));
+        queued.append(task);
+        manager.submit(task);
+    }
+
+    // One of them is inside the drive and the other seven are waiting for the
+    // lane rather than for a thread -- which is the whole point: a thread is
+    // still free.
+    QVERIFY(waitFor([&stalled] { return stalled->listsInProgress() >= 1; }, 10000));
+    QCOMPARE(stalled->listsInProgress(), 1);
+    QCOMPARE(manager.queuedForADriveCount(), 7);
+
+    // And a listing on another drive starts and finishes while all that is out.
+    auto* other = new ListDirectoryTask(answering, VfsUri::fromString(QStringLiteral("mem:///fine")));
+    int listed = -1;
+    connect(other, &ListDirectoryTask::listed, this,
+        [&listed](const VfsUri&, const FileEntryList& entries) { listed = int(entries.size()); });
+    manager.submit(other);
+    QVERIFY2(waitForTask(other), "a listing on a healthy drive never ran");
+    QCOMPARE(other->state(), Task::State::Succeeded);
+    drainEvents();
+    QCOMPARE(listed, 1);
+
+    // Let the dead drive go, so the run ends rather than being torn down mid-call.
+    stalled->setListGate(nullptr);
+    gate->release(16);
+    for (ListDirectoryTask* task : std::as_const(queued))
+        QVERIFY(waitForTask(task));
+    drainEvents();
+}
+
+void TestTaskManager::aCancelThatArrivedWhileQueuedIsAnsweredBeforeTheCall()
+{
+    // Task::execute() went straight to run(), so a queued listing against a mount
+    // that has stopped answering entered run() and blocked in the kernel before
+    // its first poll: cancelling the queue freed no thread at all. The token is
+    // cooperative and execute() is the first place it can be co-operated with.
+    TaskManager manager;
+    manager.setMaxThreadCount(1);
+
+    auto gate = std::make_shared<QSemaphore>();
+    auto* holding
+        = new ScriptedTask(QStringLiteral("holds the thread"), [gate](ScriptedTask&) { gate->acquire(); });
+    manager.submit(holding);
+
+    std::atomic_int bodiesRun { 0 };
+    QList<ScriptedTask*> waiting;
+    for (int i = 0; i < 4; ++i) {
+        auto* task = new ScriptedTask(QStringLiteral("queued"), [&bodiesRun](ScriptedTask&) { ++bodiesRun; });
+        waiting.append(task);
+        manager.submit(task);
+    }
+
+    // Cancelled while they are still queued, which is what quitting does.
+    for (ScriptedTask* task : std::as_const(waiting))
+        task->requestCancel();
+    gate->release(8);
+
+    QVERIFY(waitForTask(holding));
+    for (ScriptedTask* task : std::as_const(waiting)) {
+        QVERIFY(waitForTask(task));
+        QCOMPARE(task->state(), Task::State::Cancelled);
+    }
+    QCOMPARE(bodiesRun.load(), 0);
+    drainEvents();
+}
+
+void TestTaskManager::aTaskThatNamesNoDriveIsNotBoundedByOne()
+{
+    // A task that touches no backend has no lane and nothing to be bounded
+    // against -- an index search, a chain, a table count. Four of them run
+    // together on a pool of four, which they could not if the bound applied.
+    TaskManager manager;
+    manager.setMaxThreadCount(4);
+
+    auto gate = std::make_shared<QSemaphore>();
+    std::atomic_int started { 0 };
+    QList<ScriptedTask*> tasks;
+    for (int i = 0; i < 4; ++i) {
+        auto* task = new ScriptedTask(QStringLiteral("no drive"), [gate, &started](ScriptedTask&) {
+            ++started;
+            gate->acquire();
+        });
+        QCOMPARE(task->lane(), nullptr);
+        tasks.append(task);
+        manager.submit(task);
+    }
+
+    QVERIFY(waitFor([&started] { return started.load() == 4; }, 10000));
+    QCOMPARE(manager.queuedForADriveCount(), 0);
+    gate->release(8);
+    for (ScriptedTask* task : std::as_const(tasks))
+        QVERIFY(waitForTask(task));
+    drainEvents();
+}
+
+void TestTaskManager::everyTaskHandedADriveDeclaresIt()
+{
+    // The bound is only as good as the declarations, and a task written next year
+    // that forgets noteRunsOn() is unbounded again -- a soft failure nothing would
+    // notice. So the rule is held here rather than left to review: a .cpp that
+    // takes a FileSystemPtr in a constructor has to name its lane.
+    //
+    // Deliberately not a rule about *every* task. The ones that take a VfsManager
+    // and resolve a drive per uri -- a rename across two panes, a duplicate hunt
+    // over four roots, a set verification -- span several drives, and picking one
+    // of them would be arbitrary. Those are named here so the exemption is a list
+    // somebody can argue with rather than an oversight.
+    const QStringList spansSeveralDrives {
+        QStringLiteral("RenameTask.cpp"),
+        QStringLiteral("FindDuplicatesTask.cpp"),
+        QStringLiteral("VerifySetTask.cpp"),
+    };
+
+    QDirIterator walk(QStringLiteral(MOLE_SHELL_SOURCE_DIR), { QStringLiteral("*Task.cpp") }, QDir::Files,
+        QDirIterator::Subdirectories);
+    QStringList silent;
+    int checked = 0;
+    while (walk.hasNext()) {
+        const QString path = walk.next();
+        const QString name = QFileInfo(path).fileName();
+        if (spansSeveralDrives.contains(name))
+            continue;
+
+        QFile source(path);
+        QVERIFY2(source.open(QIODevice::ReadOnly), qPrintable(path));
+        const QString text = QString::fromUtf8(source.readAll());
+        // A constructor parameter, not any mention: the member declaration lives
+        // in the header and a local FileSystemPtr inside run() is not a lane.
+        static const QRegularExpression handed(
+            QStringLiteral("::\\w+\\([^;{]*FileSystemPtr"), QRegularExpression::DotMatchesEverythingOption);
+        if (!handed.match(text).hasMatch())
+            continue;
+        ++checked;
+        if (!text.contains(QStringLiteral("noteRunsOn")))
+            silent.append(name);
+    }
+
+    QVERIFY2(checked > 10, qPrintable(QStringLiteral("only %1 task sources were examined").arg(checked)));
+    QVERIFY2(silent.isEmpty(),
+        qPrintable(QStringLiteral("handed a drive and does not say which: %1")
+                       .arg(silent.join(QStringLiteral(", ")))));
 }
 
 MOLE_TEST_MAIN(TestTaskManager)

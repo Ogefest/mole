@@ -133,6 +133,8 @@ CompressTask::CompressTask(Request request, QObject* parent)
           parent)
     , m_request(std::move(request))
 {
+    // The source, as a transfer does: one lane per task.
+    noteRunsOn(m_request.sourceFileSystem);
     noteTouching(m_request.sources);
     noteTouching(m_request.target);
 }

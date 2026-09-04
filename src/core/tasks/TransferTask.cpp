@@ -25,6 +25,10 @@ TransferTask::TransferTask(Request request, QObject* parent)
     : Task(describe(request.mode, static_cast<int>(request.sources.size())), parent)
     , m_request(std::move(request))
 {
+    // The source, as SyncTask does: one lane per task, because a task holding two
+    // at once would be a lock ordering problem for no gain and one slot is what
+    // bounds a mount that has stopped answering.
+    noteRunsOn(m_request.sourceFileSystem);
     // Both ends. A copy from a disk to a bucket is work on two drives, and the
     // sidebar has to say so about both of them.
     noteTouching(m_request.sources);
@@ -781,6 +785,7 @@ DeleteTask::DeleteTask(FileSystemPtr fileSystem, QList<VfsUri> targets, QObject*
     , m_fileSystem(std::move(fileSystem))
     , m_targets(std::move(targets))
 {
+    noteRunsOn(m_fileSystem);
     noteTouching(m_targets);
 }
 

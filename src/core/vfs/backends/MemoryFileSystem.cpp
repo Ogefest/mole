@@ -198,10 +198,36 @@ Result<QStringList> MemoryFileSystem::askWhatIsOffered(const VfsUri&, const Canc
     return m_offers;
 }
 
+void MemoryFileSystem::setListGate(std::shared_ptr<QSemaphore> gate)
+{
+    QMutexLocker lock(&m_gateMutex);
+    m_listGate = std::move(gate);
+}
+
+int MemoryFileSystem::listsInProgress() const
+{
+    return m_listsHeld.load();
+}
+
 Result<FileEntryList> MemoryFileSystem::list(const VfsUri& dir, const CancelToken& cancel)
 {
     checkNotOnTheDrawingThread("list");
     waitAsASlowDriveWould();
+
+    // Held before anything else and outside the drive's own lock, so a listing
+    // that is being held is a call that has not come back rather than a drive
+    // that has stopped working.
+    std::shared_ptr<QSemaphore> gate;
+    {
+        QMutexLocker lock(&m_gateMutex);
+        gate = m_listGate;
+    }
+    if (gate) {
+        ++m_listsHeld;
+        gate->acquire();
+        --m_listsHeld;
+    }
+
     if (m_listDelayMs > 0) {
         // Chunked so a cancelled task does not have to wait out the full delay.
         for (int slept = 0; slept < m_listDelayMs && !cancel.isCancelled(); slept += 10)

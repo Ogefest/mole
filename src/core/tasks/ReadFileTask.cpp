@@ -10,6 +10,7 @@ ReadFileTask::ReadFileTask(FileSystemPtr fileSystem, VfsUri target, qint64 maxBy
     , m_target(std::move(target))
     , m_maxBytes(maxBytes)
 {
+    noteRunsOn(m_fileSystem);
 }
 
 void ReadFileTask::run()

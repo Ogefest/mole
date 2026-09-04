@@ -21,6 +21,10 @@ SyncTask::SyncTask(FileSystemPtr sourceFs, VfsUri source, FileSystemPtr targetFs
     , m_target(std::move(target))
     , m_options(std::move(options))
 {
+    // The source, which is the tree being read. One lane per task -- a task
+    // holding two at once would be a lock ordering problem for no gain, and one
+    // slot is what bounds a mount that has stopped answering.
+    noteRunsOn(m_sourceFs);
     // Both trees, like a copy: a sync between two drives is work on two drives.
     noteTouching(m_source);
     noteTouching(m_target);

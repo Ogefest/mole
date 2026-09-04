@@ -11,6 +11,7 @@ DriveCheckTask::DriveCheckTask(
     , m_fileSystem(std::move(fileSystem))
     , m_root(std::move(root))
 {
+    noteRunsOn(m_fileSystem);
 }
 
 void DriveCheckTask::run()

@@ -155,6 +155,7 @@ ImportJsonLinesTask::ImportJsonLinesTask(
     , m_target(std::move(target))
     , m_store(std::move(store))
 {
+    noteRunsOn(m_fileSystem);
 }
 
 QStringList ImportJsonLinesTask::keysIn(const QString& sample, bool* sawAnObject)

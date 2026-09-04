@@ -12,6 +12,7 @@ ScanTask::ScanTask(
     , m_label(std::move(label))
     , m_index(index)
 {
+    noteRunsOn(m_fileSystem);
     noteTouching(m_root);
 }
 

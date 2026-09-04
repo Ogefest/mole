@@ -8,6 +8,7 @@ QuerySpaceTask::QuerySpaceTask(FileSystemPtr fileSystem, VfsUri root, QString mo
     , m_root(std::move(root))
     , m_mountId(std::move(mountId))
 {
+    noteRunsOn(m_fileSystem);
     setBackground(true);
 }
 

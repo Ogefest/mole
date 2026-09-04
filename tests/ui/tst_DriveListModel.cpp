@@ -19,6 +19,8 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 
+#include <atomic>
+
 using namespace mole;
 using namespace mole::test;
 
@@ -27,7 +29,7 @@ namespace {
 /// A drive that claims a capacity, so the sidebar has something to draw
 /// without depending on whatever the machine running the tests happens to
 /// have mounted.
-class SizedFileSystem final : public IFileSystem
+class SizedFileSystem : public IFileSystem
 {
 public:
     QString scheme() const override { return QStringLiteral("sized"); }
@@ -61,6 +63,36 @@ public:
     qint64 totalBytes = 1000;
     qint64 freeBytes = 250;
     bool fail = false;
+};
+
+/// A drive whose space() has stopped coming back.
+///
+/// What a mount whose server has gone actually does: `statvfs` blocks in the
+/// kernel until its timeout, which for a hard NFS mount is about fifteen minutes
+/// and can be for ever, and the cooperative token cannot reach it. Held rather
+/// than slept for the same reason -- there is no duration that stands in for
+/// "never". See MOLE-362.
+class StalledFileSystem final : public SizedFileSystem
+{
+public:
+    explicit StalledFileSystem(std::shared_ptr<QSemaphore> gate)
+        : m_gate(std::move(gate))
+    {
+    }
+
+    Result<SpaceInfo> space(const VfsUri& target) override
+    {
+        ++m_asked;
+        m_gate->acquire();
+        return SizedFileSystem::space(target);
+    }
+
+    /// How many times the drive has been asked how full it is.
+    int timesAsked() const { return m_asked.load(); }
+
+private:
+    std::shared_ptr<QSemaphore> m_gate;
+    std::atomic_int m_asked { 0 };
 };
 
 /// The state a row reports. The role carries a plain int -- the enum is not
@@ -120,6 +152,10 @@ private slots:
     void aTaskThatFailsOrIsCancelledStopsTheBusyDot();
     void busyOutranksOpenAndUnreachableOutranksBusy();
     void nothingRecomputesBusyOnATimer();
+
+    // ---- what a drive that stopped answering costs -------------------------
+    void onlyOneSpaceQueryIsEverOutPerMount();
+    void addingAMountAsksNothingOfTheDisksAlreadyMeasured();
 
 private:
     /// Adds a mount and waits for its space answer to arrive, if one is coming.
@@ -1095,6 +1131,84 @@ void TestDriveListModel::hidingEverythingLeavesNothingToShow()
 
     QCOMPARE(m_model->rowCount(), 2);
     QCOMPARE(m_model->shownCount(), 0);
+}
+
+// ----------------------- what a drive that stopped answering costs
+
+void TestDriveListModel::onlyOneSpaceQueryIsEverOutPerMount()
+{
+    // refreshSpace() submitted a QuerySpaceTask per mounted drive every time it
+    // was called, with no guard against the previous answer still being out. On a
+    // mount that has stopped answering each of those is a pool thread waiting on
+    // the same statvfs, and the minute timer adds one more for ever -- which is
+    // how a single dead drive in the sidebar took the whole pool in under ten
+    // minutes with nobody touching it.
+    auto gate = std::make_shared<QSemaphore>();
+    auto stalled = std::make_shared<StalledFileSystem>(gate);
+
+    Mount mount;
+    mount.id = QStringLiteral("dead");
+    mount.displayName = QStringLiteral("The NAS");
+    mount.root = VfsUri::fromString(QStringLiteral("sized://dead/"));
+    mount.fileSystem = stalled;
+    m_vfs->addMount(mount);
+
+    QVERIFY(waitFor([&stalled] { return stalled->timesAsked() == 1; }));
+
+    m_model->refreshSpace();
+    m_model->refreshSpace();
+    m_model->refreshSpace();
+    drainEvents();
+
+    // Still one. The three refreshes found the first question still out.
+    QCOMPARE(stalled->timesAsked(), 1);
+
+    // And once it comes back, asking again is allowed: a mount that answered
+    // slowly once must not be struck off for ever.
+    gate->release(8);
+    QVERIFY(waitFor([this] { return m_model->index(0, 0).data(DriveListModel::HasSpaceRole).toBool(); }));
+    m_model->refreshSpace();
+    QVERIFY(waitFor([&stalled] { return stalled->timesAsked() == 2; }));
+}
+
+void TestDriveListModel::addingAMountAsksNothingOfTheDisksAlreadyMeasured()
+{
+    // Every change to the mount table reloads the list, and reload() asked every
+    // drive again. Browsing into a .zip adds an unlisted mount and pruning it
+    // removes one, so one gesture fired two rounds of queries at every disk in
+    // the sidebar -- including the one that never answers.
+    auto measured = std::make_shared<SizedFileSystem>();
+    mountSized(QStringLiteral("disk"), measured);
+
+    auto gate = std::make_shared<QSemaphore>();
+    auto counted = std::make_shared<StalledFileSystem>(gate);
+    gate->release(64); // this one answers; the count is what is being watched
+
+    Mount second;
+    second.id = QStringLiteral("second");
+    second.displayName = QStringLiteral("Second");
+    second.root = VfsUri::fromString(QStringLiteral("sized://second/"));
+    second.fileSystem = counted;
+    m_vfs->addMount(second);
+    QVERIFY(waitFor([&counted] { return counted->timesAsked() == 1; }));
+
+    // A third mount arrives -- what opening an archive does.
+    auto third = std::make_shared<SizedFileSystem>();
+    Mount archive;
+    archive.id = QStringLiteral("third");
+    archive.displayName = QStringLiteral("Third");
+    archive.root = VfsUri::fromString(QStringLiteral("sized://third/"));
+    archive.fileSystem = third;
+    m_vfs->addMount(archive);
+    QVERIFY(waitFor([this] { return m_model->rowCount() >= 3; }));
+    drainEvents();
+
+    // The drive that was already measured was not asked a second time.
+    QCOMPARE(counted->timesAsked(), 1);
+
+    // The minute timer is the thing that re-asks, and it asks everything.
+    m_model->refreshSpace();
+    QVERIFY(waitFor([&counted] { return counted->timesAsked() == 2; }));
 }
 
 MOLE_TEST_MAIN(TestDriveListModel)

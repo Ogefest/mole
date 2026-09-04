@@ -12,9 +12,12 @@
 #include <QString>
 
 #include <atomic>
+#include <memory>
 #include <optional>
 
 namespace mole {
+
+class IFileSystem;
 
 /// One named quantity a task publishes about its own work.
 ///
@@ -168,6 +171,18 @@ public:
     /// docs/adr/0052-a-drives-dot-says-what-it-is-doing.md.
     QList<VfsUri> touching() const { return m_touching; }
 
+    /// The drive this task's work runs on, as a key, or null for a task that
+    /// touches no drive at all.
+    ///
+    /// **This is about scheduling and touching() is about the sidebar**, which is
+    /// why they are two questions. A listing, a space query, a ranged read and a
+    /// thumbnail deliberately light no dot -- they arrive by the hundred -- and
+    /// those are exactly the tasks whose lane matters: eight of them against a
+    /// mount that has stopped answering are what used to take the whole pool.
+    /// TaskManager lets no single lane hold more than half of it. See ADR-0095 and
+    /// MOLE-362.
+    const void* lane() const { return m_lane; }
+
     /// Called by TaskManager on a pool thread. Not part of the public API.
     void execute();
 
@@ -200,6 +215,14 @@ protected:
     /// Names a location this task reads or writes. Called from the constructor,
     /// where the task's own arguments are, and never afterwards: the answer must
     /// not change while something is watching it.
+    /// Says which drive this task works on, for scheduling. Called from the
+    /// constructor, from the FileSystemPtr the task was handed.
+    ///
+    /// A task holding two drives names one -- whichever it is chiefly reading or
+    /// writing. One slot per task is what bounds a dead mount; a task holding two
+    /// lanes at once would be a lock ordering problem for no gain.
+    void noteRunsOn(const std::shared_ptr<IFileSystem>& fileSystem) { m_lane = fileSystem.get(); }
+
     void noteTouching(const VfsUri& uri)
     {
         if (uri.isValid() && !m_touching.contains(uri))
@@ -276,6 +299,8 @@ private:
     bool m_oneOfMany = false;
     /// Fixed when the task is built, so it is safe to read from any thread.
     QList<VfsUri> m_touching;
+    /// The drive, as a key and never dereferenced. Fixed when the task is built.
+    const void* m_lane = nullptr;
     QDateTime m_startedAt;
     QDateTime m_finishedAt;
     /// How long the task has been going, measured with a clock that cannot go

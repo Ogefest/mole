@@ -38,6 +38,20 @@ void Task::requestCancel()
 
 void Task::execute()
 {
+    // Answered here rather than by run(). A cancel that arrived while this was
+    // queued used to reach a task that had already entered run() and blocked in
+    // the kernel on its first list() -- an uninterruptible call on a mount that
+    // has stopped answering -- so cancelling the queue freed no pool thread at
+    // all. The token is cooperative and this is the first place it can be
+    // co-operated with. See MOLE-362.
+    if (m_cancel.isCancelled()) {
+        setState(State::Cancelled);
+        qCDebug(
+            taskLog, "%s [%s]: cancelled before it started", qPrintable(m_title), qPrintable(m_id.left(8)));
+        QMetaObject::invokeMethod(this, [this] { emit finished(); }, Qt::QueuedConnection);
+        return;
+    }
+
     setState(State::Running);
 
     // Here rather than in each task, so a scan, a copy, a rename and whatever is

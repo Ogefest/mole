@@ -65,6 +65,9 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-362 A drive that stops answering no longer stops every other drive: listing, copying, previewing and searching elsewhere keep working
+2026-09-04 #MOLE-362 Quitting does not wait on a drive that has stopped answering
+2026-09-04 #MOLE-362 Browsing into an archive no longer re-asks every disk in the sidebar how full it is
 2026-09-04 #MOLE-358 A rendered page fetches nothing for a table or cell background, so previewing one still puts nothing on the network
 2026-09-04 #MOLE-358 A text preview reads a UTF-16 file, instead of showing it as replacement characters
 2026-09-04 #MOLE-358 Line numbers stay beside their lines in a file with old-Mac or mixed line endings

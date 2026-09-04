@@ -6,10 +6,13 @@
 #include <QAbstractListModel>
 #include <QDateTime>
 #include <QHash>
+#include <QPointer>
 #include <QSet>
 #include <QTimer>
 
 namespace mole {
+
+class QuerySpaceTask;
 
 class TaskManager;
 class Preferences;
@@ -208,9 +211,27 @@ public:
     /// thing that was asked for.
     static bool saysTheDriveIsUnreachable(const VfsError& error);
 
-    /// Re-asks every drive how full it is. Called on a timer and whenever the
+    /// Which mounts a space refresh asks about.
+    enum class SpaceRefresh {
+        /// Every connected mount. What the minute timer asks for.
+        All,
+        /// Only mounts nothing has a figure for yet. What a reload asks for.
+        ///
+        /// A reload happens on every change to the mount table, and opening a
+        /// `.zip` adds an unlisted mount -- so browsing into an archive fired a
+        /// query at every disk in the sidebar, and pruning the mount afterwards
+        /// fired another round. On a dead mount each of those is a pool thread
+        /// held for as long as the kernel takes. See MOLE-362.
+        NewMounts,
+    };
+
+    /// Re-asks the drives how full they are. Called on a timer and whenever the
     /// mount table changes; exposed so a test does not have to wait a minute.
-    Q_INVOKABLE void refreshSpace();
+    ///
+    /// **At most one query per mount is ever out.** Without that, three refreshes
+    /// against a mount that has stopped answering are three pool threads waiting
+    /// on the same `statvfs`, and the minute timer adds one more for ever.
+    Q_INVOKABLE void refreshSpace(SpaceRefresh which = SpaceRefresh::All);
     /// How often the periodic refresh runs. 0 stops it.
     void setRefreshInterval(int milliseconds);
 
@@ -325,6 +346,10 @@ private:
     /// Keyed by mount id, so a drive keeps its figure across a reload of the
     /// table and the bar does not flicker away every time a mount is added.
     QHash<QString, SpaceInfo> m_space;
+    /// The query that is out for each mount, so a second is never started while
+    /// the first has not come back. Cleared when the answer arrives or the task
+    /// ends without one. The same shape the reachability check uses.
+    QHash<QString, QPointer<QuerySpaceTask>> m_spaceQueries;
     /// The device behind each local mount point, as the last rebuild found
     /// them. keyFor() reads it; enumerating per row was O(rows x mounts) and
     /// each enumeration used to be a statvfs apiece. See MOLE-361.
