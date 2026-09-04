@@ -223,13 +223,35 @@ public:
         /// rather than on the transfer finishing.
         void abandon() const;
 
+        /// Why reading the payload of an upload failed, or empty.
+        ///
+        /// Held here because it has to outlive sendFrom() and reach perform():
+        /// a read callback can only abort, and libcurl reports that as
+        /// CURLE_ABORTED_BY_CALLBACK -- the same code as the user's Cancel -- so
+        /// a staging-disk read error read as "Writing X was cancelled".
+        /// See MOLE-373.
+        const QString& payloadFailure() const { return m_payload.reason; }
+        bool payloadFailed() const { return m_payload.readFailed; }
+
+        /// The payload of an upload while one is in flight. See readFromDevice()
+        /// in CurlTransport.cpp, which is the only thing that writes to it.
+        struct PayloadState
+        {
+            QIODevice* device = nullptr;
+            bool readFailed = false;
+            QString reason;
+        };
+
     private:
+        friend class CurlPool;
+
         CurlPool* m_pool = nullptr;
         CURL* m_handle = nullptr;
         QByteArray m_url;
         /// Mutable because abandoning is a fact discovered during the transfer,
         /// and perform() is handed the lease by const reference.
         mutable bool m_pooled = true;
+        mutable PayloadState m_payload;
     };
 
     /// Enough to keep every TaskManager worker warm. Past that a handle is
@@ -300,7 +322,26 @@ enum class StatusMeaning {
 };
 
 /// Maps a finished transfer onto the VFS error vocabulary.
-VfsError errorFor(const Response& response, const QString& what, StatusMeaning meaning = StatusMeaning::Http);
+/// Whether the request carried a precondition the server could refuse.
+///
+/// 412 means two different things depending on what was asked. On a WebDAV MOVE
+/// with `Overwrite: F` it is "the destination exists", which is AlreadyExists;
+/// on anything else it is a condition the caller set and the server would not
+/// meet, which reads as the target being locked. Only rename() used to
+/// special-case it, so every other 412 came back as AccessDenied. See MOLE-373.
+enum class Precondition { NotSent, Sent };
+
+VfsError errorFor(const Response& response, const QString& what, StatusMeaning meaning = StatusMeaning::Http,
+    Precondition precondition = Precondition::NotSent);
+
+/// Whether a failure is worth trying again.
+///
+/// **A judgement about the kind and not about the caller.** StreamingDownload
+/// retried any non-cancel failure for the whole of its budget with the kind
+/// unread, so a 403 whose credentials had expired mid-copy, a 404 for an object
+/// deleted between spans and a NotSupported each waited two minutes per file
+/// before saying what was already known. See MOLE-373.
+bool isWorthRetrying(const VfsError& error);
 
 /// True when the transfer failed only because the caller cancelled it.
 bool wasCancelled(const Response& response);

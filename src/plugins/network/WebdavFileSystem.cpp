@@ -399,15 +399,14 @@ Result<void> WebdavFileSystem::rename(const VfsUri& from, const VfsUri& to, cons
     // for a 409 on MKCOL and PUT. So a rename into a folder somebody had deleted
     // came back as "already exists" from the one method that disagreed with its
     // own transport. See MOLE-345.
-    if (response.code == CURLE_OK && response.status == 412) {
-        return Result<void>::failure(
-            VfsError::AlreadyExists, QStringLiteral("%1 already exists").arg(to.path()));
-    }
-
+    //
+    // Said to errorFor() rather than intercepted here, because it is the one
+    // thing that decides what a status means and this was the one place that
+    // decided a status for itself. See net::Precondition and MOLE-373.
     const QString what = QStringLiteral("Renaming %1").arg(from.path());
     if (const VfsError refused = whatTheMultiStatusRefused(response, what); refused.isError())
         return Result<void>(refused);
-    const VfsError error = net::errorFor(response, what);
+    const VfsError error = net::errorFor(response, what, net::StatusMeaning::Http, net::Precondition::Sent);
     if (error.isError())
         return Result<void>(error);
     return {};

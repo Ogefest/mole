@@ -386,6 +386,7 @@ private slots:
     void thatSameFileOverOneSpanResumesUntilItIsWhole();
     void aSpanThatKeepsFailingEndsTheReadWhenTheBudgetIsSpent();
     void aLinkThatComesBackInsideTheBudgetCostsNothing();
+    void aRefusalThatWillNotChangeIsNotWaitedOut();
 
     void seekingToTheStartToTheEndAndPastIt();
     void aSpanBoundaryThatFallsOnAReadBoundaryIsInvisible();
@@ -758,6 +759,67 @@ void TestStreamingDownload::aLinkThatComesBackInsideTheBudgetCostsNothing()
     QVERIFY2(collected == payload,
         "the file did not come back whole after the link returned, which is the whole point");
     QCOMPARE(refusals, 0);
+}
+
+/// A failure that cannot go the other way, waited out for two minutes.
+///
+/// The retry loop bounded itself by the budget and read the *kind* not at all,
+/// so a 403 whose credentials had expired mid-copy, a 404 for an object deleted
+/// between spans and a NotSupported each sat out the whole 120 seconds -- per
+/// file -- before reporting what the first attempt already knew. Only a
+/// connection, a short body and an unclassified failure can go the other way
+/// next time. See net::isWorthRetrying and MOLE-373.
+void TestStreamingDownload::aRefusalThatWillNotChangeIsNotWaitedOut()
+{
+    const QByteArray payload = payloadOf(256 * 1024);
+
+    struct Refuser
+    {
+        VfsError::Code code;
+        int spans = 0;
+    };
+
+    // A generous budget, so the assertion is about the kind and not about the
+    // clock running out.
+    for (const VfsError::Code code : { VfsError::AccessDenied, VfsError::NotFound, VfsError::NotSupported }) {
+        auto refuser = std::make_shared<Refuser>(Refuser { code, 0 });
+        auto fetch = [refuser](QIODevice&, qint64, qint64, const CancelToken&) {
+            ++refuser->spans;
+            return VfsError::make(refuser->code, QStringLiteral("the server said no"));
+        };
+
+        QElapsedTimer clock;
+        clock.start();
+        net::StreamingDownload stream(fetch, payload.size(), 64 * 1024, std::chrono::seconds(30));
+        QVERIFY(stream.open(QIODevice::ReadOnly));
+
+        QByteArray buffer(16 * 1024, Qt::Uninitialized);
+        QCOMPARE(stream.read(buffer.data(), buffer.size()), qint64(-1));
+        QVERIFY(stream.error().isError());
+        QCOMPARE(stream.error().code, code);
+
+        // Well under the budget, and one attempt rather than a stream of them.
+        QVERIFY2(clock.elapsed() < 5000,
+            qPrintable(QStringLiteral("waited %1 ms for a refusal").arg(clock.elapsed())));
+        QCOMPARE(refuser->spans, 1);
+    }
+
+    // And a connection failure is still retried, because that is what retrying
+    // is for: this one comes good on the third attempt.
+    auto flaky = std::make_shared<int>(0);
+    auto comesBack = [flaky, payload](QIODevice& sink, qint64 offset, qint64 span, const CancelToken&) {
+        if (++*flaky < 3)
+            return VfsError::make(VfsError::NetworkError, QStringLiteral("the link went away"));
+        const qint64 available = std::min(span, qint64(payload.size()) - offset);
+        if (available > 0)
+            sink.write(payload.constData() + offset, available);
+        return VfsError::ok();
+    };
+    net::StreamingDownload survives(comesBack, payload.size(), 64 * 1024, std::chrono::seconds(30));
+    QVERIFY(survives.open(QIODevice::ReadOnly));
+    QCOMPARE(survives.readAll().size(), payload.size());
+    QVERIFY(!survives.error().isError());
+    QVERIFY(*flaky >= 3);
 }
 
 void TestStreamingDownload::seekingToTheStartToTheEndAndPastIt()

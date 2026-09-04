@@ -262,16 +262,29 @@ void DriveListModel::noteCheckResult(const QString& driveId, bool reachable, con
 
 bool DriveListModel::saysTheDriveIsUnreachable(const VfsError& error)
 {
+    // Every code named rather than defaulted: this decides whether a drive is
+    // shown as unreachable, so a twelfth code has to be considered here rather
+    // than falling into "everything else". See MOLE-373.
     switch (error.code) {
     case VfsError::NetworkError:
     case VfsError::IoError:
         return true;
-    default:
-        break;
-    }
     // Everything else is about what was asked for, not about whether anyone was
     // there to ask. NotFound and AccessDenied in particular arrive constantly
     // from ordinary browsing.
+    case VfsError::None:
+    case VfsError::NotFound:
+    case VfsError::AccessDenied:
+    case VfsError::NotSupported:
+    case VfsError::NotADirectory:
+    case VfsError::IsADirectory:
+    case VfsError::NotALink:
+    case VfsError::AlreadyExists:
+    case VfsError::NotEmpty:
+    case VfsError::Cancelled:
+    case VfsError::Unknown:
+        return false;
+    }
     return false;
 }
 

@@ -5,6 +5,8 @@
 
 #include <QFile>
 
+#include <system_error>
+
 namespace mole {
 
 /// The reference backend: plain local disk through QFileInfo/QDirIterator.
@@ -42,6 +44,16 @@ public:
     /// Public and taking a platform so the question can be asked about a system
     /// this build is not running on -- which is the only way the Windows answer
     /// is ever checked.
+    /// What the interface calls the reason the system gave.
+    ///
+    /// Only the few a caller acts on differently; everything else is an I/O
+    /// error, which is what it is. **Public so it can be held to a table**:
+    /// every caller above IFileSystem branches on the code -- resolveConflict()
+    /// on NotFound, AlreadyExists and NotEmpty, the sidebar on whether a drive
+    /// is unreachable -- so a wrong answer here is a wrong dialog rather than a
+    /// wrong word. See MOLE-373.
+    static VfsError::Code codeForSystemError(const std::error_code& failed);
+
     static QString modeString(QFile::Permissions permissions, HostPlatform platform = hostPlatform());
 
     Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) override;

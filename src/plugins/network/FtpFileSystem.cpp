@@ -220,7 +220,19 @@ Result<FileEntryList> FtpFileSystem::list(const VfsUri& dir, const CancelToken& 
         case VfsError::Cancelled:
         case VfsError::NotFound:
             return listing;
-        default:
+        // Named rather than defaulted, so a twelfth code has to come past here.
+        // See MOLE-373.
+        case VfsError::None:
+        case VfsError::AccessDenied:
+        case VfsError::NotSupported:
+        case VfsError::NotADirectory:
+        case VfsError::IsADirectory:
+        case VfsError::NotALink:
+        case VfsError::AlreadyExists:
+        case VfsError::NotEmpty:
+        case VfsError::IoError:
+        case VfsError::NetworkError:
+        case VfsError::Unknown:
             break;
         }
         const Result<FileEntry> what = stat(dir);

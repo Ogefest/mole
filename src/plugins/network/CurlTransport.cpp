@@ -102,11 +102,27 @@ namespace {
         return sink->write(data, bytes) == bytes ? static_cast<size_t>(bytes) : 0;
     }
 
+    /// The payload of an upload, and whether reading it failed.
+    ///
+    /// The flag is why this is a struct. Aborting the transfer is the only thing
+    /// a read callback can do, and libcurl reports that as
+    /// CURLE_ABORTED_BY_CALLBACK -- **the same code as the user pressing
+    /// Cancel** -- so a staging-disk read error on an upload was reported as
+    /// "Writing X was cancelled". See MOLE-373.
     size_t readFromDevice(char* buffer, size_t size, size_t count, void* userData)
     {
-        auto* source = static_cast<QIODevice*>(userData);
-        const qint64 read = source->read(buffer, static_cast<qint64>(size * count));
-        return read < 0 ? CURL_READFUNC_ABORT : static_cast<size_t>(read);
+        auto* payload = static_cast<CurlPool::Lease::PayloadState*>(userData);
+        if (!payload || !payload->device)
+            return CURL_READFUNC_ABORT;
+        const qint64 read = payload->device->read(buffer, static_cast<qint64>(size * count));
+        if (read < 0) {
+            payload->readFailed = true;
+            payload->reason = payload->device->errorString().isEmpty()
+                ? QStringLiteral("the file being sent could not be read")
+                : payload->device->errorString();
+            return CURL_READFUNC_ABORT;
+        }
+        return static_cast<size_t>(read);
     }
 
     /// Puts the payload back to a byte offset so curl can send it again.
@@ -425,9 +441,12 @@ void CurlPool::prepare(CURL* handle) const
 void CurlPool::sendFrom(const Lease& lease, QIODevice& payload, qint64 size)
 {
     CURL* handle = lease.get();
+    // On the lease, because it has to outlive this call and be readable from
+    // perform(): a read that failed has to be told apart from a cancel.
+    lease.m_payload = Lease::PayloadState { &payload, false, QString() };
     curl_easy_setopt(handle, CURLOPT_UPLOAD, 1L);
     curl_easy_setopt(handle, CURLOPT_READFUNCTION, readFromDevice);
-    curl_easy_setopt(handle, CURLOPT_READDATA, &payload);
+    curl_easy_setopt(handle, CURLOPT_READDATA, &lease.m_payload);
     curl_easy_setopt(handle, CURLOPT_SEEKFUNCTION, seekDevice);
     curl_easy_setopt(handle, CURLOPT_SEEKDATA, &payload);
     // A request carrying a file does not follow redirects.
@@ -515,12 +534,21 @@ Response CurlPool::perform(const Lease& lease, const CancelToken& cancel, QIODev
     StallWatch stall(m_options.stallSeconds);
     bool cancelled = false;
     bool stalled = false;
+    bool multiFailed = false;
     int running = 1;
 
     while (running > 0) {
         const CURLMcode stepped = curl_multi_perform(multi, &running);
         if (stepped != CURLM_OK) {
+            // **And a code.** This stored the text and broke, and response.code
+            // is only ever set from a CURLMSG_DONE that never comes -- so it
+            // stayed CURLE_OK, errorFor() answered ok(), and the half-driven
+            // connection went back to the pool. A sendSpan() that hit it would
+            // have committed a partial write of a file that was never sent.
+            // See MOLE-373.
+            response.code = CURLE_RECV_ERROR;
             response.detail = QString::fromUtf8(curl_multi_strerror(stepped));
+            multiFailed = true;
             break;
         }
         if (running == 0)
@@ -559,7 +587,7 @@ Response CurlPool::perform(const Lease& lease, const CancelToken& cancel, QIODev
     curl_multi_remove_handle(multi, handle);
     curl_multi_cleanup(multi);
 
-    if (cancelled || stalled) {
+    if (cancelled || stalled || multiFailed) {
         // A transfer stopped part way leaves its connection mid-message, and the
         // next caller must not inherit it.
         lease.abandon();
@@ -600,6 +628,15 @@ Response CurlPool::perform(const Lease& lease, const CancelToken& cancel, QIODev
         // two there would call every one of them truncated.
         response.expectedBytes = announced;
         response.receivedBytes = received;
+    }
+
+    // A payload that could not be read. libcurl can only be told to abort, and
+    // it reports that as CURLE_ABORTED_BY_CALLBACK -- the user's Cancel -- so
+    // this is turned back into what it was before anybody reads the code.
+    if (lease.payloadFailed() && !cancelled) {
+        response.code = CURLE_READ_ERROR;
+        response.detail = lease.payloadFailure();
+        lease.abandon();
     }
 
     // Only when nothing better has been said. The loop above knows things
@@ -643,7 +680,51 @@ bool wasCancelled(const Response& response)
     return response.code == CURLE_ABORTED_BY_CALLBACK;
 }
 
-VfsError errorFor(const Response& response, const QString& what, StatusMeaning meaning)
+namespace {
+
+    /// What CURLE_QUOTE_ERROR turned out to be, read out of libcurl's own words.
+    ///
+    /// **Code 21 is every failing SFTP mkdir, rm, rmdir and rename, and every
+    /// failing FTP MKD, DELE, RMD, RNFR and RNTO.** The code says only "a quote
+    /// command failed"; the reason is in the error buffer, and errorFor() had no
+    /// case for it at all -- so all of those were Unknown, "the answer that
+    /// breaks every one of them" in the conformance suite's words. The backends
+    /// pre-check with stat(), which catches the common cases, and leaves exactly
+    /// the ones nobody can pre-check: a permission problem, a rename race, an
+    /// rmdir of a directory that gained a child, a quota.
+    ///
+    /// Both protocols put a numeric reply in the text -- SFTP passes libssh2's
+    /// message through, FTP its own three digits -- so this reads words rather
+    /// than parsing a grammar neither of them promises. Never Unknown: an
+    /// unrecognised reason is an I/O error, which is what it is.
+    VfsError::Code quoteFailureFrom(const QString& detail)
+    {
+        const QString said = detail.toLower();
+        const auto mentions = [&said](const char* text) { return said.contains(QLatin1String(text)); };
+
+        if (mentions("permission denied") || mentions("access denied") || mentions("access is denied")
+            || mentions("550") || mentions("553") || mentions("not allowed") || mentions("read-only")
+            || mentions("read only")) {
+            return VfsError::AccessDenied;
+        }
+        if (mentions("no such file") || mentions("does not exist") || mentions("not found")
+            || mentions("no such directory")) {
+            return VfsError::NotFound;
+        }
+        if (mentions("already exists") || mentions("file exists") || mentions("exists")) {
+            return VfsError::AlreadyExists;
+        }
+        if (mentions("not empty") || mentions("directory not empty"))
+            return VfsError::NotEmpty;
+        if (mentions("quota") || mentions("no space") || mentions("disk full") || mentions("552"))
+            return VfsError::IoError;
+        return VfsError::IoError;
+    }
+
+} // namespace
+
+VfsError errorFor(
+    const Response& response, const QString& what, StatusMeaning meaning, Precondition precondition)
 {
     if (wasCancelled(response))
         return VfsError::make(VfsError::Cancelled, QStringLiteral("%1 was cancelled").arg(what));
@@ -659,23 +740,67 @@ VfsError errorFor(const Response& response, const QString& what, StatusMeaning m
     case CURLE_REMOTE_FILE_NOT_FOUND:
     case CURLE_TFTP_NOTFOUND:
         return fail(VfsError::NotFound, QStringLiteral("no such file or directory"));
+    // The server answered the request for the file with a refusal to send it.
+    // libcurl distinguishes it from a missing file and nothing above needs to.
+    case CURLE_FTP_COULDNT_RETR_FILE:
+        return fail(VfsError::NotFound, detail);
     case CURLE_REMOTE_ACCESS_DENIED:
     case CURLE_LOGIN_DENIED:
     case CURLE_AUTH_ERROR:
         return fail(VfsError::AccessDenied, detail);
     case CURLE_REMOTE_FILE_EXISTS:
         return fail(VfsError::AlreadyExists, detail);
+    // Every failing SFTP and FTP command that is not one of the above. Read out
+    // of the text, and never Unknown -- see quoteFailureFrom().
+    case CURLE_QUOTE_ERROR:
+        return fail(quoteFailureFrom(response.detail), detail);
     case CURLE_REMOTE_DISK_FULL:
     case CURLE_WRITE_ERROR:
     case CURLE_READ_ERROR:
     case CURLE_UPLOAD_FAILED:
+    // A body that stopped short. The Content-Length check below reports exactly
+    // this as IoError when it is the one that catches it, so the two ways of
+    // finding out the same thing now answer the same way -- it used to be
+    // IoError one way and Unknown the other.
+    case CURLE_PARTIAL_FILE:
+    case CURLE_GOT_NOTHING:
+    // A range the server would not honour, or a resume it could not make. Not a
+    // network fault and not a missing file: the request could not be expressed
+    // against this object.
+    case CURLE_RANGE_ERROR:
+    case CURLE_BAD_DOWNLOAD_RESUME:
+    // The body could not be replayed for a retry -- a stream being written as it
+    // is sent has already given its bytes away. Local, and an I/O error is what
+    // every caller does about it.
+    case CURLE_SEND_FAIL_REWIND:
+    case CURLE_INTERFACE_FAILED:
+    case CURLE_FILESIZE_EXCEEDED:
     // Never reported by a transfer that ran: it is how a backend says the
     // transfer could not be started at all, which is a local failure and not
     // something the other end did.
     case CURLE_FAILED_INIT:
+    case CURLE_OUT_OF_MEMORY:
+    // Building the request went wrong inside libcurl, and only the socket
+    // interface -- which nothing here uses -- can answer CURLE_AGAIN. Both are
+    // local and neither is anything the other end did.
+    case CURLE_HTTP_POST_ERROR:
+    case CURLE_AGAIN:
         return fail(VfsError::IoError, detail);
+    // A local file the file: protocol could not open. Not reachable from the
+    // backends here, and it is a missing file wherever it is.
+    case CURLE_FILE_COULDNT_READ_FILE:
+        return fail(VfsError::NotFound, detail);
+    // A body in an encoding this build cannot decode.
+    case CURLE_BAD_CONTENT_ENCODING:
+        return fail(VfsError::NotSupported, detail);
     case CURLE_UNSUPPORTED_PROTOCOL:
     case CURLE_NOT_BUILT_IN:
+    case CURLE_UNKNOWN_OPTION:
+        return fail(VfsError::NotSupported, detail);
+    // An address nothing can be done with. NotSupported rather than NetworkError:
+    // retrying it is pointless, which is exactly what NotSupported tells the
+    // retry rule.
+    case CURLE_URL_MALFORMAT:
         return fail(VfsError::NotSupported, detail);
     case CURLE_OPERATION_TIMEDOUT:
     case CURLE_COULDNT_RESOLVE_HOST:
@@ -685,8 +810,46 @@ VfsError errorFor(const Response& response, const QString& what, StatusMeaning m
     case CURLE_PEER_FAILED_VERIFICATION:
     case CURLE_SEND_ERROR:
     case CURLE_RECV_ERROR:
+    // The certificate chain. PEER_FAILED_VERIFICATION was already here and its
+    // neighbours were not, so the same refusal was NetworkError or Unknown
+    // depending on which check inside OpenSSL noticed.
+    // CURLE_SSL_CACERT is an alias for CURLE_PEER_FAILED_VERIFICATION above in
+    // every libcurl this builds against, so it is not listed twice.
+    case CURLE_SSL_CACERT_BADFILE:
+    case CURLE_SSL_CERTPROBLEM:
+    case CURLE_SSL_CIPHER:
+    case CURLE_SSL_ENGINE_NOTFOUND:
+    case CURLE_SSL_ENGINE_SETFAILED:
+    case CURLE_SSL_SHUTDOWN_FAILED:
+    case CURLE_SSL_CRL_BADFILE:
+    case CURLE_SSL_ISSUER_ERROR:
+    case CURLE_USE_SSL_FAILED:
+    // The SSH layer: a host key that changed, a key file that will not load, a
+    // channel that would not open. All of them are this connection, not this
+    // file.
+    case CURLE_SSH:
+    case CURLE_TOO_MANY_REDIRECTS:
+    case CURLE_WEIRD_SERVER_REPLY: // CURLE_FTP_WEIRD_SERVER_REPLY under its older name
+    case CURLE_FTP_ACCEPT_FAILED:
+    case CURLE_FTP_ACCEPT_TIMEOUT:
+    case CURLE_FTP_CANT_GET_HOST:
+    case CURLE_FTP_WEIRD_PASV_REPLY:
+    case CURLE_FTP_WEIRD_PASS_REPLY:
+    case CURLE_FTP_WEIRD_227_FORMAT:
+    case CURLE_FTP_PORT_FAILED:
+    case CURLE_FTP_COULDNT_SET_TYPE:
+    case CURLE_FTP_COULDNT_USE_REST:
+    case CURLE_HTTP2:
+    case CURLE_HTTP2_STREAM:
+    case CURLE_HTTP3:
+    case CURLE_QUIC_CONNECT_ERROR:
         return fail(VfsError::NetworkError, detail);
     default:
+        // Deliberately still here, and deliberately never reached by anything a
+        // transfer in this application can return: tst_CurlTransport holds a list
+        // of those against this function and fails if one of them lands here.
+        // The default is for a libcurl newer than the one this was written
+        // against.
         return fail(VfsError::Unknown, detail);
     }
 
@@ -697,13 +860,25 @@ VfsError errorFor(const Response& response, const QString& what, StatusMeaning m
     // a complete file to everything above, which is the worst possible outcome
     // of a copy -- so the one number that disproves it is checked here, for
     // every protocol, before anybody is told the file is good.
-    if (response.expectedBytes > 0 && response.receivedBytes >= 0
+    //
+    // Not for a status that carries an error document rather than the file: a
+    // 416's body is XML about the range, and comparing its length to the file's
+    // would call every one of them truncated.
+    const bool carriesThePayload = response.status < 400;
+    if (carriesThePayload && response.expectedBytes > 0 && response.receivedBytes >= 0
         && response.receivedBytes < response.expectedBytes) {
         return fail(VfsError::IoError,
             QStringLiteral("the transfer stopped after %1 of %2 bytes")
                 .arg(response.receivedBytes)
                 .arg(response.expectedBytes));
     }
+
+    // A loop that broke without a CURLMSG_DONE leaves the code at CURLE_OK and
+    // a sentence in `detail`. Answering ok() there put a half-driven connection
+    // back in the pool and told the caller its write had landed. See
+    // CurlPool::perform, which now sets a code -- this is the belt as well.
+    if (response.code == CURLE_OK && response.status == 0 && !response.detail.isEmpty())
+        return fail(VfsError::IoError, detail);
 
     // The transfer itself worked. For SFTP and FTP that is the whole answer.
     if (meaning == StatusMeaning::ProtocolReply)
@@ -718,6 +893,13 @@ VfsError errorFor(const Response& response, const QString& what, StatusMeaning m
     case 204:
     case 206:
     case 207:
+        return VfsError::ok();
+    // The range asked for starts past the end of the object, which is what the
+    // end of a file looks like to a reader asking span by span. Answered as
+    // success with nothing in it, so the streaming layer reads it the way it
+    // reads a short span: as the end. It used to be "the server answered 416",
+    // an IoError, retried for the whole two-minute budget first.
+    case 416:
         return VfsError::ok();
     case 301:
     case 302:
@@ -736,14 +918,62 @@ VfsError errorFor(const Response& response, const QString& what, StatusMeaning m
     case 409:
         return fail(VfsError::NotFound, QStringLiteral("a parent directory is missing"));
     case 412:
+        // Only where the caller asked for it. A MOVE with `Overwrite: F` is
+        // told 412 to mean "the destination is there", which is AlreadyExists;
+        // rename() special-cased that itself and every other caller got
+        // "the target is locked" for a condition it never set.
+        return precondition == Precondition::Sent
+            ? fail(VfsError::AlreadyExists, QStringLiteral("there is already something there"))
+            : fail(VfsError::AccessDenied, QStringLiteral("the server would not meet the condition"));
     case 423:
         return fail(VfsError::AccessDenied, QStringLiteral("the target is locked"));
     case 507:
     case 413:
         return fail(VfsError::IoError, QStringLiteral("no room left on the server"));
+    // The server is there and cannot serve this now. **Not a disk error**: a
+    // gateway that is down, an S3 SlowDown, a proxy timing out and a rate limit
+    // are the same conditions as a socket that would not open, and every one of
+    // them was reported as "the server answered 503" -- an IoError, which the
+    // sidebar and the copy layer both read as something wrong with the storage.
+    case 408:
+    case 429:
+    case 502:
+    case 503:
+    case 504:
+        return fail(VfsError::NetworkError,
+            QStringLiteral("the server is not answering requests just now (%1)").arg(response.status));
     default:
         return fail(VfsError::IoError, QStringLiteral("the server answered %1").arg(response.status));
     }
+}
+
+bool isWorthRetrying(const VfsError& error)
+{
+    switch (error.code) {
+    // The connection, which is the case retrying exists for.
+    case VfsError::NetworkError:
+    // A transfer that stopped part way. The other end may well finish it next
+    // time, and a truncated body arrives here.
+    case VfsError::IoError:
+    // A code this build does not recognise. Trying again is the safer guess
+    // about something nobody has classified.
+    case VfsError::Unknown:
+        return true;
+    case VfsError::None:
+    case VfsError::NotFound:
+    case VfsError::AccessDenied:
+    case VfsError::NotSupported:
+    case VfsError::NotADirectory:
+    case VfsError::IsADirectory:
+    case VfsError::NotALink:
+    case VfsError::AlreadyExists:
+    case VfsError::NotEmpty:
+    case VfsError::Cancelled:
+        // Every one of these is the same answer next time. Waiting two minutes
+        // to say it again is two minutes per file.
+        return false;
+    }
+    return false;
 }
 
 // ---- path encoding ---------------------------------------------------------

@@ -82,7 +82,12 @@ public:
         bool ok() const { return m_context != nullptr; }
         nfs_context* context() const { return m_context; }
         /// Why there is no connection, meaningful when ok() is false.
-        const QString& failure() const { return m_failure; }
+        ///
+        /// The whole error and not just its words: an export that refuses this
+        /// client is AccessDenied, and reporting every failed mount as
+        /// NetworkError told the sidebar a drive was unreachable when it was
+        /// reachable and saying no. See MOLE-373.
+        const VfsError& failure() const { return m_failure; }
 
         /// Close this connection instead of returning it for reuse. A context
         /// whose transport has failed answers every later call with the same
@@ -95,7 +100,7 @@ public:
         QString m_key;
         nfs_context* m_context = nullptr;
         bool m_reusable = true;
-        QString m_failure;
+        VfsError m_failure;
     };
 
     QString scheme() const override { return m_scheme; }

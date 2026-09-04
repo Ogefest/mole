@@ -217,31 +217,10 @@ namespace {
             QStringLiteral("An earlier version of a file can be read and copied, not written"));
     }
 
-    /// What the interface calls the reason the system gave.
-    ///
-    /// Only the few that a caller acts on differently; everything else is an I/O
-    /// error, which is what it is.
+    /// The class's own mapper, reached without the class name on every line.
     VfsError::Code codeForSystemError(const std::error_code& failed)
     {
-        if (failed == std::errc::no_such_file_or_directory)
-            return VfsError::NotFound;
-        if (failed == std::errc::permission_denied || failed == std::errc::operation_not_permitted)
-            return VfsError::AccessDenied;
-        if (failed == std::errc::directory_not_empty)
-            return VfsError::NotEmpty;
-        if (failed == std::errc::is_a_directory)
-            return VfsError::IsADirectory;
-        if (failed == std::errc::not_a_directory)
-            return VfsError::NotADirectory;
-        if (failed == std::errc::file_exists)
-            return VfsError::AlreadyExists;
-        // EXDEV is not a fault. It is the kernel saying this particular call
-        // cannot express the operation -- which is exactly what NotSupported
-        // means everywhere else in the VFS, and what every caller with a slower
-        // way round is already watching for.
-        if (failed == std::errc::cross_device_link)
-            return VfsError::NotSupported;
-        return VfsError::IoError;
+        return LocalFileSystem::codeForSystemError(failed);
     }
 
     VfsError errorForPath(const QString& path)
@@ -255,6 +234,29 @@ namespace {
     }
 
 } // namespace
+
+VfsError::Code LocalFileSystem::codeForSystemError(const std::error_code& failed)
+{
+    if (failed == std::errc::no_such_file_or_directory)
+        return VfsError::NotFound;
+    if (failed == std::errc::permission_denied || failed == std::errc::operation_not_permitted)
+        return VfsError::AccessDenied;
+    if (failed == std::errc::directory_not_empty)
+        return VfsError::NotEmpty;
+    if (failed == std::errc::is_a_directory)
+        return VfsError::IsADirectory;
+    if (failed == std::errc::not_a_directory)
+        return VfsError::NotADirectory;
+    if (failed == std::errc::file_exists)
+        return VfsError::AlreadyExists;
+    // EXDEV is not a fault. It is the kernel saying this particular call
+    // cannot express the operation -- which is exactly what NotSupported
+    // means everywhere else in the VFS, and what every caller with a slower
+    // way round is already watching for.
+    if (failed == std::errc::cross_device_link)
+        return VfsError::NotSupported;
+    return VfsError::IoError;
+}
 
 QString LocalFileSystem::modeString(QFile::Permissions permissions, HostPlatform platform)
 {
@@ -597,9 +599,20 @@ Result<void> LocalFileSystem::remove(const VfsUri& target, bool recursive, const
             if (!dir.removeRecursively())
                 return Result<void>::failure(
                     VfsError::IoError, QStringLiteral("Cannot remove directory %1").arg(path));
-        } else if (!dir.rmdir(path)) {
-            return Result<void>::failure(
-                VfsError::NotEmpty, QStringLiteral("Directory not empty: %1").arg(path));
+        } else {
+            // Through std::filesystem for the errno. QDir::rmdir() answers only
+            // yes or no, and this used to report every refusal as "Directory not
+            // empty" -- so a directory somebody lacked permission on, or one on
+            // a read-only mount, said the one thing that was not true. And
+            // NotEmpty is a code callers act on: resolveConflict() branches on
+            // it. See MOLE-373.
+            std::error_code failed;
+            std::filesystem::remove(std::filesystem::path(path.toStdString()), failed);
+            if (failed) {
+                return Result<void>::failure(codeForSystemError(failed),
+                    QStringLiteral("Cannot remove directory %1: %2")
+                        .arg(path, QString::fromLocal8Bit(failed.message().c_str())));
+            }
         }
         return {};
     }
@@ -707,6 +720,16 @@ Result<std::unique_ptr<QIODevice>> LocalFileSystem::openRead(
     }
     checkNotOnTheDrawingThread("openRead");
     const QString path = localPathFor(target);
+    // Empty means localPathFor() could not place it: a uri asking for an earlier
+    // version of a file that sits under no snapshot root. It used to fall
+    // through to errorForPath(""), which answers NotFound with the message "No
+    // such file: " and nothing after the colon. See MOLE-373.
+    if (path.isEmpty()) {
+        return VfsError::make(VfsError::NotFound,
+            target.hasVersion() ? QStringLiteral("There is no snapshot of %1 to read an earlier version from")
+                                      .arg(target.path())
+                                : QStringLiteral("%1 is not a local path").arg(target.toString()));
+    }
 
     // Not everything with a name is a stream of bytes. Opening a named pipe for
     // reading waits for whoever is going to write to it -- which for a search, a
@@ -719,6 +742,11 @@ Result<std::unique_ptr<QIODevice>> LocalFileSystem::openRead(
         return VfsError::make(VfsError::NotSupported,
             QStringLiteral("%1 is %2 and cannot be read as a file").arg(path, describe(specialKindOf(path))));
     }
+    // A directory, said by name. QFile::open() fails on one and errorForPath()
+    // then answered IoError, where MemoryFileSystem -- and the conformance suite
+    // that holds both to the same answers -- says IsADirectory. See MOLE-373.
+    if (info.isDir())
+        return VfsError::make(VfsError::IsADirectory, QStringLiteral("%1 is a directory").arg(path));
 
     auto file = std::make_unique<QFile>(path);
     if (!file->open(QIODevice::ReadOnly))

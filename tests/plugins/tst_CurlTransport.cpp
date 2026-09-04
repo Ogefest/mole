@@ -2,8 +2,14 @@
 #include "support/MoleTestMain.h"
 #include "support/ScriptedHttpServer.h"
 
+#include "core/vfs/backends/LocalFileSystem.h"
+
 #include <QElapsedTimer>
 #include <QTest>
+
+#include <cerrno>
+#include <cstring>
+#include <system_error>
 
 using namespace mole;
 using namespace mole::test;
@@ -30,6 +36,17 @@ private slots:
 
     void aTransferThatGoesQuietIsEndedByTheGuardItself();
     void aCancelTakesEffectAtOnce();
+
+    void noCodeATransferCanReturnComesBackAsUnknown();
+    void aFailingRemoteCommandSaysWhatWentWrong_data();
+    void aFailingRemoteCommandSaysWhatWentWrong();
+    void everyHttpStatusThatMattersHasItsOwnKind_data();
+    void everyHttpStatusThatMattersHasItsOwnKind();
+    void aLoopThatBrokeWithoutAnAnswerIsNotASuccess();
+    void aPayloadThatCouldNotBeReadIsNotACancel();
+    void onlyAFailureThatMightGoTheOtherWayIsRetried();
+    void theSystemsOwnReasonsMapOntoTheVocabulary_data();
+    void theSystemsOwnReasonsMapOntoTheVocabulary();
 
     void nothingWithACredentialInItReachesTheLog();
 };
@@ -272,6 +289,321 @@ void TestCurlTransport::aCancelTakesEffectAtOnce()
 /// session log that ADR-0012 says gets sent to whoever is helping. Nothing could
 /// hold this before, because the redactor was private to its own file. See
 /// MOLE-349.
+/// Unknown is "the answer that breaks every one of them".
+///
+/// Those are the conformance suite's words, and they are literal: every caller
+/// above IFileSystem branches on the code -- resolveConflict() on NotFound,
+/// AlreadyExists and NotEmpty, StreamingDownload on whether to try again, the
+/// sidebar on whether a drive is unreachable. A dozen CURLcodes a transfer in
+/// this application can really return fell through to `default:`, the worst of
+/// them CURLE_QUOTE_ERROR -- which is *every* failing SFTP mkdir, rm, rmdir and
+/// rename and every failing FTP MKD, DELE, RMD, RNFR and RNTO. See MOLE-373.
+void TestCurlTransport::noCodeATransferCanReturnComesBackAsUnknown()
+{
+    // What the six backends in this build can be handed back. Not every CURLcode
+    // libcurl has: the ones a transfer this application makes can end on.
+    const QList<CURLcode> reachable {
+        CURLE_UNSUPPORTED_PROTOCOL,
+        CURLE_FAILED_INIT,
+        CURLE_URL_MALFORMAT,
+        CURLE_NOT_BUILT_IN,
+        CURLE_COULDNT_RESOLVE_PROXY,
+        CURLE_COULDNT_RESOLVE_HOST,
+        CURLE_COULDNT_CONNECT,
+        CURLE_WEIRD_SERVER_REPLY,
+        CURLE_REMOTE_ACCESS_DENIED,
+        CURLE_FTP_ACCEPT_FAILED,
+        CURLE_FTP_WEIRD_PASS_REPLY,
+        CURLE_FTP_ACCEPT_TIMEOUT,
+        CURLE_FTP_WEIRD_PASV_REPLY,
+        CURLE_FTP_WEIRD_227_FORMAT,
+        CURLE_FTP_CANT_GET_HOST,
+        CURLE_HTTP2,
+        CURLE_FTP_COULDNT_SET_TYPE,
+        CURLE_PARTIAL_FILE,
+        CURLE_FTP_COULDNT_RETR_FILE,
+        CURLE_QUOTE_ERROR,
+        CURLE_WRITE_ERROR,
+        CURLE_UPLOAD_FAILED,
+        CURLE_READ_ERROR,
+        CURLE_OUT_OF_MEMORY,
+        CURLE_OPERATION_TIMEDOUT,
+        CURLE_FTP_PORT_FAILED,
+        CURLE_FTP_COULDNT_USE_REST,
+        CURLE_RANGE_ERROR,
+        CURLE_HTTP_POST_ERROR,
+        CURLE_SSL_CONNECT_ERROR,
+        CURLE_BAD_DOWNLOAD_RESUME,
+        CURLE_FILE_COULDNT_READ_FILE,
+        CURLE_TOO_MANY_REDIRECTS,
+        CURLE_UNKNOWN_OPTION,
+        CURLE_GOT_NOTHING,
+        CURLE_SSL_ENGINE_NOTFOUND,
+        CURLE_SSL_ENGINE_SETFAILED,
+        CURLE_SEND_ERROR,
+        CURLE_RECV_ERROR,
+        CURLE_SSL_CERTPROBLEM,
+        CURLE_SSL_CIPHER,
+        CURLE_PEER_FAILED_VERIFICATION,
+        CURLE_BAD_CONTENT_ENCODING,
+        CURLE_FILESIZE_EXCEEDED,
+        CURLE_USE_SSL_FAILED,
+        CURLE_SEND_FAIL_REWIND,
+        CURLE_SSL_CACERT_BADFILE,
+        CURLE_SSH,
+        CURLE_SSL_SHUTDOWN_FAILED,
+        CURLE_AGAIN,
+        CURLE_SSL_CRL_BADFILE,
+        CURLE_SSL_ISSUER_ERROR,
+        CURLE_AUTH_ERROR,
+        CURLE_HTTP2_STREAM,
+        CURLE_REMOTE_FILE_NOT_FOUND,
+        CURLE_REMOTE_DISK_FULL,
+        CURLE_REMOTE_FILE_EXISTS,
+        CURLE_LOGIN_DENIED,
+        CURLE_INTERFACE_FAILED,
+    };
+
+    QStringList unknown;
+    for (const CURLcode code : reachable) {
+        net::Response response;
+        response.code = code;
+        response.detail = QStringLiteral("something the server said");
+        const VfsError error = net::errorFor(response, QStringLiteral("Reading /x"));
+        if (error.code == VfsError::Unknown)
+            unknown.append(QString::number(int(code)));
+        QVERIFY2(error.isError(), qPrintable(QStringLiteral("code %1 was not an error").arg(int(code))));
+    }
+    QVERIFY2(unknown.isEmpty(),
+        qPrintable(QStringLiteral("these CURLcodes still map to Unknown: %1")
+                       .arg(unknown.join(QStringLiteral(", ")))));
+}
+
+void TestCurlTransport::aFailingRemoteCommandSaysWhatWentWrong_data()
+{
+    QTest::addColumn<QString>("detail");
+    QTest::addColumn<int>("expected");
+
+    // What SFTP and FTP actually put in the error buffer for a failed command.
+    QTest::newRow("sftp permission") << QStringLiteral("Permission denied") << int(VfsError::AccessDenied);
+    QTest::newRow("ftp 550") << QStringLiteral("RMD command failed: 550 Permission denied")
+                             << int(VfsError::AccessDenied);
+    QTest::newRow("read-only") << QStringLiteral("mkdir failed: read-only file system")
+                               << int(VfsError::AccessDenied);
+    QTest::newRow("missing") << QStringLiteral("rename failed: No such file") << int(VfsError::NotFound);
+    QTest::newRow("taken") << QStringLiteral("RNTO failed: 553 File already exists")
+                           << int(VfsError::AccessDenied);
+    QTest::newRow("not empty") << QStringLiteral("rmdir failed: Directory not empty")
+                               << int(VfsError::NotEmpty);
+    QTest::newRow("quota") << QStringLiteral("552 Quota exceeded") << int(VfsError::IoError);
+    // And the one nobody has a phrase for: an I/O error, never Unknown.
+    QTest::newRow("unrecognised") << QStringLiteral("something nobody has seen before")
+                                  << int(VfsError::IoError);
+}
+
+void TestCurlTransport::aFailingRemoteCommandSaysWhatWentWrong()
+{
+    QFETCH(QString, detail);
+    QFETCH(int, expected);
+
+    net::Response response;
+    response.code = CURLE_QUOTE_ERROR;
+    response.detail = detail;
+    const VfsError error
+        = net::errorFor(response, QStringLiteral("Removing /x"), net::StatusMeaning::ProtocolReply);
+    QCOMPARE(int(error.code), expected);
+    // The server's own words travel: "it failed" is not something anybody can
+    // act on.
+    QVERIFY2(error.message.contains(detail), qPrintable(error.message));
+}
+
+void TestCurlTransport::everyHttpStatusThatMattersHasItsOwnKind_data()
+{
+    QTest::addColumn<int>("status");
+    QTest::addColumn<int>("expected");
+
+    QTest::newRow("200") << 200 << int(VfsError::None);
+    QTest::newRow("206") << 206 << int(VfsError::None);
+    // Past the end of the object, which is what the end of a file looks like to
+    // a reader asking span by span.
+    QTest::newRow("416") << 416 << int(VfsError::None);
+    QTest::newRow("401") << 401 << int(VfsError::AccessDenied);
+    QTest::newRow("403") << 403 << int(VfsError::AccessDenied);
+    QTest::newRow("404") << 404 << int(VfsError::NotFound);
+    QTest::newRow("405") << 405 << int(VfsError::NotSupported);
+    QTest::newRow("409") << 409 << int(VfsError::NotFound);
+    // A condition the caller never set.
+    QTest::newRow("412 without one") << 412 << int(VfsError::AccessDenied);
+    QTest::newRow("423") << 423 << int(VfsError::AccessDenied);
+    QTest::newRow("413") << 413 << int(VfsError::IoError);
+    QTest::newRow("507") << 507 << int(VfsError::IoError);
+    QTest::newRow("501") << 501 << int(VfsError::NotSupported);
+    // The server is there and cannot serve this now. Not a disk error: these are
+    // the same conditions as a socket that would not open, and every one of them
+    // used to be "the server answered 503" -- which the sidebar and the copy
+    // layer both read as something wrong with the storage.
+    QTest::newRow("408") << 408 << int(VfsError::NetworkError);
+    QTest::newRow("429") << 429 << int(VfsError::NetworkError);
+    QTest::newRow("502") << 502 << int(VfsError::NetworkError);
+    QTest::newRow("503") << 503 << int(VfsError::NetworkError);
+    QTest::newRow("504") << 504 << int(VfsError::NetworkError);
+    // Anything else is still an I/O error, which is the honest last resort.
+    QTest::newRow("418") << 418 << int(VfsError::IoError);
+}
+
+void TestCurlTransport::everyHttpStatusThatMattersHasItsOwnKind()
+{
+    QFETCH(int, status);
+    QFETCH(int, expected);
+
+    net::Response response;
+    response.code = CURLE_OK;
+    response.status = status;
+    const VfsError error = net::errorFor(response, QStringLiteral("Reading /x"));
+    QCOMPARE(int(error.code), expected);
+
+    // 412 is the one that depends on what was asked: with `Overwrite: F` it is
+    // the destination existing, which is what WebDAV's MOVE sends.
+    if (status == 412) {
+        const VfsError asked = net::errorFor(
+            response, QStringLiteral("Renaming /x"), net::StatusMeaning::Http, net::Precondition::Sent);
+        QCOMPARE(asked.code, VfsError::AlreadyExists);
+    }
+}
+
+/// A loop that ended without an answer used to answer "fine".
+///
+/// perform() stored curl_multi_strerror()'s text in `detail` and broke, and
+/// `code` is only ever set from a CURLMSG_DONE that never came -- so it stayed
+/// CURLE_OK, this said ok(), and the half-driven connection went back to the
+/// pool. A sendSpan() that hit it would have committed a partial write of a file
+/// that was never sent. See MOLE-373.
+void TestCurlTransport::aLoopThatBrokeWithoutAnAnswerIsNotASuccess()
+{
+    net::Response response;
+    response.code = CURLE_OK;
+    response.status = 0;
+    response.detail = QStringLiteral("curl_multi_perform: internal error");
+
+    const VfsError error
+        = net::errorFor(response, QStringLiteral("Writing /x"), net::StatusMeaning::ProtocolReply);
+    QVERIFY2(error.isError(), "a transfer that never finished was reported as having worked");
+    QCOMPARE(error.code, VfsError::IoError);
+    QVERIFY2(error.message.contains(QStringLiteral("internal error")), qPrintable(error.message));
+
+    // And a transfer that really did finish with nothing to say is still fine:
+    // an empty detail is the ordinary case.
+    net::Response fine;
+    fine.code = CURLE_OK;
+    QVERIFY(!net::errorFor(fine, QStringLiteral("Writing /x"), net::StatusMeaning::ProtocolReply).isError());
+}
+
+/// "Writing X was cancelled" when nobody cancelled anything.
+///
+/// A read callback can only abort, and libcurl reports that as
+/// CURLE_ABORTED_BY_CALLBACK -- the same code as the user pressing Cancel. So a
+/// staging-disk read error part way through an upload was reported to the user
+/// as their own cancellation. See MOLE-373.
+void TestCurlTransport::aPayloadThatCouldNotBeReadIsNotACancel()
+{
+    /// A device that opens, answers one read, and then fails.
+    class FailsPartWay : public QIODevice
+    {
+    public:
+        FailsPartWay() { open(QIODevice::ReadOnly); }
+        bool isSequential() const override { return true; }
+
+    protected:
+        qint64 readData(char* data, qint64 maxSize) override
+        {
+            if (m_served >= 16) {
+                setErrorString(QStringLiteral("the staging file could not be read"));
+                return -1;
+            }
+            const qint64 give = qMin<qint64>(maxSize, 16);
+            std::memset(data, 'x', size_t(give));
+            m_served += give;
+            return give;
+        }
+        qint64 writeData(const char*, qint64) override { return -1; }
+
+    private:
+        qint64 m_served = 0;
+    };
+
+    ScriptedHttpServer server([](const ScriptedHttpServer::Request&) {
+        ScriptedHttpServer::Reply reply;
+        reply.status = 200;
+        return reply;
+    });
+    QVERIFY2(server.start(), "could not take a port for the scripted server");
+
+    net::TransportOptions options;
+    net::CurlPool pool(options);
+    net::CurlPool::Lease lease = pool.take();
+    QVERIFY(lease);
+    lease.setUrl((server.url() + QStringLiteral("/upload")).toUtf8());
+
+    FailsPartWay payload;
+    pool.sendFrom(lease, payload, -1);
+    const net::Response response = pool.perform(lease, CancelToken());
+
+    const VfsError error = net::errorFor(response, QStringLiteral("Writing /x"));
+    QVERIFY(error.isError());
+    QVERIFY2(error.code != VfsError::Cancelled, "a read error was reported as the user's cancellation");
+    QCOMPARE(error.code, VfsError::IoError);
+    QVERIFY2(error.message.contains(QStringLiteral("could not be read")), qPrintable(error.message));
+}
+
+/// Which failures are worth another go.
+///
+/// StreamingDownload retried any non-cancel failure for the whole of its budget
+/// with the kind unread, so a 403 whose credentials had expired mid-copy, a 404
+/// for an object deleted between spans and a NotSupported each waited two
+/// minutes per file before saying what the first attempt already knew.
+/// See MOLE-373.
+void TestCurlTransport::onlyAFailureThatMightGoTheOtherWayIsRetried()
+{
+    QVERIFY(net::isWorthRetrying(VfsError::make(VfsError::NetworkError, QStringLiteral("x"))));
+    QVERIFY(net::isWorthRetrying(VfsError::make(VfsError::IoError, QStringLiteral("x"))));
+    QVERIFY(net::isWorthRetrying(VfsError::make(VfsError::Unknown, QStringLiteral("x"))));
+
+    QVERIFY(!net::isWorthRetrying(VfsError::make(VfsError::AccessDenied, QStringLiteral("x"))));
+    QVERIFY(!net::isWorthRetrying(VfsError::make(VfsError::NotFound, QStringLiteral("x"))));
+    QVERIFY(!net::isWorthRetrying(VfsError::make(VfsError::NotSupported, QStringLiteral("x"))));
+    QVERIFY(!net::isWorthRetrying(VfsError::make(VfsError::AlreadyExists, QStringLiteral("x"))));
+    QVERIFY(!net::isWorthRetrying(VfsError::make(VfsError::NotEmpty, QStringLiteral("x"))));
+    QVERIFY(!net::isWorthRetrying(VfsError::make(VfsError::Cancelled, QStringLiteral("x"))));
+    QVERIFY(!net::isWorthRetrying(VfsError::ok()));
+}
+
+void TestCurlTransport::theSystemsOwnReasonsMapOntoTheVocabulary_data()
+{
+    QTest::addColumn<int>("errnoValue");
+    QTest::addColumn<int>("expected");
+
+    QTest::newRow("ENOENT") << int(ENOENT) << int(VfsError::NotFound);
+    QTest::newRow("EACCES") << int(EACCES) << int(VfsError::AccessDenied);
+    QTest::newRow("EPERM") << int(EPERM) << int(VfsError::AccessDenied);
+    QTest::newRow("ENOTEMPTY") << int(ENOTEMPTY) << int(VfsError::NotEmpty);
+    QTest::newRow("EISDIR") << int(EISDIR) << int(VfsError::IsADirectory);
+    QTest::newRow("ENOTDIR") << int(ENOTDIR) << int(VfsError::NotADirectory);
+    QTest::newRow("EEXIST") << int(EEXIST) << int(VfsError::AlreadyExists);
+    // Not a fault: the kernel saying this call cannot express the operation,
+    // which every caller with a slower way round is already watching for.
+    QTest::newRow("EXDEV") << int(EXDEV) << int(VfsError::NotSupported);
+    QTest::newRow("EIO") << int(EIO) << int(VfsError::IoError);
+    QTest::newRow("ENOSPC") << int(ENOSPC) << int(VfsError::IoError);
+}
+
+void TestCurlTransport::theSystemsOwnReasonsMapOntoTheVocabulary()
+{
+    QFETCH(int, errnoValue);
+    QFETCH(int, expected);
+    const std::error_code failed(errnoValue, std::generic_category());
+    QCOMPARE(int(LocalFileSystem::codeForSystemError(failed)), expected);
+}
+
 void TestCurlTransport::nothingWithACredentialInItReachesTheLog()
 {
     // The one that was being written down.

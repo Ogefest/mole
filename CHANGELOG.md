@@ -65,6 +65,12 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-373 A permission problem on a remote drive is reported as one, instead of as an unknown failure
+2026-09-04 #MOLE-373 A server outage is reported as one, instead of as a full disk
+2026-09-04 #MOLE-373 A copy from a drive that refuses the file gives up at once, instead of retrying for two minutes
+2026-09-04 #MOLE-373 An upload whose local file cannot be read says so, instead of saying it was cancelled
+2026-09-04 #MOLE-373 An NFS export that refuses this machine says so, instead of looking unreachable
+2026-09-04 #MOLE-373 An NFS listing marks its symbolic links, and a link to nothing is not shown as an empty file
 2026-09-04 #MOLE-379 A scheduled job whose drive is unplugged is shown as skipped, not as a failure of the rule
 2026-09-04 #MOLE-379 A scheduled run cut short by closing the application says so in the tracking list
 2026-09-04 #MOLE-379 A plugin's scheduled job shows what it is aimed at, like the built-in ones

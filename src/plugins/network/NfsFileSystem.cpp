@@ -154,12 +154,13 @@ namespace {
         return *pool;
     }
 
-    nfs_context* mountFresh(const NfsSettings& settings, QString* failure)
+    nfs_context* mountFresh(const NfsSettings& settings, VfsError* failure)
     {
         nfs_context* context = nfs_init_context();
         if (!context) {
             if (failure)
-                *failure = QStringLiteral("there is no memory for another NFS connection");
+                *failure = VfsError::make(
+                    VfsError::IoError, QStringLiteral("there is no memory for another NFS connection"));
             return nullptr;
         }
 
@@ -179,9 +180,21 @@ namespace {
         const QByteArray exported = settings.exportPath.toUtf8();
         const int rc = nfs_mount(context, host.constData(), exported.constData());
         if (rc < 0) {
+            // The whole error, code included. This kept only the message and
+            // every caller then reported NetworkError -- so an export that
+            // refuses this client (EACCES) read as "the server did not answer",
+            // and the sidebar treated a permissions problem as an unreachable
+            // drive. See MOLE-373.
             if (failure) {
-                *failure = errorFromNfs(rc, context, QStringLiteral("Mounting %1").arg(settings.exportPath))
-                               .message;
+                *failure = errorFromNfs(rc, context, QStringLiteral("Mounting %1").arg(settings.exportPath));
+                // A mount that failed without a diagnosis is a server that is
+                // not answering: there is no file yet to have an I/O error on,
+                // and libnfs answers a refused connection with an empty error
+                // string. A mount refused with EACCES keeps its own code, which
+                // is the whole point of carrying one -- that is the export
+                // saying no rather than the network failing.
+                if (failure->code == VfsError::IoError)
+                    failure->code = VfsError::NetworkError;
             }
             nfs_destroy_context(context);
             return nullptr;
@@ -482,7 +495,7 @@ Result<FileEntryList> NfsFileSystem::list(const VfsUri& dir, const CancelToken& 
 {
     Mount mount(m_settings);
     if (!mount.ok())
-        return Result<FileEntryList>::failure(VfsError::NetworkError, mount.failure());
+        return Result<FileEntryList>(mount.failure());
 
     const QString what = QStringLiteral("Listing %1").arg(dir.path());
     const QByteArray path = pathFor(dir).toUtf8();
@@ -518,7 +531,11 @@ Result<FileEntryList> NfsFileSystem::list(const VfsUri& dir, const CancelToken& 
 
         const mode_t mode = mode_t(entry->mode);
         if (mode == 0 || S_ISLNK(mode)) {
-            // A link is followed, so a link to a directory reads as a directory.
+            // A link is followed, so a link to a directory reads as a directory
+            // -- and it is *also* marked as a link, which this never did. A
+            // walker that was not asked to follow links has no other way to
+            // decline, so every NFS link was descended into. See MOLE-373.
+            made.isSymlink = S_ISLNK(mode);
             entries.append(made);
             incomplete.append(int(entries.size()) - 1);
             continue;
@@ -544,10 +561,29 @@ Result<FileEntryList> NfsFileSystem::list(const VfsUri& dir, const CancelToken& 
         {
         };
         const QByteArray childPath = pathFor(made.uri).toUtf8();
+
+        // The name itself first, for the entries a plain-READDIR server said
+        // nothing about: without it a link is indistinguishable from what it
+        // points at, and there is no second chance to ask.
+        if (!made.isSymlink) {
+            struct nfs_stat_64 itself
+            {
+            };
+            if (nfs_lstat64(mount.context(), childPath.constData(), &itself) == 0)
+                made.isSymlink = S_ISLNK(mode_t(itself.nfs_mode));
+        }
+
         if (nfs_stat64(mount.context(), childPath.constData(), &details) == 0) {
             made.isDir = S_ISDIR(mode_t(details.nfs_mode));
             made.size = made.isDir ? 0 : qint64(details.nfs_size);
             made.modified = QDateTime::fromSecsSinceEpoch(qint64(details.nfs_mtime));
+        } else if (made.isSymlink) {
+            // A link whose target is gone. Following it fails, and this used to
+            // leave the entry exactly as an empty file: no size, no date, and
+            // nothing to say it is a link to nothing. A copy would then try to
+            // read it. See MOLE-373.
+            made.size = kUnknownSize;
+            made.isReadable = false;
         }
     }
     return Result<FileEntryList>(entries);
@@ -557,7 +593,7 @@ Result<FileEntry> NfsFileSystem::stat(const VfsUri& target)
 {
     Mount mount(m_settings);
     if (!mount.ok())
-        return Result<FileEntry>::failure(VfsError::NetworkError, mount.failure());
+        return Result<FileEntry>(mount.failure());
 
     const QByteArray path = pathFor(target).toUtf8();
     struct nfs_stat_64 details
@@ -584,7 +620,7 @@ Result<void> NfsFileSystem::makeDirectory(const VfsUri& target)
 {
     Mount mount(m_settings);
     if (!mount.ok())
-        return VfsError::make(VfsError::NetworkError, mount.failure());
+        return mount.failure();
 
     const QByteArray path = pathFor(target).toUtf8();
     const int rc = nfs_mkdir(mount.context(), path.constData());
@@ -618,7 +654,7 @@ Result<void> NfsFileSystem::remove(const VfsUri& target, bool recursive, const C
 
     Mount mount(m_settings);
     if (!mount.ok())
-        return VfsError::make(VfsError::NetworkError, mount.failure());
+        return mount.failure();
 
     const QByteArray path = pathFor(target).toUtf8();
     const int rc = what.value().isDir ? nfs_rmdir(mount.context(), path.constData())
@@ -637,7 +673,7 @@ Result<void> NfsFileSystem::rename(const VfsUri& from, const VfsUri& to, const C
         return Result<void>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
     Mount mount(m_settings);
     if (!mount.ok())
-        return VfsError::make(VfsError::NetworkError, mount.failure());
+        return mount.failure();
 
     const QByteArray fromPath = pathFor(from).toUtf8();
     const QByteArray toPath = pathFor(to).toUtf8();
@@ -677,7 +713,7 @@ Result<void> NfsFileSystem::replace(const VfsUri& from, const VfsUri& to, const 
     // instant between the two calls not existing. See ADR-0087.
     Mount mount(m_settings);
     if (!mount.ok())
-        return VfsError::make(VfsError::NetworkError, mount.failure());
+        return mount.failure();
 
     const QByteArray fromPath = pathFor(from).toUtf8();
     const QByteArray toPath = pathFor(to).toUtf8();
@@ -699,7 +735,7 @@ Result<std::unique_ptr<QIODevice>> NfsFileSystem::openRead(
     }
     Mount mount(m_settings);
     if (!mount.ok())
-        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::NetworkError, mount.failure());
+        return Result<std::unique_ptr<QIODevice>>(mount.failure());
 
     const QString what = QStringLiteral("Reading %1").arg(target.path());
     const QByteArray path = pathFor(target).toUtf8();
@@ -748,7 +784,7 @@ Result<std::unique_ptr<QIODevice>> NfsFileSystem::openWrite(
     }
     Mount mount(m_settings);
     if (!mount.ok())
-        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::NetworkError, mount.failure());
+        return Result<std::unique_ptr<QIODevice>>(mount.failure());
 
     const QString what = QStringLiteral("Writing %1").arg(target.path());
     const VfsUri staging = partialWriteOf(target);

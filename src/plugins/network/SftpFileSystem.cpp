@@ -203,7 +203,21 @@ Result<FileEntryList> SftpFileSystem::list(const VfsUri& dir, const CancelToken&
     case VfsError::NotADirectory:
         // Already unambiguous; asking again would only cost a round trip.
         return listing;
-    default:
+    // Every other code, named rather than defaulted: the eleven are the whole of
+    // the vocabulary, so adding a twelfth has to come past every place that
+    // decides something from it rather than being swallowed by a `default`.
+    // See MOLE-373.
+    case VfsError::None:
+    case VfsError::NotFound:
+    case VfsError::AccessDenied:
+    case VfsError::NotSupported:
+    case VfsError::IsADirectory:
+    case VfsError::NotALink:
+    case VfsError::AlreadyExists:
+    case VfsError::NotEmpty:
+    case VfsError::IoError:
+    case VfsError::NetworkError:
+    case VfsError::Unknown:
         break;
     }
 

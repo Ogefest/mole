@@ -1,5 +1,7 @@
 #include "plugins/network/TransferStreams.h"
 
+#include "plugins/network/CurlTransport.h"
+
 #include "core/platform/Staging.h"
 
 #include <QElapsedTimer>
@@ -463,6 +465,19 @@ void StreamingDownload::startFetching(qint64 offset)
                 // While bytes are arriving the transfer is alive however many
                 // connections it has been through; when none has arrived for
                 // long enough, it is over whatever the connections say.
+                //
+                // **And only for a failure that could go the other way next
+                // time.** The kind used to be unread, so a 403 whose credentials
+                // had expired mid-copy, a 404 for an object deleted between
+                // spans and a NotSupported each sat out the whole budget --
+                // two minutes per file to say what the first attempt already
+                // knew. See net::isWorthRetrying and MOLE-373.
+                if (!net::isWorthRetrying(failed)) {
+                    const std::lock_guard<std::mutex> guard(m_mutex);
+                    m_error = failed;
+                    break;
+                }
+
                 if (m_budgetMs > 0 && sinceProgress.elapsed() >= m_budgetMs) {
                     const std::lock_guard<std::mutex> guard(m_mutex);
                     m_error = failed;
