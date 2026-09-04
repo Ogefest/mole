@@ -19,7 +19,11 @@ namespace mole {
 /// and it is the backend the test suite runs almost everything against --
 /// deterministic, fast, and able to fake the failures that are impossible to
 /// reproduce on demand with real hardware (see setFault()).
-class MemoryFileSystem final : public IFileSystem, public std::enable_shared_from_this<MemoryFileSystem>
+/// IFileSystem is already `enable_shared_from_this`, so this must not be it a
+/// second time -- two bases would make `weak_from_this()` ambiguous. The write
+/// device below needs a weak pointer to the *concrete* class, and gets one by
+/// down-casting what IFileSystem::sharedSelf() hands back. See MOLE-364.
+class MemoryFileSystem final : public IFileSystem
 {
 public:
     MemoryFileSystem();

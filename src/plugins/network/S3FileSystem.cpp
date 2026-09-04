@@ -1158,6 +1158,7 @@ Result<std::unique_ptr<QIODevice>> S3FileSystem::openWrite(const VfsUri& target,
     if (expectedSize >= 0 && expectedSize <= kPartBytes) {
         auto stream = std::make_unique<net::BufferedUpload>(
             [this, key](QIODevice& payload, qint64 size) { return putObject(key, &payload, size); });
+        stream->keepAlive(sharedSelf());
         if (!stream->open(QIODevice::WriteOnly)) {
             return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, stream->errorString());
         }
@@ -1276,6 +1277,7 @@ Result<std::unique_ptr<QIODevice>> S3FileSystem::openWrite(const VfsUri& target,
     };
 
     auto stream = std::make_unique<net::StreamingUpload>(std::move(send), kPartBytes);
+    stream->keepAlive(sharedSelf());
     if (!stream->open(QIODevice::WriteOnly)) {
         return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, stream->errorString());
     }

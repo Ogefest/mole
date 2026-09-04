@@ -389,8 +389,11 @@ Result<std::unique_ptr<QIODevice>> SftpFileSystem::openRead(const VfsUri& target
 
     // Anything larger is streamed a span at a time, so a hundred-gigabyte file
     // costs a buffer rather than a hundred gigabytes of temporary space. The
-    // stream holds this backend for as long as it lives, which is safe because
-    // whoever opened it is holding the drive it came from.
+    // stream holds this backend for as long as it lives, and holds the drive up
+    // with it -- keepAlive() below. It used to rely on "whoever opened it is
+    // holding the drive it came from", which is a convention about callers rather
+    // than a property of the code: a preview left open across an unmount made the
+    // stream the only thing that had ever kept the backend alive. See MOLE-364.
     auto fetch = [this, url, what](QIODevice& sink, qint64 offset, qint64 span, const CancelToken& cancel) {
         return fetchSpan(url, what, sink, offset, span, cancel);
     };
@@ -407,6 +410,8 @@ Result<std::unique_ptr<QIODevice>> SftpFileSystem::openRead(const VfsUri& target
         openedAs = net::identityOf(opened.value());
 
     auto stream = std::make_unique<net::StreamingDownload>(std::move(fetch), length, kSpanBytes);
+    // The mechanism, in place of the convention this used to rely on.
+    stream->keepAlive(sharedSelf());
     if (!openedAs.isEmpty()) {
         stream->checkBeforeEverySpan([this, target, openedAs]() -> VfsError {
             const Result<FileEntry> now = stat(target);
@@ -478,6 +483,7 @@ Result<std::unique_ptr<QIODevice>> SftpFileSystem::openWrite(const VfsUri& targe
     };
 
     auto stream = std::make_unique<net::StreamingUpload>(std::move(send), kSpanBytes, std::move(commit));
+    stream->keepAlive(sharedSelf());
     if (!stream->open(QIODevice::WriteOnly)) {
         return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, stream->errorString());
     }

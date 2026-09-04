@@ -551,8 +551,9 @@ Result<std::unique_ptr<QIODevice>> MemoryFileSystem::openWrite(const VfsUri& tar
     checkNotOnTheDrawingThread("openWrite");
     waitAsASlowDriveWould();
     // A stack-allocated MemoryFileSystem has no owning shared_ptr, and a device
-    // that outlives its filesystem would be a dangling write.
-    std::weak_ptr<MemoryFileSystem> owner = weak_from_this();
+    // that outlives its filesystem would be a dangling write. Down-cast from the
+    // base's pointer, because the write device dereferences the concrete class.
+    const std::weak_ptr<MemoryFileSystem> owner = std::static_pointer_cast<MemoryFileSystem>(sharedSelf());
     if (owner.expired()) {
         return VfsError::make(VfsError::NotSupported,
             QStringLiteral("mem:// writes need the filesystem to be held by a shared_ptr"));

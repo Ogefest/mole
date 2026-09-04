@@ -65,8 +65,20 @@ namespace {
     class SmbFile final : public QIODevice, public ICommitsOnClose
     {
     public:
-        SmbFile(SmbFileSystem& drive, int handle, qint64 size, QString what)
-            : m_drive(&drive)
+        /// `owner` is the drive as a shared pointer, held for this device's own
+        /// lifetime.
+        ///
+        /// The raw pointer beside it is what everything here dereferences, and
+        /// the destructor dereferences it too -- closeHandle() and
+        /// discardStaging() both build a Session from it. So a device outliving
+        /// its drive was a use-after-free inside libsmbclient, and "whoever
+        /// opened it is holding the drive" was a convention about callers rather
+        /// than a property of the code. Empty `owner` means the drive is not
+        /// owned by a shared_ptr at all -- a stack instance in a test -- where
+        /// its own scope is the answer. See MOLE-364.
+        SmbFile(SmbFileSystem& drive, FileSystemPtr owner, int handle, qint64 size, QString what)
+            : m_owner(std::move(owner))
+            , m_drive(&drive)
             , m_handle(handle)
             , m_size(size)
             , m_what(std::move(what))
@@ -203,6 +215,8 @@ namespace {
             smbc_unlink(m_drive->urlFor(m_staging).toUtf8().constData());
         }
 
+        /// Held, never dereferenced: this is the one that keeps the drive alive.
+        FileSystemPtr m_owner;
         SmbFileSystem* m_drive = nullptr;
         int m_handle = -1;
         qint64 m_size = -1;
@@ -597,7 +611,7 @@ Result<std::unique_ptr<QIODevice>> SmbFileSystem::openRead(const VfsUri& target,
             length = static_cast<qint64>(details.st_size);
     }
 
-    auto file = std::make_unique<SmbFile>(*this, handle, length, what);
+    auto file = std::make_unique<SmbFile>(*this, sharedSelf(), handle, length, what);
     if (!file->open(QIODevice::ReadOnly)) {
         return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, file->errorString());
     }
@@ -630,7 +644,7 @@ Result<std::unique_ptr<QIODevice>> SmbFileSystem::openWrite(const VfsUri& target
     if (handle < 0)
         return Result<std::unique_ptr<QIODevice>>(errorFromErrno(errno, what));
 
-    auto file = std::make_unique<SmbFile>(*this, handle, -1, what);
+    auto file = std::make_unique<SmbFile>(*this, sharedSelf(), handle, -1, what);
     file->commitOnCloseTo(staging, target, replacing);
     if (!file->open(QIODevice::WriteOnly)) {
         return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, file->errorString());

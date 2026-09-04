@@ -450,6 +450,7 @@ Result<std::unique_ptr<QIODevice>> FtpFileSystem::openRead(const VfsUri& target,
         openedAs = net::identityOf(opened.value());
 
     auto stream = std::make_unique<net::StreamingDownload>(std::move(fetch), length, kDownloadSpanBytes);
+    stream->keepAlive(sharedSelf());
     if (!openedAs.isEmpty()) {
         stream->checkBeforeEverySpan([this, target, openedAs]() -> VfsError {
             const Result<FileEntry> now = stat(target);
@@ -528,6 +529,7 @@ Result<std::unique_ptr<QIODevice>> FtpFileSystem::openWrite(const VfsUri& target
 
     auto stream
         = std::make_unique<net::StreamingUpload>(std::move(send), kUploadSpanBytes, std::move(commit));
+    stream->keepAlive(sharedSelf());
     if (!stream->open(QIODevice::WriteOnly))
         return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, stream->errorString());
     return Result<std::unique_ptr<QIODevice>>(std::unique_ptr<QIODevice>(stream.release()));

@@ -500,6 +500,7 @@ Result<std::unique_ptr<QIODevice>> WebdavFileSystem::openWrite(const VfsUri& tar
         // so the whole object goes in a single PUT however long it takes.
         auto stream = std::make_unique<net::StreamingUpload>(
             std::move(send), std::numeric_limits<qint64>::max(), commit);
+        stream->keepAlive(sharedSelf());
         if (!stream->open(QIODevice::WriteOnly))
             return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, stream->errorString());
         return Result<std::unique_ptr<QIODevice>>(std::unique_ptr<QIODevice>(stream.release()));
@@ -513,6 +514,7 @@ Result<std::unique_ptr<QIODevice>> WebdavFileSystem::openWrite(const VfsUri& tar
             return sent;
         },
         std::move(commit));
+    stream->keepAlive(sharedSelf());
     if (!stream->open(QIODevice::WriteOnly))
         return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, stream->errorString());
     return Result<std::unique_ptr<QIODevice>>(std::unique_ptr<QIODevice>(stream.release()));

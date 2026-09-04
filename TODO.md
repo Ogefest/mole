@@ -489,9 +489,12 @@ project, and a contributor should never hit a wall of text they cannot read.
   holds its backend for the length of its run, so a copy in flight finishes
   against the drive it was given while the mount disappears from the sidebar.
   That is the safe half — nothing is pulled out from under a worker thread — and
-  it is checked in `tst_TransferTaskUnderFault`. What is missing is the other
-  half: nothing tells the user that the drive they just removed is still being
-  written to. Left as it is until somebody hits it.
+  it is checked in `tst_TransferTaskUnderFault`. A device outliving its task is
+  covered too since MOLE-364: a stream holds its drive itself
+  (`IFileSystem::sharedSelf()`), so a preview left open across an unmount is a
+  stream reading from a drive nothing else refers to rather than a use-after-free.
+  What is missing is the other half: nothing tells the user that the drive they
+  just removed is still being written to. Left as it is until somebody hits it.
 - **Two threads stamping a listing's times race inside glibc's timezone cache.**
   ThreadSanitizer says so when the conformance suite's concurrency case runs against
   a real server: `QDateTime::fromSecsSinceEpoch` reaches `localtime_r`, and glibc's

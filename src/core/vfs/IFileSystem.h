@@ -30,7 +30,7 @@ namespace mole {
 ///
 /// Implementations must be safe to call concurrently from several worker
 /// threads, or serialise internally with their own mutex.
-class IFileSystem
+class IFileSystem : public std::enable_shared_from_this<IFileSystem>
 {
 public:
     virtual ~IFileSystem() = default;
@@ -272,6 +272,24 @@ public:
 
 protected:
     static Result<void> notSupported(const char* what);
+
+    /// This drive as a shared pointer, for a device to hold on to.
+    ///
+    /// **A stream a backend hands out must keep its drive alive.** Every remote
+    /// read and write captures its backend, because the bytes come from the
+    /// server on demand rather than up front -- and the comment beside the SFTP
+    /// one used to say that was safe "because whoever opened it is holding the
+    /// drive it came from". That is a convention about callers, not a property of
+    /// the code: a preview or a viewer holding a device across an unmount left the
+    /// stream as the only thing that had ever kept the backend from being deleted,
+    /// and the use-after-free landed inside libcurl or libsmbclient, a long way
+    /// from the cause. See MOLE-364.
+    ///
+    /// Empty when this backend is not owned by a `shared_ptr` at all -- a stack
+    /// instance in a test -- where there is nothing to keep alive and the object's
+    /// own scope is the answer. `weak_from_this().lock()` rather than
+    /// `shared_from_this()`, which throws in that case.
+    std::shared_ptr<IFileSystem> sharedSelf() { return weak_from_this().lock(); }
 
     /// Warns when the caller is the thread doNotCallFrom() named.
     ///

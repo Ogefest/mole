@@ -1,7 +1,12 @@
 #include "plugins/network/TransferStreams.h"
 #include "support/MoleTestMain.h"
 
+#include "core/vfs/backends/MemoryFileSystem.h"
+
+#include <QDir>
 #include <QElapsedTimer>
+#include <QFile>
+#include <QRegularExpression>
 #include <QTest>
 
 #include <atomic>
@@ -395,6 +400,8 @@ private slots:
     void aStreamWithNoCheckReadsExactlyAsItDidBefore();
     void readingAgainAfterAnErrorSaysTheSameThing();
     void closingDuringABlockedReadDoesNotHang();
+    void aStreamKeepsAliveTheDriveItWasOpenedOn();
+    void everyDeviceABackendHandsOutHoldsItsDrive();
 };
 
 void TestStreamingDownload::readsTheWholeFileThroughSeveralSpans()
@@ -1042,6 +1049,101 @@ void TestStreamingDownload::closingDuringABlockedReadDoesNotHang()
     // on which side of the close it was, and both are correct; inventing bytes
     // that never arrived is not, and neither is never coming back at all.
     QVERIFY2(result <= 7 * 1024, "a stream closed under a reader must not hand over bytes it never had");
+}
+
+void TestStreamingDownload::aStreamKeepsAliveTheDriveItWasOpenedOn()
+{
+    // The reproduction. Every remote read captures its backend -- it has to, the
+    // bytes come from the server on demand -- and the only thing that used to
+    // stop the stream outliving the drive was a comment saying "whoever opened it
+    // is holding the drive it came from". That is a convention about callers: a
+    // preview or a viewer keeping a device open across an unmount left the stream
+    // as the only thing that had ever kept the backend alive, and the
+    // use-after-free landed inside libcurl, a long way from the cause.
+    //
+    // Shaped exactly like the shipped code: the fetch holds the drive by raw
+    // pointer, and keepAlive() is the only thing between it and freed memory.
+    // Read under `make asan`, which is what turns this from a pass into a proof.
+    // See MOLE-364.
+    const QByteArray contents = payloadOf(24 * 1024);
+    auto drive = std::make_shared<MemoryFileSystem>();
+    drive->addFile(QStringLiteral("/big.bin"), contents);
+    std::weak_ptr<IFileSystem> watch = drive;
+
+    MemoryFileSystem* raw = drive.get();
+    auto stream = std::make_unique<net::StreamingDownload>(
+        [raw](QIODevice& sink, qint64 offset, qint64 span, const CancelToken&) {
+            Result<std::unique_ptr<QIODevice>> source
+                = raw->openRead(VfsUri::fromString(QStringLiteral("mem:///big.bin")));
+            if (!source.ok())
+                return source.error();
+            if (!source.value()->seek(offset))
+                return VfsError::make(VfsError::IoError, QStringLiteral("could not seek"));
+            const QByteArray chunk = source.value()->read(span);
+            if (sink.write(chunk) != chunk.size())
+                return VfsError::make(VfsError::IoError, QStringLiteral("the reader went away"));
+            return VfsError::ok();
+        },
+        contents.size(), 8 * 1024);
+    stream->keepAlive(drive);
+    QVERIFY(stream->open(QIODevice::ReadOnly));
+
+    // Everything else lets go of it, which is what unmounting does.
+    drive.reset();
+    QVERIFY2(!watch.expired(), "the stream is not holding the drive up");
+
+    QCOMPARE(stream->readAll(), contents);
+    stream->close();
+    stream.reset();
+    QVERIFY2(watch.expired(), "the drive outlived the stream that was holding it");
+}
+
+void TestStreamingDownload::everyDeviceABackendHandsOutHoldsItsDrive()
+{
+    // The mechanism is only as good as its use, and a fifth backend written next
+    // year that forgets keepAlive() is a use-after-free nothing would notice --
+    // the shape of fault MOLE-364 was. So the rule is held here: a file under
+    // plugins/network that builds a device has to name sharedSelf() at least as
+    // many times as it builds one.
+    static const QRegularExpression builds(QStringLiteral(
+        "make_unique<(?:net::)?(?:StreamingDownload|StreamingUpload|BufferedUpload|SmbFile)>"));
+
+    const QDir directory(QStringLiteral(MOLE_SHELL_SOURCE_DIR) + QStringLiteral("/plugins/network"));
+    const QStringList sources = directory.entryList({ QStringLiteral("*.cpp") }, QDir::Files, QDir::Name);
+    QVERIFY(!sources.isEmpty());
+
+    QStringList offenders;
+    int handedOut = 0;
+    for (const QString& name : sources) {
+        if (name == QLatin1String("TransferStreams.cpp"))
+            continue; // where the mechanism lives, not a backend that uses it
+
+        QFile source(directory.filePath(name));
+        QVERIFY2(source.open(QIODevice::ReadOnly), qPrintable(source.fileName()));
+        const QString text = QString::fromUtf8(source.readAll());
+
+        int built = 0;
+        QRegularExpressionMatchIterator each = builds.globalMatch(text);
+        while (each.hasNext()) {
+            each.next();
+            ++built;
+        }
+        if (built == 0)
+            continue;
+        handedOut += built;
+        const int held = static_cast<int>(text.count(QStringLiteral("sharedSelf()")));
+        if (held < built) {
+            offenders.append(QStringLiteral("%1 hands out %2 device(s) and holds its drive %3 time(s)")
+                                 .arg(name)
+                                 .arg(built)
+                                 .arg(held));
+        }
+    }
+
+    QVERIFY2(handedOut >= 8,
+        qPrintable(
+            QStringLiteral("only %1 device sites were found -- has the shape changed?").arg(handedOut)));
+    QVERIFY2(offenders.isEmpty(), qPrintable(offenders.join(QStringLiteral("; "))));
 }
 
 MOLE_TEST_MAIN(TestStreamingDownload)

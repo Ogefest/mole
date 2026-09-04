@@ -61,6 +61,14 @@ public:
     /// Meaningful only after close(). ok() until something goes wrong.
     VfsError commitError() const override { return m_error; }
 
+    /// Keeps the drive that opened this stream alive for as long as the stream.
+    ///
+    /// The callbacks above capture their backend -- they have to, the bytes come
+    /// from the server on demand -- so a stream is not allowed to be the thing
+    /// that outlives its drive. Set by every backend that hands one out, from
+    /// IFileSystem::sharedSelf(). See MOLE-364.
+    void keepAlive(FileSystemPtr drive) { m_drive = std::move(drive); }
+
 protected:
     qint64 readData(char* data, qint64 maxSize) override;
     qint64 writeData(const char* data, qint64 size) override;
@@ -71,6 +79,9 @@ private:
     QTemporaryFile m_scratch;
     VfsError m_error;
     bool m_committed = false;
+    /// The drive, held so it cannot be deleted while this stream can still call
+    /// into it. Never dereferenced here. See keepAlive().
+    FileSystemPtr m_drive;
 };
 
 /// A write stream that sends as the caller writes, instead of collecting the
@@ -115,11 +126,19 @@ public:
     /// Meaningful only after close(), as for any stream that commits there.
     VfsError commitError() const override { return m_error; }
 
+    /// Keeps the drive that opened this stream alive for as long as the stream.
+    /// See BufferedUpload::keepAlive() for why. MOLE-364.
+    void keepAlive(FileSystemPtr drive) { m_drive = std::move(drive); }
+
 protected:
     qint64 readData(char*, qint64) override { return -1; }
     qint64 writeData(const char* data, qint64 size) override;
 
 private:
+    /// Held so the drive cannot be deleted while this stream can still call into
+    /// it. Never dereferenced here. See keepAlive().
+    FileSystemPtr m_drive;
+
     class Source;
     friend class Source;
 
@@ -262,11 +281,19 @@ public:
     /// What went wrong, once a read has returned -1.
     VfsError error() const;
 
+    /// Keeps the drive that opened this stream alive for as long as the stream.
+    /// See BufferedUpload::keepAlive() for why. MOLE-364.
+    void keepAlive(FileSystemPtr drive) { m_drive = std::move(drive); }
+
 protected:
     qint64 readData(char* data, qint64 maxSize) override;
     qint64 writeData(const char*, qint64) override { return -1; }
 
 private:
+    /// Held so the drive cannot be deleted while this stream can still fetch
+    /// from it. Never dereferenced here. See keepAlive().
+    FileSystemPtr m_drive;
+
     class Sink;
     friend class Sink;
 
