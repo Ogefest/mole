@@ -106,6 +106,39 @@ on=$(git rev-parse --abbrev-ref HEAD)
 [ -z "$(git status --porcelain)" ] || die "the tree is dirty, and a release commit must carry only its own changes"
 note "on $BRANCH, and the tree is clean"
 
+# **What the remote thinks, asked before anything is written.**
+#
+# The gate checked the branch, the tree and the *local* tags, and nothing else --
+# so if $REMOTE/$BRANCH had moved (a merged pull request, a commit from another
+# clone), or if the tag existed there and not here, every step up to the push
+# succeeded: the manifest, the changelog marker, the version line and the commit
+# were written, the tag was made, the restore-on-failure was disarmed, and then
+# the push was refused. Forty minutes of tiers, and a release commit and a tag to
+# unpick by hand. ADR-0084 says a failed release "leaves the manifest alone" --
+# true only of failures before the disarm, and the push is after the last write.
+#
+# Asked here, where a refusal costs nothing. A machine with no network is refused
+# too, and that is right: a release that cannot be pushed is not a release, and
+# finding out first is the whole point.
+#
+# Behind is the refusal, and ahead is not: a branch with commits the remote has
+# not seen pushes them along with the release commit, which is the ordinary case
+# and not a fault. What cannot be pushed is a branch missing commits the remote
+# already has. See MOLE-388.
+git fetch --quiet "$REMOTE" || die "cannot reach $REMOTE, and a release that cannot be pushed is not one"
+if git rev-parse -q --verify "refs/remotes/$REMOTE/$BRANCH" >/dev/null; then
+    behind=$(git rev-list --count "HEAD..$REMOTE/$BRANCH")
+    [ "$behind" = 0 ] || die "$REMOTE/$BRANCH has $behind commit(s) this branch does not -- pull first, because the push at the end would be refused"
+    ahead=$(git rev-list --count "$REMOTE/$BRANCH..HEAD")
+    if [ "$ahead" = 0 ]; then
+        note "level with $REMOTE/$BRANCH"
+    else
+        note "$ahead commit(s) ahead of $REMOTE/$BRANCH, which the push will carry"
+    fi
+else
+    note "$REMOTE has no $BRANCH yet, so there is nothing to be behind"
+fi
+
 step "the test suite"
 note "$MAKE test"
 "$MAKE" test || die "the suite is not green"
@@ -212,6 +245,28 @@ fi
 
 printf '%s\n' "$next" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || die "'$next' is not a version of three numbers"
 git rev-parse -q --verify "refs/tags/v$next" >/dev/null && die "v$next is already a tag"
+
+# The tag on the remote as well. Only an exact local duplicate was refused, so a
+# tag pushed from another clone got all the way to the push -- see the note in
+# the gate above.
+if git ls-remote --exit-code --tags "$REMOTE" "v$next" >/dev/null 2>&1; then
+    die "v$next is already a tag on $REMOTE, pushed from somewhere else"
+fi
+
+# And it has to be *newer*. Only exact duplication was refused, so a VERSION=
+# below the current version, or below the newest tag, was accepted -- and would
+# then write a latest.json naming an older release as the newest thing there is.
+# sort -V rather than a numeric comparison per part: it is the same ordering the
+# rest of the world uses for these, and 0.10.0 sorts above 0.9.0 in it.
+newest="$current"
+if [ -n "$tags" ]; then
+    highest=$(printf '%s\n' "$tags" | sed 's/^v//' | sort -V | tail -1)
+    [ -z "$highest" ] || newest=$(printf '%s\n%s\n' "$current" "$highest" | sort -V | tail -1)
+fi
+if [ "$next" != "$newest" ] && [ "$(printf '%s\n%s\n' "$next" "$newest" | sort -V | tail -1)" != "$next" ]; then
+    die "$next is not above $newest, and a release below the newest one would publish a latest.json naming an older version"
+fi
+
 note "cutting $next -- $decided"
 
 # ------------------------------------------------------------- the marker

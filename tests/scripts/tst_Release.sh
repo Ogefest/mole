@@ -487,4 +487,85 @@ cut_release "$repo"
     git -C "$repo" status --short | sed 's/^/    /'
 }
 
+# ---------------------------------------------- what the remote already has
+#
+# Last, and with a repository of their own: the cases above build on one another
+# -- a successful cut, then failures that have to put its manifest back -- and a
+# fresh fixture in the middle of that sequence takes the ground out from under
+# the rest.
+
+begin "a remote that has moved is refused before anything is written"
+# The gate checked the branch, the tree and the *local* tags and nothing else, so
+# a remote that had moved -- a merged pull request, a commit from another clone --
+# got all the way to the push: the manifest, the marker, the version line and the
+# commit were written, the tag was made, the restore-on-failure was disarmed, and
+# then `git push` was refused. Forty minutes of tiers, and a release commit and a
+# tag to unpick by hand. ADR-0084 says a failed release leaves the manifest alone;
+# that was true only of failures before the disarm. See MOLE-388.
+mine=$(fixture)
+before=$(git -C "$mine" rev-parse HEAD)
+# Somebody else pushed. Written from a side branch of the same repository rather
+# than from a second clone: what matters is that origin/main carries a commit this
+# branch does not, and a clone brings its own default-branch trouble with it.
+git -C "$mine" checkout -q -b theirs
+echo "their work" > "$mine/theirs.txt"
+git -C "$mine" add -A
+git -C "$mine" commit -q -m "Somebody else got there first"
+git -C "$mine" push -q origin theirs:main
+git -C "$mine" checkout -q main
+git -C "$mine" branch -qD theirs
+
+cut_release "$mine"
+[ "$SCRIPT_STATUS" != 0 ] || fail "a release was cut on a branch behind the remote"
+said "pull first"
+# Nothing written, nothing committed, no tag: the refusal is in the gate.
+[ -z "$(git -C "$mine" status --porcelain)" ] || {
+    fail "it left the tree dirty"
+    git -C "$mine" status --short | sed 's/^/    /'
+}
+[ "$(git -C "$mine" rev-parse HEAD)" = "$before" ] || fail "it committed something"
+[ -z "$(git -C "$mine" tag --list 'v*')" ] || fail "it made a tag"
+[ ! -f "$repo/latest.json" ] || fail "it wrote a manifest"
+
+begin "a tag that exists only on the remote is refused"
+# Only an exact *local* duplicate was refused, so a tag pushed from another clone
+# was invisible to the gate. See MOLE-388.
+mine=$(fixture)
+# v0.4.1 is what the default patch bump would cut, and it is put on the remote
+# and nowhere else -- the local check cannot see it.
+git -C "$mine" push -q origin "HEAD:refs/tags/v0.4.1"
+[ -z "$(git -C "$mine" tag --list 'v*')" ] || fail "the fixture left a local tag, so this case proves nothing"
+cut_release "$mine"
+[ "$SCRIPT_STATUS" != 0 ] || fail "a release was cut over a tag that is already on the remote"
+said "already a tag"
+[ -z "$(git -C "$mine" status --porcelain)" ] || fail "it left the tree dirty"
+[ ! -f "$repo/latest.json" ] || fail "it wrote a manifest"
+
+begin "a version below the newest one is refused"
+# Only exact duplication was refused, so a VERSION= below the current version, or
+# below the newest tag, was accepted -- and would then write a latest.json naming
+# an older release as the newest thing there is. See MOLE-388.
+mine=$(fixture)
+cut_release "$mine" VERSION=0.3.0
+[ "$SCRIPT_STATUS" != 0 ] || fail "a release below the version the code claims was cut"
+said "is not above"
+[ ! -f "$repo/latest.json" ] || fail "it wrote a manifest"
+
+# And below the newest *tag*, which is the other half: the code can claim less
+# than what has been released if somebody bumped the tag and not the file.
+mine=$(fixture)
+git -C "$mine" tag -a v9.9.9 -m "released long ago"
+cut_release "$mine" VERSION=1.0.0
+[ "$SCRIPT_STATUS" != 0 ] || fail "a release below the newest tag was cut"
+said "is not above"
+
+# A version above it is still fine, which is what says this refuses an ordering
+# rather than the option.
+mine=$(fixture)
+cut_release "$mine" DRY=1 VERSION=0.5.0
+[ "$SCRIPT_STATUS" = 0 ] || {
+    fail "a version above the current one was refused"
+    sed 's/^/    /' "$SCRIPT_OUTPUT"
+}
+
 done_testing
