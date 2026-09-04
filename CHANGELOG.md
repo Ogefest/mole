@@ -65,6 +65,10 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-383 An audio file's comment is shown, instead of the language code in front of it
+2026-09-04 #MOLE-383 An MP3 with an extended tag header shows its tags, instead of none of them
+2026-09-04 #MOLE-383 A lossless .m4a is described as ALAC, instead of as AAC
+2026-09-04 #MOLE-383 A large zip archive is no longer described as a document whose author is further in
 2026-09-04 #MOLE-381 The details drawer shows a video's duration and codecs in every build
 2026-09-04 #MOLE-381 A damaged database, Parquet or PDF file shows its facts, instead of an empty pane
 2026-09-04 #MOLE-385 A thumbnail follows a file replaced with its old date, instead of showing the picture of the old one

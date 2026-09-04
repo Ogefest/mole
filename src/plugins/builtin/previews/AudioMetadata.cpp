@@ -160,6 +160,47 @@ namespace {
         return decoded.trimmed();
     }
 
+    /// A COMM or USLT frame: encoding, a three-letter language, a description,
+    /// a NUL, and then the text.
+    ///
+    /// **Its own decode, because id3Text() cuts at the first NUL and that NUL is
+    /// the one separating the description from the comment.** So the Comment row
+    /// read "eng" -- or "engiTunNORM", the description run together with the
+    /// language -- on essentially every MP3 that has one, and setOnce() then
+    /// kept the ID3v1 comment from replacing it. See MOLE-383.
+    QString id3Comment(QByteArrayView payload)
+    {
+        // Encoding, then three bytes of language. A frame with neither is not
+        // one of these.
+        if (payload.size() < 5)
+            return {};
+        const auto encoding = static_cast<unsigned char>(payload.at(0));
+        const QByteArray rest = payload.sliced(4).toByteArray();
+
+        // The description ends at a terminator, which is one NUL for the
+        // single-byte encodings and two for the UTF-16 ones -- and the
+        // terminator is what has to be found *before* decoding, because after
+        // decoding the two halves are one string with nothing between them.
+        QByteArray text;
+        if (encoding == 1 || encoding == 2) {
+            for (qsizetype i = 0; i + 1 < rest.size(); i += 2) {
+                if (rest.at(i) == '\0' && rest.at(i + 1) == '\0') {
+                    text = rest.mid(i + 2);
+                    break;
+                }
+            }
+        } else if (const qsizetype nul = rest.indexOf('\0'); nul >= 0) {
+            text = rest.mid(nul + 1);
+        }
+        if (text.isEmpty())
+            return {};
+
+        // The encoding byte back in front, so the one decoder handles all four.
+        QByteArray asAFrame(1, char(encoding));
+        asAFrame += text;
+        return id3Text(asAFrame);
+    }
+
     /// Reads an ID3v2 block and returns how many bytes of the file it occupied,
     /// so the caller knows where the audio starts.
     qint64 readId3v2(QByteArrayView head, Tags& tags)
@@ -184,6 +225,20 @@ namespace {
 
         const int headerBytes = major >= 3 ? 10 : 6;
         qint64 at = 0;
+
+        // The extended header, when the flag says there is one. It sits between
+        // the header and the first frame, and skipping it was not done at all --
+        // so the first "frame id" was the extended header's own size, whose
+        // leading byte is a NUL, and the loop broke immediately: **every tag in
+        // the file invisible**, from one bit. Its length field is synchsafe in
+        // v2.4 and a plain 32-bit count of the bytes *after* itself in v2.3.
+        // See MOLE-383.
+        if ((flags & 0x40) && major >= 3) {
+            const qint64 extended = major >= 4 ? qint64(synchsafe(block, 0)) : qint64(beU32(block, 0)) + 4;
+            if (extended <= 0 || extended >= block.size())
+                return declared + 10;
+            at = extended;
+        }
         while (at + headerBytes <= block.size()) {
             const QByteArray id = block.mid(at, major >= 3 ? 4 : 3);
             if (id.isEmpty() || id.at(0) == '\0')
@@ -204,7 +259,21 @@ namespace {
             if (size <= 0 || at + headerBytes + size > block.size())
                 break;
 
-            const QByteArrayView payload = QByteArrayView(block).sliced(at + headerBytes, size);
+            QByteArrayView payload = QByteArrayView(block).sliced(at + headerBytes, size);
+
+            // A v2.4 frame may carry a data-length indicator: four extra bytes
+            // in front of the frame's own content, announced by bit 0 of the
+            // second flag byte. Not skipping them put four bytes of length where
+            // the encoding byte should be, so the text came out garbled -- and it
+            // is the flag a compressed or encrypted frame sets, which is
+            // ordinary in files written by anything that pads.
+            // See MOLE-383.
+            if (major >= 4 && size > 4) {
+                const auto frameFlags = static_cast<unsigned char>(block.at(at + 9));
+                if (frameFlags & 0x01)
+                    payload = payload.sliced(4);
+            }
+
             const QString text = id3Text(payload);
             if (id == QByteArrayLiteral("TIT2") || id == QByteArrayLiteral("TT2"))
                 setOnce(tags.title, text);
@@ -220,8 +289,8 @@ namespace {
                 setOnce(tags.track, text);
             else if (id == QByteArrayLiteral("TCON"))
                 setOnce(tags.genre, text);
-            else if (id == QByteArrayLiteral("COMM"))
-                setOnce(tags.comment, text.section(QChar(u'\0'), -1));
+            else if (id == QByteArrayLiteral("COMM") || id == QByteArrayLiteral("COM"))
+                setOnce(tags.comment, id3Comment(payload));
 
             at += headerBytes + size;
         }
@@ -468,18 +537,18 @@ namespace {
             }
         }
 
-        // The duration is in the movie header, exactly where the video reader
-        // finds it -- the same walk over the same boxes.
-        if (const std::optional<IsoBox> mvhd
-            = isoBoxNamed(head, moov->payloadOffset(), moov->payloadBytes(), "mvhd")) {
-            const quint32 versionAndFlags = beU32(head, mvhd->payloadOffset());
-            const qint64 at = mvhd->payloadOffset() + ((versionAndFlags >> 24) == 1 ? 20 : 12);
-            const quint32 timescale = beU32(head, at);
-            const quint32 ticks = beU32(head, at + 4);
-            if (timescale > 0 && ticks > 0)
-                stream.seconds = double(ticks) / timescale;
-        }
-        stream.codec = QStringLiteral("AAC");
+        // The duration and the codec both come from the video reader's own walk
+        // now, rather than from a second reading of the same boxes.
+        //
+        // The second reading had two faults. It read a version-1 duration as 32
+        // bits -- the *high* half of a 64-bit field -- so a file with the wide
+        // header reported millions of hours or nought. And the codec was "AAC"
+        // unconditionally, so every ALAC .m4a, a lossless file somebody chose on
+        // purpose, was described as AAC. See MOLE-383.
+        if (const std::optional<double> seconds = isoMovieSeconds(head, *moov))
+            stream.seconds = *seconds;
+        const QString codec = isoFirstCodec(head, *moov);
+        stream.codec = codec.isEmpty() ? QStringLiteral("AAC") : codec;
         return true;
     }
 

@@ -43,6 +43,13 @@ public:
     /// this is where the parsing risk lives and it deserves bytes a test wrote.
     static QList<FileFact> factsFor(QByteArrayView prefix);
 
+    /// Whether this prefix is the front of a document container rather than of
+    /// some other zip.
+    ///
+    /// The member every one of these formats writes first by specification:
+    /// `[Content_Types].xml` or `mimetype`. See read() and MOLE-383.
+    static bool looksLikeADocumentContainer(QByteArrayView prefix);
+
     /// True in a build that can open a container at all.
     static bool isAvailable();
 };

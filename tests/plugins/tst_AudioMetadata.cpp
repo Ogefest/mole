@@ -39,6 +39,35 @@ QByteArray textFrame(const char* id, const QByteArray& text, int major, char enc
     return QByteArray(id, 4) + size + QByteArray(2, '\0') + payload;
 }
 
+/// A COMM frame: encoding, a three-letter language, a description, a NUL, and
+/// then the comment.
+///
+/// The shape that broke the reader -- see MOLE-383. The description is what
+/// iTunes and every normaliser put there, and the NUL after it is the one
+/// id3Text() was cutting the whole payload at.
+QByteArray commentFrame(
+    const QByteArray& description, const QByteArray& comment, int major, char encoding = 0)
+{
+    QByteArray payload(1, encoding);
+    payload += QByteArrayLiteral("eng");
+    payload += description;
+    payload += '\0';
+    payload += comment;
+    const QByteArray size = major >= 4 ? synchsafe(quint32(payload.size())) : be32(quint32(payload.size()));
+    return QByteArrayLiteral("COMM") + size + QByteArray(2, '\0') + payload;
+}
+
+/// A v2.4 frame carrying a data-length indicator: four bytes of length in front
+/// of the frame's own content, announced by bit 0 of the second flag byte.
+QByteArray frameWithADataLength(const char* id, const QByteArray& text)
+{
+    const QByteArray content = QByteArray(1, '\0') + text;
+    const QByteArray payload = synchsafe(quint32(content.size())) + content;
+    QByteArray flags(2, '\0');
+    flags[1] = char(0x01);
+    return QByteArray(id, 4) + synchsafe(quint32(payload.size())) + flags + payload;
+}
+
 /// A frame header a decoder would accept: MPEG 1 layer III, 128 kbit/s, 44.1 kHz.
 QByteArray mpegFrame()
 {
@@ -68,6 +97,33 @@ QByteArray id3v2(int major, const QByteArray& frames, bool unsynchronised = fals
     header += char(major);
     header += char(0);
     header += char(unsynchronised ? 0x80 : 0x00);
+    header += synchsafe(quint32(body.size()));
+    return header + body;
+}
+
+/// The same, with an extended header between the header and the first frame.
+///
+/// One bit in the flags, and the whole tag was invisible: the first "frame id"
+/// read was the extended header's own size, whose leading byte is a NUL, and the
+/// loop treated that as padding. See MOLE-383.
+QByteArray id3v2WithAnExtendedHeader(int major, const QByteArray& frames)
+{
+    QByteArray extended;
+    if (major >= 4) {
+        // v2.4: a synchsafe size that counts itself, one byte of flag count,
+        // one of flags.
+        extended = synchsafe(6) + QByteArray(1, char(1)) + QByteArray(1, '\0');
+    } else {
+        // v2.3: a plain size of what follows the size field, then flags and a
+        // padding count.
+        extended = be32(6) + QByteArray(6, '\0');
+    }
+
+    const QByteArray body = extended + frames;
+    QByteArray header = QByteArrayLiteral("ID3");
+    header += char(major);
+    header += char(0);
+    header += char(0x40); // the extended-header flag
     header += synchsafe(quint32(body.size()));
     return header + body;
 }
@@ -157,9 +213,31 @@ QByteArray dataBox(const QByteArray& text)
     return box("data", be32(1) + be32(0) + text);
 }
 
-QByteArray m4a()
+/// A sample-description chain deep enough for the codec to be read out of it:
+/// trak -> mdia -> minf -> stbl -> stsd -> the entry's own four characters.
+QByteArray audioTrack(const char* codec)
 {
-    QByteArray mvhd = be32(0) + be32(0) + be32(0) + be32(1000) + be32(215000) + QByteArray(80, '\0');
+    const QByteArray stsd = box("stsd", be32(0) + be32(1) + box(codec, QByteArray(70, '\0')));
+    const QByteArray minf = box("minf", box("stbl", stsd));
+    const QByteArray mdia = box("mdia", box("hdlr", QByteArray(24, '\0')) + minf);
+    return box("trak", mdia);
+}
+
+QByteArray m4a(const char* codec = "mp4a", bool wideHeader = false)
+{
+    // Version 0: a 32-bit creation time, modification time, timescale and
+    // duration. Version 1 widens the two times and the duration to 64 bits,
+    // which is what the audio reader's own copy of this read wrongly.
+    QByteArray mvhd;
+    if (wideHeader) {
+        mvhd = be32(1u << 24); // version 1
+        mvhd += be32(0) + be32(0) + be32(0) + be32(0); // created, modified
+        mvhd += be32(1000);
+        mvhd += be32(0) + be32(215000); // a 64-bit duration
+        mvhd += QByteArray(80, '\0');
+    } else {
+        mvhd = be32(0) + be32(0) + be32(0) + be32(1000) + be32(215000) + QByteArray(80, '\0');
+    }
 
     QByteArray ilst;
     ilst += box("\xa9"
@@ -181,7 +259,7 @@ QByteArray m4a()
     ilst += box("trkn", dataBox(QByteArray(3, '\0') + QByteArray(1, char(4)) + QByteArray(4, '\0')));
 
     const QByteArray meta = box("meta", box("hdlr", QByteArray(24, '\0')) + box("ilst", ilst));
-    const QByteArray moov = box("moov", box("mvhd", mvhd) + box("udta", meta));
+    const QByteArray moov = box("moov", box("mvhd", mvhd) + audioTrack(codec) + box("udta", meta));
     return box("ftyp", QByteArrayLiteral("M4A ") + be32(0) + QByteArrayLiteral("M4A mp42isom")) + moov
         + box("mdat", QByteArray(2048, 'a'));
 }
@@ -205,6 +283,11 @@ class TestAudioMetadata : public QObject
 private slots:
     void anMp3WithId3v2_data();
     void anMp3WithId3v2();
+    void aCommentFrameIsTheCommentAndNotTheLanguage_data();
+    void aCommentFrameIsTheCommentAndNotTheLanguage();
+    void anExtendedHeaderDoesNotHideEveryTag_data();
+    void anExtendedHeaderDoesNotHideEveryTag();
+    void aFrameWithADataLengthIndicatorIsStillReadable();
     void anUnsynchronisedBlockIsReadTheSameWay();
     void anMp3WithOnlyAnId3v1Tag();
     void aDurationWithNoHeaderToReadItFromIsMarkedAsAnEstimate();
@@ -241,6 +324,99 @@ void TestAudioMetadata::anMp3WithId3v2()
     QCOMPARE(factNamed(facts, QStringLiteral("Bitrate")), QStringLiteral("128 kbit/s"));
     QCOMPARE(factNamed(facts, QStringLiteral("Sample rate")), QStringLiteral("44.1 kHz"));
     QCOMPARE(factNamed(facts, QStringLiteral("Channels")), QStringLiteral("stereo"));
+}
+
+void TestAudioMetadata::aCommentFrameIsTheCommentAndNotTheLanguage_data()
+{
+    QTest::addColumn<int>("major");
+    QTest::newRow("ID3v2.3") << 3;
+    QTest::newRow("ID3v2.4") << 4;
+}
+
+/// The Comment row said "eng" on essentially every MP3 that had one.
+///
+/// A COMM payload is encoding, a three-letter language, a description, a NUL,
+/// and then the comment -- and id3Text() truncates at the first NUL, which is
+/// exactly that separator. So what survived was the language, or the language
+/// run together with the description ("engiTunNORM"), and setOnce() then kept
+/// the ID3v1 comment from replacing it. See MOLE-383.
+void TestAudioMetadata::aCommentFrameIsTheCommentAndNotTheLanguage()
+{
+    QFETCH(int, major);
+
+    QByteArray frames = textFrame("TIT2", QByteArrayLiteral("Blue Monday"), major);
+    frames
+        += commentFrame(QByteArrayLiteral("iTunNORM"), QByteArrayLiteral("Ripped from the 12 inch"), major);
+    QByteArray file = id3v2(major, frames);
+    for (int i = 0; i < 40; ++i)
+        file += mpegFrame();
+
+    const QList<FileFact> facts = AudioMetadataReader::factsFor(file, file, file.size());
+    QCOMPARE(factNamed(facts, QStringLiteral("Comment")), QStringLiteral("Ripped from the 12 inch"));
+    // And the title beside it, so this is not a case that passes because nothing
+    // was read at all.
+    QCOMPARE(factNamed(facts, QStringLiteral("Title")), QStringLiteral("Blue Monday"));
+
+    // A comment with an empty description is the other common shape, and it has
+    // the same NUL in the same place.
+    QByteArray plain = textFrame("TIT2", QByteArrayLiteral("Blue Monday"), major);
+    plain += commentFrame(QByteArray(), QByteArrayLiteral("no description here"), major);
+    QByteArray second = id3v2(major, plain);
+    for (int i = 0; i < 40; ++i)
+        second += mpegFrame();
+    QCOMPARE(
+        factNamed(AudioMetadataReader::factsFor(second, second, second.size()), QStringLiteral("Comment")),
+        QStringLiteral("no description here"));
+}
+
+void TestAudioMetadata::anExtendedHeaderDoesNotHideEveryTag_data()
+{
+    QTest::addColumn<int>("major");
+    QTest::newRow("ID3v2.3") << 3;
+    QTest::newRow("ID3v2.4") << 4;
+}
+
+/// One flag bit made every tag in the file invisible.
+///
+/// readId3v2() ignored header flag 0x40, so with an extended header the first
+/// "frame id" read was the extended header's own size -- whose leading byte is a
+/// NUL -- and the loop broke on it as padding. Not one tag came out. See
+/// MOLE-383.
+void TestAudioMetadata::anExtendedHeaderDoesNotHideEveryTag()
+{
+    QFETCH(int, major);
+
+    QByteArray frames = textFrame("TIT2", QByteArrayLiteral("Blue Monday"), major);
+    frames += textFrame("TPE1", QByteArrayLiteral("New Order"), major);
+    QByteArray file = id3v2WithAnExtendedHeader(major, frames);
+    for (int i = 0; i < 40; ++i)
+        file += mpegFrame();
+
+    const QList<FileFact> facts = AudioMetadataReader::factsFor(file, file, file.size());
+    QCOMPARE(factNamed(facts, QStringLiteral("Title")), QStringLiteral("Blue Monday"));
+    QCOMPARE(factNamed(facts, QStringLiteral("Artist")), QStringLiteral("New Order"));
+}
+
+/// A v2.4 frame with a data-length indicator came out garbled.
+///
+/// The indicator is four extra bytes in front of the frame's own content,
+/// announced by bit 0 of the second flag byte -- and it is the flag a compressed
+/// or encrypted frame sets, which is ordinary in files written by anything that
+/// pads. Not skipping them put four bytes of length where the encoding byte
+/// should be. See MOLE-383.
+void TestAudioMetadata::aFrameWithADataLengthIndicatorIsStillReadable()
+{
+    QByteArray frames = frameWithADataLength("TIT2", QByteArrayLiteral("Blue Monday"));
+    frames += textFrame("TPE1", QByteArrayLiteral("New Order"), 4);
+    QByteArray file = id3v2(4, frames);
+    for (int i = 0; i < 40; ++i)
+        file += mpegFrame();
+
+    const QList<FileFact> facts = AudioMetadataReader::factsFor(file, file, file.size());
+    QCOMPARE(factNamed(facts, QStringLiteral("Title")), QStringLiteral("Blue Monday"));
+    // The frame after it is still found, which is what says the size was read
+    // right as well as the content.
+    QCOMPARE(factNamed(facts, QStringLiteral("Artist")), QStringLiteral("New Order"));
 }
 
 void TestAudioMetadata::anUnsynchronisedBlockIsReadTheSameWay()
@@ -314,6 +490,24 @@ void TestAudioMetadata::anM4aReportsItsIlstTags()
     QCOMPARE(factNamed(facts, QStringLiteral("Year")), QStringLiteral("1986"));
     QCOMPARE(factNamed(facts, QStringLiteral("Track")), QStringLiteral("4"));
     QCOMPARE(factNamed(facts, QStringLiteral("Duration")), QStringLiteral("3:35"));
+    QCOMPARE(factNamed(facts, QStringLiteral("Codec")), QStringLiteral("AAC"));
+
+    // **An ALAC file is not AAC.** The codec was set to "AAC" unconditionally,
+    // so every lossless .m4a -- a file somebody chose deliberately for being
+    // lossless -- was described as the lossy format. It comes from the sample
+    // description now, through the same walk the video reader makes.
+    // See MOLE-383.
+    const QByteArray lossless = m4a("alac");
+    QCOMPARE(factNamed(AudioMetadataReader::factsFor(lossless, {}, lossless.size()), QStringLiteral("Codec")),
+        QStringLiteral("ALAC"));
+
+    // And a version-1 movie header: the duration is 64 bits there, and this
+    // reader's own copy of the box read the *high* half as a 32-bit count -- so
+    // the file reported nought or millions of hours. It shares the video
+    // reader's reading now. See MOLE-383.
+    const QByteArray wide = m4a("mp4a", true);
+    QCOMPARE(factNamed(AudioMetadataReader::factsFor(wide, {}, wide.size()), QStringLiteral("Duration")),
+        QStringLiteral("3:35"));
 }
 
 /// The box the ilst reader sliced with, claiming very nearly 2^63 bytes.

@@ -7,12 +7,14 @@
 #include "support/ZipFixtures.h"
 
 #include "core/vfs/VfsManager.h"
+#include "core/vfs/backends/LocalFileSystem.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
 #include <QBuffer>
 #include <QDir>
 #include <QFile>
 #include <QGuiApplication>
+#include <QLocale>
 #include <QPageSize>
 #include <QPainter>
 #include <QPdfWriter>
@@ -89,6 +91,7 @@ private slots:
     void anOfficeDocumentNamesItsAuthorAndCounts();
     void anOpenDocumentNamesTheOdfEquivalents();
     void aPlainZipContributesNothing();
+    void aLargeZipThatIsNoDocumentIsNotDescribedAsOne();
     void propertiesPastThePrefixAreNotFetched();
     void anEntityNamingALocalFileIsNotResolved();
     void aPdfNamesItsTitleAuthorAndPages();
@@ -159,6 +162,74 @@ void TestDocumentMetadata::aPlainZipContributesNothing()
     QVERIFY(DocumentMetadataReader::factsFor(zip.build()).isEmpty());
     QVERIFY(DocumentMetadataReader::factsFor(QByteArray("not even a zip")).isEmpty());
     QVERIFY(DocumentMetadataReader::factsFor(QByteArray()).isEmpty());
+}
+
+/// Every large zip was described as a document.
+///
+/// canRead() accepts any sniffed application/zip, on the argument that a zip
+/// which is not a document contributes nothing -- and then read() appended
+/// "Properties: not in the first 256 kB" whenever nothing was found and the
+/// prefix was full, without checking that anything document-like was there. So
+/// a 5 MB photos.zip with the drawer open told the reader it was a document
+/// whose author is further in. aPlainZipContributesNothing goes through
+/// factsFor() with a small zip and never reaches this path. See MOLE-383.
+void TestDocumentMetadata::aLargeZipThatIsNoDocumentIsNotDescribedAsOne()
+{
+    if (!DocumentMetadataReader::isAvailable())
+        QSKIP("built without libarchive");
+
+    // A zip of photographs, big enough that the prefix fills.
+    StoredZip zip;
+    zip.add("holiday/one.jpg", QByteArray(200 * 1024, 'j'));
+    zip.add("holiday/two.jpg", QByteArray(200 * 1024, 'k'));
+    const QByteArray whole = zip.build();
+    QVERIFY(whole.size() > DocumentMetadataReader::kPrefixBytes);
+
+    TempTree tree;
+    QVERIFY(tree.isValid());
+    QVERIFY(tree.writeFile(QStringLiteral("photos.zip"), whole));
+
+    auto disk = std::make_shared<LocalFileSystem>();
+    VfsManager vfs;
+    Mount mount;
+    mount.displayName = QStringLiteral("disk");
+    mount.root = tree.rootUri();
+    mount.fileSystem = disk;
+    QVERIFY(!vfs.addMount(mount).isEmpty());
+
+    PluginServices services;
+    services.vfs = &vfs;
+
+    FileEntry entry;
+    entry.uri = tree.rootUri().child(QStringLiteral("photos.zip"));
+    entry.name = QStringLiteral("photos.zip");
+    entry.size = whole.size();
+    entry.mimeType = QStringLiteral("application/zip");
+
+    const DocumentMetadataReader reader;
+    QVERIFY2(reader.canRead(entry), "a zip is still claimed -- it may be a document");
+    const QList<FileFact> facts = reader.read(entry, QByteArrayView(), services, CancelToken {});
+    QVERIFY2(facts.isEmpty(),
+        qPrintable(QStringLiteral("a zip of photographs was described as: %1")
+                       .arg(factNamed(facts, QStringLiteral("Properties")))));
+
+    // And a real document whose properties are past the prefix still says so,
+    // which is what the row is for.
+    StoredZip document;
+    document.add("[Content_Types].xml", "<Types/>");
+    document.addFiller(DocumentMetadataReader::kPrefixBytes);
+    document.add("docProps/core.xml", officeCore());
+    const QByteArray big = document.build();
+    QVERIFY(tree.writeFile(QStringLiteral("report.docx"), big));
+
+    FileEntry paper;
+    paper.uri = tree.rootUri().child(QStringLiteral("report.docx"));
+    paper.name = QStringLiteral("report.docx");
+    paper.size = big.size();
+    const QList<FileFact> said = reader.read(paper, QByteArrayView(), services, CancelToken {});
+    QCOMPARE(factNamed(said, QStringLiteral("Properties")),
+        QStringLiteral("not in the first %1")
+            .arg(QLocale().formattedDataSize(DocumentMetadataReader::kPrefixBytes)));
 }
 
 void TestDocumentMetadata::propertiesPastThePrefixAreNotFetched()

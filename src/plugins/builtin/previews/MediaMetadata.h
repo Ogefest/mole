@@ -83,6 +83,22 @@ public:
 /// identifier when it is not in the table. Shared with the audio reader.
 QString codecName(const QString& identifier);
 
+/// How long the movie in `moov` is, in seconds, from its `mvhd`.
+///
+/// Shared so there is one reading of the box rather than two. The audio reader
+/// had its own, and its own read the version-1 duration as 32 bits -- taking the
+/// *high* half of a 64-bit field, so a file written with the wide header
+/// reported a duration in the millions of hours or nought. See MOLE-383.
+std::optional<double> isoMovieSeconds(QByteArrayView bytes, const IsoBox& moov);
+
+/// The four characters naming the codec of the first sample entry under `moov`,
+/// or empty.
+///
+/// Also shared, and for the same reason: the audio reader was setting "AAC"
+/// unconditionally, so every ALAC .m4a -- a lossless file somebody chose
+/// deliberately -- was described as AAC. See MOLE-383.
+QString isoFirstCodec(QByteArrayView bytes, const IsoBox& moov);
+
 /// `1:03:07`, or `3:07` for anything under an hour.
 QString durationText(double seconds);
 

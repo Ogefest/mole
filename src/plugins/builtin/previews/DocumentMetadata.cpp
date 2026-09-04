@@ -171,6 +171,22 @@ namespace {
 
 } // namespace
 
+bool DocumentMetadataReader::looksLikeADocumentContainer(QByteArrayView prefix)
+{
+#ifdef MOLE_HAVE_ARCHIVE
+    // The two members these formats are required to write first. Asked through
+    // the same prefix walk rather than by scanning for the names as bytes: a
+    // name appears in a local header *and* in the central directory, and the
+    // walk is what knows the difference.
+    static const QStringList firstMembers { QStringLiteral("[Content_Types].xml"),
+        QStringLiteral("mimetype") };
+    return !membersFromZipPrefix(prefix, firstMembers, 4096).isEmpty();
+#else
+    Q_UNUSED(prefix);
+    return false;
+#endif
+}
+
 QList<FileFact> DocumentMetadataReader::factsFor(QByteArrayView prefix)
 {
     QList<FileFact> facts;
@@ -243,7 +259,17 @@ QList<FileFact> DocumentMetadataReader::read(
     QList<FileFact> facts = factsFor(prefix);
     // A container whose properties are further in than the prefix reaches says
     // so, rather than saying nothing and reading like a document with no author.
-    if (facts.isEmpty() && prefix.size() >= kPrefixBytes) {
+    //
+    // **And only a container that really is a document.** canRead() accepts any
+    // sniffed application/zip, on the argument that a zip which is not a
+    // document contributes nothing -- and then this row was appended whenever
+    // nothing was found and the prefix was full, so a 5 MB photos.zip told the
+    // reader it was a document whose author is further in. What decides it is
+    // the member every one of these formats puts *first* by specification:
+    // `[Content_Types].xml` for OOXML, `mimetype` for OpenDocument. If neither
+    // is in the first 256 kB then neither is the file a document, whatever else
+    // is further in. See MOLE-383.
+    if (facts.isEmpty() && prefix.size() >= kPrefixBytes && looksLikeADocumentContainer(prefix)) {
         facts.append({ QStringLiteral("Properties"),
             QStringLiteral("not in the first %1").arg(QLocale().formattedDataSize(kPrefixBytes)) });
     }

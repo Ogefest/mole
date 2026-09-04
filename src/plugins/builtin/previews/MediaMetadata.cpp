@@ -610,6 +610,45 @@ std::optional<IsoBox> isoBoxAt(QByteArrayView bytes, const QList<QByteArray>& pa
     return found;
 }
 
+std::optional<double> isoMovieSeconds(QByteArrayView bytes, const IsoBox& moov)
+{
+    const std::optional<IsoBox> mvhd = isoBoxNamed(bytes, moov.payloadOffset(), moov.payloadBytes(), "mvhd");
+    return mvhd ? isoDuration(bytes, *mvhd) : std::nullopt;
+}
+
+QString isoFirstCodec(QByteArrayView bytes, const IsoBox& moov)
+{
+    // moov -> trak -> mdia -> minf -> stbl -> stsd, and the first sample entry's
+    // own four characters. The same walk readTrack() makes; here it answers for
+    // the file rather than per track, which is what a reader with one stream
+    // wants.
+    const QList<IsoBox> traks = isoBoxesIn(bytes, moov.payloadOffset(), moov.payloadBytes());
+    for (const IsoBox& trak : traks) {
+        if (trak.type != QByteArrayLiteral("trak"))
+            continue;
+        const std::optional<IsoBox> mdia
+            = isoBoxNamed(bytes, trak.payloadOffset(), trak.payloadBytes(), "mdia");
+        if (!mdia)
+            continue;
+        const std::optional<IsoBox> minf
+            = isoBoxNamed(bytes, mdia->payloadOffset(), mdia->payloadBytes(), "minf");
+        if (!minf)
+            continue;
+        const std::optional<IsoBox> stbl
+            = isoBoxNamed(bytes, minf->payloadOffset(), minf->payloadBytes(), "stbl");
+        if (!stbl)
+            continue;
+        const std::optional<IsoBox> stsd
+            = isoBoxNamed(bytes, stbl->payloadOffset(), stbl->payloadBytes(), "stsd");
+        if (!stsd || stsd->payloadBytes() <= 8)
+            continue;
+        const QList<IsoBox> entries = isoBoxesIn(bytes, stsd->payloadOffset() + 8, stsd->payloadBytes() - 8);
+        if (!entries.isEmpty())
+            return QString::fromLatin1(entries.first().type);
+    }
+    return {};
+}
+
 QString codecName(const QString& identifier)
 {
     static const QHash<QString, QString> names {
