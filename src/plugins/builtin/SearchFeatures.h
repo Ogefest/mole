@@ -261,6 +261,13 @@ public:
     /// and returns the bytes, or -1 for anything it cannot make sense of. A form
     /// should not make someone count zeros.
     static qint64 parseSize(const QString& text);
+    /// The same, telling "left blank" from "cannot be read".
+    ///
+    /// -1 for an empty field, which is a criterion left blank; nothing for text
+    /// that is not a size. parseSize() answers -1 for both, and every caller that
+    /// has to tell them apart was getting it wrong: `10 MG` in the form meant no
+    /// lower bound. See MOLE-376.
+    static std::optional<qint64> sizeFrom(const QString& text);
     Q_INVOKABLE void setSizeRange(const QString& minText, const QString& maxText);
 
     Q_INVOKABLE void start();

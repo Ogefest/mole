@@ -107,6 +107,14 @@ public:
     /// How many listings are being held by the gate right now. Wait for this,
     /// never for a duration.
     int listsInProgress() const;
+    /// The same gate for openRead(), because a task that has to be caught *inside*
+    /// a read -- cancelled while it is holding a file open -- cannot be caught by
+    /// waiting a while and hoping. Null clears it.
+    void setReadGate(std::shared_ptr<QSemaphore> gate);
+    /// How many reads are being held right now, and how many have been reached
+    /// at all. Both are conditions to wait on rather than durations.
+    int readsInProgress() const;
+    int readCount() const;
     /// The same for openRead(), because the honest way to test what a view does
     /// while a file is slow to arrive is to have one that is.
     void setReadDelayMs(int ms) { m_readDelayMs = ms; }
@@ -201,6 +209,9 @@ private:
     mutable QMutex m_gateMutex;
     std::shared_ptr<QSemaphore> m_listGate;
     std::atomic_int m_listsHeld { 0 };
+    std::shared_ptr<QSemaphore> m_readGate;
+    std::atomic_int m_readsHeld { 0 };
+    std::atomic_int m_readCalls { 0 };
     int m_readDelayMs = 0;
     int m_operationDelayMs = 0;
     qint64 m_throttleBytes = 0;

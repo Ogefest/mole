@@ -209,6 +209,22 @@ int MemoryFileSystem::listsInProgress() const
     return m_listsHeld.load();
 }
 
+void MemoryFileSystem::setReadGate(std::shared_ptr<QSemaphore> gate)
+{
+    QMutexLocker lock(&m_gateMutex);
+    m_readGate = std::move(gate);
+}
+
+int MemoryFileSystem::readsInProgress() const
+{
+    return m_readsHeld.load();
+}
+
+int MemoryFileSystem::readCount() const
+{
+    return m_readCalls.load();
+}
+
 Result<FileEntryList> MemoryFileSystem::list(const VfsUri& dir, const CancelToken& cancel)
 {
     checkNotOnTheDrawingThread("list");
@@ -478,6 +494,22 @@ Result<std::unique_ptr<QIODevice>> MemoryFileSystem::openRead(
     }
     checkNotOnTheDrawingThread("openRead");
     waitAsASlowDriveWould();
+    ++m_readCalls;
+
+    // Held outside the drive's own lock, the way a listing is: a read that is
+    // being held is a call that has not come back, not a drive that has stopped
+    // working.
+    std::shared_ptr<QSemaphore> readGate;
+    {
+        QMutexLocker gateLock(&m_gateMutex);
+        readGate = m_readGate;
+    }
+    if (readGate) {
+        ++m_readsHeld;
+        readGate->acquire();
+        --m_readsHeld;
+    }
+
     // Slept before the lock is taken, so a delayed read does not block every
     // other caller of this drive for the duration.
     if (m_readDelayMs > 0)

@@ -11,7 +11,11 @@
 #include "core/vfs/VfsManager.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
+#include <QDateTime>
 #include <QFile>
+#include <QPointer>
+#include <QSemaphore>
+#include <QTimeZone>
 
 using namespace mole;
 using namespace mole::test;
@@ -54,6 +58,12 @@ private slots:
     void aLineNobodyCanReadSaysSoAndDoesNotRun();
     void theLineCanBeLeftEmptyAndTheFormUsedAlone();
     void aContentSearchEverywhereReadsEachHitFromItsOwnDrive();
+    void modifiedBeforeAndAfterAreTwoDifferentQuestions();
+    void theOtherEndOfADateRangeSurvivesTheLine();
+    void aSizeNobodyCanReadNarrowsNothingAndSaysSo();
+    void aRestoredSearchKeepsItsSizeLimitsAndItsLine();
+    void aRestoredSearchKeepsItsVolumeWhenAnotherOneIsIndexed();
+    void aClosedTabDoesNotLeaveItsIndexQueryReadingFiles();
 
 private:
     /// The search tab, aimed at `root`, with the index allowed.
@@ -662,6 +672,227 @@ void TestMixedSearch::aContentSearchEverywhereReadsEachHitFromItsOwnDrive()
     QVERIFY(runToEnd(other));
 
     QCOMPARE(urisIn(other->results()), QStringList({ QStringLiteral("mem://beta/docs/report.txt") }));
+}
+
+/// `modified:<` means before, and used to mean after.
+///
+/// setQueryLine()'s Below/AtMost branch assigned m_modifiedFrom, the same as the
+/// Above branch, with a comment reading "changed in the last 30 days" -- so the
+/// operator was parsed and thrown away and `modified:<2025-01-01` found the *new*
+/// files. The opposite answer, silently. And the More form's own "modified to"
+/// field, which m_modifiedTo has always backed, was never printed on the line, so
+/// the next keystroke there cleared it. See MOLE-376.
+void TestMixedSearch::modifiedBeforeAndAfterAreTwoDifferentQuestions()
+{
+    m_mem->addFile(QStringLiteral("/dates/old-note.txt"), QByteArray("x"),
+        QDateTime(QDate(2024, 1, 1), QTime(12, 0), QTimeZone::utc()));
+    m_mem->addFile(QStringLiteral("/dates/new-note.txt"), QByteArray("x"),
+        QDateTime(QDate(2026, 1, 1), QTime(12, 0), QTimeZone::utc()));
+
+    LiveSearchController* search = searchOver(memUri(QStringLiteral("/dates")));
+    QVERIFY(search);
+
+    // Before, which is the half that answered the opposite question.
+    search->setQueryLine(QStringLiteral("note modified:<2025-01-01"));
+    QVERIFY2(search->queryLineError().isEmpty(), qPrintable(search->queryLineError()));
+    QCOMPARE(search->modifiedTo(), QStringLiteral("2025-01-01"));
+    QVERIFY2(search->modifiedFrom().isEmpty(), qPrintable(search->modifiedFrom()));
+    QVERIFY(runToEnd(search));
+    QCOMPARE(urisIn(search->results()), QStringList { memUri(QStringLiteral("/dates/old-note.txt")) });
+
+    // And after, which is what it used to answer either way round.
+    search->setQueryLine(QStringLiteral("note modified:>2025-01-01"));
+    QVERIFY2(search->queryLineError().isEmpty(), qPrintable(search->queryLineError()));
+    QCOMPARE(search->modifiedFrom(), QStringLiteral("2025-01-01"));
+    QVERIFY2(search->modifiedTo().isEmpty(), qPrintable(search->modifiedTo()));
+    QVERIFY(runToEnd(search));
+    QCOMPARE(urisIn(search->results()), QStringList { memUri(QStringLiteral("/dates/new-note.txt")) });
+}
+
+/// The form's "modified to" field and the line say the same thing.
+///
+/// ADR-0067: the line and the form are one query seen twice. The "to" end was in
+/// the form and not on the line, so setting it in the form and then touching the
+/// line threw it away. See MOLE-376.
+void TestMixedSearch::theOtherEndOfADateRangeSurvivesTheLine()
+{
+    LiveSearchController* search = searchOver(memUri(QStringLiteral("/tree")));
+    QVERIFY(search);
+    search->setQueryText(QStringLiteral("note"));
+    search->setModifiedTo(QStringLiteral("2025-01-01"));
+
+    const QString line = search->queryLine();
+    QVERIFY2(line.contains(QStringLiteral("modified<=2025-01-01")), qPrintable(line));
+
+    // Read back off the line it just wrote, which is the round trip the rest of
+    // the criteria have always made.
+    LiveSearchController* second = searchOver(memUri(QStringLiteral("/tree")));
+    QVERIFY(second);
+    second->setQueryLine(line);
+    QVERIFY2(second->queryLineError().isEmpty(), qPrintable(second->queryLineError()));
+    QCOMPARE(second->modifiedTo(), QStringLiteral("2025-01-01"));
+    QCOMPARE(second->queryLine(), line);
+}
+
+/// A size the form cannot read has to narrow nothing and say so.
+///
+/// parseSize() answers -1 both for "empty" and for "could not read this", and
+/// setSizeRange() stored whichever it got -- so `10 MG` in the form meant *no
+/// lower bound*, and it silently widened a range that was already set, while
+/// `size>10MG` on the line was refused with "10MG is not a size". QueryLine.h
+/// says a criterion that cannot be read must narrow nothing and say so.
+/// See MOLE-376.
+void TestMixedSearch::aSizeNobodyCanReadNarrowsNothingAndSaysSo()
+{
+    LiveSearchController* search = searchOver(memUri(QStringLiteral("/tree")));
+    QVERIFY(search);
+    search->setQueryText(QStringLiteral("note"));
+
+    // A real range first, so there is something for the refusal not to disturb.
+    search->setSizeRange(QStringLiteral("10k"), QStringLiteral("2M"));
+    QVERIFY2(search->queryLineError().isEmpty(), qPrintable(search->queryLineError()));
+    const QString withRange = search->queryLine();
+    const qint64 low = search->minSize();
+    const qint64 high = search->maxSize();
+    QCOMPARE(low, qint64(10 * 1024));
+    QVERIFY2(withRange.contains(QStringLiteral("size>=")), qPrintable(withRange));
+
+    search->setSizeRange(QStringLiteral("10 MG"), QStringLiteral("2M"));
+    QVERIFY2(!search->queryLineError().isEmpty(), "a size nobody can read was accepted in silence");
+    QVERIFY2(
+        search->queryLineError().contains(QStringLiteral("10 MG")), qPrintable(search->queryLineError()));
+    // And the range that was there is untouched, rather than being thrown away
+    // by a value nobody could read.
+    QCOMPARE(search->minSize(), low);
+    QCOMPARE(search->maxSize(), high);
+    QCOMPARE(search->queryLine(), withRange);
+
+    // The line has always refused the same shape, which is the half that worked.
+    search->setQueryLine(QStringLiteral("note size>10MG"));
+    QVERIFY(!search->queryLineError().isEmpty());
+}
+
+/// A restored search whose fields and line disagreed.
+///
+/// restoreState() brought every criterion back through its setter, which rewrites
+/// the line -- and then assigned m_minSize and m_maxSize directly, with no
+/// rewrite. So the tab came back with fields saying `size>=10 KiB size<=2 MiB`
+/// and a line that did not, and the first edit of the line reset both to -1.
+/// See MOLE-376.
+void TestMixedSearch::aRestoredSearchKeepsItsSizeLimitsAndItsLine()
+{
+    LiveSearchController* search = searchOver(memUri(QStringLiteral("/tree")));
+    QVERIFY(search);
+    search->setQueryText(QStringLiteral("note"));
+    search->setSizeRange(QStringLiteral("10k"), QStringLiteral("2M"));
+    const QString before = search->queryLine();
+    QVERIFY2(before.contains(QStringLiteral("size>=")), qPrintable(before));
+    const QVariantMap saved = search->saveState();
+
+    LiveSearchController* restored = searchOver(memUri(QStringLiteral("/tree")));
+    QVERIFY(restored);
+    restored->restoreState(saved);
+
+    QCOMPARE(restored->queryLine(), before);
+    QCOMPARE(restored->minSize(), search->minSize());
+    QCOMPARE(restored->maxSize(), search->maxSize());
+
+    // And an edit of the line no longer throws the sizes away, because the line
+    // being edited carries them.
+    restored->setQueryLine(restored->queryLine() + QStringLiteral(" kind:file"));
+    QVERIFY2(restored->queryLineError().isEmpty(), qPrintable(restored->queryLineError()));
+    QCOMPARE(restored->minSize(), search->minSize());
+    QCOMPARE(restored->maxSize(), search->maxSize());
+}
+
+/// A restored search aimed at a different volume.
+///
+/// saveState() wrote `volumeIndex`, a row in a list refreshVolumes() rebuilds
+/// from the index snapshot in whatever order it answers -- and IndexDatabase
+/// orders volumes by label. Index a folder whose label sorts first between the
+/// save and the restore and the search comes back aimed somewhere else, while
+/// the ids were in m_volumeIds all along. `useIndex` was saved nowhere at all,
+/// so a search restored with the index switched off came back with it on.
+/// See MOLE-376.
+void TestMixedSearch::aRestoredSearchKeepsItsVolumeWhenAnotherOneIsIndexed()
+{
+    // Two volumes whose labels sort the other way round from the order they are
+    // indexed in, so a row number and an id cannot accidentally agree.
+    m_mem->addFile(QStringLiteral("/zeta/one-note.txt"), QByteArray("x"));
+    m_mem->addFile(QStringLiteral("/alpha/two-note.txt"), QByteArray("x"));
+    QVERIFY(index(memUri(QStringLiteral("/zeta")), QStringLiteral("zeta")));
+
+    LiveSearchController* search = searchOver(memUri(QStringLiteral("/tree")));
+    QVERIFY(search);
+    search->setEverywhere(true);
+    QCOMPARE(search->volumeLabels().size(), 2);
+
+    // Aimed at the one volume there is, and told not to use the index at all --
+    // two answers a restart has to come back with.
+    search->setVolumeIndex(1);
+    search->setUseIndex(false);
+    const QString aimedAt = search->volumeLabels().at(1);
+    const QVariantMap saved = search->saveState();
+
+    // Another folder is indexed, and its label sorts before the first one.
+    QVERIFY(index(memUri(QStringLiteral("/alpha")), QStringLiteral("alpha")));
+
+    LiveSearchController* restored = searchOver(memUri(QStringLiteral("/tree")));
+    QVERIFY(restored);
+    QCOMPARE(restored->volumeLabels().size(), 3);
+    restored->restoreState(saved);
+
+    QCOMPARE(restored->volumeLabels().value(restored->volumeIndex()), aimedAt);
+    QCOMPARE(restored->useIndex(), false);
+}
+
+/// A closed tab whose index query kept reading.
+///
+/// ~LiveSearchController() cancelled the walk and forgot m_indexTask, and
+/// IndexSearchTask had no way to notice a cancel in any case -- so a `content:`
+/// search over the index went on opening files, one per hit, with nothing left
+/// to show them to. Held inside the first read, which is a condition rather than
+/// a clock: releasing after the controller is gone is what makes the count
+/// mean something. See MOLE-376.
+void TestMixedSearch::aClosedTabDoesNotLeaveItsIndexQueryReadingFiles()
+{
+    QVERIFY(index(memUri(QStringLiteral("/tree/archive")), QStringLiteral("archive")));
+
+    auto gate = std::make_shared<QSemaphore>();
+    m_mem->setReadGate(gate);
+
+    const int row = m_app->tabs()->openTab(QStringLiteral("mole.livesearch"));
+    QVERIFY(row >= 0);
+    auto* search = qobject_cast<LiveSearchController*>(m_app->tabs()->controllerAt(row));
+    QVERIFY(search);
+    search->setRootUri(memUri(QStringLiteral("/tree")));
+    // Everywhere indexed, so the index is the only engine and there is no walk
+    // in this at all, and a content term, so every hit costs a read. On the line
+    // rather than through setEverywhere(), because the line is the query: a scope
+    // absent from it means this folder, so setting the line afterwards would turn
+    // the scope back off. See ADR-0067.
+    search->setQueryLine(QStringLiteral("note content:x everywhere:yes"));
+    QVERIFY2(search->queryLineError().isEmpty(), qPrintable(search->queryLineError()));
+    search->start();
+
+    QVERIFY2(waitFor([this] { return m_mem->readsInProgress() > 0; }, 10000),
+        "the index search never reached a file");
+    QCOMPARE(m_mem->readCount(), 1);
+
+    // Drained rather than waited on: deleteLater() at loop level zero is only
+    // delivered by sendPostedEvents(DeferredDelete), and the controller has to be
+    // gone *before* the gate opens or the count below would mean nothing.
+    QPointer<LiveSearchController> gone(search);
+    m_app->tabs()->closeTab(row);
+    drainEvents();
+    QVERIFY2(gone.isNull(), "the tab's controller outlived its tab");
+
+    gate->release(100);
+    QVERIFY(waitFor([this] { return m_app->tasks()->activeCount() == 0; }, 10000));
+
+    // The one read that was already in flight, and not the other two: three
+    // files match the name and all three contain the text.
+    QCOMPARE(m_mem->readCount(), 1);
 }
 
 MOLE_TEST_MAIN(TestMixedSearch)

@@ -34,6 +34,13 @@ void IndexSearchTask::run()
         return;
     }
 
+    // The token reaches the reads as well as the loop. A `content:` term over a
+    // volume of ten thousand rows is ten thousand file reads, and this had no way
+    // at all to notice a cancel: a search whose tab had been closed went on
+    // opening files until it ran out of them. ADR-0096 is the same rule one layer
+    // down. See MOLE-376.
+    m_io.cancelled = [this] { return isCancelRequested(); };
+
     Result<QList<IndexSearchHit>> hits = m_index->search(m_query);
     if (!hits.ok()) {
         fail(hits.error());
@@ -50,6 +57,11 @@ void IndexSearchTask::run()
     FileEntryList entries;
     entries.reserve(hits.value().size());
     for (const IndexSearchHit& hit : hits.value()) {
+        // Between hits, because what follows may open the file: a `content:`
+        // term over a volume of ten thousand rows is ten thousand reads, and a
+        // search whose tab has been closed used to do all of them. See MOLE-376.
+        if (isCancelRequested())
+            return;
         FileEntry entry;
         entry.name = hit.name;
         entry.uri = VfsUri::fromString(hit.uri);

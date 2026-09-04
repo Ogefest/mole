@@ -415,6 +415,17 @@ void TestSession::everyCriterionSurvivesARestart()
     search->setMaxDepth(0);
     search->setExcluded(QStringLiteral("node_modules, .git"));
     search->setSizeRange(QStringLiteral("10k"), QStringLiteral("2M"));
+    search->setUseIndex(false);
+    search->setScanReadsMetadata(true);
+    search->setScanOpensArchives(false);
+
+    // The line is the same query seen twice (ADR-0067), so it has to come back
+    // saying what the fields say. The sizes were restored by assigning the
+    // members without rewriting the line, so a restored tab's line disagreed
+    // with its own form and the first keystroke there reset both. See MOLE-376.
+    const QString line = search->queryLine();
+    QVERIFY2(line.contains(QStringLiteral("size>=")), qPrintable(line));
+    QVERIFY2(line.contains(QStringLiteral("size<=")), qPrintable(line));
 
     restartApp();
 
@@ -439,6 +450,12 @@ void TestSession::everyCriterionSurvivesARestart()
     QCOMPARE(restored->excluded(), QStringLiteral("node_modules, .git"));
     QCOMPARE(restored->minSize(), 10 * 1024);
     QCOMPARE(restored->maxSize(), 2 * 1024 * 1024);
+    // Saved nowhere at all, so a search restored with the index switched off
+    // came back with it on.
+    QCOMPARE(restored->useIndex(), false);
+    QCOMPARE(restored->scanReadsMetadata(), true);
+    QCOMPARE(restored->scanOpensArchives(), false);
+    QCOMPARE(restored->queryLine(), line);
 }
 
 void TestSession::currentTabIsRemembered()

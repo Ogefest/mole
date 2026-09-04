@@ -65,6 +65,11 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-376 `modified:<a date` on the search line means before that date, instead of after it
+2026-09-04 #MOLE-376 The search form's "modified to" field survives the next keystroke on the search line
+2026-09-04 #MOLE-376 A size the form cannot read is refused, instead of quietly meaning no limit
+2026-09-04 #MOLE-376 A restored search keeps its size limits, its volume, its index setting and its scan options
+2026-09-04 #MOLE-376 Closing a search tab stops its index query, instead of leaving it reading every file it matched
 2026-09-04 #MOLE-375 A content search across every index reads each file from its own drive, instead of through whichever drive the tab was pointed at
 2026-09-04 #MOLE-375 A content search still reads files when the folder the tab was pointed at is not connected
 2026-09-04 #MOLE-372 An indexed search finds facts written in any alphabet, instead of only ASCII ones

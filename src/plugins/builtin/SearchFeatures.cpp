@@ -49,8 +49,11 @@ LiveSearchController::LiveSearchController(PluginServices services, QString root
 
 LiveSearchController::~LiveSearchController()
 {
-    if (m_task)
-        m_task->requestCancel();
+    // Both tasks, through the one function that knows about both. This cancelled
+    // the walk and forgot m_indexTask, so a closed tab's index query -- over the
+    // whole database, opening files for a `content:` term -- ran to completion
+    // with nothing left to show it to. See MOLE-376.
+    stop();
 }
 
 void LiveSearchController::setRootUri(const QString& uri)
@@ -293,14 +296,43 @@ qint64 LiveSearchController::parseSize(const QString& text)
 
 void LiveSearchController::setSizeRange(const QString& minText, const QString& maxText)
 {
-    const qint64 low = parseSize(minText);
-    const qint64 high = parseSize(maxText);
-    if (low == m_minSize && high == m_maxSize)
+    // parseSize() answers -1 both for "empty" and for "could not read this", and
+    // this stored whichever it got -- so `10 MG` in the form meant *no lower
+    // bound*, while `size>10MG` on the line was refused with "10MG is not a
+    // size". QueryLine.h: a criterion that cannot be read "must narrow nothing
+    // and say so". Now it says so through the same error the line uses.
+    // See MOLE-376.
+    const std::optional<qint64> low = sizeFrom(minText);
+    const std::optional<qint64> high = sizeFrom(maxText);
+    if (!low || !high) {
+        m_queryLineError
+            = QStringLiteral("%1 is not a size").arg(low ? maxText.trimmed() : minText.trimmed());
+        m_queryLineErrorAt = -1;
+        emit queryLineChanged();
         return;
-    m_minSize = low;
-    m_maxSize = high;
+    }
+
+    m_queryLineError.clear();
+    m_queryLineErrorAt = -1;
+    if (*low == m_minSize && *high == m_maxSize) {
+        emit queryLineChanged();
+        return;
+    }
+    m_minSize = *low;
+    m_maxSize = *high;
     rewriteQueryLine();
     emit criteriaChanged();
+}
+
+std::optional<qint64> LiveSearchController::sizeFrom(const QString& text)
+{
+    // Empty is a criterion left blank, which is not the same as one that could
+    // not be read. parseSize() cannot tell the two apart, and every caller that
+    // has to has been getting it wrong.
+    if (text.trimmed().isEmpty())
+        return -1;
+    const qint64 bytes = parseSize(text);
+    return bytes >= 0 ? std::optional<qint64>(bytes) : std::nullopt;
 }
 
 std::optional<IndexVolume> LiveSearchController::coveringVolume() const
@@ -734,12 +766,19 @@ void LiveSearchController::setQueryLine(const QString& text)
                 emit queryLineChanged();
                 return;
             }
+            // `<` and `<=` mean *before*, and used to be parsed and thrown away:
+            // both branches assigned m_modifiedFrom, so `modified:<2025-01-01`
+            // found the new files -- the opposite answer, silently. The More form
+            // has had a "modified to" field backed by m_modifiedTo all along,
+            // which rewriteQueryLine() never printed and the next keystroke on
+            // the line cleared. See MOLE-376.
+            const bool before = term.op == QueryTerm::Op::Below || term.op == QueryTerm::Op::AtMost;
             if (key == QLatin1String("created"))
                 asWhen(m_createdFrom);
             else if (key == QLatin1String("accessed"))
                 asWhen(m_accessedFrom);
-            else if (term.op == QueryTerm::Op::Below || term.op == QueryTerm::Op::AtMost)
-                asWhen(m_modifiedFrom); // "changed in the last 30 days"
+            else if (before)
+                asWhen(m_modifiedTo);
             else
                 asWhen(m_modifiedFrom);
         } else if (key == QLatin1String("path")) {
@@ -819,6 +858,9 @@ void LiveSearchController::rewriteQueryLine()
     if (m_maxSize >= 0)
         add(QStringLiteral("size"), FileListModel::formatSize(m_maxSize), QueryTerm::Op::AtMost);
     add(QStringLiteral("modified"), m_modifiedFrom);
+    // The other end of the range, which the line never carried -- so the form's
+    // own "modified to" field was cleared by the next keystroke on the line.
+    add(QStringLiteral("modified"), m_modifiedTo, QueryTerm::Op::AtMost);
     add(QStringLiteral("created"), m_createdFrom);
     add(QStringLiteral("accessed"), m_accessedFrom);
     add(QStringLiteral("path"), m_pathText, QueryTerm::Op::Is, m_excludePath);
@@ -1013,6 +1055,10 @@ void LiveSearchController::startIndexSearch(const SearchQuery& query, const QStr
     // hits that survived everything the database could state.
     if (planSearch(query, SearchSource::Index).needsFile() && m_services.vfs) {
         const VfsUri root = VfsUri::fromString(m_rootUri);
+        // Note what is *not* set here: io.cancelled. The task fills that in from
+        // its own token, because a caller has nothing to build it from and a task
+        // that asks its caller for permission to stop is a task that never does.
+        // See IndexSearchTask::run() and MOLE-376.
         indexTask->setSearchIo(searchIoFor(root));
     }
     m_indexTask = indexTask;
@@ -1300,6 +1346,14 @@ QVariantMap LiveSearchController::saveState() const
         { QStringLiteral("caseSensitive"), m_caseSensitive },
         { QStringLiteral("everywhere"), m_everywhere },
         { QStringLiteral("volumeIndex"), m_volumeIndex },
+        // The id as well as the row, because the row is a position in a list the
+        // index rebuilds in whatever order it answers. See restoreState().
+        { QStringLiteral("volumeId"),
+            m_volumeIndex >= 0 && m_volumeIndex < m_volumeIds.size() ? m_volumeIds.at(m_volumeIndex)
+                                                                     : qint64(-1) },
+        { QStringLiteral("useIndex"), m_useIndex },
+        { QStringLiteral("scanReadsMetadata"), m_scanReadsMetadata },
+        { QStringLiteral("scanOpensArchives"), m_scanOpensArchives },
         { QStringLiteral("nameMode"), m_nameMode },
         { QStringLiteral("wholeWord"), m_wholeWord },
         { QStringLiteral("excludeName"), m_excludeName },
@@ -1319,7 +1373,7 @@ QVariantMap LiveSearchController::saveState() const
         { QStringLiteral("contentRegex"), m_contentRegex },
         { QStringLiteral("searchBinary"), m_searchBinary },
         { QStringLiteral("factCriteria"), m_factCriteria },
-        { QStringLiteral("queryLine"), m_queryLine },
+
         { QStringLiteral("minSize"), m_minSize },
         { QStringLiteral("maxSize"), m_maxSize },
     };
@@ -1361,11 +1415,34 @@ void LiveSearchController::restoreState(const QVariantMap& state)
     setContentRegex(state.value(QStringLiteral("contentRegex"), false).toBool());
     setSearchBinary(state.value(QStringLiteral("searchBinary"), false).toBool());
     setFactCriteria(state.value(QStringLiteral("factCriteria")).toMap());
+    // Assigned directly, this left the fields saying `size>=10k size<=2M` and a
+    // line that did not -- and the first edit of the line reset both to -1. Every
+    // other criterion above comes back through its setter, which rewrites the
+    // line; these two did not. See MOLE-376.
     m_minSize = state.value(QStringLiteral("minSize"), -1).toLongLong();
     m_maxSize = state.value(QStringLiteral("maxSize"), -1).toLongLong();
-    // The volume list is rebuilt from the index, so a remembered position may no
-    // longer exist; setVolumeIndex clamps.
-    setVolumeIndex(state.value(QStringLiteral("volumeIndex"), 0).toInt());
+    rewriteQueryLine();
+
+    // The volume by its id, not by its position. saveState() wrote a row number
+    // into a list refreshVolumes() rebuilds from the index snapshot in whatever
+    // order it answers, so indexing a new folder or forgetting one aimed a
+    // restored `everywhere:yes` search at a different volume. `volumeIndex` is
+    // still read, for a session written before this.
+    const qint64 volumeId = state.value(QStringLiteral("volumeId"), -1).toLongLong();
+    if (volumeId >= 0 && m_volumeIds.contains(volumeId))
+        setVolumeIndex(static_cast<int>(m_volumeIds.indexOf(volumeId)));
+    else
+        setVolumeIndex(state.value(QStringLiteral("volumeIndex"), 0).toInt());
+
+    // Whether the index may answer at all, and what a scan started from here is
+    // asked for. All three were saved nowhere, so a search restored with the
+    // index switched off came back with it on, and the scan options went back to
+    // the dialog's defaults.
+    setUseIndex(state.value(QStringLiteral("useIndex"), true).toBool());
+    setScanReadsMetadata(
+        state.value(QStringLiteral("scanReadsMetadata"), ScanOptions::dialogDefaults().metadata).toBool());
+    setScanOpensArchives(
+        state.value(QStringLiteral("scanOpensArchives"), ScanOptions::dialogDefaults().archives).toBool());
 }
 
 void LiveSearchController::setRunning(bool running)
