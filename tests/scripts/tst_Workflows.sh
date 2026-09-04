@@ -209,17 +209,66 @@ if "test-live" in runs or "test-heavy" in runs:
 sys.exit(0 if "ctest" in runs and "--label-exclude heavy" in runs else 1)
 PY
 
-begin "the fast tier says what the runner gave the build"
+begin "every job that configures says what the machine gave the build"
 # Whoever reads a red run is looking at a green tree on their own machine, so what
-# this runner did not have is the first thing worth knowing. Asked of the commands
+# that machine did not have is the first thing worth knowing. Asked of the commands
 # rather than of the step names, because a step can be renamed.
-python3 - "$FAST" <<'PY' || fail "the fast tier does not print the configure summary, so a red run says less than it could"
+#
+# All three, and through the one script: two of them carried the same hand-typed
+# alternation naming seven of the eleven optional libraries, and windows.yml asked
+# `cmake -LH` for an INTERNAL cache entry, which printed nothing on every run it
+# ever made. A list in a workflow is a list that stops mentioning the next library
+# added. See MOLE-390.
+for workflow in "$FAST" "$SECOND" .github/workflows/windows.yml; do
+    name="$(basename "$workflow")"
+    python3 - "$workflow" <<'PY' || fail "$name does not print the configure summary, so a red run says less than it could"
 import sys, yaml
 document = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
 runs = "\n".join(
-    step.get("run", "") for job in document["jobs"].values() for step in job["steps"])
-sys.exit(0 if "configure.log" in runs and "Parquet" in runs else 1)
+    step.get("run", "") for job in document["jobs"].values() for step in (job.get("steps") or []))
+sys.exit(0 if "configure.log" in runs and "configure-summary.sh" in runs else 1)
 PY
+done
+
+begin "the summary script reads the rows rather than naming them"
+# The point of it: a library added through mole_optional_dependency() appears in
+# every job's output by existing. If the script grows a list of its own, the next
+# row added is invisible again -- which is where this started.
+[ -x scripts/configure-summary.sh ] || fail "scripts/configure-summary.sh is not there or not executable"
+# Comments stripped first -- rule three, skip the file's own account of itself: the
+# note at its top quotes the alternation it replaced, and reading that as an
+# instance of the fault is how three earlier checks went wrong.
+grep -v '^[[:space:]]*#' scripts/configure-summary.sh > "$SHELLTEST_TMP/summary-code"
+grep -q 'SUMMARY "' "$SHELLTEST_TMP/summary-code" \
+    || fail "the summary script does not read the rows out of the CMake calls"
+for library in Parquet Terminal "Git state" xxhash OpenSSL libnfs; do
+    grep -qF "$library" "$SHELLTEST_TMP/summary-code" \
+        && fail "the summary script names $library itself, so a row added later would not be printed"
+done
+
+begin "the summary script names a row that printed nothing"
+# The fault it was written after: windows.yml asked a question with no answer and
+# its step printed nothing for every run of its life, which looks exactly like a
+# machine with nothing to report. A log missing one row has to be a failure and
+# say which row.
+rows=$(python3 "$MOLE_SOURCE_DIR/tests/support/read-optional-dependencies.py" rows)
+first=$(printf '%s\n' "$rows" | head -1 | cut -f2)
+[ -n "$first" ] || fail "no optional-dependency rows to build a log from"
+# A log with a line for every row but the first.
+: > "$SHELLTEST_TMP/whole.log"
+printf '%s\n' "$rows" | cut -f2 | while IFS= read -r summary; do
+    printf -- '-- %s: something\n' "$summary" >> "$SHELLTEST_TMP/whole.log"
+done
+scripts/configure-summary.sh "$SHELLTEST_TMP/whole.log" > /dev/null \
+    || fail "a log with every row in it was reported as incomplete"
+grep -vF "$first:" "$SHELLTEST_TMP/whole.log" > "$SHELLTEST_TMP/holed.log"
+if scripts/configure-summary.sh "$SHELLTEST_TMP/holed.log" > "$SHELLTEST_TMP/said" 2>&1; then
+    fail "a log missing the \"$first\" row was reported as complete"
+fi
+grep -qF "$first" "$SHELLTEST_TMP/said" || {
+    fail "it failed without saying which row was silent"
+    sed 's/^/    /' "$SHELLTEST_TMP/said"
+}
 
 begin "the fast tier publishes nothing"
 # It runs on every push, so it is the workflow with the most chances to do something
@@ -264,5 +313,75 @@ wanted = "pwsh" if sys.argv[2] == "windows.yml" else "bash"
 sys.exit(0 if shell == wanted else 1)
 PY
 done
+
+begin "every workflow says what its token may do"
+# A job with no `permissions:` gets whatever the repository's default token scope
+# is -- a setting somebody else can widen, from outside this file, without
+# touching it. Three of the five said nothing, the weekly job on a clock among
+# them. Only the release needs to write, and it says so. See MOLE-390.
+for workflow in "$MOLE_SOURCE_DIR"/.github/workflows/*.yml; do
+    name="$(basename "$workflow")"
+    python3 - "$workflow" "$name" <<'PY' || fail "$name does not say what its token may do"
+import sys, yaml
+document = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+top = document.get("permissions")
+jobs = (document.get("jobs") or {}).values()
+# Either the file says it once, or every job does.
+if top is None and not all(job.get("permissions") is not None for job in jobs):
+    sys.exit(1)
+# And only the release may write.
+scopes = [top] + [job.get("permissions") for job in jobs]
+writes = [s for s in scopes if isinstance(s, dict) and "write" in " ".join(str(v) for v in s.values())]
+if writes and sys.argv[2] != "release.yml":
+    sys.exit(1)
+sys.exit(0)
+PY
+done
+
+begin "every job has a deadline"
+# Without `timeout-minutes` a job that hangs holds a runner for the six-hour
+# maximum: a docker run that never answers, an Xvfb that never comes up, a dnf
+# mirror that stalls. None of the five had one. The values bound a hang rather
+# than measure the work, so they are generous -- what matters is that they exist.
+# See MOLE-390.
+for workflow in "$MOLE_SOURCE_DIR"/.github/workflows/*.yml; do
+    name="$(basename "$workflow")"
+    python3 - "$workflow" <<'PY' || fail "a job in $name can hang until the six-hour maximum"
+import sys, yaml
+document = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+jobs = (document.get("jobs") or {})
+if not jobs:
+    sys.exit(1)
+sys.exit(0 if all(isinstance(job.get("timeout-minutes"), int) for job in jobs.values()) else 1)
+PY
+done
+
+begin "every action is pinned to a commit and not to a tag"
+# windows.yml says of its own dependency choice that "an action is a repository
+# whose contents change under a tag", and then every workflow here used
+# `actions/checkout@v7` -- a tag the action's owner moves. A digest is what makes
+# the run reproducible and what stops a moved tag from executing something else
+# with the repository's token. The version it stands for goes in a comment beside
+# it, because a digest says nothing to a reader. See MOLE-390.
+: > "$SHELLTEST_TMP/floating"
+for workflow in "$MOLE_SOURCE_DIR"/.github/workflows/*.yml; do
+    python3 - "$workflow" >> "$SHELLTEST_TMP/floating" <<'PY'
+import re, sys, yaml
+path = sys.argv[1]
+document = yaml.safe_load(open(path, encoding="utf-8"))
+for name, job in (document.get("jobs") or {}).items():
+    for step in job.get("steps") or []:
+        uses = step.get("uses")
+        if not uses or uses.startswith("./") or uses.startswith("docker://"):
+            continue
+        reference = uses.rsplit("@", 1)[-1]
+        if not re.fullmatch(r"[0-9a-f]{40}", reference):
+            print(f"{path.split('/')[-1]}: {uses}")
+PY
+done
+if [ -s "$SHELLTEST_TMP/floating" ]; then
+    fail "an action is used at a tag, which its owner can move under it"
+    sed 's/^/    /' "$SHELLTEST_TMP/floating"
+fi
 
 done_testing

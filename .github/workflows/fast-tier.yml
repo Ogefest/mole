@@ -38,7 +38,7 @@
 # this machine gets. The configure summary said Arrow 25.0.1, libgit2 1.7.2, OpenSSL
 # 3.0.13, libsmbclient 0.7.0, libnfs 5.0.2, libcurl 8.5.0, which is what the equality
 # rule in tst_Workflows.sh exists to keep true. It also confirmed
-# `actions/checkout@v7`, which ee918a5 had recorded as unverified for want of exactly
+# `actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1`, which ee918a5 had recorded as unverified for want of exactly
 # this file. What it did surface is a warning backlog nothing was reading: 2,129 in the
 # build, 2,076 of them from Qt's generated QML cache and 53 in this project's own
 # files. That is reported on MOLE-313 rather than fixed here -- a first run's failures
@@ -88,13 +88,17 @@ jobs:
     # would quietly stop answering the question this job exists for -- whether the
     # code still builds against the version it promises. tst_Workflows.sh holds it.
     runs-on: ubuntu-24.04
+    # A bound on a hang, not a measure of the work: a docker run that never
+    # answers, an Xvfb that never starts or a dnf mirror that stalls otherwise
+    # holds a runner for the six-hour maximum. See MOLE-390.
+    timeout-minutes: 45
 
     steps:
       # v7 rather than v4, and this job is what makes that bump verified rather than
       # assumed: ee918a5 changed it in all four workflows and recorded it as
       # unverified, "on a branch whose next push will exercise it". No push exercised
       # anything until this file. See MOLE-307 and MOLE-313.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # The same libraries release.yml builds the artefacts against, because a job
       # that tests a leaner machine than the release builds on is a job that misses
@@ -134,24 +138,32 @@ jobs:
       # come from Apache's own repository -- which is where the author's machine and
       # the release builder both get it. Without this the Parquet suites would skip,
       # and a skip here says nothing while looking exactly like a pass.
+      #
+      # Through a script rather than four lines here, and the script checks the
+      # signature on what it is about to give root to: this was a `wget` and an
+      # `apt-get install` of a package fetched over a URL, in two workflows with a
+      # copy each. See scripts/arrow-apt-source.sh and MOLE-390.
       - name: Arrow and Parquet, from Apache's own repository
         run: |
-          sudo apt-get install -y --no-install-recommends ca-certificates lsb-release wget
-          wget -q "https://packages.apache.org/artifactory/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb"
-          sudo apt-get install -y "./apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb"
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libarrow-dev libparquet-dev
+          sudo apt-get install -y --no-install-recommends ca-certificates lsb-release gnupg
+          scripts/arrow-apt-source.sh
 
       # The summary is printed the way windows.yml and second-family.yml print it, and
       # for the same reason: whoever reads a red run is looking at a green tree on
       # their own machine, and what this runner did *not* have is the first thing
       # worth knowing. A library that went missing between one push and the next shows
       # up here rather than as a suite that quietly stopped asserting.
+      #
+      # Through one script rather than an alternation typed here: this named seven
+      # of the eleven optional libraries, second-family.yml had the same seven, and
+      # windows.yml asked a question with no answer at all. The script reads the
+      # rows from the calls that print them and names any that said nothing. See
+      # MOLE-390.
       - name: Configure
         run: |
           cmake --preset debug 2>&1 | tee configure.log
           echo "--- what this runner gave the build ---"
-          grep -E "Parquet|Terminal|Git state|Credential|Windows shares|NFS exports|Network drives" configure.log || true
+          scripts/configure-summary.sh configure.log
 
       - name: Build
         run: cmake --build build/debug --parallel "$(nproc)"

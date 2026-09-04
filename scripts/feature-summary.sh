@@ -38,9 +38,16 @@ MOLE_REFUSED=()
 mole_feature_summary() {
     local artefact="${1:-full}"
 
-    # Everything every artefact has. The strings are what src/app/CMakeLists.txt
-    # and the plugin CMakeLists print, and tst_ReleaseWorkflow.sh holds this file
-    # against them.
+    # Everything every artefact has. The strings are what the CMake files print
+    # through mole_optional_dependency(), and tst_ReleaseWorkflow.sh holds this
+    # file against those calls -- so a reworded message fails a suite rather than
+    # quietly making every search below match nothing.
+    #
+    # **Three of these are new, and their absence is the reason the helper
+    # exists.** Qt Pdf, Qt Multimedia and libarchive printed nothing at all when
+    # they were found, so no positive line existed to look for and this list had
+    # to name their *not-found* text instead -- a check that passes when a message
+    # is reworded, which is the shape of a check that cannot fail. See MOLE-390.
     MOLE_WANTED=(
         "Terminal: libvterm"
         "Git state: libgit2"
@@ -48,12 +55,18 @@ mole_feature_summary() {
         "Credential store: OpenSSL"
         "Network drives: sftp, ftp, s3, webdav"
         "NFS exports: nfs"
+        "Document preview: Qt Pdf"
+        "Video preview: Qt Multimedia"
+        "Archive drives: libarchive"
     )
+    # Kept as well as the positives, because the two say different things: a
+    # missing line means the row stopped printing, and one of these means the row
+    # printed the other answer. "missing: Document preview: Qt Pdf" is a worse
+    # report than "not built with: Document preview: information viewer".
     MOLE_REFUSED=(
-        "Qt6 Pdf not found"
-        "Qt6 Multimedia not found"
-        "its QML module is not"
-        "libarchive not found"
+        "Document preview: information viewer"
+        "Video preview: information viewer"
+        "Archive drives: not built"
     )
 
     case "$artefact" in

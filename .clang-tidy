@@ -1,0 +1,39 @@
+# What `make tidy` asks of this code.
+#
+# There was no file here at all, so clang-tidy ran with its default check set --
+# and `make tidy` sent its stderr to /dev/null and ended in `|| true`, which made
+# it a command that cannot fail and cannot be read. A tool in that state is worse
+# than no tool: it is in the Makefile, in the help text and in CLAUDE.md, so it
+# looks like a thing somebody is doing. See MOLE-390.
+#
+# **Chosen rather than inherited.** The default set is dominated by clang-analyzer
+# and readability checks that argue with Qt's idioms -- a QObject with a parent is
+# not a leak, `signals:` is not an identifier problem -- and a list nobody chose
+# is a list nobody will act on. What is here is the part that catches faults
+# rather than taste: bugprone-*, performance-*, and four modernize/readability
+# checks whose fix is always right.
+#
+# The tree is not clean under this yet, and TODO.md says how far off it is. A
+# check turned on here is a check somebody has to work through; adding one is a
+# small piece of work, not a setting.
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  performance-*,
+  -performance-avoid-endl,
+  modernize-use-override,
+  modernize-use-nullptr,
+  modernize-use-emplace,
+  readability-redundant-string-init,
+  readability-container-size-empty,
+  misc-unused-using-decls
+
+# Nothing here fails a build. The suite is what gates a commit; this is a tool to
+# read, and a check that stops the tree building is a check that gets switched off.
+WarningsAsErrors: ''
+
+# Only the file being compiled, not the headers it pulls in: Qt's own headers are
+# not this project's to fix, and a run that reports them buries what is.
+HeaderFilterRegex: '^$'

@@ -227,6 +227,75 @@ for image in "$build_image" "$second_family" $(cat "$SHELLTEST_TMP/install-image
     esac
 done
 
+begin "every optional library is in ARCHITECTURE.md's table"
+# The section said "three features depend on libraries that may not be installed"
+# and listed four, while the tree had eleven -- so the document was wrong about
+# the number, wrong about the list, and had been for long enough that nobody
+# noticed either. Held against the calls that do the finding, so a row added to
+# the build has to be written down before the suite is green again. See MOLE-390.
+rows=$(python3 "$MOLE_SOURCE_DIR/tests/support/read-optional-dependencies.py" rows)
+count=$(printf '%s\n' "$rows" | grep -c .)
+[ "$count" -ge 10 ] || fail "only $count optional-dependency rows were read; the parse has stopped working"
+: > "$SHELLTEST_TMP/undocumented"
+while IFS=$'\t' read -r name summary define target switch file; do
+    [ -n "$summary" ] || continue
+    # In the table, which is what a reader looks at -- a row mentioned only in the
+    # prose above it is not the list.
+    grep -qE "^\| *$summary *\|" ARCHITECTURE.md \
+        || printf '%s (%s)\n' "$summary" "$name" >> "$SHELLTEST_TMP/undocumented"
+done <<< "$rows"
+if [ -s "$SHELLTEST_TMP/undocumented" ]; then
+    fail "an optional library the build looks for is in no row of ARCHITECTURE.md's table"
+    sed 's/^/    /' "$SHELLTEST_TMP/undocumented"
+fi
+# And the number in the prose, because that is the sentence that was wrong.
+grep -qE "^\*\*$(printf '%s' "$count" | sed 's/^11$/Eleven/; s/^10$/Ten/; s/^12$/Twelve/') features depend on libraries" ARCHITECTURE.md \
+    || fail "the section does not say there are $count of them"
+
+begin "the digest of what the AppImage build downloads and runs is recorded"
+# appimagetool is fetched over a URL and then executed, and a pinned version is
+# not a pinned file: a release asset can be replaced under its tag. Apache's
+# arrow apt source is fetched and given root, and cannot be pinned by digest --
+# `latest` is its name -- so that one is checked by signature instead. See
+# MOLE-390 and scripts/arrow-apt-source.sh.
+grep -qE '^TOOL_SHA256="[0-9a-f]{64}"' scripts/package-appimage.sh \
+    || fail "no sha256 is recorded for the tool that packs the AppImage"
+grep -q 'sha256sum /tmp/appimagetool' scripts/package-appimage.sh \
+    || fail "the recorded sha256 is never compared with the file"
+[ -x scripts/arrow-apt-source.sh ] || fail "scripts/arrow-apt-source.sh is not there or not executable"
+grep -q 'gpg --batch --status-fd 1 --verify' scripts/arrow-apt-source.sh \
+    || fail "the arrow apt source is installed without its signature being checked"
+grep -qE 'KEY_FINGERPRINT="[0-9A-F]{40}"' scripts/arrow-apt-source.sh \
+    || fail "no key fingerprint is recorded for the signature to be compared against"
+# And nothing installs it the old way, in either workflow.
+grep -n 'apache-arrow-apt-source' .github/workflows/*.yml > "$SHELLTEST_TMP/raw-arrow"
+if [ -s "$SHELLTEST_TMP/raw-arrow" ]; then
+    fail "a workflow still fetches the arrow apt source itself, so the check is bypassed"
+    sed 's/^/    /' "$SHELLTEST_TMP/raw-arrow"
+fi
+
+begin "packaging carries the AppStream metainfo a desktop application is expected to have"
+# lintian warns on a .desktop file with no metainfo, AppImageHub asks for one, and
+# a desktop that shows applications reads it for the name, the summary and the
+# screenshots. There was none: the .desktop file and the icon were installed and
+# nothing described the application. See MOLE-390.
+# Named for its component id, which is what AppStream asks of the filename.
+metainfo=$(find packaging -name '*.metainfo.xml' | head -1)
+[ -n "$metainfo" ] || fail "there is no metainfo file in packaging/ at all"
+for wanted in "<id>" "<name>" "<summary>" "<description>" "<project_license>" "<metadata_license>"; do
+    grep -qF "$wanted" "$metainfo" || fail "$metainfo has no $wanted"
+done
+# The id has to match the desktop file, or a desktop shows two entries for one
+# application -- one from each.
+desktop=$(basename packaging/mole.desktop)
+grep -qE "<launchable type=\"desktop-id\">$desktop</launchable>" "$metainfo" \
+    || fail "the metainfo does not name $desktop, so a desktop sees two applications rather than one"
+grep -qE "install\(FILES [^)]*$(basename "$metainfo")" CMakeLists.txt \
+    || fail "the metainfo file is not installed, so no package carries it"
+# And where a desktop looks for it.
+grep -q 'DATAROOTDIR}/metainfo' <<< "$(grep -A2 -F "$(basename "$metainfo")" CMakeLists.txt)" \
+    || fail "the metainfo file is installed somewhere other than share/metainfo"
+
 begin "the AppImage's floor is written where a downloader can find it"
 # What it was built on decides what it runs on, so the floor is a promise. A promise
 # that lives only in a script is one that moves the day somebody bumps a base image,

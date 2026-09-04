@@ -28,8 +28,15 @@ QMLDIR="$DIST/usr/qml"
 [[ -x "$BIN" ]] || { echo "no binary at $BIN" >&2; exit 1; }
 
 QT_LIBDIR="$(dirname "$(ldd "$BIN" | awk '/libQt6Core/ {print $3}')")"
+# Where Qt keeps its plugins and QML modules, which is not its prefix. The
+# fallback asked for QT_INSTALL_PREFIX, and that answers `/usr` on Debian and
+# Ubuntu -- under which there is no `plugins/` and no `qml/`, so every copy below
+# silently found nothing and the bundle went out without a platform plugin. It
+# never fired here, because the first guess is right on this machine; it would
+# have fired on the first machine where it was not. QT_INSTALL_ARCHDATA is the
+# query that answers the directory those two live in. See MOLE-390.
 QT_ROOT="$QT_LIBDIR/qt6"
-[[ -d "$QT_ROOT" ]] || QT_ROOT="$(qmake6 -query QT_INSTALL_PREFIX 2>/dev/null || echo /usr/lib/qt6)"
+[[ -d "$QT_ROOT" ]] || QT_ROOT="$(qmake6 -query QT_INSTALL_ARCHDATA 2>/dev/null || echo /usr/lib/qt6)"
 
 mkdir -p "$LIBDIR" "$PLUGINDIR" "$QMLDIR"
 

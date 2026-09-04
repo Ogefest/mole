@@ -284,7 +284,9 @@ grep -q "level=\[\] flags=\[\]" "$SHELLTEST_TMP/seen" \
 
 # And the thing it protects, asked of the real target: what `make version` prints
 # is the version, whoever is calling it.
-said=$(make version 2>/dev/null | tail -1)
+# The line that is a version rather than the last line -- see MOLE-321, and the
+# same reading in tst_Version.sh.
+said=$(make --no-print-directory version 2>/dev/null | grep -E '^[0-9]+[.][0-9]+[.][0-9]+$' | tail -1)
 [ "$said" = "$(sed -n 's/^ *VERSION \([0-9][0-9.]*\)$/\1/p' CMakeLists.txt)" ] \
     || fail "make version said '$said', which is not the version"
 

@@ -272,10 +272,12 @@ release has, and installing `ffmpeg` is the version-proof way. The `.deb` and `.
 need none of this — they depend on the distribution's own ffmpeg, which arrives with
 whatever it was built against.
 
-`make install` lays out `<prefix>/bin/mole` and
-`<prefix>/lib/mole/plugins`, plus a desktop entry and icon so the
-app shows up in the launcher. The binary finds its plugins relative to itself,
-so any prefix works without rebuilding.
+`make install` lays out `<prefix>/bin/mole` and `<prefix>/<libdir>/mole/plugins`,
+plus a desktop entry, an icon and the AppStream metainfo so the app shows up in
+the launcher and in a software centre. `<libdir>` is `lib` on Debian and Ubuntu
+and `lib64` on an RPM distribution — the binary finds its plugins relative to
+itself, so any prefix works without rebuilding, and that difference is exactly
+what once left an `.rpm` with no plugins at all.
 
 `make bundle` additionally copies Qt, the platform plugin, the SQLite driver
 and the QML modules into `dist/`, behind a launcher script that points Qt at

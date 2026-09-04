@@ -65,7 +65,11 @@ if [ -s "$SHELLTEST_TMP/makefile-literals" ]; then
     fail "the Makefile spells out $VERSION, which is the third copy MOLE-117 was about"
     sed 's/^/    /' "$SHELLTEST_TMP/makefile-literals"
 fi
-said=$(make version 2>/dev/null | tail -1)
+# The line that is a version, not the last line: `make version` from inside a
+# recursive make prints "make[1]: Leaving directory ..." after it, which is what
+# MOLE-321 was about -- and this still read the last line, so it would have failed
+# for the reason that ticket fixed.
+said=$(make --no-print-directory version 2>/dev/null | grep -E '^[0-9]+[.][0-9]+[.][0-9]+$' | tail -1)
 [ "$said" = "$VERSION" ] || fail "make version said '$said' and CMakeLists.txt says '$VERSION'"
 
 begin "the manifest names the version this repository is at"

@@ -14,8 +14,11 @@ DESTDIR ?=
 # a script can rewrite that line and everything follows.
 VERSION := $(shell sed -n 's/^ *VERSION \([0-9][0-9.]*\)$$/\1/p' CMakeLists.txt)
 
-.PHONY: all build configure optimised release run test packages deb rpm appimage start-check test-live test-heavy test-verbose tsan clean distclean format tidy help guide-images where-the-log-is \
-        install uninstall bundle licence-check screenshots version
+# Every target here is a name rather than a file. Three were missing -- asan,
+# run-gdb and screenshots-check -- so a file of that name in the tree would have
+# made make think the work was already done. See MOLE-390.
+.PHONY: all build configure optimised release run run-gdb test packages deb rpm appimage start-check test-live test-heavy test-verbose asan tsan clean distclean format tidy help guide-images where-the-log-is \
+        install uninstall bundle licence-check screenshots screenshots-check version
 
 all: build
 
@@ -170,10 +173,25 @@ format:
 	@find src tests -name '*.cpp' -o -name '*.h' | xargs clang-format -i
 	@echo "formatted"
 
-## tidy: run clang-tidy over the compilation database
+## tidy: run clang-tidy over the compilation database, against .clang-tidy
+##       It reads .clang-tidy, it prints what it found, and it fails when it found
+##       something. All three were untrue: there was no .clang-tidy, so the
+##       default check set ran; stderr went to /dev/null, so a clang-tidy that
+##       could not run at all said nothing; and `|| true` meant the target passed
+##       whatever happened. The tree is not clean under it yet -- TODO.md says how
+##       far off -- so this is a tool to read rather than a gate. See MOLE-390.
 tidy: configure
+	@command -v clang-tidy >/dev/null || { echo "  skipped: no clang-tidy on this machine"; exit $(SKIPPED); }
 	@cmake --build $(BUILD_DIR) --target mole_core --parallel $(JOBS) >/dev/null
-	@find src -name '*.cpp' | xargs -P $(JOBS) -I{} clang-tidy -p $(BUILD_DIR) {} 2>/dev/null || true
+	@find src -name '*.cpp' | xargs -P $(JOBS) -I{} clang-tidy -p $(BUILD_DIR) {} \
+		> $(BUILD_DIR)/clang-tidy.log 2>$(BUILD_DIR)/clang-tidy.err; \
+		found=$$(grep -cE ' (warning|error): ' $(BUILD_DIR)/clang-tidy.log || true); \
+		if [ -s $(BUILD_DIR)/clang-tidy.err ] && [ "$$found" = 0 ]; then \
+			echo "  clang-tidy could not run:"; sed 's/^/    /' $(BUILD_DIR)/clang-tidy.err | head -20; exit 1; \
+		fi; \
+		grep -E ' (warning|error): ' $(BUILD_DIR)/clang-tidy.log | sort -u; \
+		echo "  $$found finding(s); the whole log is in $(BUILD_DIR)/clang-tidy.log"; \
+		[ "$$found" = 0 ]
 
 ## install: build optimised and install into $(PREFIX) (override with PREFIX=...)
 install:
@@ -199,10 +217,19 @@ uninstall:
 # only need what the distribution can give it, so this build leaves Arrow out and
 # the Parquet grid with it. The self-contained tarball keeps it: it carries its own
 # libraries and answers to nobody's archive. See MOLE-121.
+# **Three scripts exit 3 to mean "the tool for this is not on this machine", and
+# this is the one place that number is written down.** They are
+# package-rpm.sh (no docker), package-appimage.sh (no docker) and
+# check-artefact-starts.sh (no Xvfb). Two recipes honoured it and `start-check`
+# did not -- it ran the check with `|| fail=1`, so a machine with no Xvfb failed
+# the target rather than skipping it, which is the opposite of what the script
+# was saying. See MOLE-390.
+SKIPPED := 3
+
 PACKAGE_DIR := build/packages
 PACKAGE_FLAGS := -DCMAKE_DISABLE_FIND_PACKAGE_Arrow=ON -DCMAKE_DISABLE_FIND_PACKAGE_Parquet=ON
 
-## packages: build the .deb and the .rpm, each on the family it is for
+## packages: build the .deb, the .rpm and the AppImage, each where it belongs
 ##           Both come from the install rules, through CPack, so the package and
 ##           `make install` cannot come apart. Skips one with a reason rather than
 ##           failing when the tool for it is not on the machine -- and **only**
@@ -228,14 +255,14 @@ deb:
 ##      records what the binaries link, and Debian's libcurl carries symbol
 ##      versions no RPM distribution provides. See scripts/package-rpm.sh.
 rpm:
-	@scripts/package-rpm.sh $(PACKAGE_DIR); status=$$?; 		[ $$status = 0 ] || [ $$status = 3 ] || exit $$status
+	@scripts/package-rpm.sh $(PACKAGE_DIR); status=$$?; 		[ $$status = 0 ] || [ $$status = $(SKIPPED) ] || exit $$status
 
 ## appimage: the AppImage, built on the oldest distribution Mole runs on
 ##           AlmaLinux 9, so glibc 2.34: what it is built on decides what it runs
 ##           on, and that is a promise rather than a build detail. The figure is in
 ##           TODO.md and in the release notes as well as in the script.
 appimage:
-	@scripts/package-appimage.sh $(PACKAGE_DIR); status=$$?; 		[ $$status = 0 ] || [ $$status = 3 ] || exit $$status
+	@scripts/package-appimage.sh $(PACKAGE_DIR); status=$$?; 		[ $$status = 0 ] || [ $$status = $(SKIPPED) ] || exit $$status
 
 ## bundle: self-contained folder in dist/ that runs on machines without Qt
 ##         Built in its own directory with MOLE_WITH_SMB=OFF: libsmbclient is
@@ -297,11 +324,14 @@ licence-check:
 ##              window at all passes them. See MOLE-300.
 start-check:
 	@fail=0; \
-	if [ -x dist/mole ]; then scripts/check-artefact-starts.sh dist/mole || fail=1; \
+	if [ -x dist/mole ]; then \
+		scripts/check-artefact-starts.sh dist/mole; status=$$?; \
+		[ $$status = 0 ] || [ $$status = $(SKIPPED) ] || fail=1; \
 	else echo "  skipped: no bundle in dist/ -- run make bundle"; fi; \
 	for image in build/packages/*.AppImage; do \
 		[ -f "$$image" ] || continue; \
-		scripts/check-artefact-starts.sh "$$image" || fail=1; \
+		scripts/check-artefact-starts.sh "$$image"; status=$$?; \
+		[ $$status = 0 ] || [ $$status = $(SKIPPED) ] || fail=1; \
 	done; \
 	exit $$fail
 

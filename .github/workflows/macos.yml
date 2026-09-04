@@ -31,10 +31,21 @@ defaults:
   run:
     shell: bash
 
+# Only reading it. Nothing here writes to the repository, and a workflow that
+# cannot publish is easier to be sure about than one that could and does not. Said
+# rather than inherited: without it a job gets whatever the repository's default
+# token scope is, which is a setting somebody else can widen. See MOLE-390.
+permissions:
+  contents: read
+
 jobs:
   macos:
     name: Configure, build and the fast tier on macOS
     runs-on: macos-14
+    # A bound on a hang, not a measure of the work: a docker run that never
+    # answers, an Xvfb that never starts or a dnf mirror that stalls otherwise
+    # holds a runner for the six-hour maximum. See MOLE-390.
+    timeout-minutes: 90
 
     env:
       # As on Windows: not the 6.4 baseline, because what a first run has to say is
@@ -43,7 +54,7 @@ jobs:
       QT_VERSION: 6.8.2
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Ninja
         run: brew install ninja

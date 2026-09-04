@@ -68,12 +68,18 @@ echo "Start check: $LAUNCHER (on :$DISPLAY_NUMBER)"
 
 # A profile of its own, so a session this leaves behind is not the author's, and no
 # window the artefact restores comes from somebody's real session.
+#
+# Made before the application is started, which is the order it needs and not the
+# order it had: the two directories were created on the line *after* the launch, so
+# the artefact ran with a HOME and an XDG_RUNTIME_DIR that did not exist yet. Qt
+# creates what it needs under HOME, so it worked -- and a check that happens to
+# work is one nobody can reason about. See MOLE-390.
+mkdir -p "$SCRATCH/home" "$SCRATCH/run"
 env DISPLAY=":$DISPLAY_NUMBER" \
     HOME="$SCRATCH/home" \
     XDG_RUNTIME_DIR="$SCRATCH/run" \
     "$LAUNCHER" > "$SCRATCH/app.log" 2>&1 &
 APP_PID=$!
-mkdir -p "$SCRATCH/home" "$SCRATCH/run"
 
 # Two things can go wrong and they are told apart: it can die, or it can come up and
 # show nothing. The first is what a missing platform plugin does.

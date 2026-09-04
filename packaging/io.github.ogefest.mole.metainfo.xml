@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  What a desktop, an app store and a package checker read about Mole.
+
+  There was none of this: the .desktop file and the icon were installed and
+  nothing described the application, so lintian warned on every .deb, AppImageHub
+  had nothing to show, and a desktop that lists applications had only the one line
+  of Comment= from the desktop entry. See MOLE-390.
+
+  The id is reverse-DNS, which is what AppStream asks for and what `appstreamcli
+  validate` refuses to pass without; the desktop entry it belongs to is named by
+  <launchable>, and that is the tie between the two. A desktop that reads both and
+  cannot match them shows two entries for one application.
+-->
+<component type="desktop-application">
+  <id>io.github.ogefest.mole</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+
+  <name>Mole</name>
+  <developer id="io.github.ogefest">
+    <name>The Mole Authors</name>
+  </developer>
+  <summary>Work with files at scale</summary>
+
+  <description>
+    <p>
+      Mole is a file manager for working with files at scale: an IDE, but for
+      files. Browsing, searching, comparing, syncing, bulk renaming, finding
+      duplicates, previewing anything, and running long jobs in the background,
+      all under one keyboard.
+    </p>
+    <p>Local disks, network drives and archives are all the same kind of place:</p>
+    <ul>
+      <li>SFTP, FTP, S3, WebDAV, Windows shares and NFS exports, browsed like a folder</li>
+      <li>zip, tar and 7z opened in place, without unpacking them first</li>
+      <li>Previews by content rather than by name, from source code to PDFs and Parquet</li>
+      <li>Duplicate scans, folder comparison and one-way sync, as jobs that can be cancelled</li>
+      <li>Bulk rename with a preview of every name before anything is written</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">mole.desktop</launchable>
+  <provides>
+    <binary>mole</binary>
+  </provides>
+
+  <url type="homepage">https://github.com/Ogefest/mole</url>
+  <url type="bugtracker">https://github.com/Ogefest/mole/issues</url>
+
+  <categories>
+    <category>Utility</category>
+    <category>FileTools</category>
+    <category>FileManager</category>
+  </categories>
+
+  <keywords>
+    <keyword>file</keyword>
+    <keyword>manager</keyword>
+    <keyword>browser</keyword>
+    <keyword>archive</keyword>
+    <keyword>search</keyword>
+  </keywords>
+
+  <content_rating type="oars-1.1"/>
+
+  <!--
+    No <screenshots> and no <releases>. A screenshot is a URL that has to be
+    reachable for as long as the metainfo is installed, and this project publishes
+    none yet; a releases block would be a second place the version lives, which
+    CMakeLists.txt is (see MOLE-117). Both are worth adding the day there is
+    somewhere to point them.
+  -->
+</component>

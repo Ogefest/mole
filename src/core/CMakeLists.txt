@@ -232,32 +232,33 @@ endif()
 # place; when it is not, ParquetTable reports itself unsupported and the preview
 # layer falls through to the file-information viewer. A missing optional library
 # must never stop the application being built.
-find_package(Arrow QUIET)
-find_package(Parquet QUIET)
-if(Arrow_FOUND AND Parquet_FOUND)
-    target_compile_definitions(mole_core PUBLIC MOLE_HAVE_PARQUET)
-    target_link_libraries(mole_core PRIVATE Arrow::arrow_shared Parquet::parquet_shared)
-    message(STATUS "Parquet preview: enabled (Arrow ${ARROW_VERSION})")
-else()
-    message(STATUS "Parquet preview: disabled (install libarrow-dev and libparquet-dev)")
-endif()
+#
+# Every row below goes through mole_optional_dependency(), which is where that
+# rule and the shape of the line it prints now live -- see
+# cmake/MoleOptionalDependency.cmake and MOLE-390.
+mole_optional_dependency(PARQUET
+    SUMMARY "Parquet preview"
+    PACKAGE Arrow Parquet
+    VERSION_FROM ARROW_VERSION
+    FOUND "enabled (Arrow @VERSION@)"
+    MISSING "disabled (install libarrow-dev and libparquet-dev)"
+    TARGET mole_core
+    SCOPE PUBLIC
+    DEFINE MOLE_HAVE_PARQUET
+    LINK Arrow::arrow_shared Parquet::parquet_shared)
 
 # A complete terminal emulator, when one is available. Without it the built-in
 # parser handles line-oriented output and says so when it meets something it
 # cannot draw -- the panel works either way, but only libvterm makes a
 # full-screen program behave.
-find_package(PkgConfig QUIET)
-if(PkgConfig_FOUND)
-    pkg_check_modules(VTERM QUIET vterm)
-endif()
-if(VTERM_FOUND)
-    target_compile_definitions(mole_core PUBLIC MOLE_HAVE_VTERM)
-    target_include_directories(mole_core PRIVATE ${VTERM_INCLUDE_DIRS})
-    target_link_libraries(mole_core PRIVATE ${VTERM_LIBRARIES})
-    message(STATUS "Terminal: libvterm ${VTERM_VERSION}")
-else()
-    message(STATUS "Terminal: built-in parser (install libvterm-dev for full support)")
-endif()
+mole_optional_dependency(VTERM
+    SUMMARY "Terminal"
+    PKG_CONFIG vterm
+    FOUND "libvterm @VERSION@"
+    MISSING "built-in parser (install libvterm-dev for full support)"
+    TARGET mole_core
+    SCOPE PUBLIC
+    DEFINE MOLE_HAVE_VTERM)
 
 # Git state, when libgit2 is available. Without it a folder inside a checkout
 # looks exactly like one that is not -- no band, no markers, and nothing that
@@ -268,29 +269,19 @@ endif()
 # a machine without it does. That build is the one nobody would otherwise try
 # until a contributor hit it.
 option(MOLE_WITH_GIT2 "Read git state through libgit2 when it is available" ON)
-if(PkgConfig_FOUND AND MOLE_WITH_GIT2)
-    pkg_check_modules(GIT2 QUIET libgit2)
-endif()
-if(GIT2_FOUND)
-    target_compile_definitions(mole_core PUBLIC MOLE_HAVE_GIT2)
-    target_include_directories(mole_core PRIVATE ${GIT2_INCLUDE_DIRS})
-    target_link_libraries(mole_core PRIVATE ${GIT2_LIBRARIES})
-    message(STATUS "Git state: libgit2 ${GIT2_VERSION}")
-    # The tests build their fixture repositories through libgit2 themselves, so
-    # they need what core links rather than only what it defines. Cached, because
-    # the test tree is configured from a different directory scope.
-    set(MOLE_GIT2_FOUND ON CACHE INTERNAL "")
-    set(MOLE_GIT2_INCLUDE_DIRS "${GIT2_INCLUDE_DIRS}" CACHE INTERNAL "")
-    set(MOLE_GIT2_LIBRARIES "${GIT2_LIBRARIES}" CACHE INTERNAL "")
-    set(MOLE_GIT2_LIBRARY_DIRS "${GIT2_LIBRARY_DIRS}" CACHE INTERNAL "")
-else()
-    if(MOLE_WITH_GIT2)
-        message(STATUS "Git state: disabled (install libgit2-dev)")
-    else()
-        message(STATUS "Git state: disabled (MOLE_WITH_GIT2=OFF)")
-    endif()
-    set(MOLE_GIT2_FOUND OFF CACHE INTERNAL "")
-endif()
+# The tests build their fixture repositories through libgit2 themselves, so they
+# need what core links rather than only what it defines -- CACHE_PREFIX is how
+# that crosses into the test tree, which is a directory scope of its own.
+mole_optional_dependency(GIT2
+    SUMMARY "Git state"
+    PKG_CONFIG libgit2
+    SWITCH MOLE_WITH_GIT2
+    FOUND "libgit2 @VERSION@"
+    MISSING "disabled (install libgit2-dev)"
+    TARGET mole_core
+    SCOPE PUBLIC
+    DEFINE MOLE_HAVE_GIT2
+    CACHE_PREFIX MOLE_GIT2)
 
 # The first stage of a content scan digests the head of each candidate. It is a
 # filter and proves nothing -- the stage after it compares the files themselves --
@@ -299,28 +290,30 @@ endif()
 # difference between waiting for the processor and waiting for the disk. Without
 # it the scan falls back to SHA-256: slower, and every bit as correct, because a
 # filter only has to be consistent. See ADR-0046.
-if(PkgConfig_FOUND)
-    pkg_check_modules(XXHASH QUIET libxxhash)
-endif()
-if(XXHASH_FOUND)
-    target_compile_definitions(mole_core PRIVATE MOLE_HAVE_XXHASH)
-    target_include_directories(mole_core PRIVATE ${XXHASH_INCLUDE_DIRS})
-    target_link_directories(mole_core PRIVATE ${XXHASH_LIBRARY_DIRS})
-    target_link_libraries(mole_core PRIVATE ${XXHASH_LIBRARIES})
-    message(STATUS "Duplicate scan head: xxhash ${XXHASH_VERSION}")
-else()
-    message(STATUS "Duplicate scan head: SHA-256 (install libxxhash-dev for a faster filter)")
-endif()
+# PUBLIC like every other row, and it was the one PRIVATE define. Nothing outside
+# core reads MOLE_HAVE_XXHASH today; a define that is PRIVATE for no reason is a
+# difference the next reader has to account for, and the suite that checks the
+# hash a scan used would need it the moment it asked.
+mole_optional_dependency(XXHASH
+    SUMMARY "Duplicate scan head"
+    PKG_CONFIG libxxhash
+    FOUND "xxhash @VERSION@"
+    MISSING "SHA-256 (install libxxhash-dev for a faster filter)"
+    TARGET mole_core
+    SCOPE PUBLIC
+    DEFINE MOLE_HAVE_XXHASH)
 
 # Credentials are encrypted with OpenSSL, which Qt already depends on. Without it
 # the store refuses to hold anything rather than falling back to writing secrets
 # in the clear -- a credential store that quietly stops encrypting is worse than
 # one that says it cannot.
-find_package(OpenSSL QUIET)
-if(OpenSSL_FOUND)
-    target_compile_definitions(mole_core PUBLIC MOLE_HAVE_OPENSSL)
-    target_link_libraries(mole_core PRIVATE OpenSSL::Crypto)
-    message(STATUS "Credential store: OpenSSL ${OPENSSL_VERSION}")
-else()
-    message(STATUS "Credential store: unavailable (install libssl-dev)")
-endif()
+mole_optional_dependency(OPENSSL
+    SUMMARY "Credential store"
+    PACKAGE OpenSSL
+    VERSION_FROM OPENSSL_VERSION
+    FOUND "OpenSSL @VERSION@"
+    MISSING "unavailable (install libssl-dev)"
+    TARGET mole_core
+    SCOPE PUBLIC
+    DEFINE MOLE_HAVE_OPENSSL
+    LINK OpenSSL::Crypto)

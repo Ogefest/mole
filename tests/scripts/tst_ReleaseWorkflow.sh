@@ -132,11 +132,18 @@ begin "the summary lines it checks for are lines the build can print"
 # The workflow refuses to publish an artefact missing a feature by looking for the
 # configure summary's own words. A reworded message would make every one of those
 # searches quietly fail to match, which is a check that passes by finding nothing.
+#
+# Read from the mole_optional_dependency() calls rather than by grepping the CMake
+# files for the text: the message is composed there now -- a summary and one of
+# three answers -- so no file holds the printed line as a contiguous string any
+# more. tests/support/read-optional-dependencies.py puts them back together the
+# way cmake/MoleOptionalDependency.cmake does. See MOLE-390.
 : > "$SHELLTEST_TMP/stale"
-# The build's messages, joined: CMake wraps a long one across lines, so the text is
-# read as one blob rather than line by line.
-cat src/core/CMakeLists.txt src/plugins/CMakeLists.txt CMakeLists.txt \
-    | tr '\n' ' ' | tr -s ' "' '  ' > "$SHELLTEST_TMP/messages"
+python3 "$MOLE_SOURCE_DIR/tests/support/read-optional-dependencies.py" lines \
+    > "$SHELLTEST_TMP/messages" \
+    || fail "the optional-dependency calls could not be read at all"
+rows=$(grep -c . "$SHELLTEST_TMP/messages")
+[ "$rows" -ge 20 ] || fail "only $rows summary lines came back; the parse has stopped working"
 lines=$(ask summary-strings)
 count=$(printf '%s\n' "$lines" | grep -c .)
 [ "$count" -ge 8 ] || fail "only $count summary strings found in the workflow; the parse has stopped working"

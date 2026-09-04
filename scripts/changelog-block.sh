@@ -32,20 +32,14 @@ CHANGELOG="${2:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/CHANGELOG.md}"
     exit 1
 }
 
-# The shape, from the header. Fenced blocks are where the header states it, and the
-# label is what makes it findable.
-marker_re=$(sed -n "0,/^marker:/{s/^marker: *//p}" "$CHANGELOG")
-[ -n "$marker_re" ] || {
+# The shape, from the header, through the one reader of it -- which is also what
+# took the GNU-only `sed -n "0,/^marker:/{...}"` out of here. See
+# scripts/changelog-shape.sh.
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/changelog-shape.sh"
+marker_re=$(mole_changelog_shape marker "$CHANGELOG") || {
     echo "$CHANGELOG does not state its release-marker expression, so nothing can find a block" >&2
     exit 1
 }
-# The header writes \d, the way the expression reads everywhere it is quoted; awk
-# wants [0-9]. The same one translation the check and the release script make.
-marker_re=${marker_re//\\d/[0-9]}
-# And \. to [.], because awk takes the expression as a dynamic regex and treats a
-# backslash-dot as a plain dot -- which matches any character, so 0x1x0 would have
-# been a version. It warns about it, too, on every run.
-marker_re=${marker_re//\\./[.]}
 
 block=$(awk -v want="$VERSION" -v marker="$marker_re" '
     # Fenced blocks are skipped: the header shows an example of a marker, and an

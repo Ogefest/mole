@@ -476,24 +476,55 @@ looks like a wrong one, and on some backends succeeds as an anonymous user.
 
 ## Optional dependencies
 
-Three features depend on libraries that may not be installed, and all three
-follow the same shape: found at configure time, compiled behind a define, and
-reporting themselves unavailable at runtime rather than failing to build.
+**Eleven features depend on libraries that may not be installed, and all eleven
+follow the same shape**: found quietly at configure time, compiled behind a
+define, and reporting themselves unavailable at run time rather than failing to
+build. A missing optional library must never stop Mole being built, and it must
+never produce a control that does not work — the feature is absent, not broken.
 
-- **Parquet** needs Arrow. Without it `ParquetTable::isSupported()` is false, the
-  provider declines the file, and it falls through to the information viewer.
-- **The terminal** prefers libvterm. Without it a built-in parser handles
-  line-oriented output and the panel says "basic mode" instead of drawing a
-  full-screen program wrongly.
-- **Network drives** need libcurl and OpenSSL. Without either, the network plugin
-  is not built and those drives are absent from the list rather than offered and
-  failing — the same pattern as libarchive for archives.
-- **Credential encryption** needs OpenSSL. Without it the store refuses to hold
-  anything rather than falling back to writing secrets in the clear.
-- **Everything else** is Qt, which is not optional.
+That shape is one CMake function, `mole_optional_dependency()` in
+[cmake/MoleOptionalDependency.cmake](cmake/MoleOptionalDependency.cmake). It
+finds the library, prints one line, adds the define, and links what was found.
+Before it there were six shapes for eleven rows: one find that warned rather than
+reported, two that printed nothing at all when they succeeded, three that passed
+`target_link_directories()` and two that did not, and one define that was PRIVATE
+where the rest were PUBLIC.
 
-Arrow's headers must come before any Qt header: Arrow declares a parameter named
-`signals`, and Qt's macro of that name expands to `public:`.
+**The line it prints is an interface.** `scripts/feature-summary.sh` holds a
+release build to those lines, the release workflow refuses to publish an artefact
+that is missing one, and `scripts/configure-summary.sh` prints them in all three
+CI jobs so whoever reads a red run can see what the machine did not have. A row
+that only speaks when it is *absent* cannot be checked that way, which is what
+had happened to Qt Pdf and Qt Multimedia.
+
+| Feature | Needs | Without it | Define |
+|---|---|---|---|
+| Parquet preview | Arrow and Parquet | `ParquetTable::isSupported()` is false, the provider declines, and a `.parquet` falls through to the information viewer | `MOLE_HAVE_PARQUET` |
+| Terminal | libvterm | the built-in parser handles line-oriented output and the panel says "basic mode" rather than drawing a full-screen program wrongly | `MOLE_HAVE_VTERM` |
+| Git state | libgit2 | `Repository::isSupported()` answers no: no band, no markers, and a folder inside a checkout looks like one that is not | `MOLE_HAVE_GIT2` |
+| Duplicate scan head | xxhash | the first-stage filter hashes with SHA-256 — slower, and every bit as correct, because a filter only has to be consistent | `MOLE_HAVE_XXHASH` |
+| Credential store | OpenSSL | the store refuses to hold anything rather than writing secrets in the clear | `MOLE_HAVE_OPENSSL` |
+| Document preview | Qt Pdf | PDFs open in the information viewer instead of a frame nothing can fill | `MOLE_HAVE_QTPDF` |
+| Video preview | Qt Multimedia, and its QML module | videos open in the information viewer; the library and the module are two packages and either can be absent alone | `MOLE_HAVE_MULTIMEDIA` |
+| Archive drives | libarchive | the archive plugin is not built, so archives are not offered as drives at all | `MOLE_HAVE_ARCHIVE` |
+| Network drives | libcurl and OpenSSL | the network plugin is not built: no sftp, ftp, s3 or webdav, absent from the list rather than offered and failing | — (gates the plugin) |
+| Windows shares | libsmbclient | smb drives are absent. `MOLE_WITH_SMB=OFF` says the same thing on purpose: libsmbclient is GPL-3.0-or-later, so the self-contained artefacts are built without it ([ADR-0094](docs/adr/0094-smb-in-the-self-contained-artefacts.md)) | `MOLE_HAVE_SMB` |
+| NFS exports | libnfs | nfs drives are absent | `MOLE_HAVE_NFS` |
+
+Two rows carry a `MOLE_WITH_` switch — `MOLE_WITH_GIT2` and `MOLE_WITH_SMB` —
+which makes a machine that *has* the library build the way a machine without it
+does. That build is the one nobody would otherwise try until a contributor hit
+it, and for SMB it is also what the licence asks. A switch that is off prints a
+different line from a library that is missing, because they are different
+answers: one is a decision this build took, the other is something somebody could
+install. The rows found with `find_package` need no switch of their own —
+`-DCMAKE_DISABLE_FIND_PACKAGE_Arrow=ON` is CMake's own, and `make packages` uses
+it. [ADR-0097](docs/adr/0097-one-shape-for-every-optional-dependency.md) records
+the decision and what was considered instead.
+
+**Everything else is Qt, which is not optional.** Arrow's headers must come
+before any Qt header: Arrow declares a parameter named `signals`, and Qt's macro
+of that name expands to `public:`.
 
 ## Deliberate gaps
 

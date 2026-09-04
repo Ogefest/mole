@@ -37,6 +37,11 @@ if(CCACHE_PROGRAM)
     message(STATUS "Compiler cache: ${CCACHE_PROGRAM}")
 endif()
 
+# One shape for every optional library. See the note at the top of the file --
+# there were six shapes and the message they print is an interface.
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+include(MoleOptionalDependency)
+
 option(MOLE_BUILD_TESTS "Build unit tests" ON)
 option(MOLE_ENABLE_SANITIZERS "Enable ASan + UBSan" OFF)
 # Separate from the one above, because the two cannot be built together: address
@@ -161,8 +166,14 @@ endif()
 #
 # Layout:
 #   <prefix>/bin/mole
-#   <prefix>/lib/mole/plugins/*.so
-#   <prefix>/share/applications, <prefix>/share/icons/...
+#   <prefix>/<libdir>/mole/plugins/*.so
+#   <prefix>/share/applications, <prefix>/share/icons/..., <prefix>/share/metainfo
+#
+# `<libdir>` and not `lib`, which is what this said: GNUInstallDirs answers lib64
+# on an RPM distribution, and the plugins went there while nothing looked for them
+# -- no archive browsing and no network drives, reported as nothing at all rather
+# than as a failure (MOLE-296). A path written as `lib` in a comment is how that
+# came to be believed.
 #
 # PluginManager resolves the plugin directory relative to the executable, so
 # the same build runs from any prefix without being rebuilt.
@@ -198,10 +209,21 @@ install(FILES LICENSE NOTICE THIRD-PARTY-NOTICES.md
 install(DIRECTORY licenses
     DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/doc/mole)
 
-install(FILES packaging/mole.desktop
-    DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
-install(FILES packaging/mole.svg
-    DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/apps)
+# What a desktop needs to show the application, and only where there is one: all
+# three of these sat outside the guard above, so a core-only install -- which
+# builds no application at all, see MOLE_CORE_ONLY -- installed a desktop entry
+# and an icon for a binary it had not built, and a menu offering it. See MOLE-390.
+if(NOT MOLE_CORE_ONLY)
+    install(FILES packaging/mole.desktop
+        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
+    install(FILES packaging/mole.svg
+        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/apps)
+    # AppStream metainfo: what a desktop, an app store and lintian read about the
+    # application. There was none, so every .deb carried a desktop entry nothing
+    # described.
+    install(FILES packaging/io.github.ogefest.mole.metainfo.xml
+        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/metainfo)
+endif()
 
 # ------------------------------------------------------------------ packaging
 #
@@ -292,8 +314,11 @@ set(CPACK_RPM_PACKAGE_URL "${CPACK_PACKAGE_HOMEPAGE_URL}")
 # reason as shlibdeps above; this is the pair it cannot see. One package rather
 # than seven, because Fedora ships the QML modules and the SQL driver inside
 # qt6-qtdeclarative and qt6-qtbase-gui rather than splitting them the way Debian
-# does. **Unverified on an RPM system**: nothing in this repository can build or
-# install one -- see MOLE-121's note about the family this machine is not.
+# Built and installed on the family it is for, in a container, by
+# `make rpm` -- see scripts/package-rpm.sh, and the release workflow, which
+# installs the result in a fresh image that did not build it. It said
+# "unverified on an RPM system: nothing in this repository can build or install
+# one" for long after both of those existed.
 set(CPACK_RPM_PACKAGE_REQUIRES "qt6-qtdeclarative, qt6-qtbase-gui")
 # Directories the distribution owns. Without this the package claims /usr/share
 # and its subdirectories and conflicts with everything.

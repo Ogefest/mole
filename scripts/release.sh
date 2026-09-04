@@ -276,19 +276,13 @@ step "the changelog"
 # are written down -- see ADR-0080. So the marker this builds is checked against
 # the file's rule rather than against a second copy of it, which is what
 # tests/scripts/tst_Changelog.sh will hold it to afterwards.
-shape() { sed -n "s/^$1: *//p" CHANGELOG.md | head -1; }
-marker_re=$(shape marker)
-entry_re=$(shape entry)
+# Through the one reader of them, which is where the translation from what the
+# header writes to what grep and awk take now lives -- there were two copies of it.
+# See scripts/changelog-shape.sh.
+. "$SOURCE_SCRIPTS/changelog-shape.sh"
+marker_re=$(mole_changelog_shape marker CHANGELOG.md) || marker_re=""
+entry_re=$(mole_changelog_shape entry CHANGELOG.md) || entry_re=""
 [ -n "$marker_re" ] && [ -n "$entry_re" ] || die "CHANGELOG.md does not state its own shapes"
-# The header writes \d, the way the expression reads everywhere it is quoted;
-# grep and awk want [0-9]. The same one translation the test makes.
-marker_re=${marker_re//\\d/[0-9]}
-# And \. to [.], because awk takes the expression as a dynamic regex and treats a
-# backslash-dot as a plain dot -- which matches any character, so 0x1x0 would have
-# been a version. It warns about it, too, on every run.
-marker_re=${marker_re//\\./[.]}
-entry_re=${entry_re//\\d/[0-9]}
-entry_re=${entry_re//\\./[.]}
 
 # One reading of the clock, for the marker and for the manifest, so a cut that
 # crosses midnight cannot date the two of them differently.
@@ -393,7 +387,11 @@ note "project(VERSION $next)"
 step "the commit"
 # shellcheck disable=SC2086
 git add $PATHS
-git commit --quiet -m "Release $next" -m "The version, the changelog marker for $next, and the guide pictures as they are at this commit." \
+# Everything $PATHS carries, named: the message listed three of the four and left
+# out latest.json, which is the file the updater reads and the one a reader of
+# this commit is most likely to be looking for. See MOLE-390.
+git commit --quiet -m "Release $next" \
+    -m "The version, the changelog marker for $next, $MANIFEST as the updater will read it, and the guide pictures as they are at this commit." \
     || die "the commit failed"
 mutating=0
 note "$(git log --oneline -1)"

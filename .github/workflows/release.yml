@@ -78,9 +78,13 @@ jobs:
     # 24.04 is also the distribution the baseline Qt comes from: 6.4.2, the
     # version CMakeLists.txt requires and the one the author develops against.
     runs-on: ubuntu-24.04
+    # A bound on a hang, not a measure of the work: a docker run that never
+    # answers, an Xvfb that never starts or a dnf mirror that stalls otherwise
+    # holds a runner for the six-hour maximum. See MOLE-390.
+    timeout-minutes: 150
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Qt 6.4 is the only hard dependency. Everything else is found QUIET and
       # switched on with a MOLE_HAVE_* flag, and src/core/CMakeLists.txt says
@@ -154,13 +158,15 @@ jobs:
       # machine gets it too, so the artefact and the development build hold the
       # same reader. The alternative was an artefact whose Parquet preview is
       # silently absent, which is the accident this file exists to avoid.
+      #
+      # Through a script rather than four lines here, and the script checks the
+      # signature on what it is about to give root to: this was a `wget` and an
+      # `apt-get install` of a package fetched over a URL, in two workflows with a
+      # copy each. See scripts/arrow-apt-source.sh and MOLE-390.
       - name: Arrow and Parquet, from Apache's own repository
         run: |
-          sudo apt-get install -y --no-install-recommends ca-certificates lsb-release wget
-          wget -q "https://packages.apache.org/artifactory/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb"
-          sudo apt-get install -y "./apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb"
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libarrow-dev libparquet-dev
+          sudo apt-get install -y --no-install-recommends ca-certificates lsb-release gnupg
+          scripts/arrow-apt-source.sh
 
       # The fast tier, which is the whole suite anybody can run: 118 suites,
       # offscreen, no server. The live and heavy tiers are not here and cannot be
@@ -180,12 +186,15 @@ jobs:
       # absent from a published build, so it fails here instead.
       #
       # The strings are the ones src/core/CMakeLists.txt and
-      # src/plugins/CMakeLists.txt print. tests/scripts/tst_ReleaseWorkflow.sh
-      # holds them to that, so a reworded message breaks the suite here rather
-      # than a release later.
+      # src/plugins/CMakeLists.txt print, through
+      # mole_optional_dependency(). tests/scripts/tst_ReleaseWorkflow.sh holds
+      # them to that, so a reworded message breaks the suite here rather than a
+      # release later.
       - name: Refuse a build with a feature missing
         run: |
           cmake --preset release 2>&1 | tee configure.log
+          echo "--- what this runner gave the build ---"
+          scripts/configure-summary.sh configure.log
           # The list lives in scripts/feature-summary.sh, which the AppImage
           # packer and tst_ReleaseWorkflow.sh read as well. Three copies had
           # already drifted -- the AppImage's was missing xxhash and the
@@ -455,7 +464,7 @@ jobs:
       # this file has never allowed, and a red rehearsal is answered by its own log.
       - name: Upload the four artefacts, so a rehearsal can be looked at
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: mole-${{ env.VERSION }}-rehearsal
           if-no-files-found: error

@@ -564,4 +564,4 @@ note "http://$ADDRESS:$S3_PORT, buckets $S3_BUCKET and $S3_VERSIONED_BUCKET (ver
 heading "Ready"
 note "Check them with scripts/testbed/check-services.sh"
 printf '\n  The addresses and the password belong in the environment directory,\n'
-printf '  not in this repository. Next: issue #21, the control channel.\n\n'
+printf '  not in this repository -- see CLAUDE.md.\n\n'

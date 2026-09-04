@@ -352,6 +352,26 @@ project, and a contributor should never hit a wall of text they cannot read.
     it. A package records the sonames its binaries link, and that question has one
     answer. `tst_Packages.sh` now holds the two images apart (MOLE-389).
 
+- **`make tidy` works now, and the tree is 91 findings away from clean under
+  it.** It had no `.clang-tidy` at all, so clang-tidy ran with its default check
+  set; its stderr went to `/dev/null`, so a clang-tidy that could not run said
+  nothing; and the recipe ended in `|| true`, so the target passed whatever
+  happened. A command in that state is worse than no command, because it is in
+  the Makefile, the help text and CLAUDE.md, and so looks like something somebody
+  is doing. MOLE-390 gave it a chosen check set, made it print, and made it fail
+  when it found something.
+
+  What it finds on 2026-09-04, in `src/`: 21 `performance-no-automatic-move`, 20
+  `performance-implicit-conversion-in-loop`, 15
+  `bugprone-implicit-widening-of-multiplication-result`, 8
+  `performance-unnecessary-value-param`, 7
+  `performance-unnecessary-copy-initialization`, and a tail of ones and twos —
+  91 in all, and none of them a fault anybody has met. **So a red `make tidy` is
+  the state of the tree rather than a regression**, until somebody works through
+  them; it is not in `make test` and does not gate a commit. Turning a further
+  check on in `.clang-tidy` is a piece of work rather than a setting, for the
+  same reason.
+
 - **`shellcheck` is not in the suite, and the rules it would enforce are held by
   hand instead.** `shellcheck` flags the class of fault MOLE-233 was about — a
   `\$` on a line that runs in the outer shell rather than in a heredoc — and is

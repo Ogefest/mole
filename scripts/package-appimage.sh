@@ -34,6 +34,13 @@ OUT="${1:-$SOURCE/build/packages}"
 # AppImageKit assets were renamed `obsolete-*`, so the URL every guide still gives
 # is a 404.
 TOOL_URL="https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage"
+# And what those bytes are, because a pinned version is not a pinned file: a
+# release asset can be replaced under its tag, and this one is downloaded and then
+# executed. Recorded rather than trusted, the way scripts/qt-tsan.sh keeps a table
+# for the Qt source it compiles -- and enforced rather than reported, because 1.9.1
+# is a tag that is finished and its bytes have no reason to change. Taken on
+# 2026-09-04 from the URL above. See MOLE-390.
+TOOL_SHA256="ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
 
 command -v docker >/dev/null 2>&1 || {
     echo "skipped: the AppImage is built on an older distribution, in a container," >&2
@@ -51,6 +58,7 @@ docker run --rm \
     -v "$OUT:/out" \
     -e CALLER="$(id -u):$(id -g)" \
     -e TOOL_URL="$TOOL_URL" \
+    -e TOOL_SHA256="$TOOL_SHA256" \
     "$IMAGE" bash -c '
 # pipefail as well as -e. Every check below ended in tee, tail or grep, whose
 # status is the one the shell sees -- so a failing configure or a failing packer
@@ -103,8 +111,12 @@ cmake -S /src -B /build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMOLE_BUILD_
 # src/app/CMakeLists.txt comes *after* them -- passed both this and the
 # wanted/refused checks below, and failed later with an unrelated error.
 # See MOLE-387.
-grep -E "Parquet|Terminal|Git state|Network drives|Credential|Windows shares|NFS exports|Qt6 Pdf|Multimedia|libarchive" \
-    /tmp/configure.log || true
+#
+# And through the script the three CI jobs use rather than a fourth hand-typed
+# alternation: this one named ten of the eleven rows, in a pattern that mixed
+# summaries with library names. A row that printed nothing fails here, which is
+# what the script is for. See MOLE-390.
+/src/scripts/configure-summary.sh /tmp/configure.log
 
 # What this artefact has to have, from the one list all three consumers read.
 # The exemptions -- no Parquet grid, and no Windows shares on purpose -- are named
@@ -151,6 +163,19 @@ cp /src/packaging/mole.desktop "$APPDIR/mole.desktop"
 cp /src/packaging/mole.svg "$APPDIR/mole.svg"
 
 curl -sSfL -o /tmp/appimagetool "$TOOL_URL"
+# The bytes, before they are made executable and run. A pinned version is not a
+# pinned file -- a release asset can be replaced under its tag -- and this one is
+# the tool that packs an artefact somebody downloads.
+got=$(sha256sum /tmp/appimagetool | cut -d" " -f1)
+if [ "$got" != "$TOOL_SHA256" ]; then
+    echo "appimagetool is not the file this script was written against:" >&2
+    echo "  expected $TOOL_SHA256" >&2
+    echo "  got      $got" >&2
+    echo "Look at what changed under that tag before touching the line in" >&2
+    echo "scripts/package-appimage.sh. See MOLE-390." >&2
+    exit 1
+fi
+echo "  appimagetool sha256 matches the recorded one"
 chmod +x /tmp/appimagetool
 
 version=$(sed -n "s/^ *VERSION \([0-9][0-9.]*\)$/\1/p" /src/CMakeLists.txt)
