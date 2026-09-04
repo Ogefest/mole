@@ -28,6 +28,7 @@ private slots:
     void storesADriveAndReadsItBack();
     void requiresAUniqueName();
     void derivesASchemeFromTheName();
+    void aNameThatSlugsDownToSomebodyElsesSchemeIsRefused();
 
     void keepsPasswordsOutOfTheSettingsFile();
     void refusesToSaveASecretWhileLocked();
@@ -112,6 +113,42 @@ void TestRemoteRegistry::derivesASchemeFromTheName()
     RemoteDrive drive = sampleDrive();
     QCOMPARE(drive.scheme(), QStringLiteral("officenas"));
     QCOMPARE(drive.rootUri().scheme(), QStringLiteral("officenas"));
+}
+
+/// A drive called "File" was addressed as `file`.
+///
+/// The scheme is slugged from the name, and put() checked uniqueness only among
+/// the other *remote* drives -- so a name that reduced to a scheme something else
+/// already answers was accepted, and from then on driveForUri(),
+/// caseSensitivityFor() and the drive-letter floor all treated that remote drive
+/// as the local disk. See MOLE-359.
+void TestRemoteRegistry::aNameThatSlugsDownToSomebodyElsesSchemeIsRefused()
+{
+    // What the application sets once its plugins are loaded.
+    m_registry->setReservedSchemes({ QStringLiteral("sftp"), QStringLiteral("s3") });
+
+    for (const QString& name : { QStringLiteral("File"), QStringLiteral("mem"), QStringLiteral("Archive"),
+             QStringLiteral("S 3"), QStringLiteral("sftp") }) {
+        RemoteDrive drive = sampleDrive();
+        drive.name = name;
+        QString error;
+        QVERIFY2(!m_registry->put(drive, {}, &error),
+            qPrintable(QStringLiteral("a drive called \"%1\" was accepted").arg(name)));
+        // Said in terms of the name, because that is what the person typed.
+        QVERIFY2(error.contains(name), qPrintable(error));
+    }
+
+    // The built-ins are refused even when nobody named them, because a host that
+    // has not set the list still must not let a drive take `file`.
+    RemoteRegistry fresh(QDir(m_dir->path()).filePath(QStringLiteral("other.json")), m_secrets.get());
+    RemoteDrive local = sampleDrive();
+    local.name = QStringLiteral("file");
+    QVERIFY(!fresh.put(local, {}));
+
+    // And an ordinary name still works, which is what says this refuses a clash
+    // and not a shape.
+    QVERIFY(m_registry->put(sampleDrive(), {}));
+    QCOMPARE(m_registry->drives().size(), 1);
 }
 
 void TestRemoteRegistry::keepsPasswordsOutOfTheSettingsFile()

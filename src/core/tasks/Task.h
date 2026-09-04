@@ -206,6 +206,12 @@ protected:
     virtual void run() = 0;
 
     // --- helpers usable from run() ---
+    /// Whether somebody has asked this to stop.
+    ///
+    /// Asking is also how the answer gets acted on, and the token records that
+    /// -- see CancelToken::wasNoticed(). A run that never asked, and whose
+    /// backends never asked either, is not reported as cancelled however late
+    /// the cancel arrived.
     bool isCancelRequested() const { return m_cancel.isCancelled(); }
     const CancelToken& cancelToken() const { return m_cancel; }
     void setBackground(bool background) { m_background = background; }

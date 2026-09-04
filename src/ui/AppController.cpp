@@ -382,6 +382,17 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
         m_plugins->addBuiltIn(std::move(plugin));
     m_plugins->loadFromDefaultPaths();
 
+    // Now that the factories are known: a configured drive's name becomes a uri
+    // scheme, and it must not become one somebody else already answers. A drive
+    // called "File" used to be addressed as `file` -- see
+    // RemoteRegistry::setReservedSchemes() and MOLE-359.
+    {
+        QStringList taken;
+        for (const IFileSystemFactory* factory : m_vfs->factories())
+            taken.append(factory->scheme());
+        m_remotes->setReservedSchemes(taken);
+    }
+
     // Handed the sets store, because a set bookmark's name and its liveness are
     // read from it rather than copied. The store exists by now -- see above. See
     // ADR-0061.

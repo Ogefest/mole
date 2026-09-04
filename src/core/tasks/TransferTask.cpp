@@ -121,11 +121,17 @@ bool TransferTask::nothingToRefuse() const
     return true;
 }
 
-bool TransferTask::planJobs(QList<Job>& jobsOut)
+bool TransferTask::planJobs(QList<Job>& jobsOut, int fromSource)
 {
     int sourceIndex = -1;
     for (const VfsUri& source : std::as_const(m_request.sources)) {
         ++sourceIndex;
+        // Sources the rename shortcut already moved. Re-planning them stat()s
+        // names that are no longer there, records a NotFound apiece -- and
+        // because a move keeps every source while anything failed, the whole
+        // move was then undone by its own fall-through. See MOLE-359.
+        if (sourceIndex < fromSource)
+            continue;
         if (isCancelRequested())
             return false;
 
@@ -208,13 +214,22 @@ bool TransferTask::planJobs(QList<Job>& jobsOut)
 
         const NameRules arrivalRules = m_request.targetFileSystem->nameRules();
 
+        // How much of a child's path is the source root. **A trailing slash is
+        // not part of it**: the root of a drive is "/", one character, so
+        // chopping that off "/x" left "x" with no separator and the child landed
+        // at "/dest/namex" -- the name glued onto every child of a drive root
+        // copied under a new name. Reachable from the console runner, which is
+        // where a targetName is set. See MOLE-359.
+        const int rootLength = source.path().endsWith(QLatin1Char('/')) ? int(source.path().size()) - 1
+                                                                        : int(source.path().size());
+
         DirectoryWalker walker(m_request.sourceFileSystem);
         Result<void> walked = walker.walk(source, cancelToken(), [&](const FileEntry& entry, int) {
             // The same rule as above, one level in, and in the same order: the
             // walker does not descend into a link, so this is where a linked
             // folder inside a copied tree becomes one job of its own.
             if (entry.isSymlink) {
-                const QString relative = entry.uri.path().mid(source.path().size());
+                const QString relative = entry.uri.path().mid(rootLength);
                 jobsOut.append(
                     Job { entry.uri, VfsUri(target.scheme(), target.authority(), target.path() + relative),
                         Kind::Link, 0, sourceIndex });
@@ -247,7 +262,7 @@ bool TransferTask::planJobs(QList<Job>& jobsOut)
             }
 
             // Rebuild each child's path relative to the source root.
-            const QString relative = entry.uri.path().mid(source.path().size());
+            const QString relative = entry.uri.path().mid(rootLength);
             jobsOut.append(
                 Job { entry.uri, VfsUri(target.scheme(), target.authority(), target.path() + relative),
                     entry.isDir ? Kind::Directory : Kind::File, entry.isDir ? 0 : entry.size, sourceIndex });
@@ -475,14 +490,24 @@ void TransferTask::verifyArrivals()
             continue;
         }
 
+        // **Folded the way the destination folds.** The lookup was by the exact
+        // name that was asked for, so on a volume that ignores case an overwrite
+        // changing only the capitalisation -- report.txt written over
+        // Report.txt -- came back "not there afterwards", which for a move is a
+        // recorded failure and therefore a source that is kept. See MOLE-359.
+        const Qt::CaseSensitivity sensitivity = m_request.targetFileSystem->pathCaseSensitivity();
+        const auto key = [sensitivity](const QString& name) {
+            return sensitivity == Qt::CaseSensitive ? name : name.toCaseFolded();
+        };
+
         QHash<QString, qint64> sizes;
         for (const FileEntry& entry : listing.value()) {
             if (!entry.isDir)
-                sizes.insert(entry.name, entry.size);
+                sizes.insert(key(entry.name), entry.size);
         }
 
         for (const Arrival* arrival : it.value()) {
-            const QString name = arrival->target.fileName();
+            const QString name = key(arrival->target.fileName());
             if (!sizes.contains(name)) {
                 recordFailure(arrival->target,
                     VfsError::make(
@@ -650,6 +675,10 @@ void TransferTask::run()
     // the user cannot see. See MOLE-332.
     const bool sameBackend = m_request.sourceFileSystem == m_request.targetFileSystem;
     QList<bool> sourceIsDirectory;
+    // Where the generic path has to start when the shortcut gives up part way.
+    // Everything before it has already been moved, and asking about it again is
+    // asking about a name that is no longer there.
+    int plannedFrom = 0;
     if (m_request.mode == Mode::Move && sameBackend && nothingToRefuse()
         && everySourceCanBeRenamed(&sourceIsDirectory)) {
         int index = 0;
@@ -673,9 +702,14 @@ void TransferTask::run()
                 : m_request.sourceFileSystem->rename(source, target, cancelToken());
             if (renamed.ok())
                 ++m_copied;
-            else if (renamed.error().code == VfsError::NotSupported)
-                break; // fall through to the generic path below
-            else
+            else if (renamed.error().code == VfsError::NotSupported) {
+                // This source and every one after it, streamed instead. No
+                // shipped backend answers NotSupported for some renames and not
+                // others, but the first WebDAV server that moves files and not
+                // collections will.
+                plannedFrom = index;
+                break;
+            } else
                 recordFailure(source, renamed.error());
 
             setProgress(static_cast<int>(100.0 * ++index / m_request.sources.size()));
@@ -689,7 +723,7 @@ void TransferTask::run()
     }
 
     QList<Job> jobs;
-    if (!planJobs(jobs))
+    if (!planJobs(jobs, plannedFrom))
         return; // cancelled
 
     qint64 payload = 0;
@@ -760,7 +794,12 @@ void TransferTask::run()
     // a source none of whose files arrived is not deleted either, however
     // deliberate the reason they did not.
     if (m_request.mode == Mode::Move && m_failures.isEmpty()) {
-        for (int index = 0; index < m_request.sources.size(); ++index) {
+        // From where the generic path started. Everything before it was moved by
+        // the rename shortcut -- a rename *is* the move -- so asking the drive to
+        // remove those names is asking about names that are no longer there, and
+        // the NotFound apiece then kept every other source as well. See
+        // MOLE-359.
+        for (int index = plannedFrom; index < m_request.sources.size(); ++index) {
             if (isCancelRequested())
                 return;
             if (!m_unfinishedSources.contains(index)) {

@@ -108,9 +108,18 @@ QString VfsManager::remountFor(const VfsUri& uri)
         return {};
     // Already there is the ordinary case, and saying which is more useful than
     // saying nothing: a caller that wanted a mount now has one either way.
-    for (const Mount& mount : m_mounts) {
-        if (mount.root.scheme() == uri.scheme() && mount.root.authority() == uri.authority())
-            return mount.id;
+    //
+    // **Under the lock, and matched on the whole root.** This read the mount
+    // table with no lock while every other accessor takes one, and it compared
+    // the scheme and the authority alone -- so two SFTP drives on one host at
+    // different roots made each other's uris answer "already mounted", and the
+    // caller then handed that uri to resolve(), which refuses it. See MOLE-359.
+    {
+        QMutexLocker lock(&m_mutex);
+        for (const Mount& mount : m_mounts) {
+            if (uri.isWithin(mount.root))
+                return mount.id;
+        }
     }
 
     IFileSystemFactory* factory = factoryFor(uri.scheme());

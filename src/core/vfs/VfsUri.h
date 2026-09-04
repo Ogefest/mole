@@ -83,6 +83,14 @@ public:
     /// Lowercased extension without the dot, empty when there is none.
     QString suffix() const;
 
+    /// The node called `name` inside this one.
+    ///
+    /// **Nothing here may climb**: an invalid uri comes back for a `name`
+    /// carrying a ".." segment, or one that names nothing at all. The
+    /// constructor normalises those away, so `dir.child("../x")` was
+    /// `dir.parent().child("x")` -- a listing row walking out of the tree it came
+    /// from. A relative path is fine, and several callers pass one: an archive
+    /// entry is "docs/notes/report.txt". See MOLE-359.
     VfsUri child(const QString& name) const;
     VfsUri parent() const;
 

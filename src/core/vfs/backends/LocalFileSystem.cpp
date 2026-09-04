@@ -353,9 +353,26 @@ QStringList LocalFileSystem::snapshotsUnder(const QString& root)
     return names;
 }
 
+bool LocalFileSystem::isASnapshotName(const QString& snapshot)
+{
+    // **A version token is a directory name, not a path.** It used to be spliced
+    // into a path unchecked, so `?version=../../../current` in a bookmark, a
+    // session or a saved set read the *current* file while every screen said it
+    // was an earlier version -- which ADR-0077 calls worse than the feature not
+    // existing. Nothing here asks the disk: the shape is enough, and a name that
+    // is not there simply fails to open.
+    // See MOLE-359.
+    if (snapshot.isEmpty() || snapshot == QLatin1String(".") || snapshot == QLatin1String(".."))
+        return false;
+    return !snapshot.contains(QLatin1Char('/')) && !snapshot.contains(QLatin1Char('\\'));
+}
+
 QString LocalFileSystem::insideSnapshot(
     const QString& root, const QString& snapshot, const QString& localPath)
 {
+    if (!isASnapshotName(snapshot))
+        return {};
+
     QString relative = localPath.mid(root.size());
     while (relative.startsWith(QLatin1Char('/')))
         relative.remove(0, 1);

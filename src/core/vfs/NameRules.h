@@ -31,7 +31,18 @@ struct NameRules
     /// extension, because "nul.txt" is the device too.
     bool refusesReservedDeviceNames = false;
     /// Characters, not bytes. Zero means no limit this layer knows about.
+    ///
+    /// This is Windows's limit, which really is counted in UTF-16 code units.
     int maximumLength = 0;
+    /// Bytes of UTF-8. Zero means no limit this layer knows about.
+    ///
+    /// **ext4, XFS, btrfs and APFS all count bytes**, and a name of 200 Polish
+    /// characters is 300-odd bytes of UTF-8. Counted in characters it passed
+    /// checkName() and was then refused by the kernel -- which is exactly the
+    /// outcome ADR-0070 set out to remove, and PartialWrite.cpp two files away
+    /// was already measuring `toUtf8().size()` against the same 255. A drive
+    /// that limits both sets both. See MOLE-359.
+    int maximumLengthInBytes = 0;
 
     /// What the platform's usual filesystem accepts. Posix and macOS refuse
     /// almost nothing; Windows refuses a good deal.

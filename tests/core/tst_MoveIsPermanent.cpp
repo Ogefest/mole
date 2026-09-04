@@ -441,15 +441,17 @@ void TestMoveIsPermanent::aFolderMovedOntoAnotherDeviceArrivesThroughTheGuardedC
     auto drive = std::make_shared<FaultyFileSystem>(m_disk);
     const VfsUri into = VfsUri::fromLocalPath(elsewhere.path());
     const VfsUri arriving = into.child(QStringLiteral("work")).child(QStringLiteral("big.bin"));
-    const QString staging = partialWriteOf(arriving).toLocalPath();
+    // Looked for rather than derived: a staging name carries a per-open token.
+    // See MOLE-359.
+    const QString arrivingIn = QFileInfo(arriving.toLocalPath()).absolutePath();
 
     // Only the large file ever reaches this offset, so there is no need to name
     // it: notes.txt is seven bytes.
     std::atomic_bool underTheWorkingName { false };
     std::atomic_bool underTheFinalName { false };
     const QString finalName = arriving.toLocalPath();
-    drive->whenWriteReaches(16 * 1024, [&underTheWorkingName, &underTheFinalName, staging, finalName] {
-        underTheWorkingName = QFile::exists(staging);
+    drive->whenWriteReaches(16 * 1024, [&underTheWorkingName, &underTheFinalName, arrivingIn, finalName] {
+        underTheWorkingName = !partialWriteIn(arrivingIn).isEmpty();
         underTheFinalName = QFile::exists(finalName);
     });
 

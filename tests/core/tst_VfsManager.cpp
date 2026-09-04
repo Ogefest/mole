@@ -21,6 +21,7 @@ private slots:
     void unrelatedUriResolvesToNothing();
     void removeMountEmitsAndForgets();
     void mountIdsAreUnique();
+    void aRemountAnswersForTheMountThatActuallyHoldsTheUri();
 };
 
 namespace {
@@ -148,6 +149,45 @@ void TestVfsManager::mountIdsAreUnique()
     QVERIFY(!first.isEmpty());
     QVERIFY(!second.isEmpty());
     QVERIFY(first != second);
+}
+
+/// Two drives on one host answered for each other.
+///
+/// remountFor() matched on the scheme and the authority alone, so two SFTP
+/// drives on one host at different roots each answered "already mounted" for the
+/// other's uris -- and the caller then handed that uri to resolve(), which
+/// refuses it, because no mount contains it. (It also read the mount table with
+/// no lock while every other accessor takes one.) See MOLE-359.
+void TestVfsManager::aRemountAnswersForTheMountThatActuallyHoldsTheUri()
+{
+    VfsManager* manager = makeManager(this);
+    const QString photos = manager->addMount(memoryMount(QStringLiteral("nas"), QStringLiteral("/photos")));
+    const QString papers = manager->addMount(memoryMount(QStringLiteral("nas"), QStringLiteral("/papers")));
+    QVERIFY(!photos.isEmpty());
+    QVERIFY(!papers.isEmpty());
+    QVERIFY(photos != papers);
+
+    // Each uri answers with the mount that holds it, and not with whichever of
+    // the two came first in the table.
+    QCOMPARE(manager->remountFor(
+                 VfsUri(QStringLiteral("mem"), QStringLiteral("nas"), QStringLiteral("/papers/report.txt"))),
+        papers);
+    QCOMPARE(manager->remountFor(
+                 VfsUri(QStringLiteral("mem"), QStringLiteral("nas"), QStringLiteral("/photos/holiday.jpg"))),
+        photos);
+
+    // And an answer from here is a mount resolve() will accept, which is the
+    // whole point of asking: the two used to disagree.
+    const VfsUri paper(QStringLiteral("mem"), QStringLiteral("nas"), QStringLiteral("/papers/report.txt"));
+    QVERIFY(!manager->remountFor(paper).isEmpty());
+    QVERIFY2(manager->resolve(paper) != nullptr, "remountFor() named a mount that does not hold the uri");
+
+    // A uri under neither is not claimed by either, and there is no factory that
+    // can rebuild a memory drive, so it comes back empty rather than wrong.
+    QVERIFY(manager
+                ->remountFor(
+                    VfsUri(QStringLiteral("mem"), QStringLiteral("nas"), QStringLiteral("/music/song.flac")))
+                .isEmpty());
 }
 
 MOLE_TEST_MAIN(TestVfsManager)

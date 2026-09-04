@@ -48,6 +48,7 @@ private slots:
 
     void aFolderInsideARootOffersTheEarlierVersionsOfItsFiles();
     void openingAnEarlierVersionOpensThatVersion();
+    void aVersionTokenThatIsAPathCannotReachTheCurrentFile();
     void theRootIsFoundFromFarBelowIt();
     void aFileNoSnapshotKeptIsOfferedNothing();
     void aFolderOutsideAnyRootIsOfferedNothing();
@@ -156,6 +157,54 @@ void TestLocalSnapshots::openingAnEarlierVersionOpensThatVersion()
     // A snapshot that does not exist is missing, not the current file.
     QCOMPARE(
         m_fs.openRead(report.withVersion(QStringLiteral("1999-01-01"))).error().code, VfsError::NotFound);
+}
+
+/// A version token is a directory name, and it was spliced into a path unchecked.
+///
+/// `?version=../../../current` in a bookmark, a session or a saved set reads the
+/// *current* file while every screen says it is an earlier version -- which is
+/// ADR-0077's "worse than the feature not existing": a reader looking at what
+/// they believe is last month's draft, editing decisions on it, with the
+/// application agreeing. And it reaches outside the snapshot root entirely.
+/// See MOLE-359.
+void TestLocalSnapshots::aVersionTokenThatIsAPathCannotReachTheCurrentFile()
+{
+    const VfsUri report = inRoot(QStringLiteral("papers/report.txt"));
+
+    // What a hand-edited bookmark can carry. Each of these, spliced in, names
+    // the current file or something outside the root.
+    // The snapshot directory is two levels down, so `../..` from inside it is
+    // the root itself -- which is why this is a shape to refuse rather than a
+    // depth to count.
+    const QStringList wicked { QStringLiteral("../.."), QStringLiteral("../../"),
+        QStringLiteral("2026-08-01/../../.."), QStringLiteral(".."), QStringLiteral("."),
+        QStringLiteral("/etc") };
+
+    for (const QString& token : wicked) {
+        const VfsUri asked = report.withVersion(token);
+        const Result<std::unique_ptr<QIODevice>> read = m_fs.openRead(asked);
+        QVERIFY2(!read.ok(),
+            qPrintable(
+                QStringLiteral("version=%1 opened something: %2")
+                    .arg(token, QString::fromUtf8(read.value() ? read.value()->readAll() : QByteArray()))));
+        QCOMPARE(read.error().code, VfsError::NotFound);
+        QVERIFY2(
+            !m_fs.stat(asked).ok(), qPrintable(QStringLiteral("version=%1 stat'd something").arg(token)));
+    }
+
+    // The one above that really did read the current file, named on its own so
+    // this case cannot pass because a path happened not to exist.
+    const Result<std::unique_ptr<QIODevice>> escaped
+        = m_fs.openRead(report.withVersion(QStringLiteral("../..")));
+    QVERIFY2(!escaped.ok() || escaped.value()->readAll() != QByteArray("the third draft"),
+        "a version token walked out of the snapshot directory and read the current file");
+
+    // A real token still works, which is what says this refuses a shape rather
+    // than the feature.
+    const Result<std::unique_ptr<QIODevice>> real
+        = m_fs.openRead(report.withVersion(QStringLiteral("2026-08-01")));
+    QVERIFY2(real.ok(), qPrintable(real.error().message));
+    QCOMPARE(real.value()->readAll(), QByteArray("the first draft"));
 }
 
 /// A path may be far below the root, and the relative part is what indexes into

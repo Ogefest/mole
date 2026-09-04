@@ -343,8 +343,14 @@ void TestTransferTaskUnderFault::theFileBeingWrittenIsRemovedMidWrite()
     // bytes go on arriving -- the stream is open on an inode that no longer has
     // a name -- and the failure only shows up when the result is put in place.
     const VfsUri target = m_tree->rootUri().child(QStringLiteral("payload.bin"));
-    const QString staging = partialWriteOf(target).toLocalPath();
-    m_target->whenWriteReaches(kThirty, [staging] { QFile::remove(staging); });
+    // Found rather than derived: the staging name carries a per-open token so
+    // that two writers cannot share one. See MOLE-359.
+    const QString directory = m_tree->path();
+    m_target->whenWriteReaches(kThirty, [directory] {
+        const QString staging = partialWriteIn(directory);
+        if (!staging.isEmpty())
+            QFile::remove(staging);
+    });
 
     TransferTask* task = run(request());
     QVERIFY(task);

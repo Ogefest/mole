@@ -73,6 +73,15 @@ bool waitFor(const std::function<bool()>& predicate, int timeoutMs = 5000);
 /// Drains everything currently queued, including deleteLater().
 void drainEvents();
 
+/// The absolute path of the `.mole-partial` file in `directory`, or empty.
+///
+/// A staging name carries a per-open token, so no test can derive it: two long
+/// names that agree in their first 242 bytes used to share one staging name and
+/// truncate over each other (MOLE-359). Looking for the *shape* is what the
+/// sweep and every listing do anyway. Empty when there is none, and the first
+/// one when a test has somehow arranged two.
+QString partialWriteIn(const QString& directory);
+
 /// Refreshes the interface's snapshot of the index and waits for the answer.
 ///
 /// The interface reads `IndexSummary` rather than the database -- ADR-0066 -- so

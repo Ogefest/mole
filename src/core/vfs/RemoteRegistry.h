@@ -68,6 +68,19 @@ public:
     bool load();
     [[nodiscard]] bool save();
 
+    /// Schemes a drive's name may not slug down to, because something else
+    /// already answers them.
+    ///
+    /// **A drive named "File", "Mem" or "Archive" got the scheme `file`, `mem`
+    /// or `archive`.** put() checked uniqueness only among remote drives, so the
+    /// clash was accepted -- and then driveForUri(), caseSensitivityFor() and
+    /// the drive-letter floor all treated that remote drive as the local disk.
+    /// The three built-ins are always here; a host that has loaded plugins adds
+    /// their factory schemes, which is why this is settable rather than a
+    /// constant. See MOLE-359.
+    void setReservedSchemes(QStringList schemes);
+    QStringList reservedSchemes() const { return m_reserved; }
+
     QList<RemoteDrive> drives() const { return m_drives; }
     RemoteDrive drive(const QString& id) const;
     /// The configured drive a uri belongs to, matched on its scheme. An invalid
@@ -105,6 +118,7 @@ signals:
 private:
     SecretStore* m_secrets = nullptr;
     QList<RemoteDrive> m_drives;
+    QStringList m_reserved { QStringLiteral("file"), QStringLiteral("mem"), QStringLiteral("archive") };
 };
 
 } // namespace mole

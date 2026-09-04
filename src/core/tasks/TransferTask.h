@@ -159,7 +159,9 @@ private:
     void verifyArrivals();
 
     /// Expands directories into the full list of entries to create and copy.
-    bool planJobs(QList<Job>& jobsOut);
+    /// Builds the job list. `fromSource` skips the leading sources the rename
+    /// shortcut already moved -- see run() and MOLE-359.
+    bool planJobs(QList<Job>& jobsOut, int fromSource = 0);
 
     /// Deletes what really did arrive, for a source that only partly did.
     ///

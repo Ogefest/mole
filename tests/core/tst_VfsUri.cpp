@@ -22,6 +22,7 @@ private slots:
     void normalisesPath();
 
     void childAndParent();
+    void aChildCannotClimbOutOfItsParent();
     void parentOfRootIsRoot();
     void suffix_data();
     void suffix();
@@ -132,6 +133,38 @@ void TestVfsUri::childAndParent()
     // Chaining from the root must not produce a doubled slash.
     const VfsUri fromRoot = VfsUri::fromString(QStringLiteral("file:///")).child(QStringLiteral("tmp"));
     QCOMPARE(fromRoot.toString(), QStringLiteral("file:///tmp"));
+}
+
+/// child() is where a listing row becomes a uri, and it could climb.
+///
+/// The constructor normalises "..", so `dir.child("../x")` *was*
+/// `dir.parent().child("x")` -- the row walking out of the tree it was listed
+/// from. The archive backend and TransferTask sanitise their inputs; SyncPlan's
+/// walk and LocalFileSystem's listing trust theirs, so the seam was one backend
+/// away from being walked through. Closed here so it cannot be reopened by a
+/// backend written next year. See MOLE-359.
+void TestVfsUri::aChildCannotClimbOutOfItsParent()
+{
+    const VfsUri dir = VfsUri::fromString(QStringLiteral("mem:///papers/2026"));
+
+    for (const QString& name : { QStringLiteral(".."), QStringLiteral("../x"), QStringLiteral("a/../../x"),
+             QStringLiteral("x/.."), QStringLiteral("."), QStringLiteral("./"), QStringLiteral("/") }) {
+        const VfsUri child = dir.child(name);
+        QVERIFY2(!child.isValid(),
+            qPrintable(QStringLiteral("child(\"%1\") gave %2").arg(name, child.toString())));
+    }
+
+    // A relative path is still a child, because that is what an archive entry
+    // is, and it lands underneath.
+    const VfsUri deep = dir.child(QStringLiteral("docs/notes/report.txt"));
+    QVERIFY(deep.isValid());
+    QCOMPARE(deep.path(), QStringLiteral("/papers/2026/docs/notes/report.txt"));
+    QVERIFY(deep.isWithin(dir));
+
+    // And an ordinary name is untouched, including one with dots in it.
+    QCOMPARE(dir.child(QStringLiteral("..hidden")).path(), QStringLiteral("/papers/2026/..hidden"));
+    QCOMPARE(dir.child(QStringLiteral("a..b")).path(), QStringLiteral("/papers/2026/a..b"));
+    QCOMPARE(dir.child(QStringLiteral("report.txt")).path(), QStringLiteral("/papers/2026/report.txt"));
 }
 
 void TestVfsUri::parentOfRootIsRoot()

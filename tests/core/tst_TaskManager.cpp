@@ -46,6 +46,7 @@ private slots:
     void withNoTotalThereIsNoEstimate();
     void aStallHoldsTheLastEstimateRatherThanShowingInfinity();
     void aCancelledTaskIsNotStillInProgress();
+    void aCancelThatArrivedAfterTheWorkIsNotCalledACancellation();
     void elapsedTimeStopsWhenTheTaskDoes();
 
     void aCancelledTaskIsNotLoggedAsAFailure();
@@ -133,6 +134,62 @@ void TestTaskManager::cancellationIsCooperative()
 
     QVERIFY(waitForTask(task));
     QCOMPARE(task->state(), Task::State::Cancelled);
+}
+
+/// A finished task reported as cancelled.
+///
+/// execute() decided the final state from the token rather than from whether
+/// run() had stopped for it, so a cancel arriving after the last poll -- after
+/// the work was done -- turned a task that succeeded into one reported as
+/// cancelled. A move that had already deleted its source said "cancelled" over a
+/// copy that was complete, which is the worst version of it: the reader is told
+/// nothing happened when everything did. See MOLE-359.
+void TestTaskManager::aCancelThatArrivedAfterTheWorkIsNotCalledACancellation()
+{
+    TaskManager manager;
+
+    // A body that never asks about the token at all, held until the test has
+    // cancelled it: the condition is that the work is over and the cancel has
+    // landed, which is exactly the race this is about.
+    auto letItFinish = std::make_shared<QSemaphore>();
+    auto started = std::make_shared<QSemaphore>();
+    auto* task = new ScriptedTask(
+        QStringLiteral("a body that does not poll"), [letItFinish, started](ScriptedTask& self) {
+            started->release();
+            letItFinish->acquire();
+            self.setStatusText(QStringLiteral("all of it copied"));
+        });
+    manager.submit(task);
+
+    QVERIFY(waitFor([started] { return started->available() > 0; }, 10000));
+    started->acquire();
+    task->requestCancel();
+    letItFinish->release();
+
+    QVERIFY(waitForTask(task));
+    QCOMPARE(task->state(), Task::State::Succeeded);
+    QCOMPARE(task->statusText(), QStringLiteral("all of it copied"));
+
+    // And a body that *does* act on the token is still cancelled, which is the
+    // other half: this is about how the state is derived, not about weakening it.
+    auto* obedient = new ScriptedTask(QStringLiteral("a body that polls"), [](ScriptedTask& self) {
+        while (!self.isCancelRequested())
+            QThread::msleep(1);
+    });
+    manager.submit(obedient);
+    QVERIFY(waitFor([obedient] { return obedient->state() == Task::State::Running; }, 10000));
+    obedient->requestCancel();
+    QVERIFY(waitForTask(obedient));
+    QCOMPARE(obedient->state(), Task::State::Cancelled);
+
+    // As is one whose backend answered Cancelled without it ever asking: that is
+    // the token being honoured a layer down.
+    auto* toldByADrive = new ScriptedTask(QStringLiteral("a drive that stopped"), [](ScriptedTask& self) {
+        self.fail(VfsError::make(VfsError::Cancelled, QStringLiteral("the listing was cancelled")));
+    });
+    manager.submit(toldByADrive);
+    QVERIFY(waitForTask(toldByADrive));
+    QCOMPARE(toldByADrive->state(), Task::State::Cancelled);
 }
 
 void TestTaskManager::progressUpdatesReachTheUiThread()

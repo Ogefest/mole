@@ -234,6 +234,28 @@ VfsUri VfsUri::child(const QString& name) const
 {
     if (!isValid() || name.isEmpty())
         return *this;
+    // **Nothing here may climb.** The constructor normalises "..", "." and "//"
+    // inside a path, so `dir.child("../x")` used to *be*
+    // `dir.parent().child("x")` -- a listing row walking out of the tree it was
+    // listed from. The archive backend and TransferTask sanitise their inputs;
+    // SyncPlan::walk() and LocalFileSystem::list() trust theirs, so the seam was
+    // one backend away from being walked through.
+    //
+    // A relative path is still allowed, because that is what several callers
+    // pass: an archive entry is "docs/notes/report.txt" and asking each of them
+    // to walk it segment by segment would move this rule into six places. What
+    // is refused is a ".." anywhere in it, and a name that resolves to nothing.
+    // An invalid uri rather than a refusal, because every caller already handles
+    // one. See MOLE-359.
+    bool named = false;
+    for (const QStringView part : QStringView(name).split(QLatin1Char('/'))) {
+        if (part == QLatin1String(".."))
+            return {};
+        if (!part.isEmpty() && part != QLatin1String("."))
+            named = true;
+    }
+    if (!named)
+        return {};
     // Only "/" would double its slash. A drive root is "/C:" and a share root is
     // "/share": both are roots and both keep their segment, or the child would
     // land on a different volume entirely.

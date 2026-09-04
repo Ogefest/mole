@@ -10,6 +10,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 
 using namespace mole;
 using namespace mole::test;
@@ -48,6 +49,10 @@ private slots:
     void aRelativeLinkArrivesStillRelative();
     void aDriveThatCannotHoldALinkRefusesItByName();
     void aBrokenLinkSelectedOnItsOwnIsStillCopied();
+
+    void copyingADriveRootUnderANewNameKeepsEveryChildsPath();
+    void anOverwriteThatOnlyChangesCaseIsStillThereAfterwards();
+    void aRenameRefusedPartWayStreamsOnlyWhatIsLeft();
 
     void deleteRemovesFilesAndTrees();
     void deleteReportsFailures();
@@ -743,6 +748,226 @@ void TestTransferTask::aBrokenLinkSelectedOnItsOwnIsStillCopied()
         = m_mem->readLink(VfsUri::fromString(QStringLiteral("mem:///arrived/dangling.bin")));
     QVERIFY(points.ok());
     QCOMPARE(points.value(), m_tree->absolute(QStringLiteral("not-there.bin")));
+}
+
+/// Copying a drive root glued the name onto every child.
+///
+/// planJobs() built each child's path as `entry.uri.path().mid(source.path().size())`,
+/// and a drive root's path is "/" -- one character -- so chopping that off "/x"
+/// left "x" with no separator, and the child landed at "/dest/namex" rather than
+/// "/dest/name/x". Reachable with a targetName set, which is what the console
+/// runner does. See MOLE-359.
+void TestTransferTask::copyingADriveRootUnderANewNameKeepsEveryChildsPath()
+{
+    m_mem->addFile(QStringLiteral("/one.txt"), QByteArray("1"));
+    m_mem->addFile(QStringLiteral("/deep/two.txt"), QByteArray("2"));
+
+    // Onto the local disk, because a drive root cannot be copied into itself and
+    // the whole point of this case is that the source *is* a root.
+    TransferTask::Request request;
+    request.sourceFileSystem = m_mem;
+    request.targetFileSystem = m_local;
+    request.sources = { VfsUri::fromString(QStringLiteral("mem:///")) };
+    request.targetDirectory = m_tree->rootUri();
+    request.targetName = QStringLiteral("all");
+
+    auto* task = new TransferTask(request);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task));
+    QVERIFY2(task->failures().isEmpty(), qPrintable(task->failures().join(QStringLiteral("; "))));
+
+    // Under the name, not glued onto it.
+    QVERIFY2(QFileInfo::exists(m_tree->absolute(QStringLiteral("all/one.txt"))),
+        "a child of a copied drive root did not land under the name it was given");
+    QVERIFY(QFileInfo::exists(m_tree->absolute(QStringLiteral("all/deep/two.txt"))));
+    QVERIFY2(!QFileInfo::exists(m_tree->absolute(QStringLiteral("allone.txt"))),
+        "the name was glued onto the child");
+}
+
+/// An overwrite that changed only the case looked like a file that vanished.
+///
+/// verifyArrivals() looked a landed file up by the exact name it asked for, and
+/// a case-preserving volume that ignores case keeps the name the file already
+/// had -- APFS, HFS+, and an SMB share to Windows all do. So writing report.txt
+/// over Report.txt found neither name in the listing, reported "was copied but is
+/// not there afterwards", and for a move a recorded failure means every source
+/// is kept. See MOLE-359.
+void TestTransferTask::anOverwriteThatOnlyChangesCaseIsStillThereAfterwards()
+{
+    /// A volume that ignores case and keeps the spelling a file already had.
+    ///
+    /// Only openWrite() and pathCaseSensitivity() differ from the drive inside;
+    /// everything else is the memory drive, which is case-sensitive by default
+    /// and would therefore never show this.
+    class KeepsItsOwnSpelling final : public IFileSystem
+    {
+    public:
+        explicit KeepsItsOwnSpelling(std::shared_ptr<MemoryFileSystem> inner)
+            : m_inner(std::move(inner))
+        {
+        }
+
+        QString scheme() const override { return m_inner->scheme(); }
+        VfsCapabilities capabilities() const override { return m_inner->capabilities(); }
+        Qt::CaseSensitivity pathCaseSensitivity() const override { return Qt::CaseInsensitive; }
+        Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) override
+        {
+            return m_inner->list(dir, cancel);
+        }
+        Result<FileEntry> stat(const VfsUri& target) override
+        {
+            const Result<FileEntry> exact = m_inner->stat(target);
+            return exact.ok() ? exact : m_inner->stat(spellingOf(target));
+        }
+        Result<void> makeDirectory(const VfsUri& target) override { return m_inner->makeDirectory(target); }
+        Result<void> remove(const VfsUri& target, bool recursive, const CancelToken& cancel) override
+        {
+            return m_inner->remove(spellingOf(target), recursive, cancel);
+        }
+        Result<void> rename(const VfsUri& from, const VfsUri& to, const CancelToken& cancel) override
+        {
+            return m_inner->rename(from, to, cancel);
+        }
+        Result<std::unique_ptr<QIODevice>> openRead(
+            const VfsUri& target, qint64 expectedSize, const CancelToken& cancel) override
+        {
+            return m_inner->openRead(spellingOf(target), expectedSize, cancel);
+        }
+        /// The name the file already has, which is the whole of the behaviour.
+        Result<std::unique_ptr<QIODevice>> openWrite(
+            const VfsUri& target, qint64 expectedSize, const CancelToken& cancel) override
+        {
+            return m_inner->openWrite(spellingOf(target), expectedSize, cancel);
+        }
+
+    private:
+        /// The stored spelling of `target`, or `target` when nothing is there.
+        VfsUri spellingOf(const VfsUri& target) const
+        {
+            const Result<FileEntryList> here = m_inner->list(target.parent(), CancelToken());
+            if (!here.ok())
+                return target;
+            for (const FileEntry& entry : here.value()) {
+                if (entry.name.compare(target.fileName(), Qt::CaseInsensitive) == 0)
+                    return target.parent().child(entry.name);
+            }
+            return target;
+        }
+
+        std::shared_ptr<MemoryFileSystem> m_inner;
+    };
+
+    m_mem->addFile(QStringLiteral("/src/report.txt"), QByteArray("the new one"));
+    m_mem->addFile(QStringLiteral("/dst/Report.txt"), QByteArray("the old one"));
+    auto folding = std::make_shared<KeepsItsOwnSpelling>(m_mem);
+
+    TransferTask::Request request;
+    request.sourceFileSystem = folding;
+    request.targetFileSystem = folding;
+    request.sources = { VfsUri::fromString(QStringLiteral("mem:///src/report.txt")) };
+    request.targetDirectory = VfsUri::fromString(QStringLiteral("mem:///dst"));
+    request.mode = TransferTask::Mode::Copy;
+    request.onConflict = TransferTask::Conflict::Overwrite;
+
+    auto* task = new TransferTask(request);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task));
+
+    QVERIFY2(task->failures().isEmpty(), qPrintable(task->failures().join(QStringLiteral("; "))));
+    QCOMPARE(task->copiedCount(), 1);
+
+    // And the bytes really are the new ones, under the spelling the volume kept.
+    const Result<std::unique_ptr<QIODevice>> landed
+        = m_mem->openRead(VfsUri::fromString(QStringLiteral("mem:///dst/Report.txt")));
+    QVERIFY2(landed.ok(), qPrintable(landed.error().message));
+    QCOMPARE(landed.value()->readAll(), QByteArray("the new one"));
+}
+
+/// A rename shortcut that gave up part way undid its own work.
+///
+/// When a rename answers NotSupported the move falls through to the generic
+/// path -- which re-planned *all* the sources, stat()ed the ones already renamed,
+/// found them missing and recorded a failure apiece. And because a move keeps
+/// every source while anything failed, the sources it had successfully moved
+/// were kept as well as moved. No shipped backend answers NotSupported for some
+/// renames and not others; the first WebDAV server that moves files and not
+/// collections will. See MOLE-359.
+void TestTransferTask::aRenameRefusedPartWayStreamsOnlyWhatIsLeft()
+{
+    /// A drive that renames a file and refuses a directory, which is the shape
+    /// the fall-through exists for. Everything else goes to the drive inside.
+    class RefusesDirectoryRenames final : public IFileSystem
+    {
+    public:
+        explicit RefusesDirectoryRenames(FileSystemPtr inner)
+            : m_inner(std::move(inner))
+        {
+        }
+
+        QString scheme() const override { return m_inner->scheme(); }
+        VfsCapabilities capabilities() const override { return m_inner->capabilities(); }
+        Result<FileEntryList> list(const VfsUri& dir, const CancelToken& cancel) override
+        {
+            return m_inner->list(dir, cancel);
+        }
+        Result<FileEntry> stat(const VfsUri& target) override { return m_inner->stat(target); }
+        Result<void> makeDirectory(const VfsUri& target) override { return m_inner->makeDirectory(target); }
+        Result<void> remove(const VfsUri& target, bool recursive, const CancelToken& cancel) override
+        {
+            return m_inner->remove(target, recursive, cancel);
+        }
+        Result<std::unique_ptr<QIODevice>> openRead(
+            const VfsUri& target, qint64 expectedSize, const CancelToken& cancel) override
+        {
+            return m_inner->openRead(target, expectedSize, cancel);
+        }
+        Result<std::unique_ptr<QIODevice>> openWrite(
+            const VfsUri& target, qint64 expectedSize, const CancelToken& cancel) override
+        {
+            return m_inner->openWrite(target, expectedSize, cancel);
+        }
+
+        Result<void> rename(const VfsUri& from, const VfsUri& to, const CancelToken& cancel) override
+        {
+            const Result<FileEntry> what = m_inner->stat(from);
+            if (what.ok() && what.value().isDir) {
+                return VfsError::make(
+                    VfsError::NotSupported, QStringLiteral("this server does not move collections"));
+            }
+            return m_inner->rename(from, to, cancel);
+        }
+
+    private:
+        FileSystemPtr m_inner;
+    };
+
+    m_mem->addFile(QStringLiteral("/src/first.txt"), QByteArray("one"));
+    m_mem->addFile(QStringLiteral("/src/folder/inside.txt"), QByteArray("two"));
+    m_mem->addDirectory(QStringLiteral("/dst"));
+
+    auto drive = std::make_shared<RefusesDirectoryRenames>(m_mem);
+
+    TransferTask::Request request;
+    request.sourceFileSystem = drive;
+    request.targetFileSystem = drive;
+    request.sources = { VfsUri::fromString(QStringLiteral("mem:///src/first.txt")),
+        VfsUri::fromString(QStringLiteral("mem:///src/folder")) };
+    request.targetDirectory = VfsUri::fromString(QStringLiteral("mem:///dst"));
+    request.mode = TransferTask::Mode::Move;
+
+    auto* task = new TransferTask(request);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task));
+
+    QVERIFY2(task->failures().isEmpty(), qPrintable(task->failures().join(QStringLiteral("; "))));
+
+    // Both arrived.
+    QVERIFY(m_mem->stat(VfsUri::fromString(QStringLiteral("mem:///dst/first.txt"))).ok());
+    QVERIFY(m_mem->stat(VfsUri::fromString(QStringLiteral("mem:///dst/folder/inside.txt"))).ok());
+    // And both sources are gone, which is what a move with no failures means.
+    QVERIFY2(!m_mem->stat(VfsUri::fromString(QStringLiteral("mem:///src/first.txt"))).ok(),
+        "the source that was renamed successfully was kept as well as moved");
+    QVERIFY(!m_mem->stat(VfsUri::fromString(QStringLiteral("mem:///src/folder/inside.txt"))).ok());
 }
 
 void TestTransferTask::deleteRemovesFilesAndTrees()

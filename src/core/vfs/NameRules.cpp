@@ -44,7 +44,10 @@ NameRules NameRules::forPlatform(HostPlatform platform)
         // both of which checkName() refuses whatever the rules say. A quote, a
         // newline and a question mark are all legal, and the awkward-names suite
         // is there because they are.
-        rules.maximumLength = 255;
+        // Bytes, not characters: every filesystem in use on Linux and macOS
+        // counts the encoded length. maximumLength stays zero here because
+        // there is no character limit to state -- 255 bytes is the whole rule.
+        rules.maximumLengthInBytes = 255;
         return rules;
     }
 
@@ -55,6 +58,7 @@ NameRules NameRules::forPlatform(HostPlatform platform)
     rules.refusesControlCharacters = true;
     rules.refusesTrailingDotOrSpace = true;
     rules.refusesReservedDeviceNames = true;
+    // NTFS counts UTF-16 code units, which is what QString::size() answers.
     rules.maximumLength = 255;
     return rules;
 }
@@ -104,6 +108,12 @@ NameVerdict checkName(const QString& name, const NameRules& rules)
     }
     if (rules.maximumLength > 0 && repaired.size() > rules.maximumLength)
         repaired.truncate(rules.maximumLength);
+    // Trimmed a character at a time rather than by arithmetic on the byte count:
+    // cutting UTF-8 to a byte length lands in the middle of a character.
+    while (rules.maximumLengthInBytes > 0 && repaired.toUtf8().size() > rules.maximumLengthInBytes
+        && !repaired.isEmpty()) {
+        repaired.chop(1);
+    }
     if (repaired.isEmpty())
         repaired = QStringLiteral("unnamed");
 
@@ -138,6 +148,16 @@ NameVerdict checkName(const QString& name, const NameRules& rules)
     if (rules.maximumLength > 0 && name.size() > rules.maximumLength) {
         return reject(
             QStringLiteral("this drive allows %1 characters in a name").arg(rules.maximumLength), repaired);
+    }
+
+    if (rules.maximumLengthInBytes > 0 && name.toUtf8().size() > rules.maximumLengthInBytes) {
+        // The count is said in bytes because that is what the limit is: "255
+        // characters" would be a sentence the person could measure against and
+        // still be refused.
+        return reject(QStringLiteral("this drive allows %1 bytes in a name, and this one is %2")
+                          .arg(rules.maximumLengthInBytes)
+                          .arg(name.toUtf8().size()),
+            repaired);
     }
 
     return {};

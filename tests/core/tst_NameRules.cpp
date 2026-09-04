@@ -38,6 +38,7 @@ private slots:
     void aSuggestionIsAlwaysAcceptable();
 
     void theReasonNamesWhatIsWrong();
+    void aLongNameIsMeasuredTheWayTheFilesystemMeasuresIt();
 };
 
 void TestNameRules::windowsRefusesTheCharactersItRefuses_data()
@@ -246,6 +247,45 @@ void TestNameRules::theReasonNamesWhatIsWrong()
     QVERIFY(checkName(QStringLiteral("nul.txt"), windows).reason.contains(QStringLiteral("nul")));
     QVERIFY(
         checkName(QStringLiteral("two\tcolumns.tsv"), windows).reason.contains(QStringLiteral("control")));
+}
+
+/// A name the rules accepted and the kernel refused.
+///
+/// `forPlatform(Posix).maximumLength` was 255 counted in *characters*, and ext4,
+/// XFS, btrfs and APFS all count bytes -- so a 200-character Polish name is
+/// 300-odd bytes, passed checkName(), and was refused by the kernel on the way
+/// to disk. That is the outcome ADR-0070 set out to remove: the preview promises
+/// what the filesystem will accept. PartialWrite.cpp two files away was already
+/// measuring toUtf8().size() against the same 255, so the two halves of the same
+/// application disagreed about what fits. See MOLE-359.
+void TestNameRules::aLongNameIsMeasuredTheWayTheFilesystemMeasuresIt()
+{
+    const NameRules posix = NameRules::forPlatform(HostPlatform::Posix);
+
+    // Two bytes each in UTF-8, so 200 of them is 400 bytes: comfortably inside a
+    // 255-character limit and comfortably outside a 255-byte one.
+    const QString polish(200, QChar(u'ł'));
+    QCOMPARE(polish.size(), 200);
+    QCOMPARE(polish.toUtf8().size(), 400);
+
+    const NameVerdict verdict = checkName(polish, posix);
+    QVERIFY2(verdict.isRejected(), "a name the filesystem will refuse was accepted");
+    QVERIFY2(verdict.reason.contains(QStringLiteral("bytes")), qPrintable(verdict.reason));
+    // The offered name fits, and is not cut through the middle of a character.
+    QVERIFY(!verdict.suggestion.isEmpty());
+    QVERIFY(verdict.suggestion.toUtf8().size() <= 255);
+    QCOMPARE(verdict.suggestion, QString(127, QChar(u'ł')));
+    QVERIFY(!checkName(verdict.suggestion, posix).isRejected());
+
+    // 255 ASCII characters is 255 bytes and still fits, which is what says this
+    // is a change of unit and not of limit.
+    QVERIFY(!checkName(QString(255, QLatin1Char('a')), posix).isRejected());
+    QVERIFY(checkName(QString(256, QLatin1Char('a')), posix).isRejected());
+
+    // Windows counts UTF-16 code units, and 200 of these is 200 of those.
+    const NameRules windows = NameRules::forPlatform(HostPlatform::Windows);
+    QVERIFY2(!checkName(polish, windows).isRejected(),
+        "NTFS counts characters, so a 200-character name fits there");
 }
 
 MOLE_TEST_MAIN(TestNameRules)

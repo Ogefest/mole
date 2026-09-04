@@ -160,15 +160,41 @@ class CancelToken
 {
 public:
     CancelToken()
-        : m_flag(std::make_shared<std::atomic_bool>(false))
+        : m_state(std::make_shared<State>())
     {
     }
 
-    void cancel() const { m_flag->store(true, std::memory_order_relaxed); }
-    bool isCancelled() const { return m_flag->load(std::memory_order_relaxed); }
+    void cancel() const { m_state->cancelled.store(true, std::memory_order_relaxed); }
+
+    bool isCancelled() const
+    {
+        if (!m_state->cancelled.load(std::memory_order_relaxed))
+            return false;
+        // **Asking is also how the answer gets acted on.** Whoever polls this --
+        // the task's own body, a DirectoryWalker, a backend threading it down to
+        // a span -- returns early when it says yes, so a token that has said yes
+        // to somebody is a token something stopped for. See wasNoticed().
+        m_state->noticed.store(true, std::memory_order_relaxed);
+        return true;
+    }
+
+    /// Whether anybody has asked and been told yes.
+    ///
+    /// The difference between work that stopped *because* it was cancelled and
+    /// work the cancellation merely arrived behind. Task::execute() used to
+    /// derive the final state from isCancelled() alone, so a cancel landing after
+    /// the last poll -- after the copy was done, after a move had already deleted
+    /// its source -- reported a finished job as cancelled. See MOLE-359.
+    bool wasNoticed() const { return m_state->noticed.load(std::memory_order_relaxed); }
 
 private:
-    std::shared_ptr<std::atomic_bool> m_flag;
+    struct State
+    {
+        std::atomic_bool cancelled { false };
+        std::atomic_bool noticed { false };
+    };
+
+    std::shared_ptr<State> m_state;
 };
 
 /// Result<T> keeps the error next to the value so backends never throw.

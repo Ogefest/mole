@@ -1,5 +1,7 @@
 #include "TestSupport.h"
 
+#include "core/vfs/PartialWrite.h"
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
@@ -120,6 +122,17 @@ bool refreshIndexSummary(IndexSummary* summary, int timeoutMs)
     summary->refresh();
     return waitFor(
         [summary, before] { return summary->reads() > before && !summary->isReading(); }, timeoutMs);
+}
+
+QString partialWriteIn(const QString& directory)
+{
+    const QDir dir(directory);
+    const QStringList names = dir.entryList(QDir::Files | QDir::Hidden | QDir::NoDotAndDotDot);
+    for (const QString& name : names) {
+        if (isPartialWrite(name))
+            return dir.filePath(name);
+    }
+    return {};
 }
 
 void drainEvents()

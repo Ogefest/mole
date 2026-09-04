@@ -22,6 +22,11 @@ namespace mole {
 inline constexpr QLatin1String kPartialWriteSuffix(".mole-partial");
 
 /// Where a write to `target` goes before it is finished.
+///
+/// **A different name every call**, because two writers must not share one: the
+/// name is cut to fit inside the filesystem's limit, and two long names agreeing
+/// in their first 242 bytes used to produce the same staging name and truncate
+/// over each other. See MOLE-359.
 VfsUri partialWriteOf(const VfsUri& target);
 
 /// Whether this is the wreckage of a write rather than a file somebody meant to

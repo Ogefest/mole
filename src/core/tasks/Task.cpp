@@ -98,8 +98,16 @@ void Task::execute()
     // to let through.
     flushReports();
 
+    // Cancelled means the run stopped *because* it was cancelled: either it
+    // asked the token and acted on the answer, or a backend it called answered
+    // Cancelled. The token alone is not enough -- a cancel landing after the
+    // last poll used to turn a finished task into a cancelled one, and a move
+    // that had already deleted its source reported "cancelled" over a copy that
+    // was complete. See MOLE-359.
+    const bool stoppedForACancel = m_cancel.wasNoticed() || m_error.code == VfsError::Cancelled;
+
     const char* outcome = "finished";
-    if (m_cancel.isCancelled()) {
+    if (stoppedForACancel) {
         setState(State::Cancelled);
         outcome = "cancelled";
     } else if (m_error.isError()) {

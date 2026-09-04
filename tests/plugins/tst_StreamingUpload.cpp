@@ -129,6 +129,7 @@ private slots:
     void aBufferedUploadDestroyedWithoutBeingClosedSendsNothing();
     void aStagingFileThatCannotBeOpenedIsRefusedRatherThanLost();
 
+    void twoWritersToTwoLongNamesDoNotShareAStagingFile();
     void commitRenamesTheWorkingNameIntoPlace();
     void commitRefusesToReplaceSomethingThatAppeared();
     void commitLeavesNothingBehindWhenTheRenameFails();
@@ -139,7 +140,12 @@ void TestStreamingUpload::aWorkingNameIsRecognisableAndReversible()
     const VfsUri target = VfsUri::fromString(QStringLiteral("sftp://nas/photos/report.pdf"));
     const VfsUri staging = partialWriteOf(target);
 
-    QCOMPARE(staging.path(), QStringLiteral("/photos/report.pdf.mole-partial"));
+    // The shape and not the exact name: a staging name carries a per-open token,
+    // because two long names agreeing in their first 242 bytes used to share one
+    // and truncate over each other. See MOLE-359.
+    QVERIFY2(staging.path().startsWith(QStringLiteral("/photos/report.pdf.")), qPrintable(staging.path()));
+    QVERIFY2(staging.path().endsWith(QStringLiteral(".mole-partial")), qPrintable(staging.path()));
+    QVERIFY2(partialWriteOf(target).path() != staging.path(), "two writers would share a staging name");
     QCOMPARE(staging.scheme(), target.scheme());
     QCOMPARE(staging.authority(), target.authority());
     QCOMPARE(staging.parent(), target.parent());
@@ -434,6 +440,52 @@ void TestStreamingUpload::aStagingFileThatCannotBeOpenedIsRefusedRatherThanLost(
     QVERIFY2(stream.errorString().contains(QStringLiteral("temporary")), qPrintable(stream.errorString()));
     QCOMPARE(server.spans(), 0);
     QCOMPARE(commit.calls(), 0);
+}
+
+/// Two writers truncating over each other.
+///
+/// A staging name is the target's name plus a suffix, cut to fit inside the
+/// filesystem's 255-byte limit -- and the cut was deterministic with nothing to
+/// tell two writers apart. So two long names agreeing in their first 242 bytes,
+/// which is what a common prefix and a differing tail look like, produced *one*
+/// `.mole-partial` name: two concurrent writes, from two tasks or two Moles,
+/// each opened it and each wrote over the other. See MOLE-359.
+void TestStreamingUpload::twoWritersToTwoLongNamesDoNotShareAStagingFile()
+{
+    // Two names that differ only past the 242nd byte, which is where the cut
+    // used to land.
+    const QString stem(250, QLatin1Char('a'));
+    auto drive = std::make_shared<MemoryFileSystem>();
+    drive->addDirectory(QStringLiteral("/out"));
+
+    const VfsUri first
+        = VfsUri::fromString(QStringLiteral("mem:///out/") + stem + QStringLiteral("-one.bin"));
+    const VfsUri second
+        = VfsUri::fromString(QStringLiteral("mem:///out/") + stem + QStringLiteral("-two.bin"));
+    QVERIFY2(partialWriteOf(first).fileName() != partialWriteOf(second).fileName(),
+        "two long names shared one staging name");
+
+    // And through the drive, which is where the damage was: both writes open,
+    // both write, both commit, and each file has its own contents.
+    const QByteArray one(4096, '1');
+    const QByteArray two(4096, '2');
+
+    Result<std::unique_ptr<QIODevice>> firstOpen = drive->openWrite(first, one.size());
+    QVERIFY2(firstOpen.ok(), qPrintable(firstOpen.error().message));
+    Result<std::unique_ptr<QIODevice>> secondOpen = drive->openWrite(second, two.size());
+    QVERIFY2(secondOpen.ok(), qPrintable(secondOpen.error().message));
+
+    QCOMPARE(firstOpen.value()->write(one), qint64(one.size()));
+    QCOMPARE(secondOpen.value()->write(two), qint64(two.size()));
+    QVERIFY(closeAndReport(*firstOpen.value()).ok());
+    QVERIFY(closeAndReport(*secondOpen.value()).ok());
+
+    const Result<std::unique_ptr<QIODevice>> readFirst = drive->openRead(first);
+    QVERIFY2(readFirst.ok(), qPrintable(readFirst.error().message));
+    QCOMPARE(readFirst.value()->readAll(), one);
+    const Result<std::unique_ptr<QIODevice>> readSecond = drive->openRead(second);
+    QVERIFY2(readSecond.ok(), qPrintable(readSecond.error().message));
+    QCOMPARE(readSecond.value()->readAll(), two);
 }
 
 void TestStreamingUpload::commitRenamesTheWorkingNameIntoPlace()

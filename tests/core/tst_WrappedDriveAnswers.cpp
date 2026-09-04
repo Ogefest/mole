@@ -632,6 +632,7 @@ void TestWrappedDriveAnswers::aMountedDiskKeepsItsNameRulesAndItsCaseFolding()
     QCOMPARE(mountedRules.refusesTrailingDotOrSpace, platform.refusesTrailingDotOrSpace);
     QCOMPARE(mountedRules.refusesReservedDeviceNames, platform.refusesReservedDeviceNames);
     QCOMPARE(mountedRules.maximumLength, platform.maximumLength);
+    QCOMPARE(mountedRules.maximumLengthInBytes, platform.maximumLengthInBytes);
 
     // And the one that turns a version uri into a refusal when it is lost.
     QCOMPARE(mounted->understandsVersions(), disk.understandsVersions());

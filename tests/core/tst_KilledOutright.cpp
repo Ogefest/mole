@@ -76,7 +76,9 @@ void TestKilledOutright::aCopyKilledMidWayKeepsTheOriginalAndLeavesAnObviousPart
     Victim victim(QStringLiteral("aCopyKilledMidWayKeepsTheOriginalAndLeavesAnObviousPartial"), destination);
     QVERIFY2(victim.started(), "could not start a second copy of this test binary");
 
-    const QString partial = partialWriteOf(VfsUri::fromLocalPath(destination)).toLocalPath();
+    // Looked for rather than derived: a staging name carries a per-open token so
+    // two writers cannot share one. See MOLE-359.
+    const QString writingIn = QFileInfo(destination).absolutePath();
     // Killed on the write having begun, not after a wait: until there are bytes
     // on disk there is nothing to interrupt.
     //
@@ -85,8 +87,9 @@ void TestKilledOutright::aCopyKilledMidWayKeepsTheOriginalAndLeavesAnObviousPart
     // destination look like a copy that never started -- which is untrue, and
     // hides the fault behind the least useful thing this could report.
     const qint64 was = original.size();
-    const bool begun = victim.waitUntil([&partial, &destination, was] {
-        return QFileInfo(partial).size() > 0 || QFileInfo(destination).size() != was;
+    const bool begun = victim.waitUntil([&writingIn, &destination, was] {
+        const QString partial = partialWriteIn(writingIn);
+        return (!partial.isEmpty() && QFileInfo(partial).size() > 0) || QFileInfo(destination).size() != was;
     });
     victim.kill();
 
@@ -100,10 +103,11 @@ void TestKilledOutright::aCopyKilledMidWayKeepsTheOriginalAndLeavesAnObviousPart
     file.close();
 
     // And what the kill did leave is visibly not a file anybody asked for.
-    QVERIFY2(QFileInfo::exists(partial), "there should be something to show for the bytes that were written");
-    QVERIFY(isPartialWrite(QFileInfo(partial).fileName()));
+    const QString leftBehind = partialWriteIn(writingIn);
+    QVERIFY2(!leftBehind.isEmpty(), "there should be something to show for the bytes that were written");
+    QVERIFY(isPartialWrite(QFileInfo(leftBehind).fileName()));
 
-    QFile::remove(partial);
+    QFile::remove(leftBehind);
 }
 
 /// And the wreckage does not get in the way of putting it right.
@@ -128,9 +132,13 @@ void TestKilledOutright::aCopyKilledMidWayCanSimplyBeRunAgain()
     Victim victim(QStringLiteral("aCopyKilledMidWayCanSimplyBeRunAgain"), destination);
     QVERIFY(victim.started());
 
-    const QString partial = partialWriteOf(VfsUri::fromLocalPath(destination)).toLocalPath();
-    const bool begun = victim.waitUntil(
-        [&partial, &destination] { return QFileInfo(partial).size() > 0 || QFileInfo::exists(destination); });
+    // Looked for rather than derived: a staging name carries a per-open token so
+    // two writers cannot share one. See MOLE-359.
+    const QString writingIn = QFileInfo(destination).absolutePath();
+    const bool begun = victim.waitUntil([&writingIn, &destination] {
+        const QString partial = partialWriteIn(writingIn);
+        return (!partial.isEmpty() && QFileInfo(partial).size() > 0) || QFileInfo::exists(destination);
+    });
     victim.kill();
     QVERIFY2(begun, qPrintable(victim.transcript()));
 
@@ -149,7 +157,8 @@ void TestKilledOutright::aCopyKilledMidWayCanSimplyBeRunAgain()
     QCOMPARE(file.readAll(), contents);
     file.close();
 
-    QFile::remove(partial);
+    if (const QString leftBehind = partialWriteIn(writingIn); !leftBehind.isEmpty())
+        QFile::remove(leftBehind);
 }
 
 /// Configuration survives, or it was never configuration.

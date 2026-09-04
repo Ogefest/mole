@@ -1,10 +1,24 @@
 #include "core/vfs/PartialWrite.h"
 
+#include <QRandomGenerator>
+
 namespace mole {
 
 VfsUri partialWriteOf(const VfsUri& target)
 {
     QString name = target.fileName();
+
+    // **A token, so two writers cannot share a staging name.** The name is cut
+    // to fit below, deterministically, so two long names agreeing in their first
+    // 242 bytes -- which is what a common prefix and a differing tail look like
+    // -- produced *one* `.mole-partial` name. Two concurrent writes then
+    // truncated over each other: two copy tasks, or two Moles, or one of each.
+    // Eight hex characters is enough that a collision needs 2^32 tries, and it
+    // keeps isPartialWrite() a suffix test, which is what the sweep and every
+    // listing rely on. See MOLE-359.
+    const QString token
+        = QString::number(QRandomGenerator::global()->generate(), 16).rightJustified(8, QLatin1Char('0'));
+    const QString tail = QLatin1Char('.') + token + kPartialWriteSuffix;
 
     // Almost every filesystem stops a name at 255 bytes, so a file already at
     // the limit cannot wear the suffix as well -- and a copy of it would fail
@@ -12,11 +26,11 @@ VfsUri partialWriteOf(const VfsUri& target)
     // gives way instead, on whole characters so the result is still text, and
     // the suffix stays whole because the suffix is what the name is *for*.
     constexpr int kNameLimit = 255;
-    const int room = kNameLimit - kPartialWriteSuffix.size();
+    const int room = kNameLimit - int(tail.toUtf8().size());
     while (name.toUtf8().size() > room && !name.isEmpty())
         name.chop(1);
 
-    return target.parent().child(name + kPartialWriteSuffix);
+    return target.parent().child(name + tail);
 }
 
 bool isPartialWrite(const QString& name)

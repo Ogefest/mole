@@ -150,6 +150,20 @@ RemoteDrive RemoteRegistry::driveForUri(const VfsUri& uri) const
     return {};
 }
 
+void RemoteRegistry::setReservedSchemes(QStringList schemes)
+{
+    for (QString& scheme : schemes)
+        scheme = scheme.toLower();
+    // The built-ins are never dropped: a host that names none of them still must
+    // not let a drive take `file`.
+    for (const QString& always :
+        { QStringLiteral("file"), QStringLiteral("mem"), QStringLiteral("archive") }) {
+        if (!schemes.contains(always))
+            schemes.append(always);
+    }
+    m_reserved = schemes;
+}
+
 bool RemoteRegistry::put(
     const RemoteDrive& drive, const QVariantMap& secretValues, QString* errorOut, QString* storedIdOut)
 {
@@ -170,6 +184,15 @@ bool RemoteRegistry::put(
     for (const RemoteDrive& other : m_drives) {
         if (other.id != stored.id && other.scheme() == stored.scheme())
             return fail(QStringLiteral("Another drive is already called that"));
+    }
+
+    // And unique against everything *else* that answers a scheme. A drive called
+    // "File" slugged down to `file`, and from then on driveForUri() and the local
+    // disk were the same address. See setReservedSchemes() and MOLE-359.
+    if (m_reserved.contains(stored.scheme())) {
+        return fail(QStringLiteral("\"%1\" cannot be used as a drive name: it is how Mole already "
+                                   "addresses another kind of drive")
+                        .arg(stored.name));
     }
 
     if (!secretValues.isEmpty()) {

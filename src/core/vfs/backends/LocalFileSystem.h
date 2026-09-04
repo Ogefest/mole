@@ -127,6 +127,13 @@ private:
     /// What is under a root's snapshot directory, newest name last. One readdir.
     static QStringList snapshotsUnder(const QString& root);
     /// `localPath` as it appears inside `snapshot`.
+    /// Whether a version token is one directory name and nothing else.
+    ///
+    /// The token comes off a uri, and a uri comes from a bookmark, a session or
+    /// a saved set -- so it is input. See insideSnapshot() and MOLE-359.
+    static bool isASnapshotName(const QString& snapshot);
+    /// The path `localPath` had inside snapshot `snapshot`. **Empty for a token
+    /// that is not a plain name**, which every caller turns into "not there".
     static QString insideSnapshot(const QString& root, const QString& snapshot, const QString& localPath);
 };
 
