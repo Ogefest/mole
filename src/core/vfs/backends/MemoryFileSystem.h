@@ -115,6 +115,13 @@ public:
     /// at all. Both are conditions to wait on rather than durations.
     int readsInProgress() const;
     int readCount() const;
+    /// The same gate for stat(), which is the call a verification, a rename
+    /// preview and a transfer plan spend their time in -- so it is the one to
+    /// hold when a test needs an *answer* to be late rather than a listing.
+    /// Null clears it. See MOLE-404.
+    void setStatGate(std::shared_ptr<QSemaphore> gate);
+    /// How many stats are being held right now. A condition, never a duration.
+    int statsInProgress() const;
     /// The same for openRead(), because the honest way to test what a view does
     /// while a file is slow to arrive is to have one that is.
     void setReadDelayMs(int ms) { m_readDelayMs = ms; }
@@ -216,6 +223,8 @@ private:
     std::shared_ptr<QSemaphore> m_readGate;
     std::atomic_int m_readsHeld { 0 };
     std::atomic_int m_readCalls { 0 };
+    std::shared_ptr<QSemaphore> m_statGate;
+    std::atomic_int m_statsHeld { 0 };
     int m_readDelayMs = 0;
     int m_operationDelayMs = 0;
     qint64 m_throttleBytes = 0;

@@ -65,6 +65,9 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-404 A file set's "missing" count belongs to the set on screen
+2026-09-04 #MOLE-404 A photograph with no camera information is read once rather than twice on a network drive
+2026-09-04 #MOLE-404 Typing in a source file's search box no longer re-highlights the whole window per keystroke
 2026-09-04 #MOLE-384 A preview tab keeps its file across a restart when its drive is not yet connected
 2026-09-04 #MOLE-384 The preview arrows follow files added to or removed from the folder while it is open
 2026-09-04 #MOLE-383 An audio file's comment is shown, instead of the language code in front of it

@@ -266,14 +266,21 @@ void LocalCopyProvider::request(const VfsUri& uri, qint64 maxBytes)
 {
     cancel();
 
-    const QString localPath = uri.toLocalPath();
-    if (!localPath.isEmpty()) {
-        emit ready(QUrl::fromLocalFile(localPath).toString());
+    // **Before the local shortcut, because the shortcut is where it was
+    // missing.** Four controllers test m_services.isValid() in their own load()
+    // and five do not -- the image, video, SQLite, Parquet and PDF ones -- and a
+    // local file there reached m_services.tasks->submit() and
+    // m_table->setSource(store, nullptr) with no services at all. One guard
+    // written five times is one guard written nowhere; every one of those five
+    // comes through here, so here is where it goes. See MOLE-404.
+    if (!m_services.isValid()) {
+        emit failed(QStringLiteral("Application services are not available"));
         return;
     }
 
-    if (!m_services.isValid()) {
-        emit failed(QStringLiteral("Application services are not available"));
+    const QString localPath = uri.toLocalPath();
+    if (!localPath.isEmpty()) {
+        emit ready(QUrl::fromLocalFile(localPath).toString());
         return;
     }
 
@@ -1657,8 +1664,16 @@ void SqlitePreviewController::countTables()
 
     auto* task = new CountTableRowsTask(m_database->path(), order);
     m_counting = task;
-    connect(task, &CountTableRowsTask::counted, this, [this](const QString& table, qint64 rows) {
-        if (!m_database)
+    connect(task, &CountTableRowsTask::counted, this, [this, task](const QString& table, qint64 rows) {
+        // **The task, not just the database.** This was the one callback in this
+        // file without the guard its eleven siblings all have. load() cancels
+        // the counting task and resets the database, but a cancel is
+        // asynchronous -- and for a local file LocalCopyProvider emits ready
+        // *synchronously*, so a `counted` already queued lands on the new
+        // database. A stale count for a table name the new file also has
+        // (`users`, `settings`, `sqlite_sequence`) was then written into it and
+        // refreshed the grid. See MOLE-404.
+        if (m_counting != task || !m_database)
             return;
         m_database->setRowCount(table, rows);
         // The count of the table on screen is the row count of the grid, so the

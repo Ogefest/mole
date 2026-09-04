@@ -292,9 +292,29 @@ namespace {
 
     /// The TIFF block inside a JPEG's APP1 segment, or inside a TIFF file, as an
     /// offset and a length within `bytes`. Empty when there is none.
-    QByteArrayView exifBlock(QByteArrayView bytes)
+    /// Why exifBlock() came back with nothing.
+    ///
+    /// **"There is no EXIF" and "the prefix ended first" are different
+    /// answers**, and wantsMore() could not tell them apart -- so every JPEG
+    /// *without* EXIF (a screenshot, a web image, anything an exporter stripped:
+    /// most of the JPEGs on a disk) was asked for a second 64 kB read that could
+    /// never find anything. See MOLE-404.
+    enum class NoExif {
+        NotAJpeg, ///< not a file this walk understands
+        Absent, ///< the walk reached the image data, or a segment it cannot pass
+        Truncated, ///< the prefix ran out with segments still to come
+    };
+
+    QByteArrayView exifBlock(QByteArrayView bytes, NoExif* why = nullptr)
     {
         static const QByteArray marker = QByteArrayLiteral("Exif\0\0");
+        const auto give = [why](NoExif reason) {
+            if (why)
+                *why = reason;
+            return QByteArrayView();
+        };
+        if (why)
+            *why = NoExif::Absent;
 
         // A TIFF file is its own block.
         if (bytes.size() >= 4
@@ -304,26 +324,26 @@ namespace {
 
         if (bytes.size() < 4 || static_cast<unsigned char>(bytes.at(0)) != 0xff
             || static_cast<unsigned char>(bytes.at(1)) != 0xd8)
-            return {};
+            return give(NoExif::NotAJpeg);
 
         // Walk the segments. Each is a marker and a big-endian length that
         // includes the length itself, and every one of those lengths is a claim.
         qint64 at = 2;
         while (at + 4 <= bytes.size()) {
             if (static_cast<unsigned char>(bytes.at(at)) != 0xff)
-                return {};
+                return give(NoExif::Absent);
             const auto marker8 = static_cast<unsigned char>(bytes.at(at + 1));
             if (marker8 == 0xd8 || marker8 == 0x01 || (marker8 >= 0xd0 && marker8 <= 0xd7)) {
                 at += 2;
                 continue;
             }
             if (marker8 == 0xda || marker8 == 0xd9)
-                return {}; // the image data starts here; there is no EXIF
+                return give(NoExif::Absent); // the image data starts here
 
             const qint64 length = (static_cast<unsigned char>(bytes.at(at + 2)) << 8)
                 | static_cast<unsigned char>(bytes.at(at + 3));
             if (length < 2)
-                return {};
+                return give(NoExif::Absent);
 
             const qint64 payload = at + 4;
             const qint64 payloadBytes = length - 2;
@@ -345,7 +365,10 @@ namespace {
             }
             at = payload + payloadBytes;
         }
-        return {};
+        // The loop ran off the end of what is here with segments still to come:
+        // more of the file might hold the answer. Distinguished from the returns
+        // above, which have all seen why there is none.
+        return give(at < bytes.size() || at + 4 > bytes.size() ? NoExif::Truncated : NoExif::Absent);
     }
 
     QList<FileFact> exifFacts(QByteArrayView block)
@@ -634,11 +657,15 @@ bool ImageMetadataReader::wantsMore(QByteArrayView bytes, const QString& fileNam
     if (!reader.size().isValid())
         return true;
 
-    // A JPEG whose EXIF segment we never reached. Every APP1 a camera writes is
-    // near the front, so this is only ever the difference between one page and
-    // sixteen.
-    return exifBlock(bytes).isEmpty() && bytes.size() >= 2 && static_cast<unsigned char>(bytes.at(0)) == 0xff
-        && static_cast<unsigned char>(bytes.at(1)) == 0xd8;
+    // A JPEG whose EXIF segment we never reached -- and *only* that one.
+    //
+    // This used to ask for more whenever exifBlock() came back empty, which it
+    // does both when it reached the image data and when it ran out of buffer. So
+    // every JPEG without EXIF -- a screenshot, a web image, anything an exporter
+    // stripped, which is most of the JPEGs on a disk -- paid a second 64 kB read
+    // that could not possibly find anything. See MOLE-404.
+    NoExif why = NoExif::Absent;
+    return exifBlock(bytes, &why).isEmpty() && why == NoExif::Truncated;
 }
 
 QList<FileFact> ImageMetadataReader::read(

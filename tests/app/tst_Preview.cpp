@@ -12,6 +12,7 @@
 #include "plugins/builtin/previews/VideoPreview.h"
 #include "support/FakePlugin.h"
 #include "support/FaultyFileSystem.h"
+#include "support/ImageFixtures.h"
 #include "support/OfferingFileSystem.h"
 #include "support/TableFixtures.h"
 #include "support/TestSupport.h"
@@ -260,6 +261,7 @@ private slots:
     // ---- what a file says about itself ------------------------------------
     void everyReaderThatClaimsAFileContributes();
     void aPreviewOfAFileOnADriveThatIsNotThereStillRemembersIt();
+    void aJpegWithNoExifIsReadOnce();
     void theArrowsFollowWhatHappensInTheFolder();
     void aVideosDurationIsInTheDrawerInEveryBuild();
     void aFileThatIsNotWhatItsNameSaysStepsDownRatherThanShowingNothing();
@@ -919,6 +921,64 @@ void TestPreview::aPreviewOfAFileOnADriveThatIsNotThereStillRemembersIt()
 /// the preview was open left the arrows stepping through a list that no longer
 /// matched: a deleted neighbour gave a read error, a new one was unreachable,
 /// and "3 of 17" was stale. See MOLE-384.
+/// Most of the JPEGs on a disk paid for a second read that could find nothing.
+///
+/// wantsMore() asked for more whenever exifBlock() came back empty -- and it
+/// comes back empty both when the walk reached the image data and when it ran
+/// out of buffer. So every JPEG *without* EXIF -- a screenshot, a web image,
+/// anything an exporter stripped -- was fetched twice on a drive where reading
+/// is downloading. See MOLE-404.
+void TestPreview::aJpegWithNoExifIsReadOnce()
+{
+    // Two files, counted against each other rather than against a number: how
+    // many reads a preview costs in total is several readers' business, and what
+    // this case is about is the *difference* between a file with EXIF and one
+    // without. Before the fix the one without cost one more.
+    const auto opensFor = [this](const QString& name, const QByteArray& contents) {
+        auto memory = std::make_shared<MemoryFileSystem>();
+        memory->addFile(QStringLiteral("/photos/") + name, contents);
+        auto counted = std::make_shared<FaultyFileSystem>(memory);
+
+        Mount mount;
+        mount.id = name;
+        mount.displayName = name;
+        mount.root = VfsUri::fromString(QStringLiteral("mem://%1/").arg(name));
+        mount.fileSystem = counted;
+        if (m_app->services().vfs->addMount(mount).isEmpty())
+            return -1;
+
+        const int row = m_app->openFeatureTab(QStringLiteral("mole.preview"));
+        auto* preview = qobject_cast<PreviewTabController*>(m_app->tabs()->controllerAt(row));
+        if (!preview)
+            return -1;
+        const QString uri = QStringLiteral("mem://%1/photos/%2").arg(name, name);
+        preview->open(uri);
+        if (!waitFor([preview, uri] { return preview->currentUri() == uri; }, 5000))
+            return -1;
+        preview->setDetailsOpen(true);
+        if (!waitFor([preview] { return !preview->isDetailsLoading(); }, 10000))
+            return -1;
+        if (!waitFor([this] { return m_app->tasks()->activeCount() == 0; }, 10000))
+            return -1;
+        drainEvents();
+        return counted->openReadCount();
+    };
+
+    // A real JPEG with no EXIF block in it -- a screenshot, or anything an
+    // exporter stripped, which is most of the JPEGs on a disk.
+    const QByteArray plain = jpegWithExif(QSize(64, 48), QByteArray());
+
+    // And one with EXIF where a camera puts it, which has always cost one read.
+    ExifBuilder exif(false);
+    exif.addAscii(0x010f, "Mole");
+    const QByteArray withExif = jpegWithExif(QSize(64, 48), exif.build());
+
+    const int withNone = opensFor(QStringLiteral("bare.jpg"), plain);
+    const int withSome = opensFor(QStringLiteral("tagged.jpg"), withExif);
+    QVERIFY2(withNone > 0 && withSome > 0, "neither file was read at all");
+    QCOMPARE(withNone, withSome);
+}
+
 void TestPreview::theArrowsFollowWhatHappensInTheFolder()
 {
     QVERIFY(m_tree->makeDirs(QStringLiteral("gallery")));

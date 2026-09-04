@@ -231,6 +231,17 @@ int MemoryFileSystem::readCount() const
     return m_readCalls.load();
 }
 
+void MemoryFileSystem::setStatGate(std::shared_ptr<QSemaphore> gate)
+{
+    QMutexLocker lock(&m_gateMutex);
+    m_statGate = std::move(gate);
+}
+
+int MemoryFileSystem::statsInProgress() const
+{
+    return m_statsHeld.load();
+}
+
 Result<FileEntryList> MemoryFileSystem::list(const VfsUri& dir, const CancelToken& cancel)
 {
     checkNotOnTheDrawingThread("list");
@@ -303,6 +314,18 @@ Result<FileEntry> MemoryFileSystem::stat(const VfsUri& target)
 {
     checkNotOnTheDrawingThread("stat");
     waitAsASlowDriveWould();
+    // Held outside the drive's own lock, the way a listing and a read are.
+    std::shared_ptr<QSemaphore> statGate;
+    {
+        QMutexLocker gateLock(&m_gateMutex);
+        statGate = m_statGate;
+    }
+    if (statGate) {
+        ++m_statsHeld;
+        statGate->acquire();
+        --m_statsHeld;
+    }
+
     QMutexLocker lock(&m_mutex);
     ++m_statCalls;
     // The stored spelling, not the one asked for: a case-insensitive volume

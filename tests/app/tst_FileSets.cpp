@@ -18,6 +18,7 @@
 #include <QDir>
 #include <QGuiApplication>
 #include <QProcess>
+#include <QSemaphore>
 #include <QSignalSpy>
 #include <QStandardPaths>
 #include <QTest>
@@ -62,6 +63,7 @@ private slots:
     void copyingTheDrivesPathGivesTheMountRoot();
     void aRemoteLocationIsCopiedAsAUriNotAsAPathThatLooksLocal();
     void verifyFindsMembersThatHaveGone();
+    void aVerifyThatLandsAfterASwitchDoesNotMarkTheOtherSet();
     void forgettingMissingLeavesTheRestAlone();
 
 private:
@@ -427,6 +429,70 @@ void TestFileSets::verifyFindsMembersThatHaveGone()
     QCOMPARE(members.at(0).toMap().value(QStringLiteral("missing")).toBool(), false);
     QCOMPARE(members.at(0).toMap().value(QStringLiteral("checked")).toBool(), true);
     QCOMPARE(members.at(1).toMap().value(QStringLiteral("missing")).toBool(), true);
+}
+
+/// One set's answers landed on another set.
+///
+/// verify() connected VerifySetTask::verified with a lambda capturing nothing
+/// identifying the set it was started for -- and setCurrentSetId() clears
+/// m_present and m_sizes "because presence belongs to the set that was checked".
+/// So a late answer refilled them with the *previous* set's uris:
+/// missingCount() counted those, summary() said "N missing" about a set nobody
+/// had checked, every current member read as unchecked, and forgetMissing()
+/// would have called removeUris() on the set on screen with the other set's
+/// uris. Every other controller in the tree guards its task callbacks; this one
+/// did not. See MOLE-404.
+void TestFileSets::aVerifyThatLandsAfterASwitchDoesNotMarkTheOtherSet()
+{
+    // A drive that holds the answer until this test lets it go, so the switch
+    // happens while the verify is in flight. A condition, never a clock.
+    auto slow = std::make_shared<MemoryFileSystem>();
+    slow->addFile(QStringLiteral("/watched/kept.txt"), QByteArray("x"));
+    auto gate = std::make_shared<QSemaphore>();
+    slow->setStatGate(gate);
+
+    Mount mount;
+    mount.id = QStringLiteral("slow");
+    mount.displayName = QStringLiteral("Slow");
+    mount.root = VfsUri::fromString(QStringLiteral("mem:///"));
+    mount.fileSystem = slow;
+    QVERIFY(!m_app->services().vfs->addMount(mount).isEmpty());
+
+    FileSetsController* sets = openSets();
+    QVERIFY(sets);
+
+    // The set being checked: two members on the slow drive, one of which is not
+    // there -- so a late answer carries a "missing" with it.
+    const QString watched = sets->createSet(QStringLiteral("Watched"));
+    QVERIFY(!watched.isEmpty());
+    sets->addUris({ QStringLiteral("mem:///watched/kept.txt"), QStringLiteral("mem:///watched/gone.txt") });
+
+    // And the set the reader switches to, whose members are all present.
+    const QString other = sets->createSet(QStringLiteral("Other"));
+    QVERIFY(!other.isEmpty());
+    sets->setCurrentSetId(other);
+    sets->addUris({ m_tree->rootUri().child(QStringLiteral("a.txt")).toString() });
+
+    sets->setCurrentSetId(watched);
+    sets->verify();
+
+    // Held inside the drive, which is what makes the switch land first.
+    QVERIFY2(
+        waitFor([slow] { return slow->statsInProgress() > 0; }, 10000), "the verify never reached the drive");
+
+    sets->setCurrentSetId(other);
+    gate->release(100);
+
+    // Everything settles, and the set on screen reads clean: its one member is
+    // there, and nothing about the other set's members has been written into it.
+    QVERIFY(waitFor([this] { return m_app->services().tasks->activeCount() == 0; }, 20000));
+    drainEvents();
+
+    QCOMPARE(sets->currentSetId(), other);
+    QCOMPARE(sets->members().size(), 1);
+    QVERIFY2(sets->missingCount() == 0,
+        qPrintable(QStringLiteral("the set on screen was marked with %1 missing").arg(sets->missingCount())));
+    QVERIFY2(!sets->summary().contains(QStringLiteral("missing")), qPrintable(sets->summary()));
 }
 
 void TestFileSets::forgettingMissingLeavesTheRestAlone()

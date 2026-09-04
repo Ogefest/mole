@@ -261,8 +261,20 @@ void FileSetsController::verify()
     const QStringList uris = set.uris;
 
     auto* task = new VerifySetTask(vfs, uris);
+    // **The set it was started for.** The lambda captured nothing identifying
+    // it, and setCurrentSetId() clears m_present and m_sizes "because presence
+    // belongs to the set that was checked" -- so an answer landing after the
+    // user switched sets refilled them with the *previous* set's uris.
+    // missingCount() then counted those, summary() said "N missing" about a set
+    // nobody had checked, every current member read as unchecked, and
+    // forgetMissing() would have called removeUris() on the set on screen with
+    // the other set's uris. Every other controller in the tree guards its task
+    // callbacks; this one did not. See MOLE-404.
+    const QString startedFor = m_currentId;
     connect(task, &VerifySetTask::verified, this,
-        [this](const QHash<QString, bool>& present, const QHash<QString, qint64>& sizes) {
+        [this, startedFor](const QHash<QString, bool>& present, const QHash<QString, qint64>& sizes) {
+            if (startedFor != m_currentId)
+                return;
             m_present = present;
             m_sizes = sizes;
             emit membersChanged();

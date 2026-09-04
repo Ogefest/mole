@@ -621,9 +621,28 @@ void SourceHighlighter::setSearchTerm(const QString& term)
 {
     if (m_searchTerm == term)
         return;
+    const QString was = m_searchTerm;
     m_searchTerm = term;
-    if (document())
-        rehighlight();
+    if (!document())
+        return;
+
+    // **Only the blocks that can look different.** A search term is typed a
+    // character at a time and this re-highlighted the whole window on each one:
+    // over a 512 kB window that is the entire lexer run per keystroke, on the
+    // thread that draws. A block that contained neither the old term nor the new
+    // one is formatted identically either way, so there is nothing to redo in
+    // it. Both terms, because the hits of the old one have to be *un*marked.
+    // See MOLE-404.
+    if (was.isEmpty() && term.isEmpty())
+        return;
+
+    for (QTextBlock block = document()->begin(); block.isValid(); block = block.next()) {
+        const QString line = block.text();
+        const bool had = !was.isEmpty() && line.contains(was, Qt::CaseInsensitive);
+        const bool has = !term.isEmpty() && line.contains(term, Qt::CaseInsensitive);
+        if (had || has)
+            rehighlightBlock(block);
+    }
 }
 
 void SourceHighlighter::markSearchHits(const QString& text)
@@ -701,20 +720,27 @@ void SourceHighlighter::highlightCode(const QString& text, const Rules& rules)
         }
     }
 
+    // **A view rather than a copy.** Each of the three tests below was
+    // `text.mid(i, n) == …`, which allocates a QString per character per test:
+    // half a million small allocations per rehighlight() over a 512 kB window,
+    // on the thread that draws, once per typed character of a search term --
+    // because setSearchTerm() re-highlights the whole window. QStringView slices
+    // the same characters and allocates nothing. See MOLE-404.
+    const QStringView all(text);
+
     while (i < text.size()) {
         const QChar c = text.at(i);
+        const QStringView from = all.sliced(i);
 
-        if (!rules.lineComment.isEmpty() && text.mid(i, rules.lineComment.size()) == rules.lineComment) {
+        if (!rules.lineComment.isEmpty() && from.startsWith(rules.lineComment)) {
             setFormat(i, text.size() - i, m_comment);
             break;
         }
-        if (!rules.altLineComment.isEmpty()
-            && text.mid(i, rules.altLineComment.size()) == rules.altLineComment) {
+        if (!rules.altLineComment.isEmpty() && from.startsWith(rules.altLineComment)) {
             setFormat(i, text.size() - i, m_comment);
             break;
         }
-        if (!rules.blockCommentStart.isEmpty()
-            && text.mid(i, rules.blockCommentStart.size()) == rules.blockCommentStart) {
+        if (!rules.blockCommentStart.isEmpty() && from.startsWith(rules.blockCommentStart)) {
             const int close = text.indexOf(rules.blockCommentEnd, i + rules.blockCommentStart.size());
             if (close < 0) {
                 setFormat(i, text.size() - i, m_comment);
