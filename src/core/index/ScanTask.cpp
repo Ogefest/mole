@@ -20,7 +20,7 @@ void ScanTask::setContainerReader(std::function<QList<IndexedFile>(const FileEnt
     m_containers = std::move(reader);
 }
 
-void ScanTask::setFactReader(std::function<QList<SearchFact>(const FileEntry&)> reader)
+void ScanTask::setFactReader(std::function<QList<SearchFact>(const FileEntry&, const CancelToken&)> reader)
 {
     m_facts = std::move(reader);
 }
@@ -96,7 +96,7 @@ void ScanTask::run()
         // A file whose readers find nothing, or fail, is indexed without them:
         // a reader costs its own rows and never the scan.
         if (m_facts && !entry.isDir) {
-            row.facts = m_facts(entry);
+            row.facts = m_facts(entry, cancelToken());
             ++m_filesRead;
         }
         // Unchanged since the last scan, so everything under it is what it

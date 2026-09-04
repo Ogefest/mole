@@ -83,7 +83,10 @@ public:
     /// and unbounded in aggregate: a hundred thousand photographs is a hundred
     /// thousand reads. A scan without it writes exactly what a scan wrote
     /// before any of this existed. See ADR-0039.
-    void setFactReader(std::function<QList<SearchFact>(const FileEntry&)> reader);
+    ///
+    /// Handed the scan's own cancel token, so a reader that opens a large file
+    /// can stop when the scan is stopped rather than finishing it first.
+    void setFactReader(std::function<QList<SearchFact>(const FileEntry&, const CancelToken&)> reader);
 
 protected:
     void run() override;
@@ -103,7 +106,7 @@ private:
     qint64 m_carried = 0;
     std::function<QList<IndexedFile>(const FileEntry&, bool*)> m_containers;
     qint64 m_skippedDirectories = 0;
-    std::function<QList<SearchFact>(const FileEntry&)> m_facts;
+    std::function<QList<SearchFact>(const FileEntry&, const CancelToken&)> m_facts;
 };
 
 } // namespace mole

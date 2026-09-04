@@ -88,6 +88,12 @@ public:
         std::atomic_int cancelled { 0 };
         /// Bytes of head the reader was handed the last time it ran.
         std::atomic<qsizetype> headSize { 0 };
+        /// Whether the last read was handed live services. Every shipped reader
+        /// that needs bytes past the sniff page -- EXIF further into a JPEG, a
+        /// docx whose core.xml is not at the front, tags at the end of an audio
+        /// file -- checks `services.vfs` and gives up without one, so a caller
+        /// that passes an empty struct silently gets nothing from any of them.
+        std::atomic_bool sawServices { false };
     };
 
     FakeMetadataReader(QString id, QList<FileFact> facts, int priority = 0,
@@ -119,10 +125,10 @@ public:
         const CancelToken& cancel) const override
     {
         Q_UNUSED(entry);
-        Q_UNUSED(services);
         if (m_log) {
             ++m_log->reads;
             m_log->headSize = head.size();
+            m_log->sawServices = services.vfs != nullptr;
         }
         if (m_gate)
             m_gate->acquire();

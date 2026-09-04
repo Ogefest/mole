@@ -1,17 +1,42 @@
+#include "sdk/ScanReaders.h"
+#include "support/FakePlugin.h"
 #include "support/FaultyFileSystem.h"
 #include "support/MoleTestMain.h"
 #include "support/TestSupport.h"
 
 #include "core/index/ScanTask.h"
 #include "core/tasks/TaskManager.h"
+#include "core/vfs/VfsManager.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
 #include <QDir>
+#include <QSemaphore>
 
 using namespace mole;
 using namespace mole::test;
 
 namespace {
+/// The readers a test made, answering the one question factReaderFor() asks of
+/// the host. The real one is MetadataRegistry, which lives a layer above this
+/// suite; the point here is what the scan hands a reader, not who found it.
+class FakeLookup final : public IMetadataLookup
+{
+public:
+    void add(IMetadataReader* reader) { m_readers.append(reader); }
+    QList<IMetadataReader*> readersFor(const FileEntry& entry) const override
+    {
+        QList<IMetadataReader*> claiming;
+        for (IMetadataReader* reader : m_readers) {
+            if (reader->canRead(entry))
+                claiming.append(reader);
+        }
+        return claiming;
+    }
+
+private:
+    QList<IMetadataReader*> m_readers;
+};
+
 /// A scan asked to keep what has not changed, and nothing else. The only
 /// option most of these cases vary.
 ScanOptions incrementally()
@@ -43,6 +68,9 @@ private slots:
     void aScanCanRecordWhatEachFileSaysAboutItself();
     void aScanWithoutItWritesWhatItAlwaysWrote();
     void aFileWhoseReaderFindsNothingIsStillIndexed();
+    void theRealFactReaderHandsAReaderTheServicesItNeeds();
+    void aReaderThatThrowsCostsItsOwnRowsAndNotTheScan();
+    void aReaderSeesTheScanBeingCancelledUnderIt();
     void aSecondScanOfAnUnchangedTreeWalksNothing();
     void whatChangedIsReflectedAndWhatWentIsGone();
     void aDriveThatDoesNotDateItsFoldersIsWalkedInFullAndSaysSo();
@@ -350,7 +378,7 @@ void TestScanTask::aScanCanRecordWhatEachFileSaysAboutItself()
 
     auto* task = new ScanTask(m_fs, VfsUri(QStringLiteral("mem"), QString(), QStringLiteral("/")),
         QStringLiteral("scratch"), m_index.get());
-    task->setFactReader([](const FileEntry& entry) -> QList<SearchFact> {
+    task->setFactReader([](const FileEntry& entry, const CancelToken&) -> QList<SearchFact> {
         if (entry.uri.suffix() != QLatin1String("jpg"))
             return {};
         return { SearchFact { QStringLiteral("image.camera"), QStringLiteral("Canon EOS 5D"), 0, false },
@@ -399,7 +427,7 @@ void TestScanTask::aFileWhoseReaderFindsNothingIsStillIndexed()
 
     auto* task = new ScanTask(m_fs, VfsUri(QStringLiteral("mem"), QString(), QStringLiteral("/")),
         QStringLiteral("scratch"), m_index.get());
-    task->setFactReader([](const FileEntry& entry) -> QList<SearchFact> {
+    task->setFactReader([](const FileEntry& entry, const CancelToken&) -> QList<SearchFact> {
         // What a reader that gave up looks like from here: nothing at all.
         if (entry.uri.suffix() == QLatin1String("bin"))
             return {};
@@ -414,6 +442,117 @@ void TestScanTask::aFileWhoseReaderFindsNothingIsStillIndexed()
     SearchQuery awkward;
     awkward.add(SearchPredicate::name(QStringLiteral("awkward")));
     QCOMPARE(m_index->search(awkward).value().size(), 1);
+}
+
+void TestScanTask::theRealFactReaderHandsAReaderTheServicesItNeeds()
+{
+    // Through factReaderFor() rather than a stub, because the argument the scan
+    // passes is the whole of this: every shipped reader that needs bytes past
+    // the sniff page checks services.vfs and gives up without it, so an empty
+    // struct here means the index knows less about a file than the panel does
+    // and "camera is X" over the index misses files the drawer names.
+    m_fs->addFile(QStringLiteral("/photos/a.jpg"));
+
+    auto log = std::make_shared<FakeMetadataReader::Log>();
+    FakeMetadataReader reader(QStringLiteral("test.exif"),
+        QList<FileFact> {
+            { QStringLiteral("Camera"), QStringLiteral("Canon EOS 5D"), QStringLiteral("image.camera") } },
+        10, log);
+    FakeLookup lookup;
+    lookup.add(&reader);
+
+    VfsManager vfs;
+    PluginServices services;
+    services.vfs = &vfs;
+    services.metadata = &lookup;
+
+    auto* task = new ScanTask(m_fs, VfsUri(QStringLiteral("mem"), QString(), QStringLiteral("/")),
+        QStringLiteral("scratch"), m_index.get());
+    task->setFactReader(factReaderFor(services, m_fs));
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(task->state(), Task::State::Succeeded);
+    QCOMPARE(log->reads.load(), 1);
+    QVERIFY(log->sawServices.load());
+
+    SearchQuery byCamera;
+    byCamera.add(SearchPredicate::metadataIs(QStringLiteral("image.camera"), QStringLiteral("canon")));
+    QCOMPARE(m_index->search(byCamera).value().size(), 1);
+}
+
+void TestScanTask::aReaderThatThrowsCostsItsOwnRowsAndNotTheScan()
+{
+    // In the panel a throwing reader loses its own rows and is named in the log.
+    // Unguarded here, the throw travelled out of the walker's callback and
+    // ScanTask::run() into Task::run()'s generic net: the scan ended Failed with
+    // "stopped unexpectedly", the volume was left half-written, and nothing said
+    // which reader did it. One third-party plugin with a bug on one odd file
+    // turned a nightly re-index of a whole NAS into a failed job.
+    m_fs->addFile(QStringLiteral("/photos/a.jpg"));
+
+    FakeMetadataReader broken(QStringLiteral("test.broken"), QList<FileFact> {}, 20);
+    broken.failInstead();
+    FakeMetadataReader sound(QStringLiteral("test.sound"),
+        QList<FileFact> {
+            { QStringLiteral("Camera"), QStringLiteral("Nikon Z6"), QStringLiteral("image.camera") } },
+        10);
+    FakeLookup lookup;
+    lookup.add(&broken);
+    lookup.add(&sound);
+
+    VfsManager vfs;
+    PluginServices services;
+    services.vfs = &vfs;
+    services.metadata = &lookup;
+
+    auto* task = new ScanTask(m_fs, VfsUri(QStringLiteral("mem"), QString(), QStringLiteral("/")),
+        QStringLiteral("scratch"), m_index.get());
+    task->setFactReader(factReaderFor(services, m_fs));
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task));
+
+    QCOMPARE(task->state(), Task::State::Succeeded);
+    QCOMPARE(m_index->fileCount().value(), 2); // the folder and the file
+
+    SearchQuery byCamera;
+    byCamera.add(SearchPredicate::metadataIs(QStringLiteral("image.camera"), QStringLiteral("nikon")));
+    QCOMPARE(m_index->search(byCamera).value().size(), 1);
+}
+
+void TestScanTask::aReaderSeesTheScanBeingCancelledUnderIt()
+{
+    // The token used to be a default-constructed one, so a reader that opens a
+    // large file to find the tags at the end of it could not notice the scan had
+    // been stopped: it finished its file first, and on a slow drive that is the
+    // difference between a cancel and a wait.
+    m_fs->addFile(QStringLiteral("/photos/a.jpg"));
+
+    auto log = std::make_shared<FakeMetadataReader::Log>();
+    auto gate = std::make_shared<QSemaphore>();
+    FakeMetadataReader reader(QStringLiteral("test.slow"), QList<FileFact> {}, 10, log);
+    reader.holdUntilReleased(gate);
+    FakeLookup lookup;
+    lookup.add(&reader);
+
+    VfsManager vfs;
+    PluginServices services;
+    services.vfs = &vfs;
+    services.metadata = &lookup;
+
+    auto* task = new ScanTask(m_fs, VfsUri(QStringLiteral("mem"), QString(), QStringLiteral("/")),
+        QStringLiteral("scratch"), m_index.get());
+    task->setFactReader(factReaderFor(services, m_fs));
+    m_tasks->submit(task);
+
+    // Waited for, not slept through: the reader is inside read() and holding.
+    QVERIFY(waitFor([&log] { return log->reads.load() == 1; }, 10000));
+    task->requestCancel();
+    gate->release();
+
+    QVERIFY(waitForTask(task));
+    QCOMPARE(task->state(), Task::State::Cancelled);
+    QCOMPARE(log->cancelled.load(), 1);
 }
 
 /// A zip of years-old projects holds a great deal of what somebody is looking
@@ -614,7 +753,7 @@ void TestScanTask::anIncrementalScanKeepsWhatBothHalvesOfTheTreeWereAskedFor()
         m_fs->setModified(folder, settled);
     }
 
-    const auto camera = [](const FileEntry& entry) -> QList<SearchFact> {
+    const auto camera = [](const FileEntry& entry, const CancelToken&) -> QList<SearchFact> {
         if (entry.uri.suffix() != QLatin1String("jpg"))
             return {};
         return { SearchFact { QStringLiteral("image.camera"), QStringLiteral("X100V"), 0, false } };

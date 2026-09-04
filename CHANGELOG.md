@@ -65,6 +65,9 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-382 An indexed search finds the same facts the details drawer shows, instead of missing files whose tags sit past the first page
+2026-09-04 #MOLE-382 A metadata reader that fails on one file costs its own rows, instead of failing the whole scan
+2026-09-04 #MOLE-382 Cancelling a scan stops the file being read, instead of finishing it first
 2026-09-04 #MOLE-378 An alert on a drive that is unreachable says so, instead of reporting the file as missing
 2026-09-04 #MOLE-378 A size, count or age alert over a folder it could not read says so, instead of measuring what it could reach
 2026-09-04 #MOLE-378 A threshold that cannot be read is refused, instead of becoming 0 and firing on the first check

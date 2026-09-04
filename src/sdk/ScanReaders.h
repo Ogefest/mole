@@ -27,9 +27,17 @@ class Task;
 /// What a file says about itself, through the readers that fill the details
 /// panel. The same readers, so the index and the panel can never disagree.
 ///
+/// **The readers get the services and the scan's own cancel token.** They used
+/// to get `PluginServices {}` and `CancelToken {}`, and every shipped reader
+/// that needs bytes past the sniff page checks `services.vfs` and gives up
+/// without one -- so a JPEG whose EXIF sits past the first page, a docx whose
+/// core.xml is not at the front and an audio file whose tags are at the end were
+/// all described in the panel and indexed as nothing. "Every photo taken with
+/// camera X" missed the files the drawer was naming. See MOLE-382.
+///
 /// Null when nothing is registered to read a file, which is what a headless
 /// context looks like from here.
-std::function<QList<SearchFact>(const FileEntry&)> factReaderFor(
+std::function<QList<SearchFact>(const FileEntry&, const CancelToken&)> factReaderFor(
     const PluginServices& services, const FileSystemPtr& fileSystem);
 
 /// Rows for what lives inside a container, through whichever mounted backend

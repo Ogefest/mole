@@ -3,6 +3,7 @@
 #include "sdk/IMetadataReader.h"
 
 #include "core/data/FileType.h"
+#include "core/diagnostics/Diagnostics.h"
 #include "core/index/ScanTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/DirectoryWalker.h"
@@ -25,15 +26,14 @@ namespace {
     constexpr qint64 kRemoteContainerCeiling = 32 * 1024 * 1024;
 }
 
-std::function<QList<SearchFact>(const FileEntry&)> factReaderFor(
+std::function<QList<SearchFact>(const FileEntry&, const CancelToken&)> factReaderFor(
     const PluginServices& services, const FileSystemPtr& fileSystem)
 {
     if (!fileSystem || !services.metadata)
         return {};
 
-    IMetadataLookup* lookup = services.metadata;
-    return [fileSystem, lookup](const FileEntry& entry) -> QList<SearchFact> {
-        const QList<IMetadataReader*> readers = lookup->readersFor(entry);
+    return [fileSystem, services](const FileEntry& entry, const CancelToken& cancel) -> QList<SearchFact> {
+        const QList<IMetadataReader*> readers = services.metadata->readersFor(entry);
         if (readers.isEmpty())
             return {};
 
@@ -48,13 +48,30 @@ std::function<QList<SearchFact>(const FileEntry&)> factReaderFor(
 
         QList<SearchFact> out;
         for (IMetadataReader* reader : readers) {
+            if (cancel.isCancelled())
+                break;
+            if (!reader)
+                continue;
+
             // A reader that throws its hands up costs its own rows and nobody
-            // else's, which is what the extension point promises.
-            for (const FileFact& fact : reader->read(entry, head, PluginServices {}, CancelToken {})) {
-                if (!fact.isAskable())
-                    continue;
-                out.append(SearchFact {
-                    fact.key, fact.value, fact.hasNumber() ? fact.number : 0, fact.hasNumber() });
+            // else's, which is what the extension point promises -- and the call
+            // was unguarded, so it cost rather more than that. The throw
+            // travelled out of the walker's callback and ScanTask::run() into
+            // Task::run()'s generic net: the scan ended Failed with "stopped
+            // unexpectedly", the volume was left half-written, and nothing named
+            // the reader. The panel has caught this all along; the same two
+            // clauses, and the same log line.
+            try {
+                for (const FileFact& fact : reader->read(entry, head, services, cancel)) {
+                    if (!fact.isAskable())
+                        continue;
+                    out.append(SearchFact {
+                        fact.key, fact.value, fact.hasNumber() ? fact.number : 0, fact.hasNumber() });
+                }
+            } catch (const std::exception& error) {
+                qCWarning(taskLog, "metadata reader %s failed: %s", qPrintable(reader->id()), error.what());
+            } catch (...) {
+                qCWarning(taskLog, "metadata reader %s failed", qPrintable(reader->id()));
             }
         }
         return out;
