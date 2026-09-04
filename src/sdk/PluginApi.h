@@ -44,6 +44,15 @@ class PluginRegistry
 public:
     virtual ~PluginRegistry() = default;
 
+    // Every `add…` below answers false when the contribution was not taken --
+    // because it was refused, or because this host has nowhere to put that kind
+    // of thing. `mole-tasks` wires only the drives, for instance.
+    //
+    // **A contribution that was not taken has been destroyed.** The
+    // `unique_ptr` was moved into the call and there is nowhere for it to go
+    // back to, so a plugin that kept a raw pointer to what it handed over must
+    // drop that pointer when the call returns false. See MOLE-365.
+
     /// Contribute a new kind of drive: sftp, s3, a git forge, a database.
     /// Its scheme() must be unique across all loaded plugins.
     virtual bool addFileSystemFactory(std::unique_ptr<IFileSystemFactory> factory) = 0;
@@ -101,6 +110,14 @@ public:
     virtual void registerExtensions(PluginRegistry& registry) = 0;
 
     /// Called before unload. Release anything the host cannot reclaim itself.
+    ///
+    /// Called on every plugin, in reverse load order, when the host lets go of
+    /// them -- a plugin loaded from a shared library as much as one compiled in.
+    /// It was the built-ins only until MOLE-365, so a plugin holding connection
+    /// pools or a global library context was never told.
+    ///
+    /// May throw; the host catches it and logs. Nothing else is protected by
+    /// then, and taking the process down on the way out is not an improvement.
     virtual void shutdown() { }
 };
 

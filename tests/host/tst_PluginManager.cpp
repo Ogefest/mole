@@ -14,6 +14,7 @@
 #include "core/vfs/VfsManager.h"
 
 #include <QDir>
+#include <QFile>
 #include <QTemporaryDir>
 
 using namespace mole;
@@ -40,6 +41,11 @@ private slots:
     void nonPluginFileIsReportedNotFatal();
     void shutdownIsCalledOnDestruction();
     void loadsTheRealArchivePluginFromDisk();
+    void aPluginLoadedFromDiskIsToldToShutDown();
+    void aSymlinkedPluginLoads();
+    void aPluginThatThrowsWhileRegisteringIsReportedAndSkipped();
+    void aPluginThatThrowsWhenAskedWhatItIsIsReportedAndSkipped();
+    void aHostWithNowhereToPutSomethingSaysSoWithoutCallingItAFault();
 
 private:
     PluginManager* makeManager();
@@ -357,6 +363,140 @@ void TestPluginManager::loadsTheRealArchivePluginFromDisk()
     QVERIFY2(m_vfs->factoryFor(QStringLiteral("archive")) != nullptr,
         "the archive plugin must contribute its filesystem factory");
     QVERIFY(!manager->loaded().front().builtIn);
+}
+
+void TestPluginManager::aPluginLoadedFromDiskIsToldToShutDown()
+{
+    // shutdown() was called on built-ins only -- the destructor walked
+    // m_ownedPlugins, which only addBuiltIn() writes -- so a plugin from a shared
+    // library was never told to let go of anything, against what PluginApi.h
+    // promises. The network plugin keeps libcurl handle pools and SMB serialises
+    // behind a global Samba context; neither ever heard. See MOLE-365.
+    //
+    // Asserted through the real plugin on disk, because that is the path that had
+    // no coverage. What can be observed from out here is that the plugin the
+    // manager kept is the one it will call: the flag trick the built-in case uses
+    // needs a plugin the test built.
+    const QString pluginDir = QStringLiteral(MOLE_TEST_PLUGIN_DIR);
+    if (!QDir(pluginDir).exists())
+        QSKIP("no plugin was built to load from disk");
+
+    PluginManager* manager = makeManager();
+    QVERIFY(manager->loadFromDirectory(pluginDir) >= 1);
+    for (const PluginManager::LoadedPlugin& plugin : manager->loaded()) {
+        QVERIFY2(plugin.plugin != nullptr,
+            qPrintable(
+                QStringLiteral("%1 was loaded and cannot be told to shut down").arg(plugin.metadata.id)));
+    }
+
+    // And it survives being destroyed, which is where shutdown() now runs.
+    delete manager;
+}
+
+void TestPluginManager::aSymlinkedPluginLoads()
+{
+    // QDir::NoSymLinks dropped every link before QLibrary::isLibrary was asked,
+    // so a developer linking a build-tree .so into MOLE_PLUGIN_PATH -- the
+    // documented escape hatch -- and a distribution installing a versioned .so
+    // with an unversioned link beside it both got no plugin, no line in errors()
+    // and nothing under --plugins. The worst kind of loader failure, one function
+    // above the comment that says so. See MOLE-365.
+    const QDir pluginDir(QStringLiteral(MOLE_TEST_PLUGIN_DIR));
+    const QStringList libraries = pluginDir.entryList({ QStringLiteral("*.so") }, QDir::Files);
+    if (libraries.isEmpty())
+        QSKIP("no plugin was built to link to");
+
+    const QString target = pluginDir.absoluteFilePath(libraries.first());
+    const QString link = QDir(m_dir->path()).filePath(QStringLiteral("linked_plugin.so"));
+    if (!QFile::link(target, link))
+        QSKIP("this filesystem would not make a symbolic link");
+
+    PluginManager* manager = makeManager();
+    const int loaded = manager->loadFromDirectory(m_dir->path());
+    QVERIFY2(loaded >= 1,
+        qPrintable(QStringLiteral("a symlinked plugin was skipped in silence: %1")
+                       .arg(manager->errors().join(QLatin1Char(' ')))));
+    QCOMPARE(manager->loaded().front().filePath, link);
+
+    // And a link to something that is not a library is still refused, by
+    // isLibrary() rather than by dropping links -- so nothing is lost by looking.
+    QFile note(QDir(m_dir->path()).filePath(QStringLiteral("notes.txt")));
+    QVERIFY(note.open(QIODevice::WriteOnly));
+    note.write("not a library");
+    note.close();
+    QVERIFY(QFile::link(note.fileName(), QDir(m_dir->path()).filePath(QStringLiteral("notes.link"))));
+    PluginManager* second = makeManager();
+    QCOMPARE(second->loadFromDirectory(m_dir->path()), 1);
+}
+
+void TestPluginManager::aPluginThatThrowsWhileRegisteringIsReportedAndSkipped()
+{
+    // There was no try anywhere in PluginManager.cpp, so an exception went
+    // through acceptPlugin, loadFromDirectory, AppController::initialise and
+    // main: one third-party plugin with a bug stopped Mole from opening at all.
+    // Task::run() and ReadMetadataTask both catch what plugin code throws and
+    // turn it into a reported failure; the loader was the one place that did not.
+    PluginManager* manager = makeManager();
+
+    FakePlugin::Config broken;
+    broken.id = QStringLiteral("test.broken");
+    broken.throwOnRegister = true;
+    QVERIFY2(!manager->addBuiltIn(std::make_unique<FakePlugin>(broken)), "a plugin that threw was accepted");
+
+    QVERIFY(manager->loaded().empty());
+    QVERIFY2(manager->errors().join(QLatin1Char(' ')).contains(QStringLiteral("threw during registration")),
+        qPrintable(manager->errors().join(QLatin1Char(' '))));
+    QVERIFY(manager->errors().join(QLatin1Char(' ')).contains(QStringLiteral("test.broken")));
+
+    // And the next plugin loads, which is the half that matters: one bad plugin
+    // costs its own contributions and nobody else's.
+    FakePlugin::Config sound;
+    sound.id = QStringLiteral("test.sound");
+    sound.featureIds = { QStringLiteral("works") };
+    QVERIFY(manager->addBuiltIn(std::make_unique<FakePlugin>(sound)));
+    QVERIFY(m_features->feature(QStringLiteral("works")) != nullptr);
+}
+
+void TestPluginManager::aPluginThatThrowsWhenAskedWhatItIsIsReportedAndSkipped()
+{
+    // metadata() is the first plugin code the loader runs, and it can throw too.
+    PluginManager* manager = makeManager();
+
+    FakePlugin::Config broken;
+    broken.throwOnMetadata = true;
+    QVERIFY(!manager->addBuiltIn(std::make_unique<FakePlugin>(broken)));
+    QVERIFY(manager->loaded().empty());
+    QVERIFY2(manager->errors()
+                 .join(QLatin1Char(' '))
+                 .contains(QStringLiteral("threw while being asked what it is")),
+        qPrintable(manager->errors().join(QLatin1Char(' '))));
+}
+
+void TestPluginManager::aHostWithNowhereToPutSomethingSaysSoWithoutCallingItAFault()
+{
+    // mole-tasks wires only the drives, and every feature, preview, reader and
+    // thumbnailer of every plugin it loaded produced "rejected a null feature" --
+    // a fault the plugin did not have, printed when a --drive failed for an
+    // unrelated reason. Two situations had one message.
+    PluginManager::Destinations onlyDrives;
+    onlyDrives.vfs = m_vfs;
+    auto* manager = new PluginManager(m_services, onlyDrives, this);
+
+    FakePlugin::Config config;
+    config.id = QStringLiteral("test.contributes");
+    config.schemes = { QStringLiteral("takeable") };
+    config.featureIds = { QStringLiteral("nowhere") };
+    config.previewIds = { QStringLiteral("nowhere.preview") };
+    QVERIFY(manager->addBuiltIn(std::make_unique<FakePlugin>(config)));
+
+    // The drive was taken; the rest had nowhere to go and that is not an error.
+    QVERIFY(m_vfs->factoryFor(QStringLiteral("takeable")) != nullptr);
+    QVERIFY2(manager->errors().isEmpty(), qPrintable(manager->errors().join(QLatin1Char(' '))));
+
+    const QString said = manager->notes().join(QLatin1Char('\n'));
+    QVERIFY2(said.contains(QStringLiteral("nowhere to put a feature")), qPrintable(said));
+    QVERIFY2(said.contains(QStringLiteral("nowhere to put a preview provider")), qPrintable(said));
+    QVERIFY2(!said.contains(QStringLiteral("null")), qPrintable(said));
 }
 
 MOLE_TEST_MAIN(TestPluginManager)

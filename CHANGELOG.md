@@ -65,6 +65,11 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-365 A plugin that misbehaves while loading is reported and skipped, instead of stopping Mole from opening
+2026-09-04 #MOLE-365 A plugin reached through a symbolic link loads, instead of being skipped in silence
+2026-09-04 #MOLE-365 Every plugin is told to let go of what it holds when Mole closes, not only the built-in ones
+2026-09-04 #MOLE-365 A plugin problem is logged at warning, so it is in the log a report is sent with
+2026-09-04 #MOLE-365 mole-tasks no longer reports faults a plugin does not have for every feature it has nowhere to put
 2026-09-04 #MOLE-362 A drive that stops answering no longer stops every other drive: listing, copying, previewing and searching elsewhere keep working
 2026-09-04 #MOLE-362 Quitting does not wait on a drive that has stopped answering
 2026-09-04 #MOLE-362 Browsing into an archive no longer re-asks every disk in the sidebar how full it is

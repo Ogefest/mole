@@ -736,6 +736,16 @@ namespace {
             for (const QString& line : problems)
                 out << "  " << line << Qt::endl;
         }
+
+        // Kept apart from the problems. This binary has nowhere to put a feature,
+        // a preview, a reader or a thumbnailer, and saying so is not the same as
+        // saying a plugin got something wrong.
+        const QStringList notes = environment.pluginNotes();
+        if (!notes.isEmpty()) {
+            out << "not taken here:" << Qt::endl;
+            for (const QString& line : notes)
+                out << "  " << line << Qt::endl;
+        }
         return Ok;
     }
 

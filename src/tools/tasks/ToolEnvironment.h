@@ -89,6 +89,12 @@ namespace tools {
         /// that a plugin did not load.
         void loadPlugins();
         QStringList pluginErrors() const;
+        /// Things worth saying that are nobody's fault -- this binary wires only
+        /// the drives, so every feature, preview, reader and thumbnailer of every
+        /// plugin has nowhere to go. That used to be reported as
+        /// "rejected a null feature", a fault the plugin did not have, printed
+        /// whenever a `--drive` failed. See MOLE-365.
+        QStringList pluginNotes() const;
         /// Where plugins were looked for and what was found, so `drives
         /// --plugins` can answer the first question of any report about a
         /// package: was the network backend there at all. Empty until

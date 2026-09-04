@@ -107,6 +107,11 @@ QStringList ToolEnvironment::pluginErrors() const
     return m_plugins ? m_plugins->errors() : QStringList {};
 }
 
+QStringList ToolEnvironment::pluginNotes() const
+{
+    return m_plugins ? m_plugins->notes() : QStringList {};
+}
+
 QStringList ToolEnvironment::pluginSearchPaths() const
 {
     return PluginManager::defaultSearchPaths();

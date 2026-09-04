@@ -1435,8 +1435,20 @@ void AppController::recordStartup() const
         static_cast<long long>(failed.size()));
     // Named individually, because "1 failed" without saying which is the report
     // arriving without the one fact it was sent for.
+    //
+    // At warning, not info. `mole --plugins` exits 1 when this list is not
+    // empty, so the binary itself counts these as failures -- and ADR-0012 says a
+    // failure is audible at warning. A line the default configuration hides is a
+    // line nobody sees in the report they send. See MOLE-365.
     for (const QString& problem : failed)
-        qInfo("Plugin problem: %s", qPrintable(problem));
+        qWarning("Plugin problem: %s", qPrintable(problem));
+
+    // And the things that are nobody's fault, kept apart from them: a host with
+    // no registry for a kind of contribution is not a plugin misbehaving.
+    if (m_plugins) {
+        for (const QString& note : m_plugins->notes())
+            qInfo("Plugin note: %s", qPrintable(note));
+    }
 
     if (m_drives) {
         QStringList described;

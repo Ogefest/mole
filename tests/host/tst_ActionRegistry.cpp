@@ -57,6 +57,14 @@ private slots:
     void enabledStateIsEvaluatedEachTime();
     void leadingSeparatorIsSuppressed();
     void pluginsCanSlotBetweenBuiltIns();
+
+    // ---- a handler that changes the registry it is in ----------------------
+    void aHandlerThatRemovesItsOwnEntryRunsToTheEnd();
+    void aHandlerThatAddsAnEntryLeavesItBehind();
+    void aHandlerThatRebuildsAWholePrefixRunsToTheEnd();
+
+    // ---- removing, which nothing covered ----------------------------------
+    void removingByIdAndByPrefix();
 };
 
 void TestActionRegistry::rejectsIncompleteActions()
@@ -284,6 +292,118 @@ void TestActionRegistry::pluginsCanSlotBetweenBuiltIns()
     QCOMPARE(titlesOf(actionsOf(registry.buildModel(), QStringLiteral("Workflows"))),
         QStringList({ QStringLiteral("Index this folder"), QStringLiteral("Find duplicates"),
             QStringLiteral("Something else") }));
+}
+
+// -------------------- a handler that changes the registry it is in
+
+void TestActionRegistry::aHandlerThatRemovesItsOwnEntryRunsToTheEnd()
+{
+    // trigger() held a reference into m_actions and invoked the std::function
+    // living in it, so an entry whose handler removes it destroyed its own
+    // callable while it was on the stack -- along with everything the lambda had
+    // captured. "Add current folder" is exactly this shape: Bookmarks::add()
+    // emits countChanged, a direct connection rebuilds the bookmark actions, and
+    // removeActionsStartingWith() erases the entry being run. Benign today only
+    // because of what those particular lambdas capture, and the extension point
+    // every plugin's menu entry goes through had no rule about it. See MOLE-365.
+    ActionRegistry registry;
+
+    int ranTo = 0;
+    // Captured by value, so the capture block is part of the callable being
+    // erased -- which is the half a reference-into-the-vector loses.
+    const QString marker = QStringLiteral("still here");
+    MenuAction action = makeAction(
+        QStringLiteral("test.selfremoving"), MenuAction::Section::Workflows, QStringLiteral("Go"));
+    action.trigger = [&registry, &ranTo, marker] {
+        ranTo = 1;
+        registry.removeAction(QStringLiteral("test.selfremoving"));
+        // Reading the capture *after* the entry is gone is the whole point.
+        if (marker == QStringLiteral("still here"))
+            ranTo = 2;
+    };
+    QVERIFY(registry.addAction(std::move(action)));
+
+    QVERIFY(registry.trigger(QStringLiteral("test.selfremoving")));
+    QCOMPARE(ranTo, 2);
+    QVERIFY(!registry.contains(QStringLiteral("test.selfremoving")));
+}
+
+void TestActionRegistry::aHandlerThatAddsAnEntryLeavesItBehind()
+{
+    // The other direction, and the one that reallocates: pushing on to the
+    // vector while iterating it invalidates the reference the loop is holding.
+    ActionRegistry registry;
+
+    bool finished = false;
+    MenuAction action
+        = makeAction(QStringLiteral("test.adds"), MenuAction::Section::Workflows, QStringLiteral("Add"));
+    action.trigger = [&registry, &finished] {
+        for (int i = 0; i < 32; ++i) {
+            registry.addAction(makeAction(QStringLiteral("test.added.%1").arg(i),
+                MenuAction::Section::Workflows, QStringLiteral("Added")));
+        }
+        finished = true;
+    };
+    QVERIFY(registry.addAction(std::move(action)));
+
+    QVERIFY(registry.trigger(QStringLiteral("test.adds")));
+    QVERIFY(finished);
+    QVERIFY(registry.contains(QStringLiteral("test.adds")));
+    QVERIFY(registry.contains(QStringLiteral("test.added.31")));
+}
+
+void TestActionRegistry::aHandlerThatRebuildsAWholePrefixRunsToTheEnd()
+{
+    // What picking a bookmark does: the handler opens a place, the tab changes,
+    // and the same rebuild wipes every entry under the prefix -- including this
+    // one -- while its captures are being read.
+    ActionRegistry registry;
+
+    for (int i = 0; i < 4; ++i) {
+        registry.addAction(makeAction(QStringLiteral("mole.bookmarks.%1").arg(i),
+            MenuAction::Section::Bookmarks, QStringLiteral("Place")));
+    }
+
+    int removed = -1;
+    QString opened;
+    const QString place = QStringLiteral("file:///somewhere");
+    MenuAction chosen = makeAction(
+        QStringLiteral("mole.bookmarks.chosen"), MenuAction::Section::Bookmarks, QStringLiteral("Go"));
+    chosen.trigger = [&registry, &removed, &opened, place] {
+        removed = registry.removeActionsStartingWith(QStringLiteral("mole.bookmarks."));
+        opened = place; // the captured uri, read after the entry is gone
+    };
+    QVERIFY(registry.addAction(std::move(chosen)));
+
+    QVERIFY(registry.trigger(QStringLiteral("mole.bookmarks.chosen")));
+    QCOMPARE(removed, 5);
+    QCOMPARE(opened, place);
+    QVERIFY(!registry.contains(QStringLiteral("mole.bookmarks.0")));
+}
+
+// ------------------------------ removing, which nothing covered
+
+void TestActionRegistry::removingByIdAndByPrefix()
+{
+    ActionRegistry registry;
+    registry.addAction(makeAction(QStringLiteral("a.one"), MenuAction::Section::File, QStringLiteral("One")));
+    registry.addAction(makeAction(QStringLiteral("a.two"), MenuAction::Section::File, QStringLiteral("Two")));
+    registry.addAction(
+        makeAction(QStringLiteral("b.one"), MenuAction::Section::View, QStringLiteral("Other")));
+
+    QVERIFY(!registry.removeAction(QStringLiteral("nothing.like.this")));
+    QVERIFY(registry.removeAction(QStringLiteral("a.one")));
+    QVERIFY(!registry.contains(QStringLiteral("a.one")));
+    QVERIFY(registry.contains(QStringLiteral("a.two")));
+
+    QCOMPARE(registry.removeActionsStartingWith(QStringLiteral("a.")), 1);
+    QCOMPARE(registry.removeActionsStartingWith(QStringLiteral("a.")), 0);
+    QVERIFY(registry.contains(QStringLiteral("b.one")));
+
+    // And an id that was removed can be used again, which is what a rebuild
+    // depends on.
+    QVERIFY(registry.addAction(
+        makeAction(QStringLiteral("a.one"), MenuAction::Section::File, QStringLiteral("One again"))));
 }
 
 MOLE_TEST_MAIN(TestActionRegistry)

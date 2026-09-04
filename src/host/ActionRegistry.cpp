@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <functional>
 
 namespace mole {
 
@@ -72,17 +73,36 @@ int ActionRegistry::removeActionsStartingWith(const QString& prefix)
 
 bool ActionRegistry::trigger(const QString& id)
 {
+    // **Copied out of the registry before either is called.** This used to hold a
+    // reference into m_actions and invoke the std::function living in it, so an
+    // entry whose handler changes the registry destroyed its own callable while
+    // it was on the stack. "Add current folder" does exactly that:
+    // Bookmarks::add() emits countChanged, a direct connection rebuilds the
+    // bookmark actions, and removeActionsStartingWith("mole.bookmarks.") erases
+    // the entry being run. Picking a bookmark is the same shape through
+    // openPlace(). Both happen to survive today because of what those particular
+    // lambdas capture, and the extension point every plugin's menu entry goes
+    // through had no rule against a handler that touches the registry. Copying
+    // the std::function copies its captures, which is what keeps them alive.
+    // See MOLE-365.
+    std::function<void()> run;
+    std::function<bool()> enabled;
     for (const MenuAction& action : m_actions) {
         if (action.id != id)
             continue;
-        // A disabled entry can still be reached by a stale click or a
-        // shortcut, so the check belongs here and not only in the view.
-        if (action.enabled && !action.enabled())
-            return false;
-        action.trigger();
-        return true;
+        run = action.trigger;
+        enabled = action.enabled;
+        break;
     }
-    return false;
+    if (!run)
+        return false;
+
+    // A disabled entry can still be reached by a stale click or a shortcut, so
+    // the check belongs here and not only in the view.
+    if (enabled && !enabled())
+        return false;
+    run();
+    return true;
 }
 
 QVariantList ActionRegistry::buildModel() const

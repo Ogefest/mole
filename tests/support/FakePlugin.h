@@ -361,6 +361,12 @@ public:
         /// Set to true by shutdown(). Owned by the test, because the manager
         /// destroys the plugin before the test can inspect it.
         bool* shutdownFlag = nullptr;
+        /// Throws from registerExtensions(), which is plugin code the host runs
+        /// and therefore plugin code that can throw. Nothing in the loader used
+        /// to catch it, so one bad plugin ended the process at startup.
+        bool throwOnRegister = false;
+        /// The same for metadata(), which the loader calls first.
+        bool throwOnMetadata = false;
     };
 
     explicit FakePlugin(Config config)
@@ -370,6 +376,8 @@ public:
 
     PluginMetadata metadata() const override
     {
+        if (m_config.throwOnMetadata)
+            throw std::runtime_error("this plugin cannot say what it is");
         PluginMetadata data;
         data.id = m_config.id;
         data.name = m_config.id;
@@ -381,6 +389,8 @@ public:
     void registerExtensions(PluginRegistry& registry) override
     {
         m_sawServices = registry.services().isValid();
+        if (m_config.throwOnRegister)
+            throw std::runtime_error("this plugin fell over while registering");
         for (const QString& id : m_config.featureIds)
             registry.addFeature(std::make_unique<FakeFeature>(id, id));
         for (const QString& scheme : m_config.schemes)
