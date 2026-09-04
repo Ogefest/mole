@@ -73,7 +73,7 @@ void BulkRenameController::refreshDirectoryContents()
     // a name, is what the preview has to predict -- so both answers come from
     // the drive rather than from the uri's scheme or from this machine.
     m_caseSensitivity = Qt::CaseSensitive;
-    m_nameRules = NameRules();
+    m_nameRules.clear();
 
     for (const QString& directory : directories) {
         const VfsUri uri = VfsUri::fromString(directory);
@@ -84,7 +84,12 @@ void BulkRenameController::refreshDirectoryContents()
         // properties of the backend, not of the folder -- so they stay here.
         if (fs->pathCaseSensitivity() == Qt::CaseInsensitive)
             m_caseSensitivity = Qt::CaseInsensitive;
-        m_nameRules = fs->nameRules();
+        // Per directory. This used to assign one member, so a selection spanning
+        // a local disk and an SMB share was previewed with whichever drive the
+        // hash-ordered last directory happened to be on -- either inventing
+        // refusals for the local files or missing them for the share's.
+        // See MOLE-377.
+        m_nameRules.insert(directory, fs->nameRules());
 
         // The listing is the part that goes to storage, and it used to be made
         // from the thread that draws -- once per distinct parent folder, every
@@ -252,6 +257,8 @@ void BulkRenameController::apply()
     if (doable.isEmpty())
         return;
 
+    setErrorText(QString());
+
     auto* task = new RenameTask(m_services.vfs, doable);
     m_task = task;
     setBusy(true);
@@ -266,14 +273,24 @@ void BulkRenameController::apply()
         m_task.clear();
         setBusy(false);
 
-        // The sources have new names now, so the old list is stale. Re-aiming at
-        // what actually exists beats leaving a preview that refers to files that
-        // are gone.
-        QStringList renamed;
+        // What actually happened, rather than what was planned. This used to
+        // rebuild the list as though every doable rename had succeeded, clear
+        // the rules and say nothing -- so after a partial failure the tab listed
+        // names that were never created and had lost the files that still
+        // carried their old ones. RenameTask has always reported its failures
+        // and nothing read them. See MOLE-377.
+        // Held in a local before the set is built from it: begin() and end() on
+        // a function returning by value are iterators into two different
+        // temporaries.
+        const QStringList renamed = task->renamedSources();
+        const QSet<QString> moved(renamed.begin(), renamed.end());
+        const QStringList failures = task->failures();
+
+        QStringList aimAt;
         for (const RenamePlan::Entry& entry : m_plan.entries()) {
-            renamed.append(entry.isBlocked() || !entry.changed()
-                    ? entry.source.toString()
-                    : entry.source.parent().child(entry.newName).toString());
+            const QString source = entry.source.toString();
+            aimAt.append(
+                moved.contains(source) ? entry.source.parent().child(entry.newName).toString() : source);
         }
 
         if (m_services.events) {
@@ -281,13 +298,34 @@ void BulkRenameController::apply()
                 m_services.events->postDirectoryChanged(VfsUri::fromString(directory));
         }
 
-        m_rules.clear();
-        emit rulesChanged();
-        setTargets(renamed);
+        // The rules are cleared only when there is nothing left to do with them.
+        // Somebody whose batch half-failed wants the rules that produced it, so
+        // they can fix the cause and press the button again.
+        if (failures.isEmpty()) {
+            m_rules.clear();
+            emit rulesChanged();
+        } else if (task->state() == Task::State::Failed) {
+            setErrorText(task->error().message);
+        } else {
+            setErrorText(failures.size() == 1 ? failures.first()
+                                              : QStringLiteral("%1 of %2 renames failed — %3")
+                                                    .arg(failures.size())
+                                                    .arg(renamed.size() + failures.size())
+                                                    .arg(failures.join(QStringLiteral("; "))));
+        }
+        setTargets(aimAt);
     });
 
     m_services.tasks->submit(task);
     emit previewChanged();
+}
+
+void BulkRenameController::setErrorText(const QString& text)
+{
+    if (m_errorText == text)
+        return;
+    m_errorText = text;
+    emit errorTextChanged();
 }
 
 QVariantMap BulkRenameController::saveState() const

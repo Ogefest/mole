@@ -5,6 +5,8 @@
 #include "core/vfs/NameRules.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
+#include <QJsonObject>
+
 using namespace mole;
 using namespace mole::test;
 
@@ -69,9 +71,11 @@ private slots:
     void refusesAnEmptyName();
     void refusesAPathSeparator();
     void anUnchangedRowIsNotABlockedRow();
+    void aNameAnotherRowInTheBatchKeepsIsStillTaken();
     void aCaseOnlyRenameIsNotACollision();
     void thePreviewAgreesWithTheBackendAboutCollisions();
     void aNameTheDestinationWillNotAcceptIsMarkedBeforeAnythingMoves();
+    void aRuleWrittenDownComesBackAndAnEnumOutOfRangeDoesNot();
 };
 
 // ------------------------------------------------------------------ rules
@@ -360,6 +364,54 @@ void TestRenamePlan::anUnchangedRowIsNotABlockedRow()
     QVERIFY(!plan.canApply());
 }
 
+/// The batch that half-applied, between two tests that both looked at it.
+///
+/// allowsASwapWithinTheBatch sits on one side of this and
+/// anUnchangedRowIsNotABlockedRow on the other, and this is the case between
+/// them: a row in the batch that the rules leave *alone* was treated as
+/// vacating its name anyway. `claimed` was filled only from rows that changed,
+/// but the "is somebody else's name in the way" test asked only whether a source
+/// with that name was in the batch at all. So b.txt was cleared to be renamed
+/// onto an a.txt that nothing was moving, canApply() said the batch was fine,
+/// and RenameTask carried it out: refused by the local backend -- whose guard
+/// against POSIX rename() overwriting in silence is the only thing that saved
+/// the file -- and so a half-applied batch, or a destroyed file on a backend
+/// without that guard. See MOLE-377.
+void TestRenamePlan::aNameAnotherRowInTheBatchKeepsIsStillTaken()
+{
+    QHash<QString, QStringList> existing;
+    existing.insert(QStringLiteral("file:///data"), { QStringLiteral("a.txt"), QStringLiteral("b.txt") });
+
+    // b.txt -> a.txt, and a.txt is in the batch and is not going anywhere.
+    RenameRule rule;
+    rule.kind = RenameRule::Kind::Replace;
+    rule.find = QStringLiteral("b");
+    rule.replaceWith = QStringLiteral("a");
+
+    const RenamePlan plan
+        = RenamePlan::build(urisIn(QStringLiteral("file:///data"), { "a.txt", "b.txt" }), { rule }, existing);
+
+    QCOMPARE(plan.changedCount(), 1);
+    QCOMPARE(plan.blockedCount(), 1);
+    QVERIFY2(!plan.canApply(), "a batch the filesystem will refuse must not be applicable");
+    QVERIFY2(!plan.entries().first().isBlocked(), "the row nothing is doing to is not the problem");
+    const RenamePlan::Entry& blocked = plan.entries().last();
+    QVERIFY(blocked.isBlocked());
+    QVERIFY2(blocked.problem.contains(QStringLiteral("already there")), qPrintable(blocked.problem));
+
+    // And the row that really does vacate its name still lets the other one
+    // have it, which is the case on the other side of this one: with a.txt
+    // moving out of the way, b.txt -> a.txt is fine.
+    // In order: a becomes c, and then b becomes a -- the second rule cannot
+    // touch what the first produced, so this is a chain and not a loop.
+    const RenamePlan chain = RenamePlan::build(urisIn(QStringLiteral("file:///data"), { "a.txt", "b.txt" }),
+        { replace(QStringLiteral("a"), QStringLiteral("c")),
+            replace(QStringLiteral("b"), QStringLiteral("a")) },
+        existing);
+    QCOMPARE(chain.changedCount(), 2);
+    QCOMPARE(chain.blockedCount(), 0);
+}
+
 void TestRenamePlan::aCaseOnlyRenameIsNotACollision()
 {
     // report.txt -> Report.txt. On a volume that ignores case the file in the
@@ -448,8 +500,8 @@ void TestRenamePlan::aNameTheDestinationWillNotAcceptIsMarkedBeforeAnythingMoves
     const NameRules windows = NameRules::forPlatform(HostPlatform::Windows);
 
     RenameRule rule = replace(QStringLiteral("scan"), QStringLiteral("a:b"));
-    const RenamePlan plan = RenamePlan::build(
-        urisIn(QStringLiteral("file:///data"), { "scan.png" }), { rule }, {}, Qt::CaseSensitive, windows);
+    const RenamePlan plan = RenamePlan::build(urisIn(QStringLiteral("file:///data"), { "scan.png" }),
+        { rule }, {}, Qt::CaseSensitive, { { QStringLiteral("file:///data"), windows } });
 
     const RenamePlan::Entry& entry = plan.entries().first();
     QVERIFY(entry.isBlocked());
@@ -462,8 +514,48 @@ void TestRenamePlan::aNameTheDestinationWillNotAcceptIsMarkedBeforeAnythingMoves
     // The same plan against a drive that accepts the name is not blocked, so
     // this is the destination's rule and not a new rule of the rename tool's.
     const RenamePlan permissive = RenamePlan::build(urisIn(QStringLiteral("file:///data"), { "scan.png" }),
-        { rule }, {}, Qt::CaseSensitive, NameRules::forPlatform(HostPlatform::Posix));
+        { rule }, {}, Qt::CaseSensitive,
+        { { QStringLiteral("file:///data"), NameRules::forPlatform(HostPlatform::Posix) } });
     QVERIFY(!permissive.entries().first().isBlocked());
+}
+
+/// A rule read back from a file, and one that says something impossible.
+///
+/// fromJson() cast the stored numbers for scope, caseStyle and stripClass with
+/// no range check, and the switches over those three enums have no `default:` --
+/// so a value from outside the range made the rule silently do nothing at all,
+/// to every name in the batch, with the interface showing it as an ordinary
+/// enabled rule. A session file, a chain file or a hand-edited job can carry
+/// one. `kind` has always been validated against a table. See MOLE-377.
+void TestRenamePlan::aRuleWrittenDownComesBackAndAnEnumOutOfRangeDoesNot()
+{
+    RenameRule rule;
+    rule.kind = RenameRule::Kind::Strip;
+    rule.scope = RenameRule::Scope::WholeName;
+    rule.caseStyle = RenameRule::CaseStyle::Sentence;
+    rule.stripClass = RenameRule::StripClass::NonAscii;
+
+    const RenameRule back = RenameRule::fromJson(rule.toJson());
+    QCOMPARE(back.kind, RenameRule::Kind::Strip);
+    QCOMPARE(back.scope, RenameRule::Scope::WholeName);
+    QCOMPARE(back.caseStyle, RenameRule::CaseStyle::Sentence);
+    QCOMPARE(back.stripClass, RenameRule::StripClass::NonAscii);
+
+    // The last enumerator of each is the range check, so one past it is the
+    // value to try -- and so is a negative one, and a value of the wrong type.
+    QJsonObject broken = rule.toJson();
+    broken[QStringLiteral("scope")] = 7;
+    broken[QStringLiteral("caseStyle")] = -1;
+    broken[QStringLiteral("stripClass")] = QStringLiteral("digits");
+
+    const RenameRule refused = RenameRule::fromJson(broken);
+    QCOMPARE(refused.scope, RenameRule::Scope::Stem);
+    QCOMPARE(refused.caseStyle, RenameRule::CaseStyle::Upper);
+    QCOMPARE(refused.stripClass, RenameRule::StripClass::Digits);
+
+    // And the rule does something: a strip rule whose class fell back to digits
+    // strips digits, rather than every name coming out unchanged.
+    QCOMPARE(RenamePlan::apply(QStringLiteral("scan-2026.png"), { refused }, 0), QStringLiteral("scan-.png"));
 }
 
 MOLE_TEST_MAIN(TestRenamePlan)

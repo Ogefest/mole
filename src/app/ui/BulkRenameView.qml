@@ -59,6 +59,18 @@ Item {
                 }
             }
 
+            // What the last Apply could not do. RenameTask has always reported
+            // its failures and nothing read them, so a batch that half-landed
+            // looked exactly like one that landed whole. See MOLE-377.
+            Label {
+                objectName: "renameErrorText"
+                Layout.fillWidth: true
+                visible: controller && controller.errorText !== ""
+                color: App.colour.bad
+                wrapMode: Text.WordWrap
+                text: controller ? controller.errorText : ""
+            }
+
             Label {
                 Layout.fillWidth: true
                 visible: !controller || controller.sourceCount === 0

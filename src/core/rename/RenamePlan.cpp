@@ -221,7 +221,8 @@ QString RenamePlan::apply(const QString& name, const QList<RenameRule>& rules, i
 }
 
 RenamePlan RenamePlan::build(const QList<VfsUri>& sources, const QList<RenameRule>& rules,
-    const QHash<QString, QStringList>& existingNames, Qt::CaseSensitivity sensitivity, const NameRules& names)
+    const QHash<QString, QStringList>& existingNames, Qt::CaseSensitivity sensitivity,
+    const QHash<QString, NameRules>& namesByDirectory)
 {
     // One spelling per name, so this layer calls a collision exactly what the
     // backend underneath will call one. On a volume that ignores case, "a.txt"
@@ -231,12 +232,20 @@ RenamePlan RenamePlan::build(const QList<VfsUri>& sources, const QList<RenameRul
     };
 
     RenamePlan plan;
+    QStringList directories; // one per entry, in the same order
 
-    // Names claimed so far, per directory. Two files renamed to the same thing
-    // is the collision people actually hit, and the filesystem would only
-    // notice it on the second one -- after the first had already moved.
-    QHash<QString, QSet<QString>> claimed;
-
+    // **Two passes, and the order is the fix.** The collision pass has to know
+    // what every row is called before it can say whether a name is free, because
+    // a row vacates its name only if it is really going to move. This used to be
+    // one pass: `claimed` was filled only from rows that changed, but the
+    // "is somebody else's name in the way" test treated *any* source in the
+    // batch as vacating its name -- whether that row changed or not. Sources
+    // a.txt and b.txt with a rule mapping b.txt onto a.txt and leaving a.txt
+    // alone: row b came out clean, canApply() said yes, and RenameTask renamed
+    // b.txt onto an a.txt that was still there. The local backend refuses that
+    // (its guard against POSIX rename() overwriting in silence) so the batch
+    // half-applied; a backend without the guard would have destroyed a.txt.
+    // See MOLE-377.
     int index = 0;
     for (const VfsUri& source : sources) {
         Entry entry;
@@ -245,6 +254,9 @@ RenamePlan RenamePlan::build(const QList<VfsUri>& sources, const QList<RenameRul
         entry.newName = apply(entry.originalName, rules, index++);
 
         const QString directory = source.parent().toString();
+        // Per directory: a batch spanning a local disk and a share is two sets
+        // of rules, and one of them used to overwrite the other.
+        const NameRules names = namesByDirectory.value(directory);
 
         if (entry.newName.trimmed().isEmpty()) {
             entry.problem = QStringLiteral("the rules leave no name");
@@ -266,29 +278,57 @@ RenamePlan RenamePlan::build(const QList<VfsUri>& sources, const QList<RenameRul
             // only the path.
             entry.problem = verdict.reason;
             entry.suggestion = verdict.suggestion;
-        } else if (entry.changed() && claimed.value(directory).contains(key(entry.newName))) {
-            entry.problem = QStringLiteral("two files would get this name");
-        } else if (entry.changed()) {
-            const QStringList here = existingNames.value(directory);
-            // A file renamed out of the way frees its own name, so only names
-            // that nothing in this batch is vacating count as taken. A rename
-            // that only changes case is the smallest case of that: the file in
-            // the way is the file being renamed.
-            const bool present = std::any_of(here.begin(), here.end(),
-                [&](const QString& name) { return key(name) == key(entry.newName); });
-            const bool takenByOutsider
-                = present && !std::any_of(sources.begin(), sources.end(), [&](const VfsUri& other) {
-                      return other.parent().toString() == directory
-                          && key(other.fileName()) == key(entry.newName);
-                  });
-            if (takenByOutsider)
-                entry.problem = QStringLiteral("something with this name is already there");
         }
 
-        if (!entry.isBlocked() && entry.changed())
-            claimed[directory].insert(key(entry.newName));
-
         plan.m_entries.append(entry);
+        directories.append(directory);
+    }
+
+    // Names claimed so far, per directory. Two files renamed to the same thing
+    // is the collision people actually hit, and the filesystem would only
+    // notice it on the second one -- after the first had already moved.
+    QHash<QString, QSet<QString>> claimed;
+
+    for (qsizetype i = 0; i < plan.m_entries.size(); ++i) {
+        Entry& entry = plan.m_entries[i];
+        if (entry.isBlocked() || !entry.changed())
+            continue;
+        const QString& directory = directories.at(i);
+
+        if (claimed.value(directory).contains(key(entry.newName))) {
+            entry.problem = QStringLiteral("two files would get this name");
+            continue;
+        }
+
+        const QStringList here = existingNames.value(directory);
+        const bool present = std::any_of(
+            here.begin(), here.end(), [&](const QString& name) { return key(name) == key(entry.newName); });
+
+        // A file renamed out of the way frees its own name -- but only if it is
+        // really going anywhere. A row that the rules left alone, or one that is
+        // blocked, keeps the name it has, so that name is taken. A rename that
+        // only changes case is the smallest case of the other side of this: the
+        // file in the way is the file being renamed.
+        const bool vacated = [&] {
+            for (qsizetype other = 0; other < plan.m_entries.size(); ++other) {
+                if (other == i)
+                    continue;
+                const Entry& row = plan.m_entries.at(other);
+                if (directories.at(other) != directory)
+                    continue;
+                if (key(row.originalName) != key(entry.newName))
+                    continue;
+                return row.changed() && !row.isBlocked();
+            }
+            // The row itself, when only the case is changing.
+            return key(entry.originalName) == key(entry.newName);
+        }();
+
+        if (present && !vacated) {
+            entry.problem = QStringLiteral("something with this name is already there");
+            continue;
+        }
+        claimed[directory].insert(key(entry.newName));
     }
 
     return plan;

@@ -24,6 +24,14 @@ public:
 
     int renamedCount() const { return m_renamed; }
     QStringList failures() const { return m_failures; }
+    /// The sources that really were renamed, as the uris they had when the batch
+    /// started -- **not** as they stand now, because a row parked out of the way
+    /// to break a cycle carries a different uri part way through.
+    ///
+    /// Here because the caller has to re-aim at what exists afterwards, and a
+    /// count cannot tell it which rows those are. It used to assume every doable
+    /// rename succeeded. See MOLE-377.
+    QStringList renamedSources() const { return m_renamedSources; }
 
 protected:
     void run() override;
@@ -31,8 +39,10 @@ protected:
 private:
     VfsManager* m_vfs = nullptr;
     QList<RenamePlan::Entry> m_entries;
+    QList<VfsUri> m_startedAt;
     int m_renamed = 0;
     QStringList m_failures;
+    QStringList m_renamedSources;
 };
 
 } // namespace mole

@@ -144,21 +144,46 @@ QJsonObject RenameRule::toJson() const
     return json;
 }
 
+namespace {
+
+    /// One stored number turned back into an enumerator, or the default when it
+    /// names none.
+    ///
+    /// `static_cast<Scope>(json.value("scope").toInt())` is what this replaces,
+    /// and the switches over these three enums have no `default:` -- so a value
+    /// from outside the range made the rule silently do nothing at all, on every
+    /// name in the batch. A session file, a chain file or a hand-edited job can
+    /// carry one. `kindFromString()` has always validated `kind` against a
+    /// table; these three now do the same. See MOLE-377.
+    template<typename Enum>
+    Enum enumFrom(const QJsonValue& value, Enum highest, Enum fallback)
+    {
+        if (!value.isDouble())
+            return fallback;
+        const int stored = value.toInt(-1);
+        if (stored < 0 || stored > static_cast<int>(highest))
+            return fallback;
+        return static_cast<Enum>(stored);
+    }
+
+} // namespace
+
 RenameRule RenameRule::fromJson(const QJsonObject& json)
 {
     RenameRule rule;
     rule.kind = kindFromString(json.value(QStringLiteral("kind")).toString());
-    rule.scope = static_cast<Scope>(json.value(QStringLiteral("scope")).toInt());
+    rule.scope = enumFrom(json.value(QStringLiteral("scope")), Scope::WholeName, Scope::Stem);
     rule.enabled = json.value(QStringLiteral("enabled")).toBool(true);
     rule.find = json.value(QStringLiteral("find")).toString();
     rule.replaceWith = json.value(QStringLiteral("replaceWith")).toString();
     rule.useRegex = json.value(QStringLiteral("useRegex")).toBool();
     rule.caseSensitive = json.value(QStringLiteral("caseSensitive")).toBool();
-    rule.caseStyle = static_cast<CaseStyle>(json.value(QStringLiteral("caseStyle")).toInt());
+    rule.caseStyle = enumFrom(json.value(QStringLiteral("caseStyle")), CaseStyle::Sentence, CaseStyle::Upper);
     rule.position = json.value(QStringLiteral("position")).toInt();
     rule.length = json.value(QStringLiteral("length")).toInt();
     rule.text = json.value(QStringLiteral("text")).toString();
-    rule.stripClass = static_cast<StripClass>(json.value(QStringLiteral("stripClass")).toInt());
+    rule.stripClass
+        = enumFrom(json.value(QStringLiteral("stripClass")), StripClass::NonAscii, StripClass::Digits);
     rule.start = json.value(QStringLiteral("start")).toInt(1);
     rule.step = json.value(QStringLiteral("step")).toInt(1);
     rule.padding = json.value(QStringLiteral("padding")).toInt(3);

@@ -65,6 +65,9 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-377 A bulk rename refuses a name that another file in the batch is keeping
+2026-09-04 #MOLE-377 A bulk rename says which renames failed and keeps the rules that produced them
+2026-09-04 #MOLE-377 A bulk rename across two drives judges each name by its own drive's rules
 2026-09-04 #MOLE-405 Rows no longer vanish and reappear while a search of a partly indexed folder runs
 2026-09-04 #MOLE-405 A search inside files reads a text file that is not UTF-8, instead of skipping it
 2026-09-04 #MOLE-405 A CSV or JSON file that is not UTF-8 imports with its characters intact

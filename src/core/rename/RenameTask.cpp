@@ -18,8 +18,12 @@ RenameTask::RenameTask(VfsManager* vfs, QList<RenamePlan::Entry> entries, QObjec
     , m_vfs(vfs)
     , m_entries(std::move(entries))
 {
-    for (const RenamePlan::Entry& entry : std::as_const(m_entries))
+    for (const RenamePlan::Entry& entry : std::as_const(m_entries)) {
         noteTouching(entry.source);
+        // Kept because entry.source is rewritten when a row is parked to break a
+        // cycle, and the caller needs the uri it asked about.
+        m_startedAt.append(entry.source);
+    }
 }
 
 void RenameTask::run()
@@ -66,6 +70,7 @@ void RenameTask::run()
             m_failures.append(QStringLiteral("%1: %2").arg(entry.originalName, renamed.error().message));
         } else {
             ++m_renamed;
+            m_renamedSources.append(m_startedAt.at(index).toString());
         }
 
         setProgress(total > 0 ? static_cast<int>(100.0 * ++done / total) : 100);

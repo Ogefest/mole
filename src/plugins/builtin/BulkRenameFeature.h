@@ -34,6 +34,12 @@ class BulkRenameController final : public FeatureController
     Q_PROPERTY(bool canApply READ canApply NOTIFY previewChanged)
     Q_PROPERTY(QString summary READ summary NOTIFY previewChanged)
     Q_PROPERTY(QVariantList ruleKinds READ ruleKinds CONSTANT)
+    /// What went wrong the last time Apply was pressed, or empty. **A rename
+    /// that failed has to be said out loud**: the files that did move have new
+    /// names and the ones that did not still carry their old ones, and a tab
+    /// that says nothing leaves somebody believing a batch landed whole.
+    /// See MOLE-377.
+    Q_PROPERTY(QString errorText READ errorText NOTIFY errorTextChanged)
 
 public:
     BulkRenameController(PluginServices services, QObject* parent = nullptr);
@@ -52,6 +58,7 @@ public:
     int blockedCount() const { return m_plan.blockedCount(); }
     bool canApply() const;
     QString summary() const;
+    QString errorText() const { return m_errorText; }
 
     Q_INVOKABLE void addRule(const QString& kind);
     Q_INVOKABLE void removeRule(int index);
@@ -70,10 +77,12 @@ signals:
     void sourcesChanged();
     void rulesChanged();
     void previewChanged();
+    void errorTextChanged();
 
 private:
     void rebuildPreview();
     void refreshDirectoryContents();
+    void setErrorText(const QString& text);
 
     PluginServices m_services;
     QList<VfsUri> m_sources;
@@ -89,8 +98,9 @@ private:
     /// What the drive underneath does about case and about names, read when the
     /// targets are set.
     Qt::CaseSensitivity m_caseSensitivity = Qt::CaseSensitive;
-    NameRules m_nameRules;
+    QHash<QString, NameRules> m_nameRules;
     QPointer<Task> m_task;
+    QString m_errorText;
 };
 
 class BulkRenameFeature final : public IFeature

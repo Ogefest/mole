@@ -27,6 +27,10 @@ struct RenameRule
     /// Which part of the name a step touches. Most steps want the stem: a rule
     /// that upper-cases a name should not turn ".TXT" into something no tool
     /// recognises.
+    /// These three are stored as their own numbers, and `fromJson()` checks a
+    /// value against the range before casting -- so **the last enumerator of
+    /// each is the range check**. Add one at the end; do not add one in the
+    /// middle, which would change what an already-saved rule means.
     enum class Scope { Stem, Extension, WholeName };
 
     enum class CaseStyle { Upper, Lower, Title, Sentence };

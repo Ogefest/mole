@@ -44,13 +44,19 @@ public:
     /// plan is fine that the filesystem will refuse -- and the whole point of the
     /// bulk rename tool is that somebody can trust the preview before touching a
     /// hundred files.
-    /// `names` is what the drive will accept in a name, and it is the other
-    /// thing the preview has to know: the bulk rename tool exists so somebody
-    /// can trust the preview before touching a hundred files, and a plan full of
-    /// clean rows that the filesystem will refuse is worse than no preview.
+    /// `namesByDirectory` is what the drive under each directory will accept in
+    /// a name, and it is the other thing the preview has to know: the bulk
+    /// rename tool exists so somebody can trust the preview before touching a
+    /// hundred files, and a plan full of clean rows that the filesystem will
+    /// refuse is worse than no preview. **Keyed by directory rather than one set
+    /// for the batch**, because a selection spanning a local disk and a share is
+    /// two different sets of rules and the caller used to keep whichever it
+    /// asked for last. A directory nothing answered for gets `NameRules {}`,
+    /// which accepts everything this layer knows how to refuse.
     static RenamePlan build(const QList<VfsUri>& sources, const QList<RenameRule>& rules,
         const QHash<QString, QStringList>& existingNames = {},
-        Qt::CaseSensitivity sensitivity = Qt::CaseSensitive, const NameRules& names = {});
+        Qt::CaseSensitivity sensitivity = Qt::CaseSensitive,
+        const QHash<QString, NameRules>& namesByDirectory = {});
 
     const QList<Entry>& entries() const { return m_entries; }
     int changedCount() const;

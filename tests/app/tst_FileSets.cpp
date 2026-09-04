@@ -10,6 +10,9 @@
 
 #include "core/CoreMetaTypes.h"
 #include "core/sets/FileSetStore.h"
+#include "core/vfs/NameRules.h"
+#include "core/vfs/VfsManager.h"
+#include "core/vfs/backends/MemoryFileSystem.h"
 
 #include <QClipboard>
 #include <QDir>
@@ -48,6 +51,8 @@ private slots:
 
     void bulkRenameTakesASetLikeAnyOtherOperation();
     void bulkRenameRefusesABatchThatWouldCollide();
+    void bulkRenameSaysWhichRenamesFailedAndKeepsTheRules();
+    void aBatchSpanningTwoDrivesUsesEachDrivesOwnNameRules();
     void addsADriveThroughTheSameFormEveryBackendDeclares();
     void aSavedPasswordIsNeverInTheSettingsFile();
     void savingADriveChecksItStraightAway();
@@ -514,6 +519,113 @@ void TestFileSets::bulkRenameRefusesABatchThatWouldCollide()
     drainEvents();
     QVERIFY(QFile::exists(QDir(m_tree->path()).filePath(QStringLiteral("a.txt"))));
     QVERIFY(QFile::exists(QDir(m_tree->path()).filePath(QStringLiteral("b.txt"))));
+}
+
+/// A batch that half-landed used to look exactly like one that landed whole.
+///
+/// apply() rebuilt the source list as though every doable rename had succeeded,
+/// cleared the rules and said nothing -- while RenameTask::failures(),
+/// renamedCount() and state() went unread. So the tab listed names that were
+/// never created and had lost the files that still carried their old ones, and
+/// the rules that produced the batch were gone. The file removed here between
+/// the preview and the apply is the ordinary way this happens: something else
+/// touched the folder. See MOLE-377.
+void TestFileSets::bulkRenameSaysWhichRenamesFailedAndKeepsTheRules()
+{
+    FileSetsController* sets = openSets();
+    QVERIFY(sets);
+    sets->createSet(QStringLiteral("Two files"));
+    sets->addUris({ m_tree->rootUri().child(QStringLiteral("a.txt")).toString(),
+        m_tree->rootUri().child(QStringLiteral("b.txt")).toString() });
+
+    const int row = m_app->openFeatureTab(QStringLiteral("core.bulkrename"));
+    auto* rename = qobject_cast<BulkRenameController*>(m_app->tabs()->controllerAt(row));
+    QVERIFY(rename);
+    QVERIFY(waitFor([rename] { return rename->sourceCount() == 2; }));
+
+    rename->addRule(QStringLiteral("affix"));
+    rename->setRuleField(0, QStringLiteral("prefix"), QStringLiteral("new-"));
+    QCOMPARE(rename->changedCount(), 2);
+    QCOMPARE(rename->blockedCount(), 0);
+    QVERIFY(rename->canApply());
+    QVERIFY(rename->errorText().isEmpty());
+
+    // Gone between the preview and the apply, which is what the preview cannot
+    // promise about.
+    QVERIFY(QFile::remove(QDir(m_tree->path()).filePath(QStringLiteral("a.txt"))));
+
+    rename->apply();
+    QVERIFY(waitFor([rename] { return !rename->isBusy(); }, 10000));
+    drainEvents();
+
+    // Said, rather than passed over.
+    QVERIFY2(!rename->errorText().isEmpty(), "a rename that failed said nothing");
+    QVERIFY2(rename->errorText().contains(QStringLiteral("a.txt")), qPrintable(rename->errorText()));
+
+    // The rules that produced this batch are still there, because somebody has
+    // to be able to fix the cause and press the button again.
+    QCOMPARE(rename->rules().size(), 1);
+
+    // And the list is what is really on the disk: the one that moved under its
+    // new name, the one that did not under its old.
+    QVERIFY(QFile::exists(QDir(m_tree->path()).filePath(QStringLiteral("new-b.txt"))));
+    QVERIFY(waitFor([rename] { return rename->sourceCount() == 2; }));
+    const QStringList aimedAt = rename->sourceUris();
+    QVERIFY2(aimedAt.contains(m_tree->rootUri().child(QStringLiteral("new-b.txt")).toString()),
+        qPrintable(aimedAt.join(QStringLiteral(", "))));
+    QVERIFY2(!aimedAt.contains(m_tree->rootUri().child(QStringLiteral("new-a.txt")).toString()),
+        "the tab listed a name that was never created");
+    QVERIFY2(aimedAt.contains(m_tree->rootUri().child(QStringLiteral("a.txt")).toString()),
+        "the tab lost the file that still carries its old name");
+}
+
+/// One rule set for two drives.
+///
+/// refreshDirectoryContents() assigned `m_nameRules = fs->nameRules()` per
+/// directory rather than keeping them, so a batch spanning a local disk and a
+/// share was previewed with whichever drive the hash-ordered last directory
+/// happened to sit on -- inventing refusals for one half or missing them for the
+/// other, depending on the order. See MOLE-377.
+void TestFileSets::aBatchSpanningTwoDrivesUsesEachDrivesOwnNameRules()
+{
+    // A drive that refuses what Windows refuses, beside the local temp tree,
+    // which refuses almost nothing.
+    auto strict = std::make_shared<MemoryFileSystem>();
+    strict->setNameRules(NameRules::forPlatform(HostPlatform::Windows));
+    strict->addFile(QStringLiteral("/share/report.txt"), QByteArray("x"));
+    Mount mount;
+    mount.id = QStringLiteral("strict");
+    mount.displayName = QStringLiteral("Strict");
+    mount.root = VfsUri::fromString(QStringLiteral("mem:///"));
+    mount.fileSystem = strict;
+    QVERIFY(!m_app->services().vfs->addMount(mount).isEmpty());
+
+    FileSetsController* sets = openSets();
+    QVERIFY(sets);
+    sets->createSet(QStringLiteral("Across two drives"));
+    sets->addUris({ m_tree->rootUri().child(QStringLiteral("a.txt")).toString(),
+        QStringLiteral("mem:///share/report.txt") });
+
+    const int row = m_app->openFeatureTab(QStringLiteral("core.bulkrename"));
+    auto* rename = qobject_cast<BulkRenameController*>(m_app->tabs()->controllerAt(row));
+    QVERIFY(rename);
+    QVERIFY(waitFor([rename] { return rename->sourceCount() == 2; }));
+
+    // A colon, which Windows refuses and Posix does not.
+    rename->addRule(QStringLiteral("affix"));
+    rename->setRuleField(0, QStringLiteral("prefix"), QStringLiteral("v1:"));
+    QVERIFY(waitFor([rename] { return rename->changedCount() == 2; }));
+
+    // Exactly one row is blocked, and it is the one on the drive that refuses
+    // the name. Either half of the old behaviour fails this: whichever rule set
+    // won, both rows were judged by it.
+    QCOMPARE(rename->blockedCount(), 1);
+    for (const QVariant& value : rename->preview()) {
+        const QVariantMap entry = value.toMap();
+        const bool onTheStrictDrive
+            = entry.value(QStringLiteral("uri")).toString().startsWith(QStringLiteral("mem:"));
+        QCOMPARE(entry.value(QStringLiteral("blocked")).toBool(), onTheStrictDrive);
+    }
 }
 
 void TestFileSets::addsADriveThroughTheSameFormEveryBackendDeclares()
