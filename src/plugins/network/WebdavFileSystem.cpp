@@ -17,6 +17,11 @@ namespace {
     /// left exactly as it was.
     constexpr qint64 kStreamAbove = 64LL * 1024 * 1024;
 
+    /// How much one ranged fetch carries on the way in. Large enough that a read
+    /// of a file of any ordinary size is one request, with the stream clamping
+    /// the span to what is left of the file. See MOLE-370.
+    constexpr qint64 kDownloadSpanBytes = 1024LL * 1024 * 1024 * 1024;
+
     /// Asks for exactly the four properties a listing needs. Sending a body
     /// rather than relying on allprop keeps the answer small on a server that
     /// would otherwise return every property it has.
@@ -412,41 +417,134 @@ Result<void> WebdavFileSystem::rename(const VfsUri& from, const VfsUri& to, cons
     return {};
 }
 
+VfsError WebdavFileSystem::fetchSpan(const QByteArray& url, const QByteArray& validator, const QString& what,
+    QIODevice& sink, qint64 offset, qint64 span, const CancelToken& cancel)
+{
+    Call call;
+    call.url = url;
+    // Both ends of the range. A server that honoured only the start would keep
+    // delivering to the end of the file and the next span would re-fetch bytes
+    // already handed over -- a read that silently duplicates a span.
+    call.headers.append({ QByteArray("Range"),
+        QByteArray("bytes=") + QByteArray::number(offset) + '-' + QByteArray::number(offset + span - 1) });
+    // The file this read began on, and not whatever has since taken its place.
+    // WebDAV has a real ETag, so this costs a header rather than a fresh
+    // PROPFIND before every span -- which is what SFTP and FTP have to pay,
+    // having no validator at all. See MOLE-348.
+    if (!validator.isEmpty())
+        call.headers.append({ QByteArray("If-Match"), validator });
+
+    const net::Response response = send(call, cancel, &sink);
+    // 412 here is the precondition above and nothing else: the file changed
+    // while it was being read.
+    if (response.code == CURLE_OK && response.status == 412)
+        return net::fileChangedWhileBeingRead();
+    return net::errorFor(response, what);
+}
+
 Result<std::unique_ptr<QIODevice>> WebdavFileSystem::openRead(
-    const VfsUri& target, qint64, const CancelToken& cancel)
+    const VfsUri& target, qint64 expectedSize, const CancelToken& cancel)
 {
     if (cancel.isCancelled()) {
         return Result<std::unique_ptr<QIODevice>>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
     }
-    auto scratch = std::make_unique<QTemporaryFile>();
-    QString staging;
-    if (!staging::openFile(*scratch, &staging)) {
-        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError,
-            QStringLiteral("Could not open a local copy for %1: %2").arg(target.path(), staging));
+    const QByteArray url = urlFor(target);
+    const QString what = QStringLiteral("Reading %1").arg(target.path());
+
+    // How big it is and which file it is, in one request. A HEAD rather than a
+    // PROPFIND because the ETag is a header and the length is a header, and a
+    // server that will not answer HEAD leaves both unknown -- which reads as
+    // "fetch it whole", the behaviour every WebDAV read used to have.
+    qint64 length = expectedSize;
+    QByteArray validator;
+    {
+        Call head;
+        head.method = "HEAD";
+        head.url = url;
+        const net::Response answer = send(head, cancel);
+        if (answer.code == CURLE_OK && answer.httpOk()) {
+            validator = answer.header("etag");
+            if (length < 0) {
+                bool read = false;
+                const qint64 said = QString::fromUtf8(answer.header("content-length")).toLongLong(&read);
+                if (read)
+                    length = said;
+            }
+        }
     }
 
-    Call call;
-    call.url = urlFor(target);
-    const net::Response response = send(call, cancel, scratch.get());
-    const VfsError error = net::errorFor(response, QStringLiteral("Reading %1").arg(target.path()));
-    if (error.isError())
-        return Result<std::unique_ptr<QIODevice>>(error);
-
-    // A GET on a collection is not an error, which is the problem. The server
-    // redirects to the same path with a slash on the end and answers with an
-    // HTML index of the directory -- 200, a body, and nothing in the response
-    // saying it is not the file that was asked for. So a copy of a directory
-    // produced an HTML page named after it, and a preview showed the same.
+    // Small enough to hold, or of unknown length: fetched whole, as before.
     //
-    // The redirect is the tell, and it costs nothing: asking where the transfer
-    // landed is free, where asking the server what kind of thing this is would
-    // be a PROPFIND before every read.
-    if (!response.effectiveUrl.isEmpty() && response.effectiveUrl.endsWith('/') && !call.url.endsWith('/')) {
-        return Result<std::unique_ptr<QIODevice>>::failure(
-            VfsError::IsADirectory, QStringLiteral("%1 is a directory, not a file").arg(target.path()));
+    // **Above that it is streamed a span at a time**, which is what ADR-0014's
+    // second amendment says every backend does and what this one did not: it
+    // downloaded the whole file into a temporary file, so a 94 GB backup could
+    // not be read at all on a machine with 84 GB free, and a preview of a large
+    // file paid for all of it. SFTP and FTP have had this shape since MOLE-127.
+    // See MOLE-370.
+    if (length < 0 || length <= kStreamAbove) {
+        auto scratch = std::make_unique<QTemporaryFile>();
+        QString staging;
+        if (!staging::openFile(*scratch, &staging)) {
+            return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError,
+                QStringLiteral("Could not open a local copy for %1: %2").arg(target.path(), staging));
+        }
+
+        Call call;
+        call.url = url;
+        const net::Response response = send(call, cancel, scratch.get());
+        const VfsError error = net::errorFor(response, what);
+        if (error.isError())
+            return Result<std::unique_ptr<QIODevice>>(error);
+
+        // A GET on a collection is not an error, which is the problem. The
+        // server redirects to the same path with a slash on the end and answers
+        // with an HTML index of the directory -- 200, a body, and nothing in the
+        // response saying it is not the file that was asked for. So a copy of a
+        // directory produced an HTML page named after it, and a preview showed
+        // the same.
+        //
+        // The redirect is the tell, and it costs nothing: asking where the
+        // transfer landed is free, where asking the server what kind of thing
+        // this is would be a PROPFIND before every read.
+        if (!response.effectiveUrl.isEmpty() && response.effectiveUrl.endsWith('/')
+            && !call.url.endsWith('/')) {
+            return Result<std::unique_ptr<QIODevice>>::failure(
+                VfsError::IsADirectory, QStringLiteral("%1 is a directory, not a file").arg(target.path()));
+        }
+
+        return net::openDownloadedFile(std::move(scratch));
     }
 
-    return net::openDownloadedFile(std::move(scratch));
+    auto fetch = [this, url, validator, what](
+                     QIODevice& sink, qint64 offset, qint64 span, const CancelToken& spanCancel) {
+        return fetchSpan(url, validator, what, sink, offset, span, spanCancel);
+    };
+
+    auto stream = std::make_unique<net::StreamingDownload>(std::move(fetch), length, kDownloadSpanBytes);
+    stream->keepAlive(sharedSelf());
+    // No checkBeforeEverySpan() where the server gave an ETag: the If-Match on
+    // the span itself is the check, and a better one -- the server compares it
+    // against the file it is about to send. Without one there is nothing to
+    // compare, and a PROPFIND per span would be a round trip for an answer about
+    // a moment already past.
+    if (validator.isEmpty()) {
+        QString openedAs;
+        if (const Result<FileEntry> opened = stat(target); opened.ok())
+            openedAs = net::identityOf(opened.value());
+        if (!openedAs.isEmpty()) {
+            stream->checkBeforeEverySpan([this, target, openedAs]() -> VfsError {
+                const Result<FileEntry> now = stat(target);
+                if (!now.ok())
+                    return now.error();
+                return net::identityOf(now.value()) == openedAs ? VfsError::ok()
+                                                                : net::fileChangedWhileBeingRead();
+            });
+        }
+    }
+    if (!stream->open(QIODevice::ReadOnly)) {
+        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, stream->errorString());
+    }
+    return Result<std::unique_ptr<QIODevice>>(std::unique_ptr<QIODevice>(stream.release()));
 }
 
 Result<void> WebdavFileSystem::uploadFrom(

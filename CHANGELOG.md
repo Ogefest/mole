@@ -65,6 +65,8 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-370 A large file on an S3 or WebDAV drive can be read on a machine with no room for a copy of it
+2026-09-04 #MOLE-370 Previewing a large object on an S3 or WebDAV drive no longer downloads all of it
 2026-09-04 #MOLE-373 A permission problem on a remote drive is reported as one, instead of as an unknown failure
 2026-09-04 #MOLE-373 A server outage is reported as one, instead of as a full disk
 2026-09-04 #MOLE-373 A copy from a drive that refuses the file gives up at once, instead of retrying for two minutes

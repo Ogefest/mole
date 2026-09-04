@@ -134,6 +134,13 @@ private:
     };
 
     net::Response send(const Call& call, const CancelToken& cancel, QIODevice* sink = nullptr);
+
+    /// One span of a ranged read, with the ETag the read began on attached.
+    ///
+    /// The unit StreamingDownload asks for. `validator` empty means the store
+    /// gave no ETag, and then nothing is checked -- see MOLE-370.
+    VfsError fetchSpan(const QString& key, const QString& versionId, const QByteArray& validator,
+        const QString& what, QIODevice& sink, qint64 offset, qint64 span, const CancelToken& cancel);
     /// The signable form of a GET for `key`, without sending anything: the host,
     /// the path and the timestamp, which is everything a presigned url needs.
     net::SignableRequest readRequestFor(const QString& key, const QDateTime& at) const;

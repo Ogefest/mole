@@ -67,6 +67,14 @@ private:
     };
     net::Response send(const Call& call, const CancelToken& cancel, QIODevice* sink = nullptr);
 
+    /// One span of a ranged read, with the ETag the read began on attached.
+    ///
+    /// The unit StreamingDownload asks for. `validator` empty means the server
+    /// gave no ETag, and then the file's identity is checked the slower way --
+    /// see MOLE-370.
+    VfsError fetchSpan(const QByteArray& url, const QByteArray& validator, const QString& what,
+        QIODevice& sink, qint64 offset, qint64 span, const CancelToken& cancel);
+
     /// One PROPFIND, at the given depth.
     Result<QList<net::WebdavEntry>> propfind(const VfsUri& target, int depth, const CancelToken& cancel);
     /// Sends a payload as the body of a PUT. A `size` of -1 means the length is

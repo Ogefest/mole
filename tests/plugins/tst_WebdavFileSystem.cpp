@@ -150,6 +150,7 @@ private slots:
     void anAddressThatIsNotAUrlIsRefused();
     void itSatisfiesTheConformanceSuite();
     void aLargeFileGoesUpWholeThroughAChunkedPut();
+    void aLargeFileIsStreamedInRangesRatherThanDownloadedWhole();
     void aStagedWriteTooBigToBufferAlsoArrives();
 };
 
@@ -593,6 +594,75 @@ void TestWebdavFileSystem::itSatisfiesTheConformanceSuite()
 /// staged PUT: that risk is not worth taking when there is a choice. The large
 /// case has no choice, and until this ran there was nothing anywhere saying it
 /// worked against a server at all.
+/// A large file could not be read on a machine without room for a copy.
+///
+/// openRead() downloaded the whole file into a QTemporaryFile before handing
+/// back a device, and its size parameter was unnamed and unused. ADR-0014's
+/// second amendment says "No backend stages a whole file in either direction any
+/// more" and TransferStreams.h says anything large is streamed -- neither was
+/// true of WebDAV or S3, so a 94 GB backup on a machine with 84 GB free could not
+/// be read at all, and a preview of a large file downloaded all of it. The write
+/// side has been streamed since MOLE-34; this is the other direction.
+/// See MOLE-370.
+void TestWebdavFileSystem::aLargeFileIsStreamedInRangesRatherThanDownloadedWhole()
+{
+    constexpr qint64 kBig = 512LL * 1024 * 1024;
+    const QByteArray filler(64 * 1024, 'x');
+
+    ScriptedHttpServer server([&filler](const ScriptedHttpServer::Request& request) {
+        ScriptedHttpServer::Reply reply;
+        if (request.method == "HEAD") {
+            reply.headers.append("Content-Length: " + QByteArray::number(kBig));
+            reply.headers.append("ETag: \"the-file\"");
+            return reply;
+        }
+        const QByteArray range = request.header("Range");
+        if (request.method == "GET" && !range.isEmpty()) {
+            reply.status = 206;
+            reply.reason = "Partial Content";
+            reply.body = filler;
+            return reply;
+        }
+        if (request.method == "GET") {
+            // The whole file, which is the thing under test: it must not happen.
+            reply.body = QByteArray(int(kBig), 'x');
+            return reply;
+        }
+        return reply;
+    });
+    QVERIFY2(server.start(), "the scripted server could not take a port");
+
+    auto fileSystem = std::make_shared<WebdavFileSystem>(QStringLiteral("webdav"), against(server));
+    Result<std::unique_ptr<QIODevice>> opened
+        = fileSystem->openRead(VfsUri(QStringLiteral("webdav"), QString(), QStringLiteral("/backup.tar")));
+    QVERIFY2(opened.ok(), qPrintable(opened.error().message));
+    QVERIFY2(dynamic_cast<net::StreamingDownload*>(opened.value().get()) != nullptr,
+        "a large WebDAV file has to stream; staging is what made a file bigger than the scratch "
+        "space unreadable");
+
+    QByteArray buffer(4096, Qt::Uninitialized);
+    QVERIFY(opened.value()->read(buffer.data(), buffer.size()) > 0);
+    opened.value().reset();
+
+    bool sawRangedGet = false;
+    bool sawWholeGet = false;
+    for (const ScriptedHttpServer::Request& asked : server.received()) {
+        if (asked.method != "GET")
+            continue;
+        if (asked.header("Range").isEmpty()) {
+            sawWholeGet = true;
+            continue;
+        }
+        sawRangedGet = true;
+        // The file this read began on, and not whatever has since taken its
+        // place: the check the cross-span validator needs, at no extra request.
+        QCOMPARE(asked.header("If-Match"), QByteArray("\"the-file\""));
+        QVERIFY2(asked.header("Range").startsWith("bytes=0-"), asked.header("Range").constData());
+    }
+    QVERIFY2(sawRangedGet, "the read never asked for a range");
+    QVERIFY2(!sawWholeGet, "the read asked for the whole file");
+}
+
 void TestWebdavFileSystem::aLargeFileGoesUpWholeThroughAChunkedPut()
 {
     const Account account = accountFromEnvironment();

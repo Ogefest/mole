@@ -39,6 +39,21 @@ namespace {
     /// the ceiling either way, so this also carries objects up to 10 TB.
     constexpr qint64 kCopyPartBytes = 1024LL * 1024 * 1024;
 
+    /// Below this a read is fetched whole into a temporary file, as every S3 read
+    /// used to be. A small object over a pooled connection costs one request and
+    /// no thread, where streaming it would cost a thread to carry it -- and
+    /// nothing is at risk, because what made staging a fault is an object too big
+    /// to stage.
+    ///
+    /// The same figure SFTP and FTP use, deliberately: backends disagreeing about
+    /// when a file is large would be several behaviours to explain. See MOLE-370.
+    constexpr qint64 kFetchWholeBelow = 64LL * 1024 * 1024;
+
+    /// How much one ranged fetch carries. Large enough that a read of an object
+    /// of any ordinary size is one request, with the stream clamping the span to
+    /// what is left of the object.
+    constexpr qint64 kDownloadSpanBytes = 1024LL * 1024 * 1024 * 1024;
+
     QString withTrailingSlash(const QString& key)
     {
         return key.endsWith(kSeparator) ? key : key + kSeparator;
@@ -916,31 +931,112 @@ Result<void> S3FileSystem::rename(const VfsUri& from, const VfsUri& to, const Ca
     return deleteObject(fromPrefix);
 }
 
+VfsError S3FileSystem::fetchSpan(const QString& key, const QString& versionId, const QByteArray& validator,
+    const QString& what, QIODevice& sink, qint64 offset, qint64 span, const CancelToken& cancel)
+{
+    Call call;
+    call.key = key;
+    if (!versionId.isEmpty())
+        call.query.append({ QStringLiteral("versionId"), versionId });
+
+    // Both ends of the range. A store that honoured only the start would keep
+    // delivering to the end of the object and the next span would re-fetch bytes
+    // already handed over, which is a read that silently duplicates a span.
+    call.headers.append({ QByteArray("Range"),
+        QByteArray("bytes=") + QByteArray::number(offset) + '-' + QByteArray::number(offset + span - 1) });
+
+    // The object this read began on, and not any object that has since taken its
+    // place. S3 has a real ETag, so this costs a header rather than a HEAD per
+    // span -- which is what SFTP and FTP have to pay, having no validator at
+    // all. See MOLE-348.
+    if (!validator.isEmpty())
+        call.headers.append({ QByteArray("If-Match"), validator });
+
+    const net::Response response = send(call, cancel, &sink);
+    // 412 here is the precondition above and nothing else: the object changed
+    // while it was being read. Said in the one sentence every backend uses for
+    // it, rather than as a status nobody above could interpret.
+    if (response.code == CURLE_OK && response.status == 412)
+        return net::fileChangedWhileBeingRead();
+    return errorFor(response, what);
+}
+
 Result<std::unique_ptr<QIODevice>> S3FileSystem::openRead(
-    const VfsUri& target, qint64, const CancelToken& cancel)
+    const VfsUri& target, qint64 expectedSize, const CancelToken& cancel)
 {
     if (cancel.isCancelled()) {
         return Result<std::unique_ptr<QIODevice>>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
     }
-    auto scratch = std::make_unique<QTemporaryFile>();
-    QString staging;
-    if (!staging::openFile(*scratch, &staging)) {
-        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError,
-            QStringLiteral("Could not open a local copy for %1: %2").arg(target.path(), staging));
+    const QString key = keyFor(target);
+    const QString what = QStringLiteral("Reading %1").arg(target.path());
+    const QString versionId = target.hasVersion() ? target.version() : QString();
+
+    // How big it is, and which object it is. A stream has to know where the
+    // object ends before it starts, and the ETag is what tells a later span it is
+    // still reading the same one -- so both come from the one HEAD, and a caller
+    // that already knows the size still pays it for the validator.
+    qint64 length = expectedSize;
+    QByteArray validator;
+    {
+        Call head;
+        head.method = "HEAD";
+        head.key = key;
+        if (!versionId.isEmpty())
+            head.query.append({ QStringLiteral("versionId"), versionId });
+        const net::Response response = send(head, cancel);
+        if (const VfsError error = errorFor(response, what); error.isError())
+            return Result<std::unique_ptr<QIODevice>>(error);
+        validator = response.header("etag");
+        if (length < 0)
+            length = sizeFromListing(QString::fromUtf8(response.header("content-length")));
     }
 
-    Call call;
-    call.key = keyFor(target);
-    // The state the uri names, rather than the object as it is. One parameter,
-    // and the whole reason an earlier version is an ordinary readable uri.
-    if (target.hasVersion())
-        call.query.append({ QStringLiteral("versionId"), target.version() });
-    const net::Response response = send(call, cancel, scratch.get());
-    const VfsError error = errorFor(response, QStringLiteral("Reading %1").arg(target.path()));
-    if (error.isError())
-        return Result<std::unique_ptr<QIODevice>>(error);
+    // Small enough to hold: fetched whole, as before.
+    //
+    // **Above that it is streamed a span at a time**, which is what ADR-0014's
+    // second amendment says every backend does and what this one did not: it
+    // downloaded the whole object into a temporary file, so a 94 GB backup could
+    // not be read at all on a machine with 84 GB free, and a preview of a large
+    // object paid for all of it. SFTP and FTP have had this shape since MOLE-127.
+    // See MOLE-370.
+    if (length >= 0 && length <= kFetchWholeBelow) {
+        auto scratch = std::make_unique<QTemporaryFile>();
+        QString staging;
+        if (!staging::openFile(*scratch, &staging)) {
+            return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError,
+                QStringLiteral("Could not open a local copy for %1: %2").arg(target.path(), staging));
+        }
 
-    return net::openDownloadedFile(std::move(scratch));
+        Call call;
+        call.key = key;
+        // The state the uri names, rather than the object as it is. One
+        // parameter, and the whole reason an earlier version is an ordinary
+        // readable uri.
+        if (!versionId.isEmpty())
+            call.query.append({ QStringLiteral("versionId"), versionId });
+        const net::Response response = send(call, cancel, scratch.get());
+        const VfsError error = errorFor(response, what);
+        if (error.isError())
+            return Result<std::unique_ptr<QIODevice>>(error);
+
+        return net::openDownloadedFile(std::move(scratch));
+    }
+
+    auto fetch = [this, key, versionId, validator, what](
+                     QIODevice& sink, qint64 offset, qint64 span, const CancelToken& spanCancel) {
+        return fetchSpan(key, versionId, validator, what, sink, offset, span, spanCancel);
+    };
+
+    auto stream = std::make_unique<net::StreamingDownload>(std::move(fetch), length, kDownloadSpanBytes);
+    stream->keepAlive(sharedSelf());
+    // No checkBeforeEverySpan(): the If-Match on the span itself is the check,
+    // and it is a better one -- the server compares it against the object it is
+    // about to send rather than against one a separate request asked about a
+    // moment earlier.
+    if (!stream->open(QIODevice::ReadOnly)) {
+        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::IoError, stream->errorString());
+    }
+    return Result<std::unique_ptr<QIODevice>>(std::unique_ptr<QIODevice>(stream.release()));
 }
 
 Result<QString> S3FileSystem::beginMultipart(const QString& key)

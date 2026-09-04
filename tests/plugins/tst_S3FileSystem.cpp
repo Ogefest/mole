@@ -1,5 +1,6 @@
 #include "plugins/network/S3FileSystem.h"
 #include "plugins/network/S3Listing.h"
+#include "plugins/network/TransferStreams.h"
 #include "support/FileSystemConformance.h"
 #include "support/MoleTestMain.h"
 #include "support/ScriptedHttpServer.h"
@@ -342,6 +343,7 @@ private slots:
 
     void aCancelledUploadIsAbandonedRatherThanLeftBeingPaidFor();
     void anObjectTooBigForOneCopyRequestIsCopiedInRanges();
+    void aLargeObjectIsStreamedInRangesRatherThanDownloadedWhole();
     void theTimeAnObjectWasLastChangedIsRead();
     void aKeyWithAnEmptySegmentIsNotShownAsAChildOfItself();
     void aRefusedHeadIsARefusalRatherThanAMissingFile();
@@ -1016,6 +1018,77 @@ void TestS3FileSystem::aCancelledUploadIsAbandonedRatherThanLeftBeingPaidFor()
     };
     QVERIFY2(
         until(sawTheAbandon), "a cancelled upload left its parts in the bucket, where they are charged for");
+}
+
+/// A large object could not be read on a machine without room for a copy.
+///
+/// openRead() downloaded the whole object into a QTemporaryFile before handing
+/// back a device, and its size parameter was unnamed and unused. ADR-0014's
+/// second amendment says "No backend stages a whole file in either direction any
+/// more" and TransferStreams.h says anything large is streamed -- neither was
+/// true of S3 or WebDAV, so a 94 GB backup on a machine with 84 GB free could not
+/// be read at all, and a preview of a large object downloaded all of it.
+/// RandomAccessRead was honoured, by paying the whole file. See MOLE-370.
+void TestS3FileSystem::aLargeObjectIsStreamedInRangesRatherThanDownloadedWhole()
+{
+    // Past the 64 MiB threshold, and never actually stored: what the fixture
+    // hands back is whatever range is asked for.
+    constexpr qint64 kBig = 512LL * 1024 * 1024;
+    const QByteArray filler(64 * 1024, 'x');
+
+    ScriptedHttpServer server([&filler](const ScriptedHttpServer::Request& request) {
+        ScriptedHttpServer::Reply reply;
+        if (request.method == "HEAD") {
+            reply.headers.append("Content-Length: " + QByteArray::number(kBig));
+            reply.headers.append("ETag: \"the-object\"");
+            reply.headers.append("Last-Modified: Wed, 12 Oct 2022 10:00:00 GMT");
+            return reply;
+        }
+        // A ranged GET answers with what it was asked for, capped at what this
+        // fixture is willing to hand over in one go.
+        const QByteArray range = request.header("Range");
+        if (!range.isEmpty()) {
+            reply.status = 206;
+            reply.reason = "Partial Content";
+            reply.body = filler;
+            return reply;
+        }
+        // A GET with no range is the whole object, which is the thing under test:
+        // it must not happen.
+        reply.body = QByteArray(int(kBig), 'x');
+        return reply;
+    });
+    QVERIFY2(server.start(), "the scripted server could not take a port");
+
+    auto fileSystem = std::make_shared<S3FileSystem>(QStringLiteral("s3"), againstScript(server));
+    Result<std::unique_ptr<QIODevice>> opened
+        = fileSystem->openRead(VfsUri(QStringLiteral("s3"), QString(), QStringLiteral("/backup.tar")));
+    QVERIFY2(opened.ok(), qPrintable(opened.error().message));
+    QVERIFY2(dynamic_cast<net::StreamingDownload*>(opened.value().get()) != nullptr,
+        "a large S3 object has to stream; staging is what made an object bigger than the scratch "
+        "space unreadable");
+
+    // And reading it asks for ranges, with the ETag the read began on attached
+    // so a replaced object cannot be stitched into the answer.
+    QByteArray buffer(4096, Qt::Uninitialized);
+    QVERIFY(opened.value()->read(buffer.data(), buffer.size()) > 0);
+    opened.value().reset();
+
+    bool sawRangedGet = false;
+    bool sawWholeGet = false;
+    for (const ScriptedHttpServer::Request& asked : server.received()) {
+        if (asked.method != "GET")
+            continue;
+        if (asked.header("Range").isEmpty()) {
+            sawWholeGet = true;
+            continue;
+        }
+        sawRangedGet = true;
+        QCOMPARE(asked.header("If-Match"), QByteArray("\"the-object\""));
+        QVERIFY2(asked.header("Range").startsWith("bytes=0-"), asked.header("Range").constData());
+    }
+    QVERIFY2(sawRangedGet, "the read never asked for a range");
+    QVERIFY2(!sawWholeGet, "the read asked for the whole object");
 }
 
 /// A rename of anything large could not happen at all.

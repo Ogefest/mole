@@ -146,3 +146,37 @@ side's does.
 
 **No backend stages a whole file in either direction any more**, which is what the
 original decision set out to do.
+
+## Amendment, 2026-09-04 (MOLE-370)
+
+**The sentence above was not true when it was written.** S3 and WebDAV reads still
+downloaded the whole object into a `QTemporaryFile` before handing back a device, with
+the size parameter of `openRead()` unnamed and unused — so the fault this record exists
+for, a 94 GB backup on a machine with 84 GB free, was still present on two of six drives
+while the record said it was closed. `RandomAccessRead` was honoured, by paying the
+whole file, and a preview of a large object downloaded all of it.
+
+Both now have the SFTP and FTP shape, and this table is the answer to "which backends
+stream, and from what size", which is the question the two paragraphs above left a reader
+to assemble:
+
+| Drive | Reads stream above | Writes stream above | What identifies the file across spans |
+|---|---|---|---|
+| SFTP | 64 MiB | 64 MiB | a fresh `stat()` before every later span |
+| FTP | 64 MiB | 64 MiB | a fresh `stat()` before every later span |
+| S3 | 64 MiB | 64 MiB (multipart) | `If-Match: <etag>` on every span |
+| WebDAV | 64 MiB | 64 MiB | `If-Match: <etag>` on every span, else a `PROPFIND` |
+| NFS | never — it is a filesystem, read and written in place | | |
+| Local | never | | |
+
+**The ETag is the better validator and it costs nothing.** SFTP and FTP have nothing
+like one, so they have to ask a separate question before each span and live with the gap
+between the answer and the fetch (MOLE-348). S3 and WebDAV both have one, so the check
+travels *with* the request: the server compares it against the object it is about to
+send, and answers 412 if it is not the same one. That 412 is turned into the same
+"the file changed while it was being read" sentence every backend uses. A server that
+gives no ETag falls back to WebDAV's `PROPFIND`, and a store that gives none has nothing
+to check — which is stated rather than hidden.
+
+A read of unknown length is fetched whole. A stream has to know where the file ends
+before it starts, and "the server would not say" is not a reason to refuse the read.
