@@ -576,6 +576,11 @@ void TestMoveIsPermanent::onACaseSensitiveVolumeTheSamePairIsTwoPlaces()
     // directories on ext4 and in a bucket, so the guard must not start refusing
     // a move it has always allowed.
     m_memory->addFile(QStringLiteral("/work/notes.txt"), QByteArray("keep me"));
+    // The destination exists, because a copy into a folder that does not is a
+    // refusal on every real drive -- `cp -r work /WORK/inner` says "No such file
+    // or directory". This case used to rely on the in-memory drive inventing the
+    // directories on the way, which MOLE-401 stopped it doing.
+    m_memory->addDirectory(QStringLiteral("/WORK/inner"));
 
     auto second = std::make_shared<FaultyFileSystem>(m_memory);
     TransferTask* task = run(moveOf(m_memory, VfsUri::fromString(QStringLiteral("mem:///work")), second,

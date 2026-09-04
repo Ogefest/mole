@@ -52,6 +52,31 @@ struct ConformanceContext
     /// available at all. Leaving a directory nobody can read behind would take
     /// the temporary tree with it.
     std::function<bool(const QString& relativePath, const std::function<void()>& check)> whileUnlistable;
+
+    /// Runs `operation` on another thread while it is *held part way*, and calls
+    /// `whenHeld` at that moment so the suite can cancel it. `what` names the
+    /// call being held -- "list", "openRead", "openWrite", "remove", "rename",
+    /// "invoke" or "probe" -- because a fixture can usually hold some of them
+    /// and not others. Answering false means this fixture cannot arrange that
+    /// one, and the suite reports it as a case it did not run rather than a case
+    /// that passed.
+    ///
+    /// **Cancellation was only ever asked with a token that was already
+    /// cancelled**, which every backend answers before it starts -- so nothing
+    /// held a backend to noticing a token that is cancelled *while it is
+    /// working*, which is the case ADR-0096 is about and the only one a user can
+    /// produce. Arranging it needs a drive that can be held: the in-memory one
+    /// has gates, a fake server can stop answering, a real server cannot. Unset
+    /// means every one of them skips with that reason. See MOLE-401.
+    std::function<bool(const char* what, const std::function<void(const CancelToken&)>& operation,
+        const std::function<void()>& whenHeld)>
+        whileHeldPartWay;
+
+    /// Whether this context is willing to pay for the large-payload cases: a file
+    /// bigger than any buffer, a listing of many thousands of entries, a name at
+    /// the length limit. Off by default, because the fast tier is a tier somebody
+    /// runs on every change; the heavy suites turn it on.
+    bool exercisesScale = false;
 };
 
 /// Runs the shared suite. Failures are reported through QTest, so call this

@@ -363,11 +363,28 @@ Result<void> MemoryFileSystem::makeDirectory(const VfsUri& target)
     waitAsASlowDriveWould();
     {
         QMutexLocker lock(&m_mutex);
-        if (Result<void> fault = faultFor(target.path()); !fault.ok())
+        const QString path = resolve(target.path());
+        if (Result<void> fault = faultFor(path); !fault.ok())
             return fault;
-        if (m_nodes.contains(resolve(target.path())))
+        if (m_nodes.contains(path))
             return Result<void>::failure(
                 VfsError::AlreadyExists, QStringLiteral("Already exists: %1").arg(target.path()));
+
+        // One level at a time, like mkdir and unlike mkdir -p: a backend that
+        // makes the whole path hides from its callers that they have to.
+        const int slash = path.lastIndexOf(QLatin1Char('/'));
+        if (slash > 0) {
+            const QString parent = resolve(path.left(slash));
+            const auto holder = m_nodes.constFind(parent);
+            if (holder == m_nodes.constEnd()) {
+                return Result<void>::failure(
+                    VfsError::NotFound, QStringLiteral("No such directory: %1").arg(parent));
+            }
+            if (!holder->isDir) {
+                return Result<void>::failure(
+                    VfsError::NotADirectory, QStringLiteral("Not a directory: %1").arg(parent));
+            }
+        }
     }
     addDirectory(target.path());
     return {};
@@ -417,6 +434,15 @@ Result<void> MemoryFileSystem::remove(const VfsUri& target, bool recursive, cons
     if (Result<void> fault = faultFor(path); !fault.ok())
         return fault;
 
+    // **The root is not a node anybody may delete.** This removed it and left the
+    // drive with no root at all, where every real backend refuses: you cannot
+    // rmdir a mount point, unlink a bucket by asking for its prefix, or delete an
+    // SFTP server's home from underneath itself. See MOLE-401.
+    if (path == QStringLiteral("/")) {
+        return Result<void>::failure(
+            VfsError::AccessDenied, QStringLiteral("The root of a drive cannot be removed"));
+    }
+
     const auto node = m_nodes.constFind(path);
     if (node == m_nodes.constEnd())
         return Result<void>::failure(VfsError::NotFound, QStringLiteral("No such file: %1").arg(path));
@@ -458,6 +484,15 @@ Result<void> MemoryFileSystem::rename(const VfsUri& from, const VfsUri& to, cons
         return fault;
     if (!m_nodes.contains(src))
         return Result<void>::failure(VfsError::NotFound, QStringLiteral("No such file: %1").arg(src));
+
+    // **A directory cannot be renamed into itself.** The kernel answers EINVAL
+    // for `rename("/a", "/a/b")`, and that refusal is what ADR-0029 relied on
+    // when it moved the guard up out of the backends -- while this drive happily
+    // did it and left the tree unreachable from its own root. See MOLE-401.
+    if (dst == src || dst.startsWith(src + QLatin1Char('/'))) {
+        return Result<void>::failure(
+            VfsError::NotSupported, QStringLiteral("Cannot move %1 into itself").arg(from.path()));
+    }
 
     // What is in the way, in the spelling it is stored under. It is only a
     // collision when it is a different node: on a case-insensitive volume the
@@ -544,11 +579,26 @@ Result<std::unique_ptr<QIODevice>> MemoryFileSystem::openRead(
 
     // Slept before the lock is taken, so a delayed read does not block every
     // other caller of this drive for the duration.
-    if (m_readDelayMs > 0)
-        QThread::msleep(static_cast<unsigned long>(m_readDelayMs));
+    if (m_readDelayMs > 0) {
+        // Chunked, so a cancelled read does not have to wait out the whole of it.
+        for (int slept = 0; slept < m_readDelayMs && !cancel.isCancelled(); slept += 10)
+            QThread::msleep(10);
+    }
+
+    // **Asked again, after the wait and not only before it.** A token cancelled
+    // while the read was held ran to completion and handed back a device: the
+    // caller had already given up, and the bytes arrived anyway. list() polled
+    // its token in both places and this did not. See MOLE-401.
+    if (cancel.isCancelled())
+        return Result<std::unique_ptr<QIODevice>>::failure(VfsError::Cancelled, QStringLiteral("Cancelled"));
 
     QMutexLocker lock(&m_mutex);
-    const QString path = target.path();
+    // **Resolved, like list(), stat(), remove() and rename() are.** This used the
+    // path as written, so on a case-insensitive volume `stat("/Foo")` found
+    // `/foo` and `openRead("/Foo")` said NotFound -- a disagreement no real
+    // backend has, and one that made a green test on this drive say nothing about
+    // the disk. See MOLE-401.
+    const QString path = resolve(target.path());
     if (Result<void> fault = faultFor(path); !fault.ok())
         return fault.error();
 
@@ -635,19 +685,42 @@ Result<std::unique_ptr<QIODevice>> MemoryFileSystem::openWrite(
             QStringLiteral("mem:// writes need the filesystem to be held by a shared_ptr"));
     }
 
+    QString path = target.path();
     {
         QMutexLocker lock(&m_mutex);
-        if (Result<void> fault = faultFor(target.path()); !fault.ok())
+        // Resolved for the same reason openRead() is: an unresolved write made a
+        // *second* node on a case-insensitive volume, where a disk would have
+        // overwritten the first.
+        path = resolve(path);
+        if (Result<void> fault = faultFor(path); !fault.ok())
             return fault.error();
 
-        const auto existing = m_nodes.constFind(target.path());
+        const auto existing = m_nodes.constFind(path);
         if (existing != m_nodes.constEnd() && existing->isDir) {
-            return VfsError::make(
-                VfsError::IsADirectory, QStringLiteral("Is a directory: %1").arg(target.path()));
+            return VfsError::make(VfsError::IsADirectory, QStringLiteral("Is a directory: %1").arg(path));
+        }
+
+        // **A missing parent is a refusal, not an invitation.** This invented the
+        // directories on the way, where the disk answers ENOENT and every caller
+        // that copies into a new folder has to make it first. A drive that
+        // quietly creates the tree hides that requirement from every test that
+        // uses this double. See MOLE-401.
+        const int slash = path.lastIndexOf(QLatin1Char('/'));
+        if (slash > 0) {
+            const QString parent = resolve(path.left(slash));
+            const auto holder = m_nodes.constFind(parent);
+            if (holder == m_nodes.constEnd()) {
+                return VfsError::make(
+                    VfsError::NotFound, QStringLiteral("No such directory: %1").arg(parent));
+            }
+            if (!holder->isDir) {
+                return VfsError::make(
+                    VfsError::NotADirectory, QStringLiteral("Not a directory: %1").arg(parent));
+            }
         }
     }
 
-    auto device = std::make_unique<MemoryWriteDevice>(std::move(owner), target.path());
+    auto device = std::make_unique<MemoryWriteDevice>(std::move(owner), path);
     if (!device->open(QIODevice::WriteOnly)) {
         return VfsError::make(VfsError::IoError, QStringLiteral("Cannot write %1").arg(target.path()));
     }

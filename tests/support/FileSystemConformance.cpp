@@ -1,5 +1,6 @@
 #include "FileSystemConformance.h"
 
+#include "core/vfs/NameRules.h"
 #include "core/vfs/PartialWrite.h"
 #include "core/vfs/VersionGuard.h"
 
@@ -368,6 +369,395 @@ void runFileSystemConformance(const ConformanceContext& context)
 
             // And the same drive goes on answering about the file as it is.
             QVERIFY2(guarded->stat(current).ok(), "the current file must still be reachable");
+        }
+    }
+
+    // --- what the flags say, against what the drive does ------------------
+    //
+    // **The write half is gated on a test-side flag**, so a backend advertising
+    // Write while `expectsWriteSupport` is false -- or the reverse -- passed the
+    // whole suite. The two have to agree before either means anything, and each
+    // flag has to agree with the answer the operation actually gives: a drive
+    // that advertises Delete and answers NotSupported is a menu entry that does
+    // nothing. See MOLE-401.
+    {
+        const VfsCapabilities flags = fs.capabilities();
+        QCOMPARE(flags.testFlag(VfsCapability::Write), context.expectsWriteSupport);
+
+        struct Claim
+        {
+            VfsCapability flag;
+            const char* name;
+            std::function<VfsError()> attempt;
+        };
+
+        const VfsUri victim = context.root.child(QStringLiteral("flags-check.bin"));
+        const QList<Claim> claims {
+            { VfsCapability::Write, "Write",
+                [&] {
+                    Result<std::unique_ptr<QIODevice>> opened = fs.openWrite(victim, 4, noCancel);
+                    if (!opened.ok())
+                        return opened.error();
+                    opened.value()->write(QByteArray("abcd"));
+                    // Through closeAndReport, because on a staging backend the
+                    // bare close cannot fail and a refusal arrives there rather
+                    // than from openWrite.
+                    const Result<void> landed = closeAndReport(*opened.value());
+                    opened.value().reset();
+                    if (landed.ok())
+                        fs.remove(victim, false, noCancel);
+                    return landed.ok() ? VfsError {} : landed.error();
+                } },
+            { VfsCapability::MakeDirectory, "MakeDirectory",
+                [&] {
+                    const VfsUri folder = context.root.child(QStringLiteral("flags-check-dir"));
+                    const Result<void> made = fs.makeDirectory(folder);
+                    if (made.ok())
+                        fs.remove(folder, true, noCancel);
+                    return made.ok() ? VfsError {} : made.error();
+                } },
+            { VfsCapability::Delete, "Delete",
+                [&] {
+                    // Of something that is not there: what is being asked is
+                    // whether the operation exists, and NotFound is an answer
+                    // only a drive that can delete gives.
+                    const Result<void> gone
+                        = fs.remove(context.root.child(QStringLiteral("no-such-thing")), false, noCancel);
+                    return gone.ok() ? VfsError {} : gone.error();
+                } },
+            { VfsCapability::Rename, "Rename",
+                [&] {
+                    const Result<void> moved = fs.rename(context.root.child(QStringLiteral("no-such-thing")),
+                        context.root.child(QStringLiteral("nor-this")), noCancel);
+                    return moved.ok() ? VfsError {} : moved.error();
+                } },
+        };
+
+        for (const Claim& claim : claims) {
+            const VfsError answer = claim.attempt();
+            if (flags.testFlag(claim.flag)) {
+                QVERIFY2(answer.code != VfsError::NotSupported,
+                    qPrintable(QStringLiteral("this drive advertises %1 and then refuses it: %2")
+                                   .arg(QLatin1String(claim.name), answer.message)));
+            } else {
+                QVERIFY2(answer.code == VfsError::NotSupported,
+                    qPrintable(QStringLiteral("this drive does not advertise %1 and answered %2 "
+                                              "instead of NotSupported")
+                                   .arg(QLatin1String(claim.name))
+                                   .arg(int(answer.code))));
+            }
+        }
+    }
+
+    // --- how much room, when the drive says it knows ----------------------
+    {
+        const Result<SpaceInfo> room = fs.space(context.root);
+        if (fs.capabilities().testFlag(VfsCapability::ReportsSpace)) {
+            QVERIFY2(room.ok(),
+                qPrintable(QStringLiteral("this drive advertises ReportsSpace and refused: %1")
+                               .arg(room.error().message)));
+            QVERIFY2(room.value().totalBytes > 0, "a drive that reports space has to have some");
+            QVERIFY2(
+                room.value().freeBytes <= room.value().totalBytes, "more room free than there is altogether");
+        } else {
+            QVERIFY2(!room.ok(), "a drive without ReportsSpace must refuse, not invent");
+            QCOMPARE(room.error().code, VfsError::NotSupported);
+        }
+    }
+
+    // --- what the drive says it will not accept as a name -----------------
+    //
+    // `nameRules()` is what the rename dialog and every copy check against, and
+    // nothing held a drive to *its own* rules: a backend that refuses a character
+    // and does not say so, or says so and accepts it anyway, passed. The second
+    // is the one that matters -- the check happens above the backend, so a rule
+    // nobody enforces is a name that reaches the wire and comes back as a
+    // protocol error nobody can act on. See MOLE-401 and ADR-0070.
+    {
+        const NameRules rules = fs.nameRules();
+        QString refused;
+        if (!rules.forbiddenCharacters.isEmpty())
+            refused = QStringLiteral("bad%1name.txt").arg(rules.forbiddenCharacters.at(0));
+        else if (rules.refusesTrailingDotOrSpace)
+            refused = QStringLiteral("trailing.");
+        else if (rules.refusesReservedDeviceNames)
+            refused = QStringLiteral("nul.txt");
+        else if (rules.maximumLength > 0)
+            refused = QString(rules.maximumLength + 1, QLatin1Char('n'));
+
+        if (refused.isEmpty()) {
+            // Nothing to offer: a drive whose rules refuse nothing has nothing to
+            // be held to here, and that is an answer rather than a gap.
+            QVERIFY2(!checkName(QStringLiteral("ordinary.txt"), rules).isRejected(),
+                "a drive that refuses nothing must accept an ordinary name");
+        } else {
+            QVERIFY2(checkName(refused, rules).isRejected(),
+                qPrintable(
+                    QStringLiteral("the fixture name %1 is not actually refused by the rules").arg(refused)));
+            if (context.expectsWriteSupport) {
+                Result<std::unique_ptr<QIODevice>> opened
+                    = fs.openWrite(context.root.child(refused), 4, noCancel);
+                if (opened.ok()) {
+                    opened.value()->write(QByteArray("abcd"));
+                    // Collected rather than closed: a staging backend refuses on
+                    // the way out, because the working name is one it can open
+                    // and the rename into place is what the volume rejects.
+                    const Result<void> landed = closeAndReport(*opened.value());
+                    opened.value().reset();
+                    if (landed.ok()) {
+                        // A drive that took it has to have *kept* it under that
+                        // name, or the rules are wrong in the other direction: a
+                        // silent rewrite is the Windows trailing-dot fault
+                        // ADR-0070 is about.
+                        const Result<FileEntry> found = fs.stat(context.root.child(refused));
+                        QVERIFY2(found.ok(),
+                            qPrintable(QStringLiteral("this drive accepted %1, which its own nameRules() "
+                                                      "refuse, and did not keep it under that name")
+                                           .arg(refused)));
+                        fs.remove(context.root.child(refused), false, noCancel);
+                    } else {
+                        QVERIFY2(!fs.stat(context.root.child(refused)).ok(),
+                            qPrintable(QStringLiteral("this drive refused %1 and left it behind anyway")
+                                           .arg(refused)));
+                    }
+                }
+            }
+        }
+    }
+
+    // --- what the drive has left behind, and letting go of it -------------
+    {
+        const Result<QList<DriveLeftover>> left = fs.leftovers(std::chrono::seconds(0), noCancel);
+        if (!left.ok()) {
+            QCOMPARE(left.error().code, VfsError::NotSupported);
+        } else {
+            for (const DriveLeftover& leftover : left.value()) {
+                QVERIFY2(!leftover.handle.isEmpty(), "a leftover nothing can name cannot be discarded");
+                QVERIFY2(
+                    !leftover.what.isEmpty(), "a leftover with nothing to show cannot be offered to anybody");
+            }
+            // One this drive never issued. The sweep hands back what it was given,
+            // so a drive that acts on an id it did not issue would act on
+            // another drive's.
+            DriveLeftover invented;
+            invented.handle = QStringLiteral("org.mole.conformance.not-a-leftover");
+            invented.what = QStringLiteral("invented by the conformance suite");
+            const Result<void> discarded = fs.discardLeftover(invented);
+            QVERIFY2(!discarded.ok(), "a drive discarded a leftover it never issued");
+        }
+    }
+
+    // --- which entries have something to offer ----------------------------
+    {
+        const Result<QStringList> withActions = fs.entriesWithActions(context.root, noCancel);
+        if (!withActions.ok()) {
+            QCOMPARE(withActions.error().code, VfsError::NotSupported);
+        } else {
+            for (const QString& name : withActions.value()) {
+                QVERIFY2(!name.isEmpty(), "an entry with actions has to be named");
+                const Result<FileEntry> entry = fs.stat(context.root.child(name));
+                QVERIFY2(entry.ok(),
+                    qPrintable(QStringLiteral("%1 was said to have actions and does not exist").arg(name)));
+                QVERIFY2(!fs.actionsFor(context.root.child(name), entry.value()).isEmpty(),
+                    qPrintable(QStringLiteral("%1 was said to have actions and has none").arg(name)));
+            }
+        }
+    }
+
+    // --- what the drive offers, and asking it again -----------------------
+    //
+    // ADR-0076's three-state answer was held only against a test double. A real
+    // backend's offers() has to be self-consistent -- an offer with nothing in it
+    // is a menu entry with no label -- and probe() has to be safe to call and to
+    // leave the drive answering.
+    {
+        const DriveOffers before = fs.offers();
+        fs.probe(context.root, noCancel);
+        const DriveOffers after = fs.offers();
+
+        // Three states, and the two that are not `Unasked` have to be told apart:
+        // a drive that could not answer is absent for a reason worth reporting,
+        // where an empty answer is a drive with nothing to offer. ADR-0076.
+        QVERIFY2(before.state == DriveOffers::State::Unasked || before.state == DriveOffers::State::Answered
+                || before.state == DriveOffers::State::Failed,
+            "a drive's offers are in one of three states and this is none of them");
+        for (const DriveOffers* offers : { &before, &after }) {
+            if (offers->state != DriveOffers::State::Answered)
+                QVERIFY2(offers->ids.isEmpty(), "a drive that has not answered has offered nothing");
+            for (const QString& id : offers->ids) {
+                QVERIFY2(!id.isEmpty(), "an offered action must carry an id");
+                QVERIFY2(id.contains(QLatin1Char('.')),
+                    qPrintable(QStringLiteral("an offered id must be namespaced: %1").arg(id)));
+            }
+        }
+
+        // And every id the drive offers here is one it will hand out for a node
+        // that has it: an offer nothing can act on is a menu that disappoints.
+        if (after.state == DriveOffers::State::Answered && !after.ids.isEmpty()) {
+            const Result<FileEntry> subject = fs.stat(context.root.child(QStringLiteral("alpha.txt")));
+            QVERIFY2(subject.ok(), qPrintable(subject.error().message));
+            const FileActionList narrowed
+                = fs.actionsFor(context.root.child(QStringLiteral("alpha.txt")), subject.value());
+            for (const FileAction& action : narrowed) {
+                QVERIFY2(after.ids.contains(action.id),
+                    qPrintable(
+                        QStringLiteral("%1 was handed out for a file and is in no offer").arg(action.id)));
+            }
+        }
+
+        // And the drive still works afterwards, which is the half a probe can
+        // break: it talks to the server.
+        const Result<FileEntryList> afterProbe = fs.list(context.root, noCancel);
+        QVERIFY2(afterProbe.ok(),
+            qPrintable(QStringLiteral("this drive stopped listing after probe(): %1")
+                           .arg(afterProbe.error().message)));
+    }
+
+    // --- what this drive can be asked to look for -------------------------
+    //
+    // NativeSearch was unchecked, so the first backend to advertise it would
+    // arrive unchecked. What is asked here is the pair: a drive that advertises
+    // it has to answer, and one that does not has to say NotSupported rather
+    // than answer emptily -- an empty answer reads as "nothing matches", and a
+    // search that silently finds nothing is worse than one that says it cannot.
+    {
+        const Result<FileEntryList> found = fs.search(context.root, QStringLiteral("alpha*"), noCancel);
+        if (fs.capabilities().testFlag(VfsCapability::NativeSearch)) {
+            QVERIFY2(found.ok(),
+                qPrintable(QStringLiteral("this drive advertises NativeSearch and refused: %1")
+                               .arg(found.error().message)));
+            for (const FileEntry& hit : found.value()) {
+                QVERIFY2(!hit.name.isEmpty(), "a search hit has to be named");
+                QVERIFY2(hit.uri.path().startsWith(context.root.path()),
+                    qPrintable(
+                        QStringLiteral("%1 is not under where the search was asked").arg(hit.uri.path())));
+            }
+        } else {
+            QVERIFY2(!found.ok(), "a drive without NativeSearch must refuse rather than find nothing");
+            QCOMPARE(found.error().code, VfsError::NotSupported);
+        }
+    }
+
+    // --- a token cancelled while the drive is working ---------------------
+    //
+    // One per operation rather than one for listings: a drive polls its token in
+    // as many places as it has loops, and the one place it forgot is the one a
+    // user waits out. Each is arranged by the fixture or reported as not run --
+    // never quietly passed, which is what an unarrangeable case would otherwise
+    // do. See MOLE-401.
+    if (context.whileHeldPartWay) {
+        struct HeldCall
+        {
+            const char* what;
+            bool needsWriting;
+            std::function<VfsError(const CancelToken&)> attempt;
+        };
+
+        const VfsUri alpha = context.root.child(QStringLiteral("alpha.txt"));
+        const VfsUri written = context.root.child(QStringLiteral("cancel-part-way.bin"));
+
+        // Made before the operations that need something to work on, so a
+        // cancelled remove or rename is a cancelled remove or rename rather than
+        // a NotFound that looks like one.
+        if (context.expectsWriteSupport) {
+            Result<std::unique_ptr<QIODevice>> seeded = fs.openWrite(written, 4, noCancel);
+            if (seeded.ok()) {
+                seeded.value()->write(QByteArray("abcd"));
+                closeAndReport(*seeded.value());
+                seeded.value().reset();
+            }
+        }
+
+        QString anAction;
+        {
+            const Result<FileEntry> subject = fs.stat(alpha);
+            if (subject.ok()) {
+                const FileActionList offered = fs.actionsFor(alpha, subject.value());
+                if (!offered.isEmpty())
+                    anAction = offered.first().id;
+            }
+        }
+
+        QList<HeldCall> calls {
+            { "list", false,
+                [&](const CancelToken& cancel) {
+                    const Result<FileEntryList> listing = fs.list(context.root, cancel);
+                    return listing.ok() ? VfsError {} : listing.error();
+                } },
+            { "openRead", false,
+                [&](const CancelToken& cancel) {
+                    Result<std::unique_ptr<QIODevice>> opened = fs.openRead(alpha, -1, cancel);
+                    return opened.ok() ? VfsError {} : opened.error();
+                } },
+            { "openWrite", true,
+                [&](const CancelToken& cancel) {
+                    Result<std::unique_ptr<QIODevice>> opened = fs.openWrite(
+                        context.root.child(QStringLiteral("cancel-open-write.bin")), 4, cancel);
+                    if (opened.ok()) {
+                        closeAndReport(*opened.value());
+                        opened.value().reset();
+                        fs.remove(
+                            context.root.child(QStringLiteral("cancel-open-write.bin")), false, noCancel);
+                    }
+                    return opened.ok() ? VfsError {} : opened.error();
+                } },
+            { "remove", true,
+                [&](const CancelToken& cancel) {
+                    const Result<void> gone = fs.remove(written, false, cancel);
+                    return gone.ok() ? VfsError {} : gone.error();
+                } },
+            { "rename", true,
+                [&](const CancelToken& cancel) {
+                    const Result<void> moved = fs.rename(
+                        written, context.root.child(QStringLiteral("cancel-renamed.bin")), cancel);
+                    if (moved.ok())
+                        fs.rename(
+                            context.root.child(QStringLiteral("cancel-renamed.bin")), written, noCancel);
+                    return moved.ok() ? VfsError {} : moved.error();
+                } },
+        };
+
+        if (!anAction.isEmpty()) {
+            calls.append({ "invoke", false, [&](const CancelToken& cancel) {
+                              const Result<FileActionOutcome> outcome = fs.invoke(anAction, alpha, cancel);
+                              return outcome.ok() ? VfsError {} : outcome.error();
+                          } });
+        }
+
+        // probe() is not in the list, and not because it cannot be held. It
+        // answers into offers() rather than to its caller, and the section above
+        // has already probed successfully -- so a cancelled probe has nothing
+        // observable left to assert here. Where its token is honoured is
+        // askWhatIsOffered(), which tst_OfferingFileSystem holds directly.
+        QStringList notArranged;
+        for (const HeldCall& call : calls) {
+            if (call.needsWriting && !context.expectsWriteSupport)
+                continue;
+            std::atomic_bool noticed { false };
+            CancelToken token;
+            const bool arranged = context.whileHeldPartWay(
+                call.what,
+                [&](const CancelToken& cancel) {
+                    const VfsError answer = call.attempt(cancel);
+                    noticed.store(answer.code == VfsError::Cancelled);
+                },
+                [&token] { token.cancel(); });
+            if (!arranged) {
+                notArranged.append(QLatin1String(call.what));
+                continue;
+            }
+            QVERIFY2(noticed.load(),
+                qPrintable(QStringLiteral("a token cancelled while %1 was running was not noticed: the "
+                                          "operation ran to completion, which is what the task layer "
+                                          "cannot undo")
+                               .arg(QLatin1String(call.what))));
+        }
+        if (!notArranged.isEmpty()) {
+            // Said out loud rather than left silent: a case nobody can arrange
+            // reads exactly like a case that passed.
+            qInfo("this fixture cannot hold these calls part way, so their mid-flight cancel was not "
+                  "checked: %s",
+                qPrintable(notArranged.join(QStringLiteral(", "))));
         }
     }
 
@@ -791,6 +1181,180 @@ void runFileSystemConformance(const ConformanceContext& context)
         } else {
             QVERIFY2(!access.ok(), "a backend without ReportsAccess must refuse, not invent");
             QCOMPARE(access.error().code, VfsError::NotSupported);
+        }
+    }
+
+    if (!context.exercisesScale)
+        return;
+
+    // ---- optional: scale -------------------------------------------------
+    //
+    // **The largest payload the suite ever wrote was 64 KiB**, and everything a
+    // size gets wrong is above that: an offset held in 32 bits, a listing built
+    // by appending to a list that is copied each time, a name one byte over what
+    // the volume takes. None of the three is visible at 64 KiB, and all three
+    // are what somebody hits on the day they use this on real data. Behind
+    // exercisesScale because it is minutes and gigabytes, and the fast tier is
+    // a tier somebody runs on every change. See MOLE-401.
+    {
+        // Past 4 GiB, which is where an offset kept in 32 bits stops working.
+        // Not a round number: the last chunk being short is the case a loop that
+        // assumes whole chunks gets wrong.
+        const qint64 large = 4LL * 1024 * 1024 * 1024 + 4096 + 7;
+        const VfsUri huge = context.root.child(QStringLiteral("four-gigabytes.bin"));
+
+        const Result<SpaceInfo> room = fs.space(context.root);
+        const bool enoughRoom = room.ok() && room.value().freeBytes > large + (256LL << 20);
+        if (!enoughRoom) {
+            qInfo("the large-file case did not run: %s",
+                room.ok()
+                    ? "the scratch volume has less room than the file needs"
+                    : qPrintable(
+                          QStringLiteral("this drive does not report space (%1)").arg(room.error().message)));
+        } else {
+            // A pattern rather than zeroes, so a read that lands at the wrong
+            // offset comes back with the wrong bytes rather than with the same
+            // zeroes the right offset would have given.
+            const int chunk = 8 << 20;
+            QByteArray pattern(chunk, Qt::Uninitialized);
+            for (int index = 0; index < chunk; ++index)
+                pattern[index] = char('A' + (index % 23));
+
+            Result<std::unique_ptr<QIODevice>> writing = fs.openWrite(huge, large, noCancel);
+            QVERIFY2(writing.ok(), qPrintable(writing.error().message));
+            qint64 written = 0;
+            while (written < large) {
+                const qint64 want = qMin<qint64>(chunk, large - written);
+                const qint64 put = writing.value()->write(pattern.constData(), want);
+                QCOMPARE(put, want);
+                written += put;
+            }
+            const Result<void> landed = closeAndReport(*writing.value());
+            QVERIFY2(landed.ok(), qPrintable(landed.error().message));
+            writing.value().reset();
+
+            const Result<FileEntry> found = fs.stat(huge);
+            QVERIFY2(found.ok(), qPrintable(found.error().message));
+            QCOMPARE(found.value().size, large);
+
+            // Three places: the beginning, the two bytes either side of the 4 GiB
+            // line, and the short tail at the end.
+            const QList<qint64> offsets { 0, (4LL * 1024 * 1024 * 1024) - 3, large - 9 };
+            Result<std::unique_ptr<QIODevice>> reading = fs.openRead(huge, large, noCancel);
+            QVERIFY2(reading.ok(), qPrintable(reading.error().message));
+            if (fs.capabilities().testFlag(VfsCapability::RandomAccessRead)) {
+                for (const qint64 offset : offsets) {
+                    QVERIFY2(reading.value()->seek(offset),
+                        qPrintable(QStringLiteral("this drive could not seek to %1 in a %2 byte file")
+                                       .arg(offset)
+                                       .arg(large)));
+                    const QByteArray got = reading.value()->read(9);
+                    QCOMPARE(got.size(), 9);
+                    for (int index = 0; index < got.size(); ++index) {
+                        const qint64 absolute = offset + index;
+                        QCOMPARE(got.at(index), char('A' + ((absolute % chunk) % 23)));
+                    }
+                }
+            } else {
+                qInfo("the offsets in the large file were not checked: this drive does not seek");
+            }
+            reading.value().reset();
+
+            QVERIFY2(fs.remove(huge, false, noCancel).ok(), "the large file has to be removable again");
+        }
+    }
+
+    {
+        // A listing wide enough that anything quadratic in the number of entries
+        // shows up as a suite that never finishes rather than as a slow one.
+        const int many = 100'000;
+        const VfsUri wide = context.root.child(QStringLiteral("many-entries"));
+        QVERIFY2(fs.makeDirectory(wide).ok(), "the wide directory has to be creatable");
+
+        for (int index = 0; index < many; ++index) {
+            const VfsUri entry
+                = wide.child(QStringLiteral("entry-%1.dat").arg(index, 6, 10, QLatin1Char('0')));
+            Result<std::unique_ptr<QIODevice>> opened = fs.openWrite(entry, 1, noCancel);
+            QVERIFY2(opened.ok(), qPrintable(opened.error().message));
+            opened.value()->write(QByteArray(1, char('x')));
+            const Result<void> landed = closeAndReport(*opened.value());
+            QVERIFY2(landed.ok(), qPrintable(landed.error().message));
+            opened.value().reset();
+        }
+
+        const Result<FileEntryList> listing = fs.list(wide, noCancel);
+        QVERIFY2(listing.ok(), qPrintable(listing.error().message));
+        QCOMPARE(listing.value().size(), many);
+
+        // Not only the count: a listing that dropped one and invented another
+        // has the right size and the wrong contents.
+        QSet<QString> names;
+        for (const FileEntry& entry : listing.value())
+            names.insert(entry.name);
+        QCOMPARE(names.size(), many);
+        QVERIFY(names.contains(QStringLiteral("entry-000000.dat")));
+        QVERIFY(names.contains(QStringLiteral("entry-099999.dat")));
+
+        QVERIFY2(fs.remove(wide, true, noCancel).ok(), "the wide directory has to be removable again");
+    }
+
+    {
+        // A name at the limit and a name one past it. The limit is the drive's
+        // own answer, so this is the same assertion on every volume rather than
+        // 255 typed into a test.
+        const NameRules rules = fs.nameRules();
+        const int limit = rules.maximumLengthInBytes > 0 ? rules.maximumLengthInBytes : rules.maximumLength;
+        if (limit <= 0) {
+            qInfo("the name-length case did not run: this drive states no limit");
+        } else {
+            // ASCII, so bytes and characters are the same number whichever of
+            // the two limits the drive stated.
+            const QString atTheLimit = QString(limit - 4, QLatin1Char('n')) + QStringLiteral(".dat");
+            const VfsUri accepted = context.root.child(atTheLimit);
+            Result<std::unique_ptr<QIODevice>> opened = fs.openWrite(accepted, 1, noCancel);
+            QVERIFY2(opened.ok(),
+                qPrintable(QStringLiteral("a name of exactly %1 was refused, and this drive says %1 is "
+                                          "the limit: %2")
+                               .arg(limit)
+                               .arg(opened.ok() ? QString() : opened.error().message)));
+            opened.value()->write(QByteArray(1, char('x')));
+            const Result<void> landed = closeAndReport(*opened.value());
+            QVERIFY2(landed.ok(),
+                qPrintable(QStringLiteral("a name of exactly %1 could not be committed, and this drive "
+                                          "says %1 is the limit: %2")
+                               .arg(limit)
+                               .arg(landed.error().message)));
+            opened.value().reset();
+            QVERIFY2(fs.stat(accepted).ok(), "a name at the limit has to be found again under that name");
+            QVERIFY2(fs.remove(accepted, false, noCancel).ok(), "and has to be removable");
+
+            const QString pastIt = QString(limit + 1, QLatin1Char('n'));
+            Result<std::unique_ptr<QIODevice>> refused
+                = fs.openWrite(context.root.child(pastIt), 1, noCancel);
+            if (refused.ok()) {
+                // **A staging backend refuses on the way out, not on the way
+                // in**: the working name is short enough to open and the rename
+                // into place is what fails. So the refusal is collected from
+                // closeAndReport() -- and either it says no, or the file is
+                // there under the name that was asked for. What is ruled out is
+                // the third answer: an acknowledged write that kept the bytes
+                // under a name nobody asked for, which is ADR-0070's silent
+                // rewrite.
+                const Result<void> landed = closeAndReport(*refused.value());
+                refused.value().reset();
+                if (landed.ok()) {
+                    QVERIFY2(fs.stat(context.root.child(pastIt)).ok(),
+                        "this drive acknowledged a name past its own limit and did not keep it under "
+                        "that name");
+                    fs.remove(context.root.child(pastIt), false, noCancel);
+                } else {
+                    QVERIFY2(!fs.stat(context.root.child(pastIt)).ok(),
+                        "this drive refused the name and left the file behind anyway");
+                }
+            } else {
+                QVERIFY2(refused.error().code != VfsError::Unknown,
+                    "a name refused for its length has to say why");
+            }
         }
     }
 }

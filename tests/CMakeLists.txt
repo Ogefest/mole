@@ -261,6 +261,16 @@ mole_add_test(tst_NameRules         SOURCES core/tst_NameRules.cpp)
 mole_add_test(tst_QmlConventions    SOURCES app/tst_QmlConventions.cpp  LIBS Qt6::Gui)
 mole_add_test(tst_LocalFileSystem   SOURCES core/tst_LocalFileSystem.cpp)
 
+# The same conformance suite at a size, on the heavy tier: four gigabytes past
+# the 32-bit offset line, a hundred thousand entries in one directory, and a
+# name at exactly the length the volume states. Minutes and gigabytes, so it is
+# labelled out of `make test` -- and QtTest's own five-minute per-function
+# watchdog is the one that fires first here, so it is raised with the timeout.
+# See MOLE-401.
+mole_add_test(tst_ScaleConformance  SOURCES scale/tst_ScaleConformance.cpp)
+set_tests_properties(tst_ScaleConformance PROPERTIES TIMEOUT 3600 LABELS heavy
+                     ENVIRONMENT "QTEST_FUNCTION_TIMEOUT=1800000")
+
 # Earlier states of a file, where the filesystem already keeps them. The shape is
 # a temporary tree, so the discovery walk and the per-folder union are held on any
 # machine; the live case reads MOLE_TEST_SNAPSHOT_PATH and skips without it.
@@ -303,6 +313,7 @@ mole_add_test(tst_WrappedDriveAnswers SOURCES core/tst_WrappedDriveAnswers.cpp)
 mole_add_test(tst_DirectoryWalker   SOURCES core/tst_DirectoryWalker.cpp)
 mole_add_test(tst_TaskManager       SOURCES core/tst_TaskManager.cpp)
 mole_add_test(tst_DriveCheckTask    SOURCES core/tst_DriveCheckTask.cpp)
+mole_add_test(tst_DriveActionTasks  SOURCES core/tst_DriveActionTasks.cpp)
 mole_add_test(tst_IndexDatabase     SOURCES core/tst_IndexDatabase.cpp LIBS Qt6::Sql)
 mole_add_test(tst_ScanTask          SOURCES core/tst_ScanTask.cpp)
 mole_add_test(tst_LiveSearchTask    SOURCES core/tst_LiveSearchTask.cpp)

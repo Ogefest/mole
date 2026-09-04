@@ -1,9 +1,12 @@
 #include "support/FileSystemConformance.h"
 #include "support/MoleTestMain.h"
+#include "support/TestSupport.h"
 
 #include "core/vfs/backends/MemoryFileSystem.h"
 
 #include <QElapsedTimer>
+
+#include <thread>
 
 using namespace mole;
 using namespace mole::test;
@@ -52,6 +55,49 @@ void TestMemoryFileSystem::conformance()
     // name and so no moment at which it could tell an overwrite from a file that
     // arrived. See ConformanceContext::stagesWrites and TODO.md.
     context.stagesWrites = false;
+
+    // **Held part way, which is what makes the mid-operation cancel real.** The
+    // suite could only ever offer a token that was already cancelled, and every
+    // backend answers that before it starts -- so nothing held one to noticing a
+    // token cancelled *while it is working*, which is the only cancel a user can
+    // produce. The drive's list gate is a condition rather than a duration: the
+    // listing is definitely inside the call when the count says so. See
+    // ADR-0096 and MOLE-401.
+    context.whileHeldPartWay = [fs](const char* what,
+                                   const std::function<void(const CancelToken&)>& operation,
+                                   const std::function<void()>& whenHeld) {
+        // Two of the calls can be held, because two of them have a gate: the
+        // listing and the read. remove(), rename() and openWrite() finish in
+        // memory with nothing to wait on, so there is no moment to be "inside"
+        // them -- the suite is told so rather than passed.
+        const QLatin1String call(what);
+        const bool listing = call == QLatin1String("list");
+        const bool reading = call == QLatin1String("openRead");
+        if (!listing && !reading)
+            return false;
+
+        auto gate = std::make_shared<QSemaphore>(0);
+        if (listing)
+            fs->setListGate(gate);
+        else
+            fs->setReadGate(gate);
+
+        CancelToken token;
+        std::thread worker([&operation, &token] { operation(token); });
+
+        // Wait for the call to be *in* the drive, then cancel and let it go.
+        const bool held = mole::test::waitFor(
+            [fs, listing] { return (listing ? fs->listsInProgress() : fs->readsInProgress()) > 0; }, 5000);
+        whenHeld();
+        token.cancel();
+        gate->release(4);
+        worker.join();
+        if (listing)
+            fs->setListGate(nullptr);
+        else
+            fs->setReadGate(nullptr);
+        return held;
+    };
 
     runFileSystemConformance(context);
 }
