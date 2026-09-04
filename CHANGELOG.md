@@ -65,6 +65,8 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-374 An SFTP drive that logs in with a private key can read, write, rename and delete, not only browse
+2026-09-04 #MOLE-374 A private key written as ~/.ssh/id_ed25519 is found, instead of being refused as a bad credential
 2026-09-04 #MOLE-391 mole-tasks reaches a rooted drive at the address the window uses, instead of one folder deeper
 2026-09-04 #MOLE-391 mole-tasks takes an archive passphrase from the environment and refuses one typed as an argument
 2026-09-04 #MOLE-391 mole-tasks refuses a mistyped --mode, --compare, --format, --min-size or --number-from, instead of running something else

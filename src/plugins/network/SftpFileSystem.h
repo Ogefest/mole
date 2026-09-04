@@ -35,6 +35,14 @@ struct SftpSettings
     QString knownHostsPath;
 };
 
+/// What every lease for this drive is prepared with.
+///
+/// A free function rather than something built inside the constructor, because
+/// the identity of a drive is the whole of MOLE-374: it must be in the options
+/// the pool applies to every handle, and there must be nowhere else it can be
+/// put. A test can hold that here without a server.
+net::TransportOptions transportOptionsFor(const SftpSettings& settings);
+
 /// SFTP over libcurl.
 ///
 /// Reads its directory listings out of the text libcurl produces from the

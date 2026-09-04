@@ -404,6 +404,13 @@ void CurlPool::prepare(CURL* handle) const
         curl_easy_setopt(handle, CURLOPT_PASSWORD, m_options.password.toUtf8().constData());
     }
 
+    if (!m_options.privateKeyPath.isEmpty()) {
+        curl_easy_setopt(handle, CURLOPT_SSH_PRIVATE_KEYFILE, m_options.privateKeyPath.toUtf8().constData());
+        if (!m_options.privateKeyPassphrase.isEmpty()) {
+            curl_easy_setopt(handle, CURLOPT_KEYPASSWD, m_options.privateKeyPassphrase.toUtf8().constData());
+        }
+    }
+
     if (!m_options.knownHostsPath.isEmpty()) {
         // Not every libcurl build can do this -- it depends which SSH library
         // curl was compiled against -- so a refusal here is not fatal. What

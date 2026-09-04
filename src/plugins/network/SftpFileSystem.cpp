@@ -27,6 +27,19 @@ namespace {
         return QDir::homePath() + QStringLiteral("/.ssh/known_hosts");
     }
 
+    /// `~/x` as an absolute path. libcurl does not expand it, and the form's own
+    /// help suggests `~/.ssh/id_ed25519` -- so the spelling the interface
+    /// recommends went to the server as a path with a tilde in it and came back
+    /// as "the server refused the credentials".
+    QString expandHome(const QString& path)
+    {
+        if (path == QLatin1String("~"))
+            return QDir::homePath();
+        if (path.startsWith(QLatin1String("~/")))
+            return QDir::homePath() + path.mid(1);
+        return path;
+    }
+
     /// How much of a large file one connection is asked to carry.
     ///
     /// An SFTP transfer stops dead a little short of a gibibyte: the bytes
@@ -59,16 +72,17 @@ namespace {
 
 } // namespace
 
-SftpFileSystem::SftpFileSystem(QString scheme, SftpSettings settings)
-    : m_scheme(std::move(scheme))
-    , m_settings(std::move(settings))
+net::TransportOptions transportOptionsFor(const SftpSettings& settings)
 {
     net::TransportOptions options;
-    options.username = m_settings.username;
-    options.password = m_settings.password;
+    options.username = settings.username;
+    options.password = settings.password;
+    // Every lease, not one of them. See TransportOptions::privateKeyPath.
+    options.privateKeyPath = settings.privateKeyPath;
+    options.privateKeyPassphrase = settings.privateKeyPassphrase;
     options.knownHostsPath
-        = m_settings.knownHostsPath.isEmpty() ? defaultKnownHosts() : m_settings.knownHostsPath;
-    options.acceptUnknownHostKey = m_settings.acceptNewHostKey;
+        = settings.knownHostsPath.isEmpty() ? defaultKnownHosts() : settings.knownHostsPath;
+    options.acceptUnknownHostKey = settings.acceptNewHostKey;
     // How patient one *connection* is, which on this backend is a much smaller
     // question than how patient the transfer is. A read here is a span loop with
     // a budget over it (StreamingDownload), so a connection that has stopped
@@ -81,7 +95,14 @@ SftpFileSystem::SftpFileSystem(QString scheme, SftpSettings settings)
     // takes the transfer with it only after several times the wait somebody set.
     // See the second amendment to ADR-0013.
     options.stallSeconds = 25;
-    m_pool = std::make_unique<net::CurlPool>(std::move(options));
+    return options;
+}
+
+SftpFileSystem::SftpFileSystem(QString scheme, SftpSettings settings)
+    : m_scheme(std::move(scheme))
+    , m_settings(std::move(settings))
+{
+    m_pool = std::make_unique<net::CurlPool>(transportOptionsFor(m_settings));
 }
 
 VfsCapabilities SftpFileSystem::capabilities() const
@@ -124,15 +145,9 @@ net::Response SftpFileSystem::fetchListing(const VfsUri& dir, const CancelToken&
     }
 
     lease.setUrl(urlFor(dir, true));
-    if (!m_settings.privateKeyPath.isEmpty()) {
-        curl_easy_setopt(
-            lease.get(), CURLOPT_SSH_PRIVATE_KEYFILE, m_settings.privateKeyPath.toUtf8().constData());
-        if (!m_settings.privateKeyPassphrase.isEmpty()) {
-            curl_easy_setopt(
-                lease.get(), CURLOPT_KEYPASSWD, m_settings.privateKeyPassphrase.toUtf8().constData());
-        }
-    }
-
+    // Nothing about the key here: the pool prepares every handle with it, which
+    // is what makes a read, a write and a quote command authenticate the same
+    // way a listing does.
     return m_pool->perform(lease, cancel);
 }
 
@@ -569,7 +584,7 @@ SftpSettings SftpFileSystemFactory::settingsFrom(const QVariantMap& config)
     settings.host = config.value(QStringLiteral("host")).toString().trimmed();
     settings.username = config.value(QStringLiteral("user")).toString();
     settings.password = config.value(QStringLiteral("password")).toString();
-    settings.privateKeyPath = config.value(QStringLiteral("privateKey")).toString();
+    settings.privateKeyPath = expandHome(config.value(QStringLiteral("privateKey")).toString().trimmed());
     settings.privateKeyPassphrase = config.value(QStringLiteral("keyPassphrase")).toString();
 
     const int port = config.value(QStringLiteral("port")).toInt();

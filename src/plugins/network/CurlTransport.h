@@ -52,6 +52,16 @@ struct TransportOptions
 
     /// SFTP only. Empty means "wherever ssh would look".
     QString knownHostsPath;
+    /// SFTP only: the private key to authenticate with, and its passphrase.
+    ///
+    /// Here rather than on the one lease that used to set them. prepare() calls
+    /// curl_easy_reset() on every take() and takeFresh() hands out a handle
+    /// nobody has touched, so nothing set on a lease survives into the next one:
+    /// only the listing knew about the key, and a key-only drive browsed happily
+    /// and then failed every read, write, mkdir, rm and rename with "the server
+    /// refused the credentials". See MOLE-374.
+    QString privateKeyPath;
+    QString privateKeyPassphrase;
     /// SFTP only: accept and remember a host we have never seen. A host whose
     /// key has *changed* is refused regardless -- that is the case worth
     /// refusing, and the one this flag does not cover.

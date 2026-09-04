@@ -3,6 +3,7 @@
 #include "support/MoleTestMain.h"
 #include "support/TestbedControl.h"
 
+#include <QDir>
 #include <QFile>
 #include <QProcess>
 #include <QTemporaryDir>
@@ -26,10 +27,16 @@ struct Account
     int port = 22;
     QString user;
     QString password;
+    /// The other supported way in, which the live suite never exercised: a
+    /// private key and no password at all. Key-only is what most hardened
+    /// servers offer, and it is the configuration MOLE-374 broke.
+    QString privateKeyPath;
+    QString privateKeyPassphrase;
     /// A directory on the server the test may create things under.
     QString base;
 
     bool isConfigured() const { return !host.isEmpty() && !user.isEmpty(); }
+    bool hasKey() const { return isConfigured() && !privateKeyPath.isEmpty(); }
 };
 
 Account accountFromEnvironment()
@@ -40,6 +47,8 @@ Account accountFromEnvironment()
     account.host = value("MOLE_TEST_SFTP_HOST");
     account.user = value("MOLE_TEST_SFTP_USER");
     account.password = value("MOLE_TEST_SFTP_PASS");
+    account.privateKeyPath = value("MOLE_TEST_SFTP_KEY");
+    account.privateKeyPassphrase = value("MOLE_TEST_SFTP_KEY_PASS");
     account.base = value("MOLE_TEST_SFTP_BASE");
     if (account.base.isEmpty())
         account.base = QStringLiteral("/Shared");
@@ -285,6 +294,9 @@ private slots:
     void aFormWithoutCredentialsIsRefused();
     void theSchemeAndRootComeFromTheDrive();
     void theFormAsksOnlyWhatSftpNeeds();
+    void aPrivateKeyIsPartOfEveryLeaseAndNotOneOfThem();
+    void aKeyPathWrittenWithATildeBecomesAnAbsoluteOne();
+    void nothingOutsideThePoolSetsAnSshCredential();
 
     void aServerThatDescribesTheFileItselfIsUnderstoodToMeanAFile();
     void aServerThatRefusesToListAFileIsUnderstoodToMeanAFile();
@@ -298,6 +310,7 @@ private slots:
     void aReadWhoseConnectionIsCutDoesNotLookLikeAWholeFile();
     void aKilledUploadLeavesNothingThatLooksFinished();
     void aHostKeyThatChangedIsRefused();
+    void aKeyOnlyDriveDoesEverythingAndNotOnlyBrowsing();
 };
 
 void TestSftpFileSystem::aFormWithoutAHostIsRefused()
@@ -366,6 +379,80 @@ void TestSftpFileSystem::theFormAsksOnlyWhatSftpNeeds()
     }
     QCOMPARE(required, 2); // host and user, and nothing else
     QVERIFY2(hasPasswordField, "a password field is what routes the secret to the credential store");
+}
+
+/// A key-only drive browsed and could do nothing else.
+///
+/// `fetchListing()` set CURLOPT_SSH_PRIVATE_KEYFILE and CURLOPT_KEYPASSWD on its
+/// own lease, and nothing else did. `CurlPool::prepare()` calls
+/// `curl_easy_reset()` on every take() and takeFresh() hands out a handle nobody
+/// has touched, so nothing set on one lease survives into the next: the listing
+/// authenticated with the key and every read, write, mkdir, rm and rename fell
+/// back to the password that was not there. CURLE_LOGIN_DENIED became
+/// AccessDenied, "the server refused the credentials", which points at exactly
+/// the wrong problem. See MOLE-374.
+void TestSftpFileSystem::aPrivateKeyIsPartOfEveryLeaseAndNotOneOfThem()
+{
+    SftpSettings settings;
+    settings.host = QStringLiteral("example");
+    settings.username = QStringLiteral("someone");
+    settings.privateKeyPath = QStringLiteral("/keys/id_ed25519");
+    settings.privateKeyPassphrase = QStringLiteral("open sesame");
+
+    // The options the pool prepares *every* handle with, which is the only place
+    // an identity can live once a lease cannot carry one.
+    const net::TransportOptions options = transportOptionsFor(settings);
+    QCOMPARE(options.privateKeyPath, settings.privateKeyPath);
+    QCOMPARE(options.privateKeyPassphrase, settings.privateKeyPassphrase);
+}
+
+void TestSftpFileSystem::aKeyPathWrittenWithATildeBecomesAnAbsoluteOne()
+{
+    // libcurl does not expand a tilde, and the form's own help suggests
+    // ~/.ssh/id_ed25519 -- so the spelling the interface recommends was handed
+    // to the server verbatim and came back as a refused credential.
+    QVariantMap config;
+    config.insert(QStringLiteral("host"), QStringLiteral("example"));
+    config.insert(QStringLiteral("user"), QStringLiteral("someone"));
+    config.insert(QStringLiteral("privateKey"), QStringLiteral("~/.ssh/id_ed25519"));
+
+    const SftpSettings settings = SftpFileSystemFactory::settingsFrom(config);
+    QCOMPARE(settings.privateKeyPath, QDir::homePath() + QStringLiteral("/.ssh/id_ed25519"));
+    QVERIFY(!settings.privateKeyPath.contains(QLatin1Char('~')));
+
+    // A path that is already absolute is left exactly as it was.
+    config.insert(QStringLiteral("privateKey"), QStringLiteral("/etc/keys/deploy~1"));
+    QCOMPARE(
+        SftpFileSystemFactory::settingsFrom(config).privateKeyPath, QStringLiteral("/etc/keys/deploy~1"));
+}
+
+void TestSftpFileSystem::nothingOutsideThePoolSetsAnSshCredential()
+{
+    // The fault was one lease knowing something the other four did not, so the
+    // rule that stops it coming back is about *where* a credential may be set,
+    // and that is cheaper to state here than to catch in review. Every backend
+    // in this directory takes its identity from the options the pool prepares
+    // with; a curl_easy_setopt naming a key anywhere else is a fifth lease
+    // waiting to be forgotten.
+    const QDir directory(QStringLiteral(MOLE_SHELL_SOURCE_DIR) + QStringLiteral("/plugins/network"));
+    const QStringList sources = directory.entryList({ QStringLiteral("*.cpp") }, QDir::Files, QDir::Name);
+    QVERIFY(!sources.isEmpty());
+
+    QStringList offenders;
+    for (const QString& name : sources) {
+        if (name == QLatin1String("CurlTransport.cpp"))
+            continue;
+        QFile source(directory.filePath(name));
+        QVERIFY2(source.open(QIODevice::ReadOnly), qPrintable(source.fileName()));
+        const QString text = QString::fromUtf8(source.readAll());
+        for (const QString& option :
+            { QStringLiteral("CURLOPT_SSH_PRIVATE_KEYFILE"), QStringLiteral("CURLOPT_KEYPASSWD"),
+                QStringLiteral("CURLOPT_USERNAME"), QStringLiteral("CURLOPT_PASSWORD") }) {
+            if (text.contains(option))
+                offenders.append(QStringLiteral("%1 sets %2").arg(name, option));
+        }
+    }
+    QVERIFY2(offenders.isEmpty(), qPrintable(offenders.join(QStringLiteral("; "))));
 }
 
 /// Asked to list a file, a server that answers with a "." row describing the
@@ -958,6 +1045,68 @@ void TestSftpFileSystem::aHostKeyThatChangedIsRefused()
     QVERIFY2(!refused.error().message.isEmpty(),
         "a refusal has to say something; being turned away for no stated reason is indistinguishable "
         "from the server being down");
+}
+
+/// The half of MOLE-374 that only a server can answer.
+///
+/// Key-only login is an explicitly supported configuration -- `create()` accepts
+/// "either a password or a private key" -- and the live suite had only ever used
+/// a password, so a drive that listed directories and then failed every other
+/// operation went unnoticed. This is the run that would have caught it: no
+/// password anywhere, and every operation the quote-command and transfer paths
+/// use, each of which takes its own lease.
+void TestSftpFileSystem::aKeyOnlyDriveDoesEverythingAndNotOnlyBrowsing()
+{
+    const Account account = accountFromEnvironment();
+    if (!account.hasKey()) {
+        QSKIP("No key-only SFTP account in the environment; set MOLE_TEST_SFTP_KEY (and "
+              "MOLE_TEST_SFTP_KEY_PASS if the key has one) beside MOLE_TEST_SFTP_HOST and "
+              "MOLE_TEST_SFTP_USER to run this against a real server.");
+    }
+
+    SftpSettings settings;
+    settings.host = account.host;
+    settings.port = account.port;
+    settings.username = account.user;
+    // Deliberately empty. With a password to fall back on, every lease but the
+    // listing's would have logged in anyway and the fault would be invisible.
+    settings.password.clear();
+    settings.privateKeyPath = account.privateKeyPath;
+    settings.privateKeyPassphrase = account.privateKeyPassphrase;
+    settings.remoteRoot = account.base;
+
+    SftpFileSystem drive(QStringLiteral("sftp"), settings);
+    const VfsUri root(QStringLiteral("sftp"), QString(), QStringLiteral("/"));
+    const QString name = QStringLiteral("mole-key-only-%1").arg(QCoreApplication::applicationPid());
+    const VfsUri folder = root.child(name);
+
+    // Browsing worked all along; it is here so a failure says which step broke.
+    const Result<FileEntryList> listed = drive.list(root, CancelToken());
+    QVERIFY2(listed.ok(), qPrintable(listed.error().message));
+
+    // A quote command, on its own lease.
+    const Result<void> made = drive.makeDirectory(folder);
+    QVERIFY2(made.ok(), qPrintable(made.error().message));
+
+    // A write, a read and a rename, each on another one.
+    const VfsUri file = folder.child(QStringLiteral("payload.bin"));
+    const QByteArray contents(4096, 'k');
+    Result<std::unique_ptr<QIODevice>> writer = drive.openWrite(file, contents.size());
+    QVERIFY2(writer.ok(), qPrintable(writer.error().message));
+    QCOMPARE(writer.value()->write(contents), static_cast<qint64>(contents.size()));
+    writer.value()->close();
+
+    Result<std::unique_ptr<QIODevice>> reader = drive.openRead(file, contents.size());
+    QVERIFY2(reader.ok(), qPrintable(reader.error().message));
+    QCOMPARE(reader.value()->readAll(), contents);
+    reader.value()->close();
+
+    const VfsUri renamed = folder.child(QStringLiteral("payload.done"));
+    const Result<void> moved = drive.rename(file, renamed);
+    QVERIFY2(moved.ok(), qPrintable(moved.error().message));
+
+    const Result<void> gone = drive.remove(folder, true);
+    QVERIFY2(gone.ok(), qPrintable(gone.error().message));
 }
 
 MOLE_TEST_MAIN(TestSftpFileSystem)
