@@ -31,6 +31,7 @@ bool AlertStore::load()
 
     m_rules.clear();
     m_history.clear();
+    m_unreadable = 0;
     if (read == Read::Missing) {
         emit rulesChanged();
         emit historyChanged();
@@ -39,9 +40,12 @@ bool AlertStore::load()
 
     const QJsonArray rules = root.value(QStringLiteral("rules")).toArray();
     for (const QJsonValue& value : rules) {
-        const AlertRule rule = AlertRule::fromJson(value.toObject());
-        if (rule.isValid())
-            m_rules.append(rule);
+        const std::optional<AlertRule> rule = AlertRule::fromJson(value.toObject());
+        if (!rule || !rule->isValid()) {
+            ++m_unreadable;
+            continue;
+        }
+        m_rules.append(*rule);
     }
 
     const QJsonArray history = root.value(QStringLiteral("history")).toArray();

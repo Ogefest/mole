@@ -127,6 +127,26 @@ public:
     /// has done to the index. Waiting is on isStalled(), as it is for a read.
     FaultyFileSystem& listStalls(const QString& path);
 
+    /// Refuses to list `path`, or every directory when it is empty.
+    ///
+    /// A folder nobody may enter, which is the ordinary shape of the fault a
+    /// walk has to answer for: DirectoryWalker records it and carries on, so
+    /// whatever the walk was counting comes back short by whatever was inside.
+    /// Only the listing is refused, so the folder still stats as a folder --
+    /// which is exactly what a caller meets.
+    FaultyFileSystem& listFails(const QString& path = {}, VfsError::Code code = VfsError::AccessDenied,
+        const QString& message = QStringLiteral("permission denied"));
+
+    // ---- what goes wrong while asking about one name ----------------------
+
+    /// Refuses to stat `path`, or everything when it is empty.
+    ///
+    /// Not the same thing as a name that is not there. NotFound is an answer;
+    /// every other code is the absence of one, and a caller that reads them
+    /// alike reports an unreachable drive as a file that has been deleted.
+    FaultyFileSystem& statFails(const QString& path = {}, VfsError::Code code = VfsError::NetworkError,
+        const QString& message = QStringLiteral("the connection went away"));
+
     // ---- what goes wrong while deleting -----------------------------------
 
     /// Refuses to delete `path`, or everything when it is empty.

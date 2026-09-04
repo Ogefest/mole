@@ -7,6 +7,7 @@
 #include "core/alerts/AlertStore.h"
 
 #include <QPointer>
+#include <QVariant>
 #include <QVariantList>
 
 namespace mole {
@@ -50,9 +51,12 @@ public:
     void setSuggestedTarget(const QString& target);
 
     /// Creates a watch. Returns the new id, or an empty string when the input
-    /// does not describe anything checkable.
+    /// does not describe anything checkable -- which includes a threshold this
+    /// cannot read. The threshold arrives as the text that was typed rather than
+    /// as a number, because "10 GBB" and "10 GB" are different answers and a
+    /// double cannot carry the difference.
     Q_INVOKABLE QString addAlert(const QString& label, const QString& targetUri, const QString& metric,
-        const QString& comparison, double threshold, const QString& source);
+        const QString& comparison, const QString& threshold, const QString& source);
     Q_INVOKABLE bool removeAlert(const QString& id);
     Q_INVOKABLE bool setEnabled(const QString& id, bool enabled);
     Q_INVOKABLE bool setThreshold(const QString& id, double threshold);
@@ -61,8 +65,11 @@ public:
     Q_INVOKABLE void checkNow(const QString& id = {});
     Q_INVOKABLE void clearHistory();
 
-    /// A byte threshold is entered as "10 GB", not as 10737418240.
-    Q_INVOKABLE double parseThreshold(const QString& text, const QString& metric) const;
+    /// A byte threshold is entered as "10 GB", not as 10737418240. Undefined in
+    /// QML when the text is not a number this understands, which is what keeps
+    /// the Add button off: it used to answer 0 for "10 GBB", "ten" and an empty
+    /// field alike, and "above 0" fires on the first check.
+    Q_INVOKABLE QVariant parseThreshold(const QString& text, const QString& metric) const;
     Q_INVOKABLE QString unitFor(const QString& metric) const;
     Q_INVOKABLE bool metricNeedsNumber(const QString& metric) const;
 

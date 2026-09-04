@@ -9,6 +9,14 @@
 namespace mole {
 
 /// Where the alerts and their history live. One file, written whole.
+///
+/// **A rule that will not load is dropped and said to have been dropped.** The
+/// same call as ChainStore makes, and for the same reason: refusing the whole
+/// file loses nine good watches to one bad one, and loading a rule whose metric
+/// or source this build does not know would keep the name and the target while
+/// quietly watching something else. The count is available to whoever wants to
+/// say so, because a watch that stops watching in silence is exactly the failure
+/// alerts exist to prevent.
 class AlertStore : public JsonFileStore
 {
     Q_OBJECT
@@ -41,6 +49,9 @@ public:
     /// Alerts currently outside their bounds.
     int triggeredCount() const;
 
+    /// How many rules the last load could not read. Zero after a clean load.
+    [[nodiscard]] int unreadable() const { return m_unreadable; }
+
     void setHistoryLimit(int limit) { m_historyLimit = std::max(1, limit); }
 
 signals:
@@ -56,6 +67,7 @@ private:
 
     QList<AlertRule> m_rules;
     QList<AlertEvent> m_history;
+    int m_unreadable = 0;
     int m_historyLimit = 200;
 };
 

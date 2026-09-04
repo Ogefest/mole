@@ -166,14 +166,22 @@ Item {
                 Button {
                     objectName: "addAlertButton"
                     text: "Add"
-                    enabled: targetField.text.trim().length > 0
+                    // A threshold that could not be read used to become 0, and
+                    // "above 0" fires on the first check of anything that is not
+                    // empty. Nothing is added until the field says a number --
+                    // when the field is in use at all, which "changes" and the
+                    // textual metrics are not.
+                    readonly property bool thresholdReads:
+                        !thresholdField.enabled
+                        || (controller
+                            && controller.parseThreshold(thresholdField.text,
+                                                         metricBox.currentValue) !== undefined)
+                    enabled: targetField.text.trim().length > 0 && thresholdReads
                     onClicked: {
-                        const threshold = controller.parseThreshold(thresholdField.text,
-                                                                    metricBox.currentValue)
                         const id = controller.addAlert(labelField.text, targetField.text,
                                                        metricBox.currentValue,
                                                        comparisonBox.currentValue,
-                                                       threshold, sourceBox.currentValue)
+                                                       thresholdField.text, sourceBox.currentValue)
                         if (id.length > 0) {
                             labelField.text = ""
                             thresholdField.text = ""

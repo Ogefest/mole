@@ -86,20 +86,13 @@ AlertEvaluator::Reading AlertEvaluator::measureFromReport(const AlertRule& rule)
     case AlertMetric::UnreadableFolders:
         reading.number = report.unreadableFolders;
         break;
-    case AlertMetric::NewestFileAgeHours: {
-        QDateTime newest;
-        for (const FileStat& file : report.largestFiles) {
-            if (!newest.isValid() || file.modified > newest)
-                newest = file.modified;
-        }
-        if (!newest.isValid()) {
-            reading.measured = false;
-            reading.error = QStringLiteral("The report records no timestamps");
-            return reading;
-        }
-        reading.number = newest.secsTo(report.createdAt) / 3600.0;
-        break;
-    }
+    // Refused rather than approximated. AnalysisReport carries no tree-wide
+    // newest timestamp; the only timestamps in it belong to the twenty-five
+    // largest files, and the newest among *those* is the newest large file. A
+    // backup folder whose only recent writes are small logs would read as
+    // stalled -- the alert firing for the opposite of its reason. Measure it
+    // live, or give the report the field.
+    case AlertMetric::NewestFileAgeHours:
     default:
         reading.measured = false;
         reading.error = QStringLiteral("%1 cannot be read from a report").arg(alertMetricLabel(rule.metric));
@@ -128,6 +121,14 @@ AlertEvaluator::Reading AlertEvaluator::measureLive(const AlertRule& rule, const
     Result<FileEntry> stat = fs->stat(target);
 
     if (rule.metric == AlertMetric::Exists) {
+        // NotFound is an answer; every other code is the absence of one. Reading
+        // AccessDenied or NetworkError as "no" fires an Exists-below-1 alert on a
+        // share that is merely down and clears an Exists-above-0 one, and both
+        // say something about the file that nobody measured.
+        if (!stat.ok() && stat.error().code != VfsError::NotFound) {
+            reading.error = stat.error().message;
+            return reading;
+        }
         reading.measured = true;
         reading.number = stat.ok() ? 1.0 : 0.0;
         reading.text = stat.ok() ? QStringLiteral("yes") : QStringLiteral("no");
@@ -170,7 +171,10 @@ AlertEvaluator::Reading AlertEvaluator::measureLive(const AlertRule& rule, const
     if (rule.metric == AlertMetric::ModifiedTime) {
         reading.measured = true;
         reading.number = static_cast<double>(entry.modified.toSecsSinceEpoch());
-        reading.text = entry.modified.toString(Qt::ISODate);
+        // UTC, because Changed compares this text against the last one and a
+        // local rendering of one unchanged instant differs either side of a
+        // daylight-saving switch. That is one false alert a year.
+        reading.text = entry.modified.toUTC().toString(Qt::ISODate);
         return reading;
     }
 
@@ -219,8 +223,23 @@ AlertEvaluator::Reading AlertEvaluator::measureLive(const AlertRule& rule, const
     });
     facts.unreadableFolders = static_cast<int>(walker.errors().size());
 
-    if (!walked.ok() && walked.error().code == VfsError::Cancelled) {
-        reading.error = QStringLiteral("Cancelled");
+    if (!walked.ok()) {
+        reading.error = walked.error().code == VfsError::Cancelled ? QStringLiteral("Cancelled")
+                                                                   : walked.error().message;
+        return reading;
+    }
+
+    // A folder the walk could not enter is not an empty one. walk() records it
+    // and carries on -- which is right for a scan and wrong for a threshold:
+    // every count below is short by whatever was inside, so a size alert clears
+    // and a "fewer than N files" alert fires, both because a permission was
+    // denied. Only the metric that is about the unreadable folders can answer.
+    // See ADR-0030.
+    if (facts.unreadableFolders > 0 && rule.metric != AlertMetric::UnreadableFolders) {
+        reading.error
+            = QStringLiteral("%1 %2 could not be read")
+                  .arg(QLocale().toString(facts.unreadableFolders),
+                      facts.unreadableFolders == 1 ? QStringLiteral("folder") : QStringLiteral("folders"));
         return reading;
     }
 

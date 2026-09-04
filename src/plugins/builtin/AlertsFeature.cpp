@@ -9,6 +9,8 @@
 #include <QRegularExpression>
 #include <QUuid>
 
+#include <optional>
+
 namespace mole {
 namespace {
 
@@ -39,6 +41,60 @@ namespace {
             return QStringLiteral("Could not check");
         }
         return {};
+    }
+
+    /// The threshold as a number, or nothing when the text is not one.
+    ///
+    /// Nothing rather than 0, which is what this used to answer for "10 GBB",
+    /// "ten" and an empty field alike -- and "above 0" fires on the first check
+    /// of any folder that is not empty. `LiveSearchController::parseSize()`
+    /// refuses the same shapes for the same reason.
+    std::optional<double> thresholdFrom(const QString& text, AlertMetric metric)
+    {
+        const QString trimmed = text.trimmed();
+        if (trimmed.isEmpty())
+            return std::nullopt;
+
+        if (alertMetricUnit(metric) != QLatin1String("bytes")) {
+            // toDouble() rather than QLocale::toDouble(): strict, and it takes
+            // the decimal comma once the comma has been turned into a point.
+            QString number = trimmed;
+            number.replace(QLatin1Char(','), QLatin1Char('.'));
+            bool ok = false;
+            const double value = number.toDouble(&ok);
+            return ok ? std::optional<double>(value) : std::nullopt;
+        }
+
+        // "10 GB", "500m", "2 TiB" -- nobody types a byte count, and making them
+        // is how a threshold ends up wrong by three orders of magnitude.
+        static const QRegularExpression pattern(
+            QStringLiteral("^\\s*([0-9]+(?:[.,][0-9]+)?)\\s*([kmgtp]?)i?b?\\s*$"),
+            QRegularExpression::CaseInsensitiveOption);
+
+        const QRegularExpressionMatch match = pattern.match(trimmed);
+        if (!match.hasMatch())
+            return std::nullopt;
+
+        QString number = match.captured(1);
+        number.replace(QLatin1Char(','), QLatin1Char('.'));
+        bool ok = false;
+        double value = number.toDouble(&ok);
+        if (!ok)
+            return std::nullopt;
+
+        const QString scale = match.captured(2).toLower();
+        if (scale == QLatin1String("k"))
+            value *= 1024.0;
+        else if (scale == QLatin1String("m"))
+            value *= 1024.0 * 1024.0;
+        else if (scale == QLatin1String("g"))
+            value *= 1024.0 * 1024.0 * 1024.0;
+        else if (scale == QLatin1String("t"))
+            value *= 1024.0 * 1024.0 * 1024.0 * 1024.0;
+        else if (scale == QLatin1String("p"))
+            value *= 1024.0 * 1024.0 * 1024.0 * 1024.0 * 1024.0;
+
+        return value;
     }
 
     /// Every metric the evaluator can measure, in the order that reads best.
@@ -210,64 +266,57 @@ QVariantList AlertsController::sourceChoices() const
 
 QString AlertsController::unitFor(const QString& metric) const
 {
-    return alertMetricUnit(alertMetricFromString(metric));
+    const std::optional<AlertMetric> parsed = alertMetricFromString(metric);
+    return parsed ? alertMetricUnit(*parsed) : QString();
 }
 
 bool AlertsController::metricNeedsNumber(const QString& metric) const
 {
-    return alertMetricIsNumeric(alertMetricFromString(metric));
+    const std::optional<AlertMetric> parsed = alertMetricFromString(metric);
+    return parsed && alertMetricIsNumeric(*parsed);
 }
 
-double AlertsController::parseThreshold(const QString& text, const QString& metric) const
+QVariant AlertsController::parseThreshold(const QString& text, const QString& metric) const
 {
-    const QString unit = alertMetricUnit(alertMetricFromString(metric));
-    const QString trimmed = text.trimmed();
-
-    if (unit != QLatin1String("bytes"))
-        return QLocale().toDouble(trimmed);
-
-    // "10 GB", "500m", "2 TiB" -- nobody types a byte count, and making them
-    // is how a threshold ends up wrong by three orders of magnitude.
-    static const QRegularExpression pattern(
-        QStringLiteral("^\\s*([0-9]+(?:[.,][0-9]+)?)\\s*([kmgtp]?)i?b?\\s*$"),
-        QRegularExpression::CaseInsensitiveOption);
-
-    const QRegularExpressionMatch match = pattern.match(trimmed);
-    if (!match.hasMatch())
-        return QLocale().toDouble(trimmed);
-
-    QString number = match.captured(1);
-    number.replace(QLatin1Char(','), QLatin1Char('.'));
-    double value = number.toDouble();
-
-    const QString scale = match.captured(2).toLower();
-    if (scale == QLatin1String("k"))
-        value *= 1024.0;
-    else if (scale == QLatin1String("m"))
-        value *= 1024.0 * 1024.0;
-    else if (scale == QLatin1String("g"))
-        value *= 1024.0 * 1024.0 * 1024.0;
-    else if (scale == QLatin1String("t"))
-        value *= 1024.0 * 1024.0 * 1024.0 * 1024.0;
-    else if (scale == QLatin1String("p"))
-        value *= 1024.0 * 1024.0 * 1024.0 * 1024.0 * 1024.0;
-
-    return value;
+    const std::optional<AlertMetric> parsed = alertMetricFromString(metric);
+    if (!parsed)
+        return {};
+    const std::optional<double> value = thresholdFrom(text, *parsed);
+    // An invalid QVariant reaches QML as `undefined`, which is what the Add
+    // button tests. A number here would be indistinguishable from a real one.
+    return value ? QVariant(*value) : QVariant();
 }
 
 QString AlertsController::addAlert(const QString& label, const QString& targetUri, const QString& metric,
-    const QString& comparison, double threshold, const QString& source)
+    const QString& comparison, const QString& threshold, const QString& source)
 {
     if (!m_store || targetUri.trimmed().isEmpty())
+        return {};
+
+    const std::optional<AlertMetric> parsedMetric = alertMetricFromString(metric);
+    const std::optional<AlertComparison> parsedComparison = alertComparisonFromString(comparison);
+    const std::optional<AlertSource> parsedSource = alertSourceFromString(source);
+    if (!parsedMetric || !parsedComparison || !parsedSource)
         return {};
 
     AlertRule rule;
     rule.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     rule.targetUri = targetUri.trimmed();
-    rule.metric = alertMetricFromString(metric);
-    rule.comparison = alertComparisonFromString(comparison);
-    rule.source = alertSourceFromString(source);
-    rule.threshold = threshold;
+    rule.metric = *parsedMetric;
+    rule.comparison = *parsedComparison;
+    rule.source = *parsedSource;
+
+    // The form keeps Add off until the threshold reads, and this is the second
+    // line. A threshold that could not be read used to arrive here as 0, and
+    // "above 0" fires on the first check of anything that is not empty --
+    // an alert the user never asked for, on a folder they were watching.
+    if (*parsedComparison != AlertComparison::Changed && alertMetricIsNumeric(*parsedMetric)) {
+        const std::optional<double> value = thresholdFrom(threshold, *parsedMetric);
+        if (!value)
+            return {};
+        rule.threshold = *value;
+    }
+
     rule.label = label.trimmed().isEmpty()
         ? QStringLiteral("%1 — %2").arg(VfsUri::fromString(rule.targetUri).fileName(), rule.describe())
         : label.trimmed();

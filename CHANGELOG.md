@@ -65,6 +65,12 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-378 An alert on a drive that is unreachable says so, instead of reporting the file as missing
+2026-09-04 #MOLE-378 A size, count or age alert over a folder it could not read says so, instead of measuring what it could reach
+2026-09-04 #MOLE-378 A threshold that cannot be read is refused, instead of becoming 0 and firing on the first check
+2026-09-04 #MOLE-378 An alert watching a "last modified" time no longer fires at a daylight-saving switch
+2026-09-04 #MOLE-378 "Hours since anything changed" read from a report says it cannot be, instead of answering with the newest large file
+2026-09-04 #MOLE-378 An alert saved by a newer Mole is dropped and counted, instead of loading as a watch on total size
 2026-09-04 #MOLE-353 A chain says when its source could not be read, instead of finishing with nothing to do
 2026-09-04 #MOLE-353 A table whose row count could not be taken shows a blank, instead of claiming to be empty
 2026-09-04 #MOLE-406 Opening a file from an archive on a full disk says so, instead of opening half of it

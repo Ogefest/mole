@@ -43,13 +43,13 @@ QString alertMetricToString(AlertMetric metric)
     return QString::fromLatin1(metricTable().value(metric).id);
 }
 
-AlertMetric alertMetricFromString(const QString& text)
+std::optional<AlertMetric> alertMetricFromString(const QString& text)
 {
     for (auto it = metricTable().constBegin(); it != metricTable().constEnd(); ++it) {
         if (text == QLatin1String(it.value().id))
             return it.key();
     }
-    return AlertMetric::TotalSize;
+    return std::nullopt;
 }
 
 QString alertMetricLabel(AlertMetric metric)
@@ -87,15 +87,17 @@ QString alertComparisonToString(AlertComparison comparison)
     return QStringLiteral("above");
 }
 
-AlertComparison alertComparisonFromString(const QString& text)
+std::optional<AlertComparison> alertComparisonFromString(const QString& text)
 {
+    if (text == QLatin1String("above"))
+        return AlertComparison::Above;
     if (text == QLatin1String("below"))
         return AlertComparison::Below;
     if (text == QLatin1String("changed"))
         return AlertComparison::Changed;
     if (text == QLatin1String("equals"))
         return AlertComparison::Equals;
-    return AlertComparison::Above;
+    return std::nullopt;
 }
 
 QString alertComparisonLabel(AlertComparison comparison)
@@ -118,9 +120,13 @@ QString alertSourceToString(AlertSource source)
     return source == AlertSource::LatestReport ? QStringLiteral("report") : QStringLiteral("live");
 }
 
-AlertSource alertSourceFromString(const QString& text)
+std::optional<AlertSource> alertSourceFromString(const QString& text)
 {
-    return text == QLatin1String("report") ? AlertSource::LatestReport : AlertSource::Live;
+    if (text == QLatin1String("report"))
+        return AlertSource::LatestReport;
+    if (text == QLatin1String("live"))
+        return AlertSource::Live;
+    return std::nullopt;
 }
 
 QString alertStateToString(AlertState state)
@@ -189,15 +195,24 @@ QJsonObject AlertRule::toJson() const
     return json;
 }
 
-AlertRule AlertRule::fromJson(const QJsonObject& json)
+std::optional<AlertRule> AlertRule::fromJson(const QJsonObject& json)
 {
+    const std::optional<AlertMetric> metric
+        = alertMetricFromString(json.value(QStringLiteral("metric")).toString());
+    const std::optional<AlertComparison> comparison
+        = alertComparisonFromString(json.value(QStringLiteral("comparison")).toString());
+    const std::optional<AlertSource> source
+        = alertSourceFromString(json.value(QStringLiteral("source")).toString());
+    if (!metric || !comparison || !source)
+        return std::nullopt;
+
     AlertRule rule;
     rule.id = json.value(QStringLiteral("id")).toString();
     rule.label = json.value(QStringLiteral("label")).toString();
     rule.targetUri = json.value(QStringLiteral("targetUri")).toString();
-    rule.metric = alertMetricFromString(json.value(QStringLiteral("metric")).toString());
-    rule.comparison = alertComparisonFromString(json.value(QStringLiteral("comparison")).toString());
-    rule.source = alertSourceFromString(json.value(QStringLiteral("source")).toString());
+    rule.metric = *metric;
+    rule.comparison = *comparison;
+    rule.source = *source;
     rule.threshold = json.value(QStringLiteral("threshold")).toDouble();
     rule.enabled = json.value(QStringLiteral("enabled")).toBool(true);
     rule.state = alertStateFromString(json.value(QStringLiteral("state")).toString());

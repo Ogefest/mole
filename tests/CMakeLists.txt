@@ -523,6 +523,10 @@ mole_add_test(tst_IndexesView       SOURCES app/tst_IndexesView.cpp     LIBS mol
 # manifest comes from a scripted local server -- nothing here reaches the
 # internet. See MOLE-325.
 mole_add_test(tst_UpdateNotice      SOURCES app/tst_UpdateNotice.cpp    LIBS mole_qml_harness mole_builtin)
+# The form that creates a watch. tst_Alerts is headless and covers what a rule
+# measures; a threshold nobody can read is only refusable where it is typed.
+mole_add_test(tst_AlertsTab         SOURCES app/tst_AlertsTab.cpp       LIBS mole_qml_harness mole_builtin)
+
 # Where the search form's criteria land on the screen. tst_MixedSearch is headless and
 # covers what a search answers; MOLE-270 was six labels on a different row from the
 # field they name, which only a window can see.

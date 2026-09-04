@@ -67,12 +67,19 @@ struct FaultyFileSystem::Policy
         --stalledStreams;
     }
 
-    /// The first refusal that covers this path, if there is one.
-    std::optional<VfsError> refusedRemoval(const VfsUri& target) const
+    /// The first refusal in `refusals` that covers this path, if there is one.
+    ///
+    /// An empty path is every target. `coversSubtree` is what a removal needs and
+    /// a listing or a stat does not: a directory nobody may write to refuses a
+    /// recursive delete of anything inside it, while a folder nobody may enter
+    /// says nothing at all about its neighbours.
+    std::optional<VfsError> refusalFor(
+        const QList<QPair<QString, VfsError>>& refusals, const VfsUri& target, bool coversSubtree) const
     {
         QMutexLocker lock(&mutex);
-        for (const auto& [path, error] : removeRefusals) {
-            if (path.isEmpty() || path == target.path() || target.path().startsWith(path + QLatin1Char('/')))
+        for (const auto& [path, error] : refusals) {
+            if (path.isEmpty() || path == target.path()
+                || (coversSubtree && target.path().startsWith(path + QLatin1Char('/'))))
                 return error;
         }
         return std::nullopt;
@@ -82,6 +89,8 @@ struct FaultyFileSystem::Policy
     QWaitCondition wake;
     QList<Fault> faults;
     QList<QPair<QString, VfsError>> removeRefusals;
+    QList<QPair<QString, VfsError>> listRefusals;
+    QList<QPair<QString, VfsError>> statRefusals;
     QList<QPair<QString, int>> keepEvery;
     int stalledStreams = 0;
     bool released = false;
@@ -657,6 +666,8 @@ Result<FileEntryList> FaultyFileSystem::list(const VfsUri& dir, const CancelToke
     m_policy->lists.fetch_add(1, std::memory_order_relaxed);
     if (m_policy->revoked.load())
         return revokedError();
+    if (const std::optional<VfsError> refused = m_policy->refusalFor(m_policy->listRefusals, dir, false))
+        return Result<FileEntryList>(*refused);
 
     bool hold = false;
     {
@@ -687,11 +698,21 @@ Result<FileEntryList> FaultyFileSystem::list(const VfsUri& dir, const CancelToke
     return Result<FileEntryList>(entries);
 }
 
+FaultyFileSystem& FaultyFileSystem::listFails(
+    const QString& path, VfsError::Code code, const QString& message)
+{
+    QMutexLocker lock(&m_policy->mutex);
+    m_policy->listRefusals.append({ path, VfsError::make(code, message) });
+    return *this;
+}
+
 Result<FileEntry> FaultyFileSystem::stat(const VfsUri& target)
 {
     m_policy->stats.fetch_add(1, std::memory_order_relaxed);
     if (m_policy->revoked.load())
         return revokedError();
+    if (const std::optional<VfsError> refused = m_policy->refusalFor(m_policy->statRefusals, target, false))
+        return Result<FileEntry>(*refused);
 
     Result<FileEntry> entry = m_inner->stat(target);
     qint64 delta = 0;
@@ -710,6 +731,14 @@ Result<FileEntry> FaultyFileSystem::stat(const VfsUri& target)
     return Result<FileEntry>(lying);
 }
 
+FaultyFileSystem& FaultyFileSystem::statFails(
+    const QString& path, VfsError::Code code, const QString& message)
+{
+    QMutexLocker lock(&m_policy->mutex);
+    m_policy->statRefusals.append({ path, VfsError::make(code, message) });
+    return *this;
+}
+
 Result<void> FaultyFileSystem::makeDirectory(const VfsUri& target)
 {
     if (m_policy->revoked.load())
@@ -723,7 +752,7 @@ Result<void> FaultyFileSystem::remove(const VfsUri& target, bool recursive)
         return revokedError();
     // A refusal covers the path and everything under it, which is what a
     // directory nobody may write to actually does to a recursive delete.
-    if (const std::optional<VfsError> refused = m_policy->refusedRemoval(target))
+    if (const std::optional<VfsError> refused = m_policy->refusalFor(m_policy->removeRefusals, target, true))
         return Result<void>(*refused);
     return m_inner->remove(target, recursive);
 }
