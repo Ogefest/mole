@@ -72,11 +72,6 @@ private:
     QString m_errorText;
 };
 
-/// Renders one family of file types.
-///
-/// The second half of "preview as many formats as possible": text, PDF, audio
-/// tags, SQLite tables, Parquet schemas -- each is a provider, and each can
-/// ship in its own plugin so heavy dependencies stay optional.
 /// How a viewer behaves, offered to whoever is looking at the file.
 ///
 /// The provider says what the choices are; the strip above the preview renders them
@@ -92,6 +87,15 @@ struct ViewerOption
     QString defaultChoice;
 };
 
+/// Renders one family of file types.
+///
+/// The second half of "preview as many formats as possible": text, PDF, audio
+/// tags, SQLite tables, Parquet schemas -- each is a provider, and each can
+/// ship in its own plugin so heavy dependencies stay optional.
+///
+/// (This comment was stranded: ViewerOption was inserted between it and the
+/// class, so the words describing a provider sat above a struct of four
+/// QStrings. See MOLE-392.)
 class IPreviewProvider
 {
 public:

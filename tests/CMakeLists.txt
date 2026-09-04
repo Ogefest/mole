@@ -203,6 +203,12 @@ if(BASH_PROGRAM)
     # ends of the file and both ways a block can be empty. See MOLE-123.
     mole_add_shell_test(tst_ChangelogBlock
                         SCRIPT scripts/tst_ChangelogBlock.sh)
+    # What the documents promise, against the code that keeps it. Only the part
+    # that is a name -- an identifier in backticks either exists or does not --
+    # because that is the part a script can hold and the part that goes stale in
+    # silence. See MOLE-392.
+    mole_add_shell_test(tst_Documents
+                        SCRIPT scripts/tst_Documents.sh)
     # Every workflow, held to the two things all of them need -- it parses, and
     # something starts it -- and the second family held to what makes its answer
     # worth having: an account that is not root, and no locale. See MOLE-297.

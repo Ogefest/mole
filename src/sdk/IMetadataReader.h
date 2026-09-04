@@ -49,7 +49,10 @@ struct FileFact
 /// Reads what a file says about itself: a photograph's camera and exposure, a
 /// document's author, a video's codecs, an audio file's tags.
 ///
-/// The fifth extension point, and the first that is not winner-takes-all.
+/// One of the six on `PluginRegistry`, and the first that is not
+/// winner-takes-all. (It called itself "the fifth" and so did IThumbnailer;
+/// a document that counts is a document that goes stale, so
+/// ARCHITECTURE.md's table is the list and the number is read off it.)
 /// `PreviewRegistry` stops at the highest-priority provider that claims a file,
 /// because a file can only be shown one way; **every reader that claims a file
 /// contributes**, because a container and its contents are two different sets

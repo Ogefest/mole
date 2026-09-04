@@ -469,10 +469,10 @@ wrong, `3` a drive could not be reached, `130` interrupted.
 ## Extending it
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — how the pieces fit and why.
-- [`docs/WRITING_PLUGINS.md`](docs/WRITING_PLUGINS.md) — adding a drive, a tab
-  or a preview.
+- [`docs/WRITING_PLUGINS.md`](docs/WRITING_PLUGINS.md) — adding a drive, a tab, a
+  viewer, a reader, a thumbnailer or a menu entry, and where a plugin is built.
 
-The extension points:
+The extension points — six on `PluginRegistry`, two through `PluginServices`:
 
 | To add | Implement |
 |---|---|
@@ -480,7 +480,10 @@ The extension points:
 | a tab (duplicates, analytics, bulk rename) | `IFeature` + `FeatureController` |
 | a viewer (PDF, SQLite, Parquet, bytes) | `IPreviewProvider` + `PreviewController` |
 | what a file says about itself (EXIF, tags) | `IMetadataReader` |
-| a menu entry under File / View / Tools / Help | `MenuAction` |
+| a small picture of a file | `IThumbnailer` |
+| a menu entry under File / View / Operations / Workflows / Bookmarks | `MenuAction` |
+| a step a chain can be built from | `ChainRegistry`, via `services().chains` |
+| work repeated on a schedule | `Scheduler`, via `services().scheduler` |
 
 Built-in functionality is registered through the identical `PluginRegistry`
 that third-party code uses, so the API cannot quietly rot.

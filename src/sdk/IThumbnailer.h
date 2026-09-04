@@ -14,7 +14,9 @@ namespace mole {
 /// Makes a small picture of a file, for a view that shows what things look like
 /// rather than what they are called.
 ///
-/// The fifth extension point, and the second that is not about showing a file.
+/// One of the six on `PluginRegistry`, and the second that is not about showing
+/// a file. (See the note in IMetadataReader.h: both called themselves the
+/// fifth.)
 /// Unlike the metadata readers -- where every reader that claims a file
 /// contributes, because a container and its contents are two sets of facts about
 /// one file -- **a file has one picture**, so the highest-priority thumbnailer

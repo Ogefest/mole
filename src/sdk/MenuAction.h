@@ -9,12 +9,16 @@ namespace mole {
 /// One entry in the application menu.
 ///
 /// The menu is an extension point like everything else: a plugin that adds a
-/// duplicate finder also adds its "Find duplicates here" entry under Tools,
-/// and the shell places it without knowing what it does.
+/// duplicate finder also adds its "Find duplicates here" entry under
+/// Operations, and the shell places it without knowing what it does. (It said
+/// "under Tools" for long after that heading was split into Operations and
+/// Workflows -- see the enum below, and MOLE-392.)
 ///
-/// The callbacks are evaluated every time the menu is opened rather than
-/// cached, so an entry can reflect the current tab without anyone having to
-/// remember to invalidate anything.
+/// **`enabled` and `checked` are asked again every time the menu is opened**, so
+/// an entry can reflect the current tab without anyone having to remember to
+/// invalidate anything. `trigger` is not: it is called when the entry is chosen,
+/// which is the only moment it means anything. This said "the callbacks", which
+/// read as though a trigger were consulted for the entry's state.
 struct MenuAction
 {
     /// Where the entry belongs. Kept deliberately small -- a menu with eleven

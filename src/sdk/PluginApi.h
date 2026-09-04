@@ -63,8 +63,17 @@ struct PluginMetadata
 /// goes through here, and nothing else in the host is reachable -- which is
 /// what keeps the API a contract rather than an invitation to poke around.
 ///
-/// Adding a new extension point means adding a method here and bumping
-/// kPluginApiVersion.
+/// **Six extension points are methods here; two are not.** A chain step kind is
+/// registered on `services().chains` and a scheduled job kind on
+/// `services().scheduler`, so adding one of those adds no method here -- and
+/// both arrived that way, with no version bump, while this comment said adding
+/// an extension point means doing both. ARCHITECTURE.md's table is the list of
+/// all eight.
+///
+/// Adding a method here does mean bumping kPluginApiVersion: it changes this
+/// class's vtable, which every plugin built against the old one has a copy of
+/// the shape of. Appending a *field* to PluginServices does not -- see the note
+/// there and ADR-0098.
 class PluginRegistry
 {
 public:

@@ -1,18 +1,34 @@
 # Architecture
 
-Mole is built around three extension points. Almost everything the
-application does is reached through one of them, including the parts that ship
-in the box.
+Mole is built around eight extension points — six on `PluginRegistry` and two
+reached through `PluginServices`. Almost everything the application does is
+reached through one of them, including the parts that ship in the box.
+
+**The count was wrong in four documents at once**, each in its own way: this page
+said three and listed four, `README.md` listed five, `PluginRegistry` had six,
+and two headers each called themselves "the fifth extension point". A count is
+the kind of fact that goes stale in silence, so the table below is the list and
+the number is read off it.
 
 | Extension point | Adds | Interface |
 |---|---|---|
 | Filesystem backend | a new kind of **drive** (SFTP, S3, a git forge, an archive) | `IFileSystemFactory` + `IFileSystem` |
 | Feature | a new kind of **tab** (browse, search, duplicates, analytics) | `IFeature` + `FeatureController` |
 | Preview provider | a new kind of **viewer** (text, PDF, SQLite, Parquet) | `IPreviewProvider` + `PreviewController` |
-| Menu action | an entry under **File / View / Tools / Help** | `MenuAction` |
+| Metadata reader | what a file **says about itself** (EXIF, tags, document authors) — every claimant contributes | `IMetadataReader` |
+| Thumbnailer | a small **picture** of a file — one winner per file | `IThumbnailer` |
+| Menu action | an entry under **File / View / Operations / Workflows / Bookmarks** | `MenuAction` |
+| Chain step kind | an operation a **chain** can be built from, registered on `services().chains` | `ChainRegistry` |
+| Scheduled job kind | work the host **repeats on a schedule**, registered on `services().scheduler` | `Scheduler` |
 
 Every tab kind also decides what it wants remembered between runs, through
 `FeatureController::saveState()` / `restoreState()`.
+
+**A plugin is built inside this tree**, and the ABI is per build: `mole_sdk` and
+`mole_core` are static libraries that are not installed, and every SDK header
+needs core headers behind it. See
+[ADR-0099](docs/adr/0099-a-plugin-is-built-in-tree-and-the-abi-is-per-build.md)
+and [docs/WRITING_PLUGINS.md](docs/WRITING_PLUGINS.md).
 
 ## Layers
 

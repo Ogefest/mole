@@ -34,6 +34,23 @@ target_link_libraries(mole-tasks PRIVATE mole_tasks_cli mole_flags)
 set_target_properties(mole-tasks PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 
+# **Exported symbols, and here it is not about backtraces.** `mole` has this for
+# the names in a crash report (see src/app/CMakeLists.txt); this host needs it for
+# a different reason, and until MOLE-392 it did not have it.
+#
+# A plugin is a shared library that statically links mole_core, so it carries its
+# own copy of core -- its own function-local statics, its own logging category
+# objects. When the host exports its symbols the dynamic linker resolves the
+# plugin's core references to the host's copy, and there is one core in the
+# process. When it does not, there are two: a plugin loaded by `mole` and the same
+# binary loaded by `mole-tasks` were in different linking regimes, which is the
+# kind of difference that produces a fault in one host and not the other and
+# nothing to explain it.
+#
+# Two hosts, one regime. The real answer is a shared core -- ADR-0099 says why
+# that is a separate decision and what it would take.
+set_target_properties(mole-tasks PROPERTIES ENABLE_EXPORTS ON)
+
 # The drives it can reach are the plugins it can find, which are the ones the
 # window finds -- alongside the executable.
 if(MOLE_HAVE_ARCHIVE_PLUGIN)
