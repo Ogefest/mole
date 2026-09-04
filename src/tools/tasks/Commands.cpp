@@ -1,5 +1,6 @@
 #include "tools/tasks/Commands.h"
 
+#include "sdk/ScanReaders.h"
 #include "tools/tasks/ToolEnvironment.h"
 
 #include "core/diagnostics/Diagnostics.h"
@@ -27,6 +28,7 @@
 
 #include <atomic>
 #include <csignal>
+#include <optional>
 
 namespace mole::tools {
 namespace {
@@ -35,6 +37,12 @@ namespace {
     /// safe to do in a handler, and a runner that cannot be interrupted is no
     /// use for driving a long transfer by hand.
     std::atomic_bool g_interrupted { false };
+
+    /// The task the wait loop is sitting on, so an interrupt that did not come
+    /// from a signal handler can stop it now rather than at the next poll. Only
+    /// ever set and cleared by await(); requestCancel() sets one atomic flag, so
+    /// calling it from anywhere is safe.
+    std::atomic<Task*> g_running { nullptr };
 
     void onInterrupt(int)
     {
@@ -93,19 +101,26 @@ namespace {
             return true;
         }
 
-        /// The first word that is not an option, removed. That is the command
-        /// name, and taking it out is what leaves the command its own arguments.
+        /// The command word, removed. Every option that applies everywhere has
+        /// already been taken out, so the command is whatever is left at the
+        /// front -- and an option there is a mistake rather than a command.
+        ///
+        /// It used to be "the first token that is not an option", which read the
+        /// *value* of a command option placed too early as the command:
+        /// `mole-tasks --to /x copy --from y` answered "no such command: /x".
         QString takeCommand()
         {
-            for (qsizetype i = 0; i < m_tokens.size(); ++i) {
-                if (m_tokens.at(i).startsWith(QLatin1String("--")))
-                    continue;
-                const QString word = m_tokens.at(i);
-                m_tokens.remove(i, 1);
-                return word;
+            if (m_tokens.isEmpty())
+                return {};
+            if (m_tokens.first().startsWith(QLatin1String("--"))) {
+                m_optionBeforeCommand = m_tokens.first();
+                return {};
             }
-            return {};
+            return m_tokens.takeFirst();
         }
+
+        /// The option that was found where the command should have been, if any.
+        QString optionBeforeCommand() const { return m_optionBeforeCommand; }
 
         /// What is left that is not an option: the file names.
         QStringList positional() const
@@ -134,6 +149,7 @@ namespace {
     private:
         QStringList m_tokens;
         QString m_missingValue;
+        QString m_optionBeforeCommand;
     };
 
     /// Runs a task to the end, printing what it says about itself.
@@ -141,7 +157,7 @@ namespace {
     /// The event loop is spun rather than the thread blocked: tasks report
     /// through queued invocations, so a runner that waited on a condition
     /// variable would print nothing until the end and could not be interrupted.
-    int await(Task* task, TaskManager& tasks, QTextStream& out, bool quiet)
+    int await(Task* task, TaskManager& tasks, QTextStream& err, bool quiet)
     {
         QEventLoop loop;
         QString lastStatus;
@@ -151,11 +167,14 @@ namespace {
                 loop.quit();
         });
         if (!quiet) {
+            // On stderr, with everything else that is not the result: a status
+            // line landing in the middle of a redirected list of duplicates is
+            // a line somebody's next command has to filter back out.
             QObject::connect(task, &Task::statusTextChanged, &loop, [&] {
                 const QString status = task->statusText();
                 if (status != lastStatus && !status.isEmpty()) {
                     lastStatus = status;
-                    out << "  " << status << Qt::endl;
+                    err << "  " << status << Qt::endl;
                 }
             });
         }
@@ -171,16 +190,18 @@ namespace {
         });
         interruptCheck.start();
 
+        g_running.store(task);
         tasks.submit(task);
         if (!task->isFinished())
             loop.exec();
+        g_running.store(nullptr);
 
         if (task->state() == Task::State::Cancelled) {
-            out << (g_interrupted.load() ? "interrupted" : "cancelled") << Qt::endl;
+            err << (g_interrupted.load() ? "interrupted" : "cancelled") << Qt::endl;
             return g_interrupted.load() ? Interrupted : TaskFailed;
         }
         if (task->state() == Task::State::Failed) {
-            out << "failed: " << task->error().message << Qt::endl;
+            err << "failed: " << task->error().message << Qt::endl;
             return TaskFailed;
         }
         return Ok;
@@ -213,6 +234,29 @@ namespace {
     QString formattedSize(qint64 bytes)
     {
         return QLocale().formattedDataSize(bytes);
+    }
+
+    /// Says what an option would have accepted, and returns BadUsage.
+    ///
+    /// Every option a person types is read strictly. Three of them used to go
+    /// through parsers written to be forgiving for a stored file and a picker,
+    /// so `--mode miror --apply` ran an update sync and `--format tar.bz2` wrote
+    /// a zip called `x.tar.bz2`. ADR-0028: "Anything that can delete files does
+    /// not do it on the strength of a typo." See MOLE-391.
+    int refuseValue(QTextStream& err, const QString& option, const QString& given, const QStringList& accepts)
+    {
+        err << "--" << option << " does not take '" << given << "'. It takes "
+            << accepts.join(QStringLiteral(", ")) << Qt::endl;
+        return BadUsage;
+    }
+
+    /// A whole number, or nothing. `toLongLong()` with no `ok` answers 0 for
+    /// "lots" and for "1O", and 0 is a bound that lets everything through.
+    std::optional<qint64> wholeNumber(const QString& text)
+    {
+        bool ok = false;
+        const qint64 value = text.trimmed().toLongLong(&ok);
+        return ok ? std::optional<qint64>(value) : std::nullopt;
     }
 
     // ---- the commands ------------------------------------------------------
@@ -261,7 +305,7 @@ namespace {
             return NoDrive;
 
         auto* task = new TransferTask(request);
-        const int code = await(task, environment.tasks(), out, quiet);
+        const int code = await(task, environment.tasks(), err, quiet);
         out << task->copiedCount() << " transferred, " << task->skippedCount() << " skipped, "
             << task->failedCount() << " failed" << Qt::endl;
         return reportFailures(task->failures(), err, code);
@@ -291,7 +335,7 @@ namespace {
         }
 
         auto* task = new DeleteTask(fs, uris);
-        const int code = await(task, environment.tasks(), out, quiet);
+        const int code = await(task, environment.tasks(), err, quiet);
         out << task->deletedCount() << " deleted" << Qt::endl;
         return reportFailures(task->failures(), err, code);
     }
@@ -306,10 +350,18 @@ namespace {
         }
 
         SyncOptions options;
-        options.mode
-            = SyncOptions::modeFromString(args.value(QStringLiteral("mode"), QStringLiteral("update")));
-        options.compare = SyncOptions::compareFromString(
-            args.value(QStringLiteral("compare"), QStringLiteral("size-and-time")));
+        if (const QString mode = args.value(QStringLiteral("mode")); !mode.isEmpty()) {
+            const std::optional<SyncOptions::Mode> wanted = SyncOptions::modeIfKnown(mode);
+            if (!wanted)
+                return refuseValue(err, QStringLiteral("mode"), mode, SyncOptions::modeNames());
+            options.mode = *wanted;
+        }
+        if (const QString compare = args.value(QStringLiteral("compare")); !compare.isEmpty()) {
+            const std::optional<SyncOptions::Compare> wanted = SyncOptions::compareIfKnown(compare);
+            if (!wanted)
+                return refuseValue(err, QStringLiteral("compare"), compare, SyncOptions::compareNames());
+            options.compare = *wanted;
+        }
         options.includePatterns = args.values(QStringLiteral("include"));
         options.excludePatterns = args.values(QStringLiteral("exclude"));
         options.includeHidden = args.flag(QStringLiteral("hidden"));
@@ -327,7 +379,7 @@ namespace {
             return NoDrive;
 
         auto* task = new SyncTask(sourceFs, source, targetFs, target, options);
-        const int code = await(task, environment.tasks(), out, quiet);
+        const int code = await(task, environment.tasks(), err, quiet);
 
         const SyncPlan plan = task->plan();
         for (const SyncPlan::Step& step : plan.steps()) {
@@ -362,9 +414,24 @@ namespace {
         }
 
         CompressTask::Request request;
-        const QString format = args.value(QStringLiteral("format"), QStringLiteral("zip"));
-        request.format = CompressTask::formatFromName(format);
-        request.passphrase = args.value(QStringLiteral("password"));
+        if (const QString format = args.value(QStringLiteral("format")); !format.isEmpty()) {
+            const std::optional<CompressTask::Format> wanted = CompressTask::formatIfKnown(format);
+            if (!wanted)
+                return refuseValue(err, QStringLiteral("format"), format, CompressTask::formatNames());
+            request.format = *wanted;
+        }
+
+        // Named, never typed. ADR-0028 says secrets never appear in an argument,
+        // and an argument is in `ps`, in the shell history and in any CI log
+        // that echoes the command before running it.
+        if (const QString password = args.value(QStringLiteral("password")); !password.isEmpty()) {
+            QString problem;
+            request.passphrase = secretFromEnvironment(password, &problem);
+            if (!problem.isEmpty()) {
+                err << "--password: " << problem << Qt::endl;
+                return BadUsage;
+            }
+        }
 
         for (const QString& source : sources) {
             const VfsUri uri = VfsUri::fromString(source);
@@ -385,7 +452,7 @@ namespace {
             return NoDrive;
 
         auto* task = new CompressTask(request);
-        const int code = await(task, environment.tasks(), out, quiet);
+        const int code = await(task, environment.tasks(), err, quiet);
         out << task->packedCount() << " packed into " << request.target.toString() << Qt::endl;
         return reportFailures(task->failures(), err, code);
 #endif
@@ -435,9 +502,14 @@ namespace {
             rules.append(rule);
         }
         if (const QString from = args.value(QStringLiteral("number-from")); !from.isEmpty()) {
+            const std::optional<qint64> start = wholeNumber(from);
+            if (!start) {
+                err << "--number-from takes a whole number, not '" << from << "'" << Qt::endl;
+                return BadUsage;
+            }
             RenameRule rule;
             rule.kind = RenameRule::Kind::Number;
-            rule.start = from.toInt();
+            rule.start = static_cast<int>(*start);
             rule.step = 1;
             rules.append(rule);
         }
@@ -498,13 +570,22 @@ namespace {
         }
 
         auto* task = new RenameTask(&environment.drives(), changed);
-        const int code = await(task, environment.tasks(), out, quiet);
+        const int code = await(task, environment.tasks(), err, quiet);
         out << task->renamedCount() << " renamed" << Qt::endl;
         return reportFailures(task->failures(), err, code);
     }
 
     int runScan(Args& args, ToolEnvironment& environment, QTextStream& out, QTextStream& err, bool quiet)
     {
+        // Every option first. positional() is "whatever does not begin with
+        // --", so an option's *value* is one of them until the option has been
+        // taken out -- `scan <uri> --label fixture` counted two roots and was
+        // refused as "scan takes exactly one uri".
+        const QString label = args.value(QStringLiteral("label"));
+        ScanOptions options;
+        options.incremental = args.flag(QStringLiteral("incremental"));
+        options.archives = args.flag(QStringLiteral("archives"));
+
         const QStringList roots = args.positional();
         if (roots.size() != 1) {
             err << "scan takes exactly one uri" << Qt::endl;
@@ -523,17 +604,24 @@ namespace {
             return NoDrive;
         }
 
-        const QString label = args.value(QStringLiteral("label"), root.toString());
-        auto* task = new ScanTask(fs, root, label, index);
-        // The options this tool can ask for, which is one of the three. Reading
-        // what a file says about itself and listing what is inside a container
-        // both need the readers, and those live above this layer.
-        ScanOptions options;
-        options.incremental = args.flag(QStringLiteral("incremental"));
-        task->setOptions(options);
-        const int code = await(task, environment.tasks(), out, quiet);
-        out << task->filesIndexed() << " indexed, " << task->skippedDirectories() << " directories skipped"
-            << Qt::endl;
+        auto* task = new ScanTask(fs, root, label.isEmpty() ? root.toString() : label, index);
+
+        // Whichever backend mounts a zip is a plugin, so a scan asked to go
+        // inside one has to have loaded them. Not otherwise: a scan of a local
+        // tree needs none of it.
+        if (options.archives)
+            environment.loadPlugins();
+        // Through the same call the window uses rather than by hand, which is
+        // the whole of ADR-0056: a scan built in a second place is a scan that
+        // quietly indexes less. Metadata is not offered because this binary
+        // registers no metadata readers -- factReaderFor() answers null and
+        // applyScanOptions() asks for nothing, which is the honest outcome.
+        applyScanOptions(*task, options, environment.services(), fs, root);
+        const int code = await(task, environment.tasks(), err, quiet);
+        out << task->filesIndexed() << " indexed, " << task->skippedDirectories() << " directories skipped";
+        if (options.archives)
+            out << ", " << task->containedEntries() << " inside containers";
+        out << Qt::endl;
         return code;
     }
 
@@ -541,7 +629,12 @@ namespace {
         Args& args, ToolEnvironment& environment, QTextStream& out, QTextStream& err, bool quiet)
     {
         const QString by = args.value(QStringLiteral("by"), QStringLiteral("content"));
-        const qint64 minimum = args.value(QStringLiteral("min-size"), QStringLiteral("1")).toLongLong();
+        const QString minimumText = args.value(QStringLiteral("min-size"), QStringLiteral("1"));
+        const std::optional<qint64> minimum = wholeNumber(minimumText);
+        if (!minimum) {
+            err << "--min-size takes a number of bytes, not '" << minimumText << "'" << Qt::endl;
+            return BadUsage;
+        }
         const QStringList roots = args.positional();
         if (roots.isEmpty()) {
             err << "duplicates needs at least one uri" << Qt::endl;
@@ -571,8 +664,8 @@ namespace {
         }
 
         auto* task = new FindDuplicatesTask(&environment.drives(), uris, std::move(strategy));
-        task->setMinimumSize(minimum);
-        const int code = await(task, environment.tasks(), out, quiet);
+        task->setMinimumSize(*minimum);
+        const int code = await(task, environment.tasks(), err, quiet);
 
         for (const DuplicateGroup& group : task->groups()) {
             out << formattedSize(group.reclaimable) << " reclaimable:" << Qt::endl;
@@ -608,16 +701,41 @@ namespace {
             message = text;
         });
 
-        const int code = await(task, environment.tasks(), out, quiet);
+        const int code = await(task, environment.tasks(), err, quiet);
         out << message << Qt::endl;
         return reachable ? code : TaskFailed;
     }
 
-    int runDrives(ToolEnvironment& environment, QTextStream& out)
+    int runDrives(Args& args, ToolEnvironment& environment, QTextStream& out)
     {
         out << "mounted:" << Qt::endl;
         for (const QString& line : environment.mountSummary())
             out << "  " << line << Qt::endl;
+
+        // The first question of any report about a package -- was the network
+        // backend found at all -- and until now it could only be answered by
+        // asking for a drive and reading a failure. Plugin errors printed only
+        // when a mount failed, so a build with no sftp looked exactly like a
+        // drive name typed wrong.
+        if (!args.flag(QStringLiteral("plugins")))
+            return Ok;
+
+        environment.loadPlugins();
+        out << "plugins looked for in:" << Qt::endl;
+        for (const QString& path : environment.pluginSearchPaths())
+            out << "  " << path << Qt::endl;
+
+        const QStringList loaded = environment.loadedPlugins();
+        out << (loaded.isEmpty() ? QStringLiteral("nothing loaded") : QStringLiteral("loaded:")) << Qt::endl;
+        for (const QString& line : loaded)
+            out << "  " << line << Qt::endl;
+
+        const QStringList problems = environment.pluginErrors();
+        if (!problems.isEmpty()) {
+            out << "problems:" << Qt::endl;
+            for (const QString& line : problems)
+                out << "  " << line << Qt::endl;
+        }
         return Ok;
     }
 
@@ -636,13 +754,13 @@ Commands:
   sync        --from <uri> --to <uri> [--mode update|mirror|fill]
               [--compare size-and-time|size|contents] [--include <glob>]…
               [--exclude <glob>]… [--hidden] [--no-recursive] [--no-skip-newer] [--apply]
-  compress    --from <uri>… --to <archive> [--format zip|tar.gz|tar.xz|7z|xz] [--password <p>]
+  compress    --from <uri>… --to <archive> [--format zip|tar.gz|tar.xz|7z|xz] [--password @ENV_VAR]
   rename      --in <dir> [--find <s> --replace <s> [--regex]] [--case upper|lower|title|sentence]
               [--prefix <s>] [--suffix <s>] [--number-from <n>] [--apply]
-  scan        <uri> [--label <name>] [--incremental]
+  scan        <uri> [--label <name>] [--incremental] [--archives]
   duplicates  <uri>… [--by content|size|name|name+size] [--min-size <bytes>]
   verify      <uri>
-  drives      what is mounted, and how to address it
+  drives      what is mounted, and how to address it [--plugins]
 
 Everywhere:
   --drive <name>    mount a drive from the configuration the application uses
@@ -652,8 +770,20 @@ Everywhere:
                     argument list and out of the shell history
   --log <what>      task, drive, net, curl or all -- the same names MOLE_LOG takes
   --quiet           print the result and nothing on the way
+  --help            this text
+  --version         which Mole this is
+
+Options come after the command word.
 
 sync and rename work out what they would do and stop. Add --apply to carry it out.
+
+A secret is never typed as an argument: write @NAME and put the value in that
+environment variable. An argument is visible in ps, in the shell history, and in
+any log that echoes the command before running it.
+
+Standard output is the result -- the copied count, the plan, the list of
+duplicates. Progress, warnings and every error go to standard error, so
+redirecting the result gives a file with nothing else in it.
 
 Exit codes: 0 done, 1 something failed, 2 the command line is wrong,
 3 a drive could not be reached, 130 interrupted.
@@ -676,13 +806,39 @@ int runMoleTasks(
     }
 
     const bool quiet = args.flag(QStringLiteral("quiet"));
+
+    // Answered before anything else and on stdout, because both are the result:
+    // "which build is this" is the first question of every bug report, and this
+    // is the binary that runs where there is no window to ask. Both used to exit
+    // 2 -- --version was an unknown option and fell through to the usage text.
+    const bool wantsHelp = args.flag(QStringLiteral("help"));
+    if (args.flag(QStringLiteral("version"))) {
+        out << QCoreApplication::applicationName() << ' ' << QCoreApplication::applicationVersion()
+            << Qt::endl;
+        return Ok;
+    }
+    if (wantsHelp) {
+        out << usageText();
+        return Ok;
+    }
+
     const QStringList configured = args.values(QStringLiteral("drive"));
     const QStringList specs = args.values(QStringLiteral("mount"));
 
     const QString command = args.takeCommand();
-    if (command.isEmpty() || command == QLatin1String("help")) {
+    if (command == QLatin1String("help")) {
         out << usageText();
-        return command.isEmpty() ? BadUsage : Ok;
+        return Ok;
+    }
+    if (!args.optionBeforeCommand().isEmpty()) {
+        err << args.optionBeforeCommand() << " comes after the command word, not before it" << Qt::endl
+            << Qt::endl
+            << usageText();
+        return BadUsage;
+    }
+    if (command.isEmpty()) {
+        err << usageText();
+        return BadUsage;
     }
 
     if (!args.missingValue().isEmpty()) {
@@ -690,9 +846,16 @@ int runMoleTasks(
         return BadUsage;
     }
 
+    // Before anything is mounted. Connecting to a drive that is not answering is
+    // one of the longer things this binary does, and Ctrl-C during it used to
+    // kill the process by signal rather than end the run with 130.
+    std::signal(SIGINT, onInterrupt);
+    g_interrupted.store(false);
+
     // Only when a drive beyond local disk was asked for: loading plugins costs
     // a directory scan and a handful of dlopen calls, and a copy between two
-    // local paths needs none of it.
+    // local paths needs none of it. `drives --plugins` and `scan --archives`
+    // ask for them themselves.
     if (!configured.isEmpty() || !specs.isEmpty())
         environment.loadPlugins();
 
@@ -716,13 +879,8 @@ int runMoleTasks(
     }
     if (!quiet && (!configured.isEmpty() || !specs.isEmpty())) {
         for (const QString& line : environment.mountSummary())
-            out << "mounted " << line << Qt::endl;
+            err << "mounted " << line << Qt::endl;
     }
-
-    // Ctrl-C asks the task to stop rather than killing the process, so a
-    // half-written file is cleaned up the way a cancelled copy's is.
-    std::signal(SIGINT, onInterrupt);
-    g_interrupted.store(false);
 
     // Everything global has been taken out of `args` already, so what is left
     // belongs to the command.
@@ -748,7 +906,7 @@ int runMoleTasks(
     else if (command == QLatin1String("verify"))
         code = runVerify(commandArgs, environment, out, err, quiet);
     else if (command == QLatin1String("drives"))
-        code = runDrives(environment, out);
+        code = runDrives(commandArgs, environment, out);
     else {
         err << "no such command: " << command << Qt::endl << Qt::endl << usageText();
         return BadUsage;
@@ -762,11 +920,26 @@ int runMoleTasks(
         return BadUsage;
     }
 
-    if (const QString stray = commandArgs.strayOption(); !stray.isEmpty() && code == Ok) {
+    // Said whatever the run did. It used to be said only on a clean run, so the
+    // one case where a typo is the likeliest explanation -- the command failed
+    // and an option it never read is sitting there -- was the case that kept
+    // quiet about it. The command's own code still wins: "the copy failed" is a
+    // more useful answer than "you also mistyped an option".
+    if (const QString stray = commandArgs.strayOption(); !stray.isEmpty()) {
         err << stray << " means nothing to " << command << Qt::endl;
-        return BadUsage;
+        return code == Ok ? BadUsage : code;
     }
     return code;
+}
+
+void interruptMoleTasks()
+{
+    g_interrupted.store(true);
+    // Straight through rather than waiting for the poll: requestCancel() sets
+    // one atomic flag, so it is safe from anywhere that is not a signal handler
+    // -- and a caller that is not one deserves an answer now.
+    if (Task* task = g_running.load())
+        task->requestCancel();
 }
 
 } // namespace mole::tools

@@ -4,6 +4,8 @@
 #include <QString>
 #include <QStringList>
 
+#include <optional>
+
 namespace mole {
 
 /// How one tree should be made to resemble another.
@@ -58,12 +60,28 @@ struct SyncOptions
     QStringList excludePatterns;
 
     static QString modeToString(Mode mode);
+    /// Update for a name this does not know, which is what a stored file and a
+    /// picker want: the safe mode, and never a refusal that loses the rest of
+    /// the settings.
     static Mode modeFromString(const QString& text);
+    /// The same, refusing a name that is not one of them.
+    ///
+    /// Two functions rather than one because the two callers want opposite
+    /// things. A picker only ever hands back a name it offered; a person typing
+    /// `--mode miror` has made a mistake, and running an update sync on the
+    /// strength of it is exactly what ADR-0028 forbids -- "anything that can
+    /// delete files does not do it on the strength of a typo". See MOLE-391.
+    static std::optional<Mode> modeIfKnown(const QString& text);
+    /// Every accepted name, so a caller refusing one can list them.
+    static QStringList modeNames();
     static QString modeLabel(Mode mode);
     static QString modeDescription(Mode mode);
 
     static QString compareToString(Compare compare);
     static Compare compareFromString(const QString& text);
+    /// Nothing for a name that is not one of them. See modeIfKnown().
+    static std::optional<Compare> compareIfKnown(const QString& text);
+    static QStringList compareNames();
     static QString compareLabel(Compare compare);
 
     /// Whether a name survives the filters.

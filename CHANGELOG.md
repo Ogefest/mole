@@ -65,6 +65,15 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-391 mole-tasks reaches a rooted drive at the address the window uses, instead of one folder deeper
+2026-09-04 #MOLE-391 mole-tasks takes an archive passphrase from the environment and refuses one typed as an argument
+2026-09-04 #MOLE-391 mole-tasks refuses a mistyped --mode, --compare, --format, --min-size or --number-from, instead of running something else
+2026-09-04 #MOLE-391 mole-tasks --help and --version answer, instead of printing the usage and failing
+2026-09-04 #MOLE-391 mole-tasks prints the result on standard output and everything else on standard error
+2026-09-04 #MOLE-391 mole-tasks scan can go inside containers, so a scheduled scan indexes what the window would
+2026-09-04 #MOLE-391 mole-tasks drives --plugins says where plugins were looked for, what loaded and what did not
+2026-09-04 #MOLE-391 mole-tasks scan reads --label instead of counting it as a second folder
+2026-09-04 #MOLE-391 Ctrl-C while a drive is still connecting ends the run rather than killing the process
 2026-09-04 #MOLE-382 An indexed search finds the same facts the details drawer shows, instead of missing files whose tags sit past the first page
 2026-09-04 #MOLE-382 A metadata reader that fails on one file costs its own rows, instead of failing the whole scan
 2026-09-04 #MOLE-382 Cancelling a scan stops the file being read, instead of finishing it first

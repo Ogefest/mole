@@ -419,15 +419,26 @@ mole-tasks copy --from file:///data/big.bin --to file:///backup --log net
 mole-tasks sync --from file:///photos --to nas:///photos --mode mirror   # says what it would do
 mole-tasks sync --from file:///photos --to nas:///photos --mode mirror --apply
 mole-tasks duplicates file:///downloads --by content
-mole-tasks drives                                                        # what is mounted
-mole-tasks help                                                          # every command
+mole-tasks scan file:///archive --archives                               # containers too
+mole-tasks drives --plugins                                              # what is mounted, and what loaded
+mole-tasks --help                                                        # every command
+mole-tasks --version                                                     # which build this is
 ```
+
+Options come after the command word.
 
 A drive that needs configuring comes from the store the application writes
 (`--drive «name»`, with the passphrase in `MOLE_PASSPHRASE`) or from the command
 line (`--mount name=nas,type=sftp,host=…,user=…,password=@SFTP_PASSWORD`). A
 value written `@SOMETHING` is read from that environment variable, so a password
-stays out of the argument list and out of the shell history.
+stays out of the argument list and out of the shell history. **A secret is never
+typed as an argument** — `--password hunter2` is refused, because an argument is
+visible in `ps`, in the shell history and in any log that echoes the command
+before running it.
+
+**Standard output is the result**, and nothing else: the copied count, the sync
+plan, the list of duplicates. Progress, warnings and every error go to standard
+error, so redirecting the result gives a file with nothing else in it.
 
 Exit codes: `0` done, `1` something in the work failed, `2` the command line is
 wrong, `3` a drive could not be reached, `130` interrupted.

@@ -1,14 +1,22 @@
+#include "support/FaultyFileSystem.h"
 #include "support/MoleTestMain.h"
 #include "support/TestSupport.h"
 #include "tools/tasks/Commands.h"
 #include "tools/tasks/ToolEnvironment.h"
 
+#include "core/credentials/SecretStore.h"
+#include "core/index/IndexDatabase.h"
+#include "core/search/SearchQuery.h"
+#include "core/vfs/RemoteRegistry.h"
+
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QStandardPaths>
+#include <QTimer>
 
 using namespace mole;
 using namespace mole::test;
@@ -67,11 +75,36 @@ private slots:
     void anUnknownDriveTypeSaysTheDriveCouldNotBeReached();
     void theBinaryRunsWithNoDisplay();
 
+    // ---- reaching a drive the way the window reaches it ----
+    void aRootedDriveIsMountedWhereTheWindowMountsIt();
+
+    // ---- what a person types, read strictly ----
+    void helpAndVersionAreAnAnswerRatherThanAMistake();
+    void anOptionBeforeTheCommandIsNotTheCommand();
+    void aStrayOptionIsMentionedEvenWhenTheRunFailed();
+    void aValueThatIsNotOneOfTheAcceptedOnesIsRefused_data();
+    void aValueThatIsNotOneOfTheAcceptedOnesIsRefused();
+    void aPassphraseIsNamedRatherThanTyped();
+
+    // ---- the result and everything else ----
+    void progressGoesToStandardErrorAndTheResultToStandardOutput();
+    void anInterruptedRunSaysSoAndExitsOneThirty();
+
+    // ---- as complete a scan as the window builds ----
+    void aScanRecordsWhatIsInsideAContainer();
+    void drivesCanSayWhetherThePluginsLoaded();
+
 private:
     Run run(const QStringList& arguments);
     QString uriFor(const QString& relative) const;
     bool write(const QString& relative, const QByteArray& contents = "payload");
     QStringList entriesIn(const QString& relative) const;
+    /// Writes a drive into the configuration file the runner reads, the way the
+    /// window's own dialog writes one.
+    bool seedDrive(const QString& name, const QString& factoryScheme, const QString& root);
+    /// Replaces the local mount with the same drive behind a fault injector, so
+    /// a case can hold a transfer still without a clock anywhere.
+    std::shared_ptr<FaultyFileSystem> makeLocalDriveFaulty();
 
     std::unique_ptr<PrivateProfile> m_profile;
     std::unique_ptr<TempTree> m_tree;
@@ -123,11 +156,45 @@ QStringList TestMoleTasks::entriesIn(const QString& relative) const
     return QDir(m_tree->absolute(relative)).entryList(QDir::Files | QDir::Hidden, QDir::Name);
 }
 
+bool TestMoleTasks::seedDrive(const QString& name, const QString& factoryScheme, const QString& root)
+{
+    SecretStore secrets(SecretStore::defaultPath());
+    RemoteRegistry registry(RemoteRegistry::defaultPath(), &secrets);
+    registry.load();
+
+    RemoteDrive drive;
+    drive.id = QStringLiteral("seeded-") + name.toLower();
+    drive.name = name;
+    drive.factoryScheme = factoryScheme;
+    drive.root = root;
+    return registry.put(drive, {});
+}
+
+std::shared_ptr<FaultyFileSystem> TestMoleTasks::makeLocalDriveFaulty()
+{
+    const VfsUri root = VfsUri(QStringLiteral("file"), QString(), QStringLiteral("/"));
+    FileSystemPtr disk = m_environment->drives().resolve(root);
+    if (!disk)
+        return nullptr;
+
+    auto faulty = std::make_shared<FaultyFileSystem>(disk);
+    m_environment->drives().removeMount(QStringLiteral("local"));
+    Mount mount;
+    mount.id = QStringLiteral("local");
+    mount.displayName = QStringLiteral("Local disk");
+    mount.root = root;
+    mount.fileSystem = faulty;
+    m_environment->drives().addMount(std::move(mount));
+    return faulty;
+}
+
 void TestMoleTasks::noArgumentsPrintsTheUsageAndSaysSo()
 {
     const Run result = run({});
     QCOMPARE(result.code, BadUsage);
-    QVERIFY2(result.out.contains(QStringLiteral("mole-tasks <command>")), qPrintable(result.both()));
+    // On stderr: stdout is the result, and a run that did nothing has none.
+    QVERIFY2(result.err.contains(QStringLiteral("mole-tasks <command>")), qPrintable(result.both()));
+    QVERIFY2(result.out.isEmpty(), qPrintable(result.out));
 }
 
 void TestMoleTasks::anUnknownCommandIsAUsageError()
@@ -385,6 +452,275 @@ void TestMoleTasks::anUnknownDriveTypeSaysTheDriveCouldNotBeReached()
 
     QCOMPARE(result.code, NoDrive);
     QVERIFY2(result.err.contains(QStringLiteral("Nothing here can serve")), qPrintable(result.both()));
+}
+
+// ------------------------ reaching a drive the way the window reaches it
+
+void TestMoleTasks::aRootedDriveIsMountedWhereTheWindowMountsIt()
+{
+    // A drive rooted inside the remote, which is the ordinary shape of one: the
+    // window mounts it at nas://NAS/ and lets the backend prefix /data, because
+    // the root travels in the configuration as __root. The runner applied it in
+    // both places, so nothing under nas://NAS/ resolved and anything that did
+    // reached /data/data/…. A drive rooted at / behaves the same either way,
+    // which is why every existing case here passed.
+    QVERIFY(seedDrive(QStringLiteral("NAS"), QStringLiteral("mem"), QStringLiteral("/data")));
+
+    const QString windowUri
+        = RemoteDrive { {}, QStringLiteral("NAS"), {}, {}, QStringLiteral("/data"), {}, {}, true }
+              .rootUri()
+              .toString();
+
+    const Run mounted = run({ QStringLiteral("--drive"), QStringLiteral("NAS"), QStringLiteral("drives") });
+    QCOMPARE(mounted.code, Ok);
+    QVERIFY2(mounted.out.contains(windowUri + QStringLiteral("  NAS")), qPrintable(mounted.both()));
+
+    // And the uri a bookmark or a session carries actually resolves.
+    QVERIFY(write(QStringLiteral("a.txt")));
+    const Run copied = run({ QStringLiteral("--drive"), QStringLiteral("NAS"), QStringLiteral("copy"),
+        QStringLiteral("--from"), uriFor(QStringLiteral("a.txt")), QStringLiteral("--to"), windowUri });
+    QCOMPARE(copied.code, Ok);
+}
+
+// ------------------------------------ what a person types, read strictly
+
+void TestMoleTasks::helpAndVersionAreAnAnswerRatherThanAMistake()
+{
+    // Both used to exit 2. --version was an unknown option, fell through to "no
+    // command" and printed the usage -- on the binary whose whole purpose is a
+    // machine with no display, where "which build is this" is the first question
+    // of every report.
+    const Run help = run({ QStringLiteral("--help") });
+    QCOMPARE(help.code, Ok);
+    QVERIFY2(help.out.contains(QStringLiteral("mole-tasks <command>")), qPrintable(help.both()));
+
+    const Run version = run({ QStringLiteral("--version") });
+    QCOMPARE(version.code, Ok);
+    QVERIFY2(version.out.contains(QCoreApplication::applicationVersion()), qPrintable(version.both()));
+
+    // The bare word kept working, and still prints to stdout.
+    const Run word = run({ QStringLiteral("help") });
+    QCOMPARE(word.code, Ok);
+    QVERIFY2(word.out.contains(QStringLiteral("mole-tasks <command>")), qPrintable(word.both()));
+}
+
+void TestMoleTasks::anOptionBeforeTheCommandIsNotTheCommand()
+{
+    // The value of the misplaced option used to become the command word, so the
+    // message named a path: "no such command: /x".
+    QVERIFY(write(QStringLiteral("a.txt")));
+    const Run result = run({ QStringLiteral("--to"), uriFor(QString()), QStringLiteral("copy"),
+        QStringLiteral("--from"), uriFor(QStringLiteral("a.txt")) });
+
+    QCOMPARE(result.code, BadUsage);
+    QVERIFY2(result.err.contains(QStringLiteral("comes after the command word")), qPrintable(result.both()));
+    QVERIFY2(!result.err.contains(QStringLiteral("no such command")), qPrintable(result.both()));
+}
+
+void TestMoleTasks::aStrayOptionIsMentionedEvenWhenTheRunFailed()
+{
+    // The case where a typo is the likeliest explanation was the one case that
+    // said nothing: the stray was reported only on a clean run.
+    const Run result = run(
+        { QStringLiteral("delete"), uriFor(QStringLiteral("gone.txt")), QStringLiteral("--recursive") });
+
+    QVERIFY2(result.err.contains(QStringLiteral("--recursive means nothing to delete")),
+        qPrintable(result.both()));
+    QCOMPARE(result.code, TaskFailed); // the delete's own answer still wins
+}
+
+void TestMoleTasks::aValueThatIsNotOneOfTheAcceptedOnesIsRefused_data()
+{
+    QTest::addColumn<QStringList>("arguments");
+    QTest::addColumn<QString>("says");
+
+    QTest::newRow("--mode") << QStringList { QStringLiteral("sync"), QStringLiteral("--from"),
+        QStringLiteral("mem:///a"), QStringLiteral("--to"), QStringLiteral("mem:///b"),
+        QStringLiteral("--mode"), QStringLiteral("miror"), QStringLiteral("--apply") }
+                            << QStringLiteral("mirror");
+    QTest::newRow("--compare") << QStringList { QStringLiteral("sync"), QStringLiteral("--from"),
+        QStringLiteral("mem:///a"), QStringLiteral("--to"), QStringLiteral("mem:///b"),
+        QStringLiteral("--compare"), QStringLiteral("content") }
+                               << QStringLiteral("contents");
+    QTest::newRow("--format") << QStringList { QStringLiteral("compress"), QStringLiteral("--from"),
+        QStringLiteral("mem:///a"), QStringLiteral("--to"), QStringLiteral("mem:///x.tar.bz2"),
+        QStringLiteral("--format"), QStringLiteral("tar.bz2") }
+                              << QStringLiteral("tar.gz");
+    QTest::newRow("--min-size") << QStringList { QStringLiteral("duplicates"), QStringLiteral("mem:///"),
+        QStringLiteral("--min-size"), QStringLiteral("lots") }
+                                << QStringLiteral("--min-size");
+    QTest::newRow("--number-from") << QStringList { QStringLiteral("rename"), QStringLiteral("--in"),
+        QStringLiteral("mem:///"), QStringLiteral("--number-from"), QStringLiteral("one") }
+                                   << QStringLiteral("--number-from");
+}
+
+void TestMoleTasks::aValueThatIsNotOneOfTheAcceptedOnesIsRefused()
+{
+    QFETCH(QStringList, arguments);
+    QFETCH(QString, says);
+
+    // Three of these went through parsers written to forgive a stored file and a
+    // picker, so `--mode miror --apply` ran an update sync over somebody's tree
+    // and `--format tar.bz2` wrote a zip called x.tar.bz2. ADR-0028: anything
+    // that can delete files does not do it on the strength of a typo.
+    const Run result = run(arguments);
+    QCOMPARE(result.code, BadUsage);
+    QVERIFY2(result.err.contains(says), qPrintable(result.both()));
+    QVERIFY2(result.out.isEmpty(), qPrintable(result.out));
+}
+
+void TestMoleTasks::aPassphraseIsNamedRatherThanTyped()
+{
+    QVERIFY(write(QStringLiteral("a.txt")));
+
+    // ADR-0028 says it in as many words: secrets never appear in an argument.
+    const Run typed = run({ QStringLiteral("compress"), QStringLiteral("--from"),
+        uriFor(QStringLiteral("a.txt")), QStringLiteral("--to"), uriFor(QStringLiteral("out.zip")),
+        QStringLiteral("--password"), QStringLiteral("hunter2") });
+    QCOMPARE(typed.code, BadUsage);
+    QVERIFY2(typed.err.contains(QStringLiteral("@NAME")), qPrintable(typed.both()));
+    QVERIFY2(!QFile::exists(m_tree->absolute(QStringLiteral("out.zip"))), "an archive was written anyway");
+
+    // A name whose variable is not set is refused too: taking it as "no
+    // passphrase" would write an unencrypted archive where one was asked for.
+    qunsetenv("MOLE_TEST_ARCHIVE_PW");
+    const Run missing = run({ QStringLiteral("compress"), QStringLiteral("--from"),
+        uriFor(QStringLiteral("a.txt")), QStringLiteral("--to"), uriFor(QStringLiteral("out.zip")),
+        QStringLiteral("--password"), QStringLiteral("@MOLE_TEST_ARCHIVE_PW") });
+    QCOMPARE(missing.code, BadUsage);
+    QVERIFY2(missing.err.contains(QStringLiteral("MOLE_TEST_ARCHIVE_PW")), qPrintable(missing.both()));
+
+    // And the parsing itself, without a drive anywhere.
+    QString problem;
+    qputenv("MOLE_TEST_ARCHIVE_PW", "opensesame");
+    QCOMPARE(secretFromEnvironment(QStringLiteral("@MOLE_TEST_ARCHIVE_PW"), &problem),
+        QStringLiteral("opensesame"));
+    QVERIFY(problem.isEmpty());
+    qunsetenv("MOLE_TEST_ARCHIVE_PW");
+}
+
+// ------------------------------------------ the result and everything else
+
+void TestMoleTasks::progressGoesToStandardErrorAndTheResultToStandardOutput()
+{
+    QVERIFY(write(QStringLiteral("in/a.txt")));
+    QVERIFY(write(QStringLiteral("in/b.txt")));
+    QVERIFY(m_tree->makeDirs(QStringLiteral("out")));
+
+    const Run result = run({ QStringLiteral("copy"), QStringLiteral("--from"),
+        uriFor(QStringLiteral("in/a.txt")), QStringLiteral("--from"), uriFor(QStringLiteral("in/b.txt")),
+        QStringLiteral("--to"), uriFor(QStringLiteral("out")) });
+
+    QCOMPARE(result.code, Ok);
+    // Redirecting the result has to give a file with the result in it and
+    // nothing else. Nothing said which stream was which before this.
+    QVERIFY2(result.out.contains(QStringLiteral("2 transferred")), qPrintable(result.both()));
+    QCOMPARE(result.out.count(QLatin1Char('\n')), 1);
+}
+
+void TestMoleTasks::anInterruptedRunSaysSoAndExitsOneThirty()
+{
+    // 130 is the code every shell already knows, and a loop driving a transfer
+    // by hand has to be able to tell it from a failure. Nothing exercised it.
+    QVERIFY(write(QStringLiteral("big.bin"), QByteArray(512 * 1024, 'x')));
+    QVERIFY(m_tree->makeDirs(QStringLiteral("out")));
+
+    std::shared_ptr<FaultyFileSystem> disk = makeLocalDriveFaulty();
+    QVERIFY(disk);
+    disk->readStallsAt(4096);
+
+    // Triggered by the transfer reaching the offset, never by a clock: the
+    // interrupt is asked for while the stream is held, so the cancel is in place
+    // before another byte moves.
+    bool asked = false;
+    QTimer trigger;
+    trigger.setInterval(1);
+    QObject::connect(&trigger, &QTimer::timeout, &trigger, [&] {
+        if (asked || !disk->isStalled())
+            return;
+        asked = true;
+        interruptMoleTasks();
+        disk->release();
+    });
+    trigger.start();
+
+    const Run result = run({ QStringLiteral("copy"), QStringLiteral("--from"),
+        uriFor(QStringLiteral("big.bin")), QStringLiteral("--to"), uriFor(QStringLiteral("out")) });
+    trigger.stop();
+
+    QVERIFY2(asked, "the transfer never reached the offset the fault was set at");
+    QCOMPARE(result.code, Interrupted);
+    QVERIFY2(result.err.contains(QStringLiteral("interrupted")), qPrintable(result.both()));
+}
+
+// ------------------------------ as complete a scan as the window builds
+
+void TestMoleTasks::aScanRecordsWhatIsInsideAContainer()
+{
+    const QString zipper = QStandardPaths::findExecutable(QStringLiteral("zip"));
+    if (zipper.isEmpty())
+        QSKIP("zip is not available to build the fixture");
+
+    QVERIFY(m_tree->makeDirs(QStringLiteral("tree/stuff")));
+    QVERIFY(write(QStringLiteral("tree/stuff/inside.txt"), QByteArray("hello")));
+
+    QProcess packer;
+    packer.setWorkingDirectory(m_tree->absolute(QStringLiteral("tree/stuff")));
+    packer.start(zipper,
+        { QStringLiteral("-qr"), m_tree->absolute(QStringLiteral("tree/bundle.zip")), QStringLiteral(".") });
+    QVERIFY(packer.waitForFinished(30000));
+    QVERIFY(QFile::exists(m_tree->absolute(QStringLiteral("tree/bundle.zip"))));
+    QVERIFY(QDir(m_tree->absolute(QStringLiteral("tree/stuff"))).removeRecursively());
+
+    // The archive backend is a plugin, so the scan has to have loaded them --
+    // and the console scan built its options by hand and asked for neither.
+    qputenv("MOLE_PLUGIN_PATH", QByteArray(MOLE_TEST_PLUGIN_DIR));
+    const Run scanned = run({ QStringLiteral("scan"), uriFor(QStringLiteral("tree")),
+        QStringLiteral("--archives"), QStringLiteral("--label"), QStringLiteral("fixture") });
+    qunsetenv("MOLE_PLUGIN_PATH");
+
+    QCOMPARE(scanned.code, Ok);
+    QVERIFY2(scanned.out.contains(QStringLiteral("inside containers")), qPrintable(scanned.both()));
+
+    // And the member is really a row, which is the whole point: a cron
+    // mole-tasks scan used to build a poorer index than the window over the
+    // same tree, with nothing anywhere saying so.
+    QString error;
+    IndexDatabase* index = m_environment->index(&error);
+    QVERIFY2(index, qPrintable(error));
+
+    // --label was read at all, which it was not: positional() is "whatever does
+    // not begin with --", so the label's value counted as a second root and the
+    // command was refused as "scan takes exactly one uri".
+    const Result<QList<IndexVolume>> volumes = index->volumes();
+    QVERIFY(volumes.ok());
+    QCOMPARE(volumes.value().size(), 1);
+    QCOMPARE(volumes.value().first().label, QStringLiteral("fixture"));
+
+    SearchQuery query;
+    query.add(SearchPredicate::name(QStringLiteral("inside")));
+    const Result<QList<IndexSearchHit>> hits = index->search(query);
+    QVERIFY(hits.ok());
+    QCOMPARE(hits.value().size(), 1);
+}
+
+void TestMoleTasks::drivesCanSayWhetherThePluginsLoaded()
+{
+    // The first question of any report about a package -- was the network
+    // backend found at all -- and it could only be answered by asking for a
+    // drive and reading the failure, because plugin errors printed only when a
+    // mount failed.
+    qputenv("MOLE_PLUGIN_PATH", QByteArray(MOLE_TEST_PLUGIN_DIR));
+    const Run result = run({ QStringLiteral("drives"), QStringLiteral("--plugins") });
+    qunsetenv("MOLE_PLUGIN_PATH");
+
+    QCOMPARE(result.code, Ok);
+    QVERIFY2(result.out.contains(QStringLiteral("plugins looked for in:")), qPrintable(result.both()));
+    QVERIFY2(result.out.contains(QStringLiteral(MOLE_TEST_PLUGIN_DIR)), qPrintable(result.both()));
+    // Loaded or not, it says which -- and the runner does not need a plugin to
+    // be there for that to be the answer.
+    QVERIFY2(result.out.contains(QStringLiteral("loaded")) || result.out.contains(QStringLiteral("problems")),
+        qPrintable(result.both()));
 }
 
 void TestMoleTasks::theBinaryRunsWithNoDisplay()

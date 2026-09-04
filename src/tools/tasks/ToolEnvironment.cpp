@@ -10,8 +10,6 @@
 #include "core/vfs/backends/LocalFileSystem.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
-#include <QRegularExpression>
-
 namespace mole::tools {
 namespace {
 
@@ -27,21 +25,43 @@ namespace {
         return QString::fromLocal8Bit(qgetenv(raw.mid(1).toLocal8Bit().constData()));
     }
 
-    /// The uri scheme a drive is addressed by, derived from its name exactly as
-    /// the application derives it -- so the same drive is the same uri in both.
-    QString schemeForName(const QString& name)
-    {
-        QString slug = name.toLower();
-        slug.replace(QRegularExpression(QStringLiteral("[^a-z0-9]+")), QString());
-        return slug.isEmpty() ? QStringLiteral("drive") : slug;
-    }
-
 } // namespace
+
+QString secretFromEnvironment(const QString& raw, QString* problemOut)
+{
+    const auto refuse = [problemOut](const QString& why) {
+        if (problemOut)
+            *problemOut = why;
+        return QString();
+    };
+
+    if (!raw.startsWith(QLatin1Char('@'))) {
+        return refuse(QStringLiteral("a secret has to be named, not typed: write @NAME and put the "
+                                     "value in that environment variable. An argument is visible in "
+                                     "ps, in the shell history and in any log that echoes the "
+                                     "command."));
+    }
+    const QString name = raw.mid(1);
+    if (name.isEmpty())
+        return refuse(QStringLiteral("@ needs the name of an environment variable after it"));
+
+    const QString value = QString::fromLocal8Bit(qgetenv(name.toLocal8Bit().constData()));
+    if (value.isEmpty())
+        return refuse(QStringLiteral("%1 is not set, or is empty").arg(name));
+    return value;
+}
 
 ToolEnvironment::ToolEnvironment()
     : m_tasks(std::make_unique<TaskManager>())
     , m_events(std::make_unique<EventBus>())
 {
+    // Built here rather than inside loadPlugins(), because a command that never
+    // loads a plugin still has to be able to build the readers a scan needs --
+    // containerReaderFor() asks only for the drives. See ADR-0056.
+    m_services.vfs = &m_vfs;
+    m_services.tasks = m_tasks.get();
+    m_services.events = m_events.get();
+
     m_vfs.registerFactory(std::make_unique<LocalFileSystemFactory>());
     m_vfs.registerFactory(std::make_unique<MemoryFileSystemFactory>());
 
@@ -72,24 +92,37 @@ void ToolEnvironment::loadPlugins()
     if (m_plugins)
         return;
 
-    PluginServices services;
-    services.vfs = &m_vfs;
-    services.tasks = m_tasks.get();
-    services.events = m_events.get();
     // No previews, no features, no scheduler: this binary runs tasks. A plugin
     // that offers one is not rejected, it simply has nowhere to put it, and
     // says so in the errors list.
-
     PluginManager::Destinations destinations;
     destinations.vfs = &m_vfs;
 
-    m_plugins = std::make_unique<PluginManager>(services, destinations);
+    m_plugins = std::make_unique<PluginManager>(m_services, destinations);
     m_plugins->loadFromDefaultPaths();
 }
 
 QStringList ToolEnvironment::pluginErrors() const
 {
     return m_plugins ? m_plugins->errors() : QStringList {};
+}
+
+QStringList ToolEnvironment::pluginSearchPaths() const
+{
+    return PluginManager::defaultSearchPaths();
+}
+
+QStringList ToolEnvironment::loadedPlugins() const
+{
+    QStringList names;
+    if (!m_plugins)
+        return names;
+    for (const PluginManager::LoadedPlugin& plugin : m_plugins->loaded()) {
+        names.append(plugin.filePath.isEmpty()
+                ? plugin.metadata.name
+                : QStringLiteral("%1  %2").arg(plugin.metadata.name, plugin.filePath));
+    }
+    return names;
 }
 
 IndexDatabase* ToolEnvironment::index(QString* errorOut)
@@ -107,8 +140,8 @@ IndexDatabase* ToolEnvironment::index(QString* errorOut)
     return m_index.get();
 }
 
-bool ToolEnvironment::mountBuilt(const QString& name, const QString& scheme, const QVariantMap& config,
-    const QString& root, QString* errorOut)
+bool ToolEnvironment::mountBuilt(const QString& id, const QString& name, const QString& scheme,
+    const QVariantMap& config, const VfsUri& root, QString* errorOut)
 {
     IFileSystemFactory* factory = m_vfs.factoryFor(scheme);
     if (!factory) {
@@ -123,7 +156,7 @@ bool ToolEnvironment::mountBuilt(const QString& name, const QString& scheme, con
     // The backend stamps its own uris with this, so the drive answers to the
     // name it was given rather than to its protocol -- two SFTP drives would
     // otherwise both be sftp:// and only one of them reachable.
-    settings.insert(QStringLiteral("__scheme"), schemeForName(name));
+    settings.insert(QStringLiteral("__scheme"), driveSchemeFor(name));
 
     QString error;
     FileSystemPtr fs = factory->create(settings, &error);
@@ -134,8 +167,9 @@ bool ToolEnvironment::mountBuilt(const QString& name, const QString& scheme, con
     }
 
     Mount mount;
+    mount.id = id;
     mount.displayName = name;
-    mount.root = VfsUri(schemeForName(name), name, root.isEmpty() ? QStringLiteral("/") : root);
+    mount.root = root;
     mount.fileSystem = std::move(fs);
     m_vfs.addMount(std::move(mount));
     return true;
@@ -192,7 +226,9 @@ bool ToolEnvironment::mountConfigured(const QString& idOrName, QString* errorOut
         return false;
     }
 
-    return mountBuilt(drive.name, drive.factoryScheme, config, drive.root, errorOut);
+    // drive.rootUri() and not drive.root: exactly what AppController::connectDrive()
+    // mounts, and the remote root is already in the configuration as __root.
+    return mountBuilt(drive.id, drive.name, drive.factoryScheme, config, drive.rootUri(), errorOut);
 }
 
 MountSpec parseMountSpec(const QString& text)
@@ -231,7 +267,18 @@ bool ToolEnvironment::mountFromSpec(const QString& text, QString* errorOut)
             *errorOut = spec.problem;
         return false;
     }
-    return mountBuilt(spec.name, spec.type, spec.config, spec.root, errorOut);
+
+    // `root=` means what it means in drives.json: where inside the remote this
+    // drive starts. That is the backend's business, so it travels in the
+    // configuration under the key every network backend reads -- the same key
+    // RemoteRegistry::configFor() puts it under. It used to become the mount
+    // root instead, so "root" meant one thing here and another there.
+    QVariantMap config = spec.config;
+    if (!spec.root.isEmpty())
+        config.insert(QStringLiteral("__root"), spec.root);
+
+    return mountBuilt(spec.name, spec.name, spec.type, config,
+        VfsUri(driveSchemeFor(spec.name), spec.name, QStringLiteral("/")), errorOut);
 }
 
 QStringList ToolEnvironment::mountSummary() const

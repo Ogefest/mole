@@ -19,11 +19,23 @@ QString SyncOptions::modeToString(Mode mode)
 
 SyncOptions::Mode SyncOptions::modeFromString(const QString& text)
 {
+    return modeIfKnown(text).value_or(Mode::Update);
+}
+
+std::optional<SyncOptions::Mode> SyncOptions::modeIfKnown(const QString& text)
+{
+    if (text == QLatin1String("update"))
+        return Mode::Update;
     if (text == QLatin1String("mirror"))
         return Mode::Mirror;
     if (text == QLatin1String("fill"))
         return Mode::FillGaps;
-    return Mode::Update;
+    return std::nullopt;
+}
+
+QStringList SyncOptions::modeNames()
+{
+    return { QStringLiteral("update"), QStringLiteral("mirror"), QStringLiteral("fill") };
 }
 
 QString SyncOptions::modeLabel(Mode mode)
@@ -71,11 +83,26 @@ QString SyncOptions::compareToString(Compare compare)
 
 SyncOptions::Compare SyncOptions::compareFromString(const QString& text)
 {
+    return compareIfKnown(text).value_or(Compare::SizeAndTime);
+}
+
+std::optional<SyncOptions::Compare> SyncOptions::compareIfKnown(const QString& text)
+{
+    // "size-and-time" as well as the stored spelling, because that is what
+    // mole-tasks' own usage text has always documented and a command line that
+    // worked yesterday must not stop working over a hyphen.
+    if (text == QLatin1String("size+time") || text == QLatin1String("size-and-time"))
+        return Compare::SizeAndTime;
     if (text == QLatin1String("size"))
         return Compare::SizeOnly;
     if (text == QLatin1String("contents"))
         return Compare::Contents;
-    return Compare::SizeAndTime;
+    return std::nullopt;
+}
+
+QStringList SyncOptions::compareNames()
+{
+    return { QStringLiteral("size+time"), QStringLiteral("size"), QStringLiteral("contents") };
 }
 
 QString SyncOptions::compareLabel(Compare compare)

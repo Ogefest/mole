@@ -1,5 +1,7 @@
 #pragma once
 
+#include "sdk/PluginServices.h"
+
 #include "core/vfs/VfsManager.h"
 
 #include <QString>
@@ -45,6 +47,19 @@ namespace tools {
     /// A free function so the parsing can be tested without a drive anywhere.
     MountSpec parseMountSpec(const QString& text);
 
+    /// A secret named by the environment: `@SOMETHING` is the value of that
+    /// variable, and nothing else is accepted.
+    ///
+    /// ADR-0028 says it in as many words -- "Secrets never appear in an
+    /// argument" -- and an argument is in `ps` for every user on the machine, in
+    /// the shell history that outlives the run, and in any CI log that echoes
+    /// the command it is about to run. So a literal is refused rather than used.
+    ///
+    /// Empty with `problemOut` set for a literal, for a bare `@`, and for a
+    /// variable that is not set: an unset variable quietly meaning "no
+    /// passphrase" would write an unencrypted archive where one was asked for.
+    QString secretFromEnvironment(const QString& raw, QString* problemOut);
+
     /// Everything `mole-tasks` needs to reach a drive, with no window anywhere.
     ///
     /// The console binary exists for the half of the work that a C++ test cannot
@@ -74,9 +89,19 @@ namespace tools {
         /// that a plugin did not load.
         void loadPlugins();
         QStringList pluginErrors() const;
+        /// Where plugins were looked for and what was found, so `drives
+        /// --plugins` can answer the first question of any report about a
+        /// package: was the network backend there at all. Empty until
+        /// loadPlugins() has run.
+        QStringList pluginSearchPaths() const;
+        QStringList loadedPlugins() const;
 
         VfsManager& drives() { return m_vfs; }
         TaskManager& tasks() { return *m_tasks; }
+        /// The services the plugins are given, so a command can build the same
+        /// scan the window builds rather than a poorer one of its own. Valid
+        /// whether or not loadPlugins() has run. See ADR-0056.
+        PluginServices services() const { return m_services; }
         /// Opened on first use: scanning is the only command that needs it, and
         /// creating the file for a copy would be rude.
         IndexDatabase* index(QString* errorOut);
@@ -102,9 +127,18 @@ namespace tools {
         QStringList mountSummary() const;
 
     private:
-        bool mountBuilt(const QString& name, const QString& scheme, const QVariantMap& config,
-            const QString& root, QString* errorOut);
+        /// Builds the backend and mounts it at `root`.
+        ///
+        /// `root` is the *mount* root, which is not the drive's root inside the
+        /// remote: the remote root travels in the configuration as `__root` and
+        /// every network backend prefixes its own paths with it. Applying it in
+        /// both places is what made `--drive nas` reach /data/data/photos, and
+        /// only for a drive rooted below `/`, which is why the local and mem
+        /// cases never showed it. See MOLE-391.
+        bool mountBuilt(const QString& id, const QString& name, const QString& scheme,
+            const QVariantMap& config, const VfsUri& root, QString* errorOut);
 
+        PluginServices m_services;
         VfsManager m_vfs;
         std::unique_ptr<TaskManager> m_tasks;
         std::unique_ptr<EventBus> m_events;

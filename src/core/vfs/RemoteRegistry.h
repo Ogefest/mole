@@ -9,6 +9,14 @@
 
 namespace mole {
 
+/// The uri scheme a drive of this name is reached by.
+///
+/// Free rather than a member of RemoteDrive because `mole-tasks` mounts a drive
+/// described entirely on a command line, where there is no RemoteDrive to ask --
+/// and it had its own byte-for-byte copy of this, which is two ways of naming
+/// one drive waiting to drift apart.
+QString driveSchemeFor(const QString& name);
+
 /// One drive the user has configured.
 ///
 /// Split in two on purpose. The settings are ordinary and live in a readable

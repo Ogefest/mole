@@ -49,7 +49,16 @@ QStringList CompressTask::formatNames()
 
 CompressTask::Format CompressTask::formatFromName(const QString& name)
 {
+    // Zip for anything unrecognised: it is the one anyone can open anywhere, which
+    // makes it the right thing to fall back to as well as the right default.
+    return formatIfKnown(name).value_or(Format::Zip);
+}
+
+std::optional<CompressTask::Format> CompressTask::formatIfKnown(const QString& name)
+{
     const QString lower = name.trimmed().toLower();
+    if (lower == QLatin1String("zip"))
+        return Format::Zip;
     if (lower == QLatin1String("tar.gz") || lower == QLatin1String("tgz"))
         return Format::TarGz;
     if (lower == QLatin1String("tar.xz") || lower == QLatin1String("txz"))
@@ -59,9 +68,7 @@ CompressTask::Format CompressTask::formatFromName(const QString& name)
     // After tar.xz, or "tar.xz" would be read as a bare xz stream.
     if (lower == QLatin1String("xz"))
         return Format::Xz;
-    // Zip for anything unrecognised: it is the one anyone can open anywhere, which
-    // makes it the right thing to fall back to as well as the right default.
-    return Format::Zip;
+    return std::nullopt;
 }
 
 QString CompressTask::suffixFor(Format format)

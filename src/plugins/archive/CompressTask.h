@@ -6,6 +6,8 @@
 #include <QList>
 #include <QStringList>
 
+#include <optional>
+
 namespace mole {
 
 /// Packs files and folders into a new archive, in the background.
@@ -25,7 +27,16 @@ public:
 
     /// The names as the interface offers them, in the order it offers them.
     static QStringList formatNames();
+    /// Zip for a name this does not know, which is right for the form: its
+    /// picker only ever hands back a name it offered, and zip is the one anyone
+    /// can open anywhere.
     static Format formatFromName(const QString& name);
+    /// The same, refusing a name that is not one of them.
+    ///
+    /// On a command line `--format tar.bz2` is a typo, and answering it by
+    /// writing a zip called `x.tar.bz2` is a file nobody can open by its name.
+    /// See MOLE-391.
+    static std::optional<Format> formatIfKnown(const QString& name);
     /// The suffix a chosen format wants, so a name can be completed for the user.
     static QString suffixFor(Format format);
     /// Only zip carries a password: a tar has no notion of one and gzip and xz

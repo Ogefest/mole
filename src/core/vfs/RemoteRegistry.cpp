@@ -17,7 +17,7 @@
 
 namespace mole {
 
-QString RemoteDrive::scheme() const
+QString driveSchemeFor(const QString& name)
 {
     // Derived from the name so a uri reads as something a person recognises,
     // and reduced to what a scheme may contain. Two drives called the same
@@ -27,6 +27,11 @@ QString RemoteDrive::scheme() const
     if (slug.isEmpty())
         slug = QStringLiteral("drive");
     return slug;
+}
+
+QString RemoteDrive::scheme() const
+{
+    return driveSchemeFor(name);
 }
 
 VfsUri RemoteDrive::rootUri() const
