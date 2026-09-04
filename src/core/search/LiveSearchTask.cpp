@@ -38,6 +38,11 @@ void LiveSearchTask::supersede(QHash<QString, QStringList> indexedByParent)
     m_indexedByParent = std::move(indexedByParent);
 }
 
+void LiveSearchTask::setFactReader(std::function<QList<SearchFact>(const FileEntry&)> reader)
+{
+    m_facts = std::move(reader);
+}
+
 void LiveSearchTask::run()
 {
     if (!m_fileSystem) {
@@ -81,6 +86,11 @@ void LiveSearchTask::run()
     // that survived everything cheaper -- which is the whole point of the plan
     // handing them over in cost order.
     SearchIo io;
+    // Set whether or not anything needs a file: a metadata criterion asks this
+    // rather than reading bytes, and it is answered from whatever the caller's
+    // readers say. Without a supplier it stays empty, which SearchQuery reads as
+    // "this criterion cannot be answered here" rather than as "nothing matches".
+    io.facts = m_facts;
     if (m_plan.needsFile()) {
         io.read = [this](const VfsUri& uri, qint64 offset, qint64 bytes) -> QByteArray {
             Result<std::unique_ptr<QIODevice>> stream = m_fileSystem->openRead(uri, offset + bytes);
@@ -161,8 +171,22 @@ void LiveSearchTask::run()
                 ++m_skippedTooBig;
 
             if (m_plan.matchesWithoutFile(entry)) {
-                if (!needsFile || entry.isDir) {
+                if (!needsFile) {
                     keep(entry, {});
+                } else if (entry.isDir) {
+                    // A directory is still *asked* the criteria that need a
+                    // file, with nothing to read from -- which is what a folder
+                    // honestly is. It used to be kept without being asked at
+                    // all, so `content:anything` and `doc.author:anybody`
+                    // returned every folder in the tree while the index returned
+                    // none of them. A type-class criterion still answers
+                    // "folder" from the entry itself, and a negated one still
+                    // matches, which is what the index says too. See MOLE-372.
+                    SearchIo nothingToRead;
+                    nothingToRead.cancelled = io.cancelled;
+                    ContentMatch why;
+                    if (m_plan.matchesNeedingFile(entry, nothingToRead, &why))
+                        keep(entry, why);
                 } else {
                     // Held back and read with its neighbours: opening files one
                     // at a time is what makes this the search that takes
@@ -180,7 +204,7 @@ void LiveSearchTask::run()
                           .arg(walker.visitedCount())
                     : QStringLiteral("%1 matches / %2 scanned").arg(m_hitCount).arg(walker.visitedCount()));
 
-            if (m_hitCount >= m_query.limit) {
+            if (m_hitCount >= m_query.effectiveLimit()) {
                 m_truncated = true;
                 return DirectoryWalker::Action::Stop;
             }

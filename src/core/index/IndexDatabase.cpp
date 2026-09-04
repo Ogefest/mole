@@ -15,8 +15,6 @@
 namespace mole {
 namespace {
 
-    constexpr int kSchemaVersion = 5;
-
     /// How long a write waits for another connection before giving up. Named
     /// because the sentence a reader gets says how long that was -- see
     /// sqlite::describe().
@@ -381,6 +379,34 @@ Result<void> IndexDatabase::applyMigrations()
             return applied;
     }
 
+    if (version < 6) {
+        // A folded copy of a fact's text, so the index folds a fact the way it
+        // has always folded a name.
+        //
+        // Names are stored twice -- `name` and `name_folded` -- precisely because
+        // SQLite's LIKE and NOCASE fold ASCII only. Facts were stored once and
+        // folded at query time by SQLite's `lower()`, which is also ASCII-only in
+        // Qt's bundled build, against a term folded by `foldForSearch()`
+        // (QString::toLower(), which is not). So `doc.author:lukasz` with the
+        // Polish l matched a stored name in the walk and matched nothing in the
+        // index -- the exact disagreement ADR-0036 exists to prevent.
+        // See MOLE-372.
+        //
+        // Filled from what is already there, so an index built before this keeps
+        // answering without a rescan. It is folded here with SQL's own lower(),
+        // which is the best this statement can do; a rescan writes the proper
+        // fold, and until then a non-ASCII fact answers exactly as badly as it
+        // did before rather than not at all.
+        const QStringList statements = {
+            addColumn(QStringLiteral("file_facts"), QStringLiteral("text_folded"), QStringLiteral("TEXT")),
+            QStringLiteral("UPDATE file_facts SET text_folded = lower(text) WHERE text_folded IS NULL"),
+            QStringLiteral("CREATE INDEX IF NOT EXISTS idx_facts_key_folded "
+                           "ON file_facts(key, text_folded)"),
+        };
+        if (Result<void> applied = apply(6, statements); !applied.ok())
+            return applied;
+    }
+
     return {};
 }
 
@@ -587,8 +613,8 @@ Result<qint64> IndexDatabase::carryForward(qint64 volumeId, qint64 generation, c
     const qint64 carried = rows.numRowsAffected();
 
     QSqlQuery facts(db);
-    facts.prepare(QStringLiteral("INSERT INTO file_facts (file_id, key, text, num) "
-                                 "SELECT copy.id, m.key, m.text, m.num FROM file_facts m "
+    facts.prepare(QStringLiteral("INSERT INTO file_facts (file_id, key, text, text_folded, num) "
+                                 "SELECT copy.id, m.key, m.text, m.text_folded, m.num FROM file_facts m "
                                  "JOIN files old ON old.id = m.file_id "
                                  "JOIN volumes v ON v.id = old.volume_id AND v.generation = old.generation "
                                  "JOIN files copy ON copy.volume_id = old.volume_id AND copy.generation = ? "
@@ -747,7 +773,8 @@ Result<void> IndexDatabase::insertBatch(qint64 volumeId, qint64 generation, cons
                                  "parent_path, extension, is_dir, size, mtime, uri) "
                                  "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"));
     QSqlQuery fact(db);
-    fact.prepare(QStringLiteral("INSERT INTO file_facts (file_id, key, text, num) VALUES (?, ?, ?, ?)"));
+    fact.prepare(QStringLiteral(
+        "INSERT INTO file_facts (file_id, key, text, text_folded, num) VALUES (?, ?, ?, ?, ?)"));
 
     for (const IndexedFile& file : files) {
         query.addBindValue(volumeId);
@@ -773,6 +800,9 @@ Result<void> IndexDatabase::insertBatch(qint64 volumeId, qint64 generation, cons
             fact.addBindValue(fileId);
             fact.addBindValue(one.key);
             fact.addBindValue(one.text.isEmpty() ? QVariant() : QVariant(one.text));
+            // Folded here, by the same function the search term goes through --
+            // not by SQL's lower(), which folds ASCII only. See migration 6.
+            fact.addBindValue(one.text.isEmpty() ? QVariant() : QVariant(foldForSearch(one.text)));
             fact.addBindValue(one.hasNumber ? QVariant(one.number) : QVariant());
             if (!fact.exec()) {
                 db.rollback();
@@ -838,6 +868,11 @@ Result<QList<IndexSearchHit>> IndexDatabase::search(const SearchQuery& query) co
                 placeholders.append(QStringLiteral("?"));
                 bindings.append(one);
             }
+            // An empty list never reaches here -- indexCanExpress() refuses it,
+            // because `extension IN ()` is false in SQLite and matches nothing
+            // where the walk's `list.isEmpty() || …` matches everything. Asserted
+            // rather than assumed, since the clause below would be silent.
+            Q_ASSERT(!placeholders.isEmpty());
             sql += QStringLiteral(" AND f.extension IN (%1)").arg(placeholders.join(QStringLiteral(", ")));
             break;
         }
@@ -854,18 +889,37 @@ Result<QList<IndexSearchHit>> IndexDatabase::search(const SearchQuery& query) co
             // An EXISTS over the fact table rather than a join, so a file with
             // two cameras named in it comes back once. Both indexes are on
             // (key, …), so the key narrows first whichever way it is asked.
+            //
+            // NOT EXISTS for a negated one. The clause used to read only the
+            // key, the match and the value, while indexCanExpress() said yes
+            // whatever the flags -- so a negated predicate was pushed down and
+            // evaluated as if it were not, and the index returned the inverse of
+            // the walk. See MOLE-372.
             const QString key = predicate.list.value(0);
+            const QString exists
+                = predicate.negate ? QStringLiteral(" AND NOT EXISTS") : QStringLiteral(" AND EXISTS");
             if (predicate.match == SearchPredicate::Match::AtLeast
                 || predicate.match == SearchPredicate::Match::AtMost) {
-                sql += QStringLiteral(" AND EXISTS (SELECT 1 FROM file_facts m WHERE m.file_id = f.id "
-                                      "AND m.key = ? AND m.num %1 ?)")
-                           .arg(predicate.match == SearchPredicate::Match::AtMost ? QStringLiteral("<=")
-                                                                                  : QStringLiteral(">="));
+                sql += exists
+                    + QStringLiteral(" (SELECT 1 FROM file_facts m WHERE m.file_id = f.id "
+                                     "AND m.key = ? AND m.num %1 ?)")
+                          .arg(predicate.match == SearchPredicate::Match::AtMost ? QStringLiteral("<=")
+                                                                                 : QStringLiteral(">="));
                 bindings.append(key);
                 bindings.append(predicate.numberValue);
+            } else if (predicate.caseSensitive) {
+                sql += exists
+                    + QStringLiteral(" (SELECT 1 FROM file_facts m WHERE m.file_id = f.id "
+                                     "AND m.key = ? AND instr(m.text, ?) > 0)");
+                bindings.append(key);
+                bindings.append(predicate.text);
             } else {
-                sql += QStringLiteral(" AND EXISTS (SELECT 1 FROM file_facts m WHERE m.file_id = f.id "
-                                      "AND m.key = ? AND instr(lower(m.text), ?) > 0)");
+                // The folded column, not lower(m.text): SQLite's lower() folds
+                // ASCII only, and the term arrives folded by foldForSearch(),
+                // which does not. See migration 6 and MOLE-372.
+                sql += exists
+                    + QStringLiteral(" (SELECT 1 FROM file_facts m WHERE m.file_id = f.id "
+                                     "AND m.key = ? AND instr(m.text_folded, ?) > 0)");
                 bindings.append(key);
                 bindings.append(foldForSearch(predicate.text));
             }
@@ -930,7 +984,7 @@ Result<QList<IndexSearchHit>> IndexDatabase::search(const SearchQuery& query) co
     }
 
     sql += QStringLiteral(" ORDER BY f.is_dir DESC, f.name COLLATE NOCASE LIMIT ?");
-    bindings.append(query.limit > 0 ? query.limit : SearchQuery {}.limit);
+    bindings.append(query.effectiveLimit());
 
     QSqlQuery statement(db);
     statement.prepare(sql);

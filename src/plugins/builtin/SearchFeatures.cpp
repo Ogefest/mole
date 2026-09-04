@@ -1169,6 +1169,13 @@ void LiveSearchController::startWalk(FileSystemPtr fileSystem, const VfsUri& roo
 {
     auto* task = new LiveSearchTask(fileSystem, root, query);
     task->supersede(primed);
+    // The same readers the scan uses, so a metadata criterion over a folder no
+    // scan has touched is answered rather than silently matching nothing.
+    // factReaderFor() takes the scan's cancel token; a walk has its own, and the
+    // task polls it between windows in any case.
+    if (auto reader = factReaderFor(m_services, fileSystem)) {
+        task->setFactReader([reader](const FileEntry& entry) { return reader(entry, CancelToken()); });
+    }
     task->setContentCeiling(
         root.scheme() == QLatin1String("file") ? SearchIo::kLocalCeiling : SearchIo::kRemoteCeiling);
     m_task = task;

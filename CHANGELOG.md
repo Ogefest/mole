@@ -65,6 +65,10 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-372 An indexed search finds facts written in any alphabet, instead of only ASCII ones
+2026-09-04 #MOLE-372 A search for files without a given fact answers the same from an index as from a walk, instead of the opposite
+2026-09-04 #MOLE-372 A metadata criterion works on a folder no scan has touched, instead of matching nothing
+2026-09-04 #MOLE-372 A search that needs to read a file no longer returns every folder it passed
 2026-09-04 #MOLE-368 Cancelling a delete, a rename or a large read on a remote drive stops it, instead of running to the end
 2026-09-04 #MOLE-368 Deleting a folder over SFTP or FTP asks the server once per folder instead of once per file
 2026-09-04 #MOLE-380 A report filed by a schedule appears in the Reports tab at once, instead of waiting for some folder to change

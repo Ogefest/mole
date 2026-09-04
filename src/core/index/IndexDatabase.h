@@ -120,6 +120,13 @@ struct IndexSearchHit
 class IndexDatabase
 {
 public:
+    /// The schema this build understands.
+    ///
+    /// Public so a test can say "up to date" without typing the number, which is
+    /// a number that changes with every migration and went stale the first time
+    /// one was added. See applyMigrations().
+    static constexpr int kSchemaVersion = 6;
+
     /// `filePath` is a real file; SQLite ":memory:" is not usable because the
     /// scanner and the UI share one connection by design.
     explicit IndexDatabase(QString filePath);

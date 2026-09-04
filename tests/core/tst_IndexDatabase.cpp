@@ -766,7 +766,7 @@ void TestIndexDatabase::anIndexInterruptedHalfWayUpTheSchemaOpensAgain()
     QCOMPARE(recovered.fileCount().value(), 1);
 
     // And it really is up to date afterwards, rather than opening and stopping.
-    QCOMPARE(recovered.pragmaValue(QStringLiteral("user_version")).toInt(), 5);
+    QCOMPARE(recovered.pragmaValue(QStringLiteral("user_version")).toInt(), IndexDatabase::kSchemaVersion);
     const qint64 volume = recovered.volumes().value().first().id;
     QVERIFY(recovered.beginScan(volume).ok());
 }
@@ -898,6 +898,61 @@ void TestIndexDatabase::whatAFileSaysAboutItselfIsStoredAndAskedFor()
     SearchQuery anyCamera;
     anyCamera.add(SearchPredicate::metadataIs(QStringLiteral("image.camera"), QStringLiteral("o")));
     QCOMPARE(m_db->search(anyCamera).value().size(), 2);
+
+    // A value that is not ASCII. Facts were stored once and folded at query time
+    // by SQLite's lower(), which folds ASCII only in Qt's bundled build, against
+    // a term folded by foldForSearch(), which does not -- so the walk matched and
+    // the index did not. Names are stored twice for exactly this reason and facts
+    // now are too. See MOLE-372.
+    IndexedFile polish = makeFile(QStringLiteral("/photos/c.jpg"));
+    polish.facts
+        = { SearchFact { QStringLiteral("doc.author"), QString::fromUtf8("\u0141ukasz Gajos"), 0, false } };
+    QVERIFY(rescan(volume.value(), { canon, nikon, plain, polish }));
+
+    SearchQuery byAuthor;
+    byAuthor.add(SearchPredicate::metadataIs(QStringLiteral("doc.author"), QString::fromUtf8("\u0142ukasz")));
+    QCOMPARE(m_db->search(byAuthor).value().size(), 1);
+    QCOMPARE(m_db->search(byAuthor).value().first().name, QStringLiteral("c.jpg"));
+
+    // And exactly as typed, which is the other half of the same column pair.
+    SearchQuery exactly;
+    SearchPredicate cased
+        = SearchPredicate::metadataIs(QStringLiteral("doc.author"), QString::fromUtf8("\u0141ukasz"));
+    cased.caseSensitive = true;
+    exactly.add(cased);
+    QCOMPARE(m_db->search(exactly).value().size(), 1);
+
+    SearchQuery wrongCase;
+    SearchPredicate lowered
+        = SearchPredicate::metadataIs(QStringLiteral("doc.author"), QString::fromUtf8("\u0142ukasz"));
+    lowered.caseSensitive = true;
+    wrongCase.add(lowered);
+    QVERIFY(m_db->search(wrongCase).value().isEmpty());
+
+    // A negation, as NOT EXISTS. The clause read only the key, the match and the
+    // value while the planner pushed it down whatever the flags, so the index
+    // used to return the inverse of the walk -- on a criterion that can feed a
+    // chain that deletes.
+    SearchQuery notCanon;
+    SearchPredicate negated
+        = SearchPredicate::metadataIs(QStringLiteral("image.camera"), QStringLiteral("canon"));
+    negated.negate = true;
+    notCanon.add(negated);
+    const QStringList without = [&] {
+        // The Result is held in a local: `search(q).value()` as a range
+        // expression is a reference into a temporary that has already gone.
+        const Result<QList<IndexSearchHit>> hits = m_db->search(notCanon);
+        QStringList names;
+        for (const IndexSearchHit& hit : hits.value())
+            names.append(hit.name);
+        names.sort();
+        return names;
+    }();
+    QCOMPARE(without,
+        QStringList({ QStringLiteral("b.jpg"), QStringLiteral("c.jpg"), QStringLiteral("notes.txt") }));
+
+    // Back to the three the rest of this case is about.
+    QVERIFY(rescan(volume.value(), { canon, nikon, plain }));
 
     // And the index answers it rather than handing it back to be checked.
     QVERIFY(planSearch(byCamera, SearchSource::Index).pushedDownEverything());

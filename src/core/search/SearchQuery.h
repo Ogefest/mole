@@ -290,7 +290,18 @@ struct SearchQuery
     /// How many hits are wanted before a search stops looking. Both engines
     /// honour it, and a search that stops here has to say so rather than let
     /// the list read as complete.
-    int limit = 10000;
+    /// The cap when nothing says otherwise, and what a limit of nought means.
+    static constexpr int kDefaultLimit = 10000;
+    int limit = kDefaultLimit;
+
+    /// The cap to apply, whatever `limit` says.
+    ///
+    /// Nought or less means "unsaid", not "no results". A query built by hand,
+    /// restored from JSON or written by a chain can carry it, and the two engines
+    /// read it differently: the walk stopped on its first entry and reported
+    /// "Stopped at 0 matches (limit reached)", while the index fell back to the
+    /// default for the same query. One reading, in one place. See MOLE-372.
+    [[nodiscard]] int effectiveLimit() const { return limit > 0 ? limit : kDefaultLimit; }
 
     /// Directory names a walk must not descend into, as globs: `node_modules`,
     /// `.git`, `build`.

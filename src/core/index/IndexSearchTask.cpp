@@ -67,7 +67,7 @@ void IndexSearchTask::run()
     // alphabetically first, and the rest were never looked at. Read from the
     // rows and not from the entries, because the criteria applied above are
     // exactly what makes the two counts differ.
-    const int allowed = m_query.limit > 0 ? m_query.limit : SearchQuery {}.limit;
+    const int allowed = m_query.effectiveLimit();
     m_truncated = hits.value().size() >= allowed;
 
     m_hitCount = static_cast<int>(entries.size());

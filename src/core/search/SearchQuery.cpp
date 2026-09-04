@@ -35,6 +35,11 @@ namespace {
             return predicate.match == SearchPredicate::Match::Contains && !predicate.negate
                 && !predicate.wholeWord;
         case SearchPredicate::Field::Extension:
+            // An empty list is not a criterion at all: the walk's
+            // `list.isEmpty() || …` matches everything, and `extension IN ()` is
+            // false in SQLite and matches nothing. Left in the remainder, where
+            // the walk's reading of it is the one both engines get.
+            return !predicate.negate && !predicate.list.isEmpty();
         case SearchPredicate::Field::Kind:
             return !predicate.negate;
         case SearchPredicate::Field::Size:
@@ -58,7 +63,20 @@ namespace {
             // Its own table, with an index for each way of asking. This is the
             // one criterion the index answers that a walk has to open a file
             // for, which is the whole reason it is indexed at all.
-            return true;
+            //
+            // The flags, though, which this used to ignore: the clause reads
+            // only the key, the match and the value, so a negated predicate was
+            // pushed down and evaluated as if it were not -- the index returned
+            // the inverse of the walk. A whole-word or case-sensitive demand was
+            // ignored the same way. Reachable from JSON, a chain or the console,
+            // on a criterion that can feed a chain that deletes, which is the one
+            // thing SearchQuery::fromJson()'s own comment says must not happen
+            // quietly. A case demand is now answered by the clause; the other two
+            // are answered by the clause too -- a negation as NOT EXISTS, a case
+            // demand against the unfolded column. A word boundary is the one SQL
+            // cannot state, so that one is left for the evaluator, which needs a
+            // fact source of its own. See MOLE-372.
+            return !predicate.wholeWord;
         case SearchPredicate::Field::Under:
             // On the path column, which is the one thing that says where a row
             // really sits -- a member of an archive included, since its path is
@@ -116,6 +134,30 @@ namespace {
             // A pattern that does not compile matches nothing. Matching
             // everything would turn a typo into a search of the whole disk.
             return pattern.isValid() && pattern.match(text).hasMatch();
+        }
+        case SearchPredicate::Match::Equals:
+            // Exact, folded unless the caller asked otherwise. This used to fall
+            // through to a substring, so a stored `{field: name, match: equals}`
+            // -- which no factory produces but fromJson() accepts -- behaved as
+            // `contains`: "report" matched "annual-report-draft". A criterion
+            // read as a weaker one is the shape of fault ADR-0036 is about.
+            // See MOLE-372.
+            return predicate.caseSensitive ? text == predicate.text
+                                           : foldForSearch(text) == foldForSearch(predicate.text);
+        case SearchPredicate::Match::OneOf: {
+            // `list` where there is one, and a comma-separated `text` otherwise,
+            // which is what the enumerator's own comment promises.
+            const QStringList wanted = predicate.list.isEmpty()
+                ? predicate.text.split(QLatin1Char(','), Qt::SkipEmptyParts)
+                : predicate.list;
+            for (const QString& one : wanted) {
+                const QString candidate = one.trimmed();
+                if (predicate.caseSensitive ? text == candidate
+                                            : foldForSearch(text) == foldForSearch(candidate)) {
+                    return true;
+                }
+            }
+            return false;
         }
         default:
             return containsText(text, predicate.text, predicate.caseSensitive, predicate.wholeWord);

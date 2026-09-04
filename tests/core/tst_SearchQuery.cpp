@@ -89,6 +89,18 @@ private:
     /// The same, from the index.
     QStringList throughTheIndex(const SearchQuery& query);
 
+    /// What each fixture file says about itself. One reader, given to the scan
+    /// and to the walk, so a disagreement about a fact is a disagreement between
+    /// the two engines rather than between two sets of facts.
+    ///
+    /// The author is deliberately not ASCII: names are stored twice in the index
+    /// (`name`, `name_folded`) precisely because SQLite's LIKE and NOCASE fold
+    /// ASCII only, and facts were stored once and folded at query time by
+    /// SQLite's `lower()` -- also ASCII-only in Qt's bundled build -- against a
+    /// term folded by QString::toLower(). So `doc.author:łukasz` matched in the
+    /// walk and not in the index. See MOLE-372.
+    static QList<SearchFact> factsFor(const FileEntry& entry);
+
     std::unique_ptr<QTemporaryDir> m_dir;
     std::unique_ptr<IndexDatabase> m_index;
     std::unique_ptr<TaskManager> m_tasks;
@@ -543,6 +555,17 @@ void TestSearchQuery::criteriaOfOneCostKeepTheOrderTheyWereWrittenIn()
 
 // -------------------------------------------------------------- the two engines
 
+QList<SearchFact> TestSearchQuery::factsFor(const FileEntry& entry)
+{
+    if (entry.isDir || !entry.uri.suffix().compare(QLatin1String("md"), Qt::CaseInsensitive))
+        return {};
+    QList<SearchFact> facts { SearchFact {
+        QStringLiteral("doc.author"), QStringLiteral("\u0141ukasz Gajos"), 0, false } };
+    if (entry.name.contains(QLatin1String("draft")))
+        facts.first().text = QStringLiteral("Somebody Else");
+    return facts;
+}
+
 bool TestSearchQuery::buildFixture()
 {
     const QDateTime old = QDateTime::fromSecsSinceEpoch(1000000000);
@@ -556,6 +579,8 @@ bool TestSearchQuery::buildFixture()
 
     auto* scan = new ScanTask(
         m_fs, VfsUri::fromString(QStringLiteral("mem:///")), QStringLiteral("scratch"), m_index.get());
+    scan->setFactReader(
+        [](const FileEntry& entry, const CancelToken&) { return TestSearchQuery::factsFor(entry); });
     m_tasks->submit(scan);
     if (!waitForTask(scan) || scan->state() != Task::State::Succeeded)
         return false;
@@ -571,6 +596,7 @@ QStringList TestSearchQuery::throughTheWalk(const SearchQuery& query)
 {
     QStringList uris;
     auto* task = new LiveSearchTask(m_fs, VfsUri::fromString(QStringLiteral("mem:///")), query);
+    task->setFactReader([](const FileEntry& entry) { return TestSearchQuery::factsFor(entry); });
     connect(task, &LiveSearchTask::hitsFound, this, [&uris](const FileEntryList& batch) {
         for (const FileEntry& entry : batch)
             uris.append(entry.uri.toString());
@@ -589,6 +615,12 @@ QStringList TestSearchQuery::throughTheIndex(const SearchQuery& query)
 
     QStringList uris;
     auto* task = new IndexSearchTask(m_index.get(), scoped);
+    // The same facts the walk is given, for a criterion SQL cannot state -- a
+    // whole-word metadata demand is left for the evaluator, and an evaluator with
+    // no fact source answers every file the same way whatever it holds.
+    SearchIo io;
+    io.facts = [](const FileEntry& entry) { return TestSearchQuery::factsFor(entry); };
+    task->setSearchIo(io);
     connect(task, &IndexSearchTask::resultsReady, this, [&uris](const FileEntryList& entries) {
         for (const FileEntry& entry : entries)
             uris.append(entry.uri.toString());
@@ -688,6 +720,63 @@ void TestSearchQuery::everyCriterionAnswersTheSameThroughBothEngines()
         SearchQuery underFolder;
         underFolder.add(SearchPredicate::underPath(QStringLiteral("mem:///projects")));
         cases.append({ "inside one folder", underFolder });
+
+        // Facts, which is the criterion the index exists for. The value is not
+        // ASCII, which is where the two folded differently.
+        SearchQuery byAuthor;
+        byAuthor.add(
+            SearchPredicate::metadataIs(QStringLiteral("doc.author"), QStringLiteral("\u0142ukasz")));
+        cases.append({ "a fact beyond ascii", byAuthor });
+
+        SearchQuery byAuthorAsTyped;
+        byAuthorAsTyped.add(
+            SearchPredicate::metadataIs(QStringLiteral("doc.author"), QStringLiteral("\u0141ukasz")));
+        cases.append({ "a fact as typed", byAuthorAsTyped });
+
+        // indexCanExpress() said yes for a metadata predicate whatever its
+        // flags, and search()'s clause reads none of them -- so the index
+        // answered the inverse of the walk for a negated one, and ignored a word
+        // boundary and a case demand. Reachable from JSON, a chain or the
+        // console, on a criterion that can feed a chain that deletes.
+        SearchQuery notThatAuthor;
+        notThatAuthor.add(SearchPredicate::kind(false));
+        SearchPredicate negated
+            = SearchPredicate::metadataIs(QStringLiteral("doc.author"), QStringLiteral("gajos"));
+        negated.negate = true;
+        notThatAuthor.add(negated);
+        cases.append({ "not that author", notThatAuthor });
+
+        SearchQuery wholeWordAuthor;
+        SearchPredicate word
+            = SearchPredicate::metadataIs(QStringLiteral("doc.author"), QStringLiteral("Gajo"));
+        word.wholeWord = true;
+        word.negate = true; // so something matches either way
+        wholeWordAuthor.add(SearchPredicate::kind(false));
+        wholeWordAuthor.add(word);
+        cases.append({ "a fact by whole word", wholeWordAuthor });
+
+        SearchQuery caseSensitiveAuthor;
+        SearchPredicate exactCase
+            = SearchPredicate::metadataIs(QStringLiteral("doc.author"), QStringLiteral("LUKASZ"));
+        exactCase.caseSensitive = true;
+        exactCase.negate = true;
+        caseSensitiveAuthor.add(SearchPredicate::kind(false));
+        caseSensitiveAuthor.add(exactCase);
+        cases.append({ "a fact by exact case", caseSensitiveAuthor });
+
+        // Degenerate shapes, both reachable from a stored query. A limit of zero
+        // stopped the walk on its first entry -- "Stopped at 0 matches (limit
+        // reached)" -- while the index fell back to ten thousand for the same
+        // query. And `extension IN ()` is false in SQLite and matches nothing,
+        // where the walk's `list.isEmpty() || …` matches everything.
+        SearchQuery noLimit;
+        noLimit.add(SearchPredicate::name(QStringLiteral("report")));
+        noLimit.limit = 0;
+        cases.append({ "a limit of nought", noLimit });
+
+        SearchQuery noExtensions;
+        noExtensions.add(SearchPredicate::extensions({}));
+        cases.append({ "an empty extension list", noExtensions });
 
         SearchQuery together;
         together.add(SearchPredicate::name(QStringLiteral("report")));

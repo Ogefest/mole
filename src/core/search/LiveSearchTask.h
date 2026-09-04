@@ -36,6 +36,16 @@ public:
     /// downloading; see SearchIo.
     void setContentCeiling(qint64 bytes) { m_ceiling = bytes; }
 
+    /// What a file says about itself, for a metadata criterion on a drive no
+    /// scan has ever touched.
+    ///
+    /// `SearchIo::facts` had no supplier anywhere, so `doc.author:…` over an
+    /// unindexed folder matched nothing at all -- which is the answer a folder
+    /// with no such author gives, and there is no telling the two apart. The
+    /// readers live above core, so this is set by whoever has them, exactly as
+    /// ScanTask::setFactReader() is. See MOLE-372.
+    void setFactReader(std::function<QList<SearchFact>(const FileEntry&)> reader);
+
 signals:
     /// Emitted in batches on the UI thread while the walk is still running, so
     /// results stream in instead of appearing all at once at the end.
@@ -77,6 +87,7 @@ private:
     qint64 m_candidates = 0;
     qint64 m_skippedTooBig = 0;
     qint64 m_ceiling = SearchIo::kLocalCeiling;
+    std::function<QList<SearchFact>(const FileEntry&)> m_facts;
     bool m_truncated = false;
 };
 
