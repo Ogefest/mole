@@ -59,7 +59,7 @@ public:
     explicit IndexScanJob(PluginServices services, QObject* parent = nullptr);
 
     QString displayName() const override { return QStringLiteral("Re-index a folder"); }
-    bool start(const ScheduleRule& rule, std::function<void(bool, QString)> done) override;
+    StartOutcome start(const ScheduleRule& rule, std::function<void(bool, QString)> done) override;
 
 signals:
     /// A scan the scheduler ran has finished, so an open search can refresh its

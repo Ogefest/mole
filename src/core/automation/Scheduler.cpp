@@ -100,6 +100,18 @@ bool Scheduler::runNow(const QString& ruleId)
     return dispatch(rule);
 }
 
+QString IScheduledJob::describeTarget(const ScheduleRule& rule) const
+{
+    // The first string parameter. QVariantMap is ordered by key, so this is the
+    // same answer every time rather than whatever a hash gave today.
+    for (auto it = rule.parameters.cbegin(); it != rule.parameters.cend(); ++it) {
+        const QString text = it.value().toString();
+        if (it.value().typeId() == QMetaType::QString && !text.isEmpty())
+            return text;
+    }
+    return {};
+}
+
 bool Scheduler::dispatch(const ScheduleRule& rule)
 {
     IScheduledJob* handler = job(rule.jobKind);
@@ -108,14 +120,7 @@ bool Scheduler::dispatch(const ScheduleRule& rule)
     if (!handler) {
         // The plugin that provided this kind is gone. Recorded rather than
         // ignored: a rule that silently never runs is the worst outcome.
-        ScheduleRule updated = rule;
-        updated.lastRunAt = startedAt;
-        updated.lastStatus = RunStatus::Skipped;
-        updated.lastMessage = QStringLiteral("Nothing handles \"%1\" jobs").arg(rule.jobKind);
-        m_store->put(updated);
-        m_store->record(
-            RunRecord { rule.id, rule.label, startedAt, startedAt, RunStatus::Skipped, updated.lastMessage });
-        emit runFinished(rule.id, false, updated.lastMessage);
+        skip(rule.id, startedAt, QStringLiteral("Nothing handles \"%1\" jobs").arg(rule.jobKind));
         return false;
     }
 
@@ -138,14 +143,52 @@ bool Scheduler::dispatch(const ScheduleRule& rule)
     emit runStarted(rule.id);
 
     const QString ruleId = rule.id;
-    const bool started
-        = handler->start(rule, [this, ruleId](bool ok, QString message) { finish(ruleId, ok, message); });
+    // A QPointer and not `this`: both built-in jobs hold this callback inside a
+    // Task::finished connection whose context is the job, which outlives the
+    // scheduler in at least one teardown order -- so a scheduled scan still
+    // running when the Scheduler goes would have called finish() on a dead
+    // object.
+    QPointer<Scheduler> alive(this);
+    const StartOutcome outcome = handler->start(rule, [alive, ruleId](bool ok, QString message) {
+        if (alive)
+            alive->finish(ruleId, ok, message);
+    });
 
-    if (!started) {
-        finish(ruleId, false, QStringLiteral("The job refused to start"));
+    switch (outcome.what) {
+    case StartOutcome::What::Started:
+        return true;
+    case StartOutcome::What::Skipped:
+        // Not the rule's fault, so the streak the tracking list ranks by is left
+        // alone. The reason is the job's own words.
+        m_inFlight.remove(ruleId);
+        skip(ruleId, startedAt,
+            outcome.reason.isEmpty() ? QStringLiteral("Could not run just now") : outcome.reason);
+        return false;
+    case StartOutcome::What::Failed:
+        finish(ruleId, false,
+            outcome.reason.isEmpty() ? QStringLiteral("The job refused to start") : outcome.reason);
         return false;
     }
-    return true;
+    return false;
+}
+
+void Scheduler::skip(const QString& ruleId, const QDateTime& at, const QString& reason)
+{
+    if (!m_store)
+        return;
+
+    ScheduleRule rule = m_store->rule(ruleId);
+    if (!rule.isValid())
+        return;
+    // lastRunAt moves, so a rule whose drive is unplugged is not re-tried on
+    // every poll -- it waits for its interval like any other. consecutiveFailures
+    // is deliberately untouched: nothing about the rule failed.
+    rule.lastRunAt = at;
+    rule.lastStatus = RunStatus::Skipped;
+    rule.lastMessage = reason;
+    m_store->put(rule);
+    m_store->record(RunRecord { rule.id, rule.label, at, at, RunStatus::Skipped, reason });
+    emit runFinished(ruleId, false, reason);
 }
 
 void Scheduler::finish(const QString& ruleId, bool ok, const QString& message)

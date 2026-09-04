@@ -38,7 +38,8 @@ private slots:
     void schedulingTheSameFolderTwiceUpdatesTheRule();
     void unschedulingRemovesTheRule();
     void aScheduledReportRunsWithoutATabOpen();
-    void aFailedRunShowsUpInTheTrackingList();
+    void aRunThatCouldNotStartShowsUpAsSkippedRatherThanFailed();
+    void thePluginsOwnJobShowsItsTargetInTheTrackingList();
     void theTrackingTabPutsFailuresFirst();
     void ruleSurvivesARestartOfTheApplication();
     void aScheduledRescanRunsSurvivesARestartAndCatchesUp();
@@ -201,12 +202,24 @@ class JobThatNeverFinishes final : public IScheduledJob
 public:
     static QString kind() { return QStringLiteral("never-finishes"); }
     QString displayName() const override { return QStringLiteral("A job that hangs"); }
-    bool start(const ScheduleRule&, std::function<void(bool, QString)>) override
+    StartOutcome start(const ScheduleRule&, std::function<void(bool, QString)>) override
     {
         ++started;
-        return true;
+        return StartOutcome::started();
     }
     int started = 0;
+};
+
+/// A job whose parameters are its own, the way a plugin's would be.
+class JobWithItsOwnParameters final : public IScheduledJob
+{
+public:
+    static QString kind() { return QStringLiteral("plugin-shaped"); }
+    QString displayName() const override { return QStringLiteral("A plugin's job"); }
+    StartOutcome start(const ScheduleRule&, std::function<void(bool, QString)>) override
+    {
+        return StartOutcome::started();
+    }
 };
 
 } // namespace
@@ -305,15 +318,17 @@ void TestAutomation::aScheduledRunKeepsAsMuchHistoryAsAManualOne()
     // number typed here.
     AnalysisJob job(m_app->services(), store);
     bool finished = false;
-    QVERIFY(job.start(
-        [&] {
-            ScheduleRule rule;
-            rule.id = QStringLiteral("nightly");
-            rule.jobKind = AnalysisJob::kind();
-            rule.parameters.insert(AnalysisJob::rootUriParameter(), root);
-            return rule;
-        }(),
-        [&finished](bool, const QString&) { finished = true; }));
+    QCOMPARE(job.start(
+                    [&] {
+                        ScheduleRule rule;
+                        rule.id = QStringLiteral("nightly");
+                        rule.jobKind = AnalysisJob::kind();
+                        rule.parameters.insert(AnalysisJob::rootUriParameter(), root);
+                        return rule;
+                    }(),
+                    [&finished](bool, const QString&) { finished = true; })
+                 .what,
+        StartOutcome::What::Started);
     QVERIFY(waitFor([&finished] { return finished; }, 20000));
 
     // One more report than were filed, and none of the old ones gone: the depth
@@ -358,10 +373,17 @@ void TestAutomation::nothingScheduledRunsWhileTheWindowIsStillComingUp()
         "the overdue rule never ran at all");
 }
 
-void TestAutomation::aFailedRunShowsUpInTheTrackingList()
+/// A run that could not start, and what the tab says about it.
+///
+/// This case used to be called "a failed run shows up in the tracking list" and
+/// pinned the behaviour the jobs' own comments call wrong: a rule pointing at an
+/// unmounted drive was recorded Failed, with "The job refused to start", and
+/// counted towards the streak the tab ranks by. A backup disk left out for a
+/// week read as "Failed x7" above a rule that really was broken. It is visible
+/// either way -- that was never the fault -- but it now says the true thing, in
+/// the job's own words. See MOLE-379.
+void TestAutomation::aRunThatCouldNotStartShowsUpAsSkippedRatherThanFailed()
 {
-    // A rule pointing at a folder on a scheme nothing is mounted for: the
-    // report cannot run, and that has to be visible rather than silent.
     ScheduleRule rule;
     rule.id = QStringLiteral("broken");
     rule.jobKind = AnalysisJob::kind();
@@ -371,19 +393,57 @@ void TestAutomation::aFailedRunShowsUpInTheTrackingList()
 
     QCOMPARE(m_app->scheduler()->checkDue(), 0);
 
+    const ScheduleRule after = m_app->schedules()->rule(QStringLiteral("broken"));
+    QCOMPARE(after.lastStatus, RunStatus::Skipped);
+    QVERIFY2(
+        after.lastMessage.contains(QStringLiteral("No drive is mounted")), qPrintable(after.lastMessage));
+    QVERIFY2(after.consecutiveFailures == 0, "an unplugged drive counted against the rule");
+
     AutomationController* automation = openAutomation();
     QVERIFY(automation);
+    // Still shown, and still shown first: a rule that cannot run is the reason
+    // somebody opens this tab.
     QCOMPARE(automation->failingCount(), 1);
 
     const QVariantList rules = automation->rules();
     QCOMPARE(rules.size(), 1);
     const QVariantMap row = rules.first().toMap();
     QCOMPARE(row.value(QStringLiteral("failing")).toBool(), true);
-    QVERIFY(!row.value(QStringLiteral("message")).toString().isEmpty());
+    QCOMPARE(row.value(QStringLiteral("status")).toString(), QStringLiteral("skipped"));
+    QVERIFY2(row.value(QStringLiteral("message")).toString().contains(QStringLiteral("No drive is mounted")),
+        qPrintable(row.value(QStringLiteral("message")).toString()));
+    QCOMPARE(row.value(QStringLiteral("consecutiveFailures")).toInt(), 0);
+    // The target comes from the job rather than from a key this tab knows.
+    QCOMPARE(row.value(QStringLiteral("target")).toString(), QStringLiteral("nosuchscheme://host/data"));
 
     const QVariantList history = automation->history();
     QCOMPARE(history.size(), 1);
-    QCOMPARE(history.first().toMap().value(QStringLiteral("failed")).toBool(), true);
+}
+
+/// A plugin's job showed an empty target.
+///
+/// The tracking tab read `rule.parameters.value("rootUri")` -- the one place a
+/// generic tab knew a built-in job's parameter key. A job registered by a plugin,
+/// with parameters of its own naming, had a blank column. IScheduledJob answers
+/// it now, defaulting to the first string parameter. See MOLE-379.
+void TestAutomation::thePluginsOwnJobShowsItsTargetInTheTrackingList()
+{
+    JobWithItsOwnParameters job;
+    m_app->scheduler()->registerJob(JobWithItsOwnParameters::kind(), &job);
+
+    ScheduleRule rule;
+    rule.id = QStringLiteral("plugin-job");
+    rule.jobKind = JobWithItsOwnParameters::kind();
+    rule.label = QStringLiteral("Something a plugin does");
+    rule.parameters.insert(QStringLiteral("mailbox"), QStringLiteral("imap://host/INBOX"));
+    m_app->schedules()->put(rule);
+
+    AutomationController* automation = openAutomation();
+    QVERIFY(automation);
+    const QVariantList rules = automation->rules();
+    QCOMPARE(rules.size(), 1);
+    QCOMPARE(rules.first().toMap().value(QStringLiteral("target")).toString(),
+        QStringLiteral("imap://host/INBOX"));
 }
 
 void TestAutomation::theTrackingTabPutsFailuresFirst()

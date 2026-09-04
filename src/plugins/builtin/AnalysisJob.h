@@ -28,7 +28,7 @@ public:
     AnalysisJob(PluginServices services, AnalysisStore* store, QObject* parent = nullptr);
 
     QString displayName() const override { return QStringLiteral("Directory report"); }
-    bool start(const ScheduleRule& rule, std::function<void(bool, QString)> done) override;
+    StartOutcome start(const ScheduleRule& rule, std::function<void(bool, QString)> done) override;
 
     /// How many reports a scheduled run keeps per folder.
     ///

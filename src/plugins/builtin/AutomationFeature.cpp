@@ -101,13 +101,21 @@ QVariantList AutomationController::rules() const
         return a.label.localeAwareCompare(b.label) < 0;
     });
 
+    const auto targetOf = [this](const ScheduleRule& rule) -> QString {
+        IScheduledJob* handler = m_scheduler ? m_scheduler->job(rule.jobKind) : nullptr;
+        return handler ? handler->describeTarget(rule) : QString();
+    };
+
     for (const ScheduleRule& rule : rules) {
         const bool isRunning = running.contains(rule.id);
         out.append(QVariantMap {
             { QStringLiteral("id"), rule.id },
             { QStringLiteral("label"), rule.label },
             { QStringLiteral("jobKind"), rule.jobKind },
-            { QStringLiteral("target"), rule.parameters.value(QStringLiteral("rootUri")).toString() },
+            // Asked of the job rather than read out of the parameters here: this
+            // was the one place a generic tab knew a built-in job's key, so a
+            // plugin's job showed an empty target. See MOLE-379.
+            { QStringLiteral("target"), targetOf(rule) },
             { QStringLiteral("intervalSeconds"), QVariant::fromValue(rule.intervalSeconds) },
             { QStringLiteral("intervalText"), ScheduleRule::describeInterval(rule.intervalSeconds) },
             { QStringLiteral("enabled"), rule.enabled },

@@ -77,8 +77,20 @@ QJsonObject ScheduleRule::toJson() const
         json[QStringLiteral("lastSuccessAt")] = lastSuccessAt.toUTC().toString(Qt::ISODate);
     // A run interrupted by a crash or a quit must not come back as "running"
     // and be skipped forever; it is filed as a failure it can recover from.
-    json[QStringLiteral("lastStatus")]
-        = runStatusToString(lastStatus == RunStatus::Running ? RunStatus::Failed : lastStatus);
+    //
+    // **And it says so, and is counted.** This wrote the status and left the
+    // message empty and the streak untouched, so the tracking tab showed a
+    // failure that would not say why and the number it ranks rules by did not
+    // count it. Written here rather than at the moment of the interruption,
+    // because nothing runs then. See MOLE-379.
+    if (lastStatus == RunStatus::Running) {
+        json[QStringLiteral("lastStatus")] = runStatusToString(RunStatus::Failed);
+        json[QStringLiteral("lastMessage")]
+            = QStringLiteral("Interrupted: the application closed while it was running");
+        json[QStringLiteral("consecutiveFailures")] = consecutiveFailures + 1;
+        return json;
+    }
+    json[QStringLiteral("lastStatus")] = runStatusToString(lastStatus);
     json[QStringLiteral("lastMessage")] = lastMessage;
     json[QStringLiteral("consecutiveFailures")] = consecutiveFailures;
     return json;
@@ -92,17 +104,24 @@ ScheduleRule ScheduleRule::fromJson(const QJsonObject& json)
     rule.label = json.value(QStringLiteral("label")).toString();
     rule.parameters = json.value(QStringLiteral("parameters")).toObject().toVariantMap();
     rule.intervalSeconds = static_cast<qint64>(json.value(QStringLiteral("intervalSeconds")).toDouble(kDay));
-    if (rule.intervalSeconds < 60)
-        rule.intervalSeconds = 60; // a hand-edited 0 would spin the scheduler
+    rule.clampInterval(); // a hand-edited 0 would spin the scheduler
     rule.enabled = json.value(QStringLiteral("enabled")).toBool(true);
     rule.lastRunAt = QDateTime::fromString(json.value(QStringLiteral("lastRunAt")).toString(), Qt::ISODate);
     rule.lastSuccessAt
         = QDateTime::fromString(json.value(QStringLiteral("lastSuccessAt")).toString(), Qt::ISODate);
     rule.lastStatus = runStatusFromString(json.value(QStringLiteral("lastStatus")).toString());
-    if (rule.lastStatus == RunStatus::Running)
-        rule.lastStatus = RunStatus::Failed;
     rule.lastMessage = json.value(QStringLiteral("lastMessage")).toString();
     rule.consecutiveFailures = json.value(QStringLiteral("consecutiveFailures")).toInt();
+    if (rule.lastStatus == RunStatus::Running) {
+        // A file that says "running" -- hand-edited, or written by a version
+        // before toJson() converted it. The same answer as there, for the same
+        // reason: it did not succeed, and a failure has to say why.
+        rule.lastStatus = RunStatus::Failed;
+        if (rule.lastMessage.isEmpty()) {
+            rule.lastMessage = QStringLiteral("Interrupted: the application closed while it was running");
+            ++rule.consecutiveFailures;
+        }
+    }
     return rule;
 }
 

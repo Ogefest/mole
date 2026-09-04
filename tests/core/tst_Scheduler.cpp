@@ -23,14 +23,16 @@ class FakeJob final : public IScheduledJob
 public:
     QString displayName() const override { return QStringLiteral("Fake"); }
 
-    bool start(const ScheduleRule& rule, std::function<void(bool, QString)> done) override
+    StartOutcome start(const ScheduleRule& rule, std::function<void(bool, QString)> done) override
     {
         ++starts;
         lastRule = rule;
         if (refuseToStart)
-            return false;
+            return StartOutcome::failed(QStringLiteral("the fake was told to refuse"));
+        if (!skipReason.isEmpty())
+            return StartOutcome::skipped(skipReason);
         pending = std::move(done);
-        return true;
+        return StartOutcome::started();
     }
 
     void succeed(const QString& message = QStringLiteral("done"))
@@ -53,6 +55,9 @@ public:
 
     int starts = 0;
     bool refuseToStart = false;
+    /// Non-empty makes start() answer Skipped with this reason -- an unplugged
+    /// drive, in the words the built-in jobs use.
+    QString skipReason;
     ScheduleRule lastRule;
 
 private:
@@ -88,6 +93,10 @@ private slots:
     void successResetsTheFailureCount();
     void willNotStartARuleThatIsAlreadyRunning();
     void aJobThatRefusesToStartIsRecordedAsFailed();
+    void aJobThatCouldNotRunIsSkippedAndDoesNotCountAgainstTheRule();
+    void anIntervalOfZeroIsRefusedOnTheWayIntoTheStore();
+    void anInterruptedRunSaysSoAndIsCounted();
+    void aPendingCallbackAfterTheSchedulerIsGoneIsHarmless();
     void anUnhandledKindIsRecordedRatherThanIgnored();
     void runNowIgnoresTheSchedule();
 
@@ -281,6 +290,142 @@ void TestScheduler::aJobThatRefusesToStartIsRecordedAsFailed()
     QCOMPARE(after.lastStatus, RunStatus::Failed);
     QVERIFY(scheduler.runningRules().isEmpty());
     QCOMPARE(store.history().size(), 1);
+}
+
+/// "The backup disk is unplugged" is not "this rule is broken".
+///
+/// Both built-in jobs returned false for an unmounted root, believing -- their
+/// comments said so -- that the scheduler would record Skipped. It recorded
+/// Failed with "The job refused to start" and incremented consecutiveFailures,
+/// which is the number the tracking tab ranks by. So a laptop whose backup disk
+/// was out for a week showed "Failed x7" above a rule that really was broken,
+/// with a message that did not say why -- and the job's own reason had no way to
+/// travel out of start(). See MOLE-379.
+void TestScheduler::aJobThatCouldNotRunIsSkippedAndDoesNotCountAgainstTheRule()
+{
+    ScheduleStore store(m_path);
+    ScheduleRule rule = makeRule(QStringLiteral("a"));
+    rule.consecutiveFailures = 2; // a rule that had already failed twice
+    store.put(rule);
+
+    FakeJob job;
+    job.skipReason = QStringLiteral("No drive is mounted for backup:///photos");
+    Scheduler scheduler(&store);
+    scheduler.setClock([this] { return m_now; });
+    scheduler.registerJob(QStringLiteral("fake"), &job);
+
+    QCOMPARE(scheduler.checkDue(), 0);
+    QCOMPARE(job.starts, 1);
+
+    const ScheduleRule after = store.rule(QStringLiteral("a"));
+    QCOMPARE(after.lastStatus, RunStatus::Skipped);
+    QCOMPARE(after.lastMessage, job.skipReason);
+    QVERIFY2(after.consecutiveFailures == 2, "a skipped run counted against the rule");
+    // Not stuck in Running, and it waits for its interval rather than being
+    // retried on every poll.
+    QVERIFY(scheduler.runningRules().isEmpty());
+    QCOMPARE(after.lastRunAt, m_now);
+    QVERIFY(!after.isDueAt(m_now));
+
+    // And the run log says skipped rather than failed.
+    QCOMPARE(store.history().size(), 1);
+    QCOMPARE(store.history().first().status, RunStatus::Skipped);
+
+    // A job that says Failed still counts, because that is a rule that cannot
+    // work rather than a world that is not ready.
+    job.skipReason.clear();
+    job.refuseToStart = true;
+    scheduler.setClock([this] { return m_now.addSecs(7200); });
+    scheduler.checkDue();
+    QCOMPARE(store.rule(QStringLiteral("a")).lastStatus, RunStatus::Failed);
+    QCOMPARE(store.rule(QStringLiteral("a")).consecutiveFailures, 3);
+}
+
+/// The floor lived only in fromJson().
+///
+/// "A hand-edited 0 would spin the scheduler" is the comment there, and it is
+/// right -- but three callers build a rule in memory and set intervalSeconds
+/// directly, and put() took whatever they gave it. A rule with no interval is
+/// always due, so it fires on every poll for the life of the process and nothing
+/// on disk would ever show why. See MOLE-379.
+void TestScheduler::anIntervalOfZeroIsRefusedOnTheWayIntoTheStore()
+{
+    ScheduleStore store(m_path);
+    ScheduleRule rule = makeRule(QStringLiteral("a"), 0);
+    QVERIFY(store.put(rule));
+    QCOMPARE(store.rule(QStringLiteral("a")).intervalSeconds, ScheduleRule::kMinimumIntervalSeconds);
+
+    ScheduleRule negative = makeRule(QStringLiteral("b"), -3600);
+    QVERIFY(store.put(negative));
+    QCOMPARE(store.rule(QStringLiteral("b")).intervalSeconds, ScheduleRule::kMinimumIntervalSeconds);
+
+    // An interval somebody actually chose is untouched.
+    QVERIFY(store.put(makeRule(QStringLiteral("c"), 6 * 3600)));
+    QCOMPARE(store.rule(QStringLiteral("c")).intervalSeconds, qint64(6 * 3600));
+
+    // And it survives the file, which is where the floor already worked.
+    ScheduleStore reopened(m_path);
+    QVERIFY(reopened.load());
+    QCOMPARE(reopened.rule(QStringLiteral("a")).intervalSeconds, ScheduleRule::kMinimumIntervalSeconds);
+}
+
+/// An interrupted run showed a failure with no reason and no count.
+///
+/// dispatch() writes the rule as Running, serialisation turns Running into
+/// Failed on the way out -- a process that died mid-run did not succeed -- and
+/// the reload left lastMessage empty and consecutiveFailures untouched. So the
+/// tracking tab showed a failed rule that would not say why, and the streak it
+/// ranks by did not count it. See MOLE-379.
+void TestScheduler::anInterruptedRunSaysSoAndIsCounted()
+{
+    {
+        ScheduleStore store(m_path);
+        store.put(makeRule(QStringLiteral("a")));
+
+        FakeJob job;
+        Scheduler scheduler(&store);
+        scheduler.setClock([this] { return m_now; });
+        scheduler.registerJob(QStringLiteral("fake"), &job);
+        scheduler.checkDue(); // left Running: the application "quits" here
+    }
+
+    ScheduleStore reopened(m_path);
+    QVERIFY(reopened.load());
+    const ScheduleRule rule = reopened.rule(QStringLiteral("a"));
+    QCOMPARE(rule.lastStatus, RunStatus::Failed);
+    QVERIFY2(!rule.lastMessage.isEmpty(), "a failure the tab cannot explain is a failure nobody can act on");
+    QVERIFY2(rule.lastMessage.contains(QStringLiteral("Interrupted")), qPrintable(rule.lastMessage));
+    QCOMPARE(rule.consecutiveFailures, 1);
+}
+
+/// A callback outliving the scheduler.
+///
+/// dispatch() handed the job a lambda capturing a raw `this`, and both built-in
+/// jobs store that callback inside a Task::finished connection whose context is
+/// the *job* -- which outlives the Scheduler in at least one teardown order. A
+/// scheduled scan still running when the Scheduler went would then call finish()
+/// on a dead object. See MOLE-379.
+void TestScheduler::aPendingCallbackAfterTheSchedulerIsGoneIsHarmless()
+{
+    ScheduleStore store(m_path);
+    store.put(makeRule(QStringLiteral("a")));
+
+    FakeJob job;
+    {
+        Scheduler scheduler(&store);
+        scheduler.setClock([this] { return m_now; });
+        scheduler.registerJob(QStringLiteral("fake"), &job);
+        QCOMPARE(scheduler.checkDue(), 1);
+        QVERIFY(job.isPending());
+    }
+
+    // The job answers after the scheduler is gone, which is exactly what a task
+    // finishing during teardown does.
+    job.succeed(QStringLiteral("finished after nobody was listening"));
+    QVERIFY2(!job.isPending(), "the callback was never called");
+    // Nothing was written, because there was nobody left to write it -- and
+    // nothing crashed, which is the whole of the claim.
+    QCOMPARE(store.rule(QStringLiteral("a")).lastStatus, RunStatus::Running);
 }
 
 void TestScheduler::anUnhandledKindIsRecordedRatherThanIgnored()

@@ -36,6 +36,8 @@ public:
     /// could not be written. A schedule that did not reach the disk is the case
     /// ARCHITECTURE.md's "a job that quietly never runs is the one failure
     /// nobody can diagnose" is about. See ADR-0089.
+    /// Adds or replaces a rule. The interval is clamped to
+    /// ScheduleRule::kMinimumIntervalSeconds on the way in -- see clampInterval().
     bool put(const ScheduleRule& rule);
     bool remove(const QString& id);
 

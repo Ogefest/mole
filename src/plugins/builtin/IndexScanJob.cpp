@@ -76,22 +76,22 @@ QString IndexScanJob::schedule(ScheduleStore& store, const QString& rootUri, qin
     return rule.id;
 }
 
-bool IndexScanJob::start(const ScheduleRule& rule, std::function<void(bool, QString)> done)
+StartOutcome IndexScanJob::start(const ScheduleRule& rule, std::function<void(bool, QString)> done)
 {
     if (!m_services.isValid() || !m_services.index)
-        return false;
+        return StartOutcome::failed(QStringLiteral("There is no index in this run"));
 
     const QString rootUri = rule.parameters.value(rootUriParameter()).toString();
     if (rootUri.isEmpty())
-        return false;
+        return StartOutcome::failed(QStringLiteral("This rule names no folder to scan"));
 
     const VfsUri root = VfsUri::fromString(rootUri);
     FileSystemPtr fs = m_services.vfs->resolve(root);
     if (!fs) {
         // Not a failure of the job so much as of the world: an unplugged drive
-        // reads as "could not run", which the scheduler records rather than
-        // counting as a failure of the rule.
-        return false;
+        // reads as "could not run", and now says so in its own words rather than
+        // being recorded as a failure of the rule. See MOLE-379.
+        return StartOutcome::skipped(QStringLiteral("No drive is mounted for %1").arg(rootUri));
     }
 
     // One scan per volume at a time. A rule firing while somebody is rescanning
@@ -103,7 +103,7 @@ bool IndexScanJob::start(const ScheduleRule& rule, std::function<void(bool, QStr
     if (scanRunningOn(m_services, root)) {
         qCWarning(taskLog, "%s is already being scanned, so the scheduled scan was not started",
             qPrintable(rootUri));
-        return false;
+        return StartOutcome::skipped(QStringLiteral("%1 was already being scanned").arg(rootUri));
     }
 
     auto* task = new ScanTask(fs, root, rule.label, m_services.index);
@@ -129,7 +129,7 @@ bool IndexScanJob::start(const ScheduleRule& rule, std::function<void(bool, QStr
     });
 
     m_services.tasks->submit(task);
-    return true;
+    return StartOutcome::started();
 }
 
 } // namespace mole

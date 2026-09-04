@@ -3,6 +3,7 @@
 #include "core/automation/ScheduleRule.h"
 
 #include <QObject>
+#include <QPointer>
 #include <QTimer>
 
 #include <functional>
@@ -15,6 +16,34 @@ class ScheduleStore;
 ///
 /// Implemented by whoever owns the work -- the analysis feature registers one
 /// for "analysis". The scheduler never learns what a report is.
+/// What start() managed to do, and why when it did not start.
+///
+/// **A bare bool could not tell "the backup disk is unplugged" from "this job is
+/// broken", and the difference is the whole of what the tracking list is for.**
+/// Both built-in jobs returned false for an unmounted root, believing -- their
+/// comments said so -- that the scheduler would record Skipped; it recorded
+/// Failed with "The job refused to start" and counted it towards the streak the
+/// tab ranks by. A laptop whose backup disk was unplugged for a week showed
+/// "Failed x7", above a rule that really was broken, with a message that did not
+/// say why. And the job's own reason -- "No drive is mounted for ..." -- had
+/// nowhere to travel. See MOLE-405's sibling MOLE-379.
+struct StartOutcome
+{
+    enum class What {
+        Started, ///< running; `done` will be called
+        Skipped, ///< could not run through no fault of the rule; `done` will not be called
+        Failed, ///< the rule itself is wrong; `done` will not be called
+    };
+
+    What what = What::Started;
+    /// One sentence for a person, for Skipped and Failed. Empty for Started.
+    QString reason;
+
+    static StartOutcome started() { return {}; }
+    static StartOutcome skipped(QString why) { return { What::Skipped, std::move(why) }; }
+    static StartOutcome failed(QString why) { return { What::Failed, std::move(why) }; }
+};
+
 class IScheduledJob
 {
 public:
@@ -25,9 +54,23 @@ public:
 
     /// Starts the job and returns. `done` must be called exactly once, on the
     /// scheduler's thread, when the work finishes -- including when it fails.
-    /// Returning false means it could not even start, and `done` will not be
-    /// called.
-    virtual bool start(const ScheduleRule& rule, std::function<void(bool ok, QString message)> done) = 0;
+    ///
+    /// Anything but `Started` means `done` will not be called, and the reason
+    /// given is what the tracking list shows. **Skipped for a condition outside
+    /// the rule** -- nothing mounted, the target gone, the same volume already
+    /// being scanned -- which is recorded without touching the failure streak.
+    /// **Failed for a rule that cannot work**: a parameter missing, a service
+    /// absent.
+    virtual StartOutcome start(const ScheduleRule& rule, std::function<void(bool ok, QString message)> done)
+        = 0;
+
+    /// What this rule is aimed at, for the tracking list.
+    ///
+    /// The default is the first string parameter, which is right for every job
+    /// whose target is one place. The tracking tab used to read
+    /// `parameters["rootUri"]` itself -- the one place a generic tab knew a
+    /// built-in job's key, so a plugin's job showed an empty target.
+    virtual QString describeTarget(const ScheduleRule& rule) const;
 };
 
 /// Decides what is due and starts it.
@@ -91,6 +134,9 @@ signals:
 private:
     bool dispatch(const ScheduleRule& rule);
     void finish(const QString& ruleId, bool ok, const QString& message);
+    /// Records a run that could not start through no fault of the rule. Moves
+    /// lastRunAt, leaves consecutiveFailures alone. See StartOutcome.
+    void skip(const QString& ruleId, const QDateTime& at, const QString& reason);
     QDateTime now() const;
 
     ScheduleStore* m_store = nullptr;

@@ -13,7 +13,11 @@ enum class RunStatus {
     Running, ///< dispatched and still working
     Succeeded, ///< finished and produced what it promised
     Failed, ///< finished without producing it
-    Skipped, ///< could not start: nothing mounted, target gone
+    /// Could not start: nothing mounted, target gone, nobody handles the kind.
+    ///
+    /// **Not counted towards consecutiveFailures**, because nothing about the
+    /// rule is wrong -- see StartOutcome in Scheduler.h.
+    Skipped,
 };
 
 QString runStatusToString(RunStatus status);
@@ -50,6 +54,25 @@ struct ScheduleRule
     int consecutiveFailures = 0;
 
     bool isValid() const { return !id.isEmpty() && !jobKind.isEmpty(); }
+
+    /// The shortest interval the scheduler can honour.
+    ///
+    /// The poll is a minute, so anything below this is either a rule that fires
+    /// every poll or -- at zero or negative -- one that is always due, which
+    /// spins the scheduler.
+    static constexpr qint64 kMinimumIntervalSeconds = 60;
+    /// Brings the interval up to something that can be honoured.
+    ///
+    /// Called by fromJson() *and* by ScheduleStore::put(), because the floor used
+    /// to live only in fromJson(): the three callers that build a rule and set
+    /// intervalSeconds directly could store a 0 that no reload would ever see,
+    /// because a spinning scheduler is a symptom of the running process rather
+    /// than of the file. See MOLE-379.
+    void clampInterval()
+    {
+        if (intervalSeconds < kMinimumIntervalSeconds)
+            intervalSeconds = kMinimumIntervalSeconds;
+    }
 
     /// When this rule wants to run next. Invalid when it is disabled; the
     /// epoch-ish "long ago" when it has never run, so it sorts first.

@@ -82,10 +82,17 @@ ScheduleRule ScheduleStore::rule(const QString& id) const
     return {};
 }
 
-bool ScheduleStore::put(const ScheduleRule& rule)
+bool ScheduleStore::put(const ScheduleRule& incoming)
 {
-    if (!rule.isValid())
+    if (!incoming.isValid())
         return false;
+
+    // The floor is applied on the way in as well as on the way out of the file.
+    // It used to live only in ScheduleRule::fromJson(), so a rule built in
+    // memory with intervalSeconds = 0 -- three callers set it directly -- was
+    // always due and spun the scheduler until the next restart. See MOLE-379.
+    ScheduleRule rule = incoming;
+    rule.clampInterval();
 
     for (int i = 0; i < m_rules.size(); ++i) {
         if (m_rules.at(i).id == rule.id) {

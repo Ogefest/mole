@@ -16,22 +16,23 @@ AnalysisJob::AnalysisJob(PluginServices services, AnalysisStore* store, QObject*
 {
 }
 
-bool AnalysisJob::start(const ScheduleRule& rule, std::function<void(bool, QString)> done)
+StartOutcome AnalysisJob::start(const ScheduleRule& rule, std::function<void(bool, QString)> done)
 {
     if (!m_services.isValid() || !m_store)
-        return false;
+        return StartOutcome::failed(QStringLiteral("Reports are not available in this run"));
 
     const QString rootUri = rule.parameters.value(rootUriParameter()).toString();
     if (rootUri.isEmpty())
-        return false;
+        return StartOutcome::failed(QStringLiteral("This rule names no folder to report on"));
 
     const VfsUri root = VfsUri::fromString(rootUri);
     FileSystemPtr fs = m_services.vfs->resolve(root);
     if (!fs) {
         // Not a failure of the job so much as of the world: an unplugged drive
-        // should read as "could not run", which the caller turns into a
-        // recorded outcome rather than a silent nothing.
-        return false;
+        // reads as "could not run", and now says so in its own words. It used to
+        // return false, which the scheduler recorded as a failure of the rule --
+        // so a backup disk left out for a week read as "Failed x7". See MOLE-379.
+        return StartOutcome::skipped(QStringLiteral("No drive is mounted for %1").arg(rootUri));
     }
 
     auto* task = new AnalyseDirectoryTask(std::move(fs), root, rule.label);
@@ -69,7 +70,7 @@ bool AnalysisJob::start(const ScheduleRule& rule, std::function<void(bool, QStri
     });
 
     m_services.tasks->submit(task);
-    return true;
+    return StartOutcome::started();
 }
 
 } // namespace mole

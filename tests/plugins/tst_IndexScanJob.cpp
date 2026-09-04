@@ -178,10 +178,13 @@ bool TestIndexScanJob::run(const ScheduleRule& rule)
     IndexScanJob job(m_services);
     bool finished = false;
     bool succeeded = false;
-    if (!job.start(rule, [&](bool ok, QString) {
-            succeeded = ok;
-            finished = true;
-        })) {
+    if (job.start(rule,
+               [&](bool ok, QString) {
+                   succeeded = ok;
+                   finished = true;
+               })
+            .what
+        != StartOutcome::What::Started) {
         return false;
     }
     // On the condition rather than on a clock: the job hands its scan to the
@@ -305,10 +308,13 @@ void TestIndexScanJob::aSecondScanOfAVolumeAlreadyBeingScannedIsRefused()
 
     CapturedWarnings logged;
     IndexScanJob job(m_services);
-    const bool started = job.start(ruleFor(false, false), [](bool, QString) {});
+    const StartOutcome outcome = job.start(ruleFor(false, false), [](bool, QString) {});
 
     QVERIFY(waitForTask(first, 30000));
-    QVERIFY2(!started, "a second scan of a volume already being scanned had to be refused");
+    // Skipped and not Failed: nothing about the rule is wrong, and the streak the
+    // tracking list ranks by must not count it. See MOLE-379.
+    QCOMPARE(outcome.what, StartOutcome::What::Skipped);
+    QVERIFY2(outcome.reason.contains(QStringLiteral("already being scanned")), qPrintable(outcome.reason));
     QVERIFY2(logged.contains(QStringLiteral("already being scanned")), qPrintable(logged.joined()));
 }
 

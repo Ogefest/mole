@@ -65,6 +65,9 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-379 A scheduled job whose drive is unplugged is shown as skipped, not as a failure of the rule
+2026-09-04 #MOLE-379 A scheduled run cut short by closing the application says so in the tracking list
+2026-09-04 #MOLE-379 A plugin's scheduled job shows what it is aimed at, like the built-in ones
 2026-09-04 #MOLE-394 Enter in the filter box opens the row it names, wherever the cursor was before
 2026-09-04 #MOLE-394 A mixed search stays in order when the list is sorted by size or date
 2026-09-04 #MOLE-394 Moving the cursor on a remote drive no longer asks about every row it passes

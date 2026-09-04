@@ -334,13 +334,26 @@ another full interval.
 
 Three states the design deliberately makes visible rather than silent:
 
-- A rule whose plugin is gone is recorded as `Skipped` with the reason. A job
-  that quietly never runs is the one failure nobody can diagnose.
+- A run that could not start is recorded as `Skipped`, **with the job's own
+  reason and without counting against the rule**. A rule whose plugin is gone,
+  a drive that is not mounted, a volume already being scanned — none of those is
+  a fault in the rule, and a backup disk left out for a week must not read as
+  "Failed ×7" above a rule that is genuinely broken. `IScheduledJob::start()`
+  answers `Started`, `Skipped(reason)` or `Failed(reason)` so the difference can
+  travel; a bare bool could not carry it, and both built-in jobs were returning
+  false for an unmounted drive while their comments said the scheduler recorded
+  it as skipped. See MOLE-379.
 - A run interrupted by a crash or a quit is reloaded as `Failed`, not `Running`.
-  Left as `Running`, every future poll would skip it forever.
+  Left as `Running`, every future poll would skip it forever. It carries a reason
+  saying it was interrupted and counts towards the streak, because a failure the
+  tab cannot explain is one nobody can act on.
 - Consecutive failures are counted, so a job failing every night ranks above one
   that failed once. The tracking tab sorts broken rules first for the same
   reason: the reason to open it is that something stopped working.
+
+The tracking tab knows nothing about any job's parameters: it asks
+`IScheduledJob::describeTarget()` what a rule is aimed at, which defaults to the
+rule's first string parameter.
 
 Scheduling is offered on the report itself rather than in a settings screen, one
 rule per folder keyed off the folder, and the clock starts from the report that
