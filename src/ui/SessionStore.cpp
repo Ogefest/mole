@@ -65,8 +65,14 @@ bool SessionStore::save(const Session& session, QString* reasonOut)
     }
 
     QJsonObject window;
-    window[QStringLiteral("x")] = session.window.x;
-    window[QStringLiteral("y")] = session.window.y;
+    // The two keys are written only when there is a position to write, so their
+    // presence is what says so on the way back in. A file from before MOLE-395
+    // carries -1s, which read as a position that is nowhere and is refused by
+    // geometryIsOnScreen() like any other off-screen rectangle.
+    if (session.window.hasPosition()) {
+        window[QStringLiteral("x")] = session.window.x;
+        window[QStringLiteral("y")] = session.window.y;
+    }
     window[QStringLiteral("width")] = session.window.width;
     window[QStringLiteral("height")] = session.window.height;
     window[QStringLiteral("windowState")] = windowStateName(session.window.state);
@@ -113,8 +119,10 @@ Session SessionStore::load() const
     }
 
     const QJsonObject window = root.value(QStringLiteral("window")).toObject();
-    session.window.x = window.value(QStringLiteral("x")).toInt(-1);
-    session.window.y = window.value(QStringLiteral("y")).toInt(-1);
+    session.window.positionKnown
+        = window.contains(QStringLiteral("x")) && window.contains(QStringLiteral("y"));
+    session.window.x = window.value(QStringLiteral("x")).toInt(0);
+    session.window.y = window.value(QStringLiteral("y")).toInt(0);
     session.window.width = window.value(QStringLiteral("width")).toInt(0);
     session.window.height = window.value(QStringLiteral("height")).toInt(0);
     // The tri-state replaced a "maximized" boolean, and a session written by an

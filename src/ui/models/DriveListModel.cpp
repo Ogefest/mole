@@ -514,7 +514,20 @@ QVariant DriveListModel::data(const QModelIndex& index, int role) const
     case SchemeRole:
         return row.isMounted() ? row.mount.root.scheme() : row.drive.scheme();
     case IconTextRole:
-        return row.mount.iconName;
+        // The mount's, or -- for a configured drive that is not connected, which
+        // has no mount at all -- the one the factory for its scheme offers. This
+        // returned only the mount's, which was empty on every mount that did not
+        // come from a factory-building overload of addMount(): the role was
+        // blank for every row in the list. See MOLE-395.
+        if (!row.mount.iconName.isEmpty())
+            return row.mount.iconName;
+        if (row.isConfigured() && m_vfs) {
+            for (IFileSystemFactory* factory : m_vfs->factories()) {
+                if (factory && factory->scheme() == row.drive.factoryScheme)
+                    return factory->iconName();
+            }
+        }
+        return QString();
     case StateRole:
         // A plain int. The enum is not registered with QML, so handing the
         // enumerator out would give a delegate a value it could only compare

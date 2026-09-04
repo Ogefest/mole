@@ -38,6 +38,16 @@ public:
     /// True when the file was longer than maxBytes.
     bool truncated() const { return m_truncated; }
 
+    /// **Which end failed**, once the task has failed: the read off the drive, or
+    /// the write of the local copy `landAt()` asked for.
+    ///
+    /// Both come back as `VfsError::IoError` and they mean opposite things to a
+    /// caller. `FileLauncher` reports a failure to the shell, which marks a drive
+    /// unreachable on an I/O error -- so a full `/tmp` told the reader their
+    /// server had gone. The task is the only thing that knows which side it was.
+    /// See MOLE-395 and MOLE-406.
+    bool landingFailed() const { return m_landingFailed; }
+
 protected:
     void run() override;
 
@@ -48,6 +58,7 @@ private:
     QString m_landAt;
     QByteArray m_contents;
     bool m_truncated = false;
+    bool m_landingFailed = false;
 };
 
 } // namespace mole

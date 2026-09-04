@@ -132,6 +132,15 @@ public:
     Q_INVOKABLE void setTargets(const QStringList& rootUris);
     /// The same, then walks all of them. This is what "Analyse folder" means.
     Q_INVOKABLE void analyse(const QStringList& rootUris);
+    /// The folders this tab is about.
+    ///
+    /// The question every controller is asked by name rather than by type -- see
+    /// `AppController::currentTargets()`. It was missing here, and the shell's
+    /// "reuse the analysis tab already on this folder" read it as a *property*,
+    /// which nothing has: so the comparison was against an invalid QVariant and
+    /// Analyse folder opened a second tab on the same folder every time. See
+    /// MOLE-395.
+    Q_INVOKABLE QStringList targetUris() const;
     Q_INVOKABLE void refreshAll();
 
     QVariantList targetList() const;

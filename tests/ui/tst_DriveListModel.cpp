@@ -1,3 +1,4 @@
+#include "support/FakePlugin.h"
 #include "support/MoleTestMain.h"
 #include "support/TestSupport.h"
 #include "ui/models/DriveListModel.h"
@@ -112,6 +113,7 @@ class TestDriveListModel : public QObject
 private slots:
     void init();
     void cleanup();
+    void everyRowHasAGlyph();
 
     void obeysTheModelContract();
     void reportsCapacityWhenTheBackendKnowsIt();
@@ -1209,6 +1211,36 @@ void TestDriveListModel::addingAMountAsksNothingOfTheDisksAlreadyMeasured()
     // The minute timer is the thing that re-asks, and it asks everything.
     m_model->refreshSpace();
     QVERIFY(waitFor([&counted] { return counted->timesAsked() == 2; }));
+}
+
+void TestDriveListModel::everyRowHasAGlyph()
+{
+    // **The role was empty on every row.** IconTextRole returned
+    // `row.mount.iconName`, which only the two overloads of
+    // VfsManager::addMount() that build a backend themselves ever set -- and the
+    // one that does is used for archive re-mounts, which are `unlisted` and
+    // filtered out of this model. So a connected drive, a local disk and a
+    // configured drive all answered nothing, and the command palette's drive rows
+    // had no glyph while IFileSystemFactory::iconName() sat there to supply one.
+    // See MOLE-395.
+    // A factory for the scheme, because a glyph has to come from somewhere: the
+    // one the factory offers is what every row should end up with, and the point
+    // of the fault is that nothing was asking it. IFileSystemFactory::iconName()
+    // has a default, so this is what the real application has for every drive
+    // kind it can serve.
+    m_vfs->registerFactory(std::make_unique<FakeFileSystemFactory>(QStringLiteral("sftp")));
+
+    const QString driveId = configure(QStringLiteral("Fileserver"), false);
+    QVERIFY(!driveId.isEmpty());
+    connectConfigured(driveId);
+
+    QVERIFY(waitFor([this] { return m_model->rowCount() > 0; }));
+    for (int row = 0; row < m_model->rowCount(); ++row) {
+        const QString glyph = m_model->data(m_model->index(row, 0), DriveListModel::IconTextRole).toString();
+        const QString name
+            = m_model->data(m_model->index(row, 0), DriveListModel::DisplayNameRole).toString();
+        QVERIFY2(!glyph.isEmpty(), qPrintable(QStringLiteral("the row for %1 has no glyph").arg(name)));
+    }
 }
 
 MOLE_TEST_MAIN(TestDriveListModel)

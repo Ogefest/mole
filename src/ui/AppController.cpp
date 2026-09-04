@@ -215,6 +215,9 @@ void AppController::rememberWindowGeometry(int x, int y, int width, int height, 
         updated.y = y;
         updated.width = width;
         updated.height = height;
+        // Stated, because a coordinate of -1 or -1200 is a coordinate. See
+        // WindowGeometry::positionKnown.
+        updated.positionKnown = true;
     }
 
     if (updated.x == m_window.x && updated.y == m_window.y && updated.width == m_window.width
@@ -467,12 +470,17 @@ bool AppController::initialise(std::vector<std::unique_ptr<IPlugin>> builtIns, Q
         });
 
     m_launcher = new FileLauncher(m_services, this);
-    connect(m_launcher, &FileLauncher::failed, this, [this](const QString& uri, const QString& reason) {
+    connect(m_launcher, &FileLauncher::failed, this, [this](const QString& uri, const VfsError& error) {
         emit notification(static_cast<int>(EventBus::Severity::Warning),
-            QStringLiteral("Cannot open %1").arg(VfsUri::fromString(uri).fileName()), reason);
-        if (m_drives) {
-            m_drives->noteFailureAt(VfsUri::fromString(uri), VfsError::make(VfsError::IoError, reason));
-        }
+            QStringLiteral("Cannot open %1").arg(VfsUri::fromString(uri).fileName()), error.message);
+        // The launcher's error, with its own code, rather than everything wrapped
+        // as IoError. That wrapping told the reader their server was down
+        // whenever this machine had no application for a file -- and
+        // noteFailureAt() reads IoError as "the drive has gone", which is right
+        // for a read that stopped mid-extraction and wrong for six of the eight
+        // things that can go wrong here. See MOLE-395 and FileLauncher::failed.
+        if (m_drives)
+            m_drives->noteFailureAt(VfsUri::fromString(uri), error);
     });
 
     // A drag has no result to look at afterwards, so both outcomes it can have
@@ -794,7 +802,6 @@ void AppController::finishUnlock(bool ok)
 {
     if (!ok) {
         emit credentialsChanged();
-        emit drivesChanged();
         emit credentialsAttempted(false);
         return;
     }
@@ -808,7 +815,6 @@ void AppController::finishUnlock(bool ok)
     }
 
     emit credentialsChanged();
-    emit drivesChanged();
 
     // A tab restored onto a drive whose secret was in the store asked for it while
     // the store was shut, and now it can be built. Nothing is navigated: the pane
@@ -986,15 +992,18 @@ bool AppController::saveDrive(const QString& id, const QString& name, const QStr
     }
     drive.settings = settings;
 
-    m_credentialsError.clear();
+    // Its own string, and not m_credentialsError. That field is what
+    // credentialsError() hands the passphrase dialog, and this wrote into it --
+    // so a drive that could not be saved put its message in front of whoever
+    // opened the unlock dialog next, which is a sentence about a server in a box
+    // asking for a passphrase. One field, two dialogs. See MOLE-395.
+    QString saveError;
     QString storedId;
-    if (!m_remotes->put(drive, secrets, &m_credentialsError, &storedId)) {
+    if (!m_remotes->put(drive, secrets, &saveError, &storedId)) {
         emit notification(static_cast<int>(EventBus::Severity::Warning),
-            QStringLiteral("Could not save the drive"), m_credentialsError);
+            QStringLiteral("Could not save the drive"), saveError);
         return false;
     }
-    emit drivesChanged();
-
     // Verified here, where it was typed. Nothing in saving a drive tests it, and
     // nothing in connecting one does either -- so a wrong endpoint or a refused
     // password used to surface much later, as an error about a certificate in the
@@ -1025,30 +1034,14 @@ void AppController::checkDrive(const QString& id)
             message);
     };
 
+    // Built on this thread, which performs no I/O; only the listing does, and
+    // that happens inside the task. One call, where this and sweepDrive() and
+    // connectDrive() each had the same three steps written out with their own
+    // failure strings -- see RemoteRegistry::backendFor() and MOLE-395.
     QString error;
-    const QVariantMap config = m_remotes->configFor(drive, &error);
-    if (config.isEmpty()) {
-        report(false, error.isEmpty() ? QStringLiteral("This drive has no configuration") : error);
-        return;
-    }
-
-    IFileSystemFactory* factory = nullptr;
-    for (IFileSystemFactory* candidate : m_vfs->factories()) {
-        if (candidate->scheme() == drive.factoryScheme) {
-            factory = candidate;
-            break;
-        }
-    }
-    if (!factory) {
-        report(false, QStringLiteral("Nothing here can serve a %1 drive").arg(drive.factoryScheme));
-        return;
-    }
-
-    // Built on this thread, which performs no I/O; only the listing does, and that
-    // happens inside the task.
-    FileSystemPtr fs = factory->create(config, &error);
+    FileSystemPtr fs = m_remotes->backendFor(drive, m_vfs->factories(), &error);
     if (!fs) {
-        report(false, error.isEmpty() ? QStringLiteral("That configuration is not usable") : error);
+        report(false, error);
         return;
     }
 
@@ -1076,27 +1069,9 @@ void AppController::sweepDrive(const QString& id, bool discard, int olderThanHou
     };
 
     QString error;
-    const QVariantMap config = m_remotes->configFor(drive, &error);
-    if (config.isEmpty()) {
-        report(0, error.isEmpty() ? QStringLiteral("This drive has no configuration") : error);
-        return;
-    }
-
-    IFileSystemFactory* factory = nullptr;
-    for (IFileSystemFactory* candidate : m_vfs->factories()) {
-        if (candidate->scheme() == drive.factoryScheme) {
-            factory = candidate;
-            break;
-        }
-    }
-    if (!factory) {
-        report(0, QStringLiteral("Nothing here can serve a %1 drive").arg(drive.factoryScheme));
-        return;
-    }
-
-    FileSystemPtr fs = factory->create(config, &error);
+    FileSystemPtr fs = m_remotes->backendFor(drive, m_vfs->factories(), &error);
     if (!fs) {
-        report(0, error.isEmpty() ? QStringLiteral("That configuration is not usable") : error);
+        report(0, error);
         return;
     }
 
@@ -1118,10 +1093,10 @@ bool AppController::removeDrive(const QString& id)
     const RemoteDrive drive = m_remotes->drive(id);
     if (drive.isValid())
         disconnectDrive(id);
-    const bool removed = m_remotes->remove(id);
-    if (removed)
-        emit drivesChanged();
-    return removed;
+    // Nothing to announce here: RemoteRegistry::remove() emits its own
+    // drivesChanged() and DriveListModel listens to that. See the driveKinds
+    // property for why this one is gone.
+    return m_remotes->remove(id);
 }
 
 QString AppController::connectDrive(const QString& id)
@@ -1134,23 +1109,9 @@ QString AppController::connectDrive(const QString& id)
         return QStringLiteral("No such drive");
 
     QString error;
-    const QVariantMap config = m_remotes->configFor(drive, &error);
-    if (config.isEmpty())
-        return error.isEmpty() ? QStringLiteral("This drive has no configuration") : error;
-
-    IFileSystemFactory* factory = nullptr;
-    for (IFileSystemFactory* candidate : m_vfs->factories()) {
-        if (candidate->scheme() == drive.factoryScheme) {
-            factory = candidate;
-            break;
-        }
-    }
-    if (!factory)
-        return QStringLiteral("Nothing here can serve a %1 drive").arg(drive.factoryScheme);
-
-    FileSystemPtr fs = factory->create(config, &error);
+    FileSystemPtr fs = m_remotes->backendFor(drive, m_vfs->factories(), &error);
     if (!fs)
-        return error.isEmpty() ? QStringLiteral("Could not connect") : error;
+        return error;
 
     Mount mount;
     mount.id = drive.id;
@@ -1168,7 +1129,6 @@ QString AppController::connectDrive(const QString& id)
     m_vfs->addMount(mount);
 
     emit credentialsChanged();
-    emit drivesChanged();
 
     checkDrive(drive.id);
     return {};
@@ -1179,7 +1139,6 @@ void AppController::disconnectDrive(const QString& id)
     if (m_vfs)
         m_vfs->removeMount(id);
     emit credentialsChanged();
-    emit drivesChanged();
 }
 
 QString AppController::monospaceFont() const
@@ -1563,44 +1522,14 @@ void AppController::dropUnusedBrowsingMounts(const QList<VfsUri>& open)
     // forty of them each holding a file handle and a cached central directory,
     // with no way to eject one.
     //
-    // **Removed when the last reader leaves, which is not the same as "nobody is
-    // inside it right now".** A mount is made *before* anything navigates into
-    // it, and navigation is queued -- so a mount that has never been occupied is
-    // one on its way to being occupied, and taking it away then is taking it away
-    // between the two halves of opening an archive. That is exactly what happened
-    // the first time this was written: openArchive() mounted, a tab appeared, the
-    // tab's first report arrived before it had moved, and the mount was gone by
-    // the time the navigation asked for it.
-    //
-    // So a mount has to have been stood in once before it can be left. Somebody
-    // is inside it when any tab's open location shares its scheme and authority,
-    // which covers a pane in a subfolder of the archive and a preview showing a
-    // member -- a tab holding it open just as much as a browser is.
-    QStringList gone;
-    for (const Mount& mount : m_vfs->mounts()) {
-        if (!mount.unlisted)
-            continue;
-        bool inUse = false;
-        for (const VfsUri& where : open) {
-            if (where.scheme() == mount.root.scheme() && where.authority() == mount.root.authority()) {
-                inUse = true;
-                break;
-            }
-        }
-        if (inUse) {
-            m_enteredMounts.insert(mount.id);
-            continue;
-        }
-        if (m_enteredMounts.contains(mount.id)) {
-            m_enteredMounts.remove(mount.id);
-            gone.append(mount.id);
-        }
-    }
-    // Collected first: removing a mount emits mountsChanged, and iterating the
-    // list while something reacts to it is how a walk over a container ends up
-    // reading a container that has moved.
-    for (const QString& id : gone)
-        m_vfs->removeMount(id);
+    // One call, where this was twenty lines of reasoning about VfsManager's own
+    // table plus a QSet of ids beside it -- a second record of "has anything been
+    // inside this mount" that nothing cleared when a mount went away by another
+    // route. Which mounts exist, and which have been stood in, are now one
+    // record in one place. The rule itself is unchanged and is written down at
+    // VfsManager::reapUnlistedMounts() and Mount::wasEntered. See MOLE-395.
+    if (m_vfs)
+        m_vfs->reapUnlistedMounts(open);
 }
 
 void AppController::refreshOpenDrives()
@@ -2793,12 +2722,22 @@ void AppController::openReportFor(const QString& uri)
 
     // Reuses an analysis tab already showing this folder rather than opening a
     // second one on the same thing.
+    //
+    // Asked with invokeMethod, the way currentTargets() ten lines above does it.
+    // This read `controller->property("targetUris")` and no controller has such a
+    // property -- targetUris() is an invokable -- so the comparison was always
+    // against an invalid QVariant, the loop never matched, and Analyse folder
+    // opened a new tab every time. See MOLE-395.
     for (int row = 0; row < m_tabs->rowCount(); ++row) {
         QObject* controller = m_tabs->controllerAt(row);
         if (!controller || controller->metaObject()->indexOfMethod("setTargets(QStringList)") < 0)
             continue;
-        const QVariant targets = controller->property("targetUris");
-        if (targets.isValid() && targets.toStringList() == QStringList { uri }) {
+        if (controller->metaObject()->indexOfMethod("targetUris()") < 0)
+            continue;
+        QStringList targets;
+        if (!QMetaObject::invokeMethod(controller, "targetUris", Q_RETURN_ARG(QStringList, targets)))
+            continue;
+        if (targets == QStringList { uri }) {
             m_tabs->setCurrentIndex(row);
             return;
         }

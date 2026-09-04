@@ -95,12 +95,16 @@ QString FileLauncher::scratchPathFor(const VfsUri& uri)
 void FileLauncher::launch(const QString& localPath, const VfsUri& origin)
 {
     if (!m_openHook) {
-        emit failed(origin.toString(), QStringLiteral("No handler is configured"));
+        // NotSupported and not IoError: this machine has nothing to open the
+        // file with, which says nothing about where the file came from.
+        emit failed(origin.toString(),
+            VfsError::make(VfsError::NotSupported, QStringLiteral("No handler is configured")));
         return;
     }
     if (!m_openHook(localPath)) {
-        emit failed(
-            origin.toString(), QStringLiteral("The desktop has no application registered for this file"));
+        emit failed(origin.toString(),
+            VfsError::make(VfsError::NotSupported,
+                QStringLiteral("The desktop has no application registered for this file")));
         return;
     }
     emit opened(localPath);
@@ -109,7 +113,8 @@ void FileLauncher::launch(const QString& localPath, const VfsUri& origin)
 void FileLauncher::open(const VfsUri& uri)
 {
     if (!uri.isValid()) {
-        emit failed(uri.toString(), QStringLiteral("Not a valid location"));
+        emit failed(
+            uri.toString(), VfsError::make(VfsError::NotFound, QStringLiteral("Not a valid location")));
         return;
     }
 
@@ -120,19 +125,29 @@ void FileLauncher::open(const VfsUri& uri)
     }
 
     if (!m_services.isValid()) {
-        emit failed(uri.toString(), QStringLiteral("Application services are not available"));
+        emit failed(uri.toString(),
+            VfsError::make(VfsError::NotSupported, QStringLiteral("Application services are not available")));
         return;
     }
 
     FileSystemPtr fs = m_services.vfs->resolve(uri);
     if (!fs) {
-        emit failed(uri.toString(), QStringLiteral("No drive is mounted for this file"));
+        // The one of these that is about a drive, and it is still not a
+        // reachability answer: nothing is mounted, so there is nothing to be
+        // unreachable.
+        emit failed(uri.toString(),
+            VfsError::make(VfsError::NotFound, QStringLiteral("No drive is mounted for this file")));
         return;
     }
 
     const QString scratch = scratchPathFor(uri);
     if (scratch.isEmpty()) {
-        emit failed(uri.toString(), QStringLiteral("Cannot create a scratch directory"));
+        // Unknown rather than IoError, and the reason is the whole of MOLE-395:
+        // this machine's disk is what failed, and IoError is the code the drive
+        // list reads as "the far end has gone". Unknown carries the message
+        // without making a claim about anybody's server.
+        emit failed(uri.toString(),
+            VfsError::make(VfsError::Unknown, QStringLiteral("Cannot create a scratch directory")));
         return;
     }
 
@@ -145,7 +160,17 @@ void FileLauncher::open(const VfsUri& uri)
     task->landAt(scratch);
     connect(task, &Task::finished, this, [this, task, uri, scratch] {
         if (task->state() != Task::State::Succeeded) {
-            emit failed(uri.toString(), task->error().message);
+            if (task->landingFailed()) {
+                // This machine's disk, and it answers IoError like a drive
+                // would: a full /tmp reported as a drive failure is how a
+                // perfectly good server came to be shown as unreachable.
+                emit failed(uri.toString(), VfsError::make(VfsError::Unknown, task->error().message));
+                return;
+            }
+            // The read's own error, passed through with its code: this is the
+            // one failure here that really is the drive's, so a drive that
+            // stopped answering mid-extraction is reported as one.
+            emit failed(uri.toString(), task->error());
             return;
         }
         launch(scratch, uri);

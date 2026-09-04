@@ -417,6 +417,15 @@ void AnalysisTabController::addTarget(const QString& rootUri, const QString& lab
     refreshTitle();
 }
 
+QStringList AnalysisTabController::targetUris() const
+{
+    QStringList uris;
+    uris.reserve(static_cast<int>(m_targets.size()));
+    for (const AnalysisTarget* target : m_targets)
+        uris.append(target->rootUri());
+    return uris;
+}
+
 void AnalysisTabController::setTargets(const QStringList& rootUris)
 {
     qDeleteAll(m_targets);

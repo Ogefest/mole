@@ -17,6 +17,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QScreen>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QWindow>
@@ -63,6 +64,7 @@ private slots:
     void aTabRestoredBeforeItsDriveIsUpKeepsItsFolder();
 
     void windowSizeIsRemembered();
+    void aWindowOnAScreenLeftOfThePrimaryComesBackThere();
     void maximisedStateIsRemembered();
     void fullScreenKeepsTheSizeItHadBefore();
     void aSessionFromBeforeTheTriStateStillRestoresMaximised();
@@ -687,6 +689,45 @@ void TestSession::windowSizeIsRemembered()
     QCOMPARE(geometry.value(QStringLiteral("width")).toInt(), 1000);
     QCOMPARE(geometry.value(QStringLiteral("height")).toInt(), 700);
     QCOMPARE(geometry.value(QStringLiteral("windowState")).toString(), QStringLiteral("normal"));
+}
+
+void TestSession::aWindowOnAScreenLeftOfThePrimaryComesBackThere()
+{
+    // **"Unset" was `x == -1`, and -1 is a coordinate.** A monitor to the left of
+    // or above the primary one has negative virtual-desktop coordinates, so a
+    // window somebody had left there was read as having no position at all and
+    // came back on the primary screen -- every restart, for as long as their
+    // desk was arranged that way. `geometryIsOnScreen()` already asks the real
+    // question and the sentinel answered a different one in front of it. See
+    // MOLE-395.
+    //
+    // Asked of a position this machine's screens actually cover, because that is
+    // the other half of the answer: a rectangle nothing covers is still refused.
+    // The offscreen platform reports one screen at 0,0, so a few pixels above
+    // the origin is on it and negative.
+    startApp();
+    const QRect screen = QGuiApplication::primaryScreen()
+        ? QGuiApplication::primaryScreen()->availableGeometry()
+        : QRect(0, 0, 1024, 768);
+    const int x = screen.left() - 20;
+    const int y = screen.top() - 15;
+    m_app->rememberWindowGeometry(x, y, 800, 600, QWindow::Windowed);
+    m_app->saveSessionNow();
+
+    restartApp();
+
+    const QVariantMap geometry = m_app->savedWindowGeometry();
+    QVERIFY2(geometry.contains(QStringLiteral("x")),
+        "a window at a negative coordinate came back with no position at all");
+    QCOMPARE(geometry.value(QStringLiteral("x")).toInt(), x);
+    QCOMPARE(geometry.value(QStringLiteral("y")).toInt(), y);
+
+    // And a rectangle no screen covers is still refused, so this is a position
+    // being believed rather than the check being switched off.
+    m_app->rememberWindowGeometry(-40000, -40000, 800, 600, QWindow::Windowed);
+    const QVariantMap nowhere = m_app->savedWindowGeometry();
+    QVERIFY2(!nowhere.contains(QStringLiteral("x")),
+        "a window on a monitor that is no longer there was restored anyway");
 }
 
 void TestSession::maximisedStateIsRemembered()

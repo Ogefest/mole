@@ -51,6 +51,21 @@ struct Mount
     /// same archive twice is one mount, and the preview's own mount of a single
     /// compressed member is still skipped by that. See MOLE-310 and ADR-0083.
     bool unlisted = false;
+    /// Whether anything has ever been inside this mount.
+    ///
+    /// **A mount that has never been occupied is one on its way to being
+    /// occupied**: it is made *before* anything navigates into it and navigation
+    /// is queued, so "nobody is inside it right now" is true of a mount somebody
+    /// is in the middle of opening. It has to have been stood in once before it
+    /// can be left.
+    ///
+    /// Here rather than in a QSet beside the caller, which is where it was: a set
+    /// of ids kept outside this table was never cleared for a mount removed by
+    /// another route -- an eject, a failure, a plugin letting go -- so it held
+    /// ids of mounts that no longer existed and grew for the life of the process.
+    /// A fact about a mount belongs to the mount. See MOLE-395 and
+    /// reapUnlistedMounts().
+    bool wasEntered = false;
     /// The size this mount reports, instead of the one measured underneath it.
     ///
     /// Invalid by default, which means "ask the backend" -- the ordinary case. It
@@ -84,6 +99,19 @@ public:
     void registerFactory(std::unique_ptr<IFileSystemFactory> factory);
     /// Non-owning view, ordered by registration.
     QList<IFileSystemFactory*> factories() const;
+
+    /// Removes every unlisted mount that has been stood in and is now empty, and
+    /// returns what it removed.
+    ///
+    /// `openLocations` is where the window is looking. A mount is occupied when
+    /// any of them shares its scheme and authority, which covers a pane in a
+    /// subfolder of an archive and a preview showing one member -- a tab holding
+    /// it open just as much as a browser is.
+    ///
+    /// The reasoning used to live in the shell, over a QSet of ids beside the
+    /// mount table; two records of one fact, and only one of them was maintained.
+    /// See Mount::wasEntered and MOLE-395.
+    QStringList reapUnlistedMounts(const QList<VfsUri>& openLocations);
     IFileSystemFactory* factoryFor(const QString& scheme) const;
 
     // ---- Mount table -----------------------------------------------------

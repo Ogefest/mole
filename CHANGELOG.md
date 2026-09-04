@@ -65,6 +65,11 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-04 #MOLE-395 A file with no application to open it no longer marks its drive unreachable
+2026-09-04 #MOLE-395 Analyse folder reuses the tab already showing that folder
+2026-09-04 #MOLE-395 A window left on a screen above or left of the primary one comes back there
+2026-09-04 #MOLE-395 Every drive row has its kind's glyph, including one that is not connected
+2026-09-04 #MOLE-395 The passphrase dialog no longer shows a message about a drive that could not be saved
 2026-09-04 #MOLE-389 Configure works again on Qt 6.10 and newer
 2026-09-04 #MOLE-389 The .rpm is built on the current Fedora, and installs there
 2026-09-04 #MOLE-404 A file set's "missing" count belongs to the set on screen

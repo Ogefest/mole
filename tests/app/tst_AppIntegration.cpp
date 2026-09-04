@@ -95,6 +95,11 @@ private slots:
     void tellsWhatIsAlreadyKnownAboutTheFolder();
     void reportsWhoMayDoWhatHere();
     void openExternallyGoesThroughTheLauncher();
+    void aFileNothingCanOpenLeavesItsDriveAlone();
+    void openingTheSameFoldersReportTwiceUsesOneTab();
+    void everyNameTheShellSeedsIsOneTheControllerHas_data();
+    void everyNameTheShellSeedsIsOneTheControllerHas();
+    void aRefusedDriveSaveLeavesThePassphraseDialogAlone();
     void menuHasTheClassicSections();
     void theTypeScaleIsOrderedAndAboveTheFloor();
     void menuOffersANewTabOnlyForWhatOpensFromNothing();
@@ -1598,6 +1603,230 @@ void TestAppIntegration::tellsWhatIsAlreadyKnownAboutTheFolder()
 
     QVERIFY(waitFor([browser] { return browser->alertCount() == 1; }));
     QCOMPARE(browser->triggeredAlertCount(), 1);
+}
+
+void TestAppIntegration::aFileNothingCanOpenLeavesItsDriveAlone()
+{
+    // **The launcher marked the drive.** FileLauncher::failed carried its reason
+    // as a bare string, and six of the eight say nothing about a drive: no
+    // handler configured, the desktop has no application for this file, not a
+    // valid location, no scratch directory, the extracted copy could not be
+    // written. AppController wrapped every one as VfsError::IoError and handed it
+    // to DriveListModel::noteFailureAt(), where IoError means "the drive has
+    // gone" -- so opening an .xyz nobody has a viewer for on a remote drive
+    // turned the row red, said "Unreachable", and told the reader their server
+    // was down until the next explicit check.
+    //
+    // noteFailureAt()'s own comment is about this mistake in the other direction:
+    // a misread error "would send the reader looking at their network because
+    // they typed a name wrong". See MOLE-395, ADR-0018 and ADR-0052.
+    RemoteDrive drive;
+    drive.name = QStringLiteral("Fileserver");
+    drive.factoryScheme = QStringLiteral("mem");
+    drive.variant = QStringLiteral("mem");
+    drive.root = QStringLiteral("/");
+    QString driveId;
+    QString error;
+    QVERIFY2(m_app->remotes()->put(drive, {}, &error, &driveId), qPrintable(error));
+    QVERIFY(!driveId.isEmpty());
+
+    // Mounted under the configured drive's own id, so the row is a configured
+    // drive with a state to move rather than a bare mount.
+    auto backend = std::make_shared<MemoryFileSystem>();
+    const VfsUri root = VfsUri::fromString(QStringLiteral("mem:///"));
+    const VfsUri file = root.child(QStringLiteral("thing.xyz"));
+    backend->addFile(QStringLiteral("/thing.xyz"), QByteArray("bytes nothing on this machine can open"));
+    Mount mount;
+    mount.id = driveId;
+    mount.displayName = drive.name;
+    mount.root = root;
+    mount.fileSystem = backend;
+    QVERIFY(!m_app->services().vfs->addMount(mount).isEmpty());
+
+    DriveListModel* drives = m_app->drives();
+    const auto rowOf = [drives](const QString& id) {
+        for (int row = 0; row < drives->rowCount(); ++row) {
+            if (drives->data(drives->index(row, 0), DriveListModel::ConfiguredIdRole).toString() == id)
+                return row;
+        }
+        return -1;
+    };
+    QVERIFY(waitFor([&] { return rowOf(driveId) >= 0; }));
+    const int row = rowOf(driveId);
+    const auto stateNow = [drives, row] {
+        return drives->data(drives->index(row, 0), DriveListModel::StateRole).value<DriveListModel::State>();
+    };
+    const DriveListModel::State before = stateNow();
+    QVERIFY2(before != DriveListModel::State::Unreachable, "the drive started out unreachable");
+    // The fixture is one a drive failure *would* move: a direct report of an
+    // unreachable drive turns this row Unreachable, so a case that finds it Idle
+    // below has found the launcher not reporting one rather than a row that
+    // cannot move.
+    drives->noteFailureAt(file, VfsError::make(VfsError::NetworkError, QStringLiteral("nothing there")));
+    QCOMPARE(stateNow(), DriveListModel::State::Unreachable);
+    drives->noteCheckResult(driveId, true, QString());
+    QCOMPARE(stateNow(), before);
+
+    // The desktop refusing the file: an OpenHook answering false is what a
+    // machine with no application registered for .xyz does.
+    bool asked = false;
+    m_app->launcher()->setOpenHook([&asked](const QString&) {
+        asked = true;
+        return false;
+    });
+    m_app->openExternally(file.toString());
+
+    // The file is fetched through a task, so the refusal arrives after it. The
+    // refusal itself is synchronous from there: launch() emits failed(), which is
+    // what the shell listens to.
+    QVERIFY2(waitFor([&asked] { return asked; }), "the launcher never got as far as the desktop");
+
+    QCOMPARE(stateNow(), before);
+    const QString message = drives->data(drives->index(row, 0), DriveListModel::CheckMessageRole).toString();
+    QVERIFY2(message.isEmpty(), qPrintable(QStringLiteral("the drive row now says: %1").arg(message)));
+}
+
+void TestAppIntegration::openingTheSameFoldersReportTwiceUsesOneTab()
+{
+    // **The reuse loop could not match anything.** It read
+    // `controller->property("targetUris")`, and no controller has such a
+    // property -- `targetUris()` is an invokable on the browser's controller and
+    // the analysis tab had neither. So an invalid QVariant was compared with a
+    // one-element list, the loop never matched, and "Analyse folder" opened a
+    // second tab on the same folder every time it was asked. Ten lines above it,
+    // `currentTargets()` asks the same question correctly, with
+    // invokeMethod(). See MOLE-395.
+    const QString folder = m_tree->rootUri().toString();
+
+    const int before = m_app->tabs()->rowCount();
+    m_app->openReportFor(folder);
+    const int afterFirst = m_app->tabs()->rowCount();
+    QCOMPARE(afterFirst, before + 1);
+
+    m_app->openReportFor(folder);
+    QCOMPARE(m_app->tabs()->rowCount(), afterFirst);
+    QCOMPARE(m_app->tabs()->currentIndex(), afterFirst - 1);
+
+    // A different folder is a different report and does open a tab, so the reuse
+    // is about the folder rather than about the tab kind.
+    m_app->openReportFor(m_tree->rootUri().child(QStringLiteral("reports")).toString());
+    QCOMPARE(m_app->tabs()->rowCount(), afterFirst + 1);
+}
+
+void TestAppIntegration::everyNameTheShellSeedsIsOneTheControllerHas_data()
+{
+    // **The shell talks to every tab by name.** `openFeatureTab()` seeds
+    // `rootUri` and `suggestedTarget` as properties and calls `setTargets` as an
+    // invokable; search everywhere writes `everywhere`; the sync tab is given a
+    // `sourceUri`; the sets tab a `currentSetId`; the analysis tab is asked for
+    // `targetUris`. Not one of those is checked by the compiler, so a controller
+    // renaming a property leaves the shell quietly doing nothing -- which is
+    // precisely what had happened to `targetUris`, read as a property nothing
+    // has, so "Analyse folder" opened a second tab on the same folder for as
+    // long as anybody had been using it.
+    //
+    // Table-driven so a name is one line, and named as (feature, name, kind) so
+    // a failure says which tab lost which word. See MOLE-395.
+    QTest::addColumn<QString>("featureId");
+    QTest::addColumn<QString>("name");
+    QTest::addColumn<QString>("kind");
+
+    const auto row = [](const char* label, const QString& feature, const QString& name, const QString& kind) {
+        QTest::newRow(label) << feature << name << kind;
+    };
+
+    row("search: rootUri", QStringLiteral("mole.livesearch"), QStringLiteral("rootUri"),
+        QStringLiteral("writable property"));
+    row("search: everywhere", QStringLiteral("mole.livesearch"), QStringLiteral("everywhere"),
+        QStringLiteral("writable property"));
+    row("alerts: suggestedTarget", QStringLiteral("core.alerts"), QStringLiteral("suggestedTarget"),
+        QStringLiteral("writable property"));
+    row("sync: sourceUri", QStringLiteral("core.sync"), QStringLiteral("sourceUri"),
+        QStringLiteral("writable property"));
+    row("sets: currentSetId", QStringLiteral("core.filesets"), QStringLiteral("currentSetId"),
+        QStringLiteral("writable property"));
+    row("browser: activePane", QStringLiteral("mole.browser"), QStringLiteral("activePane"),
+        QStringLiteral("property"));
+
+    row("analysis: setTargets", QStringLiteral("mole.analysis"), QStringLiteral("setTargets(QStringList)"),
+        QStringLiteral("invokable"));
+    row("duplicates: setTargets", QStringLiteral("core.duplicates"),
+        QStringLiteral("setTargets(QStringList)"), QStringLiteral("invokable"));
+    row("sync: setTargets", QStringLiteral("core.sync"), QStringLiteral("setTargets(QStringList)"),
+        QStringLiteral("invokable"));
+    row("rename: setTargets", QStringLiteral("core.bulkrename"), QStringLiteral("setTargets(QStringList)"),
+        QStringLiteral("invokable"));
+    row("analysis: targetUris", QStringLiteral("mole.analysis"), QStringLiteral("targetUris()"),
+        QStringLiteral("invokable"));
+    // Not the browser: a browser tab answers what it is aimed at through
+    // `activePane` and its selection, which is the fallback in
+    // currentTargets(). These three answer directly.
+    row("sets: targetUris", QStringLiteral("core.filesets"), QStringLiteral("targetUris()"),
+        QStringLiteral("invokable"));
+    row("duplicates: targetUris", QStringLiteral("core.duplicates"), QStringLiteral("targetUris()"),
+        QStringLiteral("invokable"));
+    row("browser: navigateActive", QStringLiteral("mole.browser"), QStringLiteral("navigateActive(QString)"),
+        QStringLiteral("invokable"));
+    row("preview: open", QStringLiteral("mole.preview"), QStringLiteral("open(QString)"),
+        QStringLiteral("invokable"));
+}
+
+void TestAppIntegration::everyNameTheShellSeedsIsOneTheControllerHas()
+{
+    QFETCH(QString, featureId);
+    QFETCH(QString, name);
+    QFETCH(QString, kind);
+
+    const int row = m_app->tabs()->openTab(featureId);
+    QVERIFY2(row >= 0, qPrintable(QStringLiteral("%1 does not open a tab").arg(featureId)));
+    QObject* controller = m_app->tabs()->controllerAt(row);
+    QVERIFY2(controller != nullptr, qPrintable(QStringLiteral("%1 has no controller").arg(featureId)));
+
+    if (kind == QStringLiteral("invokable")) {
+        QVERIFY2(controller->metaObject()->indexOfMethod(name.toUtf8().constData()) >= 0,
+            qPrintable(QStringLiteral("%1's controller has no %2, and the shell calls it by that name")
+                           .arg(featureId, name)));
+        return;
+    }
+
+    const int index = controller->metaObject()->indexOfProperty(name.toUtf8().constData());
+    QVERIFY2(index >= 0,
+        qPrintable(QStringLiteral("%1's controller has no %2 property, and the shell seeds it")
+                       .arg(featureId, name)));
+    if (kind == QStringLiteral("writable property")) {
+        QVERIFY2(controller->metaObject()->property(index).isWritable(),
+            qPrintable(QStringLiteral("%1's %2 is read-only, and the shell writes it").arg(featureId, name)));
+    }
+}
+
+void TestAppIntegration::aRefusedDriveSaveLeavesThePassphraseDialogAlone()
+{
+    // **One field, two dialogs.** `m_credentialsError` is what
+    // `credentialsError()` hands the unlock dialog, and saving a drive wrote its
+    // own failure into it -- so after a drive that could not be saved, the box
+    // asking for a passphrase showed a sentence about a server. See MOLE-395.
+    const QVariantList fields = m_app->driveFields(QStringLiteral("sftp"), QStringLiteral("sftp"));
+    bool hasSecret = false;
+    for (const QVariant& value : fields)
+        hasSecret = hasSecret || value.toMap().value(QStringLiteral("secret")).toBool();
+    if (!hasSecret)
+        QSKIP("no drive kind here has a secret field, so a save cannot be refused for one");
+
+    QVERIFY(m_app->credentialsError().isEmpty());
+
+    // A secret with the store shut is the one thing put() refuses: writing it in
+    // the clear instead is not an option.
+    QVERIFY(!m_app->credentialsUnlocked());
+    QVariantMap values;
+    values.insert(QStringLiteral("host"), QStringLiteral("nas.local"));
+    values.insert(QStringLiteral("user"), QStringLiteral("someone"));
+    values.insert(QStringLiteral("password"), QStringLiteral("not-a-real-password"));
+    QVERIFY2(!m_app->saveDrive({}, QStringLiteral("NAS"), QStringLiteral("sftp"), QStringLiteral("sftp"),
+                 QStringLiteral("/data"), values),
+        "a secret cannot be saved while the store is shut, and this save was accepted");
+
+    QVERIFY2(m_app->credentialsError().isEmpty(),
+        qPrintable(QStringLiteral("the passphrase dialog would now say: %1").arg(m_app->credentialsError())));
 }
 
 void TestAppIntegration::openExternallyGoesThroughTheLauncher()

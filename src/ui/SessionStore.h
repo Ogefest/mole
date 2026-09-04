@@ -36,14 +36,23 @@ WindowState windowStateFromName(const QString& name);
 /// screen that exists -- monitors get unplugged between sessions.
 struct WindowGeometry
 {
-    int x = -1;
-    int y = -1;
+    int x = 0;
+    int y = 0;
     int width = 0;
     int height = 0;
+    /// **Whether x and y mean anything, said rather than encoded.**
+    ///
+    /// "Unset" was `x == -1`, and -1 is a coordinate: a monitor to the left of
+    /// or above the primary one has negative virtual-desktop coordinates, so a
+    /// window left there was read as having no position and came back on the
+    /// primary screen every time. `geometryIsOnScreen()` already asks the real
+    /// question -- does this rectangle still land on a screen -- and a sentinel
+    /// in front of it answered a different one. See MOLE-395.
+    bool positionKnown = false;
     WindowState state = WindowState::Normal;
 
     bool isValid() const { return width > 0 && height > 0; }
-    bool hasPosition() const { return x > -1 && y > -1; }
+    bool hasPosition() const { return positionKnown; }
 };
 
 struct Session

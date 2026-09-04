@@ -42,6 +42,10 @@ void ReadFileTask::run()
     // program it is handed to has no way to tell.
     if (!m_landAt.isEmpty()) {
         if (Result<void> landed = staging::writeWhole(m_landAt, m_contents); !landed.ok()) {
+            // Recorded before failing, because the error itself cannot say which
+            // end it came from: a local write and a remote read both answer
+            // IoError. See landingFailed() and MOLE-395.
+            m_landingFailed = true;
             fail(landed.error());
             return;
         }

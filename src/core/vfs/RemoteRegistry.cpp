@@ -238,6 +238,43 @@ bool RemoteRegistry::put(
     return true;
 }
 
+FileSystemPtr RemoteRegistry::backendFor(
+    const RemoteDrive& drive, const QList<IFileSystemFactory*>& factories, QString* errorOut) const
+{
+    const auto refuse = [errorOut](const QString& why) {
+        if (errorOut)
+            *errorOut = why;
+        return FileSystemPtr {};
+    };
+
+    if (!drive.isValid())
+        return refuse(QStringLiteral("No such drive"));
+
+    QString error;
+    const QVariantMap config = configFor(drive, &error);
+    if (config.isEmpty()) {
+        return refuse(error.isEmpty() ? QStringLiteral("This drive has no configuration") : error);
+    }
+
+    IFileSystemFactory* factory = nullptr;
+    for (IFileSystemFactory* candidate : factories) {
+        if (candidate && candidate->scheme() == drive.factoryScheme) {
+            factory = candidate;
+            break;
+        }
+    }
+    if (!factory)
+        return refuse(QStringLiteral("Nothing here can serve a %1 drive").arg(drive.factoryScheme));
+
+    FileSystemPtr fs = factory->create(config, &error);
+    if (!fs)
+        return refuse(error.isEmpty() ? QStringLiteral("That configuration is not usable") : error);
+
+    if (errorOut)
+        errorOut->clear();
+    return fs;
+}
+
 bool RemoteRegistry::remove(const QString& id)
 {
     const auto position = std::find_if(

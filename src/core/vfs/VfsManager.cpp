@@ -88,6 +88,23 @@ QString VfsManager::addMount(Mount mount)
     // so a refusal is a line like any other call. See ADR-0077 and ADR-0064.
     mount.fileSystem = withLogging(withVersionGuard(std::move(mount.fileSystem)), mount.displayName);
 
+    // The glyph, from the factory that serves this scheme, for a mount that
+    // arrived without one. Only the two overloads that build a backend
+    // themselves used to set it, and every other route -- a configured drive
+    // being connected, a test's in-memory drive, a plugin's own mount -- left it
+    // empty. DriveListModel has an iconText role that was therefore always
+    // blank, so the command palette's drive rows had no glyph while
+    // IFileSystemFactory::iconName() sat there to supply one. Filled here rather
+    // than at each call site, which is how it came to be missed. See MOLE-395.
+    if (mount.iconName.isEmpty()) {
+        for (IFileSystemFactory* factory : factories()) {
+            if (factory && factory->scheme() == mount.root.scheme()) {
+                mount.iconName = factory->iconName();
+                break;
+            }
+        }
+    }
+
     QString id;
     {
         QMutexLocker lock(&m_mutex);
@@ -147,6 +164,38 @@ QString VfsManager::remountFor(const VfsUri& uri)
     // did -- see Mount::unlisted.
     mount.unlisted = true;
     return addMount(std::move(mount));
+}
+
+QStringList VfsManager::reapUnlistedMounts(const QList<VfsUri>& openLocations)
+{
+    QStringList gone;
+    {
+        QMutexLocker lock(&m_mutex);
+        for (Mount& mount : m_mounts) {
+            if (!mount.unlisted)
+                continue;
+            bool inUse = false;
+            for (const VfsUri& where : openLocations) {
+                if (where.scheme() == mount.root.scheme() && where.authority() == mount.root.authority()) {
+                    inUse = true;
+                    break;
+                }
+            }
+            if (inUse) {
+                mount.wasEntered = true;
+                continue;
+            }
+            if (mount.wasEntered)
+                gone.append(mount.id);
+        }
+    }
+
+    // Collected first, and removed outside the lock: removing a mount emits
+    // mountsChanged, and something reacting to that while this walks the list is
+    // how a walk over a container ends up reading a container that has moved.
+    for (const QString& id : gone)
+        removeMount(id);
+    return gone;
 }
 
 void VfsManager::removeMount(const QString& id)

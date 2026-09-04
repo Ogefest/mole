@@ -135,7 +135,19 @@ class AppController : public QObject
     /// is evaluated once and never again -- there is no signal to tell the
     /// binding it went stale -- so a drive saved through this dialog would
     /// never appear in its own list.
-    Q_PROPERTY(QVariantList driveKinds READ driveKinds NOTIFY drivesChanged)
+    /// The kinds of drive this build can serve. Its NOTIFY is
+    /// driveKindsChanged() and nothing emits it, because the answer depends only
+    /// on the registered factories and those are fixed once the plugins have
+    /// loaded.
+    ///
+    /// **It used to be NOTIFY drivesChanged, and that signal was emitted from
+    /// five mutators** as a general "something about drives moved" -- a
+    /// connection, a disconnection, a save, a removal, an unlock -- none of which
+    /// can change this list. Whatever needed that news was DriveListModel, which
+    /// observes VfsManager::mountsChanged and RemoteRegistry::drivesChanged for
+    /// itself; the sidebar's eject path never emitted it and works, which is what
+    /// showed it was carrying nothing. See MOLE-395.
+    Q_PROPERTY(QVariantList driveKinds READ driveKinds NOTIFY driveKindsChanged)
     /// A view over the drive list, narrowed to the ones somebody configured.
     /// A model rather than a list of maps, and CONSTANT rather than notifying:
     /// the pointer never changes and the model announces its own rows, so a
@@ -217,6 +229,11 @@ public:
     /// Starts opening the store, or creating one. The answer arrives as
     /// `credentialsAttempted`, because the derivation happens on a task.
     Q_INVOKABLE void unlockCredentials(const QString& passphrase);
+    /// Why the last passphrase attempt failed, for the unlock dialog.
+    ///
+    /// **This is the passphrase dialog's message and nothing else's.** Saving a
+    /// drive used to write its failure here too, so a refused endpoint was shown
+    /// by the box asking for a passphrase. See MOLE-395.
     Q_INVOKABLE QString credentialsError() const { return m_credentialsError; }
     bool credentialsBusy() const { return m_credentialsBusy; }
 
@@ -559,7 +576,9 @@ signals:
     /// The answer to unlockCredentials(), once the derivation has finished.
     /// False leaves the reason in credentialsError().
     void credentialsAttempted(bool ok);
-    void drivesChanged();
+    /// Only when the set of registered factories changes, which is never after
+    /// startup today. See the driveKinds property.
+    void driveKindsChanged();
     /// A checkDrive() finished. `message` is ready to show as it stands: what was
     /// found, or why the drive could not be reached.
     void driveChecked(const QString& id, bool reachable, const QString& message);
@@ -752,7 +771,6 @@ private:
     /// The unlisted mounts something has actually been inside, so one on its way
     /// to being occupied is not taken away before it gets there. See
     /// dropUnusedBrowsingMounts().
-    QSet<QString> m_enteredMounts;
 
     DriveListModel* m_drives = nullptr;
     QSortFilterProxyModel* m_configuredDrives = nullptr;

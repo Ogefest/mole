@@ -2,6 +2,7 @@
 
 #include "core/credentials/SecretStore.h"
 #include "core/data/JsonFileStore.h"
+#include "core/vfs/IFileSystemFactory.h"
 #include "core/vfs/VfsUri.h"
 
 #include <QObject>
@@ -99,6 +100,25 @@ public:
         QString* storedIdOut = nullptr);
     /// Removes the drive and its credentials together.
     bool remove(const QString& id);
+
+    /// The backend for a configured drive, or null with a reason.
+    ///
+    /// **The three steps were written out three times**: ask for the
+    /// configuration, find the factory for the scheme, build. `checkDrive()`,
+    /// `sweepDrive()` and `connectDrive()` in AppController each had their own
+    /// copy, with three sets of failure strings -- two of which had already
+    /// drifted, so the same unusable configuration read "That configuration is
+    /// not usable" when checked and "Could not connect" when connected. See
+    /// MOLE-395.
+    ///
+    /// The factories are passed in rather than reached for: this class knows
+    /// what a drive is configured as and VfsManager knows what can serve it, and
+    /// neither needs to know the other. No I/O happens here -- building a
+    /// backend for a server that has been switched off succeeds exactly as well
+    /// as one that works, which is why connecting is not an answer about
+    /// reachability.
+    FileSystemPtr backendFor(const RemoteDrive& drive, const QList<IFileSystemFactory*>& factories,
+        QString* errorOut = nullptr) const;
 
     /// The settings a factory needs, with secrets filled back in. Empty when the
     /// store is locked and the drive needs one, so a caller cannot accidentally

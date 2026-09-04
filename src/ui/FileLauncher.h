@@ -2,6 +2,7 @@
 
 #include "sdk/PluginServices.h"
 
+#include "core/vfs/VfsTypes.h"
 #include "core/vfs/VfsUri.h"
 
 #include <QObject>
@@ -36,7 +37,20 @@ public:
 
 signals:
     void opened(const QString& localPath);
-    void failed(const QString& uri, const QString& reason);
+    /// **The error is the drive's own only when the drive is what failed**, and
+    /// a caller that marks a drive on a failure has to look at the code rather
+    /// than at the fact of a failure. This carried a bare reason string, and six
+    /// of the eight say nothing about a drive -- no handler, no registered
+    /// application, an invalid location, no scratch directory, a full local
+    /// disk. The shell wrapped every one as VfsError::IoError and reported it as
+    /// a drive failure, so opening a file nobody has a viewer for turned a
+    /// perfectly good server's row red and left it saying "Unreachable". See
+    /// MOLE-395.
+    ///
+    /// So: the read's own error when the read failed, `NotFound` when nothing is
+    /// mounted for the uri, and a code that cannot mean an unreachable drive for
+    /// everything this machine could not do.
+    void failed(const QString& uri, const mole::VfsError& error);
 
 public:
     /// Where a file from a drive with no local path is staged before being

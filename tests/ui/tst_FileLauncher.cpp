@@ -247,7 +247,12 @@ void TestFileLauncher::refusedByDesktopReportsFailure()
     launcher->open(VfsUri::fromLocalPath(tree.absolute(QStringLiteral("thing.unknown-ext"))));
 
     QCOMPARE(failed.count(), 1);
-    QVERIFY(!failed.first().at(1).toString().isEmpty());
+    // A VfsError now rather than a bare string, and its code matters: the shell
+    // marks a drive unreachable on some of these, and "nothing on this machine
+    // opens .unknown-ext" is not one of them. See MOLE-395.
+    const VfsError refusal = failed.first().at(1).value<VfsError>();
+    QVERIFY(!refusal.message.isEmpty());
+    QCOMPARE(refusal.code, VfsError::NotSupported);
 }
 
 /// A truncated copy is worse than a failure, because the program it is handed to
@@ -295,8 +300,15 @@ void TestFileLauncher::aScratchDirectoryThatCannotHoldTheFileFailsRatherThanHand
 
     // Nothing was handed to the desktop, and the failure says which file.
     QCOMPARE(m_opened.size(), 1);
-    const QString reason = failures.first().at(1).toString();
+    const VfsError failure = failures.first().at(1).value<VfsError>();
+    const QString reason = failure.message;
     QVERIFY2(reason.contains(QStringLiteral("second.txt")), qPrintable(reason));
+    // And this one is about this machine's disk, not about the drive the file
+    // came from: a code the drive list reads as "unreachable" here would tell
+    // the reader their server had gone because their /tmp is full.
+    QVERIFY2(failure.code != VfsError::IoError && failure.code != VfsError::NetworkError,
+        qPrintable(QStringLiteral("a local staging failure was reported as a drive failure: %1")
+                       .arg(int(failure.code))));
     QVERIFY2(!QFile::exists(QDir(folder).filePath(QStringLiteral("second.txt"))),
         "half a file was left under the name the desktop would have been given");
 }
