@@ -100,6 +100,26 @@ void drainEvents();
 /// one when a test has somehow arranged two.
 QString partialWriteIn(const QString& directory);
 
+/// The staging name among `names` that belongs to `targetName`, or empty.
+///
+/// **A staging name cannot be computed, only recognised.** `partialWriteOf()`
+/// mints a fresh random token on every call (MOLE-359), so a test that derives
+/// the name and then looks for it is looking for a name that does not exist and
+/// never will. Against a real server the name belongs to another process
+/// entirely, which makes deriving it not merely unreliable but meaningless.
+///
+/// Matched the way the sweep and every listing match: the `.mole-partial` suffix,
+/// plus the target's own name as a prefix so a staging file for a *different*
+/// target in the same directory is not mistaken for this one. See MOLE-433.
+QString partialWriteAmong(const QStringList& names, const QString& targetName);
+
+/// The same question asked of a drive: the staging file for `target` that is on
+/// the server now, or an invalid URI when there is none.
+///
+/// Lists `target`'s parent, so it costs one round trip and answers about what is
+/// really there rather than about what a name would have been.
+VfsUri partialWriteFor(IFileSystem& fs, const VfsUri& target);
+
 /// Refreshes the interface's snapshot of the index and waits for the answer.
 ///
 /// The interface reads `IndexSummary` rather than the database -- ADR-0066 -- so

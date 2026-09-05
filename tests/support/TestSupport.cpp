@@ -135,6 +135,30 @@ QString partialWriteIn(const QString& directory)
     return {};
 }
 
+QString partialWriteAmong(const QStringList& names, const QString& targetName)
+{
+    for (const QString& name : names) {
+        if (isPartialWrite(name) && name.startsWith(targetName))
+            return name;
+    }
+    return {};
+}
+
+VfsUri partialWriteFor(IFileSystem& fs, const VfsUri& target)
+{
+    const Result<FileEntryList> listed = fs.list(target.parent(), CancelToken());
+    if (!listed.ok())
+        return {};
+
+    QStringList names;
+    names.reserve(int(listed.value().size()));
+    for (const FileEntry& entry : listed.value())
+        names.append(entry.name);
+
+    const QString found = partialWriteAmong(names, target.fileName());
+    return found.isEmpty() ? VfsUri() : target.parent().child(found);
+}
+
 void drainEvents()
 {
     QCoreApplication::processEvents();

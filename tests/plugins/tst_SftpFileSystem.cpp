@@ -1,6 +1,7 @@
 #include "plugins/network/SftpFileSystem.h"
 #include "support/FileSystemConformance.h"
 #include "support/MoleTestMain.h"
+#include "support/TestSupport.h"
 #include "support/TestbedControl.h"
 
 #include "core/vfs/PartialWrite.h"
@@ -996,14 +997,6 @@ void TestSftpFileSystem::aKilledUploadLeavesNothingThatLooksFinished()
     // upload anyway and reported "the upload never reached the server", which is
     // both untrue and the least useful thing it could say. Recognised by shape
     // instead, which is what the sweep and every listing do. See MOLE-419.
-    const auto partialFor = [&name](const QStringList& names) {
-        for (const QString& candidate : names) {
-            if (isPartialWrite(candidate) && candidate.startsWith(name))
-                return candidate;
-        }
-        return QString();
-    };
-
     const RawSftp raw(account);
 
     QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
@@ -1038,7 +1031,7 @@ void TestSftpFileSystem::aKilledUploadLeavesNothingThatLooksFinished()
         if (victim.state() != QProcess::Running)
             break;
         const QStringList names = raw.namesIn(directory);
-        appeared = !partialFor(names).isEmpty() || names.contains(name);
+        appeared = !partialWriteAmong(names, name).isEmpty() || names.contains(name);
         if (!appeared)
             QTest::qWait(50);
     }
@@ -1069,7 +1062,7 @@ void TestSftpFileSystem::aKilledUploadLeavesNothingThatLooksFinished()
     // somebody asked for, where the next thing to open it cannot tell.
     QVERIFY2(!after.contains(name),
         qPrintable(QStringLiteral("a killed upload left %1, which looks like a finished file").arg(name)));
-    QVERIFY2(!partialFor(after).isEmpty(),
+    QVERIFY2(!partialWriteAmong(after, name).isEmpty(),
         qPrintable(QStringLiteral("expected the wreckage under a %1 name of its own; the directory "
                                   "held %2")
                        .arg(QLatin1String(".mole-partial"), after.join(QStringLiteral(", ")))));

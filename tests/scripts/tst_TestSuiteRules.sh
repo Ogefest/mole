@@ -479,4 +479,39 @@ said=$(make --no-print-directory version 2>/dev/null | grep -E '^[0-9]+[.][0-9]+
 [ "$said" = "$(sed -n 's/^ *VERSION \([0-9][0-9.]*\)$/\1/p' CMakeLists.txt)" ] \
     || fail "make version said '$said', which is not the version"
 
+
+begin "no suite that talks to a real server derives a staging name"
+# **A staging name carries a per-open random token, so it cannot be computed.**
+# `partialWriteOf()` mints a fresh one on every call (MOLE-359). Against a real
+# server the token that matters was minted inside another process entirely, which
+# makes deriving the name not merely unreliable but meaningless -- and
+# `tst_Interference` did it at four call sites for a day. One waited 1,200 ms for
+# a file that could not appear, killed a child that had by then finished its
+# upload, and reported "the upload never started" while printing a transcript of
+# the upload. The other three were removals that removed nothing, so every killed
+# case's quarter of a gibibyte stayed on the machine.
+#
+# The rule is the directory rather than the shape of the call, because the shape
+# hid it: three of the four read `remove(partialWriteOf(x))` and the one that
+# failed assigned to a local first. `tests/plugins/` keeps its uses, which are a
+# different thing -- those tests generate a name and create that file themselves,
+# so the name is theirs. What a scale test needs is
+# `partialWriteFor()`/`partialWriteAmong()` in `tests/support/`, which recognise
+# the file that is really there. See MOLE-433.
+# Lines that are wholly a comment do not call anything, and the comment above
+# the fixed call site names the function it replaced -- which is the history a
+# reader needs and not a violation.
+derived=$(grep -rn 'partialWriteOf(' tests/scale --include='*.cpp' | grep -v ':[0-9]*:[[:space:]]*//' || true)
+if [ -n "$derived" ]; then
+    fail "a scale test derives a staging name; find it by listing instead, see MOLE-433"
+    printf '%s\n' "$derived" | sed 's/^/    /' >&2
+else
+    pass_note "no derived staging names under tests/scale"
+fi
+
+# And the helper it should reach for exists, so the rule above names something
+# real rather than a function somebody has to invent under time pressure.
+grep -q 'VfsUri partialWriteFor' tests/support/TestSupport.h \
+    || fail "tests/support/TestSupport.h no longer offers partialWriteFor()"
+
 done_testing

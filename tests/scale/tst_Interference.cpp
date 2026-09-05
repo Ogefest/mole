@@ -8,7 +8,6 @@
 
 #include "core/tasks/TaskManager.h"
 #include "core/tasks/TransferTask.h"
-#include "core/vfs/PartialWrite.h"
 #include "core/vfs/backends/LocalFileSystem.h"
 
 #include <QDir>
@@ -181,7 +180,12 @@ void TestInterference::cleanup()
     if (m_drive) {
         const VfsUri onServer = VfsUri(QStringLiteral("sftp"), QString(), remoteBase()).child(m_name);
         m_drive->remove(onServer, false);
-        m_drive->remove(partialWriteOf(onServer), false);
+        // Whatever staging file is actually there. Deriving the name removed
+        // nothing at all and left every killed case's wreckage on the server, a
+        // quarter of a gibibyte at a time. See MOLE-433.
+        const VfsUri partial = partialWriteFor(*m_drive, onServer);
+        if (partial.isValid())
+            m_drive->remove(partial, false);
     }
 
     // And on the small disk, whatever a case aimed at it. A quarter of a
@@ -198,7 +202,9 @@ void TestInterference::cleanup()
         auto dav = std::make_shared<WebdavFileSystem>(QStringLiteral("dav"), settings);
         const VfsUri landed = VfsUri(QStringLiteral("dav"), QString(), QStringLiteral("/")).child(m_name);
         dav->remove(landed, false);
-        dav->remove(partialWriteOf(landed), false);
+        const VfsUri partial = partialWriteFor(*dav, landed);
+        if (partial.isValid())
+            dav->remove(partial, false);
     }
     m_running = nullptr; // the manager owns it, and the next case has its own
     m_tasks.reset();
@@ -788,7 +794,9 @@ void TestInterference::theDestinationFillsUpMidCopy()
     QVERIFY2(!dav->stat(landed).ok(), "a copy that ran out of room left a file under its final name");
 
     TestbedControl::run({ QStringLiteral("empty") });
-    dav->remove(partialWriteOf(landed), false);
+    const VfsUri partial = partialWriteFor(*dav, landed);
+    if (partial.isValid())
+        dav->remove(partial, false);
 }
 
 void TestInterference::aChangedHostKeyIsRefused()
@@ -854,14 +862,26 @@ void TestInterference::theProcessIsKilledMidUpload()
     const VfsUri source = makeSource(m_name, m_payload);
     QVERIFY(source.isValid());
     const VfsUri landed = VfsUri(QStringLiteral("sftp"), QString(), remoteBase()).child(m_name);
-    const VfsUri working = partialWriteOf(landed);
 
     Victim victim(QStringLiteral("theProcessIsKilledMidUpload"), source.toLocalPath());
     QVERIFY(victim.started());
 
     // Killed once the working name has appeared on the server, which is the
     // only moment at which there is something to interrupt.
-    QVERIFY2(victim.waitUntil([&] { return m_drive->stat(working).ok(); }, 1200, 50),
+    //
+    // **Found by listing, never by deriving.** This used to compute the name and
+    // wait for that -- but a staging name carries a per-open random token since
+    // MOLE-359, and the one that matters here is minted inside another process.
+    // The name this side computed could not appear, so the wait ran out every
+    // time, the child was killed after it had finished uploading, and the case
+    // reported "the upload never started" while printing a transcript of the
+    // child uploading. See MOLE-433.
+    //
+    // Thirty seconds, and it is a bound on a hang rather than a measure of
+    // anything: the condition decides. 1,200 ms was neither -- it is shorter
+    // than a second copy of this binary takes to start and open an SFTP session,
+    // so even a derivable name would have been racing.
+    QVERIFY2(victim.waitUntil([&] { return partialWriteFor(*m_drive, landed).isValid(); }, 30000, 50),
         qPrintable(QStringLiteral("the upload never started: %1").arg(victim.transcript())));
     victim.kill();
 

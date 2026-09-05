@@ -1,5 +1,6 @@
 #include "plugins/network/TransferStreams.h"
 #include "support/MoleTestMain.h"
+#include "support/TestSupport.h"
 
 #include "core/vfs/backends/MemoryFileSystem.h"
 
@@ -110,6 +111,8 @@ class TestStreamingUpload : public QObject
 
 private slots:
     void aWorkingNameIsRecognisableAndReversible();
+    void aStagingFileIsFoundByListingAndNotByDeriving();
+    void aStagingFileForAnotherNameIsNotMistakenForThisOne();
 
     void streamingCommitsOnceEverythingIsSent();
     void streamingDoesNotCommitAFailedSend();
@@ -486,6 +489,49 @@ void TestStreamingUpload::twoWritersToTwoLongNamesDoNotShareAStagingFile()
     const Result<std::unique_ptr<QIODevice>> readSecond = drive->openRead(second);
     QVERIFY2(readSecond.ok(), qPrintable(readSecond.error().message));
     QCOMPARE(readSecond.value()->readAll(), two);
+}
+
+void TestStreamingUpload::aStagingFileIsFoundByListingAndNotByDeriving()
+{
+    // **The other half of the token.** The case above proves two calls disagree;
+    // this one is what a test has to do about it. Deriving the name and looking
+    // for it finds nothing -- against a real server the token was minted inside
+    // another process, so there is no computation that could produce it -- and a
+    // heavy-tier case did exactly that for a day, waited out its whole allowance
+    // for a file that could not appear, and reported that an upload it had just
+    // printed a transcript of had never started. See MOLE-433.
+    auto fs = std::make_shared<MemoryFileSystem>();
+    const VfsUri target = VfsUri::fromString(QStringLiteral("mem:///reports/notes.txt"));
+
+    QVERIFY2(!test::partialWriteFor(*fs, target).isValid(), "found a staging file in an empty directory");
+
+    // What another process left: a name this side cannot compute.
+    const VfsUri theirs = partialWriteOf(target);
+    fs->addFile(theirs.path(), QByteArrayLiteral("half a file"));
+
+    const VfsUri found = test::partialWriteFor(*fs, target);
+    QVERIFY2(found.isValid(), "the staging file on the drive was not found");
+    QCOMPARE(found.path(), theirs.path());
+    // And it really is a name nothing derived: a fresh call disagrees with it.
+    QVERIFY2(partialWriteOf(target).path() != found.path(), "the token is not per-open after all");
+}
+
+void TestStreamingUpload::aStagingFileForAnotherNameIsNotMistakenForThisOne()
+{
+    // A directory a transfer is working in holds other people's wreckage too,
+    // and answering with somebody else's would make a cleanup delete their file
+    // and a wait return before this upload had started.
+    auto fs = std::make_shared<MemoryFileSystem>();
+    const VfsUri mine = VfsUri::fromString(QStringLiteral("mem:///reports/notes.txt"));
+    const VfsUri other = VfsUri::fromString(QStringLiteral("mem:///reports/accounts.txt"));
+    fs->addFile(partialWriteOf(other).path(), QByteArrayLiteral("not mine"));
+
+    QVERIFY2(!test::partialWriteFor(*fs, mine).isValid(),
+        "another target's staging file was claimed as this one's");
+
+    // And a finished file under the name asked for is not staging wreckage.
+    fs->addFile(mine.path(), QByteArrayLiteral("all of it"));
+    QVERIFY2(!test::partialWriteFor(*fs, mine).isValid(), "the finished file was mistaken for a partial one");
 }
 
 void TestStreamingUpload::commitRenamesTheWorkingNameIntoPlace()
