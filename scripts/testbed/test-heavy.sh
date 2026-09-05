@@ -96,10 +96,15 @@ export MOLE_TEST_HEAVY_BYTES="$BYTES"
 # protocol has no ranged PUT, so this is a ceiling on the file and not on a chunk of it.
 #
 # **It cost a heavy tier run to find, and why it was not obvious is worth keeping:**
-# Mole reports a 413 as "no room left on the server", so a 413 against a destination
-# that happens to live on a small disk reads exactly like the disk filling up. The room
+# Mole reported a 413 as "no room left on the server", so a 413 against a destination
+# that happens to live on a small disk read exactly like the disk filling up. The room
 # figure said 3,64 GiB free and the transfer stopped at 1,01 GiB, which sends any reader
 # straight to the disk. See MOLE-320.
+#
+# **The message says which it is now**: a 413 answers that the server refuses a request
+# this large and that freeing space will not help, and it is no longer retried, because
+# a request refused for its size is refused identically every time. So a run that hits
+# this ceiling again says so rather than sending somebody to the disk. See MOLE-327.
 #
 # Named per destination rather than as one number, because it is a fact about a server:
 # set MOLE_TEST_HEAVY_MAX_SFTP, _S3 or _FTP for one that has a limit of its own.

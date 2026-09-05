@@ -82,6 +82,7 @@ private slots:
     void aSlowDownFromS3IsReportedRatherThanLosingTheUploadInSilence();
     void anErrorDocumentInsideA200IsStillAFailure();
     void anAnswerThatArrivesInPagesIsNotAShortAnswer();
+    void aRefusalForSizeIsNotReportedAsAFullDisk();
 };
 
 /// The one that would delete a user's files.
@@ -90,6 +91,71 @@ private slots:
 /// A listing that arrives half-finished and is reported as a short directory is
 /// therefore not a display problem — it is the instruction to delete everything
 /// the answer was cut off before mentioning.
+/// The one that sends somebody to free space they already have.
+///
+/// 507 and 413 used to answer with the same sentence. A 1.82 GiB upload to the
+/// testbed's WebDAV share stopped at 1.01 GiB saying "no room left on the
+/// server", against a destination the same run had just measured as having 3.64
+/// GiB free -- it was Apache's LimitRequestBody, 1 GiB by default since httpd
+/// 2.4.54 and mentioned nowhere in that server's configuration. Everything about
+/// the message points at the disk, and the disk was fine. See MOLE-327.
+void TestServersThatMisbehave::aRefusalForSizeIsNotReportedAsAFullDisk()
+{
+    const auto uploadRefusedWith = [](int status, const char* reason) {
+        ScriptedHttpServer server([status, reason](const ScriptedHttpServer::Request& request) {
+            ScriptedHttpServer::Reply reply;
+            if (request.method == "PUT") {
+                reply.status = status;
+                reply.reason = reason;
+                // Refused before the body is read, which is what both of these
+                // servers do and what makes them tell each other apart at all.
+                reply.readRequestBody = false;
+                return reply;
+            }
+            reply.status = 404;
+            reply.reason = "Not Found";
+            return reply;
+        });
+        VfsError said;
+        if (!server.start())
+            return said;
+
+        WebdavFileSystem fileSystem(QStringLiteral("webdav"), webdavAgainst(server));
+        const VfsUri target(QStringLiteral("webdav"), QString(), QStringLiteral("/big.bin"));
+        Result<std::unique_ptr<QIODevice>> opened = fileSystem.openWrite(target, 4);
+        if (!opened.ok())
+            return opened.error();
+        opened.value()->write(payloadOf(4));
+        const Result<void> written = closeAndReport(*opened.value());
+        return written.ok() ? VfsError {} : written.error();
+    };
+
+    const VfsError full = uploadRefusedWith(507, "Insufficient Storage");
+    const VfsError tooLarge = uploadRefusedWith(413, "Content Too Large");
+
+    QVERIFY2(full.isError(), "a 507 was reported as a successful upload");
+    QVERIFY2(tooLarge.isError(), "a 413 was reported as a successful upload");
+
+    // Different answers with different remedies, so different sentences.
+    QVERIFY2(full.message != tooLarge.message, qPrintable(QStringLiteral("both say: %1").arg(full.message)));
+    QVERIFY2(full.message.contains(QStringLiteral("no room")), qPrintable(full.message));
+
+    // And the 413 says what actually happened: not the disk, and not something
+    // freeing space will get past.
+    QVERIFY2(!tooLarge.message.contains(QStringLiteral("no room")), qPrintable(tooLarge.message));
+    QVERIFY2(tooLarge.message.contains(QStringLiteral("413")), qPrintable(tooLarge.message));
+    QVERIFY2(tooLarge.message.contains(QStringLiteral("freeing space will not help")),
+        qPrintable(tooLarge.message));
+    QVERIFY2(tooLarge.message.contains(QStringLiteral("smaller")), qPrintable(tooLarge.message));
+
+    // **And it is not retried.** IoError is, which is what a refusal for size
+    // used to be: the same request, refused identically, for the whole retry
+    // budget. A WebDAV upload is one request -- the protocol has no ranged PUT --
+    // so there is not even a smaller piece to try.
+    QCOMPARE(tooLarge.code, VfsError::NotSupported);
+    QCOMPARE(full.code, VfsError::IoError);
+}
+
 void TestServersThatMisbehave::aListingCutOffMidDocumentIsAnErrorNotAShortDirectory()
 {
     const QByteArray whole = multistatusFor({ QStringLiteral("one.txt"), QStringLiteral("two.txt"),

@@ -448,7 +448,10 @@ void TestCurlTransport::everyHttpStatusThatMattersHasItsOwnKind_data()
     // A condition the caller never set.
     QTest::newRow("412 without one") << 412 << int(VfsError::AccessDenied);
     QTest::newRow("423") << 423 << int(VfsError::AccessDenied);
-    QTest::newRow("413") << 413 << int(VfsError::IoError);
+    // A refusal for size, and a destination that is full. Different answers with
+    // different remedies, and the first is not retried: see MOLE-327 and the case
+    // in tst_ServersThatMisbehave that holds the two sentences apart.
+    QTest::newRow("413") << 413 << int(VfsError::NotSupported);
     QTest::newRow("507") << 507 << int(VfsError::IoError);
     QTest::newRow("501") << 501 << int(VfsError::NotSupported);
     // The server is there and cannot serve this now. Not a disk error: these are

@@ -969,8 +969,28 @@ VfsError errorFor(
     case 423:
         return fail(VfsError::AccessDenied, QStringLiteral("the target is locked"));
     case 507:
-    case 413:
         return fail(VfsError::IoError, QStringLiteral("no room left on the server"));
+    // **A 413 is not a full disk, and this said it was.** Both used to answer
+    // "no room left on the server", and they are different answers with
+    // different remedies: 507 is a destination that is full -- free space and
+    // try again -- where 413 is the server refusing a request of this size
+    // whatever its disk holds. Found on the heavy tier: a 1.82 GiB upload
+    // stopped at 1.01 GiB saying there was no room, against a destination the
+    // same run had just measured as having 3.64 GiB free. It was Apache's
+    // LimitRequestBody, which has defaulted to 1 GiB since httpd 2.4.54 and was
+    // in nobody's configuration file. Somebody reading the old message frees
+    // space and hits it again.
+    //
+    // NotSupported rather than IoError, and that is the half that matters as
+    // much as the words: IoError is retried -- see isWorthRetrying() below --
+    // and a request refused for its size is refused identically every time. A
+    // WebDAV upload is one request, because the protocol has no ranged PUT, so
+    // there is not even a smaller piece to send. See MOLE-327.
+    case 413:
+        return fail(VfsError::NotSupported,
+            QStringLiteral("the server refuses a request this large (413). It is a limit on the "
+                           "request rather than room on the disk, so freeing space will not help: "
+                           "the file has to be smaller, or the server's limit larger"));
     // The server is there and cannot serve this now. **Not a disk error**: a
     // gateway that is down, an S3 SlowDown, a proxy timing out and a rate limit
     // are the same conditions as a socket that would not open, and every one of

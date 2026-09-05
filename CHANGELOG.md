@@ -65,6 +65,7 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-05 #MOLE-327 A server refusing a file for its size says so, instead of reporting a disk that is full
 2026-09-05 #MOLE-410 A plugin that reads the index from a thread of its own no longer leaks a database connection for the life of the session
 2026-09-05 #MOLE-411 NFS drives say they are unavailable instead of taking Mole down with them, in a container or a service on a distribution carrying libnfs 6
 2026-09-04 #MOLE-402 Five tooltips no longer point at a "Tools" menu, which has not existed since it was split into Operations and Workflows
