@@ -65,6 +65,8 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+## 0.1.3 — released 2026-09-06
+
 2026-09-05 #MOLE-415 Plugins must be rebuilt for this version: the plugin API is 13, and a library built against 12 is refused
 2026-09-05 #MOLE-327 A server refusing a file for its size says so, instead of reporting a disk that is full
 2026-09-05 #MOLE-410 A plugin that reads the index from a thread of its own no longer leaks a database connection for the life of the session
