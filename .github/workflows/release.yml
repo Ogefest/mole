@@ -218,13 +218,30 @@ jobs:
       # and the configure summary said "Network drives: sftp, ftp, s3, webdav",
       # because it was answering a different question. Derived from what is on disk
       # rather than from a list, so the next plugin is covered by existing.
+      #
+      # **`build/bundle`, which is where `make bundle` builds.** This read
+      # `build/release/plugins` for its first two days: the step above configures
+      # that directory to read the feature summary out of it and never builds it,
+      # so `built` was empty, `shipped` had every plugin, and the step failed
+      # whatever the artefact contained. It went in two days after the previous
+      # release was cut, so the tag that followed was the first time it ran at
+      # all. Two copies of a path, one of which moved.
+      # tests/scripts/tst_ReleaseWorkflow.sh now reads the directory out of the
+      # Makefile and holds this line against it. See MOLE-435.
       - name: Every plugin that was built is in the artefact
         run: |
-          built=$(find build/release/plugins -name '*.so' -printf '%f\n' | sort)
+          built=$(find build/bundle/plugins -name '*.so' -printf '%f\n' | sort)
           # Found rather than spelled out: GNUInstallDirs gives lib64 on every
           # RPM distribution, and a path with `lib` in it is a path that is right
           # on one family only. See MOLE-387.
           shipped=$(find dist/usr -type d -path '*/mole/plugins' -exec find {} -name '*.so' -printf '%f\n' \; | sort)
+          # An empty list matches an empty list, so a build whose plugins all
+          # failed would go out green off the comparison below. A release without
+          # them is not a release: no sftp, no ftp, no s3, no webdav, no archives.
+          if [ -z "$built" ]; then
+            echo "::error::nothing was built at build/bundle/plugins -- this check is looking in the wrong place, or the plugins did not build"
+            exit 1
+          fi
           if [ "$built" != "$shipped" ]; then
             echo "built:   $built"
             echo "shipped: $shipped"

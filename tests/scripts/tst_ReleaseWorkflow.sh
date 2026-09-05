@@ -174,6 +174,38 @@ if [ -s "$SHELLTEST_TMP/uninstalled" ]; then
     sed 's/^/    /' "$SHELLTEST_TMP/uninstalled"
 fi
 
+begin "the plugins it compares are the ones the artefact was built from"
+# **A step that could not pass, in the release path.** The check that every built
+# plugin is in the artefact read `build/release/plugins` -- a directory the
+# workflow *configures* to read the feature summary out of and never builds, so
+# `built` was empty, `shipped` had two plugins, and the step failed whatever the
+# artefact contained. It went in on 2026-09-04, after v0.1.2 was cut, so the tag
+# for 0.1.3 was the first time it ever ran. See MOLE-435.
+#
+# Read out of the Makefile rather than spelled here, because two copies of a path
+# is what this was: the recipe moved the build to `build/bundle` and the workflow
+# went on naming the old one.
+bundleDir=$(sed -n '/^bundle:/,/^[a-z]/p' Makefile \
+    | sed -n 's/.*cmake --build \([^ ]*\).*/\1/p' | head -1)
+[ -n "$bundleDir" ] || fail "cannot tell what directory the bundle target builds"
+checked=$(grep -oE "find [^ ]*/plugins" "$WORKFLOW" | head -1 | sed 's/^find //; s|/plugins$||')
+[ -n "$checked" ] || fail "the workflow no longer looks for built plugins at all"
+[ "$checked" = "$bundleDir" ] \
+    || fail "the workflow compares $checked/plugins against the artefact, but make bundle builds $bundleDir"
+
+begin "an artefact with no plugins in it is a failure and not a match"
+# Both sides empty compare equal, which is the failure class the commit that
+# added this step was written to remove -- reproduced inside it. A release whose
+# plugins all failed to build would have gone out green.
+awk '/Every plugin that was built is in the artefact/,/^      - name: [^E]/' "$WORKFLOW" \
+    > "$SHELLTEST_TMP/plugin-step"
+grep -q 'built' "$SHELLTEST_TMP/plugin-step" || fail "cannot find the plugin comparison step"
+# Bracket expressions rather than backslashes: a backslash next to a dollar in a
+# tracked file is a finding of its own, and this line runs here. `[$]` is a
+# literal dollar to an ERE and is not that sequence.
+grep -qE '[-]z "[$]built"|[-]z "[$]shipped"|! [[] -s|count' "$SHELLTEST_TMP/plugin-step" \
+    || fail "the step accepts an empty list of built plugins, which any two empty sides match"
+
 begin "the artefact is named from the version rather than from a number"
 version=$(sed -n 's/^ *VERSION \([0-9][0-9.]*\)$/\1/p' CMakeLists.txt)
 [ -n "$version" ] || fail "cannot tell what version the repository is at"
