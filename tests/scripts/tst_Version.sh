@@ -28,7 +28,7 @@ begin "the version is written down in exactly one place"
 count=$(version_lines | grep -c .)
 [ "$count" = 1 ] || fail "found $count VERSION lines in CMakeLists.txt; there has to be exactly one"
 VERSION=$(version_lines)
-printf '%s\n' "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' \
+grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' <<<"$VERSION" \
     || fail "'$VERSION' is not a version of three numbers"
 
 # Nothing in the source spells one out. This is the rule that was broken, and it

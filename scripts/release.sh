@@ -241,7 +241,7 @@ step "the version"
 # off, and what is read is the line shaped like a version rather than whichever line
 # happens to be last. See MOLE-321.
 current=$("$MAKE" --no-print-directory version 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | tail -1)
-printf '%s\n' "$current" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' \
+grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' <<<"$current" \
     || die "the repository does not say what version it is at ($MAKE version said '$current')"
 note "at $current"
 
@@ -268,7 +268,7 @@ else
     fi
 fi
 
-printf '%s\n' "$next" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || die "'$next' is not a version of three numbers"
+grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' <<<"$next" || die "'$next' is not a version of three numbers"
 git rev-parse -q --verify "refs/tags/v$next" >/dev/null && die "v$next is already a tag"
 
 # The tag on the remote as well. Only an exact local duplicate was refused, so a
@@ -313,7 +313,7 @@ entry_re=$(mole_changelog_shape entry CHANGELOG.md) || entry_re=""
 # crosses midnight cannot date the two of them differently.
 today=$(date +%F)
 marker="## $next — released $today"
-printf '%s\n' "$marker" | grep -qE "$marker_re" \
+grep -qE "$marker_re" <<<"$marker" \
     || die "the marker '$marker' is not the shape CHANGELOG.md states"
 note "marker: $marker"
 

@@ -179,4 +179,33 @@ if [ -s "$SHELLTEST_TMP/racy-pipes" ]; then
     sed 's/^/    /' "$SHELLTEST_TMP/racy-pipes"
 fi
 
+begin "the rule refuses a printf into grep -q, which it used to allow"
+# **The rule's own belief, held against a line rather than against the tier.** It
+# exempted `printf … | grep -q` on the grounds that "printf writes once and exits,
+# so its write always completes before grep can close the pipe" -- true below the
+# pipe buffer and false above it, and a rule that is true up to a size is one that
+# breaks silently the first time a file list grows. A test over the twenty call
+# sites would not have noticed the belief changing back, because they are all
+# here-strings now; this would. See MOLE-417 and MOLE-329.
+# No `set -o pipefail` in the sample: the tracker checks a heredoc body only when
+# it turns pipefail on for the far side, and this body is never run at all -- it
+# is two lines for the rule to read.
+cat > "$SHELLTEST_TMP/exempted.sh" <<'PROBE'
+#!/usr/bin/env bash
+printf '%s\n' "$big" | grep -q needle && echo found
+grep -q needle <<<"$big" && echo also found
+PROBE
+awk -f "$MOLE_SOURCE_DIR/tests/support/heredoc-tracker.awk" \
+    -f "$MOLE_SOURCE_DIR/tests/support/racy-pipe.awk" \
+    "$SHELLTEST_TMP/exempted.sh" > "$SHELLTEST_TMP/exempted-report"
+
+grep -q 'printf' "$SHELLTEST_TMP/exempted-report" \
+    || { fail "the rule allows printf into grep -q again, which is the fault MOLE-417 measured"; \
+         sed 's/^/    /' "$SHELLTEST_TMP/exempted-report"; }
+# And the shape it is asking for is not itself refused, or the rule would have
+# nowhere to send anybody.
+[ "$(grep -c . "$SHELLTEST_TMP/exempted-report")" = 1 ] \
+    || { fail "the rule refuses more than the pipeline, including the here-string it wants"; \
+         sed 's/^/    /' "$SHELLTEST_TMP/exempted-report"; }
+
 done_testing

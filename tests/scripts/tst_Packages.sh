@@ -48,7 +48,7 @@ if grep -q 'MOLE_HAVE_MULTIMEDIA' CMakeLists.txt; then
     recommends=$(sed -n 's/^ *set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "\(.*\)").*/\1/p' CMakeLists.txt)
     [ -n "$recommends" ] || fail "the .deb recommends nothing, so a plain install decodes no video"
     for package in gstreamer1.0-plugins-good gstreamer1.0-libav; do
-        printf '%s' "$recommends" | grep -qF "$package" \
+        grep -qF "$package" <<<"$recommends" \
             || fail "the .deb does not ask for $package"
     done
 fi
@@ -186,7 +186,7 @@ grep -rh --include=CMakeLists.txt "CLASS_NAME" src CMakeLists.txt 2>/dev/null \
 while read -r line; do
     name=${line##*CLASS_NAME }
     name=${name%% *}
-    printf '%s' "$name" | grep -qE '^[A-Za-z_][A-Za-z0-9_]*$' \
+    grep -qE '^[A-Za-z_][A-Za-z0-9_]*$' <<<"$name" \
         || fail "CLASS_NAME $name is not a C++ identifier, and Qt 6.10 refuses to configure"
 done < "$SHELLTEST_TMP/class-names"
 
@@ -331,9 +331,9 @@ grep -qiE "built on \*{0,2}${floor%%:*}" TODO.md \
 # url alone: the script says the word "continuous" while explaining why it is not
 # using one.
 tool=$(sed -n 's/^TOOL_URL="\(.*\)"$/\1/p' scripts/package-appimage.sh)
-printf '%s\n' "$tool" | grep -q 'releases/download/[0-9]' \
+grep -q 'releases/download/[0-9]' <<<"$tool" \
     || fail "appimagetool is not pinned to a release: $tool"
-printf '%s\n' "$tool" | grep -q 'continuous' \
+grep -q 'continuous' <<<"$tool" \
     && fail "appimagetool is taken from a continuous build"
 
 begin "the AppImage carries what the format needs"

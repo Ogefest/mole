@@ -54,7 +54,7 @@ lines=$(printf '%s\n' "$groups" | grep -c .)
 [ "$lines" -le 6 ] \
     || fail "the plugin-group list came back $lines lines long; the parse has stopped working"
 for group in platforms sqldrivers imageformats multimedia; do
-    printf '%s' "$groups" | grep -qw "$group" \
+    grep -qw "$group" <<<"$groups" \
         || fail "the bundler does not collect Qt's $group plugins"
 done
 
@@ -74,11 +74,11 @@ begin "the launcher names the backend rather than leaving it to be chosen"
 # shows up in `mole --plugins`.
 launcher=$(sed -n '/^cat > /,/^LAUNCHER$/p' "$BUNDLE")
 [ -n "$launcher" ] || fail "cannot find the launcher the bundler writes"
-printf '%s' "$launcher" | grep -q 'QT_MEDIA_BACKEND=ffmpeg' \
+grep -q 'QT_MEDIA_BACKEND=ffmpeg' <<<"$launcher" \
     || fail "the launcher does not name a media backend, so Qt picks the one that cannot work"
 # And the three the bundle has always needed, so a deletion here is caught too.
 for variable in LD_LIBRARY_PATH QT_PLUGIN_PATH QML2_IMPORT_PATH; do
-    printf '%s' "$launcher" | grep -q "$variable" \
+    grep -q "$variable" <<<"$launcher" \
         || fail "the launcher no longer sets $variable, so the bundle is not relocatable"
 done
 
@@ -102,9 +102,9 @@ begin "an exclusion takes the subtree with it"
 # this machine happened to have.
 collector=$(sed -n '/^collect_deps()/,/^}/p' "$BUNDLE")
 [ -n "$collector" ] || fail "cannot find the dependency collector"
-printf '%s' "$collector" | grep -q 'objdump -p' \
+grep -q 'objdump -p' <<<"$collector" \
     || fail "the collector does not read each object's own NEEDED entries, so an exclusion cannot prune"
-printf '%s' "$collector" | grep -qE 'ldd .*\| *awk.*NEEDED' \
+grep -qE 'ldd .*\| *awk.*NEEDED' <<<"$collector" \
     && fail "the collector decides what to copy from ldd's flattened closure again"
 
 begin "the media codec stack is left to the host, and the reason is written down"
@@ -152,7 +152,7 @@ elif ! grep -q 'NEEDED.*libQt6Multimedia' <(objdump -p dist/usr/bin/mole 2>/dev/
 else
     backends=$(find dist/usr/plugins/multimedia -name '*.so' 2>/dev/null | sort)
     [ -n "$backends" ] || fail "the bundle in dist/ carries no media backend at all"
-    printf '%s\n' "$backends" | grep -q gstreamermediaplugin \
+    grep -q gstreamermediaplugin <<<"$backends" \
         && fail "the bundle carries the gstreamer backend, whose decoders are not in it"
     # And it must not be short of anything, judged with the bundle's own libraries
     # ahead of the host's -- the plugin being present is not the same as loadable.

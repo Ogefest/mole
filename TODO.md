@@ -268,6 +268,17 @@ project, and a contributor should never hit a wall of text they cannot read.
   first time: the run said *6652 pixels* and nothing else, and by the time anybody
   asked what had moved there was nothing left to look at.
 
+- **`tst_Bundle` failed once inside `tst_InheritedEnvironment` with no cause anybody
+  could name, on 2026-09-05.** The case was `the bundle carries a media backend`, and
+  the assertion was a three-line list read out of `scripts/make-bundle.sh`. It passed
+  alone, passed alone under the same hostile environment, and passed on every other
+  run that day. **It is not the pipe fault MOLE-417 removed**: that one needs a
+  payload bigger than the pipe buffer and this payload is two hundred bytes, measured
+  at 0 failures in 30 runs at that size. Written down beside `26-indexes` for the same
+  reason — a sighting nobody can explain is worth recognising the second time rather
+  than rediscovering. If it comes back, the thing to capture is the exit status of
+  that pipeline, not the message.
+
 - **`make screenshots-check` compares what an eye can see, not bytes, and that is
   a measurement rather than a preference.** With every cause fixed, two runs still
   differ by one to five levels out of 255 in a few dozen pixels of pictures whose

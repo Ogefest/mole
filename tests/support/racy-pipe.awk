@@ -17,10 +17,16 @@
 # provisioning script could no longer finish. See MOLE-354. A heredoc that does
 # set pipefail is a different matter, and is checked below.
 #
-# **`printf … | grep -q` is deliberately allowed**, and there are about twenty of
-# them. `printf` writes once and exits, so its write always completes before grep
-# can close the pipe. What is refused is a producer that writes more than one
-# buffer, which is every program.
+# **`printf … | grep -q` is refused as well, and it used to be allowed.** The
+# exemption said "printf writes once and exits, so its write always completes
+# before grep can close the pipe", and that is true only while the payload fits
+# in the pipe buffer. Measured on 2026-09-05, twice and independently: 30 of 30
+# pipelines report failure with a 200,000-line payload, 0 of 30 with three lines,
+# against a 4 KiB buffer. A rule whose safety depends on how big a variable
+# happens to be is one that goes wrong silently the first time a file list grows,
+# and nothing would be watching -- `tst_Bundle` failed twice under load on a
+# `printf` of a launcher script before this was taken out. A here-string is the
+# same grep and cannot lose the race. See MOLE-417.
 
 # Prose about the shape is not the shape.
 /^[ \t]*#/ { next }
@@ -36,9 +42,5 @@ inHeredoc && /^[ \t]*set[ \t].*pipefail/ { remoteHasPipefail = 1 }
 inHeredoc && !remoteHasPipefail { next }
 
 /[^|]\|[ \t]*grep[ \t]+-[a-zA-Z]*q/ {
-    before = $0
-    sub(/\|[ \t]*grep.*/, "", before)
-    if (before ~ /printf|echo/)
-        next
     printf "%s:%d:%s\n", FILENAME, FNR, $0
 }

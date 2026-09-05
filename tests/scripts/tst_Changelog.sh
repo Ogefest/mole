@@ -75,8 +75,8 @@ check_file() {
 
         isEntry=0
         isMarker=0
-        printf '%s\n' "$line" | grep -qE "$ENTRY_RE" && isEntry=1
-        printf '%s\n' "$line" | grep -qE "$MARKER_RE" && isMarker=1
+        grep -qE "$ENTRY_RE" <<<"$line" && isEntry=1
+        grep -qE "$MARKER_RE" <<<"$line" && isMarker=1
 
         # The one rule, and it is checked wherever the line is: a second-level
         # heading that is not a release marker is a release waiting to happen.
@@ -141,13 +141,13 @@ read_shapes "$CHANGELOG"
 
 # Both ways round, because an expression that matches nothing would make every
 # case below pass by matching nothing either.
-printf '2026-08-11 #MOLE-112 A phrase\n' | grep -qE "$ENTRY_RE" \
+grep -qE "$ENTRY_RE" <<<'2026-08-11 #MOLE-112 A phrase' \
     || fail "the entry expression does not match an entry"
-printf '2026-08-11 MOLE-112 no hash at all\n' | grep -qE "$ENTRY_RE" \
+grep -qE "$ENTRY_RE" <<<'2026-08-11 MOLE-112 no hash at all' \
     && fail "the entry expression matches a line that is not one"
-printf '## 0.2.0 — released 2026-08-11\n' | grep -qE "$MARKER_RE" \
+grep -qE "$MARKER_RE" <<<'## 0.2.0 — released 2026-08-11' \
     || fail "the marker expression does not match a marker"
-printf '## Unreleased\n' | grep -qE "$MARKER_RE" \
+grep -qE "$MARKER_RE" <<<'## Unreleased' \
     && fail "the marker expression matches an ordinary heading"
 
 # --- the file --------------------------------------------------------------
