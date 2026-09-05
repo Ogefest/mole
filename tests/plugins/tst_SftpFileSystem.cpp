@@ -3,6 +3,8 @@
 #include "support/MoleTestMain.h"
 #include "support/TestbedControl.h"
 
+#include "core/vfs/PartialWrite.h"
+
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
@@ -972,7 +974,21 @@ void TestSftpFileSystem::aKilledUploadLeavesNothingThatLooksFinished()
     const QString directory = account.base;
     const QString name = QStringLiteral("mole-killed-%1.bin").arg(QCoreApplication::applicationPid());
     const QString remotePath = directory + QLatin1Char('/') + name;
-    const QString partialName = name + QStringLiteral(".mole-partial");
+
+    // **The staging name cannot be derived, and this case used to derive it.**
+    // Since MOLE-359 it carries a per-open token -- `report.bin.3f2a91c4.mole-partial`
+    // -- so `name + ".mole-partial"` is a name that never exists. The case then
+    // waited its whole allowance for a file that could not appear, killed the
+    // upload anyway and reported "the upload never reached the server", which is
+    // both untrue and the least useful thing it could say. Recognised by shape
+    // instead, which is what the sweep and every listing do. See MOLE-419.
+    const auto partialFor = [&name](const QStringList& names) {
+        for (const QString& candidate : names) {
+            if (isPartialWrite(candidate) && candidate.startsWith(name))
+                return candidate;
+        }
+        return QString();
+    };
 
     const RawSftp raw(account);
 
@@ -995,12 +1011,20 @@ void TestSftpFileSystem::aKilledUploadLeavesNothingThatLooksFinished()
     // both untrue and the least useful thing this could report -- the whole
     // question is which name the bytes are travelling under, so both are worth
     // waiting for and the answer is what gets asserted.
+    //
+    // The deadline below is a backstop and says so: it exists to fail this case
+    // when the upload never starts at all, never to give the upload an allowance
+    // to reach the server in. What ends the loop is the file appearing, or the
+    // victim exiting -- both facts about the transfer rather than about a clock.
+    // See MOLE-400 for why that distinction is the whole of it, and MOLE-419.
     bool appeared = false;
-    for (int attempt = 0; attempt < 400 && !appeared; ++attempt) {
+    QElapsedTimer backstop;
+    backstop.start();
+    while (!appeared && backstop.elapsed() < 120000) {
         if (victim.state() != QProcess::Running)
             break;
         const QStringList names = raw.namesIn(directory);
-        appeared = names.contains(partialName) || names.contains(name);
+        appeared = !partialFor(names).isEmpty() || names.contains(name);
         if (!appeared)
             QTest::qWait(50);
     }
@@ -1011,9 +1035,15 @@ void TestSftpFileSystem::aKilledUploadLeavesNothingThatLooksFinished()
 
     const QStringList after = raw.namesIn(directory);
     // Tidied up before anything is asserted, so a failure cannot leave a
-    // multi-gigabyte carcass on the server for whatever runs next.
+    // multi-gigabyte carcass on the server for whatever runs next. By shape
+    // again, because the token in the staging name is the writer's and this
+    // process never saw it.
     raw.command(QStringLiteral("rm \"%1\"").arg(remotePath), directory);
-    raw.command(QStringLiteral("rm \"%1.mole-partial\"").arg(remotePath), directory);
+    for (const QString& leftover : after) {
+        if (isPartialWrite(leftover) && leftover.startsWith(name)) {
+            raw.command(QStringLiteral("rm \"%1/%2\"").arg(directory, leftover), directory);
+        }
+    }
 
     QVERIFY2(appeared,
         qPrintable(QStringLiteral("the upload never reached the server, so nothing was killed "
@@ -1025,9 +1055,10 @@ void TestSftpFileSystem::aKilledUploadLeavesNothingThatLooksFinished()
     // somebody asked for, where the next thing to open it cannot tell.
     QVERIFY2(!after.contains(name),
         qPrintable(QStringLiteral("a killed upload left %1, which looks like a finished file").arg(name)));
-    QVERIFY2(after.contains(partialName),
-        qPrintable(QStringLiteral("expected the wreckage under %1; the directory held %2")
-                       .arg(partialName, after.join(QStringLiteral(", ")))));
+    QVERIFY2(!partialFor(after).isEmpty(),
+        qPrintable(QStringLiteral("expected the wreckage under a %1 name of its own; the directory "
+                                  "held %2")
+                       .arg(QLatin1String(".mole-partial"), after.join(QStringLiteral(", ")))));
 }
 
 /// The one case trust-on-first-use exists to catch.
