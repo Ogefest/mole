@@ -55,6 +55,37 @@ Account accountFromEnvironment()
     return account;
 }
 
+/// What one raw request did, in libcurl's own words.
+///
+/// **A bool said "it failed" and every assertion guessed why.** The three cases
+/// that make a working directory said "could not create the working directory on
+/// the server" whatever went wrong -- and what actually goes wrong is a login the
+/// server refused: this client verifies the certificate unless
+/// MOLE_TEST_IGNORE_SELF_SIGNED_CERT is set, the live service presents a
+/// self-signed one, and test-live.sh sets that where a run by hand does not. So a
+/// handshake that never completed was reported as a permission on a directory,
+/// and was carded as one. See MOLE-422, and MOLE-327 and MOLE-328 for the same
+/// shape in the product.
+struct RawOutcome
+{
+    CURLcode code = CURLE_OK;
+    /// The last FTP response code, where there was one. Zero when the exchange
+    /// never got that far.
+    long status = 0;
+
+    explicit operator bool() const { return code == CURLE_OK; }
+
+    QString reason() const
+    {
+        if (code == CURLE_OK)
+            return {};
+        QString said = QString::fromLatin1(curl_easy_strerror(code));
+        if (status > 0)
+            said += QStringLiteral(" (the server last answered %1)").arg(status);
+        return said;
+    }
+};
+
 /// Seeds through plain libcurl, so the fixtures do not come from the code under
 /// test -- the same reasoning as the SFTP and S3 suites.
 class RawFtp
@@ -75,27 +106,28 @@ public:
         return url;
     }
 
-    bool command(const QByteArray& text, const QString& contextDir) const
+    RawOutcome command(const QByteArray& text, const QString& contextDir) const
     {
         CURL* handle = prepare();
         if (!handle)
-            return false;
+            return { CURLE_FAILED_INIT, 0 };
         const QByteArray url = urlFor(contextDir, true);
         curl_slist* commands = curl_slist_append(nullptr, text.constData());
         curl_easy_setopt(handle, CURLOPT_URL, url.constData());
         curl_easy_setopt(handle, CURLOPT_QUOTE, commands);
         curl_easy_setopt(handle, CURLOPT_NOBODY, 1L);
         const CURLcode code = curl_easy_perform(handle);
+        const RawOutcome outcome { code, lastStatus(handle) };
         curl_slist_free_all(commands);
         curl_easy_cleanup(handle);
-        return code == CURLE_OK;
+        return outcome;
     }
 
-    bool putFile(const QString& path, const QByteArray& contents) const
+    RawOutcome putFile(const QString& path, const QByteArray& contents) const
     {
         CURL* handle = prepare();
         if (!handle)
-            return false;
+            return { CURLE_FAILED_INIT, 0 };
         Payload payload { contents, 0 };
         const QByteArray url = urlFor(path, false);
         curl_easy_setopt(handle, CURLOPT_URL, url.constData());
@@ -104,8 +136,9 @@ public:
         curl_easy_setopt(handle, CURLOPT_READDATA, &payload);
         curl_easy_setopt(handle, CURLOPT_INFILESIZE_LARGE, static_cast<curl_off_t>(contents.size()));
         const CURLcode code = curl_easy_perform(handle);
+        const RawOutcome outcome { code, lastStatus(handle) };
         curl_easy_cleanup(handle);
-        return code == CURLE_OK;
+        return outcome;
     }
 
     /// One ranged retrieve, exactly as a streamed read issues it: both ends of
@@ -190,6 +223,15 @@ private:
         return size * count;
     }
 
+    /// The last response the server gave, or zero. Read from the handle rather
+    /// than parsed out of anything: libcurl keeps it for exactly this.
+    static long lastStatus(CURL* handle)
+    {
+        long status = 0;
+        curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &status);
+        return status;
+    }
+
     CURL* prepare() const
     {
         CURL* handle = curl_easy_init();
@@ -213,11 +255,36 @@ private:
 
 } // namespace
 
+/// What every case that needs the server says first.
+///
+/// **A macro rather than a helper, because QSKIP and QFAIL return from the
+/// function they are written in.** In a helper they mark the result and then
+/// return from the helper, and the case carries on to fail again in its own
+/// words -- which is the fault this card is about, in a new place.
+///
+/// Two situations that look alike and are not. No `MOLE_TEST_FTP_*` at all is a
+/// skip: nothing was asked of a server and nothing is claimed about one.
+/// Configured and refused is a failure naming what libcurl said, and the case
+/// does not run -- a suite that cannot log in has nothing to say about FTP, and
+/// saying it once per case in the wrong words is what cost a day. That is
+/// MOLE-328's distinction and its inverse. See MOLE-422.
+#define MOLE_FTP_SERVER_OR_STOP()                                                                            \
+    do {                                                                                                     \
+        if (!loginRefused().isEmpty())                                                                       \
+            QFAIL(qPrintable(loginRefused()));                                                               \
+        if (!accountFromEnvironment().isConfigured()) {                                                      \
+            QSKIP("No FTP account in the environment; set MOLE_TEST_FTP_HOST, MOLE_TEST_FTP_USER "           \
+                  "and MOLE_TEST_FTP_PASS to run this against a real server.");                              \
+        }                                                                                                    \
+    } while (false)
+
 class TestFtpFileSystem : public QObject
 {
     Q_OBJECT
 
 private slots:
+    void initTestCase();
+    void aLoginThatIsRefusedSaysWhatTheServerSaidRatherThanNamingADirectory();
     void aFormWithoutAHostIsRefused();
     void anEmptyUserBecomesAnonymous();
     void encryptionDefaultsToTryingTls();
@@ -231,7 +298,74 @@ private slots:
     void rangedFetchDeliversExactlyTheSpanItAsksFor();
     void aFileOverTheThresholdReadsBackByteForByte();
     void itSatisfiesTheConformanceSuite();
+
+private:
+    /// Whether this run may talk to a server, decided once.
+    ///
+    /// **Two situations that look alike and are not.** No `MOLE_TEST_FTP_*` at
+    /// all is a skip: nothing was asked of a server and nothing is claimed about
+    /// one. Configured and refused is a failure naming what libcurl said, and the
+    /// cases do not run -- a suite that cannot log in has nothing to say about
+    /// FTP, and running twelve cases to say it twelve times in the wrong words is
+    /// what cost a day. That is MOLE-328's distinction and its inverse: a tier
+    /// that ran and failed must not read as a machine that cannot run one, and an
+    /// unconfigured machine must not read as a fault in the code. See MOLE-422.
+    ///
+    /// Empty unless the login was tried and refused. Read by
+    /// MOLE_FTP_SERVER_OR_STOP(), which is how every live case asks.
+    QString loginRefused() const { return m_loginRefused; }
+
+    /// Empty when the login worked or was never tried. See initTestCase().
+    QString m_loginRefused;
 };
+
+void TestFtpFileSystem::initTestCase()
+{
+    const Account account = accountFromEnvironment();
+    if (account.isConfigured()) {
+        // One exchange, before any case: a PWD in the base the cases work in.
+        // Cheap, and it fails for every reason a case would have failed for -- a
+        // handshake that cannot complete, a login the server rejects, a base
+        // that is not there.
+        const RawFtp raw(account);
+        const RawOutcome reached = raw.command("PWD", account.base);
+        if (!reached) {
+            m_loginRefused = QStringLiteral("cannot log in to the FTP server this suite is pointed at: %1")
+                                 .arg(reached.reason());
+        }
+    }
+}
+
+/// What a refused login reads as, which is what this whole card is about.
+///
+/// Pointed at a port nothing answers on, so it needs no server and runs
+/// everywhere. The old message would have called this a directory that could not
+/// be created; what it has to say is what libcurl said. See MOLE-422.
+void TestFtpFileSystem::aLoginThatIsRefusedSaysWhatTheServerSaidRatherThanNamingADirectory()
+{
+    Account nowhere;
+    nowhere.host = QStringLiteral("127.0.0.1");
+    // A port in the range nothing is allowed to listen on by convention, and one
+    // this machine is not using: a connection here is refused at once.
+    nowhere.port = 9;
+    nowhere.user = QStringLiteral("nobody");
+    nowhere.password = QStringLiteral("nothing");
+    nowhere.base = QStringLiteral("/Shared");
+
+    const RawFtp raw(nowhere);
+    const RawOutcome outcome = raw.command("MKD /Shared/anything", nowhere.base);
+    QVERIFY2(!outcome, "a port nothing answers on cannot have made a directory");
+
+    const QString said = outcome.reason();
+    QVERIFY2(!said.isEmpty(), "a refusal with no words is what this case exists to stop");
+    // libcurl's own sentence, whatever this build words it as -- what is refused
+    // is a message that names something the exchange never reached.
+    QVERIFY2(!said.contains(QStringLiteral("directory"), Qt::CaseInsensitive), qPrintable(said));
+    QVERIFY2(said.contains(QStringLiteral("connect"), Qt::CaseInsensitive)
+            || said.contains(QStringLiteral("refused"), Qt::CaseInsensitive)
+            || said.contains(QStringLiteral("timed out"), Qt::CaseInsensitive),
+        qPrintable(QStringLiteral("this does not read as a connection that failed: %1").arg(said)));
+}
 
 void TestFtpFileSystem::aFormWithoutAHostIsRefused()
 {
@@ -502,18 +636,15 @@ void TestFtpFileSystem::rangedFetchDeliversExactlyTheSpanItAsksFor()
     // is a claim about what servers do, and the backend is what depends on it.
     // A server that stopped honouring the end of a range would break streamed
     // reads, and this is the line that would say so.
+    MOLE_FTP_SERVER_OR_STOP();
     const Account account = accountFromEnvironment();
-    if (!account.isConfigured()) {
-        QSKIP("No FTP account in the environment; set MOLE_TEST_FTP_HOST, MOLE_TEST_FTP_USER "
-              "and MOLE_TEST_FTP_PASS to run this against a real server.");
-    }
 
     const RawFtp raw(account);
     const QString base
         = account.base + QStringLiteral("/mole-ftp-range-%1").arg(QCoreApplication::applicationPid());
     raw.removeTree(base);
-    QVERIFY2(raw.command("MKD " + base.toUtf8(), account.base),
-        "could not create the working directory on the server");
+    const RawOutcome made = raw.command("MKD " + base.toUtf8(), account.base);
+    QVERIFY2(made, qPrintable(QStringLiteral("could not make %1: %2").arg(base, made.reason())));
 
     // Position-dependent contents, so a span that came back from the wrong
     // offset is a different failure from one that came back the wrong length.
@@ -522,7 +653,8 @@ void TestFtpFileSystem::rangedFetchDeliversExactlyTheSpanItAsksFor()
     for (int block = 0; block < 300; ++block)
         payload += QByteArray(1000, static_cast<char>(block % 251));
     const QString path = base + QStringLiteral("/ranged.bin");
-    QVERIFY(raw.putFile(path, payload));
+    const RawOutcome sent = raw.putFile(path, payload);
+    QVERIFY2(sent, qPrintable(QStringLiteral("could not upload %1: %2").arg(path, sent.reason())));
 
     // The whole file, as the control: whatever follows is measured against this.
     QCOMPARE(raw.getRange(path, 0, payload.size() - 1).size(), payload.size());
@@ -553,18 +685,15 @@ void TestFtpFileSystem::aFileOverTheThresholdReadsBackByteForByte()
     // stream, and what comes back is what was put there. Larger than the
     // threshold rather than larger than the disk -- the claim is the same one and
     // the heavy tier is where sizes that need a disk of their own belong.
+    MOLE_FTP_SERVER_OR_STOP();
     const Account account = accountFromEnvironment();
-    if (!account.isConfigured()) {
-        QSKIP("No FTP account in the environment; set MOLE_TEST_FTP_HOST, MOLE_TEST_FTP_USER "
-              "and MOLE_TEST_FTP_PASS to run this against a real server.");
-    }
 
     const RawFtp raw(account);
     const QString base
         = account.base + QStringLiteral("/mole-ftp-big-%1").arg(QCoreApplication::applicationPid());
     raw.removeTree(base);
-    QVERIFY2(raw.command("MKD " + base.toUtf8(), account.base),
-        "could not create the working directory on the server");
+    const RawOutcome made = raw.command("MKD " + base.toUtf8(), account.base);
+    QVERIFY2(made, qPrintable(QStringLiteral("could not make %1: %2").arg(base, made.reason())));
 
     FtpSettings settings;
     settings.host = account.host;
@@ -583,7 +712,8 @@ void TestFtpFileSystem::aFileOverTheThresholdReadsBackByteForByte()
     payload.resize(size);
     for (qint64 i = 0; i < size; ++i)
         payload[i] = static_cast<char>((i * 31 + i / 4096) & 0xff);
-    QVERIFY(raw.putFile(base + QStringLiteral("/big.bin"), payload));
+    const RawOutcome sent = raw.putFile(base + QStringLiteral("/big.bin"), payload);
+    QVERIFY2(sent, qPrintable(QStringLiteral("could not upload the fixture: %1").arg(sent.reason())));
 
     Result<std::unique_ptr<QIODevice>> opened
         = fs->openRead(VfsUri::fromString(QStringLiteral("ftp://server/big.bin")));
@@ -612,19 +742,16 @@ void TestFtpFileSystem::aFileOverTheThresholdReadsBackByteForByte()
 
 void TestFtpFileSystem::itSatisfiesTheConformanceSuite()
 {
+    MOLE_FTP_SERVER_OR_STOP();
     const Account account = accountFromEnvironment();
-    if (!account.isConfigured()) {
-        QSKIP("No FTP account in the environment; set MOLE_TEST_FTP_HOST, MOLE_TEST_FTP_USER "
-              "and MOLE_TEST_FTP_PASS to run this against a real server.");
-    }
 
     const RawFtp raw(account);
     const QString base
         = account.base + QStringLiteral("/mole-ftp-%1").arg(QCoreApplication::applicationPid());
 
     raw.removeTree(base);
-    QVERIFY2(raw.command("MKD " + base.toUtf8(), account.base),
-        "could not create the working directory on the server");
+    const RawOutcome made = raw.command("MKD " + base.toUtf8(), account.base);
+    QVERIFY2(made, qPrintable(QStringLiteral("could not make %1: %2").arg(base, made.reason())));
 
     FtpSettings settings;
     settings.host = account.host;
@@ -641,11 +768,11 @@ void TestFtpFileSystem::itSatisfiesTheConformanceSuite()
     context.fileSystem = std::make_shared<FtpFileSystem>(QStringLiteral("ftp"), settings);
     context.root = VfsUri(QStringLiteral("ftp"), QString(), QStringLiteral("/"));
     context.seedFile = [&raw, &base](const QString& relative, const QByteArray& contents) {
-        return raw.putFile(base + QLatin1Char('/') + relative, contents);
+        return static_cast<bool>(raw.putFile(base + QLatin1Char('/') + relative, contents));
     };
     context.seedDir = [&raw, &base](const QString& relative) {
         const QString path = base + QLatin1Char('/') + relative;
-        return raw.command("MKD " + path.toUtf8(), RawFtp::parentOf(path));
+        return static_cast<bool>(raw.command("MKD " + path.toUtf8(), RawFtp::parentOf(path)));
     };
 
     runFileSystemConformance(context);
