@@ -35,11 +35,23 @@ struct Account
     /// servers offer, and it is the configuration MOLE-374 broke.
     QString privateKeyPath;
     QString privateKeyPassphrase;
+    /// Whose key it is. A separate account on the same server, because the one
+    /// the rest of the suite uses has to keep taking a password -- and an
+    /// account that still accepts one cannot show that a key was what got in.
+    /// Falls back to `user`, so a server where the same account has both is
+    /// still testable. See MOLE-423.
+    QString keyUser;
+    /// Where that account may work, which is its own directory rather than the
+    /// one the password account owns.
+    QString keyBase;
     /// A directory on the server the test may create things under.
     QString base;
 
     bool isConfigured() const { return !host.isEmpty() && !user.isEmpty(); }
     bool hasKey() const { return isConfigured() && !privateKeyPath.isEmpty(); }
+    /// The account the key belongs to, and where it may write.
+    QString keyAccount() const { return keyUser.isEmpty() ? user : keyUser; }
+    QString keyDirectory() const { return keyBase.isEmpty() ? base : keyBase; }
 };
 
 Account accountFromEnvironment()
@@ -52,6 +64,8 @@ Account accountFromEnvironment()
     account.password = value("MOLE_TEST_SFTP_PASS");
     account.privateKeyPath = value("MOLE_TEST_SFTP_KEY");
     account.privateKeyPassphrase = value("MOLE_TEST_SFTP_KEY_PASS");
+    account.keyUser = value("MOLE_TEST_SFTP_KEY_USER");
+    account.keyBase = value("MOLE_TEST_SFTP_KEY_BASE");
     account.base = value("MOLE_TEST_SFTP_BASE");
     if (account.base.isEmpty())
         account.base = QStringLiteral("/Shared");
@@ -1225,13 +1239,15 @@ void TestSftpFileSystem::aKeyOnlyDriveDoesEverythingAndNotOnlyBrowsing()
     SftpSettings settings;
     settings.host = account.host;
     settings.port = account.port;
-    settings.username = account.user;
+    settings.username = account.keyAccount();
     // Deliberately empty. With a password to fall back on, every lease but the
-    // listing's would have logged in anyway and the fault would be invisible.
+    // listing's would have logged in anyway and the fault would be invisible --
+    // and the account this key belongs to refuses passwords at the server as
+    // well, so neither end can fall back. See MOLE-423.
     settings.password.clear();
     settings.privateKeyPath = account.privateKeyPath;
     settings.privateKeyPassphrase = account.privateKeyPassphrase;
-    settings.remoteRoot = account.base;
+    settings.remoteRoot = account.keyDirectory();
 
     SftpFileSystem drive(QStringLiteral("sftp"), settings);
     const VfsUri root(QStringLiteral("sftp"), QString(), QStringLiteral("/"));

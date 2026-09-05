@@ -20,6 +20,11 @@ ACCOUNT="${MOLE_TESTBED_ACCOUNT:-moletest}"
 PASSWORD="${MOLE_TESTBED_PASSWORD:-}"
 S3_PORT="${MOLE_TESTBED_S3_PORT:-9000}"
 S3_BUCKET="${MOLE_TESTBED_S3_BUCKET:-mole-testbed}"
+KEY_ACCOUNT="${MOLE_TESTBED_KEY_ACCOUNT:-molekey}"
+# The private half of the key services.sh put on that account. A path handed in
+# from the environment directory, never a file in this repository and never a
+# default that would make one: a key checked in is a key published.
+KEY_FILE="${MOLE_TESTBED_SFTP_KEY:-}"
 BUILD="${1:-build/debug}"
 
 if [ -z "$ADDRESS" ] || [ -z "$PASSWORD" ]; then
@@ -39,6 +44,21 @@ fi
 export MOLE_TEST_SFTP_HOST="$ADDRESS" MOLE_TEST_SFTP_PORT=22
 export MOLE_TEST_SFTP_USER="$ACCOUNT" MOLE_TEST_SFTP_PASS="$PASSWORD"
 export MOLE_TEST_SFTP_BASE="/home/$ACCOUNT/sftp"
+
+# The account a key gets into and a password does not, when its key is on this
+# machine. Separate from the one above on purpose: an account that still accepts
+# a password cannot show that the key was what got in, which is the whole of what
+# MOLE-423 is for. Only the readable case exports -- a path that is set but
+# missing would turn a skip into a failure that says nothing about the code.
+if [ -n "$KEY_FILE" ] && [ -r "$KEY_FILE" ]; then
+    export MOLE_TEST_SFTP_KEY="$KEY_FILE"
+    export MOLE_TEST_SFTP_KEY_USER="$KEY_ACCOUNT"
+    export MOLE_TEST_SFTP_KEY_BASE="/home/$KEY_ACCOUNT/sftp"
+elif [ -n "$KEY_FILE" ]; then
+    echo "MOLE_TESTBED_SFTP_KEY names a file this machine cannot read: the" >&2
+    echo "key-only case will skip. It lives with the other credentials for this" >&2
+    echo "environment, outside the checkout." >&2
+fi
 
 # The Samba share services.sh puts on the machine. Named the same way as the
 # rest: the address and the password come from the environment, never from here.

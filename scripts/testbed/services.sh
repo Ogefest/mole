@@ -35,6 +35,18 @@ REKEY_LIMIT="${MOLE_TESTBED_REKEY_LIMIT:-256M}"
 # arrives over it, so the instrument that damages this machine cannot damage the
 # path that undoes the damage -- see ADR-0054.
 CONTROL_PORT="${MOLE_TESTBED_CONTROL_PORT:-2022}"
+# The account that gets in with a key and cannot get in with a password.
+#
+# **A second account rather than a second way into the first.** The one every
+# other live suite uses has to keep taking a password, and an account that still
+# accepts one cannot show that a key was what got in -- which is the whole of what
+# MOLE-374 broke and MOLE-423 is here to hold. Its public key comes from the
+# environment directory rather than from this repository, like every other
+# credential: set MOLE_TESTBED_SFTP_KEY_PUB to the public half. Without it the
+# account is not made and this step says so, because inventing a key here would
+# put a private key somewhere nobody agreed it should be.
+KEY_ACCOUNT="${MOLE_TESTBED_KEY_ACCOUNT:-molekey}"
+KEY_PUBLIC="${MOLE_TESTBED_SFTP_KEY_PUB:-}"
 S3_PORT="${MOLE_TESTBED_S3_PORT:-9000}"
 # A bucket to aim at. Invented, like every other name in this repository.
 S3_BUCKET="${MOLE_TESTBED_S3_BUCKET:-mole-testbed}"
@@ -168,6 +180,42 @@ systemctl enable --now sshd-rekey >/dev/null
 REMOTE
 note "port 22: aes256-gcm, sixteen-byte block, does not re-key at 2^30"
 note "port $REKEY_PORT: chacha20-poly1305, RekeyLimit $REKEY_LIMIT"
+
+# --- the account that only a key gets into -----------------------------------
+
+heading "SFTP, by key alone"
+if [ -z "$KEY_PUBLIC" ]; then
+    note "MOLE_TESTBED_SFTP_KEY_PUB is not set, so $KEY_ACCOUNT was not made"
+    note "the key-only case skips without it, which is a result rather than a pass"
+else
+    # The public half only. A private key never passes through this script, and
+    # never through its output: what a release gate prints is what somebody
+    # pastes into a ticket.
+    on_server <<REMOTE || die "could not make the key-only account"
+set -euo pipefail
+id -u $KEY_ACCOUNT >/dev/null 2>&1 || useradd -m -s /bin/bash $KEY_ACCOUNT
+install -d -m 0700 -o $KEY_ACCOUNT -g $KEY_ACCOUNT /home/$KEY_ACCOUNT/.ssh
+cat > /home/$KEY_ACCOUNT/.ssh/authorized_keys <<'KEY'
+$KEY_PUBLIC
+KEY
+chown $KEY_ACCOUNT:$KEY_ACCOUNT /home/$KEY_ACCOUNT/.ssh/authorized_keys
+chmod 0600 /home/$KEY_ACCOUNT/.ssh/authorized_keys
+# Somewhere of its own to work, so a case cannot pass by writing into the
+# password account's directory.
+install -d -m 0755 -o $KEY_ACCOUNT -g $KEY_ACCOUNT /home/$KEY_ACCOUNT/sftp
+
+# **Passwords refused for this account and this account only.** A Match block at
+# the end, because sshd takes the first value it reads for a keyword and
+# everything before this stays as it was for every other account.
+if ! grep -q '^Match User $KEY_ACCOUNT\$' /etc/ssh/sshd_config; then
+    printf '\n# Mole: the key-only account, see MOLE-423\nMatch User $KEY_ACCOUNT\n    PasswordAuthentication no\n    KbdInteractiveAuthentication no\n' >> /etc/ssh/sshd_config
+fi
+sshd -t -f /etc/ssh/sshd_config || { echo "the stock sshd config is broken; not restarting"; exit 1; }
+systemctl restart ssh
+REMOTE
+    note "$KEY_ACCOUNT: a key gets in, a password does not"
+    note "/home/$KEY_ACCOUNT/sftp is where it may work"
+fi
 
 # --- a third sshd, for the control channel alone -----------------------------
 #

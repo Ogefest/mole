@@ -161,6 +161,24 @@ reached_matching() {
     else fail "nothing sent to the machine matched /$1/"; fi
 }
 
+# Whether one thing reached the machine before another did. The question a
+# transcript can answer and a pair of `reached` calls cannot: an sshd config that
+# is validated *after* the daemon has been restarted is a machine nobody can log
+# into again, and both orders contain both lines.
+#
+# The first occurrence of each, because a step that appears twice is still a step
+# whose first appearance has to be in the right place. No pipeline into `head`:
+# under `set -o pipefail` that is the SIGPIPE the racy-pipe rule is about.
+reached_before() {
+    local first second
+    first=$(grep -nF -- "$1" "$TRANSCRIPT" || true); first=${first%%$'\n'*}; first=${first%%:*}
+    second=$(grep -nF -- "$2" "$TRANSCRIPT" || true); second=${second%%$'\n'*}; second=${second%%:*}
+    if [ -z "$first" ]; then fail "nothing sent to the machine contained: $1"
+    elif [ -z "$second" ]; then fail "nothing sent to the machine contained: $2"
+    elif [ "$first" -lt "$second" ]; then pass_note "reached the machine in order: $1, then $2"
+    else fail "reached the machine the wrong way round: $2 (line $second) before $1 (line $first)"; fi
+}
+
 said() {
     if grep -qF -- "$1" "$SCRIPT_OUTPUT"; then pass_note "said: $1"
     else

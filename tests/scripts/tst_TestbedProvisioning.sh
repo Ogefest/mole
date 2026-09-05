@@ -113,6 +113,68 @@ reached "mc version info"
 never_reached_matching '[\\][$][(]ss -ltn'
 never_reached_matching '[\\][$][(]/usr/local/bin/mc version info'
 
+# --- the account that only a key gets into -----------------------------------
+
+# A made-up public key. It never authenticates anything: what is being checked is
+# that the bytes handed in are the bytes that reach the machine, and a real key
+# here would be a credential in a public repository for no gain at all.
+FAKE_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTheTestSuiteOnly000000000000 mole-test"
+
+begin "with no public key given, no key-only account reaches the machine and the skip is announced"
+stub_ssh
+unset MOLE_TESTBED_SFTP_KEY_PUB
+run_script scripts/testbed/services.sh
+exited 0
+# The account is not half-made: nothing about it is sent at all.
+never_reached "useradd -m -s /bin/bash molekey"
+never_reached "Match User molekey"
+never_reached_matching "authorized_keys"
+said "MOLE_TESTBED_SFTP_KEY_PUB is not set"
+# And it says what the silence costs, because a suite that skips looks like a
+# suite that passed. See MOLE-423.
+said "skips without it, which is a result rather than a pass"
+
+begin "given a public key, the account is made, carries that key, and is told to refuse passwords"
+stub_ssh
+export MOLE_TESTBED_SFTP_KEY_PUB="$FAKE_KEY"
+run_script scripts/testbed/services.sh
+exited 0
+reached "useradd -m -s /bin/bash molekey"
+# The key that was handed in, not one the script invented.
+reached "$FAKE_KEY"
+reached "/home/molekey/.ssh/authorized_keys"
+# Somewhere of its own, so a passing case cannot be one that wrote into the
+# password account's directory.
+reached "/home/molekey/sftp"
+# The refusal, and scoped to this account: an unscoped PasswordAuthentication no
+# locks every other live suite out of the machine, and there is no getting back
+# in to undo it.
+#
+# **Asserted as one fragment rather than as two lines.** The whole block reaches
+# the machine inside a single printf, so the transcript holds it as one line with
+# literal backslash-n between the parts -- which means an anchored expression
+# matches nothing whatever the script says, and `reached "Match User molekey"`
+# passes on the strength of the grep two lines above it. Both of those were
+# written here first and both were green against a version that had moved the
+# refusal to the top level. The fragment below is the shape that is not: the
+# keyword indented under its Match, in that order, in those bytes.
+reached 'Match User molekey\n    PasswordAuthentication no'
+# And the version that would do the damage: the keyword at column one, directly
+# after a newline escape, belonging to no Match block. Written in a bracket
+# expression because a backslash next to a dollar in this file is a finding of
+# its own -- see the case above.
+never_reached_matching '[\]nPasswordAuthentication'
+never_reached_matching '[\]nKbdInteractiveAuthentication'
+# The account every other suite uses is not touched by any of it.
+never_reached "userdel moletest"
+never_reached "Match User moletest"
+# A broken sshd config locks the machine out for good, so the config is tested
+# before the daemon is restarted.
+reached_before "sshd -t -f /etc/ssh/sshd_config" "systemctl restart ssh"
+# And the private half is nowhere near any of this.
+never_reached_matching "BEGIN [A-Z ]*PRIVATE KEY"
+unset MOLE_TESTBED_SFTP_KEY_PUB
+
 # --- and it refuses to run on nothing ----------------------------------------
 
 begin "without an address the script provisions nothing and says why"
