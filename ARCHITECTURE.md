@@ -332,6 +332,19 @@ Schema changes are append-only migrations keyed off `PRAGMA user_version`.
   `setFault()` and `setListDelayMs()` reproduce "the NAS went away mid-scan" and
   "this mount is slow" without needing a NAS.
 - `make asan` runs everything under AddressSanitizer, UBSan and leak detection.
+- **A small machine is a different machine, and this is how to be one:**
+
+  ```sh
+  taskset -c 0,1 ctest --test-dir build/debug --parallel 4 --label-exclude heavy
+  ```
+
+  Two cores is what the hosted runner effectively gives a suite, and it is not
+  only slower — `TaskManager` sizes its pool from the core count, so a four-core
+  machine gets two threads and a *drive* gets one task at a time. Four suites
+  passed on every workstation here and failed on every push for a day, on two
+  races that only appear when a drive cannot run two things at once (MOLE-425).
+  A red run on the runner and a green one at your desk is this, until measured
+  otherwise.
 - `tst_AppIntegration` assembles the application the way `main()` does, minus
   the QML engine, and opens every registered feature.
 
