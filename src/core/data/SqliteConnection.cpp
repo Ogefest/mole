@@ -78,9 +78,14 @@ QSqlDatabase Connection::forCurrentThread() const
         if (existing.isValid() && existing.isOpen())
             return existing;
         // The thread whose connection this was has ended and its address has
-        // been handed to another. Its QSqlDatabase went with it -- see the
-        // QThread::finished hook below -- so there is nothing to remove here.
+        // been handed to another, so the connection it left behind is closed
+        // here -- by name, which is what removeDatabase() wants from a thread
+        // that does not own it. Nothing else would ever close it: there is no
+        // hook on the thread any more, and the thread it belonged to is gone.
+        const QString abandoned = *cached;
         m_connections.erase(cached);
+        if (QSqlDatabase::contains(abandoned))
+            QSqlDatabase::removeDatabase(abandoned);
     }
 
     const QString name = QStringLiteral("mole-sqlite-%1-%2").arg(m_token).arg(m_nextConnection++);
@@ -108,21 +113,46 @@ QSqlDatabase Connection::forCurrentThread() const
         return {};
     }
 
-    // Gone when the thread is. Captures the name and nothing else, so it holds
-    // no pointer to this object and cannot outlive one; the context object is
-    // the thread, so Qt drops the connection if the QThread itself goes first.
-    // Direct, because the removal has to happen on the thread that owns the
-    // database -- finished() is emitted there, just before it exits.
-    QObject::connect(
-        thread, &QThread::finished, thread,
-        [name] {
-            QSqlDatabase leaving = QSqlDatabase::database(name, false);
-            if (leaving.isValid() && leaving.isOpen())
-                leaving.close();
-            leaving = QSqlDatabase();
-            QSqlDatabase::removeDatabase(name);
-        },
-        Qt::DirectConnection);
+    // **Only for a thread Qt started, and telling them apart is the fix.**
+    //
+    // A connection is closed when its thread ends, which `QThread::finished`
+    // says exactly -- for a thread Qt started. For an adopted one, a plain
+    // `std::thread` that called into Qt, it is never emitted at all: the close
+    // never ran, and the `connect()` itself held Qt's per-thread data for that
+    // thread alive for the life of the process. Measured at 776 bytes in eight
+    // allocations for a thread that does nothing but adopt itself and connect,
+    // which is what made `make asan` red on tst_IndexDatabase and
+    // tst_DelimitedStore. Adopting a thread leaks nothing by itself; connecting
+    // to a signal it will never emit is the whole of it.
+    //
+    // The question "did Qt start this thread" has a public answer: Qt gives an
+    // adopted thread's QThread object an affinity to itself, where one it
+    // started lives in the thread that created it. A thread_local destructor was
+    // the other way to close on any thread and is worse -- on a pooled QThread
+    // it runs after Qt has taken that thread's objects down, and closing a
+    // QSqlDatabase there segfaults inside the sqlite driver.
+    //
+    // What an adopted thread costs instead is a connection held until this
+    // object is destroyed or the thread's address is handed to another, which
+    // the branch above notices. See MOLE-410.
+    const bool qtStartedThisThread = thread->thread() != thread;
+    if (qtStartedThisThread) {
+        // Captures the name and nothing else, so it holds no pointer to this
+        // object and cannot outlive one; the context object is the thread, so Qt
+        // drops the connection if the QThread itself goes first. Direct, because
+        // the removal has to happen on the thread that owns the database --
+        // finished() is emitted there, just before it exits.
+        QObject::connect(
+            thread, &QThread::finished, thread,
+            [name] {
+                QSqlDatabase leaving = QSqlDatabase::database(name, false);
+                if (leaving.isValid() && leaving.isOpen())
+                    leaving.close();
+                leaving = QSqlDatabase();
+                QSqlDatabase::removeDatabase(name);
+            },
+            Qt::DirectConnection);
+    }
 
     m_connections.insert(thread, name);
     m_lastError.clear();

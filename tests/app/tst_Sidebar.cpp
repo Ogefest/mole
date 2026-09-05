@@ -151,6 +151,11 @@ void TestSidebar::init()
 
 void TestSidebar::cleanup()
 {
+    // Nothing still running when the window goes. A task holding a drive open
+    // while its application is destroyed is the shape MOLE-273 is about, and
+    // under a sanitizer it is a leak report rather than a race.
+    if (m_harness && m_harness->app() && m_harness->app()->tasks())
+        m_harness->until([this] { return m_harness->app()->tasks()->activeCount() == 0; }, 60000);
     m_harness.reset();
 }
 
@@ -217,7 +222,16 @@ bool TestSidebar::configureLockedDrive(const QString& name)
     values.insert(QStringLiteral("password"), QStringLiteral("not-a-real-password"));
     if (!m_harness->app()->saveDrive({}, name, QStringLiteral("sftp"), QStringLiteral("sftp"), {}, values))
         return false;
-    m_harness->settle(3);
+
+    // **Saving a drive checks it**, and the check is a task that opens an SFTP
+    // connection to a host that is not there. Waited out rather than left in
+    // flight: the application is torn down two lines below, and a check still
+    // running then holds a backend and its curl pool on a worker thread -- which
+    // LeakSanitizer reports as leaked, because from where it stands that is what
+    // it is. It only showed up under the load of a full tier, which is what a
+    // task nobody waited for looks like. See MOLE-410 and MOLE-273.
+    if (!m_harness->until([this] { return m_harness->app()->tasks()->activeCount() == 0; }, 60000))
+        return false;
 
     QString error;
     if (!m_harness->restart(&error))

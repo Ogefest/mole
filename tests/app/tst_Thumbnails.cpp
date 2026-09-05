@@ -178,14 +178,21 @@ void TestThumbnails::startingTheApplicationDoesNotBuildTheMediaStack()
 
 void TestThumbnails::scrollingAFolderNeverRunsMoreDecodesThanTheBound()
 {
-    QVERIFY(fillGallery(240));
-    QQuickItem* grid = tiles();
-    QVERIFY(grid);
-
+    // **The bound is lowered before anything is asked for.** Lowering it does not
+    // recall what is already in flight -- pumpQueue() starts fewer, it does not
+    // cancel -- so a gallery filled first left the machine's default number of
+    // decodes running and the first sample below counted those. The old fixed
+    // settle hid it by sleeping until they finished; a drained one reads sooner
+    // and caught four against a bound of two. The claim is about the pump after
+    // the bound is set, so that is where the bound is set. See MOLE-410.
     ThumbnailPump* pump = m_harness->thumbnails();
     QVERIFY(pump);
     // Two, so the bound is visible on a machine of any size.
     pump->setConcurrency(2);
+
+    QVERIFY(fillGallery(240));
+    QQuickItem* grid = tiles();
+    QVERIFY(grid);
 
     // Something is asked for as soon as the folder is on screen.
     QVERIFY(m_harness->until([pump] { return pump->waiting() > 0; }, 20000));
