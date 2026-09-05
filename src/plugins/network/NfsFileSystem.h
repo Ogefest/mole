@@ -133,6 +133,34 @@ public:
     /// not the mistake it looks like: a leased context is not in the pool.
     static void forgetPooledMounts();
 
+    // ---- whether libnfs can be asked for a context at all ------------------
+    //
+    // **libnfs 6.0 segfaults in nfs_init_context() where getlogin() answers
+    // nothing.** It calls rpc_set_username() with the process's login name and
+    // strdup()s it without looking, and getlogin() answers nothing in a
+    // container, under a systemd service, in a cron job, and in any session with
+    // no utmp entry -- while getpwuid(getuid()) still names the account, which
+    // libnfs does not ask. Nothing can be caught after the call, because the
+    // crash is inside the call that hands the context back, so the only place to
+    // stand is in front of it. See MOLE-411.
+
+    /// Whether this session has a login name -- `getlogin()`, which is what
+    /// libnfs reads and the only thing that decides this.
+    static bool sessionHasALoginName();
+
+    /// Whether the libnfs this was built against reads that name on the way to a
+    /// context. True for 6.x, asked of the declaration rather than of a version
+    /// number -- see the note in the implementation.
+    static bool libraryReadsTheLoginName();
+
+    /// Why a context cannot be asked for, given those two facts, and a valid
+    /// error when it can.
+    ///
+    /// **Pure, and takes the facts rather than reading them**, so the decision is
+    /// assertable on a machine with libnfs 5 and a login name -- which is every
+    /// machine here, and none of the ones this crashes on.
+    static VfsError whyThereIsNoNfsHere(bool haveLoginName, bool libraryReadsIt);
+
 private:
     QString m_scheme;
     NfsSettings m_settings;

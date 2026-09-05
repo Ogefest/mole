@@ -12,6 +12,7 @@
 #include <mutex>
 #include <nfsc/libnfs.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <vector>
 
 namespace mole {
@@ -54,6 +55,16 @@ namespace {
     /// compiler can answer exactly. The template parameters are what makes it
     /// work: a discarded `if constexpr` branch is only left uninstantiated inside
     /// a template. See MOLE-389.
+    /// Whether this libnfs takes its read arguments in POSIX order, which is what
+    /// separates 6.x from 5.x. See NfsFileSystem::libraryReadsTheLoginName().
+    template<typename Context, typename Handle>
+    constexpr bool readsInPosixOrder()
+    {
+        return requires(Context context, Handle handle, void* buffer, size_t count) {
+            nfs_read(context, handle, buffer, count);
+        };
+    }
+
     template<typename Context, typename Handle>
     int nfsRead(Context context, Handle handle, char* data, uint64_t want)
     {
@@ -188,6 +199,17 @@ namespace {
 
     nfs_context* mountFresh(const NfsSettings& settings, VfsError* failure)
     {
+        // Before the call, because there is nothing to check after it: on
+        // libnfs 6.0 in a session with no login name, nfs_init_context() strdup()s
+        // a null pointer and the process is gone. See MOLE-411.
+        if (const VfsError refused = NfsFileSystem::whyThereIsNoNfsHere(
+                NfsFileSystem::sessionHasALoginName(), NfsFileSystem::libraryReadsTheLoginName());
+            refused.isError()) {
+            if (failure)
+                *failure = refused;
+            return nullptr;
+        }
+
         nfs_context* context = nfs_init_context();
         if (!context) {
             if (failure)
@@ -301,6 +323,53 @@ void NfsFileSystem::Mount::giveBack()
         }
     }
     nfs_destroy_context(context);
+}
+
+bool NfsFileSystem::sessionHasALoginName()
+{
+    // `getlogin()` and nothing else, because that is the one libnfs reads.
+    // USER and LOGNAME are set in most of the places this crashes and make no
+    // difference; getpwuid(getuid()) names the account there too, and libnfs
+    // does not ask it. See MOLE-411.
+    const char* name = getlogin();
+    return name != nullptr && *name != '\0';
+}
+
+bool NfsFileSystem::libraryReadsTheLoginName()
+{
+    // **Asked of the declaration, like nfsRead() above, because libnfs publishes
+    // no version anybody can read.** `nfs_get_version()` is the NFS protocol
+    // version of a connected share, there is no LIBNFS_VERSION macro, and a
+    // number out of pkg-config would put the answer in the build system for a
+    // question the compiler can settle exactly. What separates the two families
+    // is the argument order of nfs_read: 6.x takes POSIX order.
+    //
+    // So this says "6.x" where the fault is known in 6.0.x. That is deliberate
+    // and it is the conservative direction: a 6.1 that fixes rpc_set_username
+    // would be refused here for no reason, and the refusal names the version
+    // family so whoever sees it can narrow this line -- where the other error
+    // would be a segfault nobody can catch.
+    //
+    // Through a template, for the reason nfsRead() is one: a requires-expression
+    // in an ordinary function is checked where it is written, and a call the
+    // other header refuses is a compiler error rather than a false answer. Naming
+    // the two handle types as parameters is what defers it to instantiation.
+    return readsInPosixOrder<nfs_context*, nfsfh*>();
+}
+
+VfsError NfsFileSystem::whyThereIsNoNfsHere(bool haveLoginName, bool libraryReadsIt)
+{
+    if (haveLoginName || !libraryReadsIt)
+        return {};
+
+    // The sentence says all three things somebody needs: what is missing, which
+    // library does this, and what to do about it. A refusal that only says
+    // "unavailable" sends whoever reads it looking at their server.
+    return VfsError::make(VfsError::NotSupported,
+        QStringLiteral("NFS is unavailable in this session: libnfs 6.x reads the login name from "
+                       "getlogin(), which answers nothing here -- in a container, under a service, "
+                       "or in any session with no terminal -- and crashes rather than saying so. Run "
+                       "Mole from a login session, or build against libnfs 5.x."));
 }
 
 void NfsFileSystem::forgetPooledMounts()

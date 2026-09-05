@@ -49,6 +49,7 @@ private slots:
     void aPathIsBuiltFromTheRootAndTheUri();
     void twoDrivesInsideOneExportShareItsConnection();
     void anExportThatIsNotThereFailsRatherThanHangs();
+    void aSessionWithNoLoginNameIsRefusedRatherThanCrashedIn();
     void itSatisfiesTheConformanceSuite();
 };
 
@@ -174,6 +175,17 @@ void TestNfsFileSystem::anExportThatIsNotThereFailsRatherThanHangs()
     // machine that is not answering has to come back and say so. libnfs left to
     // itself waits for the kernel, and the difference between twenty seconds and
     // several minutes is the difference between an error and a hung window.
+    // Nothing to hang where libnfs cannot be asked for a context at all: on
+    // libnfs 6.x in a session with no login name the drive refuses in front of
+    // the call, which is MOLE-411 and is asserted in its own case. Said as a skip
+    // rather than passed over, because a case that quietly stops asking is a case
+    // nobody notices has stopped.
+    if (NfsFileSystem::whyThereIsNoNfsHere(
+            NfsFileSystem::sessionHasALoginName(), NfsFileSystem::libraryReadsTheLoginName())
+            .isError()) {
+        QSKIP("this session has no login name and this libnfs reads it, so no context can be built");
+    }
+
     NfsSettings nowhere;
     nowhere.host = QStringLiteral("127.0.0.1");
     nowhere.exportPath = QStringLiteral("/mole-no-such-export");
@@ -190,6 +202,59 @@ void TestNfsFileSystem::anExportThatIsNotThereFailsRatherThanHangs()
     // patience the backend sets is twenty seconds, and a refused connection comes
     // back in microseconds.
     QVERIFY2(clock.elapsed() < 60000, qPrintable(QStringLiteral("took %1 ms").arg(clock.elapsed())));
+}
+
+void TestNfsFileSystem::aSessionWithNoLoginNameIsRefusedRatherThanCrashedIn()
+{
+    // **libnfs 6.0 segfaults inside nfs_init_context() where getlogin() answers
+    // nothing** -- in a container, under a systemd service, in a cron job, in any
+    // session with no utmp entry. It strdup()s the login name without looking, so
+    // there is nothing to catch afterwards and the only place to stand is in
+    // front of the call.
+    //
+    // Asserted on the decision rather than on the crash, because the crash needs
+    // a machine this suite is not run on: the two facts are read separately and
+    // the answer they produce is a pure function. Fedora 44 is where it was found
+    // and the weekly job is what keeps it fixed; this is what fails here the day
+    // somebody deletes the guard. See MOLE-411.
+    QVERIFY2(NfsFileSystem::whyThereIsNoNfsHere(false, true).isError(),
+        "no login name and a library that reads it is the case that crashes");
+    QCOMPARE(NfsFileSystem::whyThereIsNoNfsHere(false, true).code, VfsError::NotSupported);
+
+    // The sentence has to name the cause, the library and the way out: a refusal
+    // that only says "unavailable" sends whoever reads it to look at their server.
+    const QString said = NfsFileSystem::whyThereIsNoNfsHere(false, true).message;
+    QVERIFY2(said.contains(QStringLiteral("getlogin")), qPrintable(said));
+    QVERIFY2(said.contains(QStringLiteral("libnfs 6")), qPrintable(said));
+    QVERIFY2(said.contains(QStringLiteral("5.x")), qPrintable(said));
+
+    // And the three cases that are not it. A login name is enough on any library,
+    // and libnfs 5 never reads it.
+    QVERIFY(!NfsFileSystem::whyThereIsNoNfsHere(true, true).isError());
+    QVERIFY(!NfsFileSystem::whyThereIsNoNfsHere(true, false).isError());
+    QVERIFY(!NfsFileSystem::whyThereIsNoNfsHere(false, false).isError());
+
+    // The two facts as this machine answers them, so a build that cannot tell
+    // which libnfs it has fails here rather than at a mount. Which way they
+    // answer is the machine's business; that they are answered is not.
+    const bool named = NfsFileSystem::sessionHasALoginName();
+    const bool reads = NfsFileSystem::libraryReadsTheLoginName();
+    QCOMPARE(NfsFileSystem::whyThereIsNoNfsHere(named, reads).isError(), !named && reads);
+
+    // And where this machine is the crashing case, a drive says so instead of
+    // taking the process down -- which is the whole of the fix, and the only
+    // place it can be asserted end to end.
+    if (!named && reads) {
+        NfsSettings anywhere;
+        anywhere.host = QStringLiteral("127.0.0.1");
+        anywhere.exportPath = QStringLiteral("/mole-no-such-export");
+        NfsFileSystem fs(QStringLiteral("nfs"), anywhere);
+        const Result<FileEntryList> listing
+            = fs.list(VfsUri(QStringLiteral("nfs"), QString(), QStringLiteral("/")), CancelToken());
+        QVERIFY(!listing.ok());
+        QVERIFY2(listing.error().message.contains(QStringLiteral("getlogin")),
+            qPrintable(listing.error().message));
+    }
 }
 
 void TestNfsFileSystem::itSatisfiesTheConformanceSuite()

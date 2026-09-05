@@ -65,6 +65,7 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-09-05 #MOLE-411 NFS drives say they are unavailable instead of taking Mole down with them, in a container or a service on a distribution carrying libnfs 6
 2026-09-04 #MOLE-402 Five tooltips no longer point at a "Tools" menu, which has not existed since it was split into Operations and Workflows
 2026-09-04 #MOLE-401 The in-memory scratch drive refuses a write into a folder that is not there, deleting its own root, and moving a folder into itself
 2026-09-04 #MOLE-401 A read from the in-memory scratch drive stops when it is cancelled
