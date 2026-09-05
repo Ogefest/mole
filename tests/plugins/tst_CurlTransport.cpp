@@ -7,9 +7,12 @@
 #include <QElapsedTimer>
 #include <QTest>
 
+#include <atomic>
 #include <cerrno>
 #include <cstring>
 #include <system_error>
+#include <thread>
+#include <vector>
 
 using namespace mole;
 using namespace mole::test;
@@ -49,6 +52,7 @@ private slots:
     void theSystemsOwnReasonsMapOntoTheVocabulary();
 
     void aSecondTransferOnOnePoolReusesTheConnection();
+    void transfersThatOverlapOnOnePoolDoNotShareOneConnection();
 
     void nothingWithACredentialInItReachesTheLog();
 };
@@ -633,6 +637,69 @@ void TestCurlTransport::theSystemsOwnReasonsMapOntoTheVocabulary()
 /// SSH for every listing"; neither was true. At 0.58 s a handshake (ADR-0013)
 /// and four or five handshakes per small SFTP upload, that is what a folder of
 /// ten thousand files cost. See MOLE-369.
+/// The one that crashed inside libcurl.
+///
+/// A `CURLSH` with `CURL_LOCK_DATA_CONNECT` put one connection cache behind
+/// every thread holding a lease, and its lock callbacks cannot make that safe:
+/// they serialise access to the cache, not the use of what comes out of it, so
+/// two transfers are handed one connection and both write to it. Against a live
+/// FTP server that was a segfault on the conformance suite's "two things at
+/// once" -- two listings of one drive, which is two panes on one drive in the
+/// application -- and a twenty-five minute hang in the release gate's tier.
+///
+/// Held here rather than only there, because it needs no server: threads and one
+/// pool are the whole of the fault. Several callers each fetching several times,
+/// rather than a pair taking turns -- a quarter of a megabyte over the loopback
+/// is short, and a race nobody arranges is a race a test does not run. With the
+/// cache shared this fails every transfer it makes. See MOLE-418.
+void TestCurlTransport::transfersThatOverlapOnOnePoolDoNotShareOneConnection()
+{
+    ScriptedHttpServer server([](const ScriptedHttpServer::Request&) {
+        ScriptedHttpServer::Reply reply;
+        reply.body = QByteArray(256 * 1024, 'x');
+        // Kept open, so there is a connection worth reusing and therefore one
+        // worth handing to two transfers at once.
+        reply.keepAlive = true;
+        return reply;
+    });
+    QVERIFY2(server.start(), "could not take a port for the scripted server");
+
+    net::TransportOptions options;
+    net::CurlPool pool(options);
+
+    std::atomic_int failures { 0 };
+    std::atomic_int shortBodies { 0 };
+    const auto fetch = [&] {
+        net::CurlPool::Lease lease = pool.take();
+        if (!lease) {
+            ++failures;
+            return;
+        }
+        lease.setUrl((server.url() + QStringLiteral("/thing")).toUtf8());
+        const net::Response response = pool.perform(lease, CancelToken());
+        if (net::errorFor(response, QStringLiteral("Reading /thing")).isError())
+            ++failures;
+        else if (response.body.size() != 256 * 1024)
+            ++shortBodies;
+    };
+
+    std::vector<std::thread> callers;
+    callers.reserve(6);
+    for (int caller = 0; caller < 6; ++caller) {
+        callers.emplace_back([&fetch] {
+            for (int round = 0; round < 20; ++round)
+                fetch();
+        });
+    }
+    for (std::thread& caller : callers)
+        caller.join();
+
+    QCOMPARE(failures.load(), 0);
+    // A body that came back short is the shape a shared connection produces when
+    // it does not crash: two transfers reading each other's bytes.
+    QCOMPARE(shortBodies.load(), 0);
+}
+
 void TestCurlTransport::aSecondTransferOnOnePoolReusesTheConnection()
 {
     ScriptedHttpServer server([](const ScriptedHttpServer::Request&) {

@@ -6,6 +6,26 @@
 
 #include <future>
 
+namespace {
+
+/// A listener that hands over descriptors rather than sockets, so each
+/// conversation can build its socket on the thread that will use it.
+class Accepting final : public QTcpServer
+{
+public:
+    std::mutex guard;
+    std::vector<qintptr> pending;
+
+protected:
+    void incomingConnection(qintptr descriptor) override
+    {
+        const std::lock_guard<std::mutex> held(guard);
+        pending.push_back(descriptor);
+    }
+};
+
+} // namespace
+
 namespace mole::test {
 namespace {
 
@@ -53,7 +73,7 @@ bool ScriptedHttpServer::start()
     std::future<quint16> port = listening.get_future();
 
     m_thread = std::thread([this, &listening] {
-        QTcpServer server;
+        Accepting server;
         if (!server.listen(QHostAddress::LocalHost, 0)) {
             listening.set_value(0);
             return;
@@ -91,21 +111,49 @@ QList<ScriptedHttpServer::Request> ScriptedHttpServer::received() const
 
 void ScriptedHttpServer::serve(QTcpServer& server)
 {
+    // **A thread per connection, because one at a time cannot answer two clients
+    // at once** -- and with keep-alive it cannot even reach the second, since a
+    // conversation stays on a socket the client is holding open for reuse. A
+    // test of two transfers running together deadlocked against this fixture
+    // rather than against anything it was testing. See MOLE-418.
+    //
+    // Descriptors rather than sockets: a QTcpSocket belongs to the thread that
+    // made it, and Accepting hands over the number instead so each conversation
+    // builds its own. That is what incomingConnection() is for.
+    auto& accepting = static_cast<Accepting&>(server);
+    std::vector<std::thread> conversations;
     while (!m_stopping) {
         // A short wait rather than a blocking accept, so stop() does not have to
         // poke the socket to be noticed.
-        if (!server.waitForNewConnection(50))
-            continue;
-        std::unique_ptr<QTcpSocket> socket(server.nextPendingConnection());
-        if (!socket)
-            continue;
-        // One answer, or several down the same socket when the handler asks for
-        // keep-alive. A client that reuses connections cannot be told apart from
-        // one that does not by a server that closes every one.
-        while (answerOne(*socket) && !m_stopping && socket->state() == QAbstractSocket::ConnectedState) { }
-        socket->disconnectFromHost();
-        if (socket->state() != QAbstractSocket::UnconnectedState)
-            socket->waitForDisconnected(1000);
+        server.waitForNewConnection(50);
+        std::vector<qintptr> arrived;
+        {
+            const std::lock_guard<std::mutex> guard(accepting.guard);
+            arrived.swap(accepting.pending);
+        }
+        for (const qintptr descriptor : arrived) {
+            conversations.emplace_back([this, descriptor] {
+                QTcpSocket socket;
+                if (!socket.setSocketDescriptor(descriptor, QAbstractSocket::ConnectedState))
+                    return;
+                // One answer, or several down the same socket when the handler
+                // asks for keep-alive. A client that reuses connections cannot
+                // be told apart from one that does not by a server that closes
+                // every one.
+                while (
+                    answerOne(socket) && !m_stopping && socket.state() == QAbstractSocket::ConnectedState) { }
+                socket.disconnectFromHost();
+                if (socket.state() != QAbstractSocket::UnconnectedState)
+                    socket.waitForDisconnected(1000);
+            });
+        }
+    }
+
+    // Every conversation finished before the server goes: a socket outliving it
+    // would be answering out of a destroyed handler.
+    for (std::thread& conversation : conversations) {
+        if (conversation.joinable())
+            conversation.join();
     }
 }
 

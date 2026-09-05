@@ -142,3 +142,40 @@ said the stall was decided "in the progress callback" when the loop had taken it
 over, `ProgressWatch` carried a switched-off `StallWatch` and a `stalled` flag
 nothing read, and `BufferedUpload`'s reason cited WebDAV being "unreliable about
 chunked PUT" when WebDAV has streamed through a chunked PUT since MOLE-34.
+
+## Amendment, 2026-09-05 (MOLE-418): the cache moves again, onto the handle
+
+**The share was a crash.** `CURL_LOCK_DATA_CONNECT` puts one connection cache
+behind every thread that holds a lease, and the lock callbacks the amendment
+above called "required" are not sufficient and cannot be: they serialise access
+to the cache, not the *use* of what comes out of it. Two transfers on two threads
+are handed the same connection and both write to it.
+
+Against a live FTP server that is a segfault inside libcurl, on the conformance
+suite's "two things at once" — which is two listings of one drive, and therefore
+two panes on one drive in the application. Three runs out of three. In the
+release gate's live tier the same race hung for twenty-five minutes instead of
+crashing, which is what stopped the 0.1.3 cut and how it was found.
+
+**The cache goes where a lease already is: on the handle.** A `CurlPool::Lease`
+is a `CURL*` **and** a `CURLM*` now, pooled and handed out together. `perform()`
+drives the lease's own loop and calls `curl_multi_remove_handle()` at the end
+rather than `curl_multi_cleanup()`, so the connection stays in that loop for the
+next lease of the same pair. One thread holds a lease, so nothing is shared
+between threads at all.
+
+Everything the amendment above was for is kept, and it is the same test that
+says so: `aSecondTransferOnOnePoolReusesTheConnection` still reads
+`connectionsOpened == 0` on the second transfer, and `aSecondListingCostsNoHandshake`
+still holds it against a real server. What is given up is a connection opened by
+one handle being reused by another, which is worth nothing here: a pool hands the
+same handle back to the next caller. The DNS and TLS session caches stay in the
+share, because what comes out of *those* is data rather than a socket.
+
+**Held offline as well as live**, which the crash was not:
+`tst_CurlTransport::transfersThatOverlapOnOnePoolDoNotShareOneConnection` runs six
+callers over one pool and fails every transfer when the connection cache is
+shared. It needed `ScriptedHttpServer` to answer more than one client at a time —
+until now it served one connection to the end, and with keep-alive it could not
+even reach the second, so a test of two transfers together deadlocked against the
+fixture rather than against the thing it was testing.

@@ -200,7 +200,11 @@ public:
     public:
         /// `pooled` false means the handle is closed when the lease ends
         /// rather than handed to the next caller.
-        Lease(CurlPool* pool, CURL* handle, bool pooled = true);
+        ///
+        /// The multi comes with it, because that is where libcurl keeps the
+        /// connection: one loop per handle, leased together and returned
+        /// together. See the note on m_idle.
+        Lease(CurlPool* pool, CURL* handle, CURLM* multi, bool pooled = true);
         ~Lease();
         Lease(Lease&& other) noexcept;
         Lease& operator=(Lease&& other) noexcept;
@@ -208,6 +212,9 @@ public:
         Lease& operator=(const Lease&) = delete;
 
         CURL* get() const { return m_handle; }
+        /// The transfer loop this handle's connections live in. perform() drives
+        /// it; nothing else has any business with it.
+        CURLM* multi() const { return m_multi; }
         explicit operator bool() const { return m_handle != nullptr; }
 
         /// Points the request at an address, and remembers it. Every backend
@@ -259,6 +266,7 @@ public:
 
         CurlPool* m_pool = nullptr;
         CURL* m_handle = nullptr;
+        CURLM* m_multi = nullptr;
         QByteArray m_url;
         /// Mutable because abandoning is a fact discovered during the transfer,
         /// and perform() is handed the lease by const reference.
@@ -311,31 +319,56 @@ public:
 
 private:
     friend class Lease;
-    void give(CURL* handle);
+
+    /// A handle and the loop its connections live in, leased and returned as
+    /// one. See the note on m_idle.
+    struct Pooled
+    {
+        CURL* easy = nullptr;
+        CURLM* multi = nullptr;
+    };
+
+    void give(Pooled pooled);
     /// Applies the shared options and clears per-request state.
     void prepare(CURL* handle) const;
 
     TransportOptions m_options;
     std::mutex m_mutex;
-    std::vector<CURL*> m_idle;
-    /// **Where the connections actually live.**
+    /// **Where the connections actually live, and why each one is leased with a
+    /// loop of its own.**
     ///
     /// In libcurl the connection cache belongs to the *multi* handle:
     /// curl_multi_add_handle() points the easy handle's cache at the multi's,
-    /// and curl_multi_cleanup() closes every connection in it. perform() makes a
-    /// multi per transfer -- deliberately, so the decision to stop is ours
-    /// (ADR-0049) -- so the connection each transfer used was closed before the
-    /// lease was even returned to this pool, and the idle handles here carried
-    /// nothing. Every SFTP operation renegotiated SSH at 0.58 s a handshake, and
-    /// a stat() is a parent listing while an openWrite() is stat, spans, stat,
-    /// rename: four or five handshakes for one small upload. Every WebDAV
-    /// request paid the CURLAUTH_ANY 401 round trip again, auth state being per
-    /// connection.
+    /// and curl_multi_cleanup() closes every connection in it. perform() used to
+    /// make a multi per transfer -- deliberately, so the decision to stop is
+    /// ours (ADR-0049) -- so the connection each transfer used was closed before
+    /// the lease was even returned, and the idle handles here carried nothing.
+    /// Every SFTP operation renegotiated SSH at 0.58 s a handshake, and a stat()
+    /// is a parent listing while an openWrite() is stat, spans, stat, rename:
+    /// four or five handshakes for one small upload. Every WebDAV request paid
+    /// the CURLAUTH_ANY 401 round trip again, auth state being per connection.
     ///
-    /// A share handle survives the multi, which is what puts the cache back
-    /// where the class comment above has always claimed it was. Its lock
-    /// callbacks take m_mutex, because a share is used from every thread that
-    /// holds a lease. See MOLE-369.
+    /// **A share handle held the cache instead, and that was a crash.**
+    /// CURL_LOCK_DATA_CONNECT puts one connection cache behind every thread
+    /// holding a lease, and lock callbacks cannot make that safe: they serialise
+    /// access to the cache, not the *use* of what comes out of it, so two
+    /// transfers are handed one connection and both write to it. Against a live
+    /// FTP server that is a segfault inside libcurl on the conformance suite's
+    /// "two things at once" -- two listings of one drive, which is two panes on
+    /// one drive in the application -- and a twenty-five minute hang in the
+    /// release gate's tier. See MOLE-418 and ADR-0049's second amendment.
+    ///
+    /// So the loop is pooled with the handle. A lease is a handle *and* its
+    /// multi; perform() removes the handle from that multi at the end rather
+    /// than destroying it, which leaves the connection in the cache for the next
+    /// lease of the same pair. One thread holds a lease, so nothing is shared
+    /// between threads at all -- the property that was wanted, without the one
+    /// that could not work.
+    std::vector<Pooled> m_idle;
+    /// The DNS and TLS session caches, which *are* safe to share with locks
+    /// because what comes out of them is data rather than a socket. A drive is
+    /// one host, so both are answered once rather than per connection, and
+    /// neither carries a credential.
     CURLSH* m_share = nullptr;
     /// Held by the share's lock callbacks, one per lockable kind. Recursive
     /// because libcurl may take one while another is held.

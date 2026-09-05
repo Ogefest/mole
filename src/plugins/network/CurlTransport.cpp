@@ -266,9 +266,10 @@ QByteArray Response::header(const char* name) const
 
 // ---- Lease -----------------------------------------------------------------
 
-CurlPool::Lease::Lease(CurlPool* pool, CURL* handle, bool pooled)
+CurlPool::Lease::Lease(CurlPool* pool, CURL* handle, CURLM* multi, bool pooled)
     : m_pool(pool)
     , m_handle(handle)
+    , m_multi(multi)
     , m_pooled(pooled)
 {
 }
@@ -277,33 +278,42 @@ CurlPool::Lease::~Lease()
 {
     if (!m_handle)
         return;
-    if (m_pool && m_pooled)
-        m_pool->give(m_handle);
-    else
-        curl_easy_cleanup(m_handle);
+    if (m_pool && m_pooled) {
+        m_pool->give({ m_handle, m_multi });
+        return;
+    }
+    // The handle first: a multi refuses to be cleaned up while one is added to
+    // it, and an abandoned transfer's connection goes with the loop it was in.
+    curl_easy_cleanup(m_handle);
+    if (m_multi)
+        curl_multi_cleanup(m_multi);
 }
 
 CurlPool::Lease::Lease(Lease&& other) noexcept
     : m_pool(other.m_pool)
     , m_handle(other.m_handle)
+    , m_multi(other.m_multi)
     , m_url(std::move(other.m_url))
     , m_pooled(other.m_pooled)
 {
     other.m_pool = nullptr;
     other.m_handle = nullptr;
+    other.m_multi = nullptr;
 }
 
 CurlPool::Lease& CurlPool::Lease::operator=(Lease&& other) noexcept
 {
     if (this != &other) {
         if (m_pool && m_handle)
-            m_pool->give(m_handle);
+            m_pool->give({ m_handle, m_multi });
         m_pool = other.m_pool;
         m_handle = other.m_handle;
+        m_multi = other.m_multi;
         m_url = std::move(other.m_url);
         m_pooled = other.m_pooled;
         other.m_pool = nullptr;
         other.m_handle = nullptr;
+        other.m_multi = nullptr;
     }
     return *this;
 }
@@ -347,6 +357,10 @@ namespace {
     /// locking of its own -- CURLSHOPT_LOCKFUNC exists for exactly this. One
     /// mutex per lockable kind rather than one for the lot, because libcurl may
     /// hold one while it takes another.
+    ///
+    /// **They make the caches safe to read and write, and they cannot make a
+    /// connection safe to use twice.** That is why the connection cache is not
+    /// in the share -- see the constructor, and MOLE-418.
     void lockShare(CURL*, curl_lock_data data, curl_lock_access, void* userData)
     {
         auto* guards = static_cast<std::recursive_mutex*>(userData);
@@ -366,18 +380,38 @@ CurlPool::CurlPool(TransportOptions options)
 {
     ensureCurlInitialised();
 
-    // The connection cache, kept where it can outlive a transfer's multi handle.
-    // See the note on m_share: without this every transfer opened a connection
-    // of its own, whatever the pool of easy handles did.
+    // What is shared between the pool's handles, and **the connection cache is
+    // not one of them.**
+    //
+    // It was, and it is the one kind libcurl does not support sharing between
+    // transfers that run at the same time. The lock callbacks below are not
+    // enough and were never meant to be: they serialise access to the cache,
+    // not the *use* of what comes out of it, so two transfers on two threads are
+    // handed the same connection and both write to it. Against a live FTP server
+    // that is a segfault inside libcurl -- three runs out of three, on the
+    // conformance suite's "two things at once", which is two listings of one
+    // drive at once and therefore two panes on one drive in the application.
+    // In the release gate's tier the same race hung for twenty-five minutes
+    // instead. Removing this line, and changing nothing else, took that case
+    // from crashing every time to passing every time in thirteen seconds.
+    //
+    // **What it costs is much less than the comment it replaces claimed.** A
+    // connection lives on the easy handle, and this pool keeps its handles --
+    // see give(), which resets the transfer state and keeps the rest. So a
+    // second operation that gets the same handle back still reuses its
+    // connection; what is given up is one operation reusing a connection that
+    // another handle opened. DNS answers and TLS sessions are still shared, and
+    // those are what the second connection would otherwise pay for twice.
+    //
+    // See MOLE-418.
     m_share = curl_share_init();
     if (m_share) {
         curl_share_setopt(m_share, CURLSHOPT_LOCKFUNC, lockShare);
         curl_share_setopt(m_share, CURLSHOPT_UNLOCKFUNC, unlockShare);
         curl_share_setopt(m_share, CURLSHOPT_USERDATA, m_shareGuards);
-        curl_share_setopt(m_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_CONNECT);
-        // The DNS cache and the TLS session cache as well: a drive is one host,
-        // so both are answered once rather than per transfer. Neither carries
-        // credentials, and both are dropped with the pool.
+        // A drive is one host, so both of these are answered once rather than
+        // per transfer. Neither carries credentials, and both are dropped with
+        // the pool.
         curl_share_setopt(m_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_DNS);
         curl_share_setopt(m_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_SSL_SESSION);
     }
@@ -386,9 +420,14 @@ CurlPool::CurlPool(TransportOptions options)
 CurlPool::~CurlPool()
 {
     // The handles first: a share must outlive every easy handle using it, and
-    // curl_share_cleanup() refuses while one still does.
-    for (CURL* handle : m_idle)
-        curl_easy_cleanup(handle);
+    // curl_share_cleanup() refuses while one still does. Each handle's loop goes
+    // with it, and after it: a multi refuses to be cleaned up while a handle is
+    // still added to it.
+    for (const Pooled& pooled : m_idle) {
+        curl_easy_cleanup(pooled.easy);
+        if (pooled.multi)
+            curl_multi_cleanup(pooled.multi);
+    }
     m_idle.clear();
     if (m_share)
         curl_share_cleanup(m_share);
@@ -396,39 +435,56 @@ CurlPool::~CurlPool()
 
 CurlPool::Lease CurlPool::take()
 {
-    CURL* handle = nullptr;
+    Pooled pooled;
     {
         const std::lock_guard<std::mutex> guard(m_mutex);
         if (!m_idle.empty()) {
-            handle = m_idle.back();
+            pooled = m_idle.back();
             m_idle.pop_back();
         }
     }
-    if (!handle)
-        handle = curl_easy_init();
-    if (handle)
-        prepare(handle);
-    return Lease(this, handle);
+    // A handle and a loop, made together where the pool had none to hand back:
+    // the connection this transfer opens lives in that loop and is there for
+    // the next lease of the pair. See the note on m_idle.
+    if (!pooled.easy)
+        pooled.easy = curl_easy_init();
+    if (pooled.easy && !pooled.multi) {
+        pooled.multi = curl_multi_init();
+        if (!pooled.multi) {
+            curl_easy_cleanup(pooled.easy);
+            pooled.easy = nullptr;
+        }
+    }
+    if (pooled.easy)
+        prepare(pooled.easy);
+    return Lease(this, pooled.easy, pooled.multi);
 }
 
 CurlPool::Lease CurlPool::takeFresh()
 {
     CURL* handle = curl_easy_init();
+    CURLM* multi = handle ? curl_multi_init() : nullptr;
+    if (handle && !multi) {
+        curl_easy_cleanup(handle);
+        handle = nullptr;
+    }
     if (handle)
         prepare(handle);
-    return Lease(this, handle, false);
+    return Lease(this, handle, multi, false);
 }
 
-void CurlPool::give(CURL* handle)
+void CurlPool::give(Pooled pooled)
 {
-    // Only the transfer state is reset; the connection cache lives on the
-    // handle, which is the whole reason for keeping it.
+    // Only the transfer state is reset; the connection lives in the loop that
+    // comes back with the handle, which is the whole reason for keeping both.
     const std::lock_guard<std::mutex> guard(m_mutex);
     if (m_idle.size() >= kMaxIdleHandles) {
-        curl_easy_cleanup(handle);
+        curl_easy_cleanup(pooled.easy);
+        if (pooled.multi)
+            curl_multi_cleanup(pooled.multi);
         return;
     }
-    m_idle.push_back(handle);
+    m_idle.push_back(pooled);
 }
 
 void CurlPool::prepare(CURL* handle) const
@@ -561,9 +617,13 @@ Response CurlPool::perform(const Lease& lease, const CancelToken& cancel, QIODev
     //
     // curl_easy_perform would block here until libcurl decided the transfer was
     // over, which made every guard Mole has an attempt to influence somebody
-    // else's loop. Driving it here costs a multi handle per transfer and buys
-    // the two decisions that matter: when to stop waiting, and on what grounds.
-    CURLM* multi = curl_multi_init();
+    // else's loop. Driving it here buys the two decisions that matter: when to
+    // stop waiting, and on what grounds.
+    //
+    // The loop comes with the lease rather than being made here, because the
+    // connection lives in it -- see the note on CurlPool::m_idle, and MOLE-418
+    // for what sharing one cache between threads did instead.
+    CURLM* multi = lease.multi();
     if (!multi) {
         response.code = CURLE_FAILED_INIT;
         response.detail = QStringLiteral("could not start a transfer loop");
@@ -624,8 +684,11 @@ Response CurlPool::perform(const Lease& lease, const CancelToken& cancel, QIODev
             response.code = message->data.result;
     }
 
+    // Removed but not destroyed: the connection this transfer used stays in the
+    // loop, which goes back to the pool with the handle. Destroying the multi is
+    // what closed it before, and is now the lease's business -- an abandoned one
+    // takes its loop with it.
     curl_multi_remove_handle(multi, handle);
-    curl_multi_cleanup(multi);
 
     if (cancelled || stalled || multiFailed) {
         // A transfer stopped part way leaves its connection mid-message, and the
