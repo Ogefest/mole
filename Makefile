@@ -17,7 +17,7 @@ VERSION := $(shell sed -n 's/^ *VERSION \([0-9][0-9.]*\)$$/\1/p' CMakeLists.txt)
 # Every target here is a name rather than a file. Three were missing -- asan,
 # run-gdb and screenshots-check -- so a file of that name in the tree would have
 # made make think the work was already done. See MOLE-390.
-.PHONY: all build configure optimised release run run-gdb test packages deb rpm appimage start-check test-live test-heavy test-verbose asan tsan clean distclean format tidy help guide-images where-the-log-is \
+.PHONY: all build build-dir configure optimised release run run-gdb test packages deb rpm appimage start-check test-live test-heavy test-verbose asan tsan clean distclean format tidy help guide-images where-the-log-is \
         install uninstall bundle licence-check screenshots screenshots-check version
 
 all: build
@@ -56,6 +56,15 @@ optimised:
 ##          because the tag is what publishes a release.
 release:
 	@MAKE="$(MAKE)" scripts/release.sh
+
+## build-dir: print the build directory this preset uses
+##            One line, and the only place that path is stated. `scripts/release.sh`
+##            asks for it because it runs the live tiers directly rather than through
+##            a make target -- make flattened their exit codes, and every failure of a
+##            tier arrived at the gate as "the environment is not configured". See
+##            MOLE-328.
+build-dir:
+	@echo $(BUILD_DIR)
 
 SESSION_LOG ?= $(HOME)/.local/share/Mole/Mole/session.log
 

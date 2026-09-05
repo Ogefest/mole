@@ -139,6 +139,16 @@ else
     note "$REMOTE has no $BRANCH yet, so there is nothing to be behind"
 fi
 
+# Where the suite was built, which is where the tiers look. Asked of make because
+# the Makefile is the one place that path is written -- `build/$(PRESET)` -- and a
+# second copy of the rule here would be wrong the first time somebody cuts a
+# release under another preset. Read the way the version is read below, for the
+# same reason: a recursive make prints directory lines. See MOLE-328 and MOLE-321.
+step "the build"
+BUILD=$("$MAKE" --no-print-directory build-dir 2>/dev/null | grep -E '^[^ ]+/[^ ]+$' | tail -1)
+[ -n "$BUILD" ] || die "the project does not say where it builds ($MAKE build-dir said nothing)"
+note "$BUILD"
+
 step "the test suite"
 note "$MAKE test"
 "$MAKE" test || die "the suite is not green"
@@ -153,12 +163,14 @@ note "green"
 # gone around; if that turns out to be too strict, the ticket to loosen it can be
 # written by somebody who has met the case.
 run_tier() {
-    local target="$1"
+    local tier="$1"
+    local target="test-$tier"
+    local script="scripts/testbed/$target.sh"
     local log="$SCRATCH/$target.log"
 
     step "the $target tier"
-    note "$MAKE $target"
-    "$MAKE" "$target" 2>&1 | tee "$log" | redact
+    note "$script $BUILD"
+    bash "$script" "$BUILD" 2>&1 | tee "$log" | redact
     local code=${PIPESTATUS[0]}
 
     # A skip is not a pass, and this is where that has to be enforced rather than
@@ -182,6 +194,19 @@ run_tier() {
     # 2 is what both tier scripts exit when the environment is not configured at
     # all. Named separately because it is the one failure that is about this
     # machine rather than about the code.
+    #
+    # **Asked of the script rather than of make, and that is the whole of
+    # MOLE-328.** This used to run `$MAKE test-live`, and make exits 2 for any
+    # failure in a recipe -- so a tier that ran for seventy minutes against the
+    # real machine and failed one case arrived here as 2 and was reported as an
+    # environment nobody had configured, six lines under its own failure. The
+    # distinction this check exists to draw was destroyed by the layer in front
+    # of it, and it failed in the direction that sends a reader to their own
+    # machine instead of to the fault. The scripts take the build directory as
+    # their argument and say so themselves when it holds nothing built; make was
+    # adding the exit code it flattened and nothing else. See MOLE-321 for the
+    # neighbouring one, where make's "Leaving directory" chatter was read as the
+    # version.
     if [ "$code" = 2 ]; then
         die "$target could not run: the live environment is not configured on this machine"
     fi
@@ -189,8 +214,8 @@ run_tier() {
     note "green, against the real environment"
 }
 
-run_tier test-live
-run_tier test-heavy
+run_tier live
+run_tier heavy
 
 step "the guide pictures"
 if [ -n "$DRY" ]; then

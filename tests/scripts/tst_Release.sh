@@ -72,20 +72,10 @@ test:
 	@test ! -f fail-the-suite || { echo "a case failed"; exit 1; }
 	@echo "suite green"
 
-# The two tiers, standing in for scripts/testbed/*.sh: they answer the way those
-# do -- 2 when the environment is not configured, a SKIP line when a suite never
-# met it, and non-zero when something failed.
-test-live:
-	@test ! -f no-environment || { echo "Set MOLE_TESTBED_ADDRESS and MOLE_TESTBED_PASSWORD."; exit 2; }
-	@test ! -f live-skips || { printf "  \033[33mSKIP\033[0m    tst_SftpFileSystem  Totals: 0 passed\n"; exit 1; }
-	@echo "Live suites against a-machine.invalid"
-	@echo "  6 ran, 0 skipped, 0 failed"
-
-test-heavy:
-	@test ! -f heavy-skips || { echo "SKIP   : TestHeavyTransfers::aTenGigabyteCopy() no room at the far end"; exit 0; }
-	@echo "heavy tier green"
-	@echo "recorded in the report:"
-	@echo "  10 GiB copy    SKIPPED-none    412 MiB/s"
+# Where this project builds, which the gate asks for because it runs the tiers
+# itself. See MOLE-328.
+build-dir:
+	@echo "build/debug"
 
 guide-images:
 	@echo "a picture, taken at $$(date +%s%N)" > docs/guide/images/01-shot.png
@@ -93,6 +83,37 @@ guide-images:
 EOF
 
     echo "a picture" > "$repo/docs/guide/images/01-shot.png"
+
+    # **The two tiers, as scripts rather than as make targets**, because that is
+    # how the gate runs them now: make exits 2 for any failure in a recipe, so a
+    # tier that ran and failed was reported as an environment nobody had
+    # configured. They answer the way the real ones do -- 2 when the environment
+    # is not configured, a SKIP line when a suite never met it, and an ordinary
+    # non-zero when a suite ran and failed. See MOLE-328.
+    mkdir -p "$repo/scripts/testbed"
+    cat > "$repo/scripts/testbed/test-live.sh" <<'EOF'
+#!/usr/bin/env bash
+test ! -f no-environment || { echo "Set MOLE_TESTBED_ADDRESS and MOLE_TESTBED_PASSWORD."; exit 2; }
+test ! -f live-skips || { printf "  \033[33mSKIP\033[0m    tst_SftpFileSystem  Totals: 0 passed\n"; exit 1; }
+test ! -f live-fails || {
+    echo "Live suites against a-machine.invalid"
+    printf "  \033[31mFAIL\033[0m    tst_SftpFileSystem       22 passed, 1 failed, 0 skipped\n"
+    printf "          FAIL!  : TestSftpFileSystem::aKilledUploadLeavesNothingThatLooksFinished()\n"
+    exit 1
+}
+echo "Live suites against a-machine.invalid"
+echo "  6 ran, 0 skipped, 0 failed"
+EOF
+    cat > "$repo/scripts/testbed/test-heavy.sh" <<'EOF'
+#!/usr/bin/env bash
+test ! -f no-environment || { echo "Set MOLE_TESTBED_ADDRESS and MOLE_TESTBED_PASSWORD."; exit 2; }
+test ! -f heavy-skips || { echo "SKIP   : TestHeavyTransfers::aTenGigabyteCopy() no room at the far end"; exit 0; }
+test ! -f heavy-fails || { echo "FAIL!  : TestHeavyTransfers::aTenGigabyteCopy() the copy stopped short"; exit 1; }
+echo "heavy tier green"
+echo "recorded in the report:"
+echo "  10 GiB copy    SKIPPED-none    412 MiB/s"
+EOF
+    chmod +x "$repo/scripts/testbed/test-live.sh" "$repo/scripts/testbed/test-heavy.sh"
 
     git -C "$repo" config user.name "Test"
     git -C "$repo" config user.email "test@example.invalid"
@@ -221,6 +242,36 @@ git -C "$repo" add -A && git -C "$repo" commit -q -m "No environment on this mac
 cut_release "$repo" IGNORE=1
 [ "$SCRIPT_STATUS" != 0 ] || fail "a release was cut without the live tiers running"
 said "the live environment is not configured on this machine"
+[ -z "$(git -C "$repo" tag --list)" ] || fail "a tag was made anyway"
+
+begin "a tier that ran and failed is not reported as a machine that cannot run it"
+# **The fault this pair exists for.** The gate ran the tiers through make, and make
+# exits 2 for any failure in a recipe -- so a heavy tier that ran for seventy
+# minutes against the real machine and failed one case was reported as "the live
+# environment is not configured on this machine", six lines under its own failure.
+# The distinction the check draws is the useful one there is, and it failed in the
+# direction that sends a reader to their own machine rather than to the fault. See
+# MOLE-328.
+repo=$(fixture)
+touch "$repo/live-fails"
+git -C "$repo" add -A && git -C "$repo" commit -q -m "The live tier will fail a case"
+cut_release "$repo" IGNORE=1
+[ "$SCRIPT_STATUS" != 0 ] || fail "a release was cut over a failing live tier"
+said "test-live is not green"
+grep -qF "the live environment is not configured" "$SCRIPT_OUTPUT" \
+    && fail "a tier that ran and failed was reported as an environment nobody configured"
+said "aKilledUploadLeavesNothingThatLooksFinished"
+[ -z "$(git -C "$repo" tag --list)" ] || fail "a tag was made anyway"
+
+begin "and the same for the heavy tier"
+repo=$(fixture)
+touch "$repo/heavy-fails"
+git -C "$repo" add -A && git -C "$repo" commit -q -m "The heavy tier will fail a case"
+cut_release "$repo" IGNORE=1
+[ "$SCRIPT_STATUS" != 0 ] || fail "a release was cut over a failing heavy tier"
+said "test-heavy is not green"
+grep -qF "the live environment is not configured" "$SCRIPT_OUTPUT" \
+    && fail "a tier that ran and failed was reported as an environment nobody configured"
 [ -z "$(git -C "$repo" tag --list)" ] || fail "a tag was made anyway"
 
 begin "a live suite that skipped is a refusal, and it is named"
