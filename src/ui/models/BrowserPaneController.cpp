@@ -920,6 +920,19 @@ void BrowserPaneController::load(const VfsUri& uri, bool recordHistory)
     // a slow mount would keep filling the pane after the user moved on.
     if (m_pending)
         m_pending->requestCancel();
+    // **And what was asked about that folder, here rather than when the next
+    // listing lands.** Calling the marks query off was left to
+    // refreshFolderMarks(), which runs when the new listing arrives -- so on a
+    // pool small enough that a drive gets one thread at a time, the new listing
+    // queued behind the query it was supposed to cancel and neither ever ran.
+    // A four-core machine has a pool of two and a limit of one per drive, which
+    // is every CI runner. Leaving a folder is the moment the answer stopped
+    // being wanted, and it does not depend on anything else starting. See
+    // MOLE-425 and ADR-0076.
+    if (m_folderActionsPending)
+        m_folderActionsPending->requestCancel();
+    if (m_driveActionsPending)
+        m_driveActionsPending->requestCancel();
 
     // Cleared before the mount is rebuilt below: rebuilding one announces itself,
     // and a pane that is still marked as waiting would answer that announcement by
@@ -1063,7 +1076,21 @@ void BrowserPaneController::load(const VfsUri& uri, bool recordHistory)
         // What the drive turned out to offer is what decides whether the folder
         // is worth a query at all, and the answer arrives after the listing has
         // already been asked for.
-        connect(probe, &Task::finished, this, [this] { refreshFolderMarks(); });
+        connect(probe, &Task::finished, this, [this] {
+            refreshFolderMarks();
+            // **And the row the cursor is already on.** refreshDriveActions()
+            // declines while the probe has not answered -- there is nothing to
+            // ask about yet -- and its comment says load() asks again when it
+            // does. It does not: the listing has already loaded by the time a
+            // probe comes back, so nothing re-asked and the menu for the row
+            // somebody was sitting on stayed empty until they moved the cursor.
+            //
+            // A race, and which way it fell depended on the machine: on a
+            // four-core runner the probe answers after the cursor is set, and
+            // four suites failed there while passing everywhere else. See
+            // MOLE-425.
+            refreshDriveActions();
+        });
         m_services.tasks->submit(probe);
     }
 }

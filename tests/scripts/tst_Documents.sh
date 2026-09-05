@@ -117,7 +117,12 @@ for name in $shown; do
 done
 for f in docs/guide/images/*; do
     name=$(basename "$f")
-    printf '%s\n' "$shown" | grep -qx "$name" \
+    # A here-string rather than a pipe into `grep -q`: grep exits on the first
+    # match, printf's next write lands on a closed pipe, and pipefail reports the
+    # pipeline as failed although the name was found. It answered "shown on no
+    # page" for a picture that is on a page, once, under load -- which is
+    # MOLE-417's measurement in this file's own new rule.
+    grep -qx "$name" <<<"$shown" \
         || echo "images/$name is kept and shown on no page" >> "$SHELLTEST_TMP/pictures"
 done
 

@@ -3082,6 +3082,12 @@ void TestWalkthrough::ctrlWClosesAPreviewTabWithTheTextFocused()
     // area takes the keyboard, and Ctrl+W is DeleteStartOfWord in Qt's
     // standard bindings, so the read-only editor claimed the key before the
     // window shortcut was consulted.
+    // Waited for: F3 makes the tab at once and the preview's QML arrives after
+    // it, so on a loaded machine this item is not there yet. Asking for it and
+    // asserting it is not null is a race that fell one way here and the other on
+    // a four-core runner. See MOLE-425.
+    QVERIFY2(m_harness->until([this] { return m_harness->item(QStringLiteral("previewText")) != nullptr; }),
+        "the preview's text area never arrived");
     QQuickItem* text = m_harness->item(QStringLiteral("previewText"));
     QVERIFY(text);
     text->forceActiveFocus();

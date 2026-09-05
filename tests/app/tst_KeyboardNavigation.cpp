@@ -650,8 +650,15 @@ void TestKeyboardNavigation::ctrlArrowsNavigateHistory()
     QVERIFY(waitFor([this, root] { return pane()->currentUri() == root; }, 5000));
 
     // A bare Up still moves the cursor rather than navigating.
+    //
+    // The listing first: `currentUri` is the folder the pane is *pointed at*,
+    // and the rows arrive after it. A cursor set into a listing that is still
+    // filling is a cursor the listing then resets, so this pressed Up from row 0
+    // and got row 0 -- on a loaded machine, where the rows had not landed yet,
+    // and never here. See MOLE-425.
+    QVERIFY(waitFor([this] { return !pane()->isLoading() && pane()->files()->rowCount() == 5; }, 5000));
     pane()->setCurrentIndex(2);
-    settle();
+    QVERIFY(waitFor([this] { return pane()->currentIndex() == 2; }, 5000));
     QVERIFY(pressKeyUntil(Qt::Key_Up, [&] { return pane()->currentIndex() == 1; }));
     QCOMPARE(pane()->currentIndex(), 1);
     QCOMPARE(pane()->currentUri(), root);
