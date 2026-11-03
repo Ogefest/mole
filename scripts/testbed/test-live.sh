@@ -77,6 +77,12 @@ export MOLE_TEST_WEBDAV_USER="$ACCOUNT" MOLE_TEST_WEBDAV_PASS="$PASSWORD"
 
 export MOLE_TEST_FTP_HOST="$ADDRESS" MOLE_TEST_FTP_PORT=21
 export MOLE_TEST_FTP_USER="$ACCOUNT" MOLE_TEST_FTP_PASS="$PASSWORD"
+# The second FTP account, whose login directory is its home rather than `/`: the
+# only place the addressing MOLE-349 fixed can be seen working. Same password,
+# named the way services.sh names it. See MOLE-421.
+FTP_HOME_ACCOUNT="${MOLE_TESTBED_FTP_HOME_ACCOUNT:-moleftphome}"
+export MOLE_TEST_FTP_HOME_USER="$FTP_HOME_ACCOUNT" MOLE_TEST_FTP_HOME_PASS="$PASSWORD"
+export MOLE_TEST_FTP_HOME_BASE="/home/$FTP_HOME_ACCOUNT/ftp"
 
 export MOLE_TEST_S3_ENDPOINT="http://$ADDRESS:$S3_PORT"
 export MOLE_TEST_S3_BUCKET="$S3_BUCKET" MOLE_TEST_S3_REGION="${MOLE_TEST_S3_REGION:-us-east-1}"

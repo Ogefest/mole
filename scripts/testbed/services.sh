@@ -46,6 +46,17 @@ CONTROL_PORT="${MOLE_TESTBED_CONTROL_PORT:-2022}"
 # account is not made and this step says so, because inventing a key here would
 # put a private key somewhere nobody agreed it should be.
 KEY_ACCOUNT="${MOLE_TESTBED_KEY_ACCOUNT:-molekey}"
+# The FTP account whose login directory is its home rather than `/`.
+#
+# **A second account, beside the chrooted one rather than instead of it.** The
+# chrooted account logs in at `/`, which is the one case in which FTP's two
+# addressing schemes coincide -- a url's path taken relative to the login
+# directory, and a QUOTE command's taken from the root. MOLE-349 fixed what goes
+# wrong when they do not, and on a machine that only had the chrooted account
+# nothing could show that it had. This one logs in at /home/<it>, is not
+# chrooted, and takes the same password. Every other live FTP case goes on using
+# the chrooted account exactly as before. See MOLE-421.
+FTP_HOME_ACCOUNT="${MOLE_TESTBED_FTP_HOME_ACCOUNT:-moleftphome}"
 KEY_PUBLIC="${MOLE_TESTBED_SFTP_KEY_PUB:-}"
 S3_PORT="${MOLE_TESTBED_S3_PORT:-9000}"
 # A bucket to aim at. Invented, like every other name in this repository.
@@ -455,8 +466,23 @@ require_ssl_reuse=NO
 # Reproduced with plain curl and no Mole involved, so it is the server rather
 # than the client under test.
 ssl_ciphers=ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:HIGH
+# Everybody is chrooted at local_root except whoever the list names, and the list
+# names one account, which logs in at its own home -- see FTP_HOME_ACCOUNT.
+chroot_list_enable=YES
+chroot_list_file=/etc/vsftpd.chroot_list
+user_config_dir=/etc/vsftpd/users
 CONF
 mkdir -p /var/run/vsftpd/empty
+
+# The account that is not chrooted, made and kept in step with the password the
+# rest of the machine uses. A shell, because vsftpd's PAM stack refuses a login
+# whose shell is not in /etc/shells.
+id -u $FTP_HOME_ACCOUNT >/dev/null 2>&1 || useradd -m -s /bin/bash $FTP_HOME_ACCOUNT
+printf '%s:%s\n' $FTP_HOME_ACCOUNT '$PASSWORD' | chpasswd
+install -d -m 0755 -o $FTP_HOME_ACCOUNT -g $FTP_HOME_ACCOUNT /home/$FTP_HOME_ACCOUNT/ftp
+printf '%s\n' $FTP_HOME_ACCOUNT > /etc/vsftpd.chroot_list
+mkdir -p /etc/vsftpd/users
+printf 'local_root=/home/%s\n' $FTP_HOME_ACCOUNT > /etc/vsftpd/users/$FTP_HOME_ACCOUNT
 
 # The cipher list above does not hold TLS 1.3 back on its own -- OpenSSL keeps
 # its 1.3 suites in a separate list and offers them whatever ssl_ciphers says
@@ -508,6 +534,7 @@ systemctl is-active --quiet vsftpd || { echo "vsftpd did not stay up:"; journalc
 REMOTE
 note "ftps://$ADDRESS/ (root /srv/moledata/ftp, passive 30000-30020)"
 note "  and /Shared inside it, which is where tst_FtpFileSystem works by default"
+note "$FTP_HOME_ACCOUNT: not chrooted, logs in at /home/$FTP_HOME_ACCOUNT, works in /home/$FTP_HOME_ACCOUNT/ftp"
 
 # --- S3 ----------------------------------------------------------------------
 #

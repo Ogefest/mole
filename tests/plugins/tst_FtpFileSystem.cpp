@@ -4,6 +4,7 @@
 #include "support/MoleTestMain.h"
 
 #include <QHash>
+#include <QScopeGuard>
 #include <QUrl>
 
 #include <algorithm>
@@ -161,6 +162,43 @@ public:
         return code == CURLE_OK ? body : QByteArray();
     }
 
+    /// The names in `dir`, asked for by its absolute path.
+    ///
+    /// `%2F` rather than a leading slash, which is RFC 1738's way of saying the
+    /// path starts at the root: a plain one is a series of CWDs from the login
+    /// directory, which is the scheme this helper is here to step around. Only
+    /// the case for an account not rooted at `/` needs it; everywhere else the
+    /// two schemes agree. See MOLE-421.
+    QStringList namesAtAbsolute(const QString& dir) const
+    {
+        QByteArray listing;
+        CURL* handle = prepare();
+        if (!handle)
+            return {};
+        QString relative = dir;
+        while (relative.startsWith(QLatin1Char('/')))
+            relative.remove(0, 1);
+        QByteArray url = "ftp://" + m_account.host.toUtf8() + ':' + QByteArray::number(m_account.port);
+        url += "/%2F" + QUrl::toPercentEncoding(relative, "/");
+        if (!url.endsWith('/'))
+            url += '/';
+        curl_easy_setopt(handle, CURLOPT_URL, url.constData());
+        curl_easy_setopt(handle, CURLOPT_DIRLISTONLY, 1L);
+        curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, collect);
+        curl_easy_setopt(handle, CURLOPT_WRITEDATA, &listing);
+        const bool listed = curl_easy_perform(handle) == CURLE_OK;
+        curl_easy_cleanup(handle);
+        if (!listed)
+            return {};
+        QStringList names;
+        for (const QString& line : QString::fromUtf8(listing).split(QLatin1Char('\n'), Qt::SkipEmptyParts)) {
+            const QString name = line.trimmed();
+            // Some servers answer NLST with the path they were asked about.
+            names.append(name.mid(name.lastIndexOf(QLatin1Char('/')) + 1));
+        }
+        return names;
+    }
+
     void removeTree(const QString& path) const
     {
         QByteArray listing;
@@ -298,6 +336,7 @@ private slots:
     void rangedFetchDeliversExactlyTheSpanItAsksFor();
     void aFileOverTheThresholdReadsBackByteForByte();
     void itSatisfiesTheConformanceSuite();
+    void anAccountNotRootedAtSlashReachesTheFileItsListingNamed();
 
 private:
     /// Whether this run may talk to a server, decided once.
@@ -778,6 +817,100 @@ void TestFtpFileSystem::itSatisfiesTheConformanceSuite()
     runFileSystemConformance(context);
 
     raw.removeTree(base);
+}
+
+/// **On an account whose login directory is not `/`, a path reaches the file its
+/// listing named.**
+///
+/// libcurl reads an FTP url's path as CWDs *from the login directory*, and the
+/// QUOTE commands beside it -- MKD, DELE, RMD, RNFR/RNTO -- carry the path from
+/// the root. On an account rooted at `/` the two are the same, which is every
+/// account the live environment had, so the suite passed whether the backend
+/// mixed them or not. Here they differ: the account logs in at its home, the
+/// listing names /home/<it>/ftp/..., and before MOLE-349 a delete or the closing
+/// rename of an upload went for a path under `/` instead. That made every
+/// upload fail and be removed as litter.
+///
+/// So every operation is the backend's own, and the check that the file is where
+/// the listing said is made independently, by the absolute path, over a
+/// connection that does not share the backend's idea of where it is. Skipped,
+/// visibly, where the account is not configured. See MOLE-421.
+void TestFtpFileSystem::anAccountNotRootedAtSlashReachesTheFileItsListingNamed()
+{
+    MOLE_FTP_SERVER_OR_STOP();
+    Account account = accountFromEnvironment();
+    account.user = QString::fromLocal8Bit(qgetenv("MOLE_TEST_FTP_HOME_USER"));
+    account.password = QString::fromLocal8Bit(qgetenv("MOLE_TEST_FTP_HOME_PASS"));
+    account.base = QString::fromLocal8Bit(qgetenv("MOLE_TEST_FTP_HOME_BASE"));
+    if (account.user.isEmpty() || account.base.isEmpty()) {
+        QSKIP("No FTP account rooted somewhere other than / in the environment; set MOLE_TEST_FTP_HOME_USER, "
+              "MOLE_TEST_FTP_HOME_PASS and MOLE_TEST_FTP_HOME_BASE. scripts/testbed/services.sh makes one.");
+    }
+    QVERIFY2(account.base.startsWith(QLatin1Char('/')) && account.base != QLatin1String("/"),
+        "MOLE_TEST_FTP_HOME_BASE has to be an absolute path that is not the root, or this asks nothing");
+
+    const RawFtp raw(account);
+    const QString name = QStringLiteral("mole-ftp-home-%1").arg(QCoreApplication::applicationPid());
+    const QString dir = account.base + QLatin1Char('/') + name;
+
+    FtpSettings settings;
+    settings.host = account.host;
+    settings.port = account.port;
+    settings.username = account.user;
+    settings.password = account.password;
+    settings.remoteRoot = account.base;
+    settings.security = account.requireTls ? FtpSettings::Security::Require : FtpSettings::Security::None;
+    settings.verifyTls = !account.ignoreSelfSignedCert;
+    auto fs = std::make_shared<FtpFileSystem>(QStringLiteral("ftp"), settings);
+
+    const VfsUri folder = VfsUri::fromString(QStringLiteral("ftp://server/") + name);
+    const auto cleanup = qScopeGuard([&] { fs->remove(folder, true); });
+
+    // Made, written, listed, read, renamed, deleted -- every one a request whose
+    // path the backend builds, and the half of them that are QUOTE commands are
+    // the half that went to the wrong place.
+    const Result<void> made = fs->makeDirectory(folder);
+    QVERIFY2(made.ok(), qPrintable(made.error().message));
+
+    const QByteArray payload("written by an account that does not log in at the root\n");
+    {
+        Result<std::unique_ptr<QIODevice>> opened = fs->openWrite(folder.child(QStringLiteral("notes.txt")));
+        QVERIFY2(opened.ok(), qPrintable(opened.error().message));
+        QCOMPARE(opened.value()->write(payload), qint64(payload.size()));
+        const Result<void> closed = closeAndReport(*opened.value());
+        QVERIFY2(closed.ok(), qPrintable(closed.error().message));
+    }
+
+    Result<FileEntryList> listed = fs->list(folder, CancelToken {});
+    QVERIFY2(listed.ok(), qPrintable(listed.error().message));
+    const auto found = std::find_if(listed.value().cbegin(), listed.value().cend(),
+        [](const FileEntry& entry) { return entry.name == QLatin1String("notes.txt"); });
+    QVERIFY2(found != listed.value().cend(), "the file just written is not in the listing");
+
+    Result<std::unique_ptr<QIODevice>> back = fs->openRead(found->uri);
+    QVERIFY2(back.ok(), qPrintable(back.error().message));
+    QCOMPARE(back.value()->readAll(), payload);
+    back.value().reset();
+
+    // Where it really is, asked by the absolute path and not through the backend.
+    QStringList there = raw.namesAtAbsolute(dir);
+    QVERIFY2(there.contains(QStringLiteral("notes.txt")),
+        qPrintable(QStringLiteral("%1 holds %2").arg(dir, there.join(QStringLiteral(", ")))));
+
+    const Result<void> renamed
+        = fs->rename(folder.child(QStringLiteral("notes.txt")), folder.child(QStringLiteral("renamed.txt")));
+    QVERIFY2(renamed.ok(), qPrintable(renamed.error().message));
+    there = raw.namesAtAbsolute(dir);
+    QVERIFY2(there.contains(QStringLiteral("renamed.txt")) && !there.contains(QStringLiteral("notes.txt")),
+        qPrintable(
+            QStringLiteral("after the rename %1 holds %2").arg(dir, there.join(QStringLiteral(", ")))));
+
+    const Result<void> removed = fs->remove(folder.child(QStringLiteral("renamed.txt")), false);
+    QVERIFY2(removed.ok(), qPrintable(removed.error().message));
+    there = raw.namesAtAbsolute(dir);
+    QVERIFY2(!there.contains(QStringLiteral("renamed.txt")),
+        qPrintable(
+            QStringLiteral("the delete left %1 holding %2").arg(dir, there.join(QStringLiteral(", ")))));
 }
 
 MOLE_TEST_MAIN(TestFtpFileSystem)

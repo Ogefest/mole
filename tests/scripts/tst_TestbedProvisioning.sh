@@ -175,6 +175,37 @@ reached_before "sshd -t -f /etc/ssh/sshd_config" "systemctl restart ssh"
 never_reached_matching "BEGIN [A-Z ]*PRIVATE KEY"
 unset MOLE_TESTBED_SFTP_KEY_PUB
 
+# --- the FTP account that is not rooted at / ----------------------------------
+
+begin "a second FTP account logs in at its home, and the chrooted one is unchanged"
+# Every FTP account the machine had was chrooted, so its login directory was `/`:
+# the one case in which FTP's two addressing schemes agree, and the case in which
+# the fault MOLE-349 fixed cannot appear. The second account is what lets the live
+# suite ask the question at all. See MOLE-421.
+stub_ssh
+export MOLE_TESTBED_NFS_CLIENTS=203.0.113.7
+run_script scripts/testbed/services.sh
+exited 0
+reached "useradd -m -s /bin/bash moleftphome"
+reached "install -d -m 0755 -o moleftphome -g moleftphome /home/moleftphome/ftp"
+# Not chrooted, and at its home rather than at the share everybody else lands in.
+reached "chroot_list_enable=YES"
+reached "> /etc/vsftpd.chroot_list"
+reached "local_root=/home/%s"
+reached "/etc/vsftpd/users/moleftphome"
+# It takes the machine's password, sent to chpasswd on the far side rather than
+# typed into anything here.
+reached "| chpasswd"
+# The chrooted account every other live FTP case uses is exactly as it was.
+reached "chroot_local_user=YES"
+reached "local_root=/srv/moledata/ftp"
+never_reached "userdel moletest"
+# And the list names the new account only: a chrooted account that turns up in it
+# stops being chrooted, which is the setting every other case depends on.
+never_reached " moletest > /etc/vsftpd.chroot_list"
+said "moleftphome: not chrooted, logs in at /home/moleftphome"
+unset MOLE_TESTBED_NFS_CLIENTS
+
 # --- and it refuses to run on nothing ----------------------------------------
 
 begin "without an address the script provisions nothing and says why"
