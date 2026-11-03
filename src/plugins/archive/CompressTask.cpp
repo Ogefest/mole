@@ -196,7 +196,14 @@ bool CompressTask::plan(QList<Item>& items)
         items.append(itemFor(entry, source, entry.name + QLatin1Char('/')));
 
         const QString base = source.path();
-        DirectoryWalker walker(m_request.sourceFileSystem);
+        // Hidden entries go in: packing a folder means all of it, and a pane that
+        // hides dotfiles is a view of the folder rather than a statement about
+        // what an archive of it is. Said here rather than inherited from the
+        // walker's default, so changing that default cannot quietly change this.
+        // See MOLE-439.
+        DirectoryWalker::Options walk;
+        walk.includeHidden = true;
+        DirectoryWalker walker(m_request.sourceFileSystem, walk);
         walker.walk(source, cancelToken(), [&](const FileEntry& found, int) {
             QString relative = found.uri.path().mid(base.size());
             if (relative.startsWith(QLatin1Char('/')))

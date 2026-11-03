@@ -52,6 +52,9 @@ private slots:
     void eachEntryKeepsItsModificationTimeAndMode_data();
     void eachEntryKeepsItsModificationTimeAndMode();
     void aDriveThatGivesNoTimeIsPackedAsNowNotAsZero();
+    void hiddenFilesInsideAPackedFolderGoIn_data();
+    void hiddenFilesInsideAPackedFolderGoIn();
+    void aFileTheDriveMarksHiddenGoesInToo();
 
 private:
     struct Header
@@ -278,6 +281,78 @@ void TestCompressTask::aDriveThatGivesNoTimeIsPackedAsNowNotAsZero()
         // No mode from the drive keeps the one there always was.
         QCOMPARE(it->mode, it.key().endsWith(QLatin1Char('/')) ? 0755 : 0644);
     }
+}
+
+void TestCompressTask::hiddenFilesInsideAPackedFolderGoIn_data()
+{
+    QTest::addColumn<int>("format");
+    QTest::addColumn<QString>("name");
+    QTest::newRow("zip") << int(CompressTask::Format::Zip) << "project.zip";
+    QTest::newRow("tar.gz") << int(CompressTask::Format::TarGz) << "project.tar.gz";
+    QTest::newRow("tar.xz") << int(CompressTask::Format::TarXz) << "project.tar.xz";
+}
+
+void TestCompressTask::hiddenFilesInsideAPackedFolderGoIn()
+{
+    // **Packing a folder packs all of it.** A pane that hides dotfiles is a view
+    // of the folder, not a statement about what an archive of it means, and an
+    // archive of a project that quietly left out .env and .git is found out the
+    // day somebody unpacks it somewhere else and the thing does not work. It held
+    // only because the walker's default happened to include hidden entries --
+    // nothing had decided it for this caller, and nothing tested it. See MOLE-439.
+    QFETCH(int, format);
+    QFETCH(QString, name);
+
+    QVERIFY(m_tree->writeFile(QStringLiteral("project/.env"), QByteArray("SECRET=1")));
+    QVERIFY(m_tree->writeFile(QStringLiteral("project/.git/HEAD"), QByteArray("ref: refs/heads/main")));
+    QVERIFY(m_tree->writeFile(QStringLiteral("project/main.c"), QByteArray("int main() {}")));
+
+    CompressTask* task = pack({ QStringLiteral("project") }, name, static_cast<CompressTask::Format>(format));
+    QVERIFY(task);
+    QCOMPARE(task->state(), Task::State::Succeeded);
+
+    const QStringList inside = contentsOf(name);
+    for (const QString& expected : { QStringLiteral("/project/.env"), QStringLiteral("/project/.git"),
+             QStringLiteral("/project/.git/HEAD"), QStringLiteral("/project/main.c") }) {
+        QVERIFY2(inside.contains(expected),
+            qPrintable(
+                QStringLiteral("%1 is not in the archive: %2").arg(expected, inside.join(QLatin1Char(' ')))));
+    }
+}
+
+void TestCompressTask::aFileTheDriveMarksHiddenGoesInToo()
+{
+    // The same, for a file hidden by the drive's flag rather than by its name --
+    // which is what a Windows volume's hidden attribute is, and what makes this
+    // case about the flag and not about the leading dot.
+    auto drive = std::make_shared<MemoryFileSystem>();
+    drive->addFile(QStringLiteral("/project/desktop.ini"), QByteArray("[.ShellClassInfo]"));
+    drive->addFile(QStringLiteral("/project/notes.txt"), QByteArray("visible"));
+    drive->markHidden(QStringLiteral("/project/desktop.ini"));
+    const Result<FileEntryList> listed
+        = drive->list(VfsUri::fromString(QStringLiteral("mem:///project")), CancelToken {});
+    QVERIFY(listed.ok());
+    QVERIFY2(std::any_of(listed.value().cbegin(), listed.value().cend(),
+                 [](const FileEntry& entry) {
+                     return entry.name == QLatin1String("desktop.ini") && entry.isHidden;
+                 }),
+        "the fixture has to mark the file hidden, or this asks nothing");
+
+    CompressTask::Request request;
+    request.sourceFileSystem = drive;
+    request.targetFileSystem = m_fs;
+    request.sources.append(VfsUri::fromString(QStringLiteral("mem:///project")));
+    request.target = m_tree->rootUri().child(QStringLiteral("flagged.zip"));
+    auto* task = new CompressTask(request);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task, 30000));
+    QCOMPARE(task->state(), Task::State::Succeeded);
+
+    const QStringList inside = contentsOf(QStringLiteral("flagged.zip"));
+    QVERIFY2(
+        inside.contains(QStringLiteral("/project/desktop.ini")), qPrintable(inside.join(QLatin1Char(' '))));
+    QVERIFY2(
+        inside.contains(QStringLiteral("/project/notes.txt")), qPrintable(inside.join(QLatin1Char(' '))));
 }
 
 void TestCompressTask::packsFilesAndFoldersThatComeBackOut_data()

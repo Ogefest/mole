@@ -72,6 +72,10 @@ public:
     /// files. Neither changes what the entry contains: a shortcut really is an
     /// ordinary file, and what a link points at is a question nothing asks yet.
     void markAsSymlink(const QString& path);
+    /// Hidden by the drive's say-so rather than by a leading dot: what a Windows
+    /// volume's hidden attribute is, and what a case asks for when it is about
+    /// the flag and not the name. See MOLE-439.
+    void markHidden(const QString& path);
     /// Puts a symbolic link at `path` pointing at `target`, which is stored as
     /// given: a link to nothing is a link, and the fixtures need one.
     void addSymlink(const QString& path, const QString& target);
@@ -189,6 +193,7 @@ private:
         // a braced list and these are set afterwards rather than at creation.
         bool isSymlink = false;
         bool isShortcut = false;
+        bool hiddenByAttribute = false;
         /// What a link points at, stored as it was given. Only ever read for a
         /// node that is one.
         QString linkTarget;

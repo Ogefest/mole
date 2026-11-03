@@ -115,6 +115,14 @@ void MemoryFileSystem::setModified(const QString& path, const QDateTime& when)
         node->modified = when;
 }
 
+void MemoryFileSystem::markHidden(const QString& path)
+{
+    QMutexLocker lock(&m_mutex);
+    const auto node = m_nodes.find(normalise(path));
+    if (node != m_nodes.end())
+        node->hiddenByAttribute = true;
+}
+
 void MemoryFileSystem::markAsSymlink(const QString& path)
 {
     QMutexLocker lock(&m_mutex);
@@ -301,7 +309,7 @@ Result<FileEntryList> MemoryFileSystem::list(const VfsUri& dir, const CancelToke
         entry.isDir = it->isDir;
         entry.isSymlink = it->isSymlink;
         entry.isShortcut = it->isShortcut;
-        entry.isHidden = looksHidden(entry.name);
+        entry.isHidden = looksHidden(entry.name) || it->hiddenByAttribute;
         entry.isWritable = true;
         entry.size = it->isDir ? 0 : it->contents.size();
         entry.modified = it->modified;
@@ -351,6 +359,7 @@ Result<FileEntry> MemoryFileSystem::stat(const VfsUri& target)
     entry.isDir = node->isDir;
     entry.isSymlink = node->isSymlink;
     entry.isShortcut = node->isShortcut;
+    entry.isHidden = looksHidden(entry.name) || node->hiddenByAttribute;
     entry.isWritable = true;
     entry.size = node->isDir ? 0 : node->contents.size();
     entry.modified = node->modified;
