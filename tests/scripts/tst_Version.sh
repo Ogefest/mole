@@ -54,7 +54,9 @@ grep -q 'QStringLiteral(MOLE_VERSION)' src/app/main.cpp \
     || fail "the application does not take its version from the build"
 
 begin "the Makefile reads the version rather than spelling it out"
-grep -qE '^VERSION := [$][(]shell .*CMakeLists[.]txt[)]$' Makefile \
+# REPO_VERSION rather than VERSION: VERSION is what `make release` is asked to cut,
+# and under the same name an exported one lost to this line. See MOLE-434.
+grep -qE '^REPO_VERSION := [$][(]shell .*CMakeLists[.]txt[)]$' Makefile \
     || fail "the Makefile does not read the version out of CMakeLists.txt"
 # This version, and not any version: a path to an instrumented Qt legitimately
 # carries Qt's own, and a rule that could not tell them apart would be a rule

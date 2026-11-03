@@ -12,7 +12,13 @@ DESTDIR ?=
 # well. The artefacts a release produces are named after it -- mole-<version>-x86_64 --
 # and a third copy would defeat the point of MOLE-117. One `sed` over one line, so
 # a script can rewrite that line and everything follows.
-VERSION := $(shell sed -n 's/^ *VERSION \([0-9][0-9.]*\)$$/\1/p' CMakeLists.txt)
+#
+# **Not called VERSION.** VERSION is the number somebody asks `make release` to cut,
+# and a Makefile assignment beats the environment: under that name, an exported
+# VERSION=0.2.0 was replaced by this line's answer before scripts/release.sh saw
+# it, and the script reported the current version as the one asked for. Only the
+# command line got through, which is what made the two look like one. See MOLE-434.
+REPO_VERSION := $(shell sed -n 's/^ *VERSION \([0-9][0-9.]*\)$$/\1/p' CMakeLists.txt)
 
 # Every target here is a name rather than a file. Three were missing -- asan,
 # run-gdb and screenshots-check -- so a file of that name in the tree would have
@@ -26,8 +32,8 @@ all: build
 ##          Read from project(VERSION) in CMakeLists.txt, which is the only place
 ##          it is written down; `make release` rewrites that line and nothing else.
 version:
-	@test -n "$(VERSION)" || { echo "no VERSION in CMakeLists.txt"; exit 1; }
-	@echo "$(VERSION)"
+	@test -n "$(REPO_VERSION)" || { echo "no VERSION in CMakeLists.txt"; exit 1; }
+	@echo "$(REPO_VERSION)"
 
 ## build: configure if needed, then compile (default)
 build: configure

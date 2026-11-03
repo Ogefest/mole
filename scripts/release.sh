@@ -12,7 +12,11 @@
 # this must not be the first time anybody sees its output. It stops at the first
 # step that fails and puts the tree back as it was.
 #
-# Overrides, all through the environment so `make release FOO=1` reaches them:
+# Overrides, all through the environment, and exported or on make's command line
+# is the same thing: `export VERSION=x; make release` and `make release VERSION=x`
+# both reach this. That held for only one of the two until MOLE-434 -- the
+# Makefile's own variable for the current version was called VERSION, and an
+# exported one lost to it. This script reads the current version for itself.
 #
 #   DRY=1              everything except the version, the marker, the manifest,
 #                      the commit, the tag and the push -- and it prints what it

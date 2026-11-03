@@ -63,10 +63,10 @@ EOF
     # reads the same line the real Makefile reads, because the script rewrites that
     # line and then asks again.
     cat > "$repo/Makefile" <<'EOF'
-VERSION := $(shell sed -n 's/^ *VERSION \([0-9][0-9.]*\)$$/\1/p' CMakeLists.txt)
+REPO_VERSION := $(shell sed -n 's/^ *VERSION \([0-9][0-9.]*\)$$/\1/p' CMakeLists.txt)
 
 version:
-	@echo "$(VERSION)"
+	@echo "$(REPO_VERSION)"
 
 test:
 	@test ! -f fail-the-suite || { echo "a case failed"; exit 1; }
@@ -618,5 +618,61 @@ cut_release "$mine" DRY=1 VERSION=0.5.0
     fail "a version above the current one was refused"
     sed 's/^/    /' "$SCRIPT_OUTPUT"
 }
+
+begin "an override reaches the script the same way exported or on the command line"
+# **Through the real Makefile, because that is where it went missing.** Every other
+# case here drives the script directly, which is the half that was right. The
+# Makefile assigned its own VERSION -- the version the repository is at -- and a
+# Makefile assignment beats the environment, so `export VERSION=0.2.0; make release`
+# handed the script the *current* version, and the script reported it as "asked
+# for with VERSION=". Saved on 2026-09-05 only because that version happened to be
+# tagged already; one release later it would have cut it. A command-line VERSION=
+# did work, which is what made the two look like one. The same is asked of MAJOR,
+# MINOR and DRY, because a DRY that goes missing turns a rehearsal into a release.
+# See MOLE-434.
+#
+# The recipe is the real one; the script it runs is a stub that says what reached it.
+stage="$SHELLTEST_TMP/makefile-only"
+rm -rf "$stage" && mkdir -p "$stage/scripts"
+printf 'project(Mole\n    VERSION 0.4.0\n    LANGUAGES CXX)\n' > "$stage/CMakeLists.txt"
+printf '%s\n' '#!/usr/bin/env bash' \
+    'echo "reached: VERSION=[${VERSION:-}] MAJOR=[${MAJOR:-}] MINOR=[${MINOR:-}] DRY=[${DRY:-}]"' \
+    > "$stage/scripts/release.sh"
+chmod +x "$stage/scripts/release.sh"
+# Nothing from whatever ran this suite: the release gate runs it from inside
+# `make release`, with its own overrides and its own MAKEFLAGS in the environment.
+real_make() {
+    env -u VERSION -u MAJOR -u MINOR -u DRY -u MAKEFLAGS -u MFLAGS -u MAKELEVEL \
+        "$@" make --no-print-directory -s -f "$MOLE_SOURCE_DIR/Makefile" -C "$stage" "${MAKE_ARGS[@]}" \
+        > "$SCRIPT_OUTPUT" 2>&1
+    SCRIPT_STATUS=$?
+}
+
+MAKE_ARGS=(release)
+real_make VERSION=0.6.0
+said "reached: VERSION=[0.6.0]"
+MAKE_ARGS=(release VERSION=0.6.0)
+real_make
+said "reached: VERSION=[0.6.0]"
+
+# Nothing chosen is nothing: the script reads the current version itself, and a
+# VERSION it did not ask for is a VERSION it reports as the operator's choice.
+MAKE_ARGS=(release)
+real_make
+said "reached: VERSION=[] MAJOR=[] MINOR=[] DRY=[]"
+
+real_make MAJOR=1 MINOR=1 DRY=1
+said "MAJOR=[1] MINOR=[1] DRY=[1]"
+MAKE_ARGS=(release MAJOR=1 MINOR=1 DRY=1)
+real_make
+said "MAJOR=[1] MINOR=[1] DRY=[1]"
+
+# And `make version` still says where the repository is, whatever is exported.
+MAKE_ARGS=(version)
+real_make VERSION=0.6.0
+said "0.4.0"
+MAKE_ARGS=(version VERSION=0.6.0)
+real_make
+said "0.4.0"
 
 done_testing
