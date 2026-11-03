@@ -88,8 +88,38 @@ Item {
                 spacing: 2
                 model: controller ? controller.volumes : []
 
+                // Handed to every row from here, where they are evaluated in this
+                // view's own scope. See the row below for why a row may not look
+                // them up by name.
+                readonly property var rowController: view.controller
+                readonly property var repeatChoices: {
+                    var out = [{ seconds: 0, text: "Repeat: never" }]
+                    var presets = view.controller ? view.controller.schedulePresets() : []
+                    for (var i = 0; i < presets.length; ++i)
+                        out.push({ seconds: presets[i].seconds,
+                                   text: "Repeat: " + presets[i].label.toLowerCase() })
+                    return out
+                }
+
+                // **Everything a row needs from outside itself, it gets through
+                // ListView.view and carries as a property of its own.** A name
+                // inside a row is looked up in the row's own context first and
+                // then in the one the ListView gives each delegate -- and on Qt
+                // 6.11 that one's context object is the row's model entry
+                // (QQmlDMListAccessorData), which answers *every* name with
+                // undefined while the row is being made. Not only `controller`:
+                // `view`, `App`, `JSON` and `console` all came back undefined on
+                // the picker's first evaluation, so its list was "never" alone, no
+                // dependency on the real controller was recorded, and nothing ever
+                // evaluated it again. Qt 6.4 asked the outer scopes and was right.
+                // `controller` declared here is found before that context is ever
+                // reached, so every `controller` in the row means this one. See
+                // MOLE-412.
                 delegate: Rectangle {
+                    id: row
                     required property var modelData
+                    readonly property var controller: ListView.view ? ListView.view.rowController : null
+                    readonly property var repeatChoices: ListView.view ? ListView.view.repeatChoices : []
                     width: ListView.view.width
                     implicitHeight: rowBody.implicitHeight + 14
                     radius: 4
@@ -209,24 +239,20 @@ Item {
                                 visible: !modelData.running
                                 font.pixelSize: 11
                                 textRole: "text"
-                                model: {
-                                    var out = [{ seconds: 0, text: "Repeat: never" }]
-                                    var presets = controller ? controller.schedulePresets() : []
-                                    for (var i = 0; i < presets.length; ++i)
-                                        out.push({ seconds: presets[i].seconds,
-                                                   text: "Repeat: " + presets[i].label.toLowerCase() })
-                                    return out
-                                }
+                                // Through the row, never by a bare name -- see the
+                                // delegate above for what a bare name found here.
+                                model: row.repeatChoices
                                 currentIndex: {
-                                    var on = modelData.scheduled ? modelData.scheduleSeconds : 0
+                                    var on = row.modelData.scheduled ? row.modelData.scheduleSeconds : 0
                                     for (var i = 0; i < model.length; ++i) {
                                         if (model[i].seconds === on)
                                             return i
                                     }
                                     return 0
                                 }
-                                onActivated: controller.setSchedule(modelData.id,
-                                                                    model[currentIndex].seconds)
+                                onActivated: if (row.controller)
+                                                 row.controller.setSchedule(row.modelData.id,
+                                                                            model[currentIndex].seconds)
                             }
 
                             Item { Layout.fillWidth: !modelData.running }
