@@ -477,6 +477,14 @@ Result<std::unique_ptr<QIODevice>> WebdavFileSystem::openRead(
         const net::Response answer = send(head, cancel);
         if (answer.code == CURLE_OK && answer.httpOk()) {
             validator = answer.header("etag");
+            // A weak tag is no validator for If-Match, which compares strongly:
+            // `W/"..."` matches nothing and every span comes back 412, read as
+            // "the file changed". Apache gives one to any file modified within
+            // the last second -- every file somebody has just written. Dropped,
+            // so the read checks the file before each span instead, as it does
+            // where the server gives no tag at all. See MOLE-413.
+            if (validator.startsWith("W/"))
+                validator.clear();
             if (length < 0) {
                 bool read = false;
                 const qint64 said = QString::fromUtf8(answer.header("content-length")).toLongLong(&read);

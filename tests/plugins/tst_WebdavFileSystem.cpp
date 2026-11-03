@@ -153,6 +153,7 @@ private slots:
     void itSatisfiesTheConformanceSuite();
     void aLargeFileGoesUpWholeThroughAChunkedPut();
     void aLargeFileIsStreamedInRangesRatherThanDownloadedWhole();
+    void aWeakEtagIsNotSentAsAPrecondition();
     void aStagedWriteTooBigToBufferAlsoArrives();
 };
 
@@ -606,6 +607,61 @@ void TestWebdavFileSystem::itSatisfiesTheConformanceSuite()
 /// be read at all, and a preview of a large file downloaded all of it. The write
 /// side has been streamed since MOLE-34; this is the other direction.
 /// See MOLE-370.
+/// **A weak ETag is not a validator `If-Match` can use.**
+///
+/// RFC 9110 compares If-Match strongly, so a weak tag -- `W/"..."` -- matches
+/// nothing, and the server answers 412 to every span. Apache hands out exactly
+/// that for a file modified within the last second, which is every file somebody
+/// has just written. Until MOLE-413 the HEAD that fetches the tag never finished
+/// against a real server, so no tag was ever sent and this never showed. Once it
+/// did, reading back a large file that had just been uploaded failed on its first
+/// span as "the file changed while it was being read". Found by the live tier,
+/// held here by a server that does what Apache does.
+void TestWebdavFileSystem::aWeakEtagIsNotSentAsAPrecondition()
+{
+    constexpr qint64 kBig = 512LL * 1024 * 1024;
+    const QByteArray filler(64 * 1024, 'x');
+
+    ScriptedHttpServer server([&filler](const ScriptedHttpServer::Request& request) {
+        ScriptedHttpServer::Reply reply;
+        if (request.method == "HEAD") {
+            reply.claimedLength = kBig;
+            reply.headers.append("ETag: W/\"11-65f5a56ce5146\"");
+            return reply;
+        }
+        // What Apache does with a weak tag in If-Match: it never matches.
+        if (!request.header("If-Match").isEmpty()) {
+            reply.status = 412;
+            reply.reason = "Precondition Failed";
+            return reply;
+        }
+        const QByteArray range = request.header("Range");
+        if (request.method == "GET" && !range.isEmpty()) {
+            reply.status = 206;
+            reply.reason = "Partial Content";
+            reply.body = filler;
+            return reply;
+        }
+        return reply;
+    });
+    QVERIFY2(server.start(), "the scripted server could not take a port");
+
+    auto fileSystem = std::make_shared<WebdavFileSystem>(QStringLiteral("webdav"), against(server));
+    Result<std::unique_ptr<QIODevice>> opened
+        = fileSystem->openRead(VfsUri(QStringLiteral("webdav"), QString(), QStringLiteral("/fresh.tar")));
+    QVERIFY2(opened.ok(), qPrintable(opened.error().message));
+
+    QByteArray buffer(4096, Qt::Uninitialized);
+    const qint64 got = opened.value()->read(buffer.data(), buffer.size());
+    QVERIFY2(got > 0, qPrintable(QStringLiteral("nothing came back: %1").arg(opened.value()->errorString())));
+    opened.value().reset();
+
+    for (const ScriptedHttpServer::Request& asked : server.received()) {
+        QVERIFY2(!asked.header("If-Match").startsWith("W/"),
+            "a weak ETag was sent as If-Match, which no server can ever satisfy");
+    }
+}
+
 void TestWebdavFileSystem::aLargeFileIsStreamedInRangesRatherThanDownloadedWhole()
 {
     constexpr qint64 kBig = 512LL * 1024 * 1024;
