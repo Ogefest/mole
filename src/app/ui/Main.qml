@@ -103,7 +103,20 @@ ApplicationWindow {
             view.focusActivePane()
     }
 
-    onActiveChanged: if (active) Qt.callLater(focusCurrentTab)
+    // And what the current tab shows, which may have changed while the window was
+    // away: a build, a download, another machine writing into the share. Only the
+    // tab on screen; the others answer whenever they are next looked at. See
+    // MOLE-437.
+    function refreshCurrentTab() {
+        var view = root.currentTabItem()
+        if (view && view.refreshWhatIsStale)
+            view.refreshWhatIsStale()
+    }
+
+    onActiveChanged: if (active) {
+        Qt.callLater(focusCurrentTab)
+        Qt.callLater(refreshCurrentTab)
+    }
 
     // `--debug-focus` (or `--debug-keys`) has the window report what holds the
     // keyboard, once a second. Focus problems depend on the window manager, so

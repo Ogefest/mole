@@ -25,6 +25,10 @@
 #include <QSet>
 #include <QUrl>
 
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+
 namespace mole {
 
 BrowserPaneController::BrowserPaneController(PluginServices services, QObject* parent)
@@ -35,6 +39,13 @@ BrowserPaneController::BrowserPaneController(PluginServices services, QObject* p
     , m_statusFloor(new QTimer(this))
     , m_gitWatcher(new QFileSystemWatcher(this))
 {
+    // Monotonic, because what is measured is how long the window was away and a
+    // wall clock moves under a suspend or a time-zone change. See setClock().
+    m_clock = [] {
+        using namespace std::chrono;
+        return static_cast<qint64>(
+            duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
+    };
     // **The cursor follows the row, not the row number.** FileListModel already
     // tracks the *selection* by uri so a re-sort or a refresh does not move it
     // onto other files; the cursor was a plain int, re-anchored only by
@@ -876,6 +887,32 @@ void BrowserPaneController::refresh()
         load(m_current, false);
 }
 
+qint64 BrowserPaneController::refreshAfterMs(qint64 costMs)
+{
+    const double ratio = static_cast<double>(std::max<qint64>(costMs, 0)) / kRefreshKneeMs;
+    const double wait = kRefreshFloorMs * std::pow(ratio, kRefreshExponent);
+    return std::clamp(std::llround(wait), kRefreshFloorMs, kRefreshCeilingMs);
+}
+
+void BrowserPaneController::setClock(std::function<qint64()> clock)
+{
+    m_clock = std::move(clock);
+}
+
+bool BrowserPaneController::refreshIfStale()
+{
+    // A guess that the folder might have changed, unlike EventBus's directoryChanged,
+    // which is a fact -- so it asks only where the answer could be wanted.
+    if (!m_current.isValid() || m_pending || m_waitingForADrive.isValid() || m_listedAtMs < 0)
+        return false;
+    if (m_listedFolder != m_current)
+        return false;
+    if (m_clock() - m_listedAtMs < refreshAfterMs(m_listingCostMs))
+        return false;
+    load(m_current, false);
+    return true;
+}
+
 void BrowserPaneController::rememberCursor(const VfsUri& from, const VfsUri& to)
 {
     const auto note = [this](const QString& folder, const QString& entry) {
@@ -1016,7 +1053,12 @@ void BrowserPaneController::load(const VfsUri& uri, bool recordHistory)
             // than putting an interim cursor somewhere and asking the drive
             // about it.
             m_installingListing = true;
-            m_files->setFilterText(QString());
+            // Only on arriving somewhere new. Re-listing the folder already in
+            // view -- F5, Mole's own copy into it, the window coming back -- must
+            // not throw away what somebody typed. See MOLE-437.
+            if (directory != m_listedFolder)
+                m_files->setFilterText(QString());
+            m_listedFolder = directory;
             m_files->setEntries(entries);
             m_installingListing = false;
             m_cursorWas.clear();
@@ -1047,6 +1089,8 @@ void BrowserPaneController::load(const VfsUri& uri, bool recordHistory)
             return;
         m_pending.clear();
         setLoading(false);
+        m_listedAtMs = m_clock();
+        m_listingCostMs = m_listedAtMs - m_listingStartedMs;
         if (task->state() == Task::State::Failed) {
             setErrorText(task->error().message);
             // Announced as well as shown. A listing that failed is the plainest
@@ -1058,6 +1102,7 @@ void BrowserPaneController::load(const VfsUri& uri, bool recordHistory)
         }
     });
 
+    m_listingStartedMs = m_clock();
     m_services.tasks->submit(task);
 
     // What a drive can offer beyond a listing depends on what it was pointed at,

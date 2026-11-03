@@ -12,6 +12,14 @@ Item {
 
     property var controller: null
 
+    // The window came back. Whatever is on screen re-lists itself if it has been
+    // away long enough for that to be worth it -- the controller decides. See
+    // MOLE-437.
+    function refreshWhatIsStale() {
+        if (controller)
+            controller.refreshStalePanes()
+    }
+
     function focusActivePane() {
         if (!controller)
             return

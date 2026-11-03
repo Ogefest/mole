@@ -19,6 +19,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QSemaphore>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QUrl>
@@ -70,6 +71,12 @@ private slots:
     void navigateLoadsTheListing();
     void navigationHappensOffTheUiThread();
     void unmountedLocationReportsAnError();
+
+    void theWaitBeforeARelistGrowsFasterThanTheCost();
+    void comingBackLateShowsWhatIsThereNow();
+    void comingBackSoonAsksTheDriveNothing();
+    void aRelistKeepsTheFilterTheCursorAndTheTicks();
+    void nothingIsRelistedWhileAListingIsInFlightOrADriveIsAwaited();
     void invalidUriReportsAnError();
     void historyGoesBackAndForward();
     void navigatingAfterBackTruncatesForward();
@@ -370,6 +377,136 @@ void TestBrowserPaneController::navigationHappensOffTheUiThread()
     QVERIFY2(pane->isLoading(), "navigation must start asynchronously");
     QVERIFY(waitFor([pane] { return !pane->isLoading(); }, 5000));
     QVERIFY(loading.count() >= 2);
+}
+
+// ---- re-listing when the window comes back (MOLE-437) ----------------------
+//
+// Every one of these sets the pane's clock by hand: the threshold is a matter of
+// seconds and minutes, and a case that waited for one would be a case that
+// sleeps. The listing itself still runs on the pool and is waited for as a
+// condition, like everywhere else in this file.
+
+void TestBrowserPaneController::theWaitBeforeARelistGrowsFasterThanTheCost()
+{
+    using P = BrowserPaneController;
+    // The floor, and the curve meeting it without a step: at the knee the
+    // expression is exactly the floor.
+    QCOMPARE(P::refreshAfterMs(30), qint64(10'000));
+    QCOMPARE(P::refreshAfterMs(500), qint64(10'000));
+    // A share at a second and a half: 10 s x 3^1.5.
+    QVERIFY(qAbs(P::refreshAfterMs(1'500) - 51'962) <= 1);
+    // Two hundred thousand files: about twenty minutes.
+    const qint64 big = P::refreshAfterMs(12'000);
+    QVERIFY2(big > 19 * 60'000 && big < 20 * 60'000 + 30'000, qPrintable(QString::number(big)));
+    // The ceiling. The curve reaches it at about 25.3 s, so 25 s is a minute short
+    // of it and anything slower is held at the hour.
+    QVERIFY(P::refreshAfterMs(25'000) > 58 * 60'000);
+    QCOMPARE(P::refreshAfterMs(26'000), qint64(3'600'000));
+    QCOMPARE(P::refreshAfterMs(10 * 60'000), qint64(3'600'000));
+    // And never backwards, across the knee and up to the ceiling.
+    qint64 before = 0;
+    for (qint64 cost = 0; cost <= 30'000; cost += 50) {
+        const qint64 wait = P::refreshAfterMs(cost);
+        QVERIFY2(
+            wait >= before, qPrintable(QStringLiteral("%1 ms waits less than the cost before it").arg(cost)));
+        before = wait;
+    }
+}
+
+void TestBrowserPaneController::comingBackLateShowsWhatIsThereNow()
+{
+    qint64 now = 0;
+    BrowserPaneController* pane = makePane();
+    pane->setClock([&now] { return now; });
+    pane->navigateTo(QStringLiteral("mem:///docs"));
+    QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() > 0; }));
+
+    // Written behind the pane's back, which is the case nothing announces.
+    m_fs->addFile(QStringLiteral("/docs/arrived.txt"), QByteArray("new"));
+    QCOMPARE(pane->files()->rowOfUri(QStringLiteral("mem:///docs/arrived.txt")), -1);
+
+    // Past the floor; the listing cost nothing on this clock.
+    now = 10'001;
+    QVERIFY(pane->refreshIfStale());
+    QVERIFY(waitFor([pane] { return !pane->isLoading(); }));
+    QVERIFY2(pane->files()->rowOfUri(QStringLiteral("mem:///docs/arrived.txt")) >= 0,
+        "the file that arrived while the window was away is not shown");
+}
+
+void TestBrowserPaneController::comingBackSoonAsksTheDriveNothing()
+{
+    qint64 now = 0;
+    BrowserPaneController* pane = makePane();
+    pane->setClock([&now] { return now; });
+    pane->navigateTo(QStringLiteral("mem:///docs"));
+    QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() > 0; }));
+    m_fs->addFile(QStringLiteral("/docs/arrived.txt"), QByteArray("new"));
+
+    const int listed = m_fs->listCallCount();
+    now = 5'000;
+    QVERIFY2(!pane->refreshIfStale(), "five seconds away re-listed a folder that costs nothing");
+    // Counted on the drive, not read off the model: a re-listing that happened to
+    // come back the same would look identical there.
+    QCOMPARE(m_fs->listCallCount(), listed);
+    QVERIFY(!pane->isLoading());
+}
+
+void TestBrowserPaneController::aRelistKeepsTheFilterTheCursorAndTheTicks()
+{
+    qint64 now = 0;
+    m_fs->addFile(QStringLiteral("/docs/another.txt"), QByteArray("x"));
+    BrowserPaneController* pane = makePane();
+    pane->setClock([&now] { return now; });
+    pane->navigateTo(QStringLiteral("mem:///docs"));
+    QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() > 0; }));
+
+    FileListModel* files = pane->files();
+    files->setFilterText(QStringLiteral(".txt"));
+    const QString cursorOn = QStringLiteral("mem:///docs/another.txt");
+    const QString tickedOn = QStringLiteral("mem:///docs/a.txt");
+    pane->setCurrentIndex(files->rowOfUri(cursorOn));
+    files->setSelected(files->rowOfUri(tickedOn), true);
+    QCOMPARE(files->uriAt(pane->currentIndex()), cursorOn);
+
+    now = 60'000;
+    QVERIFY(pane->refreshIfStale());
+    QVERIFY(waitFor([pane] { return !pane->isLoading(); }));
+
+    QCOMPARE(files->filterText(), QStringLiteral(".txt"));
+    QVERIFY(pane->currentIndex() >= 0);
+    QCOMPARE(files->uriAt(pane->currentIndex()), cursorOn);
+    QCOMPARE(files->selectedUris(), QStringList { tickedOn });
+    QVERIFY2(!pane->canGoBack(), "a re-listing joined the history");
+}
+
+void TestBrowserPaneController::nothingIsRelistedWhileAListingIsInFlightOrADriveIsAwaited()
+{
+    qint64 now = 0;
+    BrowserPaneController* pane = makePane();
+    pane->setClock([&now] { return now; });
+    pane->navigateTo(QStringLiteral("mem:///docs"));
+    QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() > 0; }));
+
+    // A listing held at the drive: F5 started it and it has not come back.
+    auto gate = std::make_shared<QSemaphore>(0);
+    m_fs->setListGate(gate);
+    pane->refresh();
+    QVERIFY(waitFor([this] { return m_fs->listsInProgress() == 1; }));
+    const int listed = m_fs->listCallCount();
+    now = 3'600'000;
+    QVERIFY2(!pane->refreshIfStale(), "a second listing was started on top of one in flight");
+    QCOMPARE(m_fs->listCallCount(), listed);
+    gate->release(16);
+    m_fs->setListGate(nullptr);
+    QVERIFY(waitFor([pane] { return !pane->isLoading(); }));
+
+    // A location no drive answers for: the pane has its own retry for when one
+    // appears (ADR-0091), and a guess on activation is not it.
+    pane->navigateTo(QStringLiteral("mem://nowhere/at/all"));
+    QVERIFY(waitFor([pane] { return !pane->isLoading(); }));
+    QVERIFY(!pane->errorText().isEmpty());
+    now += 3'600'000;
+    QVERIFY2(!pane->refreshIfStale(), "a pane waiting for a drive was re-listed");
 }
 
 void TestBrowserPaneController::unmountedLocationReportsAnError()

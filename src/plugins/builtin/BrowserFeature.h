@@ -69,6 +69,14 @@ public:
     /// The preference that holds it, and nowhere else does -- saveState() does
     /// not carry it, because two records would be two answers after a restart.
     static constexpr const char* kShowHiddenKey = "browser.showHidden";
+
+    /// The window was activated again: the panes on screen re-list themselves if
+    /// they have been away long enough for it to be worth what it costs. Both in a
+    /// dual view, the active one otherwise -- a guess that a folder might have
+    /// changed should not read a pane nobody is looking at, unlike EventBus's
+    /// directoryChanged, which is a fact and asks both. Panes in other tabs are
+    /// not asked at all. Returns how many re-listed. See MOLE-437.
+    Q_INVOKABLE int refreshStalePanes();
     bool showHidden() const;
     void setShowHidden(bool show);
 

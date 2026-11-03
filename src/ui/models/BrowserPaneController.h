@@ -16,6 +16,8 @@
 #include <QTimer>
 #include <QVariantList>
 
+#include <functional>
+
 namespace mole {
 
 class ListDirectoryTask;
@@ -170,6 +172,34 @@ public:
     Q_INVOKABLE void goForward();
     Q_INVOKABLE void refresh();
 
+    /// Re-lists the folder in view if it has been long enough since the last
+    /// listing for that to be worth what a listing of it costs, and says whether
+    /// it did. Asked when the window becomes active again: anything Mole did to
+    /// the folder it already announced, so this is for what everything else did
+    /// -- a build, a download, another machine writing into the share.
+    ///
+    /// Never while a listing is in flight, never for a pane waiting on a drive
+    /// (which has its own retry, ADR-0091), and never for a pane with no listing
+    /// to be stale. See refreshAfterMs() and MOLE-437.
+    Q_INVOKABLE bool refreshIfStale();
+
+    /// How long a pane is left alone after a listing that took `costMs`, before
+    /// coming back to the window re-lists it:
+    ///
+    ///     clamp(floor x (cost / knee)^1.5, floor, ceiling)
+    ///
+    /// The exponent is the point. A folder that takes twelve seconds is not
+    /// twelve times a folder that takes one, to somebody who has to sit and
+    /// watch it; it is the only one of the two whose re-reading would be
+    /// noticed at all. So the wait grows faster than the cost: twice the cost is
+    /// nearly three times the wait. 30 ms and 0.5 s wait the floor, 10 s; 1.5 s
+    /// waits 52 s; 12 s about 20 min; from about 25 s on, the hour.
+    static qint64 refreshAfterMs(qint64 costMs);
+
+    /// Where the pane reads the time for the above, so a test can say how long
+    /// the window was away without waiting for it. A monotonic clock by default.
+    void setClock(std::function<qint64()> clock);
+
 signals:
     void locationChanged();
     void currentIndexChanged();
@@ -279,6 +309,18 @@ private:
     /// it goes instead of showing nothing until it finishes.
     static constexpr int kStatusFloorMs = 400;
 
+    /// The re-listing curve, kept together so whoever disagrees with 1.5 has one
+    /// place to argue with it. The floor is the curve's own value at the knee,
+    /// not a clamp bolted underneath, so the two meet without a step. The
+    /// ceiling is an hour rather than ten minutes: with ten, the curve stopped
+    /// mattering at about eight seconds of cost and the clamp did the function's
+    /// work. An hour is under one per cent of itself for a twenty-second folder,
+    /// and it is what keeps the pathological case from being never. See MOLE-437.
+    static constexpr qint64 kRefreshKneeMs = 500;
+    static constexpr qint64 kRefreshFloorMs = 10'000;
+    static constexpr qint64 kRefreshCeilingMs = 3'600'000;
+    static constexpr double kRefreshExponent = 1.5;
+
     PluginServices m_services;
     FileListModel* m_files = nullptr;
     RepositoryInfo* m_repository = nullptr;
@@ -286,6 +328,16 @@ private:
     /// Where the pane is pointed but could not list, because nothing is mounted
     /// for it. Invalid whenever the location did resolve.
     VfsUri m_waitingForADrive;
+    /// When the listing in view landed, and what it cost from submission to
+    /// finish -- which measures a slow disk and a slow drive alike without
+    /// telling them apart. -1 until a listing has landed.
+    qint64 m_listedAtMs = -1;
+    qint64 m_listingCostMs = 0;
+    qint64 m_listingStartedMs = 0;
+    /// The folder whose listing the model holds. A re-listing of the same one
+    /// keeps the filter somebody typed; arriving somewhere new clears it.
+    VfsUri m_listedFolder;
+    std::function<qint64()> m_clock;
     QStringList m_history;
     int m_historyIndex = -1;
     int m_currentIndex = -1;

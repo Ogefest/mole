@@ -112,6 +112,7 @@ private slots:
     void menuEntryOpensTheTab();
     void viewMenuReflectsAndTogglesTheCurrentTab();
     void hiddenFilesAreOneRememberedSettingForEveryTab();
+    void comingBackToTheWindowAsksOnlyThePanesOnScreen();
     void menuEntriesGreyOutWhenTheyDoNotApply();
     void theMenuOffersWhatTheDriveUnderTheCursorCanDo();
     void aDriveThatOffersNothingLeavesTheMenuAsItWas();
@@ -2267,6 +2268,38 @@ void TestAppIntegration::hiddenFilesAreOneRememberedSettingForEveryTab()
         if (auto* browser = qobject_cast<BrowserController*>(m_app->tabs()->controllerAt(tab)))
             QVERIFY2(bothPanesShow(browser, true), "a restored tab started with hidden files hidden");
     }
+}
+
+/// The window coming back re-lists what is on screen and nothing else: both
+/// panes of a dual view, the active pane of a single one. See MOLE-437.
+void TestAppIntegration::comingBackToTheWindowAsksOnlyThePanesOnScreen()
+{
+    auto* browser = qobject_cast<BrowserController*>(m_app->tabs()->controllerAt(0));
+    QVERIFY(browser);
+    qint64 now = 0;
+    for (BrowserPaneController* pane : { browser->left(), browser->right() })
+        pane->setClock([&now] { return now; });
+
+    // Both panes listed, so both have something to be stale.
+    QVERIFY(m_app->triggerAction(QStringLiteral("mole.view.dualPane")));
+    browser->left()->refresh();
+    browser->right()->refresh();
+    QVERIFY(waitFor([browser] { return !browser->left()->isLoading() && !browser->right()->isLoading(); }));
+
+    now = 60'000;
+    QCOMPARE(browser->refreshStalePanes(), 2);
+    QVERIFY(waitFor([browser] { return !browser->left()->isLoading() && !browser->right()->isLoading(); }));
+
+    // Single: the pane nobody can see is left alone.
+    QVERIFY(m_app->triggerAction(QStringLiteral("mole.view.singlePane")));
+    QVERIFY(!browser->splitEnabled());
+    now = 120'000;
+    QCOMPARE(browser->refreshStalePanes(), 1);
+    // right() rather than otherPane(), which in single mode is the active pane
+    // itself -- the pane transfers go to.
+    QCOMPARE(browser->activePane(), browser->left());
+    QVERIFY2(!browser->right()->isLoading(), "a pane that is not on screen was re-listed");
+    QVERIFY(waitFor([browser] { return !browser->activePane()->isLoading(); }));
 }
 
 void TestAppIntegration::viewMenuReflectsAndTogglesTheCurrentTab()

@@ -133,6 +133,13 @@ BrowserPaneController* BrowserController::otherPane() const
     return activePane() == m_left ? m_right : m_left;
 }
 
+int BrowserController::refreshStalePanes()
+{
+    if (splitEnabled())
+        return int(m_left->refreshIfStale()) + int(m_right->refreshIfStale());
+    return activePane()->refreshIfStale() ? 1 : 0;
+}
+
 bool BrowserController::showHidden() const
 {
     if (!m_services.preferences)

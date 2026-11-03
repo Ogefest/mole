@@ -65,6 +65,7 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-11-03 #MOLE-437 A pane re-reads its folder when the window is activated again, if it has been away long enough for the read to be worth it
 2026-11-03 #MOLE-441 Showing hidden files is remembered, and applies to every tab and to new ones, instead of lasting only as long as one tab
 2026-11-03 #MOLE-427 A plugin refused for its API version says to rebuild it against this version of Mole, not only the two numbers
 2026-11-03 #MOLE-413 Opening a file on a WebDAV server no longer waits for the server to hang up first, and a large one streams instead of downloading whole
