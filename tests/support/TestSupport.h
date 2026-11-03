@@ -54,6 +54,7 @@ public:
     /// application's own housekeeping -- the two things that decide whether a
     /// drive reads as busy. See DriveListModel::refreshBusyDrives().
     using Task::isCancelRequested;
+    using Task::noteRunsOn;
     using Task::noteTouching;
     using Task::reportBytes;
     using Task::reportCount;

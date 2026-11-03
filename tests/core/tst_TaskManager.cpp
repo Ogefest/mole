@@ -69,6 +69,9 @@ private slots:
 
     // ---- one dead drive must not take the pool ----
     void oneDriveThatStoppedAnsweringDoesNotHoldEveryThread();
+    void thePoolIsSizedForTwoLanesPerDriveEvenOnASmallMachine();
+    void aLongTaskOnADriveLeavesRoomToBrowseIt();
+    void theThreadCountCanBeForcedFromOutside();
     void aCancelThatArrivedWhileQueuedIsAnsweredBeforeTheCall();
     void aTaskThatNamesNoDriveIsNotBoundedByOne();
     void everyTaskHandedADriveDeclaresIt();
@@ -976,6 +979,81 @@ void TestTaskManager::oneDriveThatStoppedAnsweringDoesNotHoldEveryThread()
     for (ListDirectoryTask* task : std::as_const(queued))
         QVERIFY(waitForTask(task));
     drainEvents();
+}
+
+// ------------------------------- a small machine still has two lanes a drive
+
+void TestTaskManager::thePoolIsSizedForTwoLanesPerDriveEvenOnASmallMachine()
+{
+    // The floor is four, so a four-core laptop -- and the hosted runner -- gets
+    // two tasks per drive rather than one. A pool of two made one lane per drive
+    // on exactly the machines most people have, and one lane is a serialising
+    // configuration: whatever holds it, a copy or a hash, holds every listing of
+    // that drive behind it. See ADR-0102 and MOLE-426.
+    QCOMPARE(TaskManager::poolSizeFor(1), 4);
+    QCOMPARE(TaskManager::poolSizeFor(2), 4);
+    QCOMPARE(TaskManager::poolSizeFor(4), 4);
+    QCOMPARE(TaskManager::poolSizeFor(6), 4);
+    QCOMPARE(TaskManager::poolSizeFor(8), 6);
+    QCOMPARE(TaskManager::poolSizeFor(20), 8);
+
+    TaskManager manager;
+    manager.setMaxThreadCount(TaskManager::poolSizeFor(4));
+    QCOMPARE(manager.perDriveLimit(), 2);
+}
+
+void TestTaskManager::aLongTaskOnADriveLeavesRoomToBrowseIt()
+{
+    // What one lane cost, in the shape somebody meets it: a long copy off a USB
+    // stick on a four-core laptop, and opening a folder on the same stick waits
+    // for the whole copy to finish. Not a deadlock -- it ends when the copy does
+    // -- and on a ten-gigabyte copy that is the same thing to whoever is waiting.
+    TaskManager manager;
+    manager.setMaxThreadCount(TaskManager::poolSizeFor(4));
+
+    auto stick = std::make_shared<MemoryFileSystem>();
+    stick->addFile(QStringLiteral("/photos/a.jpg"), QByteArray("x"));
+
+    // The copy, held inside its run() until the test lets it go.
+    auto gate = std::make_shared<QSemaphore>();
+    std::atomic_bool copying { false };
+    auto* copy = new ScriptedTask(QStringLiteral("copies off the stick"), [gate, &copying](ScriptedTask&) {
+        copying = true;
+        gate->acquire();
+    });
+    copy->noteRunsOn(stick);
+    manager.submit(copy);
+    QVERIFY(waitFor([&copying] { return copying.load(); }, 10000));
+
+    auto* listing = new ListDirectoryTask(stick, VfsUri::fromString(QStringLiteral("mem:///photos")));
+    manager.submit(listing);
+    const bool listed = waitForTask(listing, 10000);
+    gate->release();
+    QVERIFY(waitForTask(copy));
+    drainEvents();
+    QVERIFY2(listed, "a listing of the drive waited for the whole copy");
+    QCOMPARE(listing->state(), Task::State::Succeeded);
+}
+
+void TestTaskManager::theThreadCountCanBeForcedFromOutside()
+{
+    // MOLE_TASK_THREADS, so the one-lane configuration the floor no longer
+    // produces can still be run on purpose: the suites that found MOLE-425's two
+    // races run under it in the fast tier, because a floor that hides a
+    // configuration also stops anyone noticing the next fault in it.
+    qputenv("MOLE_TASK_THREADS", "2");
+    {
+        TaskManager manager;
+        QCOMPARE(manager.maxThreadCount(), 2);
+        QCOMPARE(manager.perDriveLimit(), 1);
+    }
+    // Nonsense is ignored rather than turned into a pool of nought.
+    qputenv("MOLE_TASK_THREADS", "none");
+    {
+        TaskManager manager;
+        QCOMPARE(manager.maxThreadCount(), TaskManager::poolSizeFor(QThread::idealThreadCount()));
+    }
+    qunsetenv("MOLE_TASK_THREADS");
 }
 
 void TestTaskManager::aCancelThatArrivedWhileQueuedIsAnsweredBeforeTheCall()

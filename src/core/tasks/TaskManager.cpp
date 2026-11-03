@@ -35,9 +35,11 @@ TaskManager::TaskManager(QObject* parent)
     : QObject(parent)
     , m_pool(new QThreadPool(this))
 {
-    // Leave headroom so a burst of scans cannot starve the machine.
-    const int cores = QThread::idealThreadCount();
-    m_pool->setMaxThreadCount(qBound(2, cores - 2, 8));
+    // Forced from outside, for running the one-lane configuration on purpose;
+    // anything that is not a positive number is ignored rather than obeyed.
+    bool forced = false;
+    const int asked = qEnvironmentVariableIntValue("MOLE_TASK_THREADS", &forced);
+    m_pool->setMaxThreadCount(forced && asked > 0 ? asked : poolSizeFor(QThread::idealThreadCount()));
 
     // Swept rather than cleared on demand: a list nobody prunes grows for the
     // whole session, and by the end it is long enough that the one failure
@@ -201,6 +203,16 @@ void TaskManager::clearFinished()
 
     for (Task* task : doomed)
         task->deleteLater();
+}
+
+int TaskManager::poolSizeFor(int cores)
+{
+    // Headroom above the floor, so a burst of scans cannot starve a large
+    // machine. The floor itself is four rather than two: two threads made one
+    // lane per drive on every four-core machine, and measured on 2026-11-03
+    // four busy pool threads cost the window's thread nothing it could notice,
+    // on four cores or on two. See ADR-0102.
+    return qBound(4, cores - 2, 8);
 }
 
 void TaskManager::setMaxThreadCount(int count)

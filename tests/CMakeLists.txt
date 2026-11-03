@@ -814,4 +814,20 @@ else()
     message(STATUS "Network drive tests skipped: the network plugin was not built")
 endif()
 
+# **One lane per drive, on purpose.** The pool's floor is four (ADR-0102), so no
+# machine produces the configuration in which a drive runs one task at a time any
+# more -- and it is the configuration that found MOLE-425's two races, a listing
+# queued behind the query it was meant to cancel among them. A floor that hides a
+# configuration is a floor that stops anyone noticing the next fault in it, so the
+# suites that found those run a second time with a pool of two. Same binaries,
+# same cases; MOLE_TASK_THREADS is the only difference. See MOLE-426.
+foreach(suite tst_BrowserPaneController tst_KeyboardNavigation tst_Preview tst_Walkthrough)
+    if(TARGET ${suite})
+        add_test(NAME ${suite}OneLane COMMAND ${suite})
+        set_tests_properties(${suite}OneLane PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/lsan.supp;MOLE_TASK_THREADS=2"
+            TIMEOUT 180)
+    endif()
+endforeach()
+
 endif() # MOLE_CORE_ONLY

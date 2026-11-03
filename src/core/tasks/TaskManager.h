@@ -58,6 +58,15 @@ public:
     /// does not accumulate a thousand rows nobody will read.
     void setRetention(std::chrono::seconds retention) { m_retention = retention; }
 
+    /// The pool a machine with `cores` cores gets: cores - 2, at least four and
+    /// at most eight. Four as the floor, so that half of it -- perDriveLimit() --
+    /// is two lanes per drive even on a two- or four-core machine. See ADR-0102,
+    /// which raised it from two, and ADR-0095 for the lanes themselves.
+    ///
+    /// MOLE_TASK_THREADS in the environment overrides it, which is how the suites
+    /// that need the one-lane configuration still get it. See MOLE-426.
+    static int poolSizeFor(int cores);
+
     void setMaxThreadCount(int count);
     int maxThreadCount() const;
     /// The most of the pool one drive may hold at once: half of it, and never

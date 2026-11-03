@@ -338,13 +338,23 @@ Schema changes are append-only migrations keyed off `PRAGMA user_version`.
   taskset -c 0,1 ctest --test-dir build/debug --parallel 4 --label-exclude heavy
   ```
 
-  Two cores is what the hosted runner effectively gives a suite, and it is not
-  only slower — `TaskManager` sizes its pool from the core count, so a four-core
-  machine gets two threads and a *drive* gets one task at a time. Four suites
-  passed on every workstation here and failed on every push for a day, on two
-  races that only appear when a drive cannot run two things at once (MOLE-425).
-  A red run on the runner and a green one at your desk is this, until measured
-  otherwise.
+  Two cores is what the hosted runner effectively gives a suite, and it is
+  slower in ways a workstation never shows. A red run on the runner and a green
+  one at your desk is this, until measured otherwise.
+
+  **One task per drive is a separate switch now.** Four suites once passed on
+  every workstation and failed on every push for a day, on two races that only
+  appear when a drive cannot run two things at once (MOLE-425). That was what a
+  pool of two did on a four-core machine. The pool's floor is four since
+  [ADR-0102](docs/adr/0102-the-pool-floor-is-four-so-a-drive-has-two-lanes.md),
+  so `taskset` no longer produces it, and `MOLE_TASK_THREADS=2` does:
+
+  ```sh
+  MOLE_TASK_THREADS=2 taskset -c 0,1 ctest --test-dir build/debug --parallel 4 --label-exclude heavy
+  ```
+
+  The suites that found those races already run that way in the fast tier, as
+  the `…OneLane` tests.
 - `tst_AppIntegration` assembles the application the way `main()` does, minus
   the QML engine, and opens every registered feature.
 
