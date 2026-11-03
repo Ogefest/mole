@@ -4,6 +4,7 @@
 #include "core/text/SizeWords.h"
 
 #include <QAbstractItemModelTester>
+#include <QScopeGuard>
 #include <QSignalSpy>
 
 using namespace mole;
@@ -409,6 +410,20 @@ void TestFileListModel::formatsSizes()
 {
     QFETCH(qint64, bytes);
     QFETCH(QString, expected);
+
+    // **The locale this table is written in, set for the case and put back
+    // after.** The suite runs under LC_ALL=C on purpose (MOLE-297), and the C
+    // locale's grouping is not a fact this case can lean on: Qt 6.4 writes
+    // "1,023 bytes" there and Qt 6.11 writes "1023 bytes". Nor is the
+    // developer's own -- pl_PL says "1023 bajty". So the case names the one
+    // whose answer it states. Neither alternative would do: expecting "1023"
+    // asserts 6.11's C locale instead of 6.4's, and building the expected
+    // string from QLocale makes a case that agrees with whatever the code does.
+    // See MOLE-440.
+    const QLocale previous;
+    QLocale::setDefault(QLocale(QLocale::English, QLocale::UnitedStates));
+    const auto restore = qScopeGuard([&previous] { QLocale::setDefault(previous); });
+
     QCOMPARE(sizeInWords(bytes), expected);
 }
 
