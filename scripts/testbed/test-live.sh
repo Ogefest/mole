@@ -95,13 +95,87 @@ export MOLE_TEST_IGNORE_SELF_SIGNED_CERT=1
 
 export QT_QPA_PLATFORM=offscreen
 
-# QtTest's own watchdog, which is five minutes per test function and is not
-# enough here. A case that cuts a connection mid-read now waits for the
-# transfer's budget to run out rather than for a socket to fail (ADR-0013's
-# second amendment), and against a real server over a real link that is a minute
-# and a half on its own. Left at the default it reads as a hang, which is the
-# opposite of what this target is for.
+# **Every case has a deadline, and it is this tier's rather than QtTest's.** On
+# 2026-09-05 a suite that was never going to finish held the release gate for
+# twenty-five minutes, and nothing stopped it or said what it was waiting on, so
+# the person watching could not tell a slow suite from a stuck one. The cause was
+# MOLE-418; the next hang will have another. So each suite runs with QtTest's
+# `-v1`, which names every case as it is entered, and this script watches that:
+#
+# - a case slower than HEARTBEAT seconds is named, and named again every
+#   HEARTBEAT seconds after, so slow and stuck look different from outside long
+#   before anything is decided;
+# - a case that reaches CASE_DEADLINE seconds is stopped, with the whole suite,
+#   and reported as a TIMEOUT naming it -- not as the assertion it happened to be
+#   inside, and not as an environment nobody configured.
+#
+# **Six minutes, and why that number: twice the slowest case measured.** Most
+# live cases answer in seconds. Two kinds do not. A case that cuts a connection
+# mid-read waits for the transfer's budget to run out rather than for a socket
+# to fail (ADR-0013's second amendment), which is about a minute and a half. And
+# SFTP's aLargeFileGoesUpWhole, measured against the testbed on 2026-11-03 with
+# this deadline's heartbeat, was still running at 150 s and done by 180 s. Four
+# minutes was the first figure and that run is what moved it: one and a third
+# times the slowest case is a bound that trips on a slower day. Six is double,
+# and still a quarter of what the hang that prompted this cost. See MOLE-424.
+CASE_DEADLINE="${MOLE_LIVE_CASE_DEADLINE:-360}"
+HEARTBEAT="${MOLE_LIVE_HEARTBEAT:-30}"
+
+# QtTest's own watchdog stays, above the deadline rather than below it, so it is
+# only ever a backstop: when it fires the process aborts with a stack trace, and
+# that is a worse report of the same fact.
 export QTEST_FUNCTION_TIMEOUT="${QTEST_FUNCTION_TIMEOUT:-900000}"
+
+# Runs one suite under the deadline. Sets `output` and `code` the way capturing
+# the binary's output would, and `timed_out` to the case that was cut off, empty
+# when none was.
+#
+# The suite gets a session of its own so that stopping it stops everything it
+# started -- a child holding a connection is exactly what a stuck case leaves
+# behind. Polled once a second rather than read line by line, because a case that
+# is stuck prints nothing, and nothing is what this has to notice.
+run_suite() {
+    local binary="$1" log
+    log=$(mktemp)
+    setsid "$binary" -v1 > "$log" 2>&1 &
+    local pid=$!
+    local current="the start of the suite" entered=$SECONDS seen=0 lines next_beat=$HEARTBEAT
+    timed_out=""
+    while kill -0 "$pid" 2>/dev/null; do
+        lines=$(wc -l < "$log")
+        if [ "$lines" -gt "$seen" ]; then
+            local latest
+            latest=$(tail -n +"$((seen + 1))" "$log" | sed -n 's/^INFO *: \(.*()\) entering$/\1/p' | tail -1)
+            seen=$lines
+            if [ -n "$latest" ]; then
+                current="$latest"
+                entered=$SECONDS
+                next_beat=$HEARTBEAT
+            fi
+        fi
+        local in_case=$((SECONDS - entered))
+        if [ "$in_case" -ge "$CASE_DEADLINE" ]; then
+            timed_out="$current"
+            kill -TERM -- "-$pid" 2>/dev/null
+            local grace=0
+            while kill -0 "$pid" 2>/dev/null && [ "$grace" -lt 5 ]; do
+                sleep 1
+                grace=$((grace + 1))
+            done
+            kill -KILL -- "-$pid" 2>/dev/null
+            break
+        fi
+        if [ "$in_case" -ge "$next_beat" ]; then
+            printf '          still in %s after %d s\n' "$current" "$in_case"
+            next_beat=$((next_beat + HEARTBEAT))
+        fi
+        sleep 1
+    done
+    wait "$pid" 2>/dev/null
+    code=$?
+    output=$(cat "$log")
+    rm -f "$log"
+}
 
 # The control channel, when it is installed. One case in the SFTP suite cuts a
 # connection mid-read to prove that a truncated transfer does not read as a whole
@@ -153,14 +227,17 @@ for suite in $SUITES; do
         continue
     fi
 
-    output=$("$binary" 2>&1)
-    code=$?
+    run_suite "$binary"
     totals=$(printf '%s' "$output" | sed -n 's/^Totals: //p' | tail -1)
     # A suite that skipped every case it has is a suite that never met the
     # server, whatever its exit status says.
     skips=$(printf '%s' "$output" | grep -c '^SKIP' || true)
 
-    if [ "$code" -ne 0 ]; then
+    if [ -n "$timed_out" ]; then
+        printf '  \033[31mTIMEOUT\033[0m %-24s %s did not finish within %d s\n' \
+            "$suite" "$timed_out" "$CASE_DEADLINE"
+        failed=$((failed + 1))
+    elif [ "$code" -ne 0 ]; then
         printf '  \033[31mFAIL\033[0m    %-24s %s\n' "$suite" "$totals"
         printf '%s\n' "$output" | grep '^FAIL' | sed 's/^/          /'
         failed=$((failed + 1))
@@ -177,7 +254,13 @@ done
 printf '\n  %d ran, %d skipped, %d failed\n\n' "$ran" "$skipped" "$failed"
 
 # A skip is a result, and a run that quietly skipped everything is not a pass.
-if [ "$failed" -gt 0 ] || [ "$skipped" -gt 0 ]; then
+# Said by what happened rather than by one sentence for both: a run with a case
+# cut off at the deadline used to close by blaming a skip it never had.
+if [ "$failed" -gt 0 ]; then
+    printf '\033[31mNot green.\033[0m A suite failed, was stopped at the deadline, or was not built.\n\n'
+    exit 1
+fi
+if [ "$skipped" -gt 0 ]; then
     printf '\033[31mNot green.\033[0m A suite that skipped never met the server, which is the\n'
     printf 'thing this target exists to make visible.\n\n'
     exit 1

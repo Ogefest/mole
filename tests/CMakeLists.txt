@@ -163,6 +163,10 @@ if(BASH_PROGRAM)
     # discovered by a release workflow. See ADR-0080.
     mole_add_shell_test(tst_Changelog
                         SCRIPT scripts/tst_Changelog.sh)
+    # The live tier's deadline per case, held offline with suites that are
+    # scripts: one that hangs is cut off by name. See MOLE-424.
+    mole_add_shell_test(tst_TestLive
+                        SCRIPT scripts/tst_TestLive.sh)
     # The version is written in one place and this holds everything that reads it to
     # that place, including the binary -- which is why this one is told where the
     # application is. A core-only build has no application, and the case says it
