@@ -595,6 +595,11 @@ endif()
 # walkthrough's narrative would have to step around.
 mole_add_test(tst_Sidebar           SOURCES app/tst_Sidebar.cpp         LIBS mole_qml_harness)
 
+# Show hidden files with a window behind it: the Hidden checkbox and the View
+# menu entry are one setting, and each shows what the other set. tst_AppIntegration
+# holds the rest of MOLE-441 headless.
+mole_add_test(tst_HiddenFiles       SOURCES app/tst_HiddenFiles.cpp     LIBS mole_qml_harness mole_builtin)
+
 # Dragging rows out of a listing, through the real window. Its own binary
 # because it holds a pointer button down across assertions and ticks rows, which
 # is state the walkthrough's narrative would have to step around.

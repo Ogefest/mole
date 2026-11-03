@@ -111,6 +111,7 @@ private slots:
     void everyStandingToolOpensOneTabHoweverItIsReached();
     void menuEntryOpensTheTab();
     void viewMenuReflectsAndTogglesTheCurrentTab();
+    void hiddenFilesAreOneRememberedSettingForEveryTab();
     void menuEntriesGreyOutWhenTheyDoNotApply();
     void theMenuOffersWhatTheDriveUnderTheCursorCanDo();
     void aDriveThatOffersNothingLeavesTheMenuAsItWas();
@@ -2214,6 +2215,58 @@ void TestAppIntegration::menuEntryOpensTheTab()
         QStringLiteral("mole.commander"));
 
     QVERIFY2(!m_app->triggerAction(QStringLiteral("nope")), "unknown ids must be ignored");
+}
+
+/// **Show hidden files is one setting, not one per pane.** It lasted as long as
+/// the tab it was switched on in: a new tab started without it, so did every tab
+/// after a restart, and the menu entry flipped the active pane alone, leaving the
+/// two panes of a dual view disagreeing. Now it is one preference, and every pane
+/// of every tab -- open already, opened later, or restored after a restart --
+/// shows what it says. See MOLE-441.
+void TestAppIntegration::hiddenFilesAreOneRememberedSettingForEveryTab()
+{
+    const auto bothPanesShow = [](BrowserController* browser, bool hidden) {
+        return browser && browser->left()->files()->showHidden() == hidden
+            && browser->right()->files()->showHidden() == hidden;
+    };
+
+    auto* first = qobject_cast<BrowserController*>(m_app->tabs()->controllerAt(0));
+    QVERIFY(first);
+    QVERIFY(bothPanesShow(first, false));
+    QVERIFY(m_app->triggerAction(QStringLiteral("mole.view.dualPane")));
+
+    // On from the menu: both panes, not only the active one.
+    QVERIFY(m_app->triggerAction(QStringLiteral("mole.view.hiddenFiles")));
+    QVERIFY2(bothPanesShow(first, true), "the menu turned on hidden files in one pane of a dual view");
+    QVERIFY(menuEntry(m_app->buildMenu(), QStringLiteral("mole.view.hiddenFiles"))
+                .value(QStringLiteral("checked"))
+                .toBool());
+
+    // A tab opened afterwards starts with it.
+    const int second = m_app->tabs()->openTab(QStringLiteral("mole.browser"));
+    QVERIFY(second >= 0);
+    auto* opened = qobject_cast<BrowserController*>(m_app->tabs()->controllerAt(second));
+    QVERIFY2(bothPanesShow(opened, true), "a new tab started with hidden files hidden");
+
+    // Off from that tab -- what its checkbox does -- and the first tab follows.
+    QVERIFY(opened->setProperty("showHidden", false));
+    QVERIFY2(bothPanesShow(first, false), "a tab already open kept its own idea of hidden files");
+    QVERIFY(bothPanesShow(opened, false));
+
+    // On again, then the whole application rebuilt from the same preferences file.
+    QVERIFY(opened->setProperty("showHidden", true));
+    m_app.reset();
+    m_app = std::make_unique<AppController>();
+    QString error;
+    QVERIFY2(m_app->initialise(builtIns(), &error), qPrintable(error));
+    const int afterRestart = m_app->tabs()->openTab(QStringLiteral("mole.browser"));
+    QVERIFY(afterRestart >= 0);
+    auto* restored = qobject_cast<BrowserController*>(m_app->tabs()->controllerAt(afterRestart));
+    QVERIFY2(bothPanesShow(restored, true), "hidden files were forgotten across a restart");
+    for (int tab = 0; tab < m_app->tabs()->rowCount(); ++tab) {
+        if (auto* browser = qobject_cast<BrowserController*>(m_app->tabs()->controllerAt(tab)))
+            QVERIFY2(bothPanesShow(browser, true), "a restored tab started with hidden files hidden");
+    }
 }
 
 void TestAppIntegration::viewMenuReflectsAndTogglesTheCurrentTab()

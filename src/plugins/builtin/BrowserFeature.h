@@ -48,6 +48,11 @@ class BrowserController final : public FeatureController
     Q_PROPERTY(QString accessDetail READ accessDetail NOTIFY folderFactsChanged)
     Q_PROPERTY(bool accessKnown READ isAccessKnown NOTIFY folderFactsChanged)
     Q_PROPERTY(bool readOnlyHere READ isReadOnlyHere NOTIFY folderFactsChanged)
+    /// Whether hidden files are shown, which is one answer for the whole
+    /// application rather than one per pane: the `browser.showHidden`
+    /// preference. Writing it writes the preference, and every pane of every tab
+    /// follows. See MOLE-441.
+    Q_PROPERTY(bool showHidden READ showHidden WRITE setShowHidden NOTIFY showHiddenChanged)
 
 public:
     enum class ViewMode {
@@ -60,6 +65,12 @@ public:
 
     BrowserController(
         PluginServices services, QString startUri, ViewMode initialMode, QObject* parent = nullptr);
+
+    /// The preference that holds it, and nowhere else does -- saveState() does
+    /// not carry it, because two records would be two answers after a restart.
+    static constexpr const char* kShowHiddenKey = "browser.showHidden";
+    bool showHidden() const;
+    void setShowHidden(bool show);
 
     /// Where this tab is looking: the folder each visible pane shows. In dual
     /// that is both of them; in single or grid the other pane still exists and is
@@ -143,6 +154,7 @@ signals:
     void folderFactsChanged();
     void viewModeChanged();
     void activePaneChanged();
+    void showHiddenChanged();
     void fileActivated(const QString& uri);
     void operationFailed(const QString& message);
     /// A drive-contributed action answered. Relayed from whichever pane ran it,
@@ -154,6 +166,8 @@ signals:
 
 private:
     void refreshLabels();
+    /// Both panes to whatever showHidden() says now.
+    void applyShowHidden();
     /// The tags under the listing: a report, alerts, the index, and access.
     ///
     /// `askTheDrive` says whether the drive is asked what this account may do
@@ -173,6 +187,9 @@ private:
     BrowserPaneController* m_right = nullptr;
     ViewMode m_viewMode = ViewMode::Single;
     int m_activePaneIndex = 0;
+    /// Only where there is no preference store to hold it, which is a test
+    /// building a controller by hand. With one, the store is the answer.
+    bool m_showHiddenWithoutPreferences = false;
 
     /// Refreshed when the active pane moves. Cached because the strip reads
     /// them on every repaint and two of the three answers come from a file.

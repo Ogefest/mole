@@ -1869,20 +1869,14 @@ void AppController::registerShellActions()
         action.sortOrder = 20;
         action.separatorBefore = true;
 
-        const auto paneFiles = [this]() -> QObject* {
-            const QVariant pane = currentTabProperty("activePane");
-            QObject* controller = pane.value<QObject*>();
-            return controller ? controller->property("files").value<QObject*>() : nullptr;
-        };
-
-        action.enabled = [paneFiles] { return paneFiles() != nullptr; };
-        action.checked = [paneFiles] {
-            QObject* files = paneFiles();
-            return files && files->property("showHidden").toBool();
-        };
-        action.trigger = [paneFiles] {
-            if (QObject* files = paneFiles())
-                files->setProperty("showHidden", !files->property("showHidden").toBool());
+        // The tab's showHidden, which is the application-wide preference: it
+        // flipped the active pane alone, so a dual view came out with its two
+        // panes disagreeing -- the thing the checkbox existed to prevent -- and
+        // a new tab knew nothing of it. See MOLE-441.
+        action.enabled = [this] { return currentTabProperty("showHidden").isValid(); };
+        action.checked = [this] { return currentTabProperty("showHidden", false).toBool(); };
+        action.trigger = [this] {
+            setCurrentTabProperty("showHidden", !currentTabProperty("showHidden", false).toBool());
         };
         m_actions->addAction(std::move(action));
     }

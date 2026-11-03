@@ -155,6 +155,22 @@ there is something. See
 Whether the mark can appear at all is asked of the drive once per folder, so a
 listing of five thousand files costs one question rather than five thousand.
 
+## Hidden files
+
+Dotfiles, and anything the drive itself marks hidden, are left out of a listing until
+you ask for them: the *Hidden* checkbox above the listing, or View ▸ *Show hidden
+files*. The two are the same switch, and each shows what the other set.
+
+**It is one setting, and it is remembered.** Switched on once, it applies to every
+tab already open, to every tab you open afterwards, to both panes of a dual view, and
+after Mole is closed and started again, until you switch it off. A search keeps its
+own *hidden* criterion, and a sync its own choice of whether to include hidden files:
+those are questions about the search or the sync, not about how you like to look at a
+folder.
+
+Packing a folder into an archive takes its hidden files with it whatever this
+says: an archive of a folder is all of it.
+
 ## A folder that is a git checkout
 
 ![Git state in a pane](images/01e-git-state.png)

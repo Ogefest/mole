@@ -182,18 +182,12 @@ Item {
                     text: "Hidden"
                     font.pixelSize: 12
                     focusPolicy: Qt.NoFocus
-                    checked: controller && controller.activePane && controller.activePane.files
-                             ? controller.activePane.files.showHidden : false
-                    onToggled: {
-                        // Both panes, so a dual view does not show two different
-                        // ideas of what is in the same tree.
-                        if (!controller)
-                            return
-                        if (controller.left && controller.left.files)
-                            controller.left.files.showHidden = checked
-                        if (controller.right && controller.right.files)
-                            controller.right.files.showHidden = checked
-                    }
+                    // One setting for the whole application, which the
+                    // controller keeps as a preference: every pane of every tab
+                    // follows it, and View > Show hidden files is the same
+                    // switch. See MOLE-441.
+                    checked: controller ? controller.showHidden : false
+                    onToggled: if (controller) controller.showHidden = checked
                     ToolTip.visible: hovered
                     ToolTip.text: "Show dotfiles and anything the drive marks hidden"
                     ToolTip.delay: 600

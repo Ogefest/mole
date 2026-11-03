@@ -8,6 +8,7 @@
 #include "core/events/EventBus.h"
 #include "core/index/IndexDatabase.h"
 #include "core/index/IndexSummary.h"
+#include "core/settings/Preferences.h"
 #include "core/tasks/QueryAccessTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/tasks/TransferTask.h"
@@ -48,6 +49,18 @@ BrowserController::BrowserController(
 
         connect(pane, &BrowserPaneController::locationChanged, this,
             [this] { refreshFolderFacts(AskTheDrive::Yes); });
+    }
+
+    // Hidden files, as remembered, from the first listing on -- and every later
+    // change, from this tab or any other, reaches both panes here. One setting
+    // means one answer on screen: a pane with its own idea would leave this tab's
+    // checkbox contradicting the menu's tick in another. See MOLE-441.
+    applyShowHidden();
+    if (m_services.preferences) {
+        connect(m_services.preferences, &Preferences::changed, this, [this](const QString& key) {
+            if (key == QLatin1String(kShowHiddenKey))
+                applyShowHidden();
+        });
     }
 
     // An alert added from another tab has to show up here without the user
@@ -118,6 +131,35 @@ BrowserPaneController* BrowserController::otherPane() const
     if (!splitEnabled())
         return activePane();
     return activePane() == m_left ? m_right : m_left;
+}
+
+bool BrowserController::showHidden() const
+{
+    if (!m_services.preferences)
+        return m_showHiddenWithoutPreferences;
+    return m_services.preferences->value(QLatin1String(kShowHiddenKey), false).toBool();
+}
+
+void BrowserController::setShowHidden(bool show)
+{
+    if (!m_services.preferences) {
+        m_showHiddenWithoutPreferences = show;
+        applyShowHidden();
+        return;
+    }
+    // The store says changed() to every controller, this one included, and
+    // that is what moves the panes -- so there is one path, not two.
+    m_services.preferences->setValue(QLatin1String(kShowHiddenKey), show);
+}
+
+void BrowserController::applyShowHidden()
+{
+    const bool show = showHidden();
+    const bool moved = m_left->files()->showHidden() != show || m_right->files()->showHidden() != show;
+    m_left->files()->setShowHidden(show);
+    m_right->files()->setShowHidden(show);
+    if (moved)
+        emit showHiddenChanged();
 }
 
 void BrowserController::setViewMode(ViewMode mode)
