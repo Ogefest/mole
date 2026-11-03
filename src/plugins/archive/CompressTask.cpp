@@ -2,6 +2,7 @@
 
 #include "core/vfs/DirectoryWalker.h"
 
+#include <QDateTime>
 #include <QFileInfo>
 #include <QIODevice>
 #include <QLocale>
@@ -139,6 +140,38 @@ CompressTask::CompressTask(Request request, QObject* parent)
     noteTouching(m_request.target);
 }
 
+CompressTask::Item CompressTask::itemFor(
+    const FileEntry& entry, const VfsUri& source, const QString& archivePath)
+{
+    Item item;
+    item.source = source;
+    item.archivePath = archivePath;
+    item.isDirectory = entry.isDir;
+    item.size = entry.isDir ? 0 : entry.size;
+    item.modified = entry.modified;
+    item.permissions = entry.permissions;
+    return item;
+}
+
+int CompressTask::modeFromPermissions(const QString& permissions)
+{
+    // The nine letters LocalFileSystem::modeString() and every listing parser
+    // write, owner first. Anything else is a string somebody else invented, and
+    // guessing a mode from it would be inventing one.
+    if (permissions.size() != 9)
+        return -1;
+    static constexpr char kLetters[9] = { 'r', 'w', 'x', 'r', 'w', 'x', 'r', 'w', 'x' };
+    int mode = 0;
+    for (int i = 0; i < 9; ++i) {
+        const QChar letter = permissions.at(i);
+        if (letter == QLatin1Char(kLetters[i]))
+            mode |= 1 << (8 - i);
+        else if (letter != QLatin1Char('-'))
+            return -1;
+    }
+    return mode;
+}
+
 bool CompressTask::plan(QList<Item>& items)
 {
     for (const VfsUri& source : m_request.sources) {
@@ -153,14 +186,14 @@ bool CompressTask::plan(QList<Item>& items)
 
         const FileEntry entry = stat.value();
         if (!entry.isDir) {
-            items.append(Item { source, entry.name, false, entry.size });
+            items.append(itemFor(entry, source, entry.name));
             continue;
         }
 
         // A folder goes in with what is inside it, and the names inside the archive
         // are relative to the folder itself rather than to the drive -- unpacking
         // should give back the folder, not a chain of parent directories.
-        items.append(Item { source, entry.name + QLatin1Char('/'), true, 0 });
+        items.append(itemFor(entry, source, entry.name + QLatin1Char('/')));
 
         const QString base = source.path();
         DirectoryWalker walker(m_request.sourceFileSystem);
@@ -169,8 +202,7 @@ bool CompressTask::plan(QList<Item>& items)
             if (relative.startsWith(QLatin1Char('/')))
                 relative.remove(0, 1);
             const QString inArchive = entry.name + QLatin1Char('/') + relative;
-            items.append(Item { found.uri, found.isDir ? inArchive + QLatin1Char('/') : inArchive,
-                found.isDir, found.isDir ? 0 : found.size });
+            items.append(itemFor(found, found.uri, found.isDir ? inArchive + QLatin1Char('/') : inArchive));
             return DirectoryWalker::Action::Continue;
         });
     }
@@ -299,6 +331,12 @@ void CompressTask::run()
         fail(error);
     };
 
+    // For an entry whose drive did not say when it changed. Zero is not "unknown"
+    // to anything that reads the archive: it is 1980 in zip's DOS field and 1970
+    // in tar's, a wrong date that looks like data. Now is at least a date this
+    // file plausibly had. See MOLE-438.
+    const QDateTime packedAt = QDateTime::currentDateTime();
+
     QByteArray chunk;
     for (const Item& item : items) {
         if (isCancelRequested()) {
@@ -333,7 +371,10 @@ void CompressTask::run()
         archive_entry_set_pathname(entry, item.archivePath.toUtf8().constData());
         archive_entry_set_size(entry, item.isDirectory ? 0 : item.size);
         archive_entry_set_filetype(entry, item.isDirectory ? AE_IFDIR : AE_IFREG);
-        archive_entry_set_perm(entry, item.isDirectory ? 0755 : 0644);
+        const int mode = modeFromPermissions(item.permissions);
+        archive_entry_set_perm(entry, mode >= 0 ? mode : (item.isDirectory ? 0755 : 0644));
+        const QDateTime when = item.modified.isValid() ? item.modified : packedAt;
+        archive_entry_set_mtime(entry, static_cast<time_t>(when.toSecsSinceEpoch()), 0);
 
         if (archive_write_header(writer, entry) != ARCHIVE_OK) {
             const QString reason = QString::fromLocal8Bit(archive_error_string(writer));

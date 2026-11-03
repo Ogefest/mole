@@ -681,6 +681,9 @@ if(MOLE_HAVE_ARCHIVE_PLUGIN)
     mole_add_test(tst_ArchiveFileSystem SOURCES plugins/tst_ArchiveFileSystem.cpp
                                        LIBS mole_archive_backend)
 
+    # It reads headers back with libarchive itself, because the browsing backend
+    # reports no mode at all (MOLE-438). The static backend already carries
+    # libarchive onto the link line, so nothing more is named here.
     mole_add_test(tst_CompressTask      SOURCES plugins/tst_CompressTask.cpp
                                        LIBS mole_archive_backend)
 

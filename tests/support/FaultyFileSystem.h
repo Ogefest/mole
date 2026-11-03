@@ -175,6 +175,13 @@ public:
     /// 0 is the value that switched the short-read guard off. See MOLE-344.
     FaultyFileSystem& listingGivesNoSize();
 
+    /// The drive says nothing about when anything changed or what its mode is:
+    /// every time invalid and the permission string empty, in a listing and in a
+    /// stat. What an FTP server without MLSD, or a store with no notion of a mode,
+    /// really answers -- and the case where whatever wanted the time has to have
+    /// an answer of its own rather than writing out zero.
+    FaultyFileSystem& listingGivesNoTimesOrModes();
+
     /// The drive stops advertising RandomAccessRead: it can be read from the
     /// beginning and nowhere else. Not an exotic fault -- it is what a backend
     /// streaming over a socket really is, and every caller that asks for a window

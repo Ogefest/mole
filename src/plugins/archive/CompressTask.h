@@ -92,7 +92,16 @@ private:
         QString archivePath;
         bool isDirectory = false;
         qint64 size = 0;
+        /// What goes into the entry's header, taken from the listing that found
+        /// the item. Invalid or empty where the drive does not say -- run() has an
+        /// answer for that which is not zero. See MOLE-438.
+        QDateTime modified;
+        QString permissions;
     };
+
+    static Item itemFor(const FileEntry& entry, const VfsUri& source, const QString& archivePath);
+    /// "rwxr-xr-x" as a mode, or -1 for a string that is not nine such letters.
+    static int modeFromPermissions(const QString& permissions);
 
     bool plan(QList<Item>& items);
     /// Deletes the sources after a successful write. Declines -- and says so in the

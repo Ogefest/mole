@@ -65,6 +65,8 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-11-03 #MOLE-438 Files packed into an archive keep their modification time and their executable bit, instead of all being dated 1980
+
 ## 0.1.3 — released 2026-09-06
 
 2026-09-05 #MOLE-415 Plugins must be rebuilt for this version: the plugin API is 13, and a library built against 12 is refused

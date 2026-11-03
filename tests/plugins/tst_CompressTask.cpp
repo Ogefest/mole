@@ -12,6 +12,11 @@
 #include <QDir>
 #include <QFile>
 
+#include <archive.h>
+#include <archive_entry.h>
+#include <chrono>
+#include <filesystem>
+
 using namespace mole;
 using namespace mole::test;
 
@@ -44,8 +49,20 @@ private slots:
     void aReadThatFailsMidEntryRefusesTheArchive();
     void theSourceHoldingTheArchiveIsNeverDeleted();
     void anArchiveWrittenIntoTheTreeItIsArchivingDoesNotIncludeItself();
+    void eachEntryKeepsItsModificationTimeAndMode_data();
+    void eachEntryKeepsItsModificationTimeAndMode();
+    void aDriveThatGivesNoTimeIsPackedAsNowNotAsZero();
 
 private:
+    struct Header
+    {
+        qint64 mtime = 0;
+        bool mtimeSet = false;
+        int mode = 0;
+    };
+    /// Every entry's header, read straight out of the archive with libarchive.
+    QHash<QString, Header> headersOf(const QString& archiveName);
+
     /// Runs a compression to completion and returns the task.
     CompressTask* pack(const QStringList& relativeSources, const QString& archiveName,
         CompressTask::Format format = CompressTask::Format::Zip);
@@ -133,6 +150,134 @@ QStringList TestCompressTask::contentsOf(const QString& archiveName)
         });
     paths.sort();
     return paths;
+}
+
+QHash<QString, TestCompressTask::Header> TestCompressTask::headersOf(const QString& archiveName)
+{
+    QHash<QString, Header> headers;
+    archive* reader = archive_read_new();
+    archive_read_support_format_all(reader);
+    archive_read_support_filter_all(reader);
+    const QByteArray path = QFile::encodeName(QDir(m_tree->path()).filePath(archiveName));
+    if (archive_read_open_filename(reader, path.constData(), 64 * 1024) != ARCHIVE_OK) {
+        archive_read_free(reader);
+        return headers;
+    }
+    archive_entry* entry = nullptr;
+    while (archive_read_next_header(reader, &entry) == ARCHIVE_OK) {
+        Header header;
+        header.mtimeSet = archive_entry_mtime_is_set(entry) != 0;
+        header.mtime = static_cast<qint64>(archive_entry_mtime(entry));
+        header.mode = static_cast<int>(archive_entry_perm(entry));
+        headers.insert(QString::fromUtf8(archive_entry_pathname(entry)), header);
+        archive_read_data_skip(reader);
+    }
+    archive_read_free(reader);
+    return headers;
+}
+
+void TestCompressTask::eachEntryKeepsItsModificationTimeAndMode_data()
+{
+    QTest::addColumn<int>("format");
+    QTest::addColumn<QString>("name");
+    // The slack each format's time field allows: zip's DOS date counts in two
+    // seconds, tar's in one.
+    QTest::addColumn<int>("slack");
+
+    QTest::newRow("zip") << int(CompressTask::Format::Zip) << "dated.zip" << 2;
+    QTest::newRow("tar.gz") << int(CompressTask::Format::TarGz) << "dated.tar.gz" << 0;
+    QTest::newRow("tar.xz") << int(CompressTask::Format::TarXz) << "dated.tar.xz" << 0;
+}
+
+void TestCompressTask::eachEntryKeepsItsModificationTimeAndMode()
+{
+    QFETCH(int, format);
+    QFETCH(QString, name);
+    QFETCH(int, slack);
+
+    // Years ago and on an odd second, so neither "now" nor a value rounded to
+    // zip's two seconds could pass for it by accident.
+    const QDateTime fileTime = QDateTime::fromSecsSinceEpoch(1'500'000'001);
+    const QDateTime folderTime = QDateTime::fromSecsSinceEpoch(1'400'000'003);
+    QVERIFY(m_tree->writeFile(QStringLiteral("reports/run.sh"), QByteArray("#!/bin/sh\necho hi\n")));
+    const QString script = QDir(m_tree->path()).filePath(QStringLiteral("reports/run.sh"));
+    QVERIFY(QFile::setPermissions(script,
+        QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner | QFile::ReadGroup | QFile::ExeGroup
+            | QFile::ReadOther | QFile::ExeOther));
+
+    // Through std::filesystem rather than QFile, which cannot open a folder to
+    // set its time.
+    const auto setTime = [&](const QString& relative, const QDateTime& when) {
+        const std::filesystem::path path = QDir(m_tree->path()).filePath(relative).toStdString();
+        const auto sys = std::chrono::system_clock::time_point(std::chrono::seconds(when.toSecsSinceEpoch()));
+        std::error_code failed;
+        std::filesystem::last_write_time(path, std::chrono::file_clock::from_sys(sys), failed);
+        return !failed;
+    };
+    QVERIFY(setTime(QStringLiteral("notes.txt"), fileTime));
+    QVERIFY(setTime(QStringLiteral("reports/run.sh"), fileTime));
+    // Last, because writing a file into a folder moves the folder's time.
+    QVERIFY(setTime(QStringLiteral("reports"), folderTime));
+
+    CompressTask* task = pack({ QStringLiteral("notes.txt"), QStringLiteral("reports") }, name,
+        static_cast<CompressTask::Format>(format));
+    QVERIFY(task);
+    QCOMPARE(task->state(), Task::State::Succeeded);
+
+    const QHash<QString, Header> headers = headersOf(name);
+    const auto timeOf = [&](const QString& path) -> qint64 {
+        const auto found = headers.constFind(path);
+        return found == headers.cend() ? -1 : found->mtime;
+    };
+    const QString inside = QStringList(headers.keys()).join(QLatin1Char(' '));
+    QVERIFY2(headers.contains(QStringLiteral("notes.txt")), qPrintable(inside));
+    QVERIFY2(headers.contains(QStringLiteral("reports/")), qPrintable(inside));
+    QVERIFY2(headers.contains(QStringLiteral("reports/run.sh")), qPrintable(inside));
+
+    QVERIFY2(qAbs(timeOf(QStringLiteral("notes.txt")) - fileTime.toSecsSinceEpoch()) <= slack,
+        qPrintable(QStringLiteral("notes.txt is dated %1")
+                       .arg(QDateTime::fromSecsSinceEpoch(timeOf(QStringLiteral("notes.txt")))
+                                .toString(Qt::ISODate))));
+    QVERIFY(qAbs(timeOf(QStringLiteral("reports/run.sh")) - fileTime.toSecsSinceEpoch()) <= slack);
+    QVERIFY2(qAbs(timeOf(QStringLiteral("reports/")) - folderTime.toSecsSinceEpoch()) <= slack,
+        "a folder comes back dated when it was, not when it was unpacked");
+
+    // The executable bit survives, and an ordinary file is not made executable.
+    QCOMPARE(headers.value(QStringLiteral("reports/run.sh")).mode, 0755);
+    QCOMPARE(headers.value(QStringLiteral("notes.txt")).mode & 0111, 0);
+}
+
+void TestCompressTask::aDriveThatGivesNoTimeIsPackedAsNowNotAsZero()
+{
+    // A drive with no times and no modes: the header still needs both, and zero
+    // is the one wrong answer that looks like data -- 1980 in a zip, 1970 in a tar.
+    auto silent = std::make_shared<FaultyFileSystem>(m_fs);
+    silent->listingGivesNoTimesOrModes();
+
+    CompressTask::Request request;
+    request.sourceFileSystem = silent;
+    request.targetFileSystem = m_fs;
+    request.format = CompressTask::Format::TarGz;
+    request.sources.append(m_tree->rootUri().child(QStringLiteral("notes.txt")));
+    request.sources.append(m_tree->rootUri().child(QStringLiteral("reports")));
+    request.target = m_tree->rootUri().child(QStringLiteral("undated.tar.gz"));
+
+    const qint64 before = QDateTime::currentSecsSinceEpoch();
+    auto* task = new CompressTask(request);
+    m_tasks->submit(task);
+    QVERIFY(waitForTask(task, 30000));
+    QCOMPARE(task->state(), Task::State::Succeeded);
+    const qint64 after = QDateTime::currentSecsSinceEpoch();
+
+    const QHash<QString, Header> headers = headersOf(QStringLiteral("undated.tar.gz"));
+    QVERIFY(!headers.isEmpty());
+    for (auto it = headers.cbegin(); it != headers.cend(); ++it) {
+        QVERIFY2(it->mtime >= before && it->mtime <= after,
+            qPrintable(QStringLiteral("%1 is dated %2")
+                           .arg(it.key(), QDateTime::fromSecsSinceEpoch(it->mtime).toString(Qt::ISODate))));
+        // No mode from the drive keeps the one there always was.
+        QCOMPARE(it->mode, it.key().endsWith(QLatin1Char('/')) ? 0755 : 0644);
+    }
 }
 
 void TestCompressTask::packsFilesAndFoldersThatComeBackOut_data()

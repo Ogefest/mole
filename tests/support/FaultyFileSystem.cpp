@@ -119,6 +119,7 @@ struct FaultyFileSystem::Policy
     }
     qint64 listingSizeDelta = 0;
     std::atomic_bool listingWithoutSizes { false };
+    std::atomic_bool listingWithoutTimesOrModes { false };
     /// Directories whose listing stalls until release().
     QStringList listStallPaths;
     std::atomic_bool noRandomAccess { false };
@@ -135,6 +136,14 @@ namespace {
     VfsError revokedError()
     {
         return VfsError::make(VfsError::AccessDenied, QStringLiteral("permission was withdrawn"));
+    }
+
+    void forgetTimesAndModes(FileEntry& entry)
+    {
+        entry.modified = {};
+        entry.created = {};
+        entry.accessed = {};
+        entry.permissions.clear();
     }
 
     /// Counts the bytes handed over and acts when the count arrives at an offset.
@@ -558,6 +567,12 @@ FaultyFileSystem& FaultyFileSystem::listingGivesNoSize()
     return *this;
 }
 
+FaultyFileSystem& FaultyFileSystem::listingGivesNoTimesOrModes()
+{
+    m_policy->listingWithoutTimesOrModes.store(true);
+    return *this;
+}
+
 FaultyFileSystem& FaultyFileSystem::cannotSeek()
 {
     m_policy->noRandomAccess.store(true);
@@ -686,11 +701,14 @@ Result<FileEntryList> FaultyFileSystem::list(const VfsUri& dir, const CancelToke
         delta = m_policy->listingSizeDelta;
     }
     const bool silent = m_policy->listingWithoutSizes.load();
-    if (!listed.ok() || (delta == 0 && !silent))
+    const bool timeless = m_policy->listingWithoutTimesOrModes.load();
+    if (!listed.ok() || (delta == 0 && !silent && !timeless))
         return listed;
 
     FileEntryList entries = listed.value();
     for (FileEntry& entry : entries) {
+        if (timeless)
+            forgetTimesAndModes(entry);
         if (entry.isDir)
             continue;
         entry.size = silent ? kUnknownSize : entry.size + delta;
@@ -721,10 +739,15 @@ Result<FileEntry> FaultyFileSystem::stat(const VfsUri& target)
         delta = m_policy->listingSizeDelta;
     }
     const bool silent = m_policy->listingWithoutSizes.load();
-    if (!entry.ok() || (delta == 0 && !silent) || entry.value().isDir)
+    const bool timeless = m_policy->listingWithoutTimesOrModes.load();
+    if (!entry.ok() || (delta == 0 && !silent && !timeless))
         return entry;
 
     FileEntry lying = entry.value();
+    if (timeless)
+        forgetTimesAndModes(lying);
+    if (lying.isDir)
+        return Result<FileEntry>(lying);
     // A drive that does not report sizes does not report them to the short-read
     // guard's follow-up question either.
     lying.size = silent ? kUnknownSize : lying.size + delta;
