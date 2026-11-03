@@ -1039,7 +1039,7 @@ void TestS3FileSystem::aLargeObjectIsStreamedInRangesRatherThanDownloadedWhole()
     ScriptedHttpServer server([&filler](const ScriptedHttpServer::Request& request) {
         ScriptedHttpServer::Reply reply;
         if (request.method == "HEAD") {
-            reply.headers.append("Content-Length: " + QByteArray::number(kBig));
+            reply.claimedLength = kBig;
             reply.headers.append("ETag: \"the-object\"");
             reply.headers.append("Last-Modified: Wed, 12 Oct 2022 10:00:00 GMT");
             return reply;
@@ -1108,7 +1108,7 @@ void TestS3FileSystem::anObjectTooBigForOneCopyRequestIsCopiedInRanges()
             // The source is there and is six gigabytes; nothing is at the
             // destination.
             if (request.path.contains("backup.tar")) {
-                reply.headers.append("Content-Length: " + QByteArray::number(kSixGigabytes));
+                reply.claimedLength = kSixGigabytes;
                 reply.headers.append("Last-Modified: Wed, 12 Oct 2022 10:00:00 GMT");
                 return reply;
             }
@@ -1191,7 +1191,7 @@ void TestS3FileSystem::theTimeAnObjectWasLastChangedIsRead()
 {
     ScriptedHttpServer server([](const ScriptedHttpServer::Request&) {
         ScriptedHttpServer::Reply reply;
-        reply.headers.append("Content-Length: 12");
+        reply.claimedLength = 12;
         reply.headers.append("Last-Modified: Wed, 12 Oct 2022 10:00:00 GMT");
         return reply;
     });

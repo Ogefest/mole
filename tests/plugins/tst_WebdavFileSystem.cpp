@@ -614,7 +614,7 @@ void TestWebdavFileSystem::aLargeFileIsStreamedInRangesRatherThanDownloadedWhole
     ScriptedHttpServer server([&filler](const ScriptedHttpServer::Request& request) {
         ScriptedHttpServer::Reply reply;
         if (request.method == "HEAD") {
-            reply.headers.append("Content-Length: " + QByteArray::number(kBig));
+            reply.claimedLength = kBig;
             reply.headers.append("ETag: \"the-file\"");
             return reply;
         }

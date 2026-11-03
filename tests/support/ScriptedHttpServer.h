@@ -60,6 +60,10 @@ public:
         int status = 200;
         QByteArray reason = "OK";
         /// Whole header lines, without the terminator: `Content-Type: text/xml`.
+        ///
+        /// Not `Content-Length`, which is claimedLength's. One written here is
+        /// taken as the claim and replaces the fixture's own -- an answer
+        /// carrying two is malformed, and libcurl 8.18 refuses it. See MOLE-413.
         QList<QByteArray> headers;
         QByteArray body;
 

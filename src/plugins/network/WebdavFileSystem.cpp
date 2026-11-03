@@ -219,7 +219,19 @@ net::Response WebdavFileSystem::send(const Call& call, const CancelToken& cancel
     // insist on Digest, and there is no reason to make the user care.
     curl_easy_setopt(lease.get(), CURLOPT_HTTPAUTH, static_cast<long>(CURLAUTH_ANY));
 
-    if (call.payload) {
+    if (call.method == "HEAD") {
+        // NOBODY, not a custom method called HEAD. curl takes a custom method's
+        // name on trust and goes on reading the body the Content-Length
+        // promises -- which a HEAD never sends -- so it waited until the server
+        // hung up, or until the stall guard gave up on a server that keeps the
+        // connection open, and then reported the HEAD as failed. openRead()
+        // reads that as "length unknown" and fetched the file whole, so the
+        // streaming MOLE-370 added never once happened against a real server.
+        // What hid it was a test fixture sending a second Content-Length of 0,
+        // which the curl of the day believed. S3 has always done it this way.
+        // See MOLE-413.
+        curl_easy_setopt(lease.get(), CURLOPT_NOBODY, 1L);
+    } else if (call.payload) {
         net::CurlPool::sendFrom(lease, *call.payload, call.payloadSize);
         curl_easy_setopt(lease.get(), CURLOPT_CUSTOMREQUEST, call.method.constData());
     } else if (!call.body.isEmpty()) {

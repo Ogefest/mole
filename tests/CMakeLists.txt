@@ -305,6 +305,10 @@ mole_add_test(tst_SqliteFaults      SOURCES support/tst_SqliteFaults.cpp)
 # The drive that contributes actions. A fake that lies makes every suite built on
 # it green for the wrong reason, so it is held to the same contract as a backend.
 mole_add_test(tst_OfferingFileSystem SOURCES support/tst_OfferingFileSystem.cpp)
+# The scripted HTTP server, held to answering wrongly only where a case asks it
+# to. Two Content-Length lines in one answer went unnoticed until a newer libcurl
+# refused them. See MOLE-413.
+mole_add_test(tst_ScriptedHttpServer SOURCES support/tst_ScriptedHttpServer.cpp)
 mole_add_test(tst_VfsManager        SOURCES core/tst_VfsManager.cpp)
 
 # Every mount is behind two wrappers, and most of the suite holds a bare backend.

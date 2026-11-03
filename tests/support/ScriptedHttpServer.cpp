@@ -212,10 +212,33 @@ bool ScriptedHttpServer::answerOne(QTcpSocket& socket)
         m_received.append(request);
     }
 
-    const qint64 claimed = reply.claimedLength >= 0 ? reply.claimedLength : reply.body.size();
+    // One Content-Length, always. A case that writes the header itself is
+    // making its claim the long way round, so its line *is* the claim and the
+    // fixture's own goes; sending both is an answer with two lengths, which
+    // libcurl 8.18 refuses outright and RFC 9110 says it should. Saying it twice
+    // is a contradiction in the case rather than a choice, so that one stops the
+    // run. See MOLE-413.
+    qint64 claimed = reply.claimedLength >= 0 ? reply.claimedLength : reply.body.size();
+    QList<QByteArray> headers;
+    for (const QByteArray& header : reply.headers) {
+        const int colon = header.indexOf(':');
+        if (colon < 0 || header.left(colon).trimmed().toLower() != "content-length") {
+            headers.append(header);
+            continue;
+        }
+        if (reply.claimedLength >= 0) {
+            qFatal(
+                "ScriptedHttpServer: a reply sets claimedLength and also writes \"%s\"; say the length once",
+                header.constData());
+        }
+        bool isNumber = false;
+        claimed = header.mid(colon + 1).trimmed().toLongLong(&isNumber);
+        if (!isNumber)
+            qFatal("ScriptedHttpServer: \"%s\" is not a length; use claimedLength", header.constData());
+    }
 
     QByteArray out = "HTTP/1.1 " + QByteArray::number(reply.status) + ' ' + reply.reason + "\r\n";
-    for (const QByteArray& header : reply.headers)
+    for (const QByteArray& header : headers)
         out += header + "\r\n";
     out += "Content-Length: " + QByteArray::number(claimed) + "\r\n";
     // Closing is the default, because keep-alive is one more thing to get right
