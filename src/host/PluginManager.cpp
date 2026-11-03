@@ -36,6 +36,21 @@ namespace {
         return iid.mid(prefix.size());
     }
 
+    /// Why a plugin built against another API version was refused, and what to
+    /// do about it. Both numbers, which is what MOLE-366 was for -- and then the
+    /// sentence a person needs after reading them, because a reader who does not
+    /// know the number is an ABI version has otherwise been given two integers.
+    /// There is no setting that loads it as it stands; ADR-0098 decided there
+    /// should not be. One place for both checks that refuse one, so the message a
+    /// user meets cannot be the one that was not changed. See MOLE-427.
+    QString builtAgainstAnotherApi(const QString& who, const QString& builtAgainst)
+    {
+        return QStringLiteral("%1: built against plugin API %2, host provides %3; "
+                              "rebuild the plugin against this version of Mole")
+            .arg(who, builtAgainst)
+            .arg(kPluginApiVersion);
+    }
+
     /// The concrete PluginRegistry handed to one plugin during registration.
     /// Scoping it per plugin lets errors name the culprit.
     class ScopedRegistry final : public PluginRegistry
@@ -278,10 +293,7 @@ bool PluginManager::acceptPlugin(IPlugin* plugin, const QString& filePath, bool 
     // built-in -- which has no identifier to read -- and a plugin whose metadata
     // says something other than what it was compiled with. See ADR-0098.
     if (metadata.apiVersion != kPluginApiVersion) {
-        m_errors.append(QStringLiteral("%1: built against plugin API %2, host provides %3")
-                            .arg(metadata.id)
-                            .arg(metadata.apiVersion)
-                            .arg(kPluginApiVersion));
+        m_errors.append(builtAgainstAnotherApi(metadata.id, QString::number(metadata.apiVersion)));
         return false;
     }
 
@@ -361,9 +373,7 @@ int PluginManager::loadFromDirectory(const QString& directory)
                                    "interface (it declares %2)")
                         .arg(path, declaredIid.isEmpty() ? QStringLiteral("nothing") : declaredIid));
             } else {
-                m_errors.append(QStringLiteral("%1: built against plugin API %2, host provides %3")
-                                    .arg(path, version)
-                                    .arg(kPluginApiVersion));
+                m_errors.append(builtAgainstAnotherApi(path, version));
             }
             delete loader;
             continue;

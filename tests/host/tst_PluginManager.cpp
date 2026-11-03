@@ -47,6 +47,7 @@ private slots:
     void aPluginThatThrowsWhenAskedWhatItIsIsReportedAndSkipped();
     void aHostWithNowhereToPutSomethingSaysSoWithoutCallingItAFault();
     void aPluginBuiltAgainstAnotherApiIsRefusedWithoutBeingAsked();
+    void aPluginRefusedForItsVersionIsToldToRebuild();
     void aPluginBuiltAgainstAShorterServicesReadsTheFieldsItKnows();
 
 private:
@@ -551,6 +552,39 @@ void TestPluginManager::aPluginBuiltAgainstAnotherApiIsRefusedWithoutBeingAsked(
     const QString said = manager->errors().join(QLatin1Char('\n'));
     QVERIFY2(said.contains(QStringLiteral("built against plugin API 1,")), qPrintable(said));
     QVERIFY2(said.contains(QString::number(kPluginApiVersion)), qPrintable(said));
+}
+
+void TestPluginManager::aPluginRefusedForItsVersionIsToldToRebuild()
+{
+    // Two numbers say what is wrong and not what to do about it. A reader who does
+    // not already know the number is an ABI version has been told their plugin
+    // failed and given two integers -- so both places that refuse one say the
+    // sentence that matters: rebuild it. Both, because the message somebody meets
+    // is whichever one was not changed. See MOLE-427.
+    const QString instruction = QStringLiteral("rebuild the plugin against this version of Mole");
+
+    // A built-in, or a plugin whose metadata disagrees with what it was compiled
+    // with: the metadata check.
+    {
+        PluginManager* manager = makeManager();
+        FakePlugin::Config config;
+        config.apiVersion = kPluginApiVersion - 1;
+        QVERIFY(!manager->addBuiltIn(std::make_unique<FakePlugin>(config)));
+        const QString said = manager->errors().join(QLatin1Char('\n'));
+        QVERIFY2(said.contains(instruction), qPrintable(said));
+        QVERIFY2(said.contains(QStringLiteral("built against plugin API %1,").arg(kPluginApiVersion - 1)),
+            qPrintable(said));
+    }
+
+    // A real library on disk: the identifier check, which is what a stale .so in
+    // somebody's plugin folder actually meets.
+    const QString alone = fixtureAlone(QStringLiteral("stale_api"));
+    if (alone.isEmpty())
+        QSKIP("the stale-API fixture plugin was not built");
+    PluginManager* manager = makeManager();
+    QCOMPARE(manager->loadFromDirectory(alone), 0);
+    const QString said = manager->errors().join(QLatin1Char('\n'));
+    QVERIFY2(said.contains(instruction), qPrintable(said));
 }
 
 void TestPluginManager::aPluginBuiltAgainstAShorterServicesReadsTheFieldsItKnows()

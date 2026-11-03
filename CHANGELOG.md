@@ -65,6 +65,7 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-11-03 #MOLE-427 A plugin refused for its API version says to rebuild it against this version of Mole, not only the two numbers
 2026-11-03 #MOLE-413 Opening a file on a WebDAV server no longer waits for the server to hang up first, and a large one streams instead of downloading whole
 2026-11-03 #MOLE-438 Files packed into an archive keep their modification time and their executable bit, instead of all being dated 1980
 
