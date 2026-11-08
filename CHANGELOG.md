@@ -71,6 +71,7 @@ the file and the thing that checks it cannot come apart.
 2026-11-03 #MOLE-441 Showing hidden files is remembered, and applies to every tab and to new ones, instead of lasting only as long as one tab
 2026-11-03 #MOLE-427 A plugin refused for its API version says to rebuild it against this version of Mole, not only the two numbers
 2026-11-03 #MOLE-413 Opening a file on a WebDAV server no longer waits for the server to hang up first, and a large one streams instead of downloading whole
+2026-11-03 #MOLE-412 The Repeat dropdown in the Indexes tab offers every schedule on Qt 6.11, instead of only "never"
 2026-11-03 #MOLE-438 Files packed into an archive keep their modification time and their executable bit, instead of all being dated 1980
 
 ## 0.1.3 — released 2026-09-06
