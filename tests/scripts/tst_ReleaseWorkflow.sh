@@ -237,6 +237,71 @@ if [ -s "$SHELLTEST_TMP/hardcoded" ]; then
 fi
 grep -q 'make version' "$WORKFLOW" || fail "the workflow does not ask the build what version it is"
 
+begin "appimagetool comes from a cache keyed on the digest the packer pins"
+# Downloaded live on every run, it stopped the rehearsal twice in three attempts on
+# 2026-11-08 when GitHub's assets answered 504. The cache is only safe while its
+# key names the file the packer will accept: a key typed out here would drift from
+# TOOL_SHA256 the first time the tool moved, and a stale cache would be restored and
+# refused on every run. So the key has to come from the step that reads the pin, the
+# fetch has to sit between restore and save, and every one of them before the
+# packages are built, with the same directory throughout. See MOLE-450.
+python3 - "$WORKFLOW" > "$SHELLTEST_TMP/toolcache" <<'PY'
+import re, sys, yaml
+
+document = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+steps = [s for job in document["jobs"].values() for s in job.get("steps") or []]
+
+def index_of(predicate, what):
+    for i, step in enumerate(steps):
+        if predicate(step):
+            return i
+    print(f"no step {what}")
+    sys.exit(0)
+
+reader = index_of(lambda s: "TOOL_SHA256" in (s.get("run") or "")
+                  and "scripts/package-appimage.sh" in (s.get("run") or ""),
+                  "reads TOOL_SHA256 out of scripts/package-appimage.sh")
+reader_id = steps[reader].get("id")
+if not reader_id:
+    print("the step that reads the pin has no id, so nothing can use its answer")
+    sys.exit(0)
+
+restore = index_of(lambda s: str(s.get("uses", "")).startswith("actions/cache/restore@"),
+                   "restores the tool from a cache")
+fetch = index_of(lambda s: "package-appimage.sh --fetch-tool" in (s.get("run") or ""),
+                 "fetches and checks the tool on its own")
+save = index_of(lambda s: str(s.get("uses", "")).startswith("actions/cache/save@"),
+                "saves the tool for the next run")
+build = index_of(lambda s: "make packages" in (s.get("run") or ""), "builds the packages")
+
+if not reader < restore < fetch < save < build:
+    print("the order is not: read the pin, restore, fetch, save, build the packages")
+
+if "RUNTIME_SHA256" not in (steps[reader].get("run") or ""):
+    print("the step that reads the pins does not read RUNTIME_SHA256")
+pins = (f"steps.{reader_id}.outputs.sha256", f"steps.{reader_id}.outputs.runtime-sha256")
+for name, i in (("restore", restore), ("save", save)):
+    key = str((steps[i].get("with") or {}).get("key", ""))
+    for pin in pins:
+        if pin not in key:
+            print(f"the {name} key does not carry {pin}: {key!r}")
+    if re.search(r"[0-9a-f]{64}", key):
+        print(f"the {name} key spells out a digest instead of reading it: {key!r}")
+
+dirs = {
+    "restore": str((steps[restore].get("with") or {}).get("path", "")),
+    "save": str((steps[save].get("with") or {}).get("path", "")),
+    "fetch": str((steps[fetch].get("env") or {}).get("MOLE_APPIMAGETOOL_CACHE", "")),
+    "build": str((steps[build].get("env") or {}).get("MOLE_APPIMAGETOOL_CACHE", "")),
+}
+if len(set(dirs.values())) != 1 or not all(dirs.values()):
+    print(f"the tool is kept in one place and looked for in another: {dirs}")
+PY
+if [ -s "$SHELLTEST_TMP/toolcache" ]; then
+    fail "the tool cache does not hold to the pin:"
+    sed 's/^/    /' "$SHELLTEST_TMP/toolcache"
+fi
+
 begin "the rehearsal's paths cover every script the release reaches"
 # GitHub reads the filter literally, so it cannot be generated, and a filter that
 # goes stale is a rehearsal that stops running without saying so. So the list of

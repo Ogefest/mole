@@ -274,6 +274,46 @@ jobs:
           fi
           echo "$shipped"
 
+      # **The tool that packs the AppImage, from a cache before it is asked of
+      # GitHub.** It was downloaded live on every run, once, and GitHub's asset
+      # hosting answering 504 stopped the rehearsal twice in three attempts on
+      # 2026-11-08. A tag run hit the same way is a red tag. Now it is restored from
+      # a cache keyed on the two SHA-256s the packer pins -- the tool, and the
+      # runtime it packs into the image -- so the key and the pins cannot name
+      # different files. It is fetched with retries only when the cache had
+      # none, checked against that digest either way, and saved straight away, so
+      # a run that fails later still leaves it for the next. tst_ReleaseWorkflow.sh
+      # holds the key to the pin. See MOLE-450.
+      - name: Which appimagetool the AppImage is packed with
+        id: appimagetool
+        run: |
+          sha=$(sed -n 's/^TOOL_SHA256="\([0-9a-f]*\)"$/\1/p' scripts/package-appimage.sh)
+          runtime=$(sed -n 's/^RUNTIME_SHA256="\([0-9a-f]*\)"$/\1/p' scripts/package-appimage.sh)
+          [ -n "$sha" ] || { echo "::error::scripts/package-appimage.sh pins no TOOL_SHA256"; exit 1; }
+          [ -n "$runtime" ] || { echo "::error::scripts/package-appimage.sh pins no RUNTIME_SHA256"; exit 1; }
+          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+          echo "runtime-sha256=$runtime" >> "$GITHUB_OUTPUT"
+          echo "dir=$RUNNER_TEMP/appimagetool" >> "$GITHUB_OUTPUT"
+
+      - name: appimagetool, from the cache if a run has kept it
+        id: appimagetool-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.appimagetool.outputs.dir }}
+          key: appimagetool-${{ steps.appimagetool.outputs.sha256 }}-runtime-${{ steps.appimagetool.outputs.runtime-sha256 }}
+
+      - name: appimagetool, checked, and fetched if the cache had none
+        env:
+          MOLE_APPIMAGETOOL_CACHE: ${{ steps.appimagetool.outputs.dir }}
+        run: scripts/package-appimage.sh --fetch-tool
+
+      - name: appimagetool, kept for the next run
+        if: steps.appimagetool-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.appimagetool.outputs.dir }}
+          key: appimagetool-${{ steps.appimagetool.outputs.sha256 }}-runtime-${{ steps.appimagetool.outputs.runtime-sha256 }}
+
       # The distribution packages, each built for the family it installs on. Both
       # come out of the install rules through CPack, so a package and
       # `make install` cannot come apart -- and both carry what their own
@@ -288,6 +328,8 @@ jobs:
       # requirements -- so the only honest way to produce one is to build it where
       # it will be installed. See scripts/package-rpm.sh.
       - name: The .deb, the .rpm and the AppImage
+        env:
+          MOLE_APPIMAGETOOL_CACHE: ${{ steps.appimagetool.outputs.dir }}
         run: make packages
 
       # And they install, on a clean system of each family, with nothing installed

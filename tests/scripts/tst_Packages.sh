@@ -388,7 +388,7 @@ for script in scripts/package-rpm.sh scripts/package-appimage.sh; do
         || fail "the container body in $script does not set pipefail"
 done
 # And the packer's own status is not thrown away by a pipe into tail.
-grep -q 'appimagetool "$APPDIR" "$image"' scripts/package-appimage.sh \
+grep -q '"$APPDIR" "$image" >/tmp/appimagetool.log' scripts/package-appimage.sh \
     || fail "appimagetool is not called with its status kept"
 grep -qF '[ -s "$image" ]' scripts/package-appimage.sh \
     || fail "nothing checks that an image was actually produced"
@@ -419,6 +419,76 @@ grep -q 'feature-summary.sh' .github/workflows/release.yml \
 # difference between two lists.
 grep -q 'Windows shares: not built' scripts/feature-summary.sh \
     || fail "the AppImage exemption is not named in the shared list"
+
+# A curl that records what it was asked and then fails the way GitHub's asset
+# hosting did on 2026-11-08: with a 504, after which `-f` makes curl exit 22.
+fake_curl() {
+    mkdir -p "$SHELLTEST_TMP/curlbin"
+    cat > "$SHELLTEST_TMP/curlbin/curl" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$CURL_CALLS"
+echo "curl: (22) The requested URL returned error: 504" >&2
+exit 22
+STUB
+    chmod +x "$SHELLTEST_TMP/curlbin/curl"
+    export CURL_CALLS="$SHELLTEST_TMP/curl-calls"
+    : > "$CURL_CALLS"
+}
+
+begin "appimagetool is fetched with retries that a server error counts toward"
+# A bare `curl -sSfL` made one request, and one 504 ended the run. It stopped the
+# release rehearsal twice in three attempts on 2026-11-08, while GitHub said all
+# was well, and on a tag that is a red tag. `--retry` alone does not cover a 5xx:
+# curl retries only what it considers transient, and `--retry-all-errors` is what
+# puts an HTTP error on that list. See MOLE-450.
+fake_curl
+cache="$SHELLTEST_TMP/tool-cache"
+( PATH="$SHELLTEST_TMP/curlbin:$PATH" MOLE_APPIMAGETOOL_CACHE="$cache" \
+    bash scripts/package-appimage.sh --fetch-tool ) > "$SHELLTEST_TMP/fetch-out" 2>&1
+status=$?
+[ "$status" -ne 0 ] || fail "a download that failed was reported as a success"
+[ -s "$CURL_CALLS" ] || fail "nothing asked curl for the tool at all"
+grep -q -- '--retry [1-9]' "$CURL_CALLS" || fail "the download is not retried: $(head -1 "$CURL_CALLS")"
+grep -q -- '--retry-all-errors' "$CURL_CALLS" \
+    || fail "a 504 is not retried: curl's --retry skips HTTP errors without --retry-all-errors"
+[ -z "$(ls -A "$cache" 2>/dev/null)" ] || fail "a failed download left something in the cache: $(ls "$cache")"
+
+begin "a cached appimagetool is checked exactly as a downloaded one is"
+# The cache is what lets a run skip GitHub, and it must not also skip the digest
+# check MOLE-390 added: the file is executed, and a cache is a place bytes can be
+# swapped. A copy that does not match is refused, removed so the next run fetches
+# a good one, and the network is not asked to cover for it. See MOLE-450.
+fake_curl
+cache="$SHELLTEST_TMP/bad-cache"
+mkdir -p "$cache"
+sha=$(sed -n 's/^TOOL_SHA256="\([0-9a-f]*\)"$/\1/p' scripts/package-appimage.sh)
+printf 'not appimagetool\n' > "$cache/appimagetool-$sha"
+( PATH="$SHELLTEST_TMP/curlbin:$PATH" MOLE_APPIMAGETOOL_CACHE="$cache" \
+    bash scripts/package-appimage.sh --fetch-tool ) > "$SHELLTEST_TMP/fetch-out" 2>&1
+status=$?
+[ "$status" -ne 0 ] || fail "a cached copy with the wrong bytes was accepted"
+grep -q "not the file this script was written against" "$SHELLTEST_TMP/fetch-out" \
+    || fail "the refusal does not say why: $(cat "$SHELLTEST_TMP/fetch-out")"
+[ ! -e "$cache/appimagetool-$sha" ] || fail "the bad copy was left in the cache for the next run to trip on"
+[ ! -s "$CURL_CALLS" ] || fail "a cached copy was there and the network was asked anyway"
+
+begin "the AppImage runtime is pinned, checked and handed to the packer"
+# Given no runtime, appimagetool downloads one from GitHub while it packs, and takes
+# the `continuous` build: every AppImage so far carried whichever runtime was
+# newest that day, and the packing step depended on GitHub a second time with no
+# retry. It showed on 2026-11-08 as "Failed to download runtime file" with the tool
+# already in the cache. See MOLE-450.
+url=$(sed -n 's/^RUNTIME_URL="\(.*\)"$/\1/p' scripts/package-appimage.sh)
+[ -n "$url" ] || fail "no runtime is pinned for the AppImage"
+case "$url" in
+    */continuous/*) fail "the AppImage runtime is the continuous build: $url" ;;
+esac
+grep -qE '^RUNTIME_SHA256="[0-9a-f]{64}"' scripts/package-appimage.sh \
+    || fail "no sha256 is recorded for the runtime packed into the AppImage"
+grep -q 'sha256sum /tmp/runtime' scripts/package-appimage.sh \
+    || fail "the runtime's sha256 is never compared inside the container"
+grep -q 'appimagetool --runtime-file /tmp/runtime' scripts/package-appimage.sh \
+    || fail "the packer is not handed the pinned runtime, so it fetches its own"
 
 begin "all three packaging targets exist and are declared"
 for target in packages deb rpm appimage; do

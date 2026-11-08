@@ -41,6 +41,80 @@ TOOL_URL="https://github.com/AppImage/appimagetool/releases/download/1.9.1/appim
 # is a tag that is finished and its bytes have no reason to change. Taken on
 # 2026-09-04 from the URL above. See MOLE-390.
 TOOL_SHA256="ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
+# **And the runtime it puts at the front of the image, pinned the same way.** Asked
+# for none, appimagetool downloads one from GitHub by itself while packing, and
+# takes `continuous` -- so every AppImage so far carried whichever runtime had been
+# built most recently, and the packing step reached GitHub a second time, without
+# retries, where the fetch below could not see it. Found on 2026-11-08 when the
+# tool came out of the cache and the packer still failed: "Failed to download
+# runtime file". 20251108 is the newest tagged release of AppImage/type2-runtime;
+# the digest is GitHub's own for that asset and matched the bytes. See MOLE-450.
+RUNTIME_URL="https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64"
+RUNTIME_SHA256="2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d"
+
+# Where the tool is kept between runs. Unset, a fresh directory per run, which is
+# what this always did; release.yml points it at a directory it caches, keyed on
+# TOOL_SHA256, so a run with a warm cache never asks GitHub for it. See MOLE-450.
+TOOL_DIR="${MOLE_APPIMAGETOOL_CACHE:-}"
+TOOL_FILE="appimagetool-$TOOL_SHA256"
+RUNTIME_FILE="runtime-$RUNTIME_SHA256"
+
+# Leaves a checked copy of one pinned file at $TOOL_DIR/<name>, fetching it only
+# when none is there.
+#
+# **Fetched with retries, and a server error counts.** This was one bare request,
+# and GitHub's asset hosting answering 504 stopped the release rehearsal twice in
+# three attempts on 2026-11-08 while its status page said all was well. curl's
+# --retry alone skips HTTP errors; --retry-all-errors is what makes a 504 one more
+# try rather than the end. Without --retry-delay the wait doubles each time.
+#
+# **And checked every time, cached or not.** A cache is a place bytes can be
+# swapped, and these files are executed or packed into what users run. A copy that
+# does not match is removed, so the next run fetches a good one rather than
+# tripping on the same bad bytes for ever. See MOLE-390 for the digests and
+# MOLE-450 for the rest.
+fetch_pinned() {
+    local url="$1" sha="$2" name="$3" what="$4"
+    mkdir -p "$TOOL_DIR" || return 1
+    local file="$TOOL_DIR/$name"
+    if [ -f "$file" ]; then
+        echo "  $what from the cache"
+    else
+        if ! curl -sSfL --retry 8 --retry-all-errors --connect-timeout 30 \
+                -o "$file.part" "$url"; then
+            rm -f "$file.part"
+            echo "$what could not be downloaded from $url" >&2
+            return 1
+        fi
+        mv "$file.part" "$file"
+    fi
+    local got
+    got=$(sha256sum "$file" | cut -d" " -f1)
+    if [ "$got" != "$sha" ]; then
+        rm -f "$file"
+        echo "$what is not the file this script was written against:" >&2
+        echo "  expected $sha" >&2
+        echo "  got      $got" >&2
+        echo "Look at what changed under that tag before touching the line in" >&2
+        echo "scripts/package-appimage.sh. See MOLE-390." >&2
+        return 1
+    fi
+    echo "  $what sha256 matches the recorded one"
+}
+
+fetch_tool() {
+    fetch_pinned "$TOOL_URL" "$TOOL_SHA256" "$TOOL_FILE" appimagetool \
+        && fetch_pinned "$RUNTIME_URL" "$RUNTIME_SHA256" "$RUNTIME_FILE" "the AppImage runtime"
+}
+
+# `--fetch-tool` only fetches and checks it, which is how release.yml fills its
+# cache in a step of its own: saved straight after this, so a run that fails later
+# still leaves the tool behind for the next one.
+if [ "${1:-}" = --fetch-tool ]; then
+    [ -n "$TOOL_DIR" ] || { echo "--fetch-tool needs MOLE_APPIMAGETOOL_CACHE" >&2; exit 2; }
+    fetch_tool
+    exit $?
+fi
 
 command -v docker >/dev/null 2>&1 || {
     echo "skipped: the AppImage is built on an older distribution, in a container," >&2
@@ -53,12 +127,21 @@ OUT="$(cd "$OUT" && pwd)"
 
 echo "Building the AppImage on $IMAGE"
 
+if [ -z "$TOOL_DIR" ]; then
+    TOOL_DIR="$(mktemp -d)"
+    trap 'rm -rf "$TOOL_DIR"' EXIT
+fi
+fetch_tool || exit 1
+
 docker run --rm \
     -v "$SOURCE:/src:ro" \
     -v "$OUT:/out" \
     -e CALLER="$(id -u):$(id -g)" \
-    -e TOOL_URL="$TOOL_URL" \
+    -v "$TOOL_DIR:/tool:ro" \
+    -e TOOL_FILE="$TOOL_FILE" \
     -e TOOL_SHA256="$TOOL_SHA256" \
+    -e RUNTIME_FILE="$RUNTIME_FILE" \
+    -e RUNTIME_SHA256="$RUNTIME_SHA256" \
     "$IMAGE" bash -c '
 # pipefail as well as -e. Every check below ended in tee, tail or grep, whose
 # status is the one the shell sees -- so a failing configure or a failing packer
@@ -165,10 +248,12 @@ chmod +x "$APPDIR/AppRun"
 cp /src/packaging/mole.desktop "$APPDIR/mole.desktop"
 cp /src/packaging/mole.svg "$APPDIR/mole.svg"
 
-curl -sSfL -o /tmp/appimagetool "$TOOL_URL"
-# The bytes, before they are made executable and run. A pinned version is not a
-# pinned file -- a release asset can be replaced under its tag -- and this one is
-# the tool that packs an artefact somebody downloads.
+# Fetched and checked outside the container, by fetch_tool above. Copied rather
+# than run from the mount, which is read-only, and checked again here: what is
+# executed is this copy, and a check on another file is a check on another file.
+# A pinned version is not a pinned file -- a release asset can be replaced under
+# its tag -- and this one is the tool that packs an artefact somebody downloads.
+cp "/tool/$TOOL_FILE" /tmp/appimagetool
 got=$(sha256sum /tmp/appimagetool | cut -d" " -f1)
 if [ "$got" != "$TOOL_SHA256" ]; then
     echo "appimagetool is not the file this script was written against:" >&2
@@ -180,6 +265,14 @@ if [ "$got" != "$TOOL_SHA256" ]; then
 fi
 echo "  appimagetool sha256 matches the recorded one"
 chmod +x /tmp/appimagetool
+# The runtime, the same way, and handed to the packer so it does not go and fetch
+# one of its own.
+cp "/tool/$RUNTIME_FILE" /tmp/runtime
+got=$(sha256sum /tmp/runtime | cut -d" " -f1)
+if [ "$got" != "$RUNTIME_SHA256" ]; then
+    echo "the AppImage runtime is not the file this script was written against" >&2
+    exit 1
+fi
 
 version=$(sed -n "s/^ *VERSION \([0-9][0-9.]*\)$/\1/p" /src/CMakeLists.txt)
 # Extracted rather than mounted: appimagetool is itself an AppImage and a container
@@ -190,7 +283,7 @@ image="/out/mole-$version-x86_64.AppImage"
 # great deal and only the tail is worth reading when it worked. Redirected to a
 # file rather than piped, so the status this script sees belongs to the packer --
 # with a pipe it belonged to tail, and a failing packer did not stop the script.
-if ! ARCH=x86_64 /tmp/appimagetool "$APPDIR" "$image" >/tmp/appimagetool.log 2>&1; then
+if ! ARCH=x86_64 /tmp/appimagetool --runtime-file /tmp/runtime "$APPDIR" "$image" >/tmp/appimagetool.log 2>&1; then
     cat /tmp/appimagetool.log
     echo "appimagetool failed" >&2
     exit 1
