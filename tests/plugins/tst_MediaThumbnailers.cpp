@@ -42,6 +42,8 @@ private slots:
     void aPdfOnARemoteDriveUnderTheCeilingProducesATile();
     void aVideoShowsAFrameThatIsNotTheFirst();
     void aLongVideoIsSeekedRatherThanPlayedTo();
+    void aSeekWaitsForTheMediaAndForTheSeek_data();
+    void aSeekWaitsForTheMediaAndForTheSeek();
     void aVideoThatCannotBeDecodedInTimeYieldsNothing();
     void aVideoOnADriveThatIsNotLocalIsNotClaimed();
     void aVideoIsClaimedOnlyByABuildThatCanDecodeOne();
@@ -358,6 +360,44 @@ void TestMediaThumbnailers::aLongVideoIsSeekedRatherThanPlayedTo()
     const QColor middle = tile.pixelColor(tile.width() / 2, tile.height() / 2);
     QVERIFY2(middle.red() > 80 || middle.blue() > 80,
         qPrintable(QStringLiteral("the frame came back %1, which is the black opening").arg(middle.name())));
+#endif
+}
+
+/// The decision aLongVideoIsSeekedRatherThanPlayedTo() depends on, asked without a
+/// video, a decoder or a particular Qt -- because the order of the two signals is
+/// what changed between Qt 6.4 and Qt 6.11, and only one of them is on any given
+/// machine. See MOLE-449.
+void TestMediaThumbnailers::aSeekWaitsForTheMediaAndForTheSeek_data()
+{
+#ifdef MOLE_HAVE_MULTIMEDIA
+    QTest::addColumn<QMediaPlayer::MediaStatus>("status");
+    QTest::addColumn<bool>("seekable");
+    QTest::addColumn<bool>("lands");
+
+    // Qt 6.11: seekableChanged(true) while the media is still loading. A seek
+    // here was dropped and the file played from its start.
+    QTest::newRow("seekable, still loading") << QMediaPlayer::LoadingMedia << true << false;
+    // Qt 6.4: LoadedMedia first, with the player not yet able to seek.
+    QTest::newRow("loaded, not yet seekable") << QMediaPlayer::LoadedMedia << false << false;
+    // Whichever came second, this is the moment.
+    QTest::newRow("loaded and seekable") << QMediaPlayer::LoadedMedia << true << true;
+    QTest::newRow("buffered and seekable") << QMediaPlayer::BufferedMedia << true << true;
+    // And never into nothing.
+    QTest::newRow("no media") << QMediaPlayer::NoMedia << true << false;
+    QTest::newRow("invalid media") << QMediaPlayer::InvalidMedia << true << false;
+#endif
+}
+
+void TestMediaThumbnailers::aSeekWaitsForTheMediaAndForTheSeek()
+{
+#ifndef MOLE_HAVE_MULTIMEDIA
+    QSKIP("this build has no Qt Multimedia, so nothing seeks");
+#else
+    QFETCH(QMediaPlayer::MediaStatus, status);
+    QFETCH(bool, seekable);
+    QFETCH(bool, lands);
+
+    QCOMPARE(VideoThumbnailer::aSeekWillLand(status, seekable), lands);
 #endif
 }
 
@@ -679,7 +719,6 @@ int main(int argc, char** argv)
     return QTest::qExec(&testObject, argc, argv);
 }
 
-
 /// An `ffmpeg` on the path is not an encoder.
 ///
 /// The fixture asked only whether the binary existed and then asked it for
@@ -689,22 +728,22 @@ int main(int argc, char** argv)
 void TestMediaThumbnailers::theFixtureIsMadeWithAnEncoderTheMachineHas()
 {
     // Abridged from real listings: Ubuntu's, and Fedora 45's ffmpeg-free.
-    const QString ubuntu = QStringLiteral(
-        "Encoders:\n"
-        " V..... = Video\n"
-        " ------\n"
-        " V....D libx264              libx264 H.264 / AVC / MPEG-4 AVC (codec h264)\n"
-        " V.S..D mpeg4                MPEG-4 part 2\n"
-        " A....D aac                  AAC (Advanced Audio Coding)\n");
-    const QString fedoraFree = QStringLiteral(
-        "Encoders:\n"
-        " V....D libopenh264          OpenH264 H.264 / AVC (codec h264)\n"
-        " V.S..D mpeg4                MPEG-4 part 2\n"
-        " V....D libvpx-vp9           libvpx VP9 (codec vp9)\n");
-    const QString neither = QStringLiteral(
-        "Encoders:\n"
-        " V....D libvpx               libvpx VP8 (codec vp8)\n"
-        " A....D libx264ish           an audio encoder whose name only looks like it\n");
+    const QString ubuntu
+        = QStringLiteral("Encoders:\n"
+                         " V..... = Video\n"
+                         " ------\n"
+                         " V....D libx264              libx264 H.264 / AVC / MPEG-4 AVC (codec h264)\n"
+                         " V.S..D mpeg4                MPEG-4 part 2\n"
+                         " A....D aac                  AAC (Advanced Audio Coding)\n");
+    const QString fedoraFree
+        = QStringLiteral("Encoders:\n"
+                         " V....D libopenh264          OpenH264 H.264 / AVC (codec h264)\n"
+                         " V.S..D mpeg4                MPEG-4 part 2\n"
+                         " V....D libvpx-vp9           libvpx VP9 (codec vp9)\n");
+    const QString neither
+        = QStringLiteral("Encoders:\n"
+                         " V....D libvpx               libvpx VP8 (codec vp8)\n"
+                         " A....D libx264ish           an audio encoder whose name only looks like it\n");
 
     QCOMPARE(fixtures::chooseVideoEncoder(ubuntu), QStringLiteral("libx264"));
     QCOMPARE(fixtures::chooseVideoEncoder(fedoraFree), QStringLiteral("mpeg4"));

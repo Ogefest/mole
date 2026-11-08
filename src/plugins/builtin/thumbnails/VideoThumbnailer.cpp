@@ -38,6 +38,23 @@ bool VideoThumbnailer::canThumbnail(const FileEntry& entry) const
     return supported.contains(entry.uri.suffix()) && VideoPreviewProvider::isAvailable();
 }
 
+bool VideoThumbnailer::aSeekWillLand(QMediaPlayer::MediaStatus status, bool seekable)
+{
+    switch (status) {
+    case QMediaPlayer::LoadedMedia:
+    case QMediaPlayer::StalledMedia:
+    case QMediaPlayer::BufferingMedia:
+    case QMediaPlayer::BufferedMedia:
+        return seekable;
+    case QMediaPlayer::NoMedia:
+    case QMediaPlayer::LoadingMedia:
+    case QMediaPlayer::EndOfMedia:
+    case QMediaPlayer::InvalidMedia:
+        return false;
+    }
+    return false;
+}
+
 QImage VideoThumbnailer::thumbnail(
     const FileEntry& entry, int size, const PluginServices& services, const CancelToken& cancel) const
 {
@@ -96,20 +113,21 @@ QImage VideoThumbnailer::thumbnail(
         loop.quit();
     });
 
-    // Where the frame is chosen, and *when* is the whole of it. LoadedMedia says the
-    // file has been opened, not that the pipeline can be moved: at that point
-    // isSeekable() is still false and setPosition() is dropped without an error or
-    // a signal, leaving the player at zero. Playing then runs the file from its
-    // beginning and the position guard below rejects every frame until playback has
-    // genuinely arrived at the target -- so the tile costs its own seek offset in
-    // wall clock, and anything past the time limit never produces one at all.
+    // Where the frame is chosen, and *when* is the whole of it. A setPosition() made
+    // too early is dropped without an error or a signal, leaving the player at
+    // zero. Playing then runs the file from its beginning and the position guard
+    // above rejects every frame until playback has genuinely arrived at the target
+    // -- so the tile costs its own seek offset in wall clock, and anything past the
+    // time limit never produces one at all.
     //
-    // seekableChanged is the signal that says a seek will land. It comes a moment
-    // after LoadedMedia and before any frame. Asked at every status as well, and
-    // guarded on isSeekable() rather than on which signal woke it: a source already
-    // seekable when it finished loading never emits the change.
+    // Too early means before the media has loaded *or* before the player says it
+    // can seek, and the two arrive in an order that depends on the Qt version: 6.4
+    // reports LoadedMedia and then seekableChanged, 6.11 the other way round. So
+    // this is asked from both signals and acts on the second, whichever it is --
+    // aSeekWillLand() is the whole condition. A source already seekable when it
+    // finished loading never emits the change, which is why the status asks too.
     auto seekAndPlay = [&] {
-        if (sought || !player.isSeekable())
+        if (sought || !aSeekWillLand(player.mediaStatus(), player.isSeekable()))
             return;
         // A tenth of the way in, bounded: a title card is usually over by a
         // second, and a minute in is a scene nobody would recognise the file by.

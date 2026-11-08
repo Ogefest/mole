@@ -2,6 +2,10 @@
 
 #include "sdk/IThumbnailer.h"
 
+#ifdef MOLE_HAVE_MULTIMEDIA
+#include <QMediaPlayer>
+#endif
+
 namespace mole {
 
 #ifdef MOLE_HAVE_MULTIMEDIA
@@ -35,6 +39,18 @@ public:
     /// viewer's own availability, because a build with the module and no codecs
     /// claims nothing.
     static bool isAvailable();
+
+    /// Whether a seek asked for now will be honoured: the media has loaded *and*
+    /// the player says it can seek. Either alone is not enough, and which one
+    /// arrives first depends on the Qt version.
+    ///
+    /// Qt 6.4 reports LoadedMedia while isSeekable() is still false, and drops a
+    /// setPosition() made then. Qt 6.11's ffmpeg engine turned that round:
+    /// seekableChanged(true) arrives *before* LoadedMedia, and a setPosition()
+    /// made in that gap is dropped the same way -- the player stays at zero,
+    /// plays the file from its start, and a target six seconds in is never
+    /// reached inside the time limit. Both orders were measured, see MOLE-449.
+    static bool aSeekWillLand(QMediaPlayer::MediaStatus status, bool seekable);
 
     /// How far in the frame is taken from: a tenth of the way through, never less
     /// than the floor and never more than the ceiling -- and never past nine
