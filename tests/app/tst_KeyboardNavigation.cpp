@@ -1165,12 +1165,22 @@ bool TestKeyboardNavigation::showTiles()
         return false;
     tab->setViewMode(BrowserController::ViewMode::Grid);
     settle();
-    QQuickItem* grid = findItem(QStringLiteral("fileGrid"));
-    if (!grid || !grid->isVisible() || grid->width() <= 0)
-        return false;
-    // Waited for rather than assumed: the grid takes the keyboard when it
-    // becomes the visible view, and a key sent before that goes nowhere.
-    return waitFor([grid] { return grid->width() > 0 && grid->height() > 0; });
+    // **All of it waited for, none of it checked once.** The grid is visible as
+    // soon as the mode changes and gets its size from the layout pass, which runs
+    // on the way to a frame -- and settle() stops asking for frames on a machine
+    // where one has taken longer than its guard. Under load on Fedora 45 that left
+    // the grid visible at 0x0 at the moment this used to look, and laid out at
+    // 1022x516 a moment later: the case failed before it had asked anything. See
+    // MOLE-447.
+    //
+    // The grid takes the keyboard when it becomes the visible view, and a key
+    // sent before it has a size goes nowhere.
+    return waitFor(
+        [this] {
+            QQuickItem* grid = findItem(QStringLiteral("fileGrid"));
+            return grid && grid->isVisible() && grid->width() > 0 && grid->height() > 0;
+        },
+        10000);
 }
 
 int TestKeyboardNavigation::gridColumns() const
