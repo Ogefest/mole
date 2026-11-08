@@ -272,7 +272,11 @@ if(MOLE_HAVE_NETWORK)
         MISSING "unavailable (install libsmbclient-dev)"
         TARGET mole_network_backends
         SCOPE PUBLIC
-        DEFINE MOLE_HAVE_SMB)
+        DEFINE MOLE_HAVE_SMB
+        # For tests/CMakeLists.txt, which is configured elsewhere and asks
+        # SMBCLIENT_FOUND whether to build tst_SmbFileSystem. Without this nothing
+        # set it, and the suite left every fresh build. See MOLE-451.
+        CACHE_PREFIX SMBCLIENT)
     if(MOLE_HAVE_SMB)
         target_sources(mole_network_backends PRIVATE
             network/SmbFileSystem.h
@@ -288,7 +292,9 @@ if(MOLE_HAVE_NETWORK)
         MISSING "unavailable (install libnfs-dev)"
         TARGET mole_network_backends
         SCOPE PUBLIC
-        DEFINE MOLE_HAVE_NFS)
+        DEFINE MOLE_HAVE_NFS
+        # Likewise for tst_NfsFileSystem. See MOLE-451.
+        CACHE_PREFIX LIBNFS)
     if(MOLE_HAVE_NFS)
         target_sources(mole_network_backends PRIVATE
             network/NfsFileSystem.h

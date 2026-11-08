@@ -514,4 +514,29 @@ fi
 grep -q 'VfsUri partialWriteFor' tests/support/TestSupport.h \
     || fail "tests/support/TestSupport.h no longer offers partialWriteFor()"
 
+begin "every library a test is built on names a variable something sets"
+# The test tree is configured in its own directory and cannot see what
+# src/plugins/ found, so a suite that needs an optional library asks a cache
+# variable. d57c286 moved SMB and NFS to mole_optional_dependency(), which exports
+# `<prefix>_FOUND` only when given CACHE_PREFIX, and those two calls were not. So
+# `if(SMBCLIENT_FOUND)` and `if(LIBNFS_FOUND)` read variables nobody set, and both
+# suites dropped out of every fresh build without a word -- for two months, until a
+# release's live tier refused because they were missing. A condition on an unset
+# variable is false, not an error, which is why this is checked by reading.
+# See MOLE-451.
+: > "$SHELLTEST_TMP/unset-conditions"
+for variable in $(grep -oE 'if\((NOT )?[A-Za-z0-9_]+_FOUND\)' tests/CMakeLists.txt \
+                  | sed -E 's/if\((NOT )?//; s/\)$//' | sort -u); do
+    prefix="${variable%_FOUND}"
+    # Exported by the helper, by a pkg_check_modules() of that prefix, or by a
+    # find_package() of that name: the three things that set one.
+    grep -rqE "CACHE_PREFIX[[:space:]]+$prefix\\b|pkg_check_modules\\($prefix[[:space:]]|find_package\\($prefix[[:space:])]" \
+        CMakeLists.txt cmake src tests/CMakeLists.txt \
+        || echo "$variable" >> "$SHELLTEST_TMP/unset-conditions"
+done
+if [ -s "$SHELLTEST_TMP/unset-conditions" ]; then
+    fail "tests/CMakeLists.txt gates suites on variables nothing sets, so those suites are never built:"
+    sed 's/^/    /' "$SHELLTEST_TMP/unset-conditions"
+fi
+
 done_testing
