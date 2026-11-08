@@ -65,6 +65,8 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-11-08 #MOLE-446 On Fedora 45 a shell, awk or sed script with no suffix opens as text again, not as File information
+
 ## 0.1.4 — released 2026-11-08
 
 2026-11-08 #MOLE-443 A file that changes while it is being read from a network drive is reported at once, not after two minutes

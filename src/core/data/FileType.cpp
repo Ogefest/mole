@@ -25,9 +25,9 @@ namespace {
         return QStringLiteral("application/octet-stream");
     }
 
-    bool isText(const QMimeType& type)
+    bool isTextType(const QMimeType& type)
     {
-        return type.inherits(plainText());
+        return type.isValid() && FileType::isText(type.name(), type.allAncestors());
     }
 
     /// A QByteArray over the caller's bytes, which QMimeDatabase wants and which
@@ -109,7 +109,7 @@ QString FileType::identify(const QString& name, QByteArrayView head)
     // here can touch the file however the name is spelled.
     const QMimeType byName = mimeDatabase.mimeTypeForFile(name, QMimeDatabase::MatchExtension);
     const QMimeType named = byName.isDefault() ? QMimeType() : byName;
-    const bool nameSaysText = named.isValid() && isText(named);
+    const bool nameSaysText = named.isValid() && isTextType(named);
 
     // An empty file. The database has a type for one (application/x-zerosize),
     // and it is no use to a viewer; nothing in an empty file is binary.
@@ -120,7 +120,7 @@ QString FileType::identify(const QString& name, QByteArrayView head)
     // answer is a format, a bare text/plain, or the default when the sample made
     // no sense to either.
     const QMimeType byData = mimeDatabase.mimeTypeForData(borrow(head));
-    const bool bytesAreText = byData.isDefault() ? looksLikeText(head) : isText(byData);
+    const bool bytesAreText = byData.isDefault() ? looksLikeText(head) : isTextType(byData);
     // A claim about the format, as opposed to "these bytes read as text", which
     // says nothing a name could contradict.
     const QMimeType magic = byData.isDefault() || byData.name() == plainText() ? QMimeType() : byData;
@@ -134,6 +134,16 @@ QString FileType::identify(const QString& name, QByteArrayView head)
     if (named.isValid() && nameSaysText == bytesAreText)
         return named.name();
     return bytesAreText ? plainText() : binary();
+}
+
+bool FileType::isText(const QString& mimeType)
+{
+    return isTextType(database().mimeTypeForName(mimeType));
+}
+
+bool FileType::isText(const QString& name, const QStringList& ancestors)
+{
+    return name.startsWith(QLatin1String("text/")) || ancestors.contains(plainText());
 }
 
 bool FileType::namesSingleCompressedStream(const QString& name)

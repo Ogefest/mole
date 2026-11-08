@@ -3,7 +3,6 @@
 #include "core/data/FileType.h"
 
 #include <QJsonArray>
-#include <QMimeDatabase>
 #include <QRegularExpression>
 #include <QStringDecoder>
 
@@ -261,14 +260,9 @@ QString classOfMimeType(const QString& mimeType)
     if (archives.contains(mimeType))
         return QStringLiteral("archive");
 
-    // Whatever the mime database calls a descendant of plain text, which is
-    // where a Dockerfile, a makefile and every source file land -- and they are
-    // code by anybody's reckoning.
-    static const QMimeDatabase database;
-    const QMimeType type = database.mimeTypeForName(mimeType);
-    if (type.isValid() && type.allAncestors().contains(QLatin1String("text/plain")))
-        return QStringLiteral("code");
-    if (mimeType.startsWith(QLatin1String("text/")))
+    // Whatever is text, which is where a Dockerfile, a makefile and every source
+    // file land -- and they are code by anybody's reckoning.
+    if (FileType::isText(mimeType))
         return QStringLiteral("code");
 
     return {};

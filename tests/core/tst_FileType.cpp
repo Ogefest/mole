@@ -49,8 +49,7 @@ QByteArray elfObject()
 
 bool isText(const QString& mimeType)
 {
-    static const QMimeDatabase mimeDatabase;
-    return mimeDatabase.mimeTypeForName(mimeType).inherits(QStringLiteral("text/plain"));
+    return FileType::isText(mimeType);
 }
 
 } // namespace
@@ -71,6 +70,8 @@ private slots:
     void nulBytesAreBinaryAndNothingIsText();
     void aSampleCutMidCharacterIsStillText();
     void aStrayControlCharacterDoesNotMakeALogBinary();
+    void textIsTextWhateverTheDatabaseFilesItUnder_data();
+    void textIsTextWhateverTheDatabaseFilesItUnder();
 };
 
 // ------------------------------------------------------------------- text
@@ -233,4 +234,47 @@ void TestFileType::aStrayControlCharacterDoesNotMakeALogBinary()
 }
 
 MOLE_TEST_MAIN(TestFileType)
+// ------------------------------------------------------- what text is
+
+void TestFileType::textIsTextWhateverTheDatabaseFilesItUnder_data()
+{
+    QTest::addColumn<QString>("name");
+    QTest::addColumn<QStringList>("ancestors");
+    QTest::addColumn<bool>("text");
+
+    const QString plain = QStringLiteral("text/plain");
+    const QString executable = QStringLiteral("application/x-executable");
+    const QString octets = QStringLiteral("application/octet-stream");
+
+    // What shared-mime-info 2.4 said about a shell script, and what 2.5.1 says:
+    // the same type, moved from under text/plain to under application/x-executable
+    // and nothing textual. Fedora 45 shipped 2.5.1, and a script called `deploy`
+    // opened as File information there. See MOLE-446.
+    QTest::newRow("shell script, shared-mime-info 2.4")
+        << "text/x-shellscript" << QStringList { executable, plain, octets } << true;
+    QTest::newRow("shell script, shared-mime-info 2.5.1")
+        << "text/x-shellscript" << QStringList { executable, octets } << true;
+    // The rest of the family 2.5 moved with it, measured the same day.
+    QTest::newRow("csh, 2.5.1") << "text/x-csh" << QStringList { executable, octets } << true;
+    QTest::newRow("awk, 2.5.1") << "text/x-awk" << QStringList { executable, octets } << true;
+    QTest::newRow("sed, 2.5.1") << "text/x-sed" << QStringList { executable, octets } << true;
+
+    // Text filed under application/, which only its ancestry can say.
+    QTest::newRow("JSON") << "application/json"
+                          << QStringList { QStringLiteral("application/javascript"), plain } << true;
+    // And what is not text, however close it sits to a script.
+    QTest::newRow("an executable") << "application/x-executable" << QStringList { octets } << false;
+    QTest::newRow("bytes") << "application/octet-stream" << QStringList {} << false;
+    QTest::newRow("a zip") << "application/zip" << QStringList { octets } << false;
+}
+
+void TestFileType::textIsTextWhateverTheDatabaseFilesItUnder()
+{
+    QFETCH(QString, name);
+    QFETCH(QStringList, ancestors);
+    QFETCH(bool, text);
+
+    QCOMPARE(FileType::isText(name, ancestors), text);
+}
+
 #include "tst_FileType.moc"

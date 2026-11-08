@@ -3,6 +3,7 @@
 #include <QByteArrayView>
 #include <QString>
 #include <QStringConverter>
+#include <QStringList>
 
 namespace mole {
 
@@ -108,6 +109,29 @@ public:
     /// preview tab decides from it whether the file is a wrapper around the thing
     /// somebody actually wanted to look at (MOLE-219).
     static bool namesSingleCompressedStream(const QString& name);
+
+    /// Whether a MIME type is text, asked of the installed database. Aliases are
+    /// resolved first, so `application/x-shellscript` answers as the
+    /// `text/x-shellscript` it now stands for.
+    ///
+    /// The one place this is decided. The preview's text viewer, the sniffer and
+    /// the search all need the answer, and each used to ask the database whether
+    /// the type descends from `text/plain` -- which stopped being true of shell
+    /// scripts on the day shared-mime-info 2.5 reparented them. See MOLE-446.
+    static bool isText(const QString& mimeType);
+
+    /// The same decision from a type's name and every type it descends from, as
+    /// the database reported them. Here so a test can hand it the answer one
+    /// particular shared-mime-info gives without having that version installed.
+    ///
+    /// - A type under the `text/` top-level media type is text. RFC 2046 says so,
+    ///   and it is the one part of the answer no database can move: 2.5 made
+    ///   `text/x-shellscript`, `text/x-csh`, `text/x-awk` and `text/x-sed`
+    ///   children of `application/x-executable` and of nothing textual.
+    /// - So is anything descending from `text/plain`, which is how JSON, XML,
+    ///   JavaScript and every other text format filed under `application/` say
+    ///   it.
+    static bool isText(const QString& name, const QStringList& ancestors);
 
     /// The share of a sample that may be control characters before it is taken
     /// for binary. Here so a test can state the threshold it is testing.

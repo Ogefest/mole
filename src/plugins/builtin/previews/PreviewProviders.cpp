@@ -3,6 +3,7 @@
 #include "plugins/builtin/ImageFormats.h"
 #include "plugins/builtin/previews/ReadImageHeaderTask.h"
 
+#include "core/data/FileType.h"
 #include "core/platform/Staging.h"
 #include "core/tasks/TaskManager.h"
 #include "core/text/SizeWords.h"
@@ -928,7 +929,7 @@ bool TextPreviewProvider::canPreview(const FileEntry& entry) const
     // name, and a zip called notes.txt is not text however familiar its name is.
     // Still no I/O here -- the answer arrived in the entry. See ADR-0033.
     if (!entry.mimeType.isEmpty())
-        return mimeDatabase.mimeTypeForName(entry.mimeType).inherits(QStringLiteral("text/plain"));
+        return FileType::isText(entry.mimeType);
 
     const QString suffix = entry.uri.suffix();
     if (textSuffixes().contains(suffix))
@@ -939,7 +940,7 @@ bool TextPreviewProvider::canPreview(const FileEntry& entry) const
     // No suffix: ask the shared MIME database rather than guessing. Name-only
     // lookup, because opening the file to sniff it would be I/O in canPreview.
     const QMimeType type = mimeDatabase.mimeTypeForFile(entry.name, QMimeDatabase::MatchExtension);
-    return type.inherits(QStringLiteral("text/plain"));
+    return FileType::isText(type.name());
 }
 
 QUrl TextPreviewProvider::viewSource() const
