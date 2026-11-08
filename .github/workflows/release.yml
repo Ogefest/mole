@@ -17,9 +17,12 @@
 # would have been a release -- and a failure at step eight leaves a published tag,
 # no release, and a version number that is either burned or has to be un-published.
 # A dispatch runs the thirteen steps that can fail, unchanged, and stops at the
-# last one: `Publish` is guarded to a push, and the artefacts go to the run instead
+# last one: `Publish` is guarded to a tag, and the artefacts go to the run instead
 # so a rehearsal can be looked at rather than only passed. MOLE-307's rule and
 # MOLE-314 applying it here: a YAML file that has never run is a hypothesis.
+#
+# **A push to main that touches the release path is a rehearsal too**, the same
+# one, and nobody has to remember to ask for it. See MOLE-436 and the trigger below.
 #
 # **And it has published one: run 33472868494, from a pushed tag on 2026-09-01** --
 # the first release this repository has ever had. Eighteen steps, `Publish` among
@@ -50,6 +53,27 @@ on:
   push:
     tags:
       - 'v*'
+    # **And a rehearsal of its own accord, whenever the release path changes.** A
+    # dispatch was the only way to rehearse and nothing dispatched it, so a change
+    # to this file first ran when a real release depended on it -- and that broke
+    # two of the first three releases. A failed tag run cannot be fixed from main
+    # either: a re-run uses the workflow file *from the tag*, so the way out is a
+    # moved tag or a burned version. See MOLE-436.
+    #
+    # The paths are what decides what a release contains: this file, the recipes
+    # it calls and the scripts they reach. GitHub reads the list literally, so it
+    # cannot be generated; it names directories rather than files so that a new
+    # script is inside it without anybody remembering, and tst_ReleaseWorkflow.sh
+    # derives every script this file reaches and fails if one falls outside.
+    # GitHub does not evaluate a paths filter for a tag push, so a tag runs
+    # whatever it touched, exactly as before.
+    branches:
+      - main
+    paths:
+      - .github/workflows/release.yml
+      - Makefile
+      - scripts/**
+      - packaging/**
   # On demand, so the file can be exercised without spending a version number.
   # It publishes nothing -- see the note above and the guard on `Publish`.
   workflow_dispatch:
@@ -407,16 +431,19 @@ jobs:
       # see MOLE-117. Checked against the tag rather than trusted: they are written
       # by the same commit, so a tag on the wrong one is worth catching here.
       #
-      # **On a dispatch there is no tag to compare against.** GITHUB_REF_NAME is the
+      # **On a rehearsal there is no tag to compare against.** GITHUB_REF_NAME is the
       # branch then, so the comparison would fail every rehearsal for a reason that is
       # not a fault, and the version comes from CMakeLists.txt alone -- which is where
       # it always came from; the tag is the copy being checked. The check is not
       # skipped quietly but kept on the only path where a tag exists, which is the
       # only path that publishes, and the run says which of the two it did.
+      #
+      # Asked of the ref and not of the event: a push to main is a push too, and it
+      # has no tag. See MOLE-436.
       - name: Pack the tarball
         run: |
           version=$(make version)
-          if [ "$GITHUB_EVENT_NAME" = push ]; then
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
             tag="${GITHUB_REF_NAME#v}"
             [ "$version" = "$tag" ] || {
               echo "::error::the tag says $tag and the build says $version"
@@ -424,7 +451,7 @@ jobs:
             }
             echo "the tag and the build agree on $version"
           else
-            echo "$GITHUB_EVENT_NAME run: there is no tag, so the version is CMakeLists.txt's alone -- $version"
+            echo "a rehearsal on $GITHUB_REF_NAME: there is no tag, so the version is CMakeLists.txt's alone -- $version"
           fi
           name="mole-$version-x86_64"
           mv dist "$name"
@@ -449,10 +476,10 @@ jobs:
       # included, which GitHub prints beside every file it lists. See MOLE-303.
       # **A rehearsal excuses exactly one refusal here, and no others.** Nothing has
       # ever been released, so CHANGELOG.md holds no marker for any version and this
-      # step cannot come back green on a dispatch until `make release` writes the
+      # step cannot come back green on a rehearsal until `make release` writes the
       # first one -- MOLE-315. That one message is reported and the run carries on;
       # anything else the script says stops it, so this does not become a check that
-      # passes by doing nothing. On a push it is fatal exactly as it always was.
+      # passes by doing nothing. On a tag it is fatal exactly as it always was.
       - name: The release notes, out of the changelog
         run: |
           if scripts/release-notes.sh "$VERSION" "$GITHUB_REF_NAME" CHANGELOG.md > notes.md 2> refused; then
@@ -461,7 +488,7 @@ jobs:
             exit 0
           fi
           cat refused
-          if [ "$GITHUB_EVENT_NAME" = push ]; then
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
             echo "::error::there are no notes to publish"
             exit 1
           fi
@@ -472,7 +499,7 @@ jobs:
           echo "::notice::no changelog marker for $VERSION yet, so there are no notes to rehearse -- see MOLE-315"
 
       # What a rehearsal leaves behind. On a tag run these are attached to the release
-      # itself and a second copy on the run would be storage for nothing; on a dispatch
+      # itself and a second copy on the run would be storage for nothing; on a rehearsal
       # there is no release, and a rehearsal nobody can download only tells you it
       # passed. The four are named one by one rather than as a directory, so the four
       # things a release publishes are the four things here.
@@ -480,7 +507,7 @@ jobs:
       # No `always()`, deliberately: a step that runs after a failure is the one thing
       # this file has never allowed, and a red rehearsal is answered by its own log.
       - name: Upload the four artefacts, so a rehearsal can be looked at
-        if: github.event_name == 'workflow_dispatch'
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: mole-${{ env.VERSION }}-rehearsal
@@ -496,13 +523,18 @@ jobs:
       # in the path between a tag and a published artefact.
       #
       # **Guarded to a pushed tag, and that guard is what makes a rehearsal safe**: a
-      # dispatch creates no release and pushes no tag, while every step above it runs
+      # rehearsal creates no release and pushes no tag, while every step above it runs
       # unchanged, which is the entire point of the exercise. The condition asks about
-      # the event and not about job status, so it does not weaken the rule that a red
+      # the ref and not about job status, so it does not weaken the rule that a red
       # suite attaches nothing -- GitHub evaluates a step's `if` only while the job is
       # still succeeding, unless the expression asks about status itself.
+      #
+      # **The ref, not the event.** This read `github.event_name == 'push'`, which was
+      # right only because the one push trigger was a tag. With pushes to main
+      # rehearsing, that guard would publish a release from every one of them. The
+      # same commit changed both, the guard first. See MOLE-436.
       - name: Publish
-        if: github.event_name == 'push'
+        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

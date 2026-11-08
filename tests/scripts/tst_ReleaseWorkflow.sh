@@ -35,24 +35,45 @@ ask parses > "$SHELLTEST_TMP/parse" 2>&1 || {
     sed 's/^/    /' "$SHELLTEST_TMP/parse"
 }
 
-begin "a pushed v tag and a dispatch start it, and nothing else"
+begin "a pushed v tag, a push to main and a dispatch start it, and nothing else"
 # The tag is the trigger that publishes, and `scripts/release.sh` is the only thing
 # that makes a tag. The dispatch exists because a file of fourteen steps that had
 # never executed would otherwise have had its first run be a real release -- see
-# MOLE-314 -- and it is safe only because the publish step is guarded, which is the
-# case below. A third way in, or a dispatch with that guard gone, would each be a way
-# to publish something the local gate never saw.
+# MOLE-314 -- and a push to main rehearses whenever the release path changes,
+# because a dispatch nobody remembers is a rehearsal that does not happen -- see
+# MOLE-436. Both are safe only because the publish step is guarded to a tag, which
+# is the case below. A fourth way in, or either of them with that guard gone, would
+# each be a way to publish something the local gate never saw.
 triggers=$(ask triggers)
-[ "$triggers" = "push.tags=v* workflow_dispatch" ] || fail "it starts on: $triggers"
+without_paths=$(tr ' ' '\n' <<<"$triggers" | grep -v '^push\.paths=' | paste -sd' ')
+[ "$without_paths" = "push.branches=main push.tags=v* workflow_dispatch" ] \
+    || fail "it starts on: $triggers"
+# A push to main without a paths filter would rehearse on every commit: thirty-eight
+# minutes of runner for a change to a comment in src/.
+grep -q '^push\.paths=.' <<<"$(tr ' ' '\n' <<<"$triggers")" \
+    || fail "a push to main is not filtered to the release path, so every commit rehearses"
 
-begin "a dispatch run publishes nothing"
-# The whole safety of the dispatch, in one condition. Asked of the step that creates
-# the release rather than of a step name, because a step can be renamed.
+begin "the release is published only from a tag, asked of the ref and not of the event"
+# The whole safety of every rehearsal, in one condition. Asked of the step that
+# creates the release rather than of a step name, because a step can be renamed.
+#
+# **It has to name the ref.** It read `github.event_name == 'push'`, which was
+# right only while the one push trigger was a tag: with pushes to main rehearsing,
+# that guard publishes a release from an ordinary commit. A comparison that is right
+# by accident is the fault MOLE-435 fixed in another step. See MOLE-436.
 guard=$(ask condition 'gh release create')
 case "$guard" in
-    *github.event_name*push*) ;;
+    *event_name*) fail "the step that creates the release asks about the event, and a push to main is a push: $guard" ;;
+    *"!startsWith(github.ref, 'refs/tags/')"*) fail "the step that creates the release is guarded to everything but a tag: $guard" ;;
+    *"startsWith(github.ref, 'refs/tags/')"*) ;;
     *) fail "the step that creates the release is guarded by: ${guard:-nothing at all}" ;;
 esac
+
+# And nothing in the file decides anything by the event: the tag check and the
+# notes are each one push-to-main away from treating a rehearsal as a release.
+# Comments may talk about it; conditions and commands may not.
+by_event=$(grep -nE 'event_name|GITHUB_EVENT_NAME' "$WORKFLOW" | grep -vE '^[0-9]+:[[:space:]]*#')
+[ -z "$by_event" ] || fail "the workflow still decides by the event: $by_event"
 
 # And nothing else in the file publishes or tags. `gh release create` is the one
 # command that makes a release; a `git push` or a `git tag` anywhere here would be a
@@ -63,13 +84,13 @@ forbidden=$(grep -nE '\bgit (push|tag)\b' "$WORKFLOW")
 [ -z "$forbidden" ] || fail "the workflow pushes or tags: $forbidden"
 
 begin "a rehearsal leaves the four artefacts behind"
-# A dispatch that only says "passed" cannot be looked at, and the ticket asks for
+# A rehearsal that only says "passed" cannot be looked at, and the ticket asks for
 # each of the four to be started rather than merely produced -- which needs them
-# downloadable. Conditional on the dispatch: on a tag run they are on the release.
+# downloadable. On anything but a tag: on a tag run they are on the release.
 guard=$(ask condition 'upload-artifact')
 case "$guard" in
-    *github.event_name*workflow_dispatch*) ;;
-    *) fail "nothing uploads the artefacts on a dispatch; the guard reads: ${guard:-nothing at all}" ;;
+    *"!startsWith(github.ref, 'refs/tags/')"*) ;;
+    *) fail "nothing uploads the artefacts on a rehearsal; the guard reads: ${guard:-nothing at all}" ;;
 esac
 : > "$SHELLTEST_TMP/unuploaded"
 for artefact in TARBALL '*.deb' '*.rpm' '*.AppImage'; do
@@ -215,5 +236,74 @@ if [ -s "$SHELLTEST_TMP/hardcoded" ]; then
     sed 's/^/    /' "$SHELLTEST_TMP/hardcoded"
 fi
 grep -q 'make version' "$WORKFLOW" || fail "the workflow does not ask the build what version it is"
+
+begin "the rehearsal's paths cover every script the release reaches"
+# GitHub reads the filter literally, so it cannot be generated, and a filter that
+# goes stale is a rehearsal that stops running without saying so. So the list of
+# what a release reaches is derived here instead: every script a step runs, every
+# make target it calls and that target's prerequisites, every script their
+# recipes run, and every script those scripts name in turn. Each one has to fall
+# inside the filter. See MOLE-436.
+python3 - "$WORKFLOW" > "$SHELLTEST_TMP/uncovered" <<'PY'
+import fnmatch, os, re, sys, yaml
+
+document = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+triggers = document.get("on", document.get(True)) or {}
+patterns = (triggers.get("push") or {}).get("paths") or []
+if not patterns:
+    print("there is no paths filter at all")
+    sys.exit(0)
+
+runs = "\n".join(step.get("run") or "" for job in document["jobs"].values()
+                 for step in job.get("steps") or [])
+script = re.compile(r"scripts/[\w.-]+\.(?:sh|py)")
+
+# The Makefile's rules, as target -> (prerequisites, recipe).
+rules = {}
+current = None
+for line in open("Makefile", encoding="utf-8"):
+    match = re.match(r"^([a-z][\w-]*):(?!=)(.*)$", line)
+    if match:
+        current = match.group(1)
+        rules[current] = (match.group(2).split(), [])
+    elif current and line.startswith("\t"):
+        rules[current][1].append(line)
+    elif line.strip() and not line.startswith("#"):
+        current = None
+
+reached = {sys.argv[1], "Makefile"}
+reached.update(script.findall(runs))
+targets = [t for t in re.findall(r"\bmake ([a-z][\w-]*)", runs) if t in rules]
+seen = set()
+while targets:
+    target = targets.pop()
+    if target in seen:
+        continue
+    seen.add(target)
+    prerequisites, recipe = rules[target]
+    targets.extend(p for p in prerequisites if p in rules)
+    reached.update(script.findall("".join(recipe)))
+
+# And what those scripts run in turn, to a fixed point.
+pending = [path for path in reached if path.startswith("scripts/")]
+while pending:
+    path = pending.pop()
+    if not os.path.isfile(path):
+        continue
+    for named in script.findall(open(path, encoding="utf-8").read()):
+        if named not in reached:
+            reached.add(named)
+            pending.append(named)
+
+if len([p for p in reached if p.startswith("scripts/")]) < 5:
+    print(f"only {len(reached)} paths were derived, so the derivation found nothing")
+for path in sorted(p for p in reached if os.path.exists(p)):
+    if not any(fnmatch.fnmatch(path, pattern) for pattern in patterns):
+        print(path)
+PY
+if [ -s "$SHELLTEST_TMP/uncovered" ]; then
+    fail "a change to one of these would not rehearse the release:"
+    sed 's/^/    /' "$SHELLTEST_TMP/uncovered"
+fi
 
 done_testing
