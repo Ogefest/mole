@@ -50,6 +50,7 @@ private slots:
     void theDiagnosticsSayWhichOfTheTwoHappened();
     void neitherRunsOnTheGuiThreadAndBothStopWhenTold();
     void theVideoThumbnailerDoesNotRunOnTheGuiThread();
+    void theFixtureIsMadeWithAnEncoderTheMachineHas();
 
 private:
     /// A one-page PDF written by hand: a page of a known shape, and no library
@@ -300,7 +301,7 @@ void TestMediaThumbnailers::aVideoShowsAFrameThatIsNotTheFirst()
     if (!VideoThumbnailer::isAvailable())
         QSKIP("this build can decode no video at all");
     if (!fixtures::videoEncoderAvailable())
-        QSKIP("no encoder to make a video fixture with");
+        QSKIP("no ffmpeg with libx264 or mpeg4 to make a video fixture with");
 
     const QString path = QDir(m_dir->path()).filePath(QStringLiteral("clip.mp4"));
     QVERIFY2(fixtures::writeVideoWithBlackOpening(path), "the fixture is a black second then colour");
@@ -337,7 +338,7 @@ void TestMediaThumbnailers::aLongVideoIsSeekedRatherThanPlayedTo()
     if (!VideoThumbnailer::isAvailable())
         QSKIP("this build can decode no video at all");
     if (!fixtures::videoEncoderAvailable())
-        QSKIP("no encoder to make a video fixture with");
+        QSKIP("no ffmpeg with libx264 or mpeg4 to make a video fixture with");
 
     const QString path = QDir(m_dir->path()).filePath(QStringLiteral("lecture.mp4"));
     QVERIFY2(fixtures::writeMinuteLongVideoWithBlackOpening(path),
@@ -678,4 +679,43 @@ int main(int argc, char** argv)
     return QTest::qExec(&testObject, argc, argv);
 }
 
+
+/// An `ffmpeg` on the path is not an encoder.
+///
+/// The fixture asked only whether the binary existed and then asked it for
+/// libx264. Fedora's ffmpeg-free has no libx264, so the day the second-family job
+/// installed it the video cases stopped skipping and failed on their fixture
+/// instead. The choice is read from what the machine's ffmpeg lists. See MOLE-445.
+void TestMediaThumbnailers::theFixtureIsMadeWithAnEncoderTheMachineHas()
+{
+    // Abridged from real listings: Ubuntu's, and Fedora 45's ffmpeg-free.
+    const QString ubuntu = QStringLiteral(
+        "Encoders:\n"
+        " V..... = Video\n"
+        " ------\n"
+        " V....D libx264              libx264 H.264 / AVC / MPEG-4 AVC (codec h264)\n"
+        " V.S..D mpeg4                MPEG-4 part 2\n"
+        " A....D aac                  AAC (Advanced Audio Coding)\n");
+    const QString fedoraFree = QStringLiteral(
+        "Encoders:\n"
+        " V....D libopenh264          OpenH264 H.264 / AVC (codec h264)\n"
+        " V.S..D mpeg4                MPEG-4 part 2\n"
+        " V....D libvpx-vp9           libvpx VP9 (codec vp9)\n");
+    const QString neither = QStringLiteral(
+        "Encoders:\n"
+        " V....D libvpx               libvpx VP8 (codec vp8)\n"
+        " A....D libx264ish           an audio encoder whose name only looks like it\n");
+
+    QCOMPARE(fixtures::chooseVideoEncoder(ubuntu), QStringLiteral("libx264"));
+    QCOMPARE(fixtures::chooseVideoEncoder(fedoraFree), QStringLiteral("mpeg4"));
+    QCOMPARE(fixtures::chooseVideoEncoder(neither), QString());
+    QCOMPARE(fixtures::chooseVideoEncoder(QString()), QString());
+
+    // And on this machine, whichever it is: what the fixture says it can do, it can.
+    if (!fixtures::videoEncoderAvailable())
+        QSKIP("no ffmpeg with libx264 or mpeg4 on this machine");
+    qInfo("video fixtures here are encoded with %s", qPrintable(fixtures::videoEncoder()));
+    const QString path = QDir(m_dir->path()).filePath(QStringLiteral("probe.mp4"));
+    QVERIFY(fixtures::writeVideoWithBlackOpening(path));
+}
 #include "tst_MediaThumbnailers.moc"
