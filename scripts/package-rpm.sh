@@ -66,10 +66,13 @@ set -eo pipefail
 # the log is the only record of what the requirements were taken from.
 . /etc/os-release
 echo "  on Fedora $VERSION_ID"
+# libgit2 by what it provides rather than by a package name: Fedora 45 renamed the
+# package to libgit2_1.9-devel, and a name that a release can change is a pin by
+# another route. Quoted, because the parentheses are a glob. See MOLE-444.
 dnf install -y -q gcc-c++ cmake ninja-build pkgconf-pkg-config rpm-build \
     qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qttools-devel qt6-qtsvg-devel \
     qt6-qtmultimedia-devel qt6-qtpdf-devel libarchive-devel libcurl-devel \
-    openssl-devel libgit2-devel xxhash-devel libvterm-devel libsmbclient-devel \
+    openssl-devel "pkgconfig(libgit2)" xxhash-devel libvterm-devel libsmbclient-devel \
     libnfs-devel >/dev/null
 
 # Arrow where the distribution has it, so the package a family gets holds whatever

@@ -384,4 +384,25 @@ if [ -s "$SHELLTEST_TMP/floating" ]; then
     sed 's/^/    /' "$SHELLTEST_TMP/floating"
 fi
 
+begin "an RPM-family install asks for libgit2 by what it provides, not by a package name"
+# Fedora 45 renamed the package to `libgit2_1.9-devel`, and `libgit2-devel` stopped
+# existing between one Monday and the next: the second family and the .rpm stopped
+# at the install, sixteen seconds in. What the build needs is the library, and
+# `pkgconfig(libgit2)` is the name of that on every release, whatever the package
+# is called that week. Asked of every file that builds Mole on an RPM family --
+# the ones installing Qt's devel packages, since release.yml also runs dnf, but
+# only to install the finished .rpm. See MOLE-444.
+dnf_files=$(grep -l 'qt6-qtbase-devel' .github/workflows/*.yml scripts/package-*.sh)
+[ -n "$dnf_files" ] || fail "no file builds on an RPM family, so this asked nothing"
+for file in $dnf_files; do
+    if grep -n 'libgit2-devel' "$file" > "$SHELLTEST_TMP/byname"; then
+        fail "$file asks dnf for libgit2 by a package name that a release can rename"
+        sed 's/^/    /' "$SHELLTEST_TMP/byname"
+    fi
+    # Quoted, or the parentheses are a glob; double quotes in the package scripts,
+    # whose install runs inside a single-quoted container script.
+    grep -qE "[\"']pkgconfig\\(libgit2\\)[\"']" "$file" \
+        || fail "$file builds on an RPM family and does not ask for 'pkgconfig(libgit2)'"
+done
+
 done_testing

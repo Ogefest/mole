@@ -83,10 +83,13 @@ dnf install -y -q epel-release >/dev/null
 # with a reduced terminal parser and with no NFS drives -- none of which was a
 # property of the distribution. Checked package by package rather than assumed, and
 # the step below refuses a build that came out missing one.
+# libgit2 by what it provides rather than by a package name: Fedora 45 renamed the
+# package to libgit2_1.9-devel, and a name that a release can change is a pin by
+# another route. Quoted, because the parentheses are a glob. See MOLE-444.
 dnf install -y -q gcc-c++ cmake ninja-build pkgconf-pkg-config file which findutils \
     qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qttools-devel qt6-qtsvg-devel \
     qt6-qtbase-gui qt6-qtmultimedia-devel qt6-qtpdf-devel libarchive-devel \
-    libcurl-devel openssl-devel libgit2-devel xxhash-devel libsmbclient-devel \
+    libcurl-devel openssl-devel "pkgconfig(libgit2)" xxhash-devel libsmbclient-devel \
     libnfs-devel libvterm-devel libarrow-devel parquet-libs-devel \
     xcb-util-cursor >/dev/null
 
