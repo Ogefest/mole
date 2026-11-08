@@ -94,13 +94,23 @@ jobs:
       # Fedora 45 renamed the package to `libgit2_1.9-devel`, and this job stopped at
       # the install the week `latest` moved. The library is what the build needs, and
       # that name does not change. See MOLE-444.
+      #
+      # ffmpeg-free is what Qt's ffmpeg media plugin links. The bundle carries that
+      # plugin and never the codec libraries -- they are left to the host for a
+      # licence reason, see make-bundle.sh -- so the bundle check asks whether the
+      # plugin would load *here*, and without these libraries it reports a plugin
+      # it cannot carry. That report is the check working, and a media backend that
+      # cannot load is the kind of fault this job exists to find. Named rather than
+      # left to qt6-qtmultimedia's own requirements, which have not always brought
+      # it. From Fedora's own repositories: RPM Fusion is not needed for the
+      # libraries the plugin links. See MOLE-414.
       - name: Install what the build and the suite need
         run: |
           dnf install -y -q gcc-c++ cmake ninja-build pkgconf-pkg-config git \
             shadow-utils util-linux rpm-build \
             python3-pyyaml dejavu-sans-fonts xorg-x11-server-Xvfb xwininfo \
             qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qttools-devel qt6-qtsvg-devel \
-            qt6-qtmultimedia-devel qt6-qtpdf-devel libarchive-devel libcurl-devel \
+            qt6-qtmultimedia-devel ffmpeg-free qt6-qtpdf-devel libarchive-devel libcurl-devel \
             openssl-devel 'pkgconfig(libgit2)' xxhash-devel libvterm-devel libsmbclient-devel \
             libnfs-devel libarrow-devel parquet-libs-devel
 

@@ -384,6 +384,19 @@ if [ -s "$SHELLTEST_TMP/floating" ]; then
     sed 's/^/    /' "$SHELLTEST_TMP/floating"
 fi
 
+begin "the second family installs what the bundled media plugin links"
+# The bundle carries Qt's ffmpeg plugin and leaves the codec libraries to the
+# host, so the bundle check can only ask its real question on a machine that has
+# them. Without ffmpeg it reports a plugin that would not load, which is right
+# about the machine and says nothing about the code. See MOLE-414.
+python3 - "$SECOND" <<'PY' || fail "the second family does not install ffmpeg, so the bundle check reports the machine rather than the bundle"
+import sys, yaml
+document = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+steps = [s for job in document["jobs"].values() for s in job["steps"]]
+runs = "\n".join(s.get("run", "") for s in steps)
+sys.exit(0 if "ffmpeg-free" in runs.split() else 1)
+PY
+
 begin "an RPM-family install asks for libgit2 by what it provides, not by a package name"
 # Fedora 45 renamed the package to `libgit2_1.9-devel`, and `libgit2-devel` stopped
 # existing between one Monday and the next: the second family and the .rpm stopped
