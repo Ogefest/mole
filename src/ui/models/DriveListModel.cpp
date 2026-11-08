@@ -264,7 +264,7 @@ void DriveListModel::noteCheckResult(const QString& driveId, bool reachable, con
 bool DriveListModel::saysTheDriveIsUnreachable(const VfsError& error)
 {
     // Every code named rather than defaulted: this decides whether a drive is
-    // shown as unreachable, so a twelfth code has to be considered here rather
+    // shown as unreachable, so a new code has to be considered here rather
     // than falling into "everything else". See MOLE-373.
     switch (error.code) {
     case VfsError::NetworkError:
@@ -284,6 +284,7 @@ bool DriveListModel::saysTheDriveIsUnreachable(const VfsError& error)
     case VfsError::NotEmpty:
     case VfsError::Cancelled:
     case VfsError::Unknown:
+    case VfsError::Changed:
         return false;
     }
     return false;

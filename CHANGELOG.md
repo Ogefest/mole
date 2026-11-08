@@ -65,6 +65,7 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-11-08 #MOLE-443 A file that changes while it is being read from a network drive is reported at once, not after two minutes
 2026-11-03 #MOLE-426 On a machine with four cores or fewer, a drive busy with a long copy can still be browsed, instead of every folder on it waiting for the copy to finish
 2026-11-03 #MOLE-437 A pane re-reads its folder when the window is activated again, if it has been away long enough for the read to be worth it
 2026-11-03 #MOLE-441 Showing hidden files is remembered, and applies to every tab and to new ones, instead of lasting only as long as one tab

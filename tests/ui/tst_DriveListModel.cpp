@@ -139,6 +139,7 @@ private slots:
     void aDriveIsConnectingUntilSomethingHasActuallyAsked();
     void aDriveThatCannotBeReachedKeepsItsMountAndSaysWhy();
     void aFailedOperationMovesAConnectedDriveToUnreachable();
+    void aFileThatChangedUnderAReadSaysNothingAboutTheDrive();
     void aFailureOnALocalDiskIsNotADriveProblem();
     void nothingSchedulesARepeatingCheck();
     void aMissingFolderIsNotAnUnreachableDrive();
@@ -652,6 +653,24 @@ void TestDriveListModel::aFailedOperationMovesAConnectedDriveToUnreachable()
     QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Unreachable);
     QCOMPARE(m_model->index(0, 0).data(DriveListModel::CheckMessageRole).toString(),
         QStringLiteral("The server stopped answering"));
+}
+
+/// A file replaced while it was being read is an answer from a server that is
+/// plainly there. It used to arrive as IoError, which marks a drive unreachable;
+/// it has its own code now, and that code says nothing about the drive.
+/// See MOLE-443 and ADR-0103.
+void TestDriveListModel::aFileThatChangedUnderAReadSaysNothingAboutTheDrive()
+{
+    const QString id = configure(QStringLiteral("Office NAS"));
+    m_model->noteCheckStarted(id);
+    connectConfigured(id);
+    m_model->noteCheckResult(id, true, QStringLiteral("Listed 4 entries"));
+
+    const VfsUri somewhereOnIt = m_registry->drive(id).rootUri().child(QStringLiteral("backup.tar"));
+    m_model->noteFailureAt(somewhereOnIt,
+        VfsError::make(VfsError::Changed, QStringLiteral("the file changed while it was being read")));
+
+    QCOMPARE(stateAt(m_model->index(0, 0)), DriveListModel::State::Idle);
 }
 
 /// A local disk that refused a listing has a permission problem, not a

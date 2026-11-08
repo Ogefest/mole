@@ -154,6 +154,7 @@ private slots:
     void aLargeFileGoesUpWholeThroughAChunkedPut();
     void aLargeFileIsStreamedInRangesRatherThanDownloadedWhole();
     void aWeakEtagIsNotSentAsAPrecondition();
+    void aSpanRefusedBecauseTheFileChangedIsAskedOnce();
     void aStagedWriteTooBigToBufferAlsoArrives();
 };
 
@@ -660,6 +661,48 @@ void TestWebdavFileSystem::aWeakEtagIsNotSentAsAPrecondition()
         QVERIFY2(!asked.header("If-Match").startsWith("W/"),
             "a weak ETag was sent as If-Match, which no server can ever satisfy");
     }
+}
+
+/// A file that really does change under a read is said at once.
+///
+/// The weak tag above was one way to get 412 on every span; a file replaced
+/// mid-read is the honest one. Either way the answer cannot change, and it was
+/// fetched again every two seconds until the transfer's budget of two minutes
+/// ran out. Counted on the requests the server received. See MOLE-443.
+void TestWebdavFileSystem::aSpanRefusedBecauseTheFileChangedIsAskedOnce()
+{
+    constexpr qint64 kBig = 512LL * 1024 * 1024;
+
+    ScriptedHttpServer server([](const ScriptedHttpServer::Request& request) {
+        ScriptedHttpServer::Reply reply;
+        if (request.method == "HEAD") {
+            reply.claimedLength = kBig;
+            reply.headers.append("ETag: \"the-file-that-was\"");
+            return reply;
+        }
+        // Replaced since the HEAD: every precondition now fails.
+        reply.status = 412;
+        reply.reason = "Precondition Failed";
+        return reply;
+    });
+    QVERIFY2(server.start(), "the scripted server could not take a port");
+
+    auto fileSystem = std::make_shared<WebdavFileSystem>(QStringLiteral("webdav"), against(server));
+    Result<std::unique_ptr<QIODevice>> opened
+        = fileSystem->openRead(VfsUri(QStringLiteral("webdav"), QString(), QStringLiteral("/replaced.tar")));
+    QVERIFY2(opened.ok(), qPrintable(opened.error().message));
+    auto* stream = dynamic_cast<net::StreamingDownload*>(opened.value().get());
+    QVERIFY(stream != nullptr);
+
+    QByteArray buffer(4096, Qt::Uninitialized);
+    QCOMPARE(stream->read(buffer.data(), buffer.size()), qint64(-1));
+    QCOMPARE(stream->error().code, VfsError::Changed);
+    QCOMPARE(stream->error().message, QStringLiteral("the file changed while it was being read"));
+
+    int spans = 0;
+    for (const ScriptedHttpServer::Request& asked : server.received())
+        spans += asked.method == "GET" ? 1 : 0;
+    QCOMPARE(spans, 1);
 }
 
 void TestWebdavFileSystem::aLargeFileIsStreamedInRangesRatherThanDownloadedWhole()

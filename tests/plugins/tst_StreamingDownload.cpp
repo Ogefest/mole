@@ -388,6 +388,7 @@ private slots:
     void aSpanThatKeepsFailingEndsTheReadWhenTheBudgetIsSpent();
     void aLinkThatComesBackInsideTheBudgetCostsNothing();
     void aRefusalThatWillNotChangeIsNotWaitedOut();
+    void aSpanRefusedBecauseTheFileChangedIsAskedOnce();
 
     void seekingToTheStartToTheEndAndPastIt();
     void aSpanBoundaryThatFallsOnAReadBoundaryIsInvisible();
@@ -842,6 +843,33 @@ void TestStreamingDownload::aRefusalThatWillNotChangeIsNotWaitedOut()
     QVERIFY(*flaky >= 3);
 }
 
+/// A span the server refused because the file changed, retried for two minutes.
+///
+/// A drive with a validator sends it with every span, and a server that answers
+/// "not that file any more" has given an answer that cannot change: the file the
+/// read began on is gone. It shared IoError with a body cut short, which is worth
+/// retrying, so it was fetched again with the same validator and refused again
+/// until the whole budget was spent -- the MOLE-373 fault through a code that
+/// slipped past it. Counted in attempts, not timed. See MOLE-443.
+void TestStreamingDownload::aSpanRefusedBecauseTheFileChangedIsAskedOnce()
+{
+    const QByteArray payload = payloadOf(256 * 1024);
+    auto attempts = std::make_shared<std::atomic<int>>(0);
+    auto fetch = [attempts](QIODevice&, qint64, qint64, const CancelToken&) {
+        ++*attempts;
+        return net::fileChangedWhileBeingRead();
+    };
+
+    net::StreamingDownload stream(fetch, payload.size(), 64 * 1024, std::chrono::seconds(30));
+    QVERIFY(stream.open(QIODevice::ReadOnly));
+
+    QByteArray buffer(16 * 1024, Qt::Uninitialized);
+    QCOMPARE(stream.read(buffer.data(), buffer.size()), qint64(-1));
+    QCOMPARE(stream.error().code, VfsError::Changed);
+    QCOMPARE(stream.error().message, QStringLiteral("the file changed while it was being read"));
+    QCOMPARE(attempts->load(), 1);
+}
+
 void TestStreamingDownload::seekingToTheStartToTheEndAndPastIt()
 {
     // The ends of the device, which is where anything that previews a file goes
@@ -1030,12 +1058,15 @@ void TestStreamingDownload::aFileRewrittenBetweenTwoSpansFailsRatherThanStitchin
     qint64 last = 0;
     const QByteArray rest = readAll(stream, &last);
     QCOMPARE(last, -1);
-    QCOMPARE(stream.error().code, VfsError::IoError);
+    QCOMPARE(stream.error().code, VfsError::Changed);
     QCOMPARE(stream.error().message, QStringLiteral("the file changed while it was being read"));
 
     // Not one byte of the file that replaced it.
     QVERIFY2(!rest.contains('b'), "the second file's bytes were handed to the reader");
-    QVERIFY2(server.spans() <= 2, "a span was fetched after the file was known to have changed");
+    // Stopped at once, which nothing asserted: one span, the check before the
+    // second, and nothing after it. See MOLE-443.
+    QCOMPARE(server.spans(), 1);
+    QCOMPARE(server.checks(), 1);
 }
 
 /// And a file that is still itself is read exactly as before, having been asked.

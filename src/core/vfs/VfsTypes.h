@@ -28,7 +28,11 @@ struct VfsError
         IoError,
         NetworkError,
         Cancelled,
-        Unknown
+        Unknown,
+        /// The file is no longer the one the operation began on: replaced or
+        /// rewritten part way through a read. Not a fault in the transfer, and
+        /// the same answer however often it is asked. See MOLE-443.
+        Changed
     };
 
     Code code = None;

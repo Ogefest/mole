@@ -324,7 +324,10 @@ StreamingDownload::StreamingDownload(Fetch fetch, qint64 size, qint64 spanBytes,
 
 VfsError fileChangedWhileBeingRead()
 {
-    return VfsError::make(VfsError::IoError, QStringLiteral("the file changed while it was being read"));
+    // Its own code rather than IoError, which is what a truncated body arrives
+    // as and so is retried: a changed file was refused again every two seconds
+    // until the budget ran out. See MOLE-443.
+    return VfsError::make(VfsError::Changed, QStringLiteral("the file changed while it was being read"));
 }
 
 QString identityOf(const FileEntry& entry)

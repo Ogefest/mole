@@ -594,6 +594,7 @@ void TestCurlTransport::onlyAFailureThatMightGoTheOtherWayIsRetried()
     QVERIFY(!net::isWorthRetrying(VfsError::make(VfsError::AlreadyExists, QStringLiteral("x"))));
     QVERIFY(!net::isWorthRetrying(VfsError::make(VfsError::NotEmpty, QStringLiteral("x"))));
     QVERIFY(!net::isWorthRetrying(VfsError::make(VfsError::Cancelled, QStringLiteral("x"))));
+    QVERIFY(!net::isWorthRetrying(VfsError::make(VfsError::Changed, QStringLiteral("x"))));
     QVERIFY(!net::isWorthRetrying(VfsError::ok()));
 }
 

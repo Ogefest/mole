@@ -1093,6 +1093,10 @@ bool isWorthRetrying(const VfsError& error)
     case VfsError::AlreadyExists:
     case VfsError::NotEmpty:
     case VfsError::Cancelled:
+    // The file the read began on is gone, and asking again with the same
+    // validator is refused again. It used to share IoError with a dropped body
+    // and sat out the whole budget. See MOLE-443.
+    case VfsError::Changed:
         // Every one of these is the same answer next time. Waiting two minutes
         // to say it again is two minutes per file.
         return false;
