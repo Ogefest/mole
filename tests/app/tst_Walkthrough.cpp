@@ -1970,9 +1970,16 @@ void TestWalkthrough::aPartlyIndexedFolderShowsWhereEachRowCameFrom()
     search->scanDirectory(m_harness->fixtureUri() + QStringLiteral("/archive"), QStringLiteral("archive"));
     QVERIFY(m_harness->until([this] { return m_harness->app()->tasks()->activeCount() == 0; }, 30000));
 
+    // **Waited for, not read once.** The note answers from the index snapshot
+    // (ADR-0066), and the snapshot is re-read by a task the scan's own
+    // indexUpdated starts on its way out -- so there is a moment with no task
+    // running at all and the snapshot still from before the scan. Read then, the
+    // note says "not indexed", which is true of the snapshot it was given, and the
+    // release run of 2026-11-08 failed on exactly that. Held back in a test, the
+    // snapshot read reproduces it every time. See MOLE-448.
     search->setRootUri(m_harness->fixtureUri());
-    m_harness->settle(4);
-    QVERIFY2(search->coverageNote().contains(QStringLiteral("part of this folder")),
+    QVERIFY2(m_harness->until(
+                 [search] { return search->coverageNote().contains(QStringLiteral("part of this folder")); }),
         qPrintable(search->coverageNote()));
 
     search->setQueryText(QStringLiteral("report"));
@@ -4203,8 +4210,11 @@ void TestWalkthrough::theListOfIndexesSaysHowOldEachOneIsAndWhatIsInIt()
     m_harness->settle(6);
 
     // The list is right before it is photographed: two rows, one of them kept up
-    // to date, and the two kinds of scan told apart.
-    QCOMPARE(indexes->volumeCount(), 2);
+    // to date, and the two kinds of scan told apart. The rows come from the same
+    // snapshot as the search tab's coverage note, re-read after the second scan
+    // finished rather than by it, so they are waited for as well. See MOLE-448.
+    QVERIFY2(m_harness->until([indexes] { return indexes->volumeCount() == 2; }),
+        qPrintable(QStringLiteral("%1 volumes listed").arg(indexes->volumeCount())));
     QCOMPARE(indexes->scheduledCount(), 1);
     QVERIFY2(m_harness->item(QStringLiteral("indexList")), "the view has to have drawn the list");
 
