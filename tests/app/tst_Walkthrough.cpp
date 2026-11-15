@@ -136,6 +136,7 @@ private slots:
     void theCopyPathKeysActuallyCopyAPath();
     void theCommandPaletteFindsAndRunsThings();
     void theWindowBehindAPopupIsNotWashedOut();
+    void aLongGlyphInThePaletteStaysInItsColumn();
     void aVideoStartsPlayingOnItsOwnAndStopsOnTheButton();
     void aVideoThatCannotBeDecodedFallsBackToWhatIsKnownAboutIt();
     void steppingOffAVideoLeavesNoPlayerBehind();
@@ -1724,6 +1725,56 @@ void TestWalkthrough::theWindowBehindAPopupIsNotWashedOut()
     QVERIFY(m_harness->until([palette] { return palette->property("opened").toBool(); }));
 
     assertTheWindowBehindAPopupIsDimmed("the command palette");
+
+    QVERIFY(QMetaObject::invokeMethod(palette, "close"));
+    QVERIFY(m_harness->until([palette] { return !palette->property("opened").toBool(); }));
+}
+
+/// A drive whose glyph is a word, as every local disk's was: the palette's icon
+/// column printed `drive-harddisk` straight over the drive's name. A plugin's
+/// factory can still answer with anything, so the column has to hold whatever it
+/// is given. See MOLE-457.
+void TestWalkthrough::aLongGlyphInThePaletteStaysInItsColumn()
+{
+    auto drive = std::make_shared<MemoryFileSystem>();
+    Mount mount;
+    mount.id = QStringLiteral("wordy");
+    mount.displayName = QStringLiteral("Zebrawidget");
+    mount.root = VfsUri::fromString(QStringLiteral("mem://wordy/"));
+    mount.iconName = QStringLiteral("drive-harddisk");
+    mount.fileSystem = drive;
+    m_harness->app()->services().vfs->addMount(mount);
+
+    m_harness->key(Qt::Key_R, Qt::ControlModifier);
+    QObject* palette = m_harness->object(QStringLiteral("commandPalette"));
+    QVERIFY(palette);
+    QVERIFY(m_harness->until([palette] { return palette->property("opened").toBool(); }));
+    m_harness->type(QStringLiteral("zebraw"));
+    QQuickItem* list = m_harness->item(QStringLiteral("commandPaletteList"));
+    QVERIFY(list);
+    QVERIFY(m_harness->until([list] { return list->property("count").toInt() >= 1; }));
+
+    QQuickItem* wordy = nullptr;
+    QVERIFY(m_harness->until([&] {
+        for (QQuickItem* glyph : m_harness->items(QStringLiteral("paletteGlyph"))) {
+            if (glyph->isVisible() && glyph->property("text").toString() == mount.iconName)
+                wordy = glyph;
+        }
+        return wordy != nullptr;
+    }));
+
+    // The column is its own width, and what does not fit in it is cut there: the
+    // title beside it starts where the column ends, and nothing is drawn over it.
+    const qreal drawn = wordy->property("contentWidth").toReal();
+    QVERIFY2(drawn > wordy->width(), "the word fits, so this asserts nothing");
+    QVERIFY2(wordy->clip(),
+        qPrintable(QStringLiteral("%1 px of glyph drawn in a %2 px column with nothing to cut it")
+                .arg(drawn)
+                .arg(wordy->width())));
+    const QList<QQuickItem*> row = wordy->parentItem()->childItems();
+    const int at = row.indexOf(wordy);
+    QVERIFY(at >= 0 && at + 1 < row.size());
+    QVERIFY(wordy->x() + wordy->width() <= row.at(at + 1)->x());
 
     QVERIFY(QMetaObject::invokeMethod(palette, "close"));
     QVERIFY(m_harness->until([palette] { return !palette->property("opened").toBool(); }));

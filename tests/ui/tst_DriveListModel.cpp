@@ -1259,6 +1259,12 @@ void TestDriveListModel::everyRowHasAGlyph()
         const QString name
             = m_model->data(m_model->index(row, 0), DriveListModel::DisplayNameRole).toString();
         QVERIFY2(!glyph.isEmpty(), qPrintable(QStringLiteral("the row for %1 has no glyph").arg(name)));
+        // And a glyph, not a word. An icon-theme name is not empty and passed the
+        // line above, and the palette printed it over the drive's name. See
+        // MOLE-457.
+        QVERIFY2(isOneGlyph(glyph),
+            qPrintable(QStringLiteral("the row for %1 is drawn with \"%2\", which is not a glyph")
+                    .arg(name, glyph)));
     }
 }
 

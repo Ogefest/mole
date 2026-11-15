@@ -68,7 +68,11 @@ public:
     virtual QString scheme() const = 0;
     /// Shown in the "add drive" menu, e.g. "SSH / SFTP".
     virtual QString displayName() const = 0;
-    virtual QString iconName() const { return QStringLiteral("drive"); }
+    /// The drive's glyph: one printable symbol, drawn as text wherever a drive is
+    /// listed -- the command palette, the sidebar. **Not a freedesktop icon-theme
+    /// name.** Nothing in Mole looks one up in a theme, so `drive-harddisk` was
+    /// printed as fourteen characters over the drive's name. See MOLE-457.
+    virtual QString iconName() const { return QStringLiteral("\U0001F4BF"); } // 💿
 
     /// Empty for backends that need no configuration (local disk).
     virtual QList<ConnectionField> connectionFields() const { return {}; }

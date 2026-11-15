@@ -142,7 +142,7 @@ class LocalFileSystemFactory final : public IFileSystemFactory
 public:
     QString scheme() const override { return QStringLiteral("file"); }
     QString displayName() const override { return QStringLiteral("Local disk"); }
-    QString iconName() const override { return QStringLiteral("drive-harddisk"); }
+    QString iconName() const override { return QStringLiteral("\U0001F4BD"); } // 💽
 
     FileSystemPtr create(const QVariantMap& config, QString* errorOut) override;
 };

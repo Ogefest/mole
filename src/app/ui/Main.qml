@@ -629,6 +629,10 @@ ApplicationWindow {
                             Item {
                                 implicitWidth: 16
                                 implicitHeight: 16
+                                // Cut rather than drawn over the tab's title, the
+                                // same guard the palette's glyph column has. See
+                                // MOLE-457.
+                                clip: true
                                 Label {
                                     anchors.centerIn: parent
                                     text: tabButton.iconText

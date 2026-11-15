@@ -89,6 +89,11 @@ bool waitForTask(Task* task, int timeoutMs = 10000);
 /// Spins the event loop until `predicate` holds or the timeout expires.
 bool waitFor(const std::function<bool()>& predicate, int timeoutMs = 5000);
 
+/// Whether `text` is something a drive can be drawn with: one grapheme, or at
+/// most two characters. What IFileSystemFactory::iconName() promises, and what a
+/// freedesktop icon-theme name such as `drive-harddisk` is not. See MOLE-457.
+bool isOneGlyph(const QString& text);
+
 /// Drains everything currently queued, including deleteLater().
 void drainEvents();
 

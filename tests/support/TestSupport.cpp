@@ -8,6 +8,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QMutex>
+#include <QTextBoundaryFinder>
 #include <QThread>
 
 #include <utility>
@@ -80,6 +81,19 @@ void PrivateProfile::clearVolatileState() const
     QFile::remove(filePath(QStringLiteral("credentials.enc")));
     QFile::remove(filePath(QStringLiteral("drives.json")));
     QDir(filePath(QStringLiteral("analysis"))).removeRecursively();
+}
+
+bool isOneGlyph(const QString& text)
+{
+    if (text.isEmpty())
+        return false;
+    if (text.size() <= 2)
+        return true;
+    QTextBoundaryFinder graphemes(QTextBoundaryFinder::Grapheme, text);
+    int count = 0;
+    while (graphemes.toNextBoundary() >= 0)
+        ++count;
+    return count == 1;
 }
 
 bool waitFor(const std::function<bool()>& predicate, int timeoutMs)

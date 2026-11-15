@@ -65,6 +65,7 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-11-15 #MOLE-457 Local drives in the command palette show a glyph instead of the words "drive-harddisk" written over their name
 2026-11-15 #MOLE-454 Symbolic links in a listing are marked as links, a broken link is marked as broken, and hovering one shows where it points
 2026-11-15 #MOLE-456 Typing in a folder opened from the filter now always shows the filter bar, instead of filtering the listing by text that was nowhere on screen
 2026-11-15 #MOLE-455 Folder sizes measured in a listing are no longer lost when the window comes back into focus or the folder is refreshed

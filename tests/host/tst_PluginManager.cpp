@@ -6,12 +6,14 @@
 #include "host/ThumbnailRegistry.h"
 #include "support/FakePlugin.h"
 #include "support/MoleTestMain.h"
+#include "support/TestSupport.h"
 
 #include "core/automation/Chain.h"
 #include "core/events/EventBus.h"
 #include "core/index/IndexDatabase.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/VfsManager.h"
+#include "core/vfs/backends/LocalFileSystem.h"
 
 #include <QDir>
 #include <QFile>
@@ -41,6 +43,7 @@ private slots:
     void nonPluginFileIsReportedNotFatal();
     void shutdownIsCalledOnDestruction();
     void loadsTheRealArchivePluginFromDisk();
+    void everyDriveKindIsDrawnWithAGlyph();
     void aPluginLoadedFromDiskIsToldToShutDown();
     void aSymlinkedPluginLoads();
     void aPluginThatThrowsWhileRegisteringIsReportedAndSkipped();
@@ -388,6 +391,33 @@ void TestPluginManager::loadsTheRealArchivePluginFromDisk()
     QVERIFY2(m_vfs->factoryFor(QStringLiteral("archive")) != nullptr,
         "the archive plugin must contribute its filesystem factory");
     QVERIFY(!manager->loaded().front().builtIn);
+}
+
+/// Every factory there is at startup answers iconName() with a glyph: the local
+/// disk and the in-memory drive built in, the default a factory gets by not
+/// answering, and every kind the plugins on disk contribute. Three of them were
+/// freedesktop icon-theme names, which nothing looks up, so the command palette
+/// printed `drive-harddisk` over a local drive's name. This is what stops the next
+/// backend bringing one back. See MOLE-457.
+void TestPluginManager::everyDriveKindIsDrawnWithAGlyph()
+{
+    PluginManager* manager = makeManager();
+    m_vfs->registerFactory(std::make_unique<LocalFileSystemFactory>());
+    m_vfs->registerFactory(std::make_unique<MemoryFileSystemFactory>());
+    // Answers nothing of its own, so this is the interface's default.
+    m_vfs->registerFactory(std::make_unique<FakeFileSystemFactory>(QStringLiteral("plain")));
+    const QString pluginDir = QStringLiteral(MOLE_TEST_PLUGIN_DIR);
+    if (QDir(pluginDir).exists())
+        manager->loadFromDirectory(pluginDir);
+
+    QStringList schemes;
+    for (IFileSystemFactory* factory : m_vfs->factories()) {
+        schemes << factory->scheme();
+        QVERIFY2(isOneGlyph(factory->iconName()),
+            qPrintable(QStringLiteral("%1 is drawn with \"%2\", which is not a glyph")
+                    .arg(factory->scheme(), factory->iconName())));
+    }
+    QVERIFY2(schemes.contains(QStringLiteral("file")), qPrintable(schemes.join(QLatin1Char(' '))));
 }
 
 void TestPluginManager::aPluginLoadedFromDiskIsToldToShutDown()

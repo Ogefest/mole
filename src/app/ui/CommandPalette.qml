@@ -122,8 +122,18 @@ Popup {
                     anchors.rightMargin: 10
                     spacing: 8
 
+                    // A column that cannot spill. It is given whatever a drive's
+                    // factory or a plugin calls its glyph, and a word written
+                    // there used to run straight across the title beside it. A
+                    // glyph that is wide in some font is cut rather than laid
+                    // over the name. See MOLE-457.
                     Label {
+                        objectName: "paletteGlyph"
                         Layout.preferredWidth: 20
+                        Layout.minimumWidth: 20
+                        Layout.maximumWidth: 20
+                        clip: true
+                        horizontalAlignment: Text.AlignHCenter
                         text: iconText
                         color: App.colour.accent
                         font.pixelSize: App.secondaryTextSize

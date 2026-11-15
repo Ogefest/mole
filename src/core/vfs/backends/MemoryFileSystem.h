@@ -257,7 +257,7 @@ class MemoryFileSystemFactory final : public IFileSystemFactory
 public:
     QString scheme() const override { return QStringLiteral("mem"); }
     QString displayName() const override { return QStringLiteral("In-memory scratch"); }
-    QString iconName() const override { return QStringLiteral("drive-removable-media"); }
+    QString iconName() const override { return QStringLiteral("\U0001F4BE"); } // 💾
 
     FileSystemPtr create(const QVariantMap& config, QString* errorOut) override;
 };
