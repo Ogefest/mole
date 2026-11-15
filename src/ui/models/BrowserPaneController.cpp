@@ -1056,10 +1056,15 @@ void BrowserPaneController::load(const VfsUri& uri, bool recordHistory)
             // Only on arriving somewhere new. Re-listing the folder already in
             // view -- F5, Mole's own copy into it, the window coming back -- must
             // not throw away what somebody typed. See MOLE-437.
-            if (directory != m_listedFolder)
+            // The same goes for folder sizes measured here: a re-listing keeps the
+            // ones whose entry is still present. See MOLE-455.
+            const bool relisting = directory == m_listedFolder;
+            if (!relisting)
                 m_files->setFilterText(QString());
             m_listedFolder = directory;
-            m_files->setEntries(entries);
+            m_files->setEntries(entries,
+                relisting ? FileListModel::Measurements::KeepWherePresent
+                          : FileListModel::Measurements::Drop);
             m_installingListing = false;
             m_cursorWas.clear();
 

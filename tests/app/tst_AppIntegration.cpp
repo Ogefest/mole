@@ -527,11 +527,13 @@ void TestAppIntegration::measuringFoldersFillsTheirSizesIntoTheListing()
     const QString notes = m_tree->rootUri().child(QStringLiteral("notes.txt")).toString();
     QCOMPARE(files->measuredSize(notes), -1);
 
-    // Refreshing throws the measurements away: they describe the tree as it was
-    // when they were taken, and a stale number is worse than an empty cell.
+    // Refreshing keeps them. This was once the other way round, and it meant every
+    // re-listing -- F5, a write into the folder, the window coming back -- threw
+    // away minutes of measuring. The number stands until the user measures again
+    // or goes somewhere else. See MOLE-455.
     pane->refresh();
     QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() == 3; }));
-    QCOMPARE(files->measuredSize(reports), -1);
+    QCOMPARE(files->measuredSize(reports), 702);
 }
 
 void TestAppIntegration::measuringUsesTheTickedFoldersWhenThereAreAny()

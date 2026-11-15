@@ -128,8 +128,10 @@ nothing is ticked — and writes each total into its row as the walk finishes it
 runs in the background, it can be cancelled, and sorting by size then puts the measured
 folders in the order you would expect.
 
-A measurement describes the tree as it was when it was taken, so refreshing the listing
-clears it. A stale number is worse than an empty cell.
+A measurement stays while you are in that folder: refreshing the listing, or coming
+back to the window, keeps it for every folder that is still there. It describes the
+tree as it was when it was taken, so measure again to bring it up to date. Going to
+another folder and back starts without any.
 
 ## When a folder is slow
 

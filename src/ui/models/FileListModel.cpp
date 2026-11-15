@@ -8,6 +8,7 @@
 
 #include <QCollator>
 #include <QLocale>
+#include <QSet>
 #include <QUrl>
 
 #include <algorithm>
@@ -77,13 +78,29 @@ FileListModel::FileListModel(QObject* parent)
 {
 }
 
-void FileListModel::setEntries(FileEntryList entries)
+void FileListModel::setEntries(FileEntryList entries, Measurements measurements)
 {
     beginResetModel();
     m_all = std::move(entries);
-    // A measurement describes the tree as it was when it was taken, so a new
-    // listing starts without any. The same goes for where rows came from.
-    m_measured.clear();
+    // A measurement describes the tree as it was when it was taken, so a listing
+    // of somewhere else starts without any. A re-listing of the same folder keeps
+    // the ones whose entry is still here: losing them on every refresh threw away
+    // minutes of measuring each time the window came back. See MOLE-455.
+    if (measurements == Measurements::KeepWherePresent && !m_measured.isEmpty()) {
+        QSet<QString> present;
+        present.reserve(m_all.size());
+        for (const FileEntry& entry : std::as_const(m_all))
+            present.insert(entry.uri.toString());
+        for (auto it = m_measured.begin(); it != m_measured.end();) {
+            if (present.contains(it.key()))
+                ++it;
+            else
+                it = m_measured.erase(it);
+        }
+    } else {
+        m_measured.clear();
+    }
+    // Where rows came from belongs to the listing that produced them.
     m_indexed.clear();
     m_matches.clear();
     m_withdrawn.clear();

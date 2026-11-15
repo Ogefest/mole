@@ -76,6 +76,8 @@ private slots:
     void comingBackLateShowsWhatIsThereNow();
     void comingBackSoonAsksTheDriveNothing();
     void aRelistKeepsTheFilterTheCursorAndTheTicks();
+    void aRelistKeepsTheMeasuredSizesOfWhatIsStillThere();
+    void aMeasurementArrivingDuringARelistIsKept();
     void nothingIsRelistedWhileAListingIsInFlightOrADriveIsAwaited();
     void invalidUriReportsAnError();
     void historyGoesBackAndForward();
@@ -477,6 +479,73 @@ void TestBrowserPaneController::aRelistKeepsTheFilterTheCursorAndTheTicks()
     QCOMPARE(files->uriAt(pane->currentIndex()), cursorOn);
     QCOMPARE(files->selectedUris(), QStringList { tickedOn });
     QVERIFY2(!pane->canGoBack(), "a re-listing joined the history");
+}
+
+// Folder sizes are measured by a task that writes into the model one folder at a
+// time. Every re-listing of the folder on screen used to throw them all away, so
+// a window that went to the background and came back lost minutes of measuring.
+// See MOLE-455. EventBus::directoryChanged re-lists through refresh(), the same
+// call as F5, so the F5 case below is that route as well.
+void TestBrowserPaneController::aRelistKeepsTheMeasuredSizesOfWhatIsStillThere()
+{
+    qint64 now = 0;
+    m_fs->addFile(QStringLiteral("/docs/other/c.txt"), QByteArray("c"));
+    BrowserPaneController* pane = makePane();
+    pane->setClock([&now] { return now; });
+    pane->navigateTo(QStringLiteral("mem:///docs"));
+    QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() > 0; }));
+
+    FileListModel* files = pane->files();
+    const QString deep = QStringLiteral("mem:///docs/deep");
+    const QString other = QStringLiteral("mem:///docs/other");
+    files->setMeasuredSize(deep, 123'456);
+    files->setMeasuredSize(other, 7'890);
+
+    // The window comes back after long enough to re-list.
+    now = 60'000;
+    QVERIFY(pane->refreshIfStale());
+    QVERIFY(waitFor([pane] { return !pane->isLoading(); }));
+    QCOMPARE(files->measuredSize(deep), qint64(123'456));
+    QCOMPARE(files->measuredSize(other), qint64(7'890));
+
+    // F5, and with it a write into the folder announced on the event bus. A
+    // folder deleted outside Mole in the meantime loses its measurement.
+    QVERIFY(m_fs->remove(VfsUri::fromString(other), true).ok());
+    pane->refresh();
+    QVERIFY(waitFor([pane] { return !pane->isLoading(); }));
+    QCOMPARE(files->measuredSize(deep), qint64(123'456));
+    QCOMPARE(files->measuredSize(other), qint64(-1));
+
+    // Going somewhere else and coming back starts without any, as it always has.
+    pane->navigateTo(QStringLiteral("mem:///"));
+    QVERIFY(
+        waitFor([pane] { return !pane->isLoading() && pane->currentUri() == QStringLiteral("mem:///"); }));
+    pane->navigateTo(QStringLiteral("mem:///docs"));
+    QVERIFY(waitFor([pane] {
+        return !pane->isLoading() && pane->files()->rowOfUri(QStringLiteral("mem:///docs/deep")) >= 0;
+    }));
+    QCOMPARE(files->measuredSize(deep), qint64(-1));
+}
+
+void TestBrowserPaneController::aMeasurementArrivingDuringARelistIsKept()
+{
+    BrowserPaneController* pane = makePane();
+    pane->navigateTo(QStringLiteral("mem:///docs"));
+    QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() > 0; }));
+
+    // The re-listing is held at the drive, and the measuring task delivers while
+    // it is: the listing that then arrives must not wipe what came in meanwhile.
+    auto gate = std::make_shared<QSemaphore>(0);
+    m_fs->setListGate(gate);
+    pane->refresh();
+    QVERIFY(waitFor([this] { return m_fs->listsInProgress() == 1; }));
+    const QString deep = QStringLiteral("mem:///docs/deep");
+    pane->files()->setMeasuredSize(deep, 42);
+    gate->release(16);
+    m_fs->setListGate(nullptr);
+    QVERIFY(waitFor([pane] { return !pane->isLoading(); }));
+
+    QCOMPARE(pane->files()->measuredSize(deep), qint64(42));
 }
 
 void TestBrowserPaneController::nothingIsRelistedWhileAListingIsInFlightOrADriveIsAwaited()

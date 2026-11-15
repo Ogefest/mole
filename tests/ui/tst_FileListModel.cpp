@@ -95,6 +95,8 @@ private slots:
     void selectionSurvivesResorting();
     void selectionDropsFilesThatDisappeared();
     void selectAllAndInvert();
+    void aRelistKeepsTheMeasurementsOfWhatIsStillThere();
+    void aListingOfSomewhereElseStartsWithoutMeasurements();
     void targetsFallBackToTheCursor();
     void selectionIsBoundsChecked();
 
@@ -474,6 +476,51 @@ void TestFileListModel::selectionDropsFilesThatDisappeared()
     model.setEntries({ makeEntry(QStringLiteral("stays")) });
     QCOMPARE(model.selectionCount(), 1);
     QCOMPARE(model.selectedUris(), QStringList({ QStringLiteral("file:///data/stays") }));
+}
+
+// ---- measured folder sizes across a re-listing (MOLE-455) -----------------
+
+void TestFileListModel::aRelistKeepsTheMeasurementsOfWhatIsStillThere()
+{
+    FileListModel model;
+    model.setEntries({ makeEntry(QStringLiteral("stays"), true), makeEntry(QStringLiteral("goes"), true),
+        makeEntry(QStringLiteral("file.txt"), false, 10) });
+    const QString stays = QStringLiteral("file:///data/stays");
+    const QString goes = QStringLiteral("file:///data/goes");
+    model.setMeasuredSize(stays, 4096);
+    model.setMeasuredSize(goes, 8192);
+
+    model.setEntries(
+        { makeEntry(QStringLiteral("stays"), true), makeEntry(QStringLiteral("file.txt"), false, 10),
+            makeEntry(QStringLiteral("arrived"), true) },
+        FileListModel::Measurements::KeepWherePresent);
+
+    QCOMPARE(model.measuredSize(stays), qint64(4096));
+    const int row = model.rowOfUri(stays);
+    QVERIFY(row >= 0);
+    QCOMPARE(model.data(model.index(row, 0), FileListModel::SizeRole).toLongLong(), qint64(4096));
+    // Gone from the folder, so gone from the measurements: no orphan left to
+    // reappear if a folder of the same name is made again.
+    QCOMPARE(model.measuredSize(goes), qint64(-1));
+    QCOMPARE(model.measuredSize(QStringLiteral("file:///data/arrived")), qint64(-1));
+
+    // And it comes back after the entry does only if somebody measures it again.
+    model.setEntries({ makeEntry(QStringLiteral("stays"), true), makeEntry(QStringLiteral("goes"), true) },
+        FileListModel::Measurements::KeepWherePresent);
+    QCOMPARE(model.measuredSize(goes), qint64(-1));
+    QCOMPARE(model.measuredSize(stays), qint64(4096));
+}
+
+void TestFileListModel::aListingOfSomewhereElseStartsWithoutMeasurements()
+{
+    FileListModel model;
+    model.setEntries({ makeEntry(QStringLiteral("stays"), true) });
+    const QString stays = QStringLiteral("file:///data/stays");
+    model.setMeasuredSize(stays, 4096);
+
+    // The default is the old rule, and the one a new folder needs.
+    model.setEntries({ makeEntry(QStringLiteral("stays"), true) });
+    QCOMPARE(model.measuredSize(stays), qint64(-1));
 }
 
 void TestFileListModel::selectAllAndInvert()

@@ -113,8 +113,21 @@ public:
     /// marking the rows again must not depend on the listing being fetched twice.
     const FileEntryList& allEntries() const { return m_all; }
 
+    /// Whether a new listing keeps the folder sizes measured in the one before.
+    enum class Measurements {
+        /// A listing of somewhere else: a measurement describes the tree it was
+        /// taken in, so none of them carries over.
+        Drop,
+        /// A re-listing of the same folder -- F5, a write into it, the window
+        /// coming back. A measurement stands for every entry still present, and
+        /// one whose entry is gone goes with it. Whether a kept number is still
+        /// accurate is deliberately not judged: the user measured, and measuring
+        /// again is how it is refreshed. See MOLE-455.
+        KeepWherePresent,
+    };
+
     /// Replaces the contents.
-    void setEntries(FileEntryList entries);
+    void setEntries(FileEntryList entries, Measurements measurements = Measurements::Drop);
     /// Appends without disturbing what is already shown -- used by searches
     /// that stream their results in.
     void appendEntries(const FileEntryList& entries);
