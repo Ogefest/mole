@@ -257,6 +257,7 @@ set_target_properties(compare-shots PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_
 # --- core: no GUI, no plugins -----------------------------------------------
 mole_add_test(tst_VfsUri            SOURCES core/tst_VfsUri.cpp)
 mole_add_test(tst_SystemVolumes     SOURCES core/tst_SystemVolumes.cpp)
+mole_add_test(tst_MountTableWatch   SOURCES core/tst_MountTableWatch.cpp)
 mole_add_test(tst_NameRules         SOURCES core/tst_NameRules.cpp)
 # Qt6::Gui, because one case asks Qt what a StandardKey means and that answer
 # comes out of the platform theme -- which a QCoreApplication has not got. It
