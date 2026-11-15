@@ -135,6 +135,12 @@ public:
 
 signals:
     void tableChanged();
+    /// A different table is on screen: another file, another table of the same
+    /// database, a re-import. Unlike tableChanged, not sent for a filter, a page,
+    /// a refresh or widths arriving -- which is what lets a view keep something
+    /// for exactly as long as the same table is showing, such as the widths a
+    /// reader dragged its columns to. See MOLE-453.
+    void sourceChanged();
     void filterChanged();
     void readingChanged();
     /// The page moved, or was put back to the first because what is being shown

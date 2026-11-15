@@ -590,6 +590,11 @@ if(MOLE_HAVE_MULTIMEDIA)
     target_compile_definitions(tst_Walkthrough PRIVATE MOLE_TEST_HAVE_MULTIMEDIA)
 endif()
 
+# The grid every tabular preview shares, hosted on its own in the window: its
+# header row is a separate Repeater from the cells, and a column dragged wider has
+# to be the same width in both. See MOLE-453.
+mole_add_test(tst_DataGrid          SOURCES app/tst_DataGrid.cpp        LIBS mole_qml_harness)
+
 # The drive rows in the sidebar. Their own binary rather than more of the
 # walkthrough: this one configures drives and connects them, which is state the
 # walkthrough's narrative would have to step around.

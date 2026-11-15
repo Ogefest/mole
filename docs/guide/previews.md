@@ -118,6 +118,11 @@ A filter is applied once you stop typing rather than on every key, because searc
 every column of every row is a pass over the table and holding a key down would start
 one per character.
 
+Columns start as wide as a sample of their values, up to sixty characters. Drag the edge
+of a column's header to make it wider or narrower — as wide as you like, which is how to
+read a long path or URL in full — and double-click the edge to put it back. The widths
+stay while you page and filter, and the next file starts afresh.
+
 Rows appear as they are read:
 
 ![Still reading](images/02b-preview-csv-loading.png)

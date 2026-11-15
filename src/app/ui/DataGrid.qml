@@ -98,11 +98,56 @@ Item {
     // Columns are sized to what is actually in them. The header row and the grid
     // share this rather than asking the TableView, which reports -1 for a column
     // it has not laid out yet -- and the header is built before the first pass.
+    //
+    // A width the reader dragged wins over the computed one, and it goes through
+    // here like any other: anything that sized the cells without telling the
+    // separate header row would let the two drift apart. See MOLE-453.
     function columnPixels(column) {
+        const dragged = userWidths[column]
+        if (dragged !== undefined)
+            return dragged
+        return computedPixels(column)
+    }
+
+    function computedPixels(column) {
         const hints = table ? table.columnWidths : []
         const characters = column < hints.length ? hints[column] : 12
         const padded = Math.min(Math.max(characters, 4), 60) + 2
         return Math.round(padded * metrics.advanceWidth)
+    }
+
+    /// Widths the reader has dragged columns to, by column. Held for as long as
+    /// the same table is on screen -- a page, a filter or a selection keeps them --
+    /// and forgotten when another table arrives. Not saved between sessions: a
+    /// width belongs to a column of one table, and a store keyed on that is more
+    /// machinery than this is worth.
+    property var userWidths: ({})
+
+    /// The narrowest a drag can make a column: the computed floor of four
+    /// characters. There is no ceiling -- getting past the sixty-character cap is
+    /// the main reason to drag at all.
+    readonly property int minimumColumnPixels: Math.round((4 + 2) * metrics.advanceWidth)
+
+    function setColumnWidth(column, pixels) {
+        const widths = Object.assign({}, userWidths)
+        widths[column] = Math.max(minimumColumnPixels, Math.round(pixels))
+        userWidths = widths
+        view.forceLayout()
+    }
+
+    /// Back to the width the contents give it, so a drag can always be undone.
+    function resetColumnWidth(column) {
+        const widths = Object.assign({}, userWidths)
+        delete widths[column]
+        userWidths = widths
+        view.forceLayout()
+    }
+
+    // Another table, or no table: its columns are not these.
+    onTableChanged: { userWidths = ({}); view.forceLayout() }
+    Connections {
+        target: grid.table ? grid.table : null
+        function onSourceChanged() { grid.userWidths = ({}); view.forceLayout() }
     }
 
     // A selection is a set of row indices, and every reset of the model -- a new
@@ -177,7 +222,9 @@ Item {
                 Repeater {
                     model: grid.table ? grid.table.columns : 0
                     delegate: Rectangle {
+                        id: headerCell
                         required property int index
+                        objectName: "gridHeader" + index
                         width: grid.columnPixels(index)
                         height: 26
                         color: App.colour.hover
@@ -194,6 +241,37 @@ Item {
                             font.pixelSize: App.smallTextSize
                             font.bold: true
                             color: App.colour.textSecondary
+                        }
+
+                        // The column's right edge, to drag. Measured in the grid's
+                        // coordinates rather than its own, because the handle rides
+                        // on the edge it is moving. A double click forgets the drag.
+                        // It is the header's, so a press here never starts a cell
+                        // selection or moves the cursor. See MOLE-453.
+                        MouseArea {
+                            objectName: "gridResize" + headerCell.index
+                            width: 8
+                            anchors.top: parent.top
+                            anchors.bottom: parent.bottom
+                            anchors.right: parent.right
+                            anchors.rightMargin: -4
+                            z: 1
+                            cursorShape: Qt.SplitHCursor
+                            preventStealing: true
+
+                            property real pressedAt: 0
+                            property real widthAtPress: 0
+
+                            onPressed: function(mouse) {
+                                pressedAt = mapToItem(grid, mouse.x, 0).x
+                                widthAtPress = grid.columnPixels(headerCell.index)
+                            }
+                            onPositionChanged: function(mouse) {
+                                if (pressed)
+                                    grid.setColumnWidth(headerCell.index,
+                                        widthAtPress + mapToItem(grid, mouse.x, 0).x - pressedAt)
+                            }
+                            onDoubleClicked: grid.resetColumnWidth(headerCell.index)
                         }
                     }
                 }

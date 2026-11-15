@@ -62,6 +62,7 @@ void TableModel::setSource(std::shared_ptr<ITableSource> source, TaskManager* ta
         emit pageChanged();
     emit tableChanged();
     emit filterChanged();
+    emit sourceChanged();
 }
 
 void TableModel::clear()
