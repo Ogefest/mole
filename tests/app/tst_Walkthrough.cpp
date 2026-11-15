@@ -156,6 +156,8 @@ private slots:
     void aNameOutsideLatin1CanBeTypedIntoTheFilter();
     void filtersAndCopiesTableCells();
     void theFilterKeepsTheKeyboardWhileNarrowing();
+    void escapeEmptiesTheFilterAndItReopensEmpty();
+    void backspaceGoesUpAfterAFolderIsOpenedFromTheFilter();
     void dualPaneAndGrid();
     void f5CopiesTheSelectedFile();
     void theCopyDialogSaysWhichButtonActsAndGoesRedForOverwrite();
@@ -206,6 +208,10 @@ private slots:
 
 private:
     BrowserPaneController* pane() const;
+    /// Whether every filter on screen is one you can see: no filter field holds
+    /// text while its bar is hidden, and a filtered listing in the active pane
+    /// has a visible bar saying by what. See MOLE-456.
+    bool filterBarIsHonest() const;
     /// Asserts that the window behind an open popup is dimmed rather than washed
     /// out. `what` names the popup, for the message a failure prints.
     void assertTheWindowBehindAPopupIsDimmed(const char* what);
@@ -554,6 +560,27 @@ BrowserPaneController* TestWalkthrough::pane() const
 {
     auto* browser = qobject_cast<BrowserController*>(m_harness->app()->tabs()->currentController());
     return browser ? browser->activePane() : nullptr;
+}
+
+bool TestWalkthrough::filterBarIsHonest() const
+{
+    bool shown = false;
+    const QString filtering = pane() ? pane()->files()->filterText() : QString();
+    for (QQuickItem* field : m_harness->items(QStringLiteral("filterField"))) {
+        QQuickItem* bar = field->parentItem();
+        const QString text = field->property("text").toString();
+        if (!bar->isVisible() && !text.isEmpty()) {
+            qWarning("a filter field holds \"%s\" behind a hidden bar", qPrintable(text));
+            return false;
+        }
+        if (bar->isVisible() && text == filtering)
+            shown = true;
+    }
+    if (!filtering.isEmpty() && !shown) {
+        qWarning("the listing is filtered by \"%s\" and no bar says so", qPrintable(filtering));
+        return false;
+    }
+    return true;
 }
 
 void TestWalkthrough::browsesAndPreviews()
@@ -2499,6 +2526,7 @@ void TestWalkthrough::filtersByTyping()
     QVERIFY(filter);
     QVERIFY2(filter->hasActiveFocus(), "the keyboard must move into the filter");
     QCOMPARE(filter->property("text").toString(), QStringLiteral("j"));
+    QVERIFY(filterBarIsHonest());
 
     // A filter is a substring match, not a prefix: "log" catches access.log and
     // changelog.md, and in the second the match is in the middle of the name.
@@ -2508,9 +2536,11 @@ void TestWalkthrough::filtersByTyping()
     m_harness->key(Qt::Key_G);
     QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 2; }));
     m_harness->screenshot(QStringLiteral("04-filter"));
+    QVERIFY(filterBarIsHonest());
 
     m_harness->key(Qt::Key_Escape);
     QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == kRootRows; }));
+    QVERIFY(filterBarIsHonest());
 }
 
 /// Typing a name in the alphabet this application is most careful about.
@@ -2557,9 +2587,11 @@ void TestWalkthrough::aNameOutsideLatin1CanBeTypedIntoTheFilter()
     filter = m_harness->item(QStringLiteral("filterField"));
     QVERIFY(filter);
     QCOMPARE(filter->property("text").toString(), japanese.left(2));
+    QVERIFY(filterBarIsHonest());
 
     m_harness->key(Qt::Key_Escape);
     QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 3; }));
+    QVERIFY(filterBarIsHonest());
 }
 
 void TestWalkthrough::theFilterKeepsTheKeyboardWhileNarrowing()
@@ -2572,6 +2604,7 @@ void TestWalkthrough::theFilterKeepsTheKeyboardWhileNarrowing()
     m_harness->key(Qt::Key_O);
     m_harness->key(Qt::Key_C);
     QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 1; }));
+    QVERIFY(filterBarIsHonest());
 
     QQuickItem* filter = m_harness->item(QStringLiteral("filterField"));
     QVERIFY(filter);
@@ -2581,22 +2614,71 @@ void TestWalkthrough::theFilterKeepsTheKeyboardWhileNarrowing()
     m_harness->key(Qt::Key_Return);
     QVERIFY2(m_harness->until([this] { return pane()->currentUri().endsWith(QStringLiteral("/documents")); }),
         "Enter in the filter must open the highlighted row");
+    QVERIFY(filterBarIsHonest());
 
-    // And arrows move the cursor while the field still has the keyboard, so
-    // typing more keeps narrowing instead of going somewhere else.
+    // And typing in the folder that opened narrows it -- with the bar on screen
+    // saying by what. The keystroke used to go into the field that had been
+    // hidden with the keyboard still in it, so the listing was filtered by text
+    // that was nowhere to be seen. See MOLE-456.
     m_harness->key(Qt::Key_C); // "prices.csv"; "report.txt" has no c
     QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 1; }));
+    QVERIFY(filterBarIsHonest());
 
+    QQuickItem* row = m_harness->item(QStringLiteral("filterRow"));
+    QVERIFY(row);
+    QVERIFY2(row->isVisible(), "the listing is filtered and the filter bar is hidden");
     filter = m_harness->item(QStringLiteral("filterField"));
     QVERIFY(filter);
+    QCOMPARE(filter->property("text").toString(), QStringLiteral("c"));
     QVERIFY2(filter->hasActiveFocus(), "the filter keeps the keyboard");
 
-    const int before = pane()->currentIndex();
     m_harness->key(Qt::Key_Down);
     QVERIFY2(filter->hasActiveFocus(), "an arrow moves the cursor, not the focus");
-    Q_UNUSED(before);
 
     m_harness->key(Qt::Key_Escape);
+    QVERIFY(filterBarIsHonest());
+}
+
+void TestWalkthrough::escapeEmptiesTheFilterAndItReopensEmpty()
+{
+    m_harness->key(Qt::Key_J);
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 1; }));
+
+    m_harness->key(Qt::Key_Escape);
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == kRootRows; }));
+    QVERIFY(filterBarIsHonest());
+    QQuickItem* filter = m_harness->item(QStringLiteral("filterField"));
+    QVERIFY(filter);
+    // Closing the bar used to leave "j" in the field, so reopening it showed a
+    // term that filtered nothing.
+    QCOMPARE(filter->property("text").toString(), QString());
+
+    m_harness->app()->triggerAction(QStringLiteral("mole.view.filter"));
+    QQuickItem* row = m_harness->item(QStringLiteral("filterRow"));
+    QVERIFY(row);
+    QVERIFY(m_harness->until([row] { return row->isVisible(); }));
+    QCOMPARE(filter->property("text").toString(), QString());
+    QCOMPARE(pane()->files()->filterText(), QString());
+    QCOMPARE(pane()->files()->rowCount(), kRootRows);
+    QVERIFY(filterBarIsHonest());
+}
+
+void TestWalkthrough::backspaceGoesUpAfterAFolderIsOpenedFromTheFilter()
+{
+    m_harness->key(Qt::Key_D);
+    m_harness->key(Qt::Key_O);
+    m_harness->key(Qt::Key_C);
+    QVERIFY(m_harness->until([this] { return pane()->files()->rowCount() == 1; }));
+    m_harness->key(Qt::Key_Return);
+    QVERIFY(m_harness->until([this] { return pane()->currentUri().endsWith(QStringLiteral("/documents")); }));
+    QVERIFY(m_harness->until([this] { return !pane()->isLoading(); }));
+
+    // The pane's own keys are the pane's again: the hidden field used to keep
+    // the keyboard, and swallowed this.
+    m_harness->key(Qt::Key_Backspace);
+    QVERIFY2(m_harness->until([this] { return pane()->currentUri() == m_harness->fixtureUri(); }),
+        qPrintable(QStringLiteral("Backspace did not go up; still in %1").arg(pane()->currentUri())));
+    QVERIFY(filterBarIsHonest());
 }
 
 void TestWalkthrough::filtersAndCopiesTableCells()

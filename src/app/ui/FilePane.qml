@@ -256,16 +256,15 @@ FocusScope {
     // with nothing on screen to explain why.
     Connections {
         target: paneController
-        function onLocationChanged() {
-            filterRow.visible = false
-            filterField.text = ""
-            if (paneController)
-                paneController.files.filterText = ""
-        }
+        function onLocationChanged() { pane.closeFilter() }
     }
 
+    /// Whether the filter bar has been asked for. Not the whole of whether it is
+    /// shown: a filtered listing shows it whatever this says -- see filterRow.
+    property bool filterOpen: false
+
     function focusFilter() {
-        filterRow.visible = true
+        filterOpen = true
         filterField.forceActiveFocus()
         filterField.selectAll()
     }
@@ -273,16 +272,33 @@ FocusScope {
     /// Opens the filter bar already containing the keystroke that opened it,
     /// so nothing the user typed is lost.
     function beginFilter(character) {
-        filterRow.visible = true
+        filterOpen = true
         filterField.text = character
         filterField.forceActiveFocus()
         filterField.cursorPosition = filterField.text.length
     }
 
-    function clearFilter() {
+    /// The one way the bar closes: the field's text, the model's filter and the
+    /// bar go together, and the keyboard comes off the field if it was there.
+    ///
+    /// Each of those used to be done by some callers and not others. Leaving a
+    /// folder hid the bar and emptied the field but left the keyboard in it -- a
+    /// hidden item keeps its focus -- so the next keystroke went into a field
+    /// nobody could see and filtered the new folder by it, and the pane's own keys
+    /// were dead. Escape emptied the model but not the field, so the bar reopened
+    /// with a term that filtered nothing. See MOLE-456.
+    function closeFilter() {
+        const hadKeyboard = filterField.activeFocus
+        filterField.text = ""
         if (paneController)
             paneController.files.filterText = ""
-        filterRow.visible = false
+        filterOpen = false
+        if (hadKeyboard)
+            pane.takeFocus()
+    }
+
+    function clearFilter() {
+        closeFilter()
         pane.takeFocus()
     }
 
@@ -506,8 +522,13 @@ FocusScope {
         // a tab of its own.
         RowLayout {
             id: filterRow
+            objectName: "filterRow"
             Layout.fillWidth: true
-            visible: false
+            // Shown whenever the listing is filtered, whatever else has happened:
+            // rows hidden by text that is nowhere on screen is the one state this
+            // bar must never allow. See MOLE-456.
+            visible: pane.filterOpen
+                     || (!!paneController && paneController.files.filterText.length > 0)
             spacing: 6
 
             Label {
