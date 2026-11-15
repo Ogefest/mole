@@ -106,6 +106,14 @@ public:
     /// Ticks the row under the cursor and steps down, like Insert in a
     /// commander-style manager.
     Q_INVOKABLE void toggleSelectionAndAdvance();
+    /// Asks the drive where the symbolic link at `uri` points, and answers with
+    /// linkTargetRead().
+    ///
+    /// Asked when somebody hovers over a link and never while listing: a folder of
+    /// five thousand links must not pay five thousand reads to draw itself. Off the
+    /// thread that draws the window, because on a remote drive this is a round
+    /// trip. See MOLE-454.
+    Q_INVOKABLE void readLinkTarget(const QString& uri);
 
     // ---- operations on this pane ----------------------------------------
     //
@@ -210,6 +218,9 @@ signals:
     /// A non-directory row was activated.
     void fileActivated(const QString& uri);
     void driveActionsChanged();
+    /// Where the link at `uri` points, as the drive stores it. `target` is empty
+    /// and `error` says why when the drive could not say.
+    void linkTargetRead(const QString& uri, const QString& target, const QString& error);
     /// An action answered with something to read and copy. `validUntilText` is
     /// empty when the answer does not go stale, which is most of them.
     void driveActionText(const QString& title, const QString& text, const QString& validUntilText);

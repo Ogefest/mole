@@ -546,6 +546,10 @@ QVariant FileListModel::data(const QModelIndex& index, int role) const
         return repositoryStateMark(annotationFor(entry.uri.toString()) >> GitStateShift);
     case SelectedRole:
         return m_selected.contains(entry.uri.toString());
+    case IsLinkRole:
+        return entry.isSymlink;
+    case IsBrokenLinkRole:
+        return entry.isSymlink && entry.special == SpecialKind::DanglingLink;
     default:
         return {};
     }
@@ -579,6 +583,8 @@ QHash<int, QByteArray> FileListModel::roleNames() const
         { MatchColumnRole, "matchColumn" },
         { MatchLengthRole, "matchLength" },
         { ContainerNameRole, "containerName" },
+        { IsLinkRole, "isLink" },
+        { IsBrokenLinkRole, "isBrokenLink" },
     };
 }
 

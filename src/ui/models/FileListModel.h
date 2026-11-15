@@ -69,6 +69,13 @@ public:
         /// is the drive's business; a row only says there is something. Answered
         /// by one query per folder, never one per row. See ADR-0075.
         HasDriveActionRole,
+        /// A symbolic link. Everything else about the row -- isDir, the icon, the
+        /// size -- describes what it points at, so without this a link to a
+        /// folder is a folder by construction. A Windows `.lnk` is an ordinary
+        /// file and is not one. See MOLE-454.
+        IsLinkRole,
+        /// A symbolic link whose target is not there: opening it can only fail.
+        IsBrokenLinkRole,
     };
 
     /// Where a row came from.

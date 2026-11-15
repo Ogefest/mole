@@ -177,6 +177,9 @@ public:
     /// no request at all -- on a real remote drive a stat is a round trip, and a
     /// count is the only way to say "none" rather than "few".
     int statCallCount() const;
+    /// How many times readLink() has been reached. For the claim that drawing a
+    /// listing asks nothing about where its links point. See MOLE-454.
+    int readLinkCallCount() const;
     /// Whether a probe is inside the drive right now. What a test waits for.
     bool isProbing() const;
 
@@ -200,6 +203,11 @@ private:
     };
 
     static QString normalise(const QString& path);
+    /// Describes a link the way a real drive's listing does: as what it points at
+    /// -- a folder, or a file of that size -- and as dangling when nothing is
+    /// there. A node marked with markAsSymlink() has no target of its own and is
+    /// left as it is. Callers must hold m_mutex.
+    void describeLink(const QString& path, const Node& node, FileEntry& entry) const;
     /// The stored spelling of whatever is at `path`, or `path` when nothing is.
     /// A no-op on a case-sensitive volume, which is the default. Callers must
     /// hold m_mutex.
@@ -235,6 +243,7 @@ private:
     qint64 m_throttleBytes = 0;
     int m_throttleDelayMs = 0;
     mutable int m_listCalls = 0;
+    int m_readLinkCalls = 0;
     mutable int m_statCalls = 0;
     QStringList m_offers;
     VfsError::Code m_probeFault = VfsError::None;

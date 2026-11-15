@@ -737,6 +737,7 @@ FocusScope {
             onActiveFocusChanged: if (activeFocus) pane.focusRequested()
 
             delegate: ItemDelegate {
+                id: rowDelegate
                 required property int index
                 required property string name
                 required property bool isDir
@@ -749,6 +750,9 @@ FocusScope {
                 required property bool alertTriggered
                 required property string gitMark
                 required property bool hasDriveAction
+                required property string uri
+                required property bool isLink
+                required property bool isBrokenLink
 
                 width: ListView.view.width
                 // From the scale, so raising the text size cannot crop a row.
@@ -805,13 +809,27 @@ FocusScope {
                     color: App.colour.selection
                 }
 
+                LinkTip {
+                    controller: paneController
+                    uri: rowDelegate.uri
+                    link: isLink
+                }
+
                 RowLayout {
                     anchors.fill: parent
                     anchors.leftMargin: 8
                     anchors.rightMargin: 8
                     spacing: 8
+                    // A link to nothing can only fail to open, so it reads as less
+                    // than the rows around it. See MOLE-454.
+                    opacity: isBrokenLink ? 0.5 : 1.0
 
                     Label { text: iconText; font.pixelSize: App.textSize }
+                    LinkMark {
+                        objectName: "rowLinkMark"
+                        link: isLink
+                        broken: isBrokenLink
+                    }
 
                     Label {
                         objectName: "fileName"
@@ -934,12 +952,16 @@ FocusScope {
             onActiveFocusChanged: if (activeFocus) pane.focusRequested()
 
             delegate: ItemDelegate {
+                id: tileDelegate
                 required property int index
                 required property string name
                 required property bool isDir
                 required property string sizeText
                 required property string iconText
                 required property bool selected
+                required property string uri
+                required property bool isLink
+                required property bool isBrokenLink
 
                 width: grid.cellWidth - 8
                 height: grid.cellHeight - 8
@@ -972,10 +994,17 @@ FocusScope {
                     onActiveChanged: if (active) pane.beginDrag(index)
                 }
 
+                LinkTip {
+                    controller: paneController
+                    uri: tileDelegate.uri
+                    link: isLink
+                }
+
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: 6
                     spacing: 2
+                    opacity: isBrokenLink ? 0.5 : 1.0
 
                     // The room a picture occupies, and the icon underneath it.
                     //
@@ -1008,6 +1037,16 @@ FocusScope {
                             visible: !thumbnail.hasPicture
                             text: iconText
                             font.pixelSize: Math.max(24, Math.round(pane.tileHeight * 0.32))
+                        }
+
+                        // In the corner of the picture, so it is there over a
+                        // thumbnail as well as over an icon.
+                        LinkMark {
+                            objectName: "tileLinkMark"
+                            anchors.right: parent.right
+                            anchors.bottom: parent.bottom
+                            link: isLink
+                            broken: isBrokenLink
                         }
 
                         Image {
@@ -1052,7 +1091,9 @@ FocusScope {
                     Label {
                         objectName: "tileCaption"
                         Layout.alignment: Qt.AlignHCenter
-                        text: isDir ? "folder" : sizeText
+                        // A broken link has no size to give, and the target's
+                        // would be a size it does not have.
+                        text: isBrokenLink ? "link" : isDir ? "folder" : sizeText
                         color: App.colour.textFaint
                         font.pixelSize: App.smallTextSize
                     }

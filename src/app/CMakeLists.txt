@@ -52,6 +52,8 @@ set(MOLE_QML_FILES
     ui/FilePane.qml
     ui/RepositoryBand.qml
     ui/GitMark.qml
+    ui/LinkMark.qml
+    ui/LinkTip.qml
     ui/Picker.qml
     ui/BrowserView.qml
     ui/LiveSearchView.qml

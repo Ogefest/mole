@@ -2,6 +2,7 @@
 #include "ui/models/FileListModel.h"
 
 #include "core/text/SizeWords.h"
+#include "core/vfs/backends/MemoryFileSystem.h"
 
 #include <QAbstractItemModelTester>
 #include <QScopeGuard>
@@ -96,6 +97,7 @@ private slots:
     void selectionDropsFilesThatDisappeared();
     void selectAllAndInvert();
     void aRelistKeepsTheMeasurementsOfWhatIsStillThere();
+    void aSymbolicLinkIsMarkedAndABrokenOneIsMarkedBroken();
     void aListingOfSomewhereElseStartsWithoutMeasurements();
     void targetsFallBackToTheCursor();
     void selectionIsBoundsChecked();
@@ -521,6 +523,62 @@ void TestFileListModel::aListingOfSomewhereElseStartsWithoutMeasurements()
     // The default is the old rule, and the one a new folder needs.
     model.setEntries({ makeEntry(QStringLiteral("stays"), true) });
     QCOMPARE(model.measuredSize(stays), qint64(-1));
+}
+
+// ---- symbolic links (MOLE-454) --------------------------------------------
+
+void TestFileListModel::aSymbolicLinkIsMarkedAndABrokenOneIsMarkedBroken()
+{
+    // The five things that must look different: a file, a link to it, a folder,
+    // a link to that, and a link to nothing.
+    MemoryFileSystem fs;
+    fs.addFile(QStringLiteral("/here/file.txt"), QByteArray("twelve bytes"));
+    fs.addFile(QStringLiteral("/here/folder/inside.txt"));
+    fs.addSymlink(QStringLiteral("/here/to-file"), QStringLiteral("file.txt"));
+    fs.addSymlink(QStringLiteral("/here/to-folder"), QStringLiteral("/here/folder"));
+    fs.addSymlink(QStringLiteral("/here/to-nothing"), QStringLiteral("gone.txt"));
+
+    const Result<FileEntryList> listed = fs.list(VfsUri::fromString(QStringLiteral("mem:///here")), {});
+    QVERIFY(listed.ok());
+    FileListModel model;
+    model.setEntries(listed.value());
+    QCOMPARE(model.rowCount(), 5);
+
+    struct Expected
+    {
+        const char* name;
+        bool isDir;
+        bool isLink;
+        bool isBroken;
+    };
+    const Expected expected[] = {
+        { "file.txt", false, false, false },
+        { "to-file", false, true, false },
+        { "folder", true, false, false },
+        { "to-folder", true, true, false },
+        { "to-nothing", false, true, true },
+    };
+    for (const Expected& want : expected) {
+        const int row = model.rowOfUri(QStringLiteral("mem:///here/") + QLatin1String(want.name));
+        QVERIFY2(row >= 0, want.name);
+        const QModelIndex at = model.index(row, 0);
+        QCOMPARE(at.data(FileListModel::IsDirRole).toBool(), want.isDir);
+        QCOMPARE(at.data(FileListModel::IsLinkRole).toBool(), want.isLink);
+        QCOMPARE(at.data(FileListModel::IsBrokenLinkRole).toBool(), want.isBroken);
+    }
+
+    // A link to a file still says what it points at: the target's size.
+    const int toFile = model.rowOfUri(QStringLiteral("mem:///here/to-file"));
+    QCOMPARE(model.index(toFile, 0).data(FileListModel::SizeRole).toLongLong(), qint64(12));
+
+    // Where a link points is read when somebody hovers over it, never to draw a
+    // listing: a folder of five thousand links must not cost five thousand reads.
+    QCOMPARE(fs.readLinkCallCount(), 0);
+
+    // And the roles reach QML under the names the delegates use.
+    const QHash<int, QByteArray> names = model.roleNames();
+    QCOMPARE(names.value(FileListModel::IsLinkRole), QByteArray("isLink"));
+    QCOMPARE(names.value(FileListModel::IsBrokenLinkRole), QByteArray("isBrokenLink"));
 }
 
 void TestFileListModel::selectAllAndInvert()

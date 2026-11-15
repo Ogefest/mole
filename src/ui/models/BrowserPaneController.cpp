@@ -21,9 +21,11 @@
 #include "core/vfs/backends/LocalFileSystem.h"
 
 #include <QFileInfo>
+#include <QFutureWatcher>
 #include <QLocale>
 #include <QSet>
 #include <QUrl>
+#include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
 #include <chrono>
@@ -517,6 +519,29 @@ void BrowserPaneController::cursorToStart()
 void BrowserPaneController::cursorToEnd()
 {
     setCurrentIndex(m_files->rowCount() - 1);
+}
+
+void BrowserPaneController::readLinkTarget(const QString& uri)
+{
+    const VfsUri link = VfsUri::fromString(uri);
+    FileSystemPtr fs = m_services.vfs ? m_services.vfs->resolve(link) : nullptr;
+    if (!fs) {
+        emit linkTargetRead(uri, QString(), tr("No drive answers for this location"));
+        return;
+    }
+
+    using Answer = QPair<QString, QString>;
+    auto* watcher = new QFutureWatcher<Answer>(this);
+    connect(watcher, &QFutureWatcher<Answer>::finished, this, [this, watcher, uri] {
+        const Answer answer = watcher->result();
+        watcher->deleteLater();
+        emit linkTargetRead(uri, answer.first, answer.second);
+    });
+    watcher->setFuture(QtConcurrent::run([fs, link] {
+        const Result<QString> target = fs->readLink(link);
+        return target.ok() ? Answer { target.value(), QString() }
+                           : Answer { QString(), target.error().message };
+    }));
 }
 
 void BrowserPaneController::toggleSelectionAndAdvance()

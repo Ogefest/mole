@@ -157,6 +157,7 @@ private slots:
     void filtersAndCopiesTableCells();
     void theFilterKeepsTheKeyboardWhileNarrowing();
     void escapeEmptiesTheFilterAndItReopensEmpty();
+    void aSymbolicLinkIsMarkedInTheListAndTheTiles();
     void backspaceGoesUpAfterAFolderIsOpenedFromTheFilter();
     void dualPaneAndGrid();
     void f5CopiesTheSelectedFile();
@@ -2661,6 +2662,77 @@ void TestWalkthrough::escapeEmptiesTheFilterAndItReopensEmpty()
     QCOMPARE(pane()->files()->filterText(), QString());
     QCOMPARE(pane()->files()->rowCount(), kRootRows);
     QVERIFY(filterBarIsHonest());
+}
+
+/// A file, a link to it, a folder, a link to that, and a link to nothing: five
+/// things that must look different in the list and in the tiles. A link used to
+/// be drawn exactly like its target. See MOLE-454.
+void TestWalkthrough::aSymbolicLinkIsMarkedInTheListAndTheTiles()
+{
+    const QString root = m_harness->fixturePath() + QStringLiteral("/links");
+    QVERIFY(m_harness->writeFile(QStringLiteral("links/file.txt"), QByteArray("twelve bytes")));
+    QVERIFY(m_harness->writeFile(QStringLiteral("links/folder/inside.txt")));
+    QVERIFY(QFile::link(root + QStringLiteral("/file.txt"), root + QStringLiteral("/to-file")));
+    QVERIFY(QFile::link(root + QStringLiteral("/folder"), root + QStringLiteral("/to-folder")));
+    QVERIFY(QFile::link(root + QStringLiteral("/gone.txt"), root + QStringLiteral("/to-nothing")));
+
+    pane()->navigateTo(m_harness->fixtureUri() + QStringLiteral("/links"));
+    QVERIFY(m_harness->until([this] { return !pane()->isLoading() && pane()->files()->rowCount() == 5; }));
+
+    // Each mark that is showing, by the glyph it shows: two that point somewhere
+    // and one that points at nothing, and nothing on the file or the folder.
+    const auto shownMarks = [this](const QString& objectName) {
+        QStringList glyphs;
+        for (QQuickItem* mark : m_harness->items(objectName)) {
+            if (mark->isVisible())
+                glyphs << mark->property("text").toString();
+        }
+        glyphs.sort();
+        return glyphs;
+    };
+    const QString pointing = QStringLiteral("\u21AA");
+    const QString broken = QStringLiteral("\u2298");
+    const QStringList expected { pointing, pointing, broken };
+    QVERIFY(m_harness->until([&] { return shownMarks(QStringLiteral("rowLinkMark")).size() == 3; }));
+    QCOMPARE(shownMarks(QStringLiteral("rowLinkMark")), (QStringList { pointing, pointing, broken }));
+
+    // Hovering a link that works says where it points, read off the drive when the
+    // pointer arrived rather than with the listing.
+    QQuickItem* toFile = nullptr;
+    for (QQuickItem* name : m_harness->items(QStringLiteral("fileName"))) {
+        if (name->isVisible() && name->property("text").toString() == QStringLiteral("to-file"))
+            toFile = name;
+    }
+    QVERIFY(toFile);
+    m_harness->moveTo(m_harness->centreOf(toFile));
+    const QString target = root + QStringLiteral("/file.txt");
+    QVERIFY2(m_harness->until([&] {
+        for (QQuickItem* tip : m_harness->items(QStringLiteral("linkTip"))) {
+            if (tip->isVisible() && tip->property("target").toString() == target)
+                return true;
+        }
+        return false;
+    }),
+        "hovering the link did not say where it points");
+
+    // The same five in the tiles, where a broken link has no size to give.
+    auto* browser = qobject_cast<BrowserController*>(m_harness->app()->tabs()->currentController());
+    QVERIFY(browser);
+    browser->setViewMode(BrowserController::ViewMode::Grid);
+    QVERIFY(m_harness->until([this] {
+        QQuickItem* grid = m_harness->item(QStringLiteral("fileGrid"));
+        return grid && grid->isVisible() && grid->width() > 0;
+    }));
+    QVERIFY(m_harness->until([&] { return shownMarks(QStringLiteral("tileLinkMark")).size() == 3; }));
+    QCOMPARE(shownMarks(QStringLiteral("tileLinkMark")), expected);
+
+    QStringList captions;
+    for (QQuickItem* caption : m_harness->items(QStringLiteral("tileCaption"))) {
+        if (caption->isVisible())
+            captions << caption->property("text").toString();
+    }
+    QCOMPARE(captions.count(QStringLiteral("link")), 1);
+    QCOMPARE(captions.count(QStringLiteral("folder")), 2);
 }
 
 void TestWalkthrough::backspaceGoesUpAfterAFolderIsOpenedFromTheFilter()

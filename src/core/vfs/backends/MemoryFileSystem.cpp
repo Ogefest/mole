@@ -42,6 +42,34 @@ QString MemoryFileSystem::resolve(const QString& path) const
     return path;
 }
 
+void MemoryFileSystem::describeLink(const QString& path, const Node& node, FileEntry& entry) const
+{
+    if (!node.isSymlink || node.linkTarget.isEmpty())
+        return;
+
+    // Followed through links to links, as stat(2) does, and given up on after a
+    // few, as it gives up on a loop.
+    QString at = path;
+    const Node* current = &node;
+    for (int hops = 0; hops < 8; ++hops) {
+        const QString& target = current->linkTarget;
+        const QString parent = at.section(QLatin1Char('/'), 0, -2);
+        at = resolve(
+            normalise(target.startsWith(QLatin1Char('/')) ? target : parent + QLatin1Char('/') + target));
+        const auto found = m_nodes.constFind(at);
+        if (found == m_nodes.constEnd())
+            break;
+        if (found->isSymlink && !found->linkTarget.isEmpty()) {
+            current = &*found;
+            continue;
+        }
+        entry.isDir = found->isDir;
+        entry.size = found->isDir ? 0 : found->contents.size();
+        return;
+    }
+    entry.special = SpecialKind::DanglingLink;
+}
+
 VfsUri MemoryFileSystem::uriFor(const QString& path) const
 {
     return VfsUri(QStringLiteral("mem"), QString(), path);
@@ -170,6 +198,12 @@ int MemoryFileSystem::listCallCount() const
 {
     QMutexLocker lock(&m_mutex);
     return m_listCalls;
+}
+
+int MemoryFileSystem::readLinkCallCount() const
+{
+    QMutexLocker lock(&m_mutex);
+    return m_readLinkCalls;
 }
 
 int MemoryFileSystem::statCallCount() const
@@ -313,6 +347,7 @@ Result<FileEntryList> MemoryFileSystem::list(const VfsUri& dir, const CancelToke
         entry.isWritable = true;
         entry.size = it->isDir ? 0 : it->contents.size();
         entry.modified = it->modified;
+        describeLink(candidate, *it, entry);
         out.append(entry);
     }
 
@@ -363,6 +398,7 @@ Result<FileEntry> MemoryFileSystem::stat(const VfsUri& target)
     entry.isWritable = true;
     entry.size = node->isDir ? 0 : node->contents.size();
     entry.modified = node->modified;
+    describeLink(path, *node, entry);
     return entry;
 }
 
@@ -404,6 +440,7 @@ Result<QString> MemoryFileSystem::readLink(const VfsUri& link)
     checkNotOnTheDrawingThread("readLink");
     waitAsASlowDriveWould();
     QMutexLocker lock(&m_mutex);
+    ++m_readLinkCalls;
     const QString path = resolve(link.path());
     if (Result<void> fault = faultFor(path); !fault.ok())
         return fault.error();
