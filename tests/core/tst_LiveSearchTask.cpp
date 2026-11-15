@@ -26,6 +26,7 @@ private slots:
     void filtersBySize();
     void caseInsensitiveByDefault();
     void stopsAtResultLimit();
+    void aShallowMatchIsFoundBeforeACappedSearchFillsUpDeepInside();
     void excludedFoldersAreNeverEntered();
     void depthStopsTheWalkAtTheFolderItWasGiven();
     void aTypeClassOpensOnlyWhatSurvivedEverythingElse();
@@ -241,6 +242,37 @@ void TestLiveSearchTask::stopsAtResultLimit()
     QCOMPARE(task->hitCount(), 10);
     QCOMPARE(m_hits.size(), 10);
     QVERIFY(task->statusText().contains(QStringLiteral("limit")));
+}
+
+/// A folder of projects, one of them with a dependency tree full of matches and
+/// another with the one match somebody was looking for, near the top. Walked
+/// depth first, the search went to the bottom of the dependency tree, filled its
+/// limit there and stopped, and the shallow match was never reported at all. See
+/// MOLE-452.
+void TestLiveSearchTask::aShallowMatchIsFoundBeforeACappedSearchFillsUpDeepInside()
+{
+    // Listed after the shallow one, which is the sibling a depth-first walk
+    // enters first.
+    for (int i = 0; i < 40; ++i)
+        m_fs->addFile(QStringLiteral("/z-deps/lib/pkg/match-%1.txt").arg(i));
+    m_fs->addFile(QStringLiteral("/a-project/match-here.txt"));
+
+    SearchQuery query;
+    query.add(SearchPredicate::name(QStringLiteral("match")));
+    query.limit = 10;
+
+    LiveSearchTask* task = start(query);
+    QVERIFY(waitForTask(task));
+    QCOMPARE(task->state(), Task::State::Succeeded);
+    QVERIFY(task->truncated());
+
+    QStringList found;
+    for (const FileEntry& hit : std::as_const(m_hits))
+        found << hit.uri.path();
+    QVERIFY2(found.contains(QStringLiteral("/a-project/match-here.txt")),
+        qPrintable(found.join(QLatin1Char(' '))));
+    // And first, since nothing else is as near the top.
+    QCOMPARE(found.first(), QStringLiteral("/a-project/match-here.txt"));
 }
 
 /// Counted in directories entered, not in results returned.

@@ -6,7 +6,7 @@
 
 namespace mole {
 
-/// Depth-first traversal over any backend. Shared by the indexer, the live
+/// Traversal over any backend, depth first unless asked otherwise. Shared by the indexer, the live
 /// search and duplicate detection, so the awkward parts -- cancellation,
 /// unreadable directories, links -- are solved once.
 ///
@@ -20,11 +20,31 @@ namespace mole {
 class DirectoryWalker
 {
 public:
+    /// The order directories are entered in. Every entry of a directory goes
+    /// through the visitor when that directory is listed, either way; what differs
+    /// is which directory is listed next.
+    enum class Order {
+        /// The last directory found is entered next, so one branch is followed to
+        /// the bottom before its siblings, which are entered in the reverse of
+        /// listing order. The default, because a caller that walks the whole tree
+        /// -- the indexer, transfers, duplicates, folder sizes -- gains nothing
+        /// from any other.
+        DepthFirst,
+        /// One level at a time: every entry at depth n before any at depth n+1,
+        /// and siblings in listing order. For a walk whose early results matter
+        /// more than its total -- a live search, where what is wanted is usually
+        /// near the top and a capped search must not spend its cap inside one
+        /// deep folder. The pending list holds a whole level of directories at
+        /// once: uris, so even a very wide tree costs megabytes. See MOLE-452.
+        BreadthFirst,
+    };
+
     struct Options
     {
         bool includeHidden = true;
         /// -1 means unlimited. 0 lists only the root's direct children.
         int maxDepth = -1;
+        Order order = Order::DepthFirst;
     };
 
     /// What the walker should do after the visitor has seen an entry.

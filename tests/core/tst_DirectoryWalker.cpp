@@ -79,6 +79,8 @@ private slots:
 
     void visitsEveryEntryRecursively();
     void respectsMaxDepth();
+    void breadthFirstSeesEveryLevelBeforeTheNext();
+    void depthFirstIsStillTheDefaultAndUnchanged();
     void visitorCanPruneASubtree();
     void stopEndsTheWalkSuccessfully();
     void unreadableDirectoryIsRecordedNotFatal();
@@ -118,6 +120,77 @@ void TestDirectoryWalker::visitsEveryEntryRecursively()
         QStringLiteral("/one/b.txt"), QStringLiteral("/one/two"), QStringLiteral("/one/two/c.txt") };
     QCOMPARE(seen, expected);
     QCOMPARE(walker.visitedCount(), 5);
+}
+
+namespace {
+
+/// Two levels under one child and none under the others, so the two orders
+/// disagree about almost everything after the first listing.
+void buildOrderTree(MemoryFileSystem& fs)
+{
+    fs.addFile(QStringLiteral("/a/deep/y.txt"));
+    fs.addFile(QStringLiteral("/a/x.txt"));
+    fs.addFile(QStringLiteral("/b/z.txt"));
+    fs.addDirectory(QStringLiteral("/c"));
+    fs.addFile(QStringLiteral("/top.txt"));
+}
+
+QStringList visitOrder(const FileSystemPtr& fs, DirectoryWalker::Options options, QStringList* directories)
+{
+    QStringList seen;
+    DirectoryWalker walker(fs, options);
+    const Result<void> result = walker.walk(
+        VfsUri::fromString(QStringLiteral("mem:///")), CancelToken(),
+        [&](const FileEntry& entry, int depth) {
+            seen.append(QStringLiteral("%1:%2").arg(depth).arg(entry.uri.path()));
+            return DirectoryWalker::Action::Continue;
+        },
+        [&](const VfsUri& dir, const FileEntryList&) { directories->append(dir.path()); });
+    if (!result.ok())
+        seen.append(QStringLiteral("failed: ") + result.error().message);
+    return seen;
+}
+
+} // namespace
+
+/// What a live search wants: everything near the top before anything deep, and
+/// siblings in the order they were listed. See MOLE-452.
+void TestDirectoryWalker::breadthFirstSeesEveryLevelBeforeTheNext()
+{
+    buildOrderTree(*m_fs);
+    DirectoryWalker::Options options;
+    options.order = DirectoryWalker::Order::BreadthFirst;
+    QStringList directories;
+    const QStringList seen = visitOrder(m_fs, options, &directories);
+
+    const QStringList expected { QStringLiteral("0:/a"), QStringLiteral("0:/b"), QStringLiteral("0:/c"),
+        QStringLiteral("0:/top.txt"), QStringLiteral("1:/a/deep"), QStringLiteral("1:/a/x.txt"),
+        QStringLiteral("1:/b/z.txt"), QStringLiteral("2:/a/deep/y.txt") };
+    QCOMPARE(seen, expected);
+    // Each directory once, when it has been seen whole, in the same order.
+    QCOMPARE(directories,
+        (QStringList { QStringLiteral("/"), QStringLiteral("/a"), QStringLiteral("/b"), QStringLiteral("/c"),
+            QStringLiteral("/a/deep") }));
+}
+
+/// Pinned, because eleven callers walk the whole tree and rely on nothing about
+/// the order changing underneath them.
+void TestDirectoryWalker::depthFirstIsStillTheDefaultAndUnchanged()
+{
+    buildOrderTree(*m_fs);
+    QCOMPARE(DirectoryWalker::Options().order, DirectoryWalker::Order::DepthFirst);
+    QStringList directories;
+    const QStringList seen = visitOrder(m_fs, DirectoryWalker::Options(), &directories);
+
+    // The last directory pushed is entered next: c, then b, then a and its
+    // subtree to the bottom.
+    const QStringList expected { QStringLiteral("0:/a"), QStringLiteral("0:/b"), QStringLiteral("0:/c"),
+        QStringLiteral("0:/top.txt"), QStringLiteral("1:/b/z.txt"), QStringLiteral("1:/a/deep"),
+        QStringLiteral("1:/a/x.txt"), QStringLiteral("2:/a/deep/y.txt") };
+    QCOMPARE(seen, expected);
+    QCOMPARE(directories,
+        (QStringList { QStringLiteral("/"), QStringLiteral("/c"), QStringLiteral("/b"), QStringLiteral("/a"),
+            QStringLiteral("/a/deep") }));
 }
 
 void TestDirectoryWalker::respectsMaxDepth()

@@ -191,6 +191,13 @@ void LiveSearchTask::run()
     };
     DirectoryWalker::Options options;
     options.maxDepth = m_query.maxDepth;
+    // One level at a time. What somebody searches for is usually near the
+    // surface, and depth first went to the bottom of one project's .venv before
+    // looking at the top of the next -- a capped search spent its whole cap in
+    // there and never reported the shallow match at all. The take-back above is
+    // per directory and waits for nothing pending, so it does not care which
+    // order the directories come in. See MOLE-452.
+    options.order = DirectoryWalker::Order::BreadthFirst;
     DirectoryWalker walker(m_fileSystem, options);
     Result<void> walked = walker.walk(
         m_root, cancelToken(),

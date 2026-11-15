@@ -34,13 +34,29 @@ Result<void> DirectoryWalker::walk(const VfsUri& root, const CancelToken& cancel
         int depth;
     };
 
-    QList<Pending> stack { { root, 0 } };
+    // One list for both orders: depth first takes from the back, breadth first
+    // from the front. The front is an index rather than takeFirst(), which would
+    // move the whole list along on every directory.
+    QList<Pending> pending { { root, 0 } };
+    qsizetype front = 0;
+    const bool breadthFirst = m_options.order == Order::BreadthFirst;
 
-    while (!stack.isEmpty()) {
+    while (front < pending.size()) {
         if (cancel.isCancelled())
             return Result<void>::failure(VfsError::Cancelled, QStringLiteral("Walk cancelled"));
 
-        const Pending current = stack.takeLast();
+        Pending current;
+        if (breadthFirst) {
+            current = pending.at(front++);
+            // Let the consumed half go once it is most of the list, so a long walk
+            // does not hold every directory it has ever seen.
+            if (front > 1024 && front * 2 > pending.size()) {
+                pending.remove(0, front);
+                front = 0;
+            }
+        } else {
+            current = pending.takeLast();
+        }
 
         Result<FileEntryList> listing = m_fileSystem->list(current.uri, cancel);
         if (!listing.ok()) {
@@ -74,7 +90,7 @@ Result<void> DirectoryWalker::walk(const VfsUri& root, const CancelToken& cancel
             if (m_options.maxDepth >= 0 && current.depth >= m_options.maxDepth)
                 continue;
 
-            stack.append({ entry.uri, current.depth + 1 });
+            pending.append({ entry.uri, current.depth + 1 });
         }
 
         // Reached only by the loop running out: a cancel and a Stop both return
