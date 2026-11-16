@@ -77,7 +77,7 @@ dnf install -y -q gcc-c++ cmake ninja-build pkgconf-pkg-config rpm-build \
 
 # Arrow where the distribution has it, so the package a family gets holds whatever
 # that family can satisfy -- the same rule the .deb is built by, with a different
-# answer: no Ubuntu archive has Arrow at any version, and Fedora packages it as
+# answer: no Ubuntu archive before 26.04 has Arrow, and Fedora packages it as
 # libarrow-devel and parquet-libs-devel. Best-effort and never fatal, so a
 # distribution that stops shipping it produces a package without the Parquet grid
 # rather than no package at all. It says which way it went.

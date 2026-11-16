@@ -180,6 +180,9 @@ add_library(mole_core STATIC
     data/CountTableRowsTask.cpp
     data/ParquetTable.h
     data/ParquetTable.cpp
+    data/ParquetReader.h
+    data/ParquetModule.h
+    data/ParquetModule.cpp
     data/ReadTableTask.h
     data/ReadTableTask.cpp
 
@@ -234,24 +237,13 @@ if(UNIX AND NOT APPLE)
     target_link_libraries(mole_core PRIVATE util)
 endif()
 
-# Parquet is optional. When Arrow is installed the viewer reads Parquet files in
-# place; when it is not, ParquetTable reports itself unsupported and the preview
-# layer falls through to the file-information viewer. A missing optional library
-# must never stop the application being built.
+# Parquet is not here. Core holds ParquetTable, which links no Arrow and loads the
+# Parquet module at run time; the module, which does link Arrow, is built by
+# src/modules/parquet. See MOLE-459.
 #
-# Every row below goes through mole_optional_dependency(), which is where that
-# rule and the shape of the line it prints now live -- see
-# cmake/MoleOptionalDependency.cmake and MOLE-390.
-mole_optional_dependency(PARQUET
-    SUMMARY "Parquet preview"
-    PACKAGE Arrow Parquet
-    VERSION_FROM ARROW_VERSION
-    FOUND "enabled (Arrow @VERSION@)"
-    MISSING "disabled (install libarrow-dev and libparquet-dev)"
-    TARGET mole_core
-    SCOPE PUBLIC
-    DEFINE MOLE_HAVE_PARQUET
-    LINK Arrow::arrow_shared Parquet::parquet_shared)
+# Every optional row below goes through mole_optional_dependency(), which is where
+# the rule that a missing library never stops the build, and the shape of the line
+# it prints, now live -- see cmake/MoleOptionalDependency.cmake and MOLE-390.
 
 # A complete terminal emulator, when one is available. Without it the built-in
 # parser handles line-oriented output and says so when it meets something it

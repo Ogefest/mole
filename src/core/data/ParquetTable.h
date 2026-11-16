@@ -13,9 +13,12 @@ namespace mole {
 /// decoded. That is what lets a multi-gigabyte file open at once, the same
 /// property that makes reading SQLite in place worthwhile.
 ///
-/// Compiled only when Arrow is available. Without it `isSupported()` is false and
-/// the preview falls through to the file-information viewer -- a missing optional
-/// library must not stop the application being built.
+/// The reading is done by the Parquet module, `mole-parquet.so`, which is built
+/// against Arrow and loaded at run time; this class is always compiled and links
+/// no Arrow. Without a loadable module `isSupported()` is false and the preview
+/// falls through to the file-information viewer -- a missing optional library must
+/// stop neither the build nor the application starting. See ParquetReader.h and
+/// MOLE-459.
 class ParquetTable : public ITableSource
 {
 public:
@@ -25,8 +28,12 @@ public:
     ParquetTable(const ParquetTable&) = delete;
     ParquetTable& operator=(const ParquetTable&) = delete;
 
-    /// Whether this build can read Parquet at all.
+    /// Whether Parquet can be read here at all: the module is installed, and it
+    /// loaded.
     static bool isSupported();
+
+    /// What `mole --plugins` says: the module and its Arrow, or why there is none.
+    static QString diagnosticLine();
 
     bool open(QString* errorOut = nullptr);
     void close();

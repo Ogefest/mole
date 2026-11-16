@@ -32,7 +32,8 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Every call writes one keyword per line; tests/support/read-optional-dependencies.py
 # is the reader that understands the whole shape, and is what the suites use.
 summaries=$(grep -HoE '^[[:blank:]]*SUMMARY "[^"]+"' \
-    "$here/src/core/CMakeLists.txt" "$here/src/plugins/CMakeLists.txt" "$here/CMakeLists.txt" \
+    "$here/src/core/CMakeLists.txt" "$here/src/plugins/CMakeLists.txt" \
+    "$here/src/modules/parquet/CMakeLists.txt" "$here/CMakeLists.txt" \
     2>/dev/null | sed 's/:[[:blank:]]*SUMMARY "/\t/; s/"$//')
 [ -n "$summaries" ] || {
     echo "configure-summary: no optional-dependency rows found, so this printed nothing" >&2

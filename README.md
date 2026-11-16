@@ -166,7 +166,7 @@ make packages    # a .deb, an .rpm and an AppImage, each for the family it insta
 |---|---|---|---|---|---|
 | `make optimised` | — | 127 MB | yes | — | running on this machine |
 | `make install` | — | 196 MB | yes | — | your own machine |
-| `.deb` | 3.7 MB | 10 MB | yes, from the archive | no Parquet grid | Debian 13, Ubuntu 24.04 and Ubuntu 26.04 |
+| `.deb` | 3.7 MB | 10 MB | yes, from the archive | no Parquet grid on Debian 13 and Ubuntu 24.04 | Debian 13, Ubuntu 24.04 and Ubuntu 26.04 |
 | `.rpm` | 2.5 MB | 11 MB | yes, from the archive | will not install on any release but the one it was built on | the current Fedora |
 | tarball (`make bundle`) | 79 MB | 209 MB | **no** | no Windows shares; video needs the host's ffmpeg | handing it to someone else |
 | AppImage | 110 MB | 294 MB | **no** | no Parquet grid; no Windows shares; video needs the host's ffmpeg | any distribution from 2021 onwards — it **runs on glibc 2.34** and upwards |
@@ -227,16 +227,29 @@ about are below, and both are libraries you can install yourself.
 A `.parquet` file opens as a grid with filtering and copyable cells where Apache
 Arrow is available, and as the file-information view where it is not.
 
-**`libarrow` is in no Debian or Ubuntu archive today** — not in Debian 12 or 13, not
-in Ubuntu 24.04 or 25.04 — so the `.deb` is built without it, and so is the AppImage,
-whose build host has only Arrow 9 and the code needs newer. Fedora packages Arrow and
-Parquet, so the `.rpm` has the grid; the tarball carries its own copy and answers to
-nobody's archive.
+**Ubuntu 26.04 is the first Debian-family release that packages Arrow**, and the
+`.deb` uses it there. Parquet is read by a module, `mole-parquet.so`, which Mole
+loads the first time it needs it rather than linking at start. The `.deb`
+carries one built on 26.04 against the archive's Arrow 23, and **recommends** Arrow
+rather than requiring it. So on Ubuntu 26.04 `apt install ./mole_<version>_amd64.deb`
+installs `libarrow2300` and `libparquet2300` by itself and the grid works.
 
-If you want the grid on Debian or Ubuntu, install Arrow from the project's own
-packages — <https://arrow.apache.org/install/> — and use the tarball, which is the
-artefact built against it. **Ubuntu 26.04 carries Arrow 23 in the archive**, and from
-there the `.deb` can have the grid without anything extra.
+On **Debian 13 and Ubuntu 24.04**, which have no Arrow at all, apt skips the
+recommendation and installs exactly as before. The module is present and cannot
+load, and a `.parquet` file opens as file information. That holds even with
+Apache's own Arrow packages added: the module was built for 26.04's newer C
+library and Qt, so it refuses to load and Mole says so instead of crashing. The
+AppImage has no grid either: its build host has only Arrow 9, and the code needs
+newer. Fedora packages Arrow and Parquet, so the `.rpm` has the grid. The tarball
+carries its own copy and answers to nobody's archive.
+
+To get the grid on Debian 13 or Ubuntu 24.04, install Arrow from the project's own
+packages — <https://arrow.apache.org/install/> — and use the tarball, the artefact
+built against it.
+
+`mole --plugins` has a `parquet:` line. It says whether the module loaded and with
+which Arrow, or why it did not: no module, no Arrow, or a module built for a newer
+system than this one.
 
 ### Video previews
 

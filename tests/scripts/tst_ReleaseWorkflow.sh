@@ -138,7 +138,7 @@ begin "every optional library the build looks for is named in the workflow"
 # dependency joins this case by existing, which is the only way it stays true.
 : > "$SHELLTEST_TMP/unnamed"
 packages=$(grep -rhoE '\b(lib[a-z0-9]+-dev|qt6-[a-z]+-dev|qml6-module-[a-z]+)\b' \
-           src/core/CMakeLists.txt src/plugins/CMakeLists.txt CMakeLists.txt | sort -u)
+           src/core/CMakeLists.txt src/plugins/CMakeLists.txt src/modules/parquet/CMakeLists.txt CMakeLists.txt | sort -u)
 count=$(printf '%s\n' "$packages" | grep -c .)
 [ "$count" -ge 8 ] || fail "only $count packages found in the build files; the parse has stopped working"
 for package in $packages; do

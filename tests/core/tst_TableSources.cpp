@@ -579,7 +579,7 @@ void TestTableSources::parquetReportsItselfWhenUnsupported()
     ParquetTable table(QStringLiteral("/nonexistent.parquet"));
     QString error;
     QVERIFY(!table.open(&error));
-    QVERIFY(error.contains(QStringLiteral("without Parquet")));
+    QVERIFY2(error.contains(QStringLiteral("Parquet is not available")), qPrintable(error));
 #endif
 }
 

@@ -317,9 +317,11 @@ jobs:
       # The distribution packages, each built for the family it installs on. Both
       # come out of the install rules through CPack, so a package and
       # `make install` cannot come apart -- and both carry what their own
-      # distribution can satisfy, which is not the same list: no Ubuntu archive has
-      # Arrow, and Fedora packages it, so the .deb has no Parquet grid and the .rpm
-      # does. The tarball above has it either way, because it carries its own
+      # distribution can satisfy, which is not the same list. Fedora packages Arrow,
+      # so the .rpm builds the Parquet module beside the application. Of the .deb's
+      # three distributions only Ubuntu 26.04 does, so `make deb` builds the module in
+      # an ubuntu:26.04 container and recommends Arrow rather than requiring it
+      # (MOLE-459). The tarball above has it either way, because it carries its own
       # libraries.
       #
       # `make rpm` builds in a container of that family. An .rpm built on Debian
@@ -365,22 +367,60 @@ jobs:
           # The git line is the one the package's Depends can no longer show: the
           # .deb links libgit2 statically, so a build that lost it would install,
           # start and quietly show no repository band.
+          #
+          # **And the Parquet line differs by distribution, on purpose.** The .deb
+          # carries a Parquet module built on Ubuntu 26.04 and recommends the Arrow
+          # it links, which only 26.04's archive has. So on 26.04 the install has to
+          # bring Arrow in by itself and the module has to load; on the other two
+          # the recommends are skipped without an error and Parquet has to be
+          # reported as not available -- a module that loaded there, or an install
+          # that failed over Arrow, would both be wrong. See MOLE-459.
           for image in debian:13 ubuntu:24.04 ubuntu:26.04; do
             echo "--- $image ---"
+            if [ "$image" = ubuntu:26.04 ]; then
+              parquet='parquet: module loaded, Arrow [0-9]'
+              arrow='ls /usr/lib/x86_64-linux-gnu/libarrow.so.* /usr/lib/x86_64-linux-gnu/libparquet.so.*'
+            else
+              parquet='parquet: not available'
+              arrow='true'
+            fi
             docker run --rm -v "$PWD/build/packages:/pkg:ro" "$image" bash -c "
               set -e
               export DEBIAN_FRONTEND=noninteractive
               apt-get update -qq >/dev/null
               apt-get install -y -qq /pkg/mole_${version}_amd64.deb >/dev/null
+              $arrow
               QT_QPA_PLATFORM=offscreen mole --plugins | tee /tmp/said
               grep -q 'Archive drives' /tmp/said
               grep -q 'Standard network drives' /tmp/said
               grep -qE 'video codecs it reports: [A-Z]' /tmp/said
               grep -qE 'git state: read through libgit2 [0-9]' /tmp/said
+              grep -qE '$parquet' /tmp/said
               test -f /usr/share/applications/mole.desktop
               apt-get remove -y -qq mole >/dev/null
               test ! -e /usr/bin/mole"
           done
+          # **The one case that is not a clean system: Ubuntu 24.04 with Apache's own
+          # Arrow repository added**, which is where somebody who wanted the grid
+          # before 26.04 got it. If Apache publishes the Arrow the module links, the
+          # Recommends are satisfied there and the module is installed beside an
+          # Arrow it could use -- on a glibc, a libstdc++ and a Qt older than the
+          # ones it was built against. It must not load and must not crash: Mole
+          # starts, and the line says why. If Apache has moved on to a newer Arrow,
+          # the recommends are skipped and the same assertions hold. Apache's
+          # repository is reached the way the build step above reaches it, through
+          # the script that checks its signature. See MOLE-459.
+          echo "--- ubuntu:24.04 with Apache's Arrow repository ---"
+          docker run --rm -v "$PWD/build/packages:/pkg:ro" -v "$PWD/scripts:/scripts:ro" ubuntu:24.04 bash -c "
+            set -e
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq >/dev/null
+            apt-get install -y -qq sudo ca-certificates curl gnupg lsb-release >/dev/null
+            /scripts/arrow-apt-source.sh >/dev/null
+            apt-get install -y -qq /pkg/mole_${version}_amd64.deb >/dev/null
+            QT_QPA_PLATFORM=offscreen mole --plugins | tee /tmp/said
+            grep -q 'Archive drives' /tmp/said
+            grep -q 'parquet: not available' /tmp/said"
           # **Fedora, and deliberately not the image that built the package.** The
           # check used to run in `fedora:40`, which is what `make rpm` built in --
           # so it asked whether a package installs on the machine that made it, and

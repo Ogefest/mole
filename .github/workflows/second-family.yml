@@ -6,7 +6,7 @@
 # container rather than by anything that runs on its own. The static libraries were
 # not position-independent, which Fedora's linker refuses outright and Ubuntu's
 # accepted. And ParquetTable did not compile against any Arrow older than 21: this
-# machine can only ever have 25, since no Ubuntu archive carries Arrow at all, and
+# machine can only ever have 25, since no Ubuntu archive carried Arrow before 26.04, and
 # Fedora 40 has 15 -- so the Parquet grid had never compiled anywhere but the
 # author's workstation. See MOLE-297.
 #

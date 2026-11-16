@@ -2,8 +2,8 @@
 #
 # Adds Apache's own Arrow repository, having checked who signed what it adds.
 #
-# **Arrow is in no Ubuntu archive at any version**, so the Parquet grid can only
-# come from Apache, and the way in is a .deb that installs a signing key and a
+# **Arrow is in no Ubuntu archive before 26.04**, and every builder here is older,
+# so the Parquet grid can only come from Apache, and the way in is a .deb that installs a signing key and a
 # source list. Two workflows did that with a bare `wget | apt-get install` -- a
 # package fetched over a URL and given root, with nothing asked about it. Beside
 # `scripts/qt-tsan.sh`, which keeps a SHA-256 table and says of itself that

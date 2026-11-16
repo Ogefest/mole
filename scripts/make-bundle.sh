@@ -21,7 +21,12 @@ LIBDIR="$DIST/usr/lib"
 # network plugin could not load for want of libsmbclient, reported as a problem
 # nobody was reading. The archive plugin got away with it because libarchive came in
 # as something else's dependency. See MOLE-296.
-MOLE_PLUGIN_DIRS="$(find "$DIST/usr" -type d -path '*/mole/plugins' 2>/dev/null | tr '\n' ' ')"
+#
+# And the modules beside them -- the Parquet module, which links Arrow -- for the
+# same reason: a directory this scan does not know is a directory whose
+# dependencies are never collected, and the tarball would carry a Parquet module
+# that cannot load. See MOLE-459.
+MOLE_PLUGIN_DIRS="$(find "$DIST/usr" -type d \( -path '*/mole/plugins' -o -path '*/mole/modules' \) 2>/dev/null | tr '\n' ' ')"
 PLUGINDIR="$DIST/usr/plugins"
 QMLDIR="$DIST/usr/qml"
 

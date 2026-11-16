@@ -226,12 +226,13 @@ uninstall:
 
 # Where the distribution packages are built, and why it is not build/release.
 #
-# Arrow is in no Ubuntu archive at any version, so a .deb built with it depends on
-# libarrow2500 and `apt install ./mole_*.deb` refuses on a clean system -- proved
-# in a container, and the only dependency that failed. A distribution package may
-# only need what the distribution can give it, so this build leaves Arrow out and
-# the Parquet grid with it. The self-contained tarball keeps it: it carries its own
-# libraries and answers to nobody's archive. See MOLE-121.
+# Arrow is in neither Debian 13's nor Ubuntu 24.04's archive, so a .deb whose build
+# found Arrow -- the release runner has Apache's own -- would depend on it, and
+# `apt install ./mole_*.deb` would refuse on a clean system. A distribution package
+# may only need what the distribution can give it, so this build leaves Arrow out.
+# The Parquet grid reaches the .deb another way: a module built on Ubuntu 26.04,
+# the one archive in the family that has Arrow, and recommended rather than
+# required. See MOLE-121 and MOLE-459.
 # **Three scripts exit 3 to mean "the tool for this is not on this machine", and
 # this is the one place that number is written down.** They are
 # package-rpm.sh (no docker), package-appimage.sh (no docker) and
@@ -246,6 +247,9 @@ PACKAGE_FLAGS := -DCMAKE_DISABLE_FIND_PACKAGE_Arrow=ON -DCMAKE_DISABLE_FIND_PACK
 # Where `make deb` builds the libgit2 it links statically. Beside the package tree
 # rather than inside it, so starting that tree afresh does not rebuild libgit2.
 LIBGIT2_PREFIX := build/libgit2-static
+# Where `make deb` has the Parquet module built, in a container. Beside the package
+# tree for the same reason.
+PARQUET_MODULE_DIR := build/parquet-module
 
 ## packages: build the .deb, the .rpm and the AppImage, each where it belongs
 ##           Both come from the install rules, through CPack, so the package and
@@ -272,11 +276,20 @@ packages: deb rpm appimage
 ##      The -U lines forget what an earlier configure of this directory found for
 ##      libgit2: pkg-config's answers are cached, and a tree first configured
 ##      before the static copy existed would otherwise keep linking the system's.
+##
+##      The Parquet module comes from an ubuntu:26.04 container, the one place in
+##      the family with Arrow, and is added to the package after cpack with Arrow
+##      as Recommends -- see scripts/package-parquet-module.sh and MOLE-459.
+##      Without docker it is skipped, said, and the .deb has no Parquet grid.
 deb:
 	@command -v dpkg-deb >/dev/null || { echo "  skipped: no dpkg-deb on this machine"; exit 0; }
 	@scripts/libgit2-static.sh $(LIBGIT2_PREFIX)
-	@cmake -S . -B $(PACKAGE_DIR) -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+	@scripts/package-parquet-module.sh $(PARQUET_MODULE_DIR); status=$$?; \
+		[ $$status = 0 ] || [ $$status = $(SKIPPED) ] || exit $$status
+	@module=$(abspath $(PARQUET_MODULE_DIR))/mole-parquet.so; [ -f "$$module" ] || module=; \
+		cmake -S . -B $(PACKAGE_DIR) -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
 		-DMOLE_BUILD_TESTS=OFF $(PACKAGE_FLAGS) -DCMAKE_PREFIX_PATH=$(abspath $(LIBGIT2_PREFIX)) \
+		-DMOLE_DEB_PARQUET_MODULE="$$module" \
 		-U 'GIT2_*' -U '__pkg_config_*_GIT2' -U 'pkgcfg_lib_GIT2_*' -U 'MOLE_GIT2_*' >/dev/null
 	@cmake --build $(PACKAGE_DIR) --parallel $(JOBS) >/dev/null
 	@cd $(PACKAGE_DIR) && cpack -G DEB >cpack-deb.log 2>&1 || { cat cpack-deb.log; exit 1; }

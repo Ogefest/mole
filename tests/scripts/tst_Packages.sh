@@ -506,7 +506,7 @@ want="libc6 (>= 2.34), libqt6gui6t64 (>= 6.4.0) | libqt6gui6 (>= 6.4.0), libqt6c
     want: $want"
 
 begin "the rewrite reaches the package cpack wrote, and leaves it a package"
-grep -qF 'set(CPACK_POST_BUILD_SCRIPTS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/deb-qt-alternatives.cmake")' CMakeLists.txt \
+grep -qF '"${CMAKE_CURRENT_SOURCE_DIR}/packaging/deb-qt-alternatives.cmake"' CMakeLists.txt \
     || fail "cpack does not run the Qt alternatives step on the .deb"
 if ! command -v dpkg-deb >/dev/null 2>&1; then
     echo "  skipped: no dpkg-deb on this machine, so no package can be written to rewrite"
@@ -534,6 +534,65 @@ else
         || fail "the repacked files are not owned by root: $contents"
     [ "$(cat "$SHELLTEST_TMP/mole-0.0.1-1.x86_64.rpm")" = "not a package" ] \
         || fail "the step rewrote something that is not a .deb"
+fi
+
+begin "the Parquet module goes into the .deb with Arrow recommended, never required"
+# Built on Ubuntu 26.04 and added to the package built on 24.04 after cpack, because
+# dpkg-shlibdeps would put Arrow in Depends -- and the package would stop installing
+# on Debian 13 and Ubuntu 24.04, which have none. What it links is recommended
+# instead, less what the package already depends on, and nothing is typed: the list
+# comes from the module's own NEEDED entries. See MOLE-459.
+step="$MOLE_SOURCE_DIR/packaging/deb-parquet-module.cmake"
+grep -qF '"${CMAKE_CURRENT_SOURCE_DIR}/packaging/deb-parquet-module.cmake"' CMakeLists.txt \
+    || fail "cpack does not run the Parquet module step on the .deb"
+recipe=$(awk '/^deb:/,/^$/' Makefile)
+grep -q 'scripts/package-parquet-module.sh' <<<"$recipe" || fail "make deb does not build the Parquet module"
+grep -q 'MOLE_DEB_PARQUET_MODULE=' <<<"$recipe" || fail "make deb does not hand the module to the package"
+grep -q 'ubuntu:26.04' scripts/package-parquet-module.sh \
+    || fail "the module is not built on the one distribution in the family with Arrow"
+grep -q 'objdump -p "$module"' scripts/package-parquet-module.sh \
+    || fail "what the module links is not read from the module itself"
+if ! command -v dpkg-deb >/dev/null 2>&1; then
+    echo "  skipped: no dpkg-deb on this machine, so no package can be written to add it to"
+else
+    tree="$SHELLTEST_TMP/module-tree"
+    mkdir -p "$tree/DEBIAN" "$tree/usr/bin" "$SHELLTEST_TMP/module"
+    printf '#!/bin/sh\n' > "$tree/usr/bin/mole"
+    chmod 755 "$tree/usr/bin/mole"
+    printf '%s\n' "Package: mole" "Version: 0.0.1" "Architecture: amd64" \
+        "Maintainer: The Mole Authors <nobody@example.invalid>" "Installed-Size: 10" \
+        "Depends: libc6 (>= 2.34), libstdc++6 (>= 14), libqt6core6t64 (>= 6.4.0) | libqt6core6 (>= 6.4.0)" \
+        "Recommends: gstreamer1.0-plugins-good" \
+        "Description: a fixture" > "$tree/DEBIAN/control"
+    (cd "$tree" && md5sum usr/bin/mole > DEBIAN/md5sums)
+    dpkg-deb --root-owner-group -b "$tree" "$SHELLTEST_TMP/module/mole_0.0.1_amd64.deb" >/dev/null
+    head -c 5000 /dev/urandom > "$SHELLTEST_TMP/module/mole-parquet.so"
+    printf '%s\n' libarrow2300 libc6 libparquet2300 libqt6core6t64 libstdc++6 \
+        > "$SHELLTEST_TMP/module/mole-parquet.recommends"
+    cmake "-DCPACK_PACKAGE_FILES=$SHELLTEST_TMP/module/mole_0.0.1_amd64.deb" \
+        "-DCPACK_MOLE_PARQUET_MODULE=$SHELLTEST_TMP/module/mole-parquet.so" \
+        -DCPACK_MOLE_MODULE_DIR=usr/lib/mole/modules -P "$step" > "$SHELLTEST_TMP/module-out" 2>&1 \
+        || fail "the step failed: $(cat "$SHELLTEST_TMP/module-out")"
+    deb="$SHELLTEST_TMP/module/mole_0.0.1_amd64.deb"
+    [ "$(dpkg-deb -f "$deb" Recommends)" = "gstreamer1.0-plugins-good, libarrow2300, libparquet2300" ] \
+        || fail "the package recommends: $(dpkg-deb -f "$deb" Recommends)"
+    [ "$(dpkg-deb -f "$deb" Depends)" = "libc6 (>= 2.34), libstdc++6 (>= 14), libqt6core6t64 (>= 6.4.0) | libqt6core6 (>= 6.4.0)" ] \
+        || fail "Depends changed, and Arrow in it would refuse two of the three: $(dpkg-deb -f "$deb" Depends)"
+    [ "$(dpkg-deb -f "$deb" Installed-Size)" = 15 ] \
+        || fail "Installed-Size does not count the module: $(dpkg-deb -f "$deb" Installed-Size)"
+    contents=$(dpkg-deb -c "$deb")
+    grep -q ' root/root .*usr/lib/mole/modules/mole-parquet.so$' <<<"$contents" \
+        || fail "the module is not in the package, owned by root: $contents"
+    rm -rf "$SHELLTEST_TMP/module/x"
+    dpkg-deb -R "$deb" "$SHELLTEST_TMP/module/x"
+    (cd "$SHELLTEST_TMP/module/x" && md5sum -c --quiet DEBIAN/md5sums) > "$SHELLTEST_TMP/module-md5" 2>&1 \
+        || fail "md5sums does not match what the package holds: $(cat "$SHELLTEST_TMP/module-md5")"
+
+    # And without a module, the step leaves the package exactly as it was.
+    cp "$deb" "$SHELLTEST_TMP/module/before.deb"
+    cmake "-DCPACK_PACKAGE_FILES=$deb" -P "$step" > "$SHELLTEST_TMP/module-out" 2>&1 \
+        || fail "the step failed with no module to add: $(cat "$SHELLTEST_TMP/module-out")"
+    cmp -s "$deb" "$SHELLTEST_TMP/module/before.deb" || fail "with no module the step changed the package anyway"
 fi
 
 begin "the .deb links libgit2 statically, from a pinned and checked release"

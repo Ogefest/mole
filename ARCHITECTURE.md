@@ -560,7 +560,7 @@ had happened to Qt Pdf and Qt Multimedia.
 
 | Feature | Needs | Without it | Define |
 |---|---|---|---|
-| Parquet preview | Arrow and Parquet | `ParquetTable::isSupported()` is false, the provider declines, and a `.parquet` falls through to the information viewer | `MOLE_HAVE_PARQUET` |
+| Parquet preview | Arrow and Parquet | No `mole-parquet.so` is built. At run time the same answer comes from a module that is absent or will not load: `ParquetTable::isSupported()` is false, the provider declines, and a `.parquet` falls through to the information viewer | the `mole_parquet` module target, loaded at run time rather than linked — see ADR-0106 |
 | Terminal | libvterm | the built-in parser handles line-oriented output and the panel says "basic mode" rather than drawing a full-screen program wrongly | `MOLE_HAVE_VTERM` |
 | Git state | libgit2 | `Repository::isSupported()` answers no: no band, no markers, and a folder inside a checkout looks like one that is not | `MOLE_HAVE_GIT2` |
 | Duplicate scan head | xxhash | the first-stage filter hashes with SHA-256 — slower, and every bit as correct, because a filter only has to be consistent | `MOLE_HAVE_XXHASH` |

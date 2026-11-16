@@ -26,7 +26,8 @@ from pathlib import Path
 
 # Where the calls are. Not a glob: a row in a file nobody reads is a row nobody
 # checks, so the files are named and a new one has to be added here on purpose.
-SOURCES = ("src/core/CMakeLists.txt", "src/plugins/CMakeLists.txt", "CMakeLists.txt")
+SOURCES = ("src/core/CMakeLists.txt", "src/plugins/CMakeLists.txt", "src/modules/parquet/CMakeLists.txt",
+           "CMakeLists.txt")
 
 CALL = "mole_optional_dependency("
 

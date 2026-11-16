@@ -134,7 +134,7 @@ jobs:
             libsmbclient-dev libnfs-dev libvterm-dev libgit2-dev libxxhash-dev \
             xvfb x11-utils libxcb-cursor0
 
-      # Arrow is in no Ubuntu archive at any version, so the Parquet grid can only
+      # Arrow is in no Ubuntu archive before 26.04, so on this runner the Parquet grid can only
       # come from Apache's own repository -- which is where the author's machine and
       # the release builder both get it. Without this the Parquet suites would skip,
       # and a skip here says nothing while looking exactly like a pass.

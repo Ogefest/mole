@@ -7,6 +7,7 @@
 #include "ui/DragSource.h"
 
 #include "core/CoreMetaTypes.h"
+#include "core/data/ParquetTable.h"
 #include "core/diagnostics/Diagnostics.h"
 #include "core/vcs/Repository.h"
 
@@ -64,6 +65,13 @@ int runDiagnostics(mole::AppController& controller, bool listPlugins)
     // and a build that lost it shows no band and reports no error. See MOLE-458.
     out << "git:" << Qt::endl;
     out << "  " << mole::Repository::diagnosticLine() << Qt::endl;
+
+    // And the Parquet module, which is the one feature here that a package can
+    // carry and still not have: the .deb ships it on all three distributions and it
+    // loads on one. Whether it loaded, and if not why, is the first question about
+    // a .parquet file that opened as file information. See MOLE-459.
+    out << "parquet:" << Qt::endl;
+    out << "  " << mole::ParquetTable::diagnosticLine() << Qt::endl;
 
     const QStringList problems = controller.pluginErrors();
     if (!problems.isEmpty()) {

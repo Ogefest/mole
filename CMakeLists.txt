@@ -126,6 +126,10 @@ add_subdirectory(src/core)
 add_subdirectory(src/sdk)
 add_subdirectory(src/host)
 add_subdirectory(src/ui)
+# Modules the application loads at run time rather than links -- Parquet, which
+# needs Arrow. Built in a core-only configuration as well, because that is how a
+# container with nothing but qtbase and Arrow builds one. See MOLE-459.
+add_subdirectory(src/modules/parquet)
 # The two that need Qml, Quick, Pdf or Multimedia, and so the two a qtbase-only
 # Qt cannot build. Everything above needs nothing outside qtbase.
 if(NOT MOLE_CORE_ONLY)
@@ -300,7 +304,19 @@ set(CPACK_DEBIAN_PACKAGE_DEPENDS "libqt6sql6-sqlite, ${MOLE_DEB_QML_DEPENDS}")
 #                        run, by rule rather than by list.
 #
 # See MOLE-458, and release.yml, which installs the result on all three.
-set(CPACK_POST_BUILD_SCRIPTS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/deb-qt-alternatives.cmake")
+#
+# And the Parquet module, built on 26.04 because that is the only one of the three
+# with Arrow, is added to the finished package after that -- out of reach of
+# shlibdeps, which would otherwise put Arrow in Depends -- with what it links as
+# Recommends. `make deb` passes MOLE_DEB_PARQUET_MODULE; empty, the .deb has no
+# module and Parquet opens as file information everywhere. See MOLE-459.
+set(MOLE_DEB_PARQUET_MODULE "" CACHE FILEPATH
+    "A mole-parquet.so built elsewhere, for the .deb to carry (see scripts/package-parquet-module.sh)")
+set(CPACK_MOLE_PARQUET_MODULE "${MOLE_DEB_PARQUET_MODULE}")
+set(CPACK_MOLE_MODULE_DIR "usr/${CMAKE_INSTALL_LIBDIR}/mole/modules")
+set(CPACK_POST_BUILD_SCRIPTS
+    "${CMAKE_CURRENT_SOURCE_DIR}/packaging/deb-qt-alternatives.cmake"
+    "${CMAKE_CURRENT_SOURCE_DIR}/packaging/deb-parquet-module.cmake")
 
 # The third kind. Qt Multimedia is a front end and picks a backend at run time; on
 # Debian and Ubuntu the platform default is GStreamer, whose decoders live in

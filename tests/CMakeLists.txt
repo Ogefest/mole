@@ -61,6 +61,19 @@ if(MOLE_GIT2_FOUND)
     target_link_libraries(mole_test_support PRIVATE ${MOLE_GIT2_LIBRARIES})
 endif()
 
+# Parquet is a module the application loads (src/modules/parquet), so nothing the
+# tests link carries Arrow any more. The fixtures write .parquet files through Arrow
+# themselves, so they find it here, and every suite that reads one needs the module
+# to have been built: it is looked for beside the executable, one level up from the
+# test binaries. See MOLE-459.
+if(MOLE_PARQUET_FOUND AND TARGET mole_parquet)
+    find_package(Arrow QUIET)
+    find_package(Parquet QUIET)
+    target_compile_definitions(mole_test_support PUBLIC MOLE_HAVE_PARQUET)
+    target_link_libraries(mole_test_support PUBLIC Arrow::arrow_shared Parquet::parquet_shared)
+    add_dependencies(mole_test_support mole_parquet)
+endif()
+
 # Where the user guide keeps its pictures, so a test can hold the rule that every
 # feature has one -- see everyFeatureAndPreviewHasAPictureInTheGuide.
 target_compile_definitions(mole_test_support
@@ -385,6 +398,27 @@ mole_add_test(tst_FileType          SOURCES core/tst_FileType.cpp)
 mole_add_test(tst_DelimitedText     SOURCES core/tst_DelimitedText.cpp)
 mole_add_test(tst_DelimitedStore    SOURCES core/tst_DelimitedStore.cpp)
 mole_add_test(tst_TableSources     SOURCES core/tst_TableSources.cpp)
+# The loader of the Parquet module, and the two modules it must refuse although
+# they load: one built against a Qt newer than any, one speaking another interface.
+# They link Qt Core for its headers and nothing of Mole. See MOLE-459.
+mole_add_test(tst_ParquetModule    SOURCES core/tst_ParquetModule.cpp)
+foreach(fake IN ITEMS newer_qt other_abi)
+    add_library(mole_test_fake_parquet_${fake} MODULE support/modules/FakeParquetModule.cpp)
+    target_include_directories(mole_test_fake_parquet_${fake} PRIVATE "${CMAKE_SOURCE_DIR}/src")
+    target_link_libraries(mole_test_fake_parquet_${fake} PRIVATE Qt6::Core)
+    set_target_properties(mole_test_fake_parquet_${fake} PROPERTIES
+        PREFIX "" OUTPUT_NAME mole-parquet
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests/fake-parquet-modules/${fake}")
+    add_dependencies(tst_ParquetModule mole_test_fake_parquet_${fake})
+endforeach()
+target_compile_definitions(mole_test_fake_parquet_newer_qt PRIVATE
+    FAKE_MODULE_ABI=MOLE_PARQUET_MODULE_ABI FAKE_MODULE_QT_VERSION=0x630000)
+target_compile_definitions(mole_test_fake_parquet_other_abi PRIVATE
+    FAKE_MODULE_ABI=999 FAKE_MODULE_QT_VERSION=QT_VERSION)
+target_compile_definitions(tst_ParquetModule PRIVATE
+    MOLE_TEST_FAKE_PARQUET_NEWER_QT="${CMAKE_BINARY_DIR}/tests/fake-parquet-modules/newer_qt/mole-parquet.so"
+    MOLE_TEST_FAKE_PARQUET_OTHER_ABI="${CMAKE_BINARY_DIR}/tests/fake-parquet-modules/other_abi/mole-parquet.so"
+    MOLE_TEST_PARQUET_MODULE="${CMAKE_BINARY_DIR}/modules/mole-parquet.so")
 mole_add_test(tst_RenamePlan       SOURCES core/tst_RenamePlan.cpp)
 
 # Carrying a batch of renames out, where the order is the whole problem.
