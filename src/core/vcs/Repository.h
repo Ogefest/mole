@@ -174,6 +174,13 @@ public:
     /// "nothing here" when this is false, so a caller never needs to ask first.
     static bool isSupported();
 
+    /// What `mole --plugins` says about git state: `git state: read through
+    /// libgit2 <version>`, the version the linked library reports at run time, or
+    /// that this build has none. The .deb links libgit2 statically, so its Depends
+    /// cannot show whether it did; the release asserts this line instead. See
+    /// MOLE-458.
+    static QString diagnosticLine();
+
     /// The work tree root that contains `path`, or an empty string when there is
     /// none. Walks up from `path` the way git itself does, so any folder inside a
     /// checkout answers with the checkout.

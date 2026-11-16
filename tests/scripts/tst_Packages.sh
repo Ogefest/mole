@@ -490,6 +490,74 @@ grep -q 'sha256sum /tmp/runtime' scripts/package-appimage.sh \
 grep -q 'appimagetool --runtime-file /tmp/runtime' scripts/package-appimage.sh \
     || fail "the packer is not handed the pinned runtime, so it fetches its own"
 
+begin "every Qt t64 name in a .deb's Depends is given its unsuffixed alternative"
+# One .deb for Debian 13, Ubuntu 24.04 and Ubuntu 26.04, built on 24.04: shlibdeps
+# names libqt6gui6t64 and Debian and 26.04 call the same library libqt6gui6, so a
+# package naming only the first refused to install on two of the three. A rule
+# rather than a list, so these names are made up as well as real -- the next Qt
+# library added to the build has to be covered without anybody remembering. See
+# MOLE-458.
+rule="$MOLE_SOURCE_DIR/packaging/deb-qt-alternatives.cmake"
+got=$(cmake -DMOLE_DEPENDS="libc6 (>= 2.34), libqt6gui6t64 (>= 6.4.0), libqt6core6t64 (>= 6.4.0), libqt6shadertools6t64, libqt6foo6t64 (>= 6.4.0) | libqt6foo6 (>= 6.4.0), libqt6sql6-sqlite, libgit2-1.7 (>= 1.7.0)" \
+    -P "$rule" 2>&1)
+want="libc6 (>= 2.34), libqt6gui6t64 (>= 6.4.0) | libqt6gui6 (>= 6.4.0), libqt6core6t64 (>= 6.4.0) | libqt6core6 (>= 6.4.0), libqt6shadertools6t64 | libqt6shadertools6, libqt6foo6t64 (>= 6.4.0) | libqt6foo6 (>= 6.4.0), libqt6sql6-sqlite, libgit2-1.7 (>= 1.7.0)"
+[ "$got" = "$want" ] || fail "the Depends rewrite is wrong:
+    got:  $got
+    want: $want"
+
+begin "the rewrite reaches the package cpack wrote, and leaves it a package"
+grep -qF 'set(CPACK_POST_BUILD_SCRIPTS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/deb-qt-alternatives.cmake")' CMakeLists.txt \
+    || fail "cpack does not run the Qt alternatives step on the .deb"
+if ! command -v dpkg-deb >/dev/null 2>&1; then
+    echo "  skipped: no dpkg-deb on this machine, so no package can be written to rewrite"
+else
+    tree="$SHELLTEST_TMP/deb-tree"
+    mkdir -p "$tree/DEBIAN" "$tree/usr/bin"
+    printf '#!/bin/sh\n' > "$tree/usr/bin/mole"
+    chmod 755 "$tree/usr/bin/mole"
+    printf '%s\n' "Package: mole" "Version: 0.0.1" "Architecture: amd64" \
+        "Maintainer: The Mole Authors <nobody@example.invalid>" \
+        "Depends: libqt6network6t64 (>= 6.1.2), libc6 (>= 2.34)" \
+        "Description: a fixture" > "$tree/DEBIAN/control"
+    dpkg-deb --root-owner-group -b "$tree" "$SHELLTEST_TMP/mole_0.0.1_amd64.deb" >/dev/null
+    # And an .rpm beside it, which the step is run for as well and must not touch.
+    echo "not a package" > "$SHELLTEST_TMP/mole-0.0.1-1.x86_64.rpm"
+    cmake "-DCPACK_PACKAGE_FILES=$SHELLTEST_TMP/mole_0.0.1_amd64.deb;$SHELLTEST_TMP/mole-0.0.1-1.x86_64.rpm" \
+        -P "$rule" > "$SHELLTEST_TMP/rewrite-out" 2>&1 \
+        || fail "the step failed: $(cat "$SHELLTEST_TMP/rewrite-out")"
+    depends=$(dpkg-deb -f "$SHELLTEST_TMP/mole_0.0.1_amd64.deb" Depends)
+    [ "$depends" = "libqt6network6t64 (>= 6.1.2) | libqt6network6 (>= 6.1.2), libc6 (>= 2.34)" ] \
+        || fail "the package says: $depends"
+    # Still owned by root, as cpack wrote it, though an ordinary user unpacked it.
+    contents=$(dpkg-deb -c "$SHELLTEST_TMP/mole_0.0.1_amd64.deb")
+    grep -q ' root/root .*usr/bin/mole$' <<<"$contents" \
+        || fail "the repacked files are not owned by root: $contents"
+    [ "$(cat "$SHELLTEST_TMP/mole-0.0.1-1.x86_64.rpm")" = "not a package" ] \
+        || fail "the step rewrote something that is not a .deb"
+fi
+
+begin "the .deb links libgit2 statically, from a pinned and checked release"
+# libgit2's soname moves with each minor version and no version is on all three
+# distributions the .deb is for, so naming a libgit2 package is installing on one
+# of them at most -- 0.1.4 named libgit2-1.7 and Debian 13 refused it. See MOLE-458.
+grep -qE '^LIBGIT2_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$' scripts/libgit2-static.sh \
+    || fail "no libgit2 version is pinned"
+grep -qE '^LIBGIT2_SHA256="[0-9a-f]{64}"$' scripts/libgit2-static.sh \
+    || fail "no sha256 is recorded for the libgit2 source that is built"
+grep -q 'sha256sum' scripts/libgit2-static.sh || fail "the libgit2 source is never checked against its pin"
+# Mole reads local repositories only (ADR-0041), and every transport left on is a
+# library -- libssh2, OpenSSL, GSSAPI -- the static copy would need from the system.
+for off in BUILD_SHARED_LIBS USE_SSH USE_HTTPS USE_GSSAPI USE_NTLMCLIENT; do
+    grep -q -- "-D$off=OFF" scripts/libgit2-static.sh || fail "libgit2 is built with $off left on"
+done
+recipe=$(awk '/^deb:/,/^$/' Makefile)
+grep -q 'scripts/libgit2-static.sh' <<<"$recipe" || fail "make deb does not build the static libgit2"
+grep -q 'CMAKE_PREFIX_PATH=.*LIBGIT2_PREFIX' <<<"$recipe" || fail "make deb does not point the build at it"
+grep -q 'grep -q libgit2' <<<"$recipe" \
+    || fail "make deb does not refuse a package whose Depends still names libgit2"
+grep -qE '^\| \*\*libgit2\*\* .*[Ss]tatically linked' THIRD-PARTY-NOTICES.md \
+    || fail "THIRD-PARTY-NOTICES.md does not say the .deb carries libgit2 inside it"
+
 begin "all three packaging targets exist and are declared"
 for target in packages deb rpm appimage; do
     grep -qE "^$target:" Makefile || fail "there is no target called $target"

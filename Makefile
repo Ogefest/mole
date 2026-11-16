@@ -243,6 +243,9 @@ SKIPPED := 3
 
 PACKAGE_DIR := build/packages
 PACKAGE_FLAGS := -DCMAKE_DISABLE_FIND_PACKAGE_Arrow=ON -DCMAKE_DISABLE_FIND_PACKAGE_Parquet=ON
+# Where `make deb` builds the libgit2 it links statically. Beside the package tree
+# rather than inside it, so starting that tree afresh does not rebuild libgit2.
+LIBGIT2_PREFIX := build/libgit2-static
 
 ## packages: build the .deb, the .rpm and the AppImage, each where it belongs
 ##           Both come from the install rules, through CPack, so the package and
@@ -257,13 +260,33 @@ PACKAGE_FLAGS := -DCMAKE_DISABLE_FIND_PACKAGE_Arrow=ON -DCMAKE_DISABLE_FIND_PACK
 ##           See MOLE-387.
 packages: deb rpm appimage
 
-## deb: the .deb, built here, from what this distribution's archive can satisfy
+## deb: the .deb, for Debian 13, Ubuntu 24.04 and Ubuntu 26.04
+##      Built here -- on 24.04 in a release, the oldest of the three -- with
+##      libgit2 linked statically, because no libgit2 soname exists on all three;
+##      the pinned version is in scripts/libgit2-static.sh. Qt's `t64` names get
+##      their unsuffixed alternatives inside cpack, from
+##      packaging/deb-qt-alternatives.cmake. The last step refuses a .deb whose
+##      Depends still names a libgit2, which is what a build that quietly found
+##      the system's copy instead would produce. See MOLE-458.
+##
+##      The -U lines forget what an earlier configure of this directory found for
+##      libgit2: pkg-config's answers are cached, and a tree first configured
+##      before the static copy existed would otherwise keep linking the system's.
 deb:
 	@command -v dpkg-deb >/dev/null || { echo "  skipped: no dpkg-deb on this machine"; exit 0; }
-	@cmake -S . -B $(PACKAGE_DIR) -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo 		-DMOLE_BUILD_TESTS=OFF $(PACKAGE_FLAGS) >/dev/null
+	@scripts/libgit2-static.sh $(LIBGIT2_PREFIX)
+	@cmake -S . -B $(PACKAGE_DIR) -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+		-DMOLE_BUILD_TESTS=OFF $(PACKAGE_FLAGS) -DCMAKE_PREFIX_PATH=$(abspath $(LIBGIT2_PREFIX)) \
+		-U 'GIT2_*' -U '__pkg_config_*_GIT2' -U 'pkgcfg_lib_GIT2_*' -U 'MOLE_GIT2_*' >/dev/null
 	@cmake --build $(PACKAGE_DIR) --parallel $(JOBS) >/dev/null
 	@cd $(PACKAGE_DIR) && cpack -G DEB >cpack-deb.log 2>&1 || { cat cpack-deb.log; exit 1; }
 	@tail -1 $(PACKAGE_DIR)/cpack-deb.log
+	@depends=$$(dpkg-deb -f $(PACKAGE_DIR)/mole_$(REPO_VERSION)_*.deb Depends); \
+		if printf '%s' "$$depends" | grep -q libgit2; then \
+			echo "  the .deb depends on a libgit2 package, so it installs on one distribution at most:"; \
+			echo "    $$depends"; exit 1; \
+		fi; \
+		echo "  Depends: $$depends"
 
 ## rpm: the .rpm, built in a container of the family it installs on
 ##      An .rpm built on Debian cannot be installed on an RPM system: rpmbuild

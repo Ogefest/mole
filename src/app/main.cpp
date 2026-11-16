@@ -8,6 +8,7 @@
 
 #include "core/CoreMetaTypes.h"
 #include "core/diagnostics/Diagnostics.h"
+#include "core/vcs/Repository.h"
 
 #include <QByteArray>
 #include <QDir>
@@ -57,6 +58,12 @@ int runDiagnostics(mole::AppController& controller, bool listPlugins)
     out << "media:" << Qt::endl;
     for (const QString& line : mole::VideoPreviewProvider::diagnosticLines())
         out << "  " << line << Qt::endl;
+
+    // Git state, beside the media stack and for the same reason: the .deb links
+    // libgit2 statically, so nothing in the package says whether a build has it,
+    // and a build that lost it shows no band and reports no error. See MOLE-458.
+    out << "git:" << Qt::endl;
+    out << "  " << mole::Repository::diagnosticLine() << Qt::endl;
 
     const QStringList problems = controller.pluginErrors();
     if (!problems.isEmpty()) {

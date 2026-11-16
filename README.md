@@ -166,7 +166,7 @@ make packages    # a .deb, an .rpm and an AppImage, each for the family it insta
 |---|---|---|---|---|---|
 | `make optimised` | — | 127 MB | yes | — | running on this machine |
 | `make install` | — | 196 MB | yes | — | your own machine |
-| `.deb` | 3.7 MB | 10 MB | yes, from the archive | no Parquet grid | Debian and Ubuntu |
+| `.deb` | 3.7 MB | 10 MB | yes, from the archive | no Parquet grid | Debian 13, Ubuntu 24.04 and Ubuntu 26.04 |
 | `.rpm` | 2.5 MB | 11 MB | yes, from the archive | will not install on any release but the one it was built on | the current Fedora |
 | tarball (`make bundle`) | 79 MB | 209 MB | **no** | no Windows shares; video needs the host's ffmpeg | handing it to someone else |
 | AppImage | 110 MB | 294 MB | **no** | no Parquet grid; no Windows shares; video needs the host's ffmpeg | any distribution from 2021 onwards — it **runs on glibc 2.34** and upwards |
@@ -196,6 +196,13 @@ package is for the Fedora that was current when it was built — not for older
 Fedoras, and not for RHEL, which is several years behind on both. Anywhere else,
 the tarball is the artefact that works: it carries its own libraries and answers to
 nobody's archive.
+
+**The `.deb` is for exactly three releases: Debian 13, Ubuntu 24.04 and Ubuntu
+26.04**, and every release installs it in a fresh container of each and checks that
+it starts with its drives, its video decoders and git state. It is built on Ubuntu
+24.04, the oldest of the three, and carries its own libgit2 — no libgit2 package
+exists under one name on all three. Debian 12 and older Ubuntus are not promised:
+the AppImage covers them, and anywhere else the tarball is the artefact that works.
 
 The AppImage's row carries the one promise that is not about size: **it runs on
 glibc 2.34** — Ubuntu 22.04, Debian 12, RHEL 9 and anything newer — because that is

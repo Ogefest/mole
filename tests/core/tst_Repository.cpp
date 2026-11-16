@@ -10,6 +10,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QRegularExpression>
 #include <QThread>
 
 using namespace mole;
@@ -64,6 +65,7 @@ private slots:
     void aCancelledWalkTaskSaysCancelledAndTellsNobody();
 
     void withoutGitSupportNothingIsClaimed();
+    void theDiagnosticLineSaysWhichLibraryOrThatThereIsNone();
 
 private:
     /// Both sides of a path comparison go through this: a temporary directory can
@@ -806,6 +808,28 @@ void TestRepository::withoutGitSupportNothingIsClaimed()
     QVERIFY(Repository::workTreeFor(QDir::homePath()).isEmpty());
     QVERIFY(!RepositoryCache::shared().forPath(QDir::homePath()));
     QVERIFY(!Repository::open(QDir::homePath()));
+#endif
+}
+
+void TestRepository::theDiagnosticLineSaysWhichLibraryOrThatThereIsNone()
+{
+    // What `mole --plugins` prints about git state, and what the release workflow
+    // asserts in every container it installs the .deb in: a build that quietly lost
+    // libgit2 -- linked statically there, so nothing in the package's Depends
+    // would show it -- has to fail that check rather than reach somebody as a
+    // missing band. See MOLE-458.
+    const QString line = Repository::diagnosticLine();
+    QVERIFY2(line.startsWith(QStringLiteral("git state: ")), qPrintable(line));
+#ifdef MOLE_HAVE_GIT2
+    // The version the library reports about itself at run time, not the header's:
+    // with a static copy and a system copy both on a machine, the one linked is
+    // the one that answers.
+    QVERIFY2(QRegularExpression(QStringLiteral("^git state: read through libgit2 [0-9]+\\.[0-9]+\\.[0-9]+$"))
+                 .match(line)
+                 .hasMatch(),
+        qPrintable(line));
+#else
+    QVERIFY2(line.contains(QStringLiteral("not in this build")), qPrintable(line));
 #endif
 }
 

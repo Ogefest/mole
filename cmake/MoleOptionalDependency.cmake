@@ -105,9 +105,19 @@ function(mole_optional_dependency name)
             endif()
             if(${name}_FOUND)
                 set(found TRUE)
-                # What pkg-config answered, for the caller to link with.
+                # What pkg-config answered, for the caller to link with -- as the
+                # absolute paths it resolved, not as bare names.
+                #
+                # **Names were wrong for a static library.** `-lgit2` plus a link
+                # directory on mole_core does not survive to the executable's link:
+                # mole_core is itself static, so the directory is PRIVATE to a target
+                # that never links, and the application's `-lgit2` searched the
+                # system paths instead. `make deb` pointed the build at a static
+                # libgit2 and got the system's shared one, and only the check on the
+                # .deb's Depends said so. The path is the library pkg-config chose,
+                # wherever the link happens. See MOLE-458.
                 if(NOT ARG_LINK)
-                    set(ARG_LINK ${${name}_LIBRARIES})
+                    set(ARG_LINK ${${name}_LINK_LIBRARIES})
                 endif()
                 if(NOT ARG_INCLUDE)
                     set(ARG_INCLUDE ${${name}_INCLUDE_DIRS})

@@ -59,6 +59,20 @@ bool Repository::isSupported()
 #endif
 }
 
+QString Repository::diagnosticLine()
+{
+#ifdef MOLE_HAVE_GIT2
+    int major = 0;
+    int minor = 0;
+    int revision = 0;
+    git_libgit2_version(&major, &minor, &revision);
+    return QStringLiteral("git state: read through libgit2 %1.%2.%3").arg(major).arg(minor).arg(revision);
+#else
+    return QStringLiteral("git state: not in this build (it was built without libgit2), so a checkout looks "
+                          "like any other folder");
+#endif
+}
+
 #ifdef MOLE_HAVE_GIT2
 
 namespace {
@@ -181,7 +195,7 @@ namespace {
         // deep. The root itself is left out because a pane showing it is a pane
         // inside the checkout, not a row standing for it.
         for (int slash = relative.lastIndexOf(QLatin1Char('/')); slash > 0;
-             slash = relative.lastIndexOf(QLatin1Char('/'))) {
+            slash = relative.lastIndexOf(QLatin1Char('/'))) {
             relative.truncate(slash);
             out.byPath[root + QLatin1Char('/') + relative] |= RepositoryContainsChanges;
         }

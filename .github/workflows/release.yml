@@ -353,19 +353,34 @@ jobs:
           # an RPM distribution, so the plugins went to /usr/lib64/mole/plugins and
           # nothing looked there -- no archive browsing and no network drives,
           # reported as nothing at all rather than as a failure. See MOLE-296.
-          echo "--- Ubuntu ---"
-          docker run --rm -v "$PWD/build/packages:/pkg:ro" ubuntu:24.04 bash -c "
-            set -e
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq >/dev/null
-            apt-get install -y -qq /pkg/mole_${version}_amd64.deb >/dev/null
-            QT_QPA_PLATFORM=offscreen mole --plugins | tee /tmp/said
-            grep -q 'Archive drives' /tmp/said
-            grep -q 'Standard network drives' /tmp/said
-            grep -qE 'video codecs it reports: [A-Z]' /tmp/said
-            test -f /usr/share/applications/mole.desktop
-            apt-get remove -y -qq mole >/dev/null
-            test ! -e /usr/bin/mole"
+          #
+          # **One .deb, three distributions, none of which built it.** The .deb is
+          # promised for Debian 13, Ubuntu 24.04 and Ubuntu 26.04, and it was only
+          # ever installed here in ubuntu:24.04 -- the distribution that built it, so
+          # the names dpkg-shlibdeps had written were the names it found. A released .deb then
+          # refused to install on Debian 13 over five of them: libgit2-1.7 and four
+          # Qt libraries Debian calls without `t64`. So it is installed in all three
+          # on every release. See MOLE-458.
+          #
+          # The git line is the one the package's Depends can no longer show: the
+          # .deb links libgit2 statically, so a build that lost it would install,
+          # start and quietly show no repository band.
+          for image in debian:13 ubuntu:24.04 ubuntu:26.04; do
+            echo "--- $image ---"
+            docker run --rm -v "$PWD/build/packages:/pkg:ro" "$image" bash -c "
+              set -e
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update -qq >/dev/null
+              apt-get install -y -qq /pkg/mole_${version}_amd64.deb >/dev/null
+              QT_QPA_PLATFORM=offscreen mole --plugins | tee /tmp/said
+              grep -q 'Archive drives' /tmp/said
+              grep -q 'Standard network drives' /tmp/said
+              grep -qE 'video codecs it reports: [A-Z]' /tmp/said
+              grep -qE 'git state: read through libgit2 [0-9]' /tmp/said
+              test -f /usr/share/applications/mole.desktop
+              apt-get remove -y -qq mole >/dev/null
+              test ! -e /usr/bin/mole"
+          done
           # **Fedora, and deliberately not the image that built the package.** The
           # check used to run in `fedora:40`, which is what `make rpm` built in --
           # so it asked whether a package installs on the machine that made it, and

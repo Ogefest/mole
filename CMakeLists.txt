@@ -286,6 +286,21 @@ set(CPACK_DEBIAN_PACKAGE_PRIORITY optional)
 # much, so it refuses to install on a system that has everything it needs.
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
 set(CPACK_DEBIAN_PACKAGE_DEPENDS "libqt6sql6-sqlite, ${MOLE_DEB_QML_DEPENDS}")
+# **One .deb for Debian 13, Ubuntu 24.04 and Ubuntu 26.04**, built on the oldest of
+# them. What shlibdeps derives is what 24.04 calls each library, and two things in
+# that list are called something else on the other two:
+#
+#   libgit2-1.7          a real difference -- libgit2's soname moves with every
+#                        minor version and no version is on all three. `make deb`
+#                        links a pinned libgit2 statically instead; see
+#                        scripts/libgit2-static.sh.
+#   libqt6gui6t64 etc.   a naming difference only -- Debian dropped `t64` from some
+#                        Qt libraries and 26.04 followed. The step below gives each
+#                        Qt `t64` name its unsuffixed alternative after shlibdeps has
+#                        run, by rule rather than by list.
+#
+# See MOLE-458, and release.yml, which installs the result on all three.
+set(CPACK_POST_BUILD_SCRIPTS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/deb-qt-alternatives.cmake")
 
 # The third kind. Qt Multimedia is a front end and picks a backend at run time; on
 # Debian and Ubuntu the platform default is GStreamer, whose decoders live in
@@ -297,9 +312,10 @@ set(CPACK_DEBIAN_PACKAGE_DEPENDS "libqt6sql6-sqlite, ${MOLE_DEB_QML_DEPENDS}")
 #
 # Recommends rather than Depends, because that is the strength the relationship has:
 # apt installs recommends by default, so the ordinary install gets video, while a
-# minimal system without `universe` enabled -- where gstreamer1.0-libav lives -- can
-# still install the package and browse files. A missing decoder must not be an
-# install failure.
+# system that cannot satisfy them -- an Ubuntu without `universe` enabled, which is
+# where gstreamer1.0-libav lives there, or a minimal image with recommends turned
+# off -- can still install the package and browse files. (On Debian it is in
+# `main`.) A missing decoder must not be an install failure.
 if(MOLE_HAVE_MULTIMEDIA)
     set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "gstreamer1.0-plugins-good, gstreamer1.0-libav")
 endif()
