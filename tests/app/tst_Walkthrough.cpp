@@ -4871,6 +4871,7 @@ void TestWalkthrough::everyFeatureAndPreviewHasAPictureInTheGuide()
     // produces a new picture fails on its absence and never gets to copy it in.
     const QDir images(m_shots.isEmpty() ? QStringLiteral(MOLE_GUIDE_IMAGE_DIR) : m_shots);
     QVERIFY2(images.exists(), qPrintable(images.path()));
+    const QDir committed(QStringLiteral(MOLE_GUIDE_IMAGE_DIR));
 
     QStringList undocumented;
     QStringList missing;
@@ -4882,7 +4883,14 @@ void TestWalkthrough::everyFeatureAndPreviewHasAPictureInTheGuide()
             undocumented.append(id);
             return;
         }
-        if (!images.exists(*picture + QStringLiteral(".png")))
+        // A picture this build cannot take is looked for where it was committed: its
+        // step skips and leaves the guide's copy as it is, so asking this run's
+        // output for it fails a screenshot run -- the one the release gate makes --
+        // over a picture nobody expected it to produce. A build that can take it is
+        // still held to a fresh one. See MOLE-464.
+        const bool cannotTake = id == QLatin1String("mole.preview.parquet") && !fixtures::parquetAvailable();
+        const QDir& where = cannotTake ? committed : images;
+        if (!where.exists(*picture + QStringLiteral(".png")))
             missing.append(QStringLiteral("%1 -> %2.png").arg(id, *picture));
     };
 
