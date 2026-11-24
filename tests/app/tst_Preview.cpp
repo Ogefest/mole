@@ -29,6 +29,7 @@
 
 #include "core/CoreMetaTypes.h"
 #include "core/data/FileType.h"
+#include "core/data/ParquetModule.h"
 #include "core/tasks/TaskManager.h"
 #include "core/text/ImportJsonLinesTask.h"
 #include "core/vfs/VfsManager.h"
@@ -839,16 +840,22 @@ void TestPreview::aFileThatIsNotWhatItsNameSaysStepsDownRatherThanShowingNothing
     };
 
     // Each one is claimed on its name and is not what the name says.
-    const QList<Case> pretenders {
+    QList<Case> pretenders {
         // A Berkeley DB header, which is what a .db often really is.
         { QStringLiteral("index.sqlite"), QByteArray("\x00\x06\x15\x61", 4) + QByteArray(600, '\x11'),
             QStringLiteral("mole.preview.sqlite") },
-        { QStringLiteral("rows.parquet"), QByteArray("not a parquet file at all") + QByteArray(600, 'x'),
-            QStringLiteral("mole.preview.parquet") },
         // PostScript under a PDF's name, which is the classic one.
         { QStringLiteral("report.pdf"), QByteArrayLiteral("%!PS-Adobe-3.0\n") + QByteArray(600, 'p'),
             QStringLiteral("mole.preview.pdf") },
     };
+    // Parquet only where its module loaded: without one nothing claims a .parquet,
+    // it opens as file information directly, and there is no step down to say why.
+    // That is the right behaviour and not this case. See MOLE-462.
+    if (parquetModule::current().loaded) {
+        pretenders.append(
+            { QStringLiteral("rows.parquet"), QByteArray("not a parquet file at all") + QByteArray(600, 'x'),
+                QStringLiteral("mole.preview.parquet") });
+    }
 
     for (const Case& pretender : pretenders) {
         QVERIFY(m_tree->writeFile(pretender.fileName, pretender.contents));
