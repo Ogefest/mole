@@ -126,7 +126,7 @@ void TestDocumentMetadata::anOfficeDocumentNamesItsAuthorAndCounts()
     // Compared with the locale's own short form of the fixture's date rather than
     // searched for "2026": the short form has a two-digit year in en_US, so the
     // search passed in CI's C locale and failed on a workstation. See MOLE-463.
-    const QDateTime created(QDate(2026, 3, 14), QTime(9, 31), QTimeZone::UTC);
+    const QDateTime created(QDate(2026, 3, 14), QTime(9, 31), QTimeZone::utc());
     QCOMPARE(factNamed(facts, QStringLiteral("Created")), QLocale().toString(created, QLocale::ShortFormat));
     QVERIFY(!factNamed(facts, QStringLiteral("Created")).contains(QLatin1Char('T')));
     QVERIFY(!factNamed(facts, QStringLiteral("Modified")).isEmpty());
