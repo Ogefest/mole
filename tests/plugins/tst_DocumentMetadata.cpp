@@ -18,6 +18,7 @@
 #include <QPageSize>
 #include <QPainter>
 #include <QPdfWriter>
+#include <QTimeZone>
 
 using namespace mole;
 using namespace mole::test;
@@ -122,8 +123,11 @@ void TestDocumentMetadata::anOfficeDocumentNamesItsAuthorAndCounts()
     QCOMPARE(factNamed(facts, QStringLiteral("Pages")), QStringLiteral("12"));
 
     // A date is said the way a reader says one, not as the document stores it.
-    QVERIFY2(factNamed(facts, QStringLiteral("Created")).contains(QStringLiteral("2026")),
-        qPrintable(factNamed(facts, QStringLiteral("Created"))));
+    // Compared with the locale's own short form of the fixture's date rather than
+    // searched for "2026": the short form has a two-digit year in en_US, so the
+    // search passed in CI's C locale and failed on a workstation. See MOLE-463.
+    const QDateTime created(QDate(2026, 3, 14), QTime(9, 31), QTimeZone::UTC);
+    QCOMPARE(factNamed(facts, QStringLiteral("Created")), QLocale().toString(created, QLocale::ShortFormat));
     QVERIFY(!factNamed(facts, QStringLiteral("Created")).contains(QLatin1Char('T')));
     QVERIFY(!factNamed(facts, QStringLiteral("Modified")).isEmpty());
 }
@@ -145,7 +149,9 @@ void TestDocumentMetadata::anOpenDocumentNamesTheOdfEquivalents()
     QCOMPARE(factNamed(facts, QStringLiteral("Application")), QStringLiteral("LibreOffice/24.2"));
     QCOMPARE(factNamed(facts, QStringLiteral("Pages")), QStringLiteral("4"));
     QCOMPARE(factNamed(facts, QStringLiteral("Words")), QStringLiteral("812"));
-    QVERIFY(factNamed(facts, QStringLiteral("Created")).contains(QStringLiteral("2026")));
+    // A date with no zone is the reader's local time, and said in the reader's locale.
+    const QDateTime created(QDate(2026, 1, 8), QTime(11, 0));
+    QCOMPARE(factNamed(facts, QStringLiteral("Created")), QLocale().toString(created, QLocale::ShortFormat));
 }
 
 void TestDocumentMetadata::aPlainZipContributesNothing()

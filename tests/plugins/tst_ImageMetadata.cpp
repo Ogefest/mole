@@ -3,8 +3,10 @@
 #include "support/MoleTestMain.h"
 
 #include <QBuffer>
+#include <QDateTime>
 #include <QImage>
 #include <QImageWriter>
+#include <QLocale>
 #include <QPainter>
 
 #include <cstring>
@@ -98,8 +100,11 @@ void TestImageMetadata::readsEveryTagACameraWrote()
     QCOMPARE(factNamed(facts, QStringLiteral("Flash")), QStringLiteral("fired"));
     QCOMPARE(factNamed(facts, QStringLiteral("Orientation")), QStringLiteral("rotated 90° clockwise"));
     QCOMPARE(factNamed(facts, QStringLiteral("Software")), QStringLiteral("Mole 1.0"));
-    QVERIFY2(factNamed(facts, QStringLiteral("Taken")).contains(QStringLiteral("2026")),
-        qPrintable(factNamed(facts, QStringLiteral("Taken"))));
+    // Said in the reader's locale, so compared with that locale's short form of the
+    // date the fixture wrote rather than searched for "2026": in en_US the short
+    // form has a two-digit year. See MOLE-463.
+    const QDateTime taken(QDate(2026, 3, 14), QTime(9, 31, 7));
+    QCOMPARE(factNamed(facts, QStringLiteral("Taken")), QLocale().toString(taken, QLocale::ShortFormat));
 
     // Numbers, and nothing looked up: a preview must put nothing on the network.
     QCOMPARE(factNamed(facts, QStringLiteral("Position")), QStringLiteral("52.22969, 21.01219"));
