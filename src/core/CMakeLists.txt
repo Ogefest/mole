@@ -33,6 +33,8 @@ add_library(mole_core STATIC
     vfs/SystemVolumes.cpp
     vfs/MountTableWatch.h
     vfs/MountTableWatch.cpp
+    vfs/SystemVolumeMounts.h
+    vfs/SystemVolumeMounts.cpp
     vfs/backends/LocalFileSystem.h
     vfs/backends/LocalFileSystem.cpp
     vfs/backends/MemoryFileSystem.h

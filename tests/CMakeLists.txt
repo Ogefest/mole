@@ -271,6 +271,7 @@ set_target_properties(compare-shots PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_
 mole_add_test(tst_VfsUri            SOURCES core/tst_VfsUri.cpp)
 mole_add_test(tst_SystemVolumes     SOURCES core/tst_SystemVolumes.cpp)
 mole_add_test(tst_MountTableWatch   SOURCES core/tst_MountTableWatch.cpp)
+mole_add_test(tst_SystemVolumeMounts SOURCES core/tst_SystemVolumeMounts.cpp)
 mole_add_test(tst_NameRules         SOURCES core/tst_NameRules.cpp)
 mole_add_test(tst_DateWords         SOURCES core/tst_DateWords.cpp)
 # Qt6::Gui, because one case asks Qt what a StandardKey means and that answer

@@ -65,6 +65,7 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-11-25 #MOLE-429 A drive plugged in while Mole is running appears in the drive list, and one unplugged stops being offered.
 2026-11-25 #MOLE-467 Dates are shown as year-month-day, such as 2026-03-14 09:31, in every locale, so a year is never two digits and a day is never mistaken for a month.
 
 ## 0.1.5 — released 2026-11-25

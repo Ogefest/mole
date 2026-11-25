@@ -30,6 +30,8 @@ namespace mole {
 
 class VfsManager;
 class TaskManager;
+class SystemVolumeMounts;
+class MountTableWatch;
 class IndexDatabase;
 class IndexSummary;
 class EventBus;
@@ -757,6 +759,11 @@ private:
 
     VfsManager* m_vfs = nullptr;
     TaskManager* m_taskManager = nullptr;
+    /// The drives the operating system has mounted, kept in step with the
+    /// mount table while Mole runs. Both are children; both are null under a
+    /// fixed MOLE_DRIVES list, which is not this machine's table. See MOLE-429.
+    SystemVolumeMounts* m_systemVolumes = nullptr;
+    MountTableWatch* m_mountWatch = nullptr;
     /// Not a QObject, and it must outlive every task that writes to it, so its
     /// lifetime is managed explicitly rather than by the QObject tree.
     std::unique_ptr<IndexDatabase> m_index;

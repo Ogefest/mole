@@ -23,6 +23,7 @@
 #include "core/analysis/AnalysisStore.h"
 #include "core/automation/ScheduleStore.h"
 #include "core/credentials/SecretStore.h"
+#include "core/diagnostics/Diagnostics.h"
 #include "core/events/EventBus.h"
 #include "core/index/IndexDatabase.h"
 #include "core/index/IndexSummary.h"
@@ -34,7 +35,9 @@
 #include "core/tasks/SweepLeftoversTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/IFileSystemFactory.h"
+#include "core/vfs/MountTableWatch.h"
 #include "core/vfs/RemoteRegistry.h"
+#include "core/vfs/SystemVolumeMounts.h"
 #include "core/vfs/SystemVolumes.h"
 #include "core/vfs/VfsManager.h"
 
@@ -734,15 +737,33 @@ void AppController::mountDefaultDrives()
     // application from the one they were written against -- and the benefit
     // would only reach the platforms without a mount table, which are the ones
     // this checkout cannot measure. TODO.md records that half.
-    for (const SystemVolume& volume : SystemVolumes::enumerate()) {
-        // The volume carrying home is in that list now, and it was not before:
-        // on a machine where /home is its own dataset it is a real disk holding
-        // everything the user owns. It is the same place as the row above, so it
-        // gets one row, under the name people look for rather than the name the
-        // dataset happens to have.
-        if (volume.rootPath == home)
-            continue;
-        mountLocal(volume.name, volume.rootPath);
+    //
+    // The volume carrying home is skipped there: on a machine where /home is its
+    // own dataset it is a real disk holding everything the user owns, and it is
+    // the same place as the row above, so it gets one row, under the name people
+    // look for rather than the name the dataset happens to have.
+    m_systemVolumes = new SystemVolumeMounts(
+        m_vfs,
+        [factory](const QString&) {
+            QString error;
+            return factory->create({}, &error);
+        },
+        home, this);
+    m_systemVolumes->sync();
+
+    // And again whenever the table changes, so a stick plugged in while Mole is
+    // running appears and one pulled out stops being offered. A watch rather
+    // than a timer: on Linux the table says when it changed, and while nothing
+    // is mounted this costs nothing. Elsewhere there is no table to watch, and
+    // polling what is read instead would be MOLE-361 on a schedule, so the list
+    // stays as it was at startup there and the log says why. See MOLE-429 and
+    // ADR-0104.
+    m_mountWatch = new MountTableWatch(hostPlatform(), this);
+    if (m_mountWatch->isWatching()) {
+        connect(m_mountWatch, &MountTableWatch::changed, m_systemVolumes, &SystemVolumeMounts::sync);
+    } else {
+        qCInfo(
+            driveLog, "drives mounted later are not noticed: %s", qPrintable(m_mountWatch->whyNotWatching()));
     }
 }
 

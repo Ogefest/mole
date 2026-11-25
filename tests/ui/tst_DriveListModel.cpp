@@ -9,6 +9,7 @@
 #include "core/tasks/QuerySpaceTask.h"
 #include "core/tasks/TaskManager.h"
 #include "core/vfs/RemoteRegistry.h"
+#include "core/vfs/SystemVolumeMounts.h"
 #include "core/vfs/SystemVolumes.h"
 #include "core/vfs/backends/LocalFileSystem.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
@@ -159,6 +160,7 @@ private slots:
     // ---- what a drive that stopped answering costs -------------------------
     void onlyOneSpaceQueryIsEverOutPerMount();
     void addingAMountAsksNothingOfTheDisksAlreadyMeasured();
+    void aDrivePluggedInIsTheOnlyOneAskedHowFullItIs();
 
 private:
     /// Adds a mount and waits for its space answer to arrive, if one is coming.
@@ -1230,6 +1232,54 @@ void TestDriveListModel::addingAMountAsksNothingOfTheDisksAlreadyMeasured()
     // The minute timer is the thing that re-asks, and it asks everything.
     m_model->refreshSpace();
     QVERIFY(waitFor([&counted] { return counted->timesAsked() == 2; }));
+}
+
+/// The same rule, reached the way a stick plugged in mid-run reaches it: the mount
+/// table changes, SystemVolumeMounts mounts the difference, and the list reloads.
+/// The drives already measured are not asked again; only the new one is. Held
+/// offline through the enumerator seam. See MOLE-429 and MOLE-362.
+void TestDriveListModel::aDrivePluggedInIsTheOnlyOneAskedHowFullItIs()
+{
+    QList<SystemVolume> table;
+    SystemVolumes::setEnumerator([&table] { return table; });
+    const auto restore = qScopeGuard([] { SystemVolumes::setEnumerator(nullptr); });
+
+    auto gate = std::make_shared<QSemaphore>();
+    gate->release(64); // every drive answers; how often each is asked is the point
+    QHash<QString, std::shared_ptr<StalledFileSystem>> drives;
+    SystemVolumeMounts volumes(
+        m_vfs.get(),
+        [&](const QString& rootPath) {
+            auto fs = std::make_shared<StalledFileSystem>(gate);
+            drives.insert(rootPath, fs);
+            return fs;
+        },
+        QStringLiteral("/home/tester"));
+
+    const auto disk = [](const QString& root, const QString& device, const QString& type) {
+        SystemVolume volume;
+        volume.rootPath = root;
+        volume.device = device;
+        volume.fileSystemType = type;
+        return volume;
+    };
+    table = { disk(QStringLiteral("/"), QStringLiteral("/dev/sda2"), QStringLiteral("ext4")),
+        disk(QStringLiteral("/mnt/data"), QStringLiteral("/dev/sdc1"), QStringLiteral("ext4")) };
+    volumes.sync();
+    QVERIFY(waitFor([&] {
+        return drives.value(QStringLiteral("/"))->timesAsked() == 1
+            && drives.value(QStringLiteral("/mnt/data"))->timesAsked() == 1;
+    }));
+
+    table.append(
+        disk(QStringLiteral("/media/tester/STICK"), QStringLiteral("/dev/sdb1"), QStringLiteral("vfat")));
+    volumes.sync();
+    QCOMPARE(m_model->rowCount(), 3);
+    QVERIFY(waitFor([&] { return drives.value(QStringLiteral("/media/tester/STICK"))->timesAsked() == 1; }));
+    drainEvents();
+
+    QCOMPARE(drives.value(QStringLiteral("/"))->timesAsked(), 1);
+    QCOMPARE(drives.value(QStringLiteral("/mnt/data"))->timesAsked(), 1);
 }
 
 void TestDriveListModel::everyRowHasAGlyph()

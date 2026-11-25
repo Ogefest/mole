@@ -327,9 +327,6 @@ QString SystemVolumes::displayName(
 
 QList<SystemVolume> SystemVolumes::enumerate()
 {
-    if (injected())
-        return injected()();
-
     QList<SystemVolume> out;
     QSet<QString> seenRoots;
 
@@ -342,8 +339,20 @@ QList<SystemVolume> SystemVolumes::enumerate()
     // keep the old path, and are the platforms this cannot be measured on; the
     // callers do not wait for either any more, which is the other half. See
     // MOLE-361.
+    //
+    // A test's own table stands in for both, before the filter rather than after
+    // it: what a test hands in is what a machine would have mounted, and the
+    // rules below are part of what it is asking about. A loopback for a snap
+    // package fed through here is dropped exactly as the real one is. See
+    // MOLE-429.
     bool readTheTable = false;
-    QList<SystemVolume> candidates = volumesFromProc(&readTheTable);
+    QList<SystemVolume> candidates;
+    if (injected()) {
+        candidates = injected()();
+        readTheTable = true;
+    } else {
+        candidates = volumesFromProc(&readTheTable);
+    }
     if (!readTheTable) {
         for (const QStorageInfo& storage : QStorageInfo::mountedVolumes()) {
             if (!storage.isValid() || !storage.isReady())

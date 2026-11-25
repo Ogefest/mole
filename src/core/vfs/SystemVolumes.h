@@ -46,12 +46,13 @@ public:
     static QList<SystemVolume> enumerate();
 
     /// Replaces what enumerate() reads, for a test that needs a machine it does
-    /// not have -- a hung mount, a ZFS pile, a Windows drive letter.
+    /// not have -- a hung mount, a ZFS pile, a stick plugged in mid-run.
     ///
-    /// A seam rather than a mock of the operating system: the rules above are
-    /// pure and already tested directly, and what this covers is how often the
-    /// list is asked for and on which thread. Pass nullptr to go back to the
-    /// real one.
+    /// A seam rather than a mock of the operating system. It stands in for the
+    /// mount table, *before* the filter: the volumes handed back go through
+    /// isInteresting(), displayName() and the ordering exactly as the real
+    /// table's do, so a snap loopback fed through here produces no drive, as it
+    /// would not on the machine. Pass nullptr to go back to the real one.
     using Enumerator = std::function<QList<SystemVolume>()>;
     static void setEnumerator(Enumerator enumerator);
 
