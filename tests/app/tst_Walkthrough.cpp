@@ -237,6 +237,12 @@ private:
     /// already had one keeps its old viewer for a moment -- and handing that back
     /// gives a test an object the tab is about to destroy under it.
     QObject* viewerOf(PreviewTabController* preview, const QString& uri = {});
+    /// The name of the viewer an open preview chose, once it has chosen one.
+    /// F3 opens the tab at once and the viewer is picked a moment later, after
+    /// the drive has answered about the file, so an empty name means "not yet"
+    /// rather than "none". Reading it in the same breath as the key is what
+    /// failed the Fast tier on the v0.1.5 tag (MOLE-466).
+    QString viewerNameOf(PreviewTabController* preview);
     /// Puts the cursor on a folder in the current listing and opens it with
     /// Return. Named rather than assumed: these tests used to press Return on
     /// whatever row 0 happened to be, which was "documents" only for as long as
@@ -547,6 +553,14 @@ QObject* TestWalkthrough::viewerOf(PreviewTabController* preview, const QString&
     return preview->viewer();
 }
 
+QString TestWalkthrough::viewerNameOf(PreviewTabController* preview)
+{
+    if (!preview)
+        return {};
+    m_harness->until([preview] { return !preview->viewerName().isEmpty(); });
+    return preview->viewerName();
+}
+
 void TestWalkthrough::enterFolder(const QString& name)
 {
     const int row = pane()->files()->rowOfUri(pane()->currentUri() + QLatin1Char('/') + name);
@@ -603,14 +617,14 @@ void TestWalkthrough::browsesAndPreviews()
     m_harness->key(Qt::Key_F3);
     auto* preview = qobject_cast<PreviewTabController*>(m_harness->app()->tabs()->currentController());
     QVERIFY2(preview, "F3 must open a preview tab");
-    QCOMPARE(preview->viewerName(), QStringLiteral("Table"));
+    QCOMPARE(viewerNameOf(preview), QStringLiteral("Table"));
     QVERIFY(m_harness->until([preview] { return preview->siblingCount() > 0; }));
     m_harness->screenshot(QStringLiteral("02-preview-csv"));
 
     // Right steps to the next file in the folder, and the viewer changes with it.
     m_harness->key(Qt::Key_Right);
     QVERIFY(m_harness->until([preview] { return preview->fileName() == QStringLiteral("report.txt"); }));
-    QCOMPARE(preview->viewerName(), QStringLiteral("Text"));
+    QCOMPARE(viewerNameOf(preview), QStringLiteral("Text"));
     m_harness->screenshot(QStringLiteral("03-preview-text"));
 }
 
@@ -1342,7 +1356,7 @@ void TestWalkthrough::spaceMeansTheSameThingInEveryViewer()
 
     auto* preview = qobject_cast<PreviewTabController*>(m_harness->app()->tabs()->currentController());
     QVERIFY2(preview, "F3 must open a preview tab");
-    QCOMPARE(preview->viewerName(), QStringLiteral("Text"));
+    QCOMPARE(viewerNameOf(preview), QStringLiteral("Text"));
     QVERIFY(m_harness->until([preview] { return preview->siblingCount() > 0; }));
     const QString started = preview->fileName();
 
@@ -4568,7 +4582,7 @@ void TestWalkthrough::duplicatesFindsTheSamePictureThreeTimes()
 void TestWalkthrough::anImageIsFittedToThePane()
 {
     PreviewTabController* preview = previewOf(QStringLiteral("photos/sunset.png"));
-    QCOMPARE(preview->viewerName(), QStringLiteral("Image"));
+    QCOMPARE(viewerNameOf(preview), QStringLiteral("Image"));
     // The viewer hands QML a url to load rather than the pixels, so "it has one"
     // is the state to wait for -- what QML then does with it is what the picture
     // shows.
@@ -4606,7 +4620,7 @@ void TestWalkthrough::anImageIsFittedToThePane()
 void TestWalkthrough::aSqliteFileOpensItsTables()
 {
     PreviewTabController* preview = previewOf(QStringLiteral("exports/catalogue.sqlite"));
-    QCOMPARE(preview->viewerName(), QStringLiteral("Database"));
+    QCOMPARE(viewerNameOf(preview), QStringLiteral("Database"));
 
     QObject* viewer = preview->viewer();
     QVERIFY(viewer);
@@ -4622,7 +4636,7 @@ void TestWalkthrough::aParquetFileOpensItsColumns()
         QSKIP("this build has no Parquet support; the committed picture stays as it is");
 
     PreviewTabController* preview = previewOf(QStringLiteral("exports/rows.parquet"));
-    QCOMPARE(preview->viewerName(), QStringLiteral("Parquet"));
+    QCOMPARE(viewerNameOf(preview), QStringLiteral("Parquet"));
 
     QObject* viewer = preview->viewer();
     QVERIFY(viewer);
@@ -4651,7 +4665,7 @@ void TestWalkthrough::aFileNothingClaimsStillReportsItself()
         QStringLiteral("exports/nothing-in-it.dat"), QDateTime(QDate(2026, 3, 10), QTime(7, 19))));
 
     PreviewTabController* preview = previewOf(QStringLiteral("exports/nothing-in-it.dat"));
-    QCOMPARE(preview->viewerName(), QStringLiteral("File information"));
+    QCOMPARE(viewerNameOf(preview), QStringLiteral("File information"));
     QVERIFY(preview->viewer());
 
     // The facts are this viewer's content, so it shows them in its own body
@@ -4669,7 +4683,7 @@ void TestWalkthrough::aFileIsWhatIsInItRatherThanWhatItIsCalled()
     // No suffix and no glob for the name, so nothing but the bytes says this is
     // text -- and once they have, the name says which language to colour it as.
     PreviewTabController* preview = previewOf(QStringLiteral("code/Dockerfile"));
-    QCOMPARE(preview->viewerName(), QStringLiteral("Text"));
+    QCOMPARE(viewerNameOf(preview), QStringLiteral("Text"));
 
     auto* viewer = qobject_cast<TextPreviewController*>(viewerOf(preview));
     QVERIFY(viewer);
@@ -4686,7 +4700,7 @@ void TestWalkthrough::theBytesOfAFileNothingElseCanShow()
     // The viewer of last resort, and the only one that always works. Nothing
     // knows this format, so what is honest to show is what is in the file.
     PreviewTabController* preview = previewOf(QStringLiteral("exports/dump.bin"));
-    QCOMPARE(preview->viewerName(), QStringLiteral("Bytes"));
+    QCOMPARE(viewerNameOf(preview), QStringLiteral("Bytes"));
 
     auto* viewer = qobject_cast<HexPreviewController*>(viewerOf(preview));
     QVERIFY(viewer);
