@@ -131,6 +131,9 @@ void DragSource::stage(const QList<VfsUri>& rows, const QHash<QString, FileEntry
         request.targetFileSystem = std::make_shared<LocalFileSystem>();
         request.sources = sources;
         request.targetDirectory = VfsUri::fromLocalPath(targetDirectory);
+        // A drive that goes mid-copy is said to have gone. See MOLE-431.
+        request.driveGone
+            = TransferTask::driveCheckFor(m_services.vfs, sources.first(), request.targetDirectory);
         request.mode = TransferTask::Mode::Copy;
         // A copy that is here already is a stale one being replaced on purpose:
         // freshness was checked before anything was queued.

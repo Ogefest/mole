@@ -6,9 +6,12 @@
 #include <QSet>
 #include <QStringList>
 
+#include <functional>
 #include <optional>
 
 namespace mole {
+
+class VfsManager;
 
 /// Copies or moves entries between any two mounts.
 ///
@@ -49,7 +52,22 @@ public:
         /// ignored when there is more than one source, since there would be
         /// nothing sensible to call the rest.
         QString targetName;
+        /// Asked when a file fails: the root of a drive this transfer depends on
+        /// that is no longer there, if one has gone. A stick pulled out mid-copy
+        /// otherwise fails as a run of files that could not be read, which is the
+        /// wrong thing to tell somebody. With an answer, the transfer stops and
+        /// fails once, naming the drive. Unset, nothing is asked. See
+        /// driveCheckFor() and MOLE-431.
+        std::function<std::optional<VfsUri>()> driveGone;
     };
+
+    /// A driveGone for a transfer between `source` and `target`: the drive under
+    /// either has gone when its mount has left `vfs`, or when the drive can no
+    /// longer say anything about its own root. The mounts are noted now, so a
+    /// drive that comes back under another mount does not count as still there
+    /// for this transfer. `vfs` must outlive the task, as every service does.
+    static std::function<std::optional<VfsUri>()> driveCheckFor(
+        VfsManager* vfs, const VfsUri& source, const VfsUri& target);
 
     explicit TransferTask(Request request, QObject* parent = nullptr);
 

@@ -456,6 +456,9 @@ void BrowserController::startTransfer(bool move, const QString& targetName, cons
     request.targetFileSystem = m_services.vfs->resolve(targetDir);
     request.sources = sources;
     request.targetDirectory = targetDir;
+    // A stick pulled out mid-copy fails as the drive going, not as a run of
+    // files that could not be read. See MOLE-431.
+    request.driveGone = TransferTask::driveCheckFor(m_services.vfs, sources.first(), targetDir);
     request.mode = move ? TransferTask::Mode::Move : TransferTask::Mode::Copy;
     request.onConflict = conflict == QLatin1String("overwrite") ? TransferTask::Conflict::Overwrite
         : conflict == QLatin1String("skip")                     ? TransferTask::Conflict::Skip

@@ -88,6 +88,7 @@ BrowserPaneController::BrowserPaneController(PluginServices services, QObject* p
     if (m_services.vfs) {
         connect(
             m_services.vfs, &VfsManager::mountsChanged, this, &BrowserPaneController::retryIfADriveArrived);
+        connect(m_services.vfs, &VfsManager::mountRemoved, this, &BrowserPaneController::noteMountRemoved);
     }
 
     // Every write Mole performs already says so here, including its own copies and
@@ -105,10 +106,53 @@ BrowserPaneController::BrowserPaneController(PluginServices services, QObject* p
     }
 }
 
+void BrowserPaneController::noteMountRemoved(const QString& mountId)
+{
+    if (mountId.isEmpty() || mountId != m_currentMountId || !m_current.isValid())
+        return;
+
+    // Kept, not cleared: the location is still what this pane was asked to show,
+    // and the drive may well come back. What it must not do is go on showing the
+    // listing of a disk that is no longer there, or read as an empty or
+    // unreadable folder -- a read failure taken for an answer is the fault this
+    // project keeps paying for. Said the way a pane whose drive is missing at
+    // load says it, and retried the same way when a mount appears. See MOLE-351.
+    m_lostMountId = m_currentMountId;
+    m_lostMountRoot = m_currentMountRoot;
+    m_currentMountId.clear();
+    // A listing still out was asked of the disk that went, and whatever it
+    // brings back -- rows, or a read error -- must not land over this.
+    if (m_pending) {
+        m_pending->requestCancel();
+        m_pending.clear();
+    }
+    setLoading(false);
+    m_files->clear();
+    setErrorText(
+        QStringLiteral("%1 is not there any more -- it was unplugged or unmounted. This folder comes back "
+                       "when the drive does.")
+            .arg(m_currentMountName.isEmpty() ? m_lostMountRoot.toString() : m_currentMountName));
+    m_waitingForADrive = m_current;
+}
+
 void BrowserPaneController::retryIfADriveArrived()
 {
     if (!m_waitingForADrive.isValid() || m_waitingForADrive != m_current)
         return;
+
+    // The same disk back under its own mount id, possibly at another mount point:
+    // the automounter's BACKUP1. The pane follows it there, to the same folder
+    // inside it, rather than waiting for a place the disk will not come back to.
+    if (!m_lostMountId.isEmpty() && m_services.vfs) {
+        const Mount back = m_services.vfs->mount(m_lostMountId);
+        if (!back.id.isEmpty() && back.root != m_lostMountRoot && m_current.isWithin(m_lostMountRoot)) {
+            QString inside = m_current.path().mid(m_lostMountRoot.path().size());
+            while (inside.startsWith(QLatin1Char('/')))
+                inside.remove(0, 1);
+            m_current = inside.isEmpty() ? back.root : back.root.child(inside);
+            m_waitingForADrive = m_current;
+        }
+    }
     // Some other drive's mount changed. Asked rather than attempted, so a pane
     // waiting on a drive nobody is connecting does not re-list on every mount.
     if (!m_services.vfs || !m_services.vfs->resolve(m_waitingForADrive))
@@ -851,6 +895,9 @@ void BrowserPaneController::dropHere(const QStringList& urls, const QString& con
     request.targetFileSystem = std::move(target);
     request.sources = rows;
     request.targetDirectory = m_current;
+    // A drive that goes mid-copy is said to have gone. See MOLE-431.
+    if (!rows.isEmpty())
+        request.driveGone = TransferTask::driveCheckFor(m_services.vfs, rows.first(), m_current);
     // Never Move, whatever the source offered. Deleting somebody else's file
     // because of a gesture that looks exactly like the one that copies is the
     // one outcome a drop may not have -- see ADR-0040.
@@ -1043,7 +1090,11 @@ void BrowserPaneController::load(const VfsUri& uri, bool recordHistory)
 
     FileSystemPtr fs = m_services.vfs->resolve(uri);
     if (!fs) {
-        setErrorText(QStringLiteral("No drive is mounted for %1").arg(uri.toString()));
+        // A drive that went from under this pane has already said so, in words
+        // that say more than this; a Refresh while it is gone keeps them.
+        m_currentMountId.clear();
+        if (m_lostMountId.isEmpty() || !uri.isWithin(m_lostMountRoot))
+            setErrorText(QStringLiteral("No drive is mounted for %1").arg(uri.toString()));
         m_files->clear();
         // Nobody else knows this pane wanted a drive. Said out loud so whoever can
         // arrange one does -- connecting a configured drive is AppController's job
@@ -1054,6 +1105,15 @@ void BrowserPaneController::load(const VfsUri& uri, bool recordHistory)
             m_services.events->postDriveNeeded(uri);
         return;
     }
+
+    // Which mount this is, so the pane can tell when that drive goes. See
+    // noteMountRemoved().
+    const Mount on = m_services.vfs->mountForUri(uri);
+    m_currentMountId = on.id;
+    m_currentMountRoot = on.root;
+    m_currentMountName = on.displayName;
+    m_lostMountId.clear();
+    m_lostMountRoot = VfsUri();
 
     setErrorText({});
     setLoading(true);

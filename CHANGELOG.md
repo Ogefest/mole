@@ -65,6 +65,8 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-11-25 #MOLE-431 A drive unplugged while Mole is using it says so instead of looking like an empty folder, and a folder on it comes back when the drive does, even at another mount point.
+2026-11-25 #MOLE-431 A copy from or to a drive that is unplugged stops and says the drive went away, instead of listing every file after it as unreadable.
 2026-11-25 #MOLE-430 A removable drive keeps its name and its place in the list across being unplugged and plugged back in, and is called by the label written on it.
 2026-11-25 #MOLE-429 A drive plugged in while Mole is running appears in the drive list, and one unplugged stops being offered.
 2026-11-25 #MOLE-467 Dates are shown as year-month-day, such as 2026-03-14 09:31, in every locale, so a year is never two digits and a day is never mistaken for a month.

@@ -12,6 +12,8 @@
 #include "core/vcs/ReadStatusTask.h"
 #include "core/vcs/Repository.h"
 #include "core/vfs/IFileSystemFactory.h"
+#include "core/vfs/SystemVolumeMounts.h"
+#include "core/vfs/SystemVolumes.h"
 #include "core/vfs/VfsManager.h"
 #include "core/vfs/backends/LocalFileSystem.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
@@ -65,6 +67,12 @@ class TestBrowserPaneController : public QObject
     Q_OBJECT
 
 private slots:
+    // --- a drive that vanishes under the pane (MOLE-431) ----------------------
+    void aPaneOnADriveThatVanishesKeepsItsPlaceAndSaysTheDriveIsGone();
+    void aDriveThatComesBackSomewhereElseTakesThePaneBackToTheSameFolder();
+    void aDriveThatComesBackInTheSamePlaceIsListedAgain();
+    void anotherDriveGoingLeavesThePaneAlone();
+
     void init();
     void cleanup();
 
@@ -2403,6 +2411,140 @@ void TestBrowserPaneController::goingBackIntoADriveWhoseMountWasPrunedRebuildsIt
     pane->goBack();
     QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() == 1; }));
     QCOMPARE(pane->currentUri(), inside);
+    QVERIFY(pane->errorText().isEmpty());
+}
+
+// ---------------------------------------- a drive that vanishes under the pane
+
+namespace {
+
+/// A stick, offline: a mount table the test hands in, a /dev/disk of its own so
+/// the stick has a UUID, and a filesystem per mount point holding docs/a.txt
+/// under it. See MOLE-429, MOLE-430 and MOLE-431.
+struct PluggableStick
+{
+    QTemporaryDir disks;
+    QList<SystemVolume> table;
+    std::unique_ptr<SystemVolumeMounts> volumes;
+
+    explicit PluggableStick(VfsManager* vfs)
+    {
+        for (const char* dir : { "dev", "disk/by-uuid", "disk/by-label" })
+            QDir(disks.path()).mkpath(QLatin1String(dir));
+        SystemVolumes::setDiskDirectory(disks.filePath(QStringLiteral("disk")));
+        SystemVolumes::setEnumerator([this] { return table; });
+        volumes = std::make_unique<SystemVolumeMounts>(
+            vfs,
+            [](const QString& root) {
+                auto fs = std::make_shared<MemoryFileSystem>();
+                fs->addFile(root + QStringLiteral("/docs/a.txt"), QByteArray("aaa"));
+                fs->addFile(root + QStringLiteral("/docs/b.txt"), QByteArray("bb"));
+                return fs;
+            },
+            QStringLiteral("/home/tester"));
+    }
+    ~PluggableStick()
+    {
+        volumes.reset();
+        SystemVolumes::setEnumerator(nullptr);
+        SystemVolumes::setDiskDirectory({});
+    }
+
+    /// The stick, as `node`, mounted at `root`.
+    void plugIn(const QString& root, const QString& node = QStringLiteral("sdb1"))
+    {
+        QFile device(disks.filePath(QStringLiteral("dev/") + node));
+        device.open(QIODevice::WriteOnly);
+        const QString link = disks.filePath(QStringLiteral("disk/by-uuid/0A1B-2C3D"));
+        QFile::remove(link);
+        QFile::link(QStringLiteral("../../dev/") + node, link);
+        SystemVolume volume;
+        volume.rootPath = root;
+        volume.device = device.fileName();
+        volume.fileSystemType = QStringLiteral("vfat");
+        table = { volume };
+        volumes->sync();
+    }
+    void pullOut()
+    {
+        table.clear();
+        volumes->sync();
+    }
+};
+
+} // namespace
+
+void TestBrowserPaneController::aPaneOnADriveThatVanishesKeepsItsPlaceAndSaysTheDriveIsGone()
+{
+    PluggableStick stick(m_vfs);
+    stick.plugIn(QStringLiteral("/media/tester/BACKUP"));
+    BrowserPaneController* pane = paneOn(QStringLiteral("file:///media/tester/BACKUP/docs"));
+    QVERIFY(pane);
+    QCOMPARE(pane->files()->rowCount(), 2);
+
+    stick.pullOut();
+
+    // Where it was, still: the location is what the pane was asked to show.
+    QCOMPARE(pane->currentUri(), QStringLiteral("file:///media/tester/BACKUP/docs"));
+    // Said, and said as the drive going -- not an empty folder, not a folder that
+    // could not be read, not a permission problem.
+    QVERIFY2(pane->errorText().contains(QStringLiteral("not there any more")), qPrintable(pane->errorText()));
+    QVERIFY(pane->errorText().contains(QStringLiteral("BACKUP")));
+    QCOMPARE(pane->files()->rowCount(), 0);
+    QVERIFY(!pane->isLoading());
+
+    // A Refresh while it is gone keeps saying so, rather than swapping to a
+    // message that says less.
+    pane->refresh();
+    QVERIFY(waitFor([pane] { return !pane->isLoading(); }));
+    QVERIFY2(pane->errorText().contains(QStringLiteral("not there any more")), qPrintable(pane->errorText()));
+}
+
+void TestBrowserPaneController::aDriveThatComesBackSomewhereElseTakesThePaneBackToTheSameFolder()
+{
+    // Out and back in, as another node, and the automounter says BACKUP1. It is
+    // the same disk, so the pane follows it to the same folder inside it without
+    // being reopened.
+    PluggableStick stick(m_vfs);
+    stick.plugIn(QStringLiteral("/media/tester/BACKUP"));
+    BrowserPaneController* pane = paneOn(QStringLiteral("file:///media/tester/BACKUP/docs"));
+    QVERIFY(pane);
+    stick.pullOut();
+    QVERIFY(!pane->errorText().isEmpty());
+
+    stick.plugIn(QStringLiteral("/media/tester/BACKUP1"), QStringLiteral("sdc1"));
+
+    QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() == 2; }));
+    QCOMPARE(pane->currentUri(), QStringLiteral("file:///media/tester/BACKUP1/docs"));
+    QVERIFY2(pane->errorText().isEmpty(), qPrintable(pane->errorText()));
+}
+
+void TestBrowserPaneController::aDriveThatComesBackInTheSamePlaceIsListedAgain()
+{
+    PluggableStick stick(m_vfs);
+    stick.plugIn(QStringLiteral("/media/tester/BACKUP"));
+    BrowserPaneController* pane = paneOn(QStringLiteral("file:///media/tester/BACKUP/docs"));
+    QVERIFY(pane);
+    stick.pullOut();
+
+    stick.plugIn(QStringLiteral("/media/tester/BACKUP"));
+    QVERIFY(waitFor([pane] { return !pane->isLoading() && pane->files()->rowCount() == 2; }));
+    QCOMPARE(pane->currentUri(), QStringLiteral("file:///media/tester/BACKUP/docs"));
+    QVERIFY(pane->errorText().isEmpty());
+}
+
+void TestBrowserPaneController::anotherDriveGoingLeavesThePaneAlone()
+{
+    // The pane is on the scratch drive; the stick going is nothing to it.
+    PluggableStick stick(m_vfs);
+    stick.plugIn(QStringLiteral("/media/tester/BACKUP"));
+    BrowserPaneController* pane = paneOn(QStringLiteral("mem:///docs"));
+    QVERIFY(pane);
+    const int rows = pane->files()->rowCount();
+    QVERIFY(rows > 0);
+
+    stick.pullOut();
+    QCOMPARE(pane->files()->rowCount(), rows);
     QVERIFY(pane->errorText().isEmpty());
 }
 

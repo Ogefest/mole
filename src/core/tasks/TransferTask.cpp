@@ -3,6 +3,7 @@
 #include "core/diagnostics/Diagnostics.h"
 #include "core/text/SizeWords.h"
 #include "core/vfs/DirectoryWalker.h"
+#include "core/vfs/VfsManager.h"
 
 #include <QElapsedTimer>
 #include <QLocale>
@@ -34,6 +35,45 @@ TransferTask::TransferTask(Request request, QObject* parent)
     // sidebar has to say so about both of them.
     noteTouching(m_request.sources);
     noteTouching(m_request.targetDirectory);
+}
+
+std::function<std::optional<VfsUri>()> TransferTask::driveCheckFor(
+    VfsManager* vfs, const VfsUri& source, const VfsUri& target)
+{
+    if (!vfs)
+        return {};
+    struct Watched
+    {
+        QString mountId;
+        VfsUri root;
+        FileSystemPtr fileSystem;
+    };
+    QList<Watched> watched;
+    for (const VfsUri& place : { source, target }) {
+        const Mount mount = vfs->mountForUri(place);
+        if (mount.id.isEmpty())
+            continue;
+        if (std::any_of(
+                watched.cbegin(), watched.cend(), [&](const Watched& w) { return w.mountId == mount.id; }))
+            continue;
+        watched.append({ mount.id, mount.root, mount.fileSystem });
+    }
+    return [vfs, watched]() -> std::optional<VfsUri> {
+        for (const Watched& w : watched) {
+            // The mount gone from the table is the plain case: the operating
+            // system said the disk went, and the drive list has already let it
+            // go. Compared by root as well, since a stick plugged back in
+            // elsewhere keeps its mount id but is not where this copy was.
+            const Mount now = vfs->mount(w.mountId);
+            if (now.id.isEmpty() || now.root != w.root)
+                return w.root;
+            // Still in the table but the disk cannot answer about its own root:
+            // pulled out, and the unmount not yet noticed.
+            if (w.fileSystem && !w.fileSystem->stat(w.root).ok())
+                return w.root;
+        }
+        return std::nullopt;
+    };
 }
 
 void TransferTask::recordFailure(const VfsUri& uri, const VfsError& error)
@@ -758,6 +798,23 @@ void TransferTask::run()
         // what was expected, and everything inside it still had its own answer.
         if (outcome != Outcome::Transferred && outcome != Outcome::Merged)
             m_unfinishedSources.insert(job.sourceIndex);
+
+        // A file that failed because its drive went is not a file that could not
+        // be read, and neither is every file after it. Stopped here, failed once,
+        // and named for what happened. A move deletes nothing, since its source
+        // never all arrived, and what did not finish arriving was never given
+        // its real name. See MOLE-431 and MOLE-338.
+        if (outcome == Outcome::Failed && m_request.driveGone) {
+            if (const std::optional<VfsUri> gone = m_request.driveGone()) {
+                fail(VfsError::make(VfsError::IoError,
+                    QStringLiteral(
+                        "The drive at %1 went away during the transfer; %2 of %3 file(s) had arrived")
+                        .arg(gone->toString())
+                        .arg(m_copied)
+                        .arg(jobs.size())));
+                return;
+            }
+        }
 
         // Whatever the outcome, this job is no longer in flight, so its bytes
         // are settled -- a skipped file must not leave the total short for ever.

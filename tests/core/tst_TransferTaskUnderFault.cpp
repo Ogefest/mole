@@ -71,6 +71,9 @@ private slots:
     void everyOneOfTenConcurrentCopiesGetsTheFault();
 
     void aDriveUnmountedWithATransferInFlight();
+    void aDriveThatGoesMidCopyFailsAsTheDriveGoing();
+    void aDriveThatStopsAnsweringAboutItsRootCountsAsGone();
+    void aFailureOnADriveStillThereIsAnOrdinaryFailure();
     void aMoveWhoseSourceDiesMidFileKeepsTheSource();
 
 private:
@@ -666,6 +669,96 @@ void TestTransferTaskUnderFault::aDriveUnmountedWithATransferInFlight()
     QVERIFY2(task->failures().isEmpty(), qPrintable(task->failures().join(QLatin1Char(' '))));
     QCOMPARE(destinationSize(QStringLiteral("payload.bin")), kPayload);
     QVERIFY(!drives.resolve(VfsUri::fromString(QStringLiteral("mem:///src/payload.bin"))));
+}
+
+/// A stick pulled out mid-copy. What reaches the task is a read that fails, and
+/// on its own that reads as a file that could not be read -- followed by every
+/// file after it, each failing the same way. With the drive's mount gone from
+/// the table, the transfer stops at the first failure and fails once, as the
+/// drive going, with the drive in the message. Nothing is left that looks
+/// finished. See MOLE-431 and MOLE-338.
+void TestTransferTaskUnderFault::aDriveThatGoesMidCopyFailsAsTheDriveGoing()
+{
+    m_memory->addFile(QStringLiteral("/src/second.bin"), QByteArray(kPayload, 'b'));
+    VfsManager drives;
+    Mount mount;
+    mount.displayName = QStringLiteral("STICK");
+    mount.root = VfsUri::fromString(QStringLiteral("mem:///"));
+    mount.fileSystem = m_source;
+    const QString id = drives.addMount(mount);
+
+    // The order the machine produces: the disk leaves the table, then the read
+    // that was under way fails.
+    m_source->whenReadReaches(
+        kThirty, [&drives, id] { drives.removeMount(id); }, QStringLiteral("/src/payload.bin"));
+    m_source->readFailsAt(
+        kSixty, QStringLiteral("/src/payload.bin"), VfsError::IoError, QStringLiteral("Input/output error"));
+
+    TransferTask::Request asked = request({ QStringLiteral("payload.bin"), QStringLiteral("second.bin") });
+    asked.driveGone = TransferTask::driveCheckFor(&drives, asked.sources.first(), asked.targetDirectory);
+    TransferTask* task = run(asked);
+    QVERIFY(task);
+
+    QCOMPARE(task->state(), Task::State::Failed);
+    const QString said = task->error().message;
+    QVERIFY2(said.contains(QStringLiteral("went away")), qPrintable(said));
+    QVERIFY2(said.contains(QStringLiteral("mem:///")), qPrintable(said));
+    // Stopped there: the second file was never attempted, so it did not fail as
+    // a file of its own, and nothing arrived under either name.
+    QVERIFY2(task->failures().size() <= 1, qPrintable(task->failures().join(QLatin1Char(' '))));
+    QVERIFY2(destinationEntries().isEmpty(), qPrintable(destinationEntries().join(QLatin1Char(' '))));
+}
+
+/// Pulled out, and the unmount not noticed yet: the mount is still in the table,
+/// but the drive can no longer say anything about its own root. That is the
+/// drive gone too.
+void TestTransferTaskUnderFault::aDriveThatStopsAnsweringAboutItsRootCountsAsGone()
+{
+    VfsManager drives;
+    Mount mount;
+    mount.displayName = QStringLiteral("STICK");
+    mount.root = VfsUri::fromString(QStringLiteral("mem:///"));
+    mount.fileSystem = m_source;
+    drives.addMount(mount);
+
+    m_source->whenReadReaches(kThirty, [this] {
+        m_source->statFails(QStringLiteral("/"), VfsError::IoError, QStringLiteral("Input/output error"));
+    });
+    m_source->readFailsAt(kSixty, {}, VfsError::IoError, QStringLiteral("Input/output error"));
+
+    TransferTask::Request asked = request();
+    asked.driveGone = TransferTask::driveCheckFor(&drives, asked.sources.first(), asked.targetDirectory);
+    TransferTask* task = run(asked);
+    QVERIFY(task);
+    QCOMPARE(task->state(), Task::State::Failed);
+    QVERIFY2(task->error().message.contains(QStringLiteral("went away")), qPrintable(task->error().message));
+    QVERIFY(destinationEntries().isEmpty());
+}
+
+/// And the other side of it: a read that fails on a drive that is still there is
+/// a file that could not be read, said as one, and the transfer goes on to the
+/// next file as it always has. The check must not turn every failure into
+/// "the drive went".
+void TestTransferTaskUnderFault::aFailureOnADriveStillThereIsAnOrdinaryFailure()
+{
+    m_memory->addFile(QStringLiteral("/src/second.bin"), QByteArray(kPayload, 'b'));
+    VfsManager drives;
+    Mount mount;
+    mount.displayName = QStringLiteral("Scratch");
+    mount.root = VfsUri::fromString(QStringLiteral("mem:///"));
+    mount.fileSystem = m_source;
+    drives.addMount(mount);
+    m_source->readFailsAt(kThirty, QStringLiteral("/src/payload.bin"));
+
+    TransferTask::Request asked = request({ QStringLiteral("payload.bin"), QStringLiteral("second.bin") });
+    asked.driveGone = TransferTask::driveCheckFor(&drives, asked.sources.first(), asked.targetDirectory);
+    TransferTask* task = run(asked);
+    QVERIFY(task);
+
+    QVERIFY(!task->error().message.contains(QStringLiteral("went away during")));
+    QCOMPARE(task->failures().size(), 1);
+    QVERIFY(task->failures().first().contains(QStringLiteral("the connection went away")));
+    QCOMPARE(destinationSize(QStringLiteral("second.bin")), kPayload);
 }
 
 void TestTransferTaskUnderFault::aMoveWhoseSourceDiesMidFileKeepsTheSource()

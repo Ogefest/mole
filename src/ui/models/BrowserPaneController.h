@@ -244,6 +244,10 @@ private:
     /// be, and the mount appearing -- from the sidebar, from an unlocked store,
     /// from another pane -- is the event that retries it. See MOLE-351.
     void retryIfADriveArrived();
+    /// The drive under the location in view has been unmounted: the pane keeps
+    /// its location and says the drive is not there, rather than showing an
+    /// empty folder. See MOLE-431.
+    void noteMountRemoved(const QString& mountId);
     /// Asks the drive what it can do to the row under the cursor, on a worker.
     /// Cheap to call: a drive that has nothing to offer answers with nothing,
     /// and an answer for a row the cursor has already left is dropped.
@@ -339,6 +343,16 @@ private:
     /// Where the pane is pointed but could not list, because nothing is mounted
     /// for it. Invalid whenever the location did resolve.
     VfsUri m_waitingForADrive;
+    /// The mount the location in view is on, noted when it was listed, so the
+    /// pane knows its drive has gone when that mount is removed. See MOLE-431.
+    QString m_currentMountId;
+    VfsUri m_currentMountRoot;
+    QString m_currentMountName;
+    /// The mount that went from under the pane, and where it was. A disk with a
+    /// UUID comes back under the same mount id (MOLE-430), possibly somewhere
+    /// else, and this is what lets the pane follow it there.
+    QString m_lostMountId;
+    VfsUri m_lostMountRoot;
     /// When the listing in view landed, and what it cost from submission to
     /// finish -- which measures a slow disk and a slow drive alike without
     /// telling them apart. -1 until a listing has landed.
