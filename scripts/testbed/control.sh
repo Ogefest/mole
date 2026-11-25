@@ -27,6 +27,7 @@
 #   MOLE_TESTBED_ADDRESS=… scripts/testbed/control.sh restore
 #
 set -uo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/ssh-options.sh"
 
 ADDRESS="${MOLE_TESTBED_ADDRESS:-}"
 ACCOUNT="${MOLE_TESTBED_ACCOUNT:-moletest}"
@@ -559,7 +560,7 @@ fi
 # and is announced rather than silent, because a channel that quietly moved onto
 # the port the tier blackholes is the fault this whole file is about.
 PORT="$CONTROL_PORT"
-if ! ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 \
+if ! ssh "${TESTBED_SSH[@]}" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 \
         -p "$CONTROL_PORT" "$ACCOUNT@$ADDRESS" true 2>/dev/null; then
     PORT=22
     echo "control.sh: nothing answers on port $CONTROL_PORT; using port 22." >&2
@@ -568,7 +569,7 @@ if ! ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=
 fi
 
 on_server() {
-    ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p "$PORT" "$ACCOUNT@$ADDRESS" "$@"
+    ssh "${TESTBED_SSH[@]}" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p "$PORT" "$ACCOUNT@$ADDRESS" "$@"
 }
 
 
@@ -584,8 +585,8 @@ SUDOERS
     on_server "sudo chmod 0440 /etc/sudoers.d/mole-control"
     on_server "sudo /usr/local/bin/mole-control status"
     printf '\nInstalled. Point the suite at it with:\n\n'
-    printf "  export MOLE_TEST_CONTROL='ssh -o BatchMode=yes -p %s %s@%s sudo mole-control'\n\n" \
-        "$PORT" "$ACCOUNT" "$ADDRESS"
+    printf "  export MOLE_TEST_CONTROL='ssh %s-o BatchMode=yes -p %s %s@%s sudo mole-control'\n\n" \
+        "${TESTBED_SSH_WORDS:+$TESTBED_SSH_WORDS }" "$PORT" "$ACCOUNT" "$ADDRESS"
     exit 0
 fi
 

@@ -14,6 +14,7 @@
 #   MOLE_TESTBED_ADDRESS=<address> MOLE_TESTBED_PASSWORD=<throwaway> make test-live
 #
 set -uo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/ssh-options.sh"
 
 ADDRESS="${MOLE_TESTBED_ADDRESS:-}"
 ACCOUNT="${MOLE_TESTBED_ACCOUNT:-moletest}"
@@ -195,9 +196,9 @@ run_suite() {
 CONTROL_PORT="${MOLE_TESTBED_CONTROL_PORT:-2022}"
 if [ -z "${MOLE_TEST_CONTROL:-}" ]; then
     for port in "$CONTROL_PORT" 22; do
-        if ssh -o BatchMode=yes -o ConnectTimeout=5 -p "$port" "$ACCOUNT@$ADDRESS" \
+        if ssh "${TESTBED_SSH[@]}" -o BatchMode=yes -o ConnectTimeout=5 -p "$port" "$ACCOUNT@$ADDRESS" \
                 'command -v mole-control' >/dev/null 2>&1; then
-            export MOLE_TEST_CONTROL="ssh -o BatchMode=yes -p $port $ACCOUNT@$ADDRESS sudo mole-control"
+            export MOLE_TEST_CONTROL="ssh $TESTBED_SSH_WORDS -o BatchMode=yes -p $port $ACCOUNT@$ADDRESS sudo mole-control"
             break
         fi
     done

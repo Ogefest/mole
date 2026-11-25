@@ -17,6 +17,7 @@
 #       scripts/testbed/provision.sh
 #
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/ssh-options.sh"
 
 # --- what to build, and where -----------------------------------------------
 
@@ -80,7 +81,7 @@ directory named in CLAUDE.md, under \"Where work is tracked\"."
 
 # Everything on the hypervisor goes through here, so there is one place that
 # knows how we reach it and one place to look when that changes.
-on_node() { ssh -o BatchMode=yes "$NODE" "LC_ALL=C bash -s" -- "$@"; }
+on_node() { ssh "${TESTBED_SSH[@]}" -o BatchMode=yes "$NODE" "LC_ALL=C bash -s" -- "$@"; }
 
 # --- the virtual machine ----------------------------------------------------
 
@@ -194,7 +195,7 @@ note "$address"
 # machine will accept a connection from anybody but the template's own key.
 
 heading "Finishing the machine off"
-ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$ACCOUNT@$address" \
+ssh "${TESTBED_SSH[@]}" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$ACCOUNT@$address" \
     "sudo bash -s" <<'REMOTE' || die "could not finish the machine off"
 set -euo pipefail
 # The small disk, mounted where the servers that need to fill it will put their

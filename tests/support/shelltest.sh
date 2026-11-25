@@ -125,7 +125,9 @@ STUB
 # The status is in SCRIPT_STATUS; the output is asserted on with `said`.
 run_script() {
     local script="$1"; shift
-    ( cd "$MOLE_SOURCE_DIR" && bash "$script" "$@" ) >"$SCRIPT_OUTPUT" 2>&1
+    # Nothing on stdin, so a call with nothing to send reaches the stub's `cat` as
+    # an empty input rather than waiting on whatever terminal started the suite.
+    ( cd "$MOLE_SOURCE_DIR" && bash "$script" "$@" ) </dev/null >"$SCRIPT_OUTPUT" 2>&1
     SCRIPT_STATUS=$?
 }
 

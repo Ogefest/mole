@@ -88,6 +88,20 @@ Everything has a default except the hypervisor and the password.
 | `MOLE_TESTBED_SYSTEM_GB` | `32` | grown, never shrunk |
 | `MOLE_TESTBED_DATA_GB` | `4` | set once, at creation |
 | `MOLE_TESTBED_ACCOUNT` | `moletest` | |
+| `MOLE_TESTBED_SSH_KEY` | — | a private key on this machine; every ssh uses it and only it |
+
+**Give `MOLE_TESTBED_SSH_KEY` when your keys need a touch.** Without it, every
+script here signs in with whatever `ssh` offers first, the agent's keys and then
+the default files, in `ssh`'s own order. On a workstation whose keys are
+hardware-backed, each of them needs a physical touch to sign, and `BatchMode`
+turns that into an authentication failure. A server that counts attempts may
+then close the connection before any key could get in. Set the variable to a key
+that needs no touch, installed for the hypervisor's account and the machine's,
+and every `ssh` the scripts make — to the hypervisor, to the machine, and inside
+the `MOLE_TEST_CONTROL` the tiers export — adds `-i <key> -o IdentitiesOnly=yes`.
+Unset, nothing changes. The path cannot contain whitespace, because the suites
+split `MOLE_TEST_CONTROL` on spaces. Like every other credential it lives outside
+this repository. See `MOLE-468`.
 
 **Give `MOLE_TESTBED_ADDRESS`.** The suite needs a stable address anyway, and an
 address that is a parameter is one nobody has to discover twice. Without it the

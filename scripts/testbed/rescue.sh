@@ -21,6 +21,7 @@
 # directory named in CLAUDE.md.
 #
 set -uo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/ssh-options.sh"
 
 HOST="${MOLE_PROXMOX_HOST:-}"
 VMID="${MOLE_TESTBED_VMID:-200}"
@@ -34,7 +35,7 @@ MESSAGE
     exit 2
 fi
 
-on_host() { ssh -o BatchMode=yes -o ConnectTimeout=10 "root@$HOST" "$@"; }
+on_host() { ssh "${TESTBED_SSH[@]}" -o BatchMode=yes -o ConnectTimeout=10 "root@$HOST" "$@"; }
 
 case "$ACTION" in
 clear)

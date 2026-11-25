@@ -10,6 +10,7 @@
 # Exits non-zero if anything is not answering, and says which.
 #
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/ssh-options.sh"
 
 ADDRESS="${MOLE_TESTBED_ADDRESS:-}"
 ACCOUNT="${MOLE_TESTBED_ACCOUNT:-moletest}"
@@ -37,7 +38,7 @@ printf '\n\033[1mServices on %s\033[0m\n' "$ADDRESS"
 # refuses to open a directory.
 
 for port in 22 "$REKEY_PORT"; do
-    if ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=8 \
+    if ssh "${TESTBED_SSH[@]}" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=8 \
            -p "$port" "$ACCOUNT@$ADDRESS" 'true' >/dev/null 2>&1; then
         ok "sftp on $port"
     else
@@ -52,7 +53,7 @@ cipher_on() {
     # -v before the destination. After it, ssh passes it to the remote command
     # and the client says nothing at all -- which is how this check quietly
     # measured nothing and still printed a tick.
-    ssh -v -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=8 \
+    ssh "${TESTBED_SSH[@]}" -v -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=8 \
         -p "$1" "$ACCOUNT@$ADDRESS" true 2>&1 \
         | sed -n 's/.*kex: server->client cipher: \([^ ]*\) .*/\1/p' | head -1
 }
@@ -71,10 +72,10 @@ fi
 # It has to answer, and `mole-control` has to refuse to damage it. A control
 # sshd that is reachable but that the instrument will happily blackhole is the
 # fault of ADR-0054 wearing a different port number.
-if ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=8 \
+if ssh "${TESTBED_SSH[@]}" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=8 \
        -p "$CONTROL_PORT" "$ACCOUNT@$ADDRESS" 'true' >/dev/null 2>&1; then
     ok "the control channel answers on $CONTROL_PORT"
-    if ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=8 \
+    if ssh "${TESTBED_SSH[@]}" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=8 \
            -p "$CONTROL_PORT" "$ACCOUNT@$ADDRESS" \
            "sudo mole-control blackhole $CONTROL_PORT 1" >/dev/null 2>&1; then
         bad "mole-control blackholed its own port -- it can still cut the machine off"

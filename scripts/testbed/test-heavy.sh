@@ -37,6 +37,7 @@
 #   MOLE_TEST_HEAVY_BYTES=$((20 * 1024**3)) … make test-heavy
 #
 set -uo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/ssh-options.sh"
 
 ADDRESS="${MOLE_TESTBED_ADDRESS:-}"
 ACCOUNT="${MOLE_TESTBED_ACCOUNT:-moletest}"
@@ -122,14 +123,14 @@ export MOLE_TEST_HEAVY_REPORT="${MOLE_TEST_HEAVY_REPORT:-$BUILD/heavy-report.txt
 # `mole-control` refuses to be pointed at it. See ADR-0054.
 CONTROL_PORT="${MOLE_TESTBED_CONTROL_PORT:-2022}"
 if [ -z "${MOLE_TEST_CONTROL:-}" ] \
-        && ! ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 \
+        && ! ssh "${TESTBED_SSH[@]}" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 \
             -p "$CONTROL_PORT" "$ACCOUNT@$ADDRESS" true 2>/dev/null; then
     echo "Nothing answers on port $CONTROL_PORT: the control sshd is not there." >&2
     echo "Run scripts/testbed/services.sh. This tier blackholes port 22, so a" >&2
     echo "control channel on port 22 would be cut along with the transfer." >&2
     exit 2
 fi
-CONTROL="${MOLE_TEST_CONTROL:-ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p $CONTROL_PORT $ACCOUNT@$ADDRESS sudo mole-control}"
+CONTROL="${MOLE_TEST_CONTROL:-ssh $TESTBED_SSH_WORDS -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p $CONTROL_PORT $ACCOUNT@$ADDRESS sudo mole-control}"
 
 # Before the tier and not only after it, because the runs this is for never
 # reached the end. Both tiers clean up in `cleanup()`, which works for every run

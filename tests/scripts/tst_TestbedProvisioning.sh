@@ -206,6 +206,112 @@ never_reached " moletest > /etc/vsftpd.chroot_list"
 said "moleftphome: not chrooted, logs in at /home/moleftphome"
 unset MOLE_TESTBED_NFS_CLIENTS
 
+# --- which key the scripts sign in with --------------------------------------
+
+# MOLE-354 stopped on 2026-11-15 because every key the agent offered was
+# hardware-backed and needed a touch, and BatchMode turned each into a failure.
+# MOLE_TESTBED_SSH_KEY names one key that needs no touch, and with it set every
+# ssh these scripts make uses that key and nothing else. See MOLE-468.
+#
+# A file that is readable and is not a key: the scripts only pass the path on,
+# and a real private key in a test fixture would be a credential published.
+FAKE_PRIVATE="$SHELLTEST_TMP/automation-key"
+printf 'not a key, only a path the scripts pass on\n' > "$FAKE_PRIVATE"
+
+# Every call the stub recorded names the key and refuses every other identity --
+# not merely one of them, because a script with two ways in and one of them
+# fixed still walks the agent on the other.
+every_ssh_names_the_key() {
+    local calls
+    calls=$(grep -c '^=== ssh' "$TRANSCRIPT" || true)
+    if [ "$calls" -eq 0 ]; then fail "no ssh call was made at all"; return; fi
+    if grep -vqF -- "-i $FAKE_PRIVATE -o IdentitiesOnly=yes" <<<"$(grep '^=== ssh' "$TRANSCRIPT")"; then
+        fail "an ssh call went out without the key:"
+        grep '^=== ssh' "$TRANSCRIPT" | grep -vF -- "-i $FAKE_PRIVATE" | sed 's/^/    /' >&2
+    else
+        pass_note "all $calls ssh call(s) named the key, and only it"
+    fi
+}
+
+no_ssh_names_a_key() {
+    if grep -qE -- ' -i |IdentitiesOnly' <<<"$(grep '^=== ssh' "$TRANSCRIPT")"; then
+        fail "an ssh call named an identity with MOLE_TESTBED_SSH_KEY unset"
+    else
+        pass_note "no ssh call named an identity"
+    fi
+}
+
+begin "with MOLE_TESTBED_SSH_KEY set, services.sh signs in with that key only"
+stub_ssh
+export MOLE_TESTBED_SSH_KEY="$FAKE_PRIVATE"
+run_script scripts/testbed/services.sh
+exited 0
+every_ssh_names_the_key
+# The path is all that travels. Nothing of the key's contents reaches a machine.
+never_reached "not a key, only a path"
+
+begin "with MOLE_TESTBED_SSH_KEY set, provision.sh reaches the hypervisor with that key only"
+stub_ssh
+export MOLE_TESTBED_SSH_KEY="$FAKE_PRIVATE" MOLE_PROXMOX_HOST=hypervisor.invalid
+# Stopped at the first step that needs an answer the stub cannot give, which is
+# after several calls to the hypervisor have been made.
+run_script scripts/testbed/provision.sh
+every_ssh_names_the_key
+
+begin "with MOLE_TESTBED_SSH_KEY set, snapshot.sh reaches the hypervisor and the machine with that key only"
+stub_ssh
+export MOLE_TESTBED_SSH_KEY="$FAKE_PRIVATE" MOLE_PROXMOX_HOST=hypervisor.invalid
+# A rollback asks the hypervisor and then waits for the machine to answer, so it
+# is two hosts and both ways in.
+run_script scripts/testbed/snapshot.sh rollback
+exited 0
+every_ssh_names_the_key
+reached "hypervisor.invalid"
+reached "moletest@testbed.invalid"
+
+begin "with MOLE_TESTBED_SSH_KEY set, rescue.sh reaches the hypervisor with that key only"
+stub_ssh
+export MOLE_TESTBED_SSH_KEY="$FAKE_PRIVATE" MOLE_PROXMOX_HOST=hypervisor.invalid
+run_script scripts/testbed/rescue.sh clear
+exited 0
+every_ssh_names_the_key
+
+begin "with MOLE_TESTBED_SSH_KEY set, the control channel test-live.sh exports carries the key"
+# The suites run MOLE_TEST_CONTROL themselves, so the key has to travel inside it.
+# The tier's own sweep runs it once before any suite starts, which puts it in the
+# transcript. No build is given, so no suite runs.
+stub_ssh
+export MOLE_TESTBED_SSH_KEY="$FAKE_PRIVATE"
+unset MOLE_TEST_CONTROL
+run_script scripts/testbed/test-live.sh "$SHELLTEST_TMP/no-build-here"
+every_ssh_names_the_key
+reached "sudo mole-control sweep"
+
+begin "with MOLE_TESTBED_SSH_KEY unset, no script names an identity"
+stub_ssh
+unset MOLE_TESTBED_SSH_KEY
+export MOLE_PROXMOX_HOST=hypervisor.invalid
+run_script scripts/testbed/services.sh
+run_script scripts/testbed/snapshot.sh rollback
+run_script scripts/testbed/rescue.sh clear
+unset MOLE_TEST_CONTROL
+run_script scripts/testbed/test-live.sh "$SHELLTEST_TMP/no-build-here"
+no_ssh_names_a_key
+reached "sudo mole-control sweep"
+
+begin "a key path with a space in it is refused before anything is sent"
+# MOLE_TEST_CONTROL is split on spaces by the suites, so a path with one cannot
+# be carried there whole.
+stub_ssh
+mkdir -p "$SHELLTEST_TMP/with space"
+cp "$FAKE_PRIVATE" "$SHELLTEST_TMP/with space/key"
+export MOLE_TESTBED_SSH_KEY="$SHELLTEST_TMP/with space/key"
+run_script scripts/testbed/services.sh
+exited 2
+said "MOLE_TESTBED_SSH_KEY has whitespace in it"
+if [ -s "$TRANSCRIPT" ]; then fail "it reached a machine after refusing to run"; fi
+unset MOLE_TESTBED_SSH_KEY MOLE_PROXMOX_HOST
+
 # --- and it refuses to run on nothing ----------------------------------------
 
 begin "without an address the script provisions nothing and says why"

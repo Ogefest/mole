@@ -13,6 +13,7 @@
 #   MOLE_PROXMOX_HOST=… scripts/testbed/snapshot.sh list
 #
 set -uo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/ssh-options.sh"
 
 PROXMOX_HOST="${MOLE_PROXMOX_HOST:-}"
 PROXMOX_USER="${MOLE_PROXMOX_USER:-root}"
@@ -30,14 +31,14 @@ note() { printf '  %s\n' "$*"; }
 [ -n "$NODE" ] || { echo "Set MOLE_PROXMOX_HOST. It is not in this repository." >&2; exit 2; }
 [ $# -ge 1 ] || { echo "Usage: snapshot.sh take | rollback | list | delete" >&2; exit 2; }
 
-on_node() { ssh -o BatchMode=yes "$NODE" "LC_ALL=C bash -s"; }
+on_node() { ssh "${TESTBED_SSH[@]}" -o BatchMode=yes "$NODE" "LC_ALL=C bash -s"; }
 
 # The machine has to be answering before a run starts, or the suite skips
 # itself and reports green for having done nothing.
 wait_for_ssh() {
     [ -n "$ADDRESS" ] || return 0
     for _ in $(seq 1 60); do
-        ssh -o BatchMode=yes -o ConnectTimeout=4 -o StrictHostKeyChecking=no \
+        ssh "${TESTBED_SSH[@]}" -o BatchMode=yes -o ConnectTimeout=4 -o StrictHostKeyChecking=no \
             "$ACCOUNT@$ADDRESS" true 2>/dev/null && return 0
         sleep 2
     done

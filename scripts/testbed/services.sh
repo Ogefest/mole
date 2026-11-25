@@ -21,6 +21,7 @@
 #       scripts/testbed/services.sh
 #
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/ssh-options.sh"
 
 ADDRESS="${MOLE_TESTBED_ADDRESS:-}"
 ACCOUNT="${MOLE_TESTBED_ACCOUNT:-moletest}"
@@ -89,7 +90,7 @@ case "$PASSWORD" in
     *\'*) die "MOLE_TESTBED_PASSWORD cannot contain a single quote." ;;
 esac
 
-on_server() { ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$ACCOUNT@$ADDRESS" "sudo bash -s"; }
+on_server() { ssh "${TESTBED_SSH[@]}" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$ACCOUNT@$ADDRESS" "sudo bash -s"; }
 
 heading "Packages"
 on_server <<'REMOTE' || die "could not install the servers"
