@@ -44,6 +44,7 @@ private slots:
     void onlySoManyDecodeAtOnceAndTheRestQueue();
     void whatCameIntoViewLastIsServedFirst();
     void abandoningARequestBeforeItStartsCostsNothing();
+    void aRequestArrivingAfterTheTaskPoolHasGoneIsAnsweredWithNothing();
 
 private:
     /// The answer for `id`, waited on rather than timed.
@@ -590,6 +591,44 @@ void TestThumbnailSource::abandoningARequestBeforeItStartsCostsNothing()
     gate->release(64);
     QVERIFY(waitFor([&] { return m_pump->waiting() == 0; }, 20000));
     QVERIFY2(log->made.load() == 1, "a queued decode that nobody wants any more costs nothing at all");
+}
+
+/// The image provider posts a request to the pump and returns, and Qt's picture
+/// reader can still be holding the provider after the window has gone. So a
+/// request can arrive after the application, and the task pool with it, has been
+/// destroyed. In the walkthrough that was the next test's first event loop: the
+/// pump called submit() on a freed TaskManager, which printed "Cannot set parent,
+/// new parent is in a different thread" from garbage and then died of
+/// std::bad_alloc or a segfault, once in a few dozen runs. See MOLE-465.
+void TestThumbnailSource::aRequestArrivingAfterTheTaskPoolHasGoneIsAnsweredWithNothing()
+{
+    QVERIFY(m_registry->addThumbnailer(std::make_unique<FakeThumbnailer>(
+        QStringLiteral("test.jpegs"), QColor(Qt::green), 0, nullptr, QStringLiteral("jpg"))));
+
+    QObject response;
+    bool arrived = false;
+    QImage answer(1, 1, QImage::Format_RGB32);
+    QObject scope;
+    QObject::connect(m_pump.get(), &ThumbnailPump::ready, &scope, [&](QObject* who, const QImage& image) {
+        if (who != &response)
+            return;
+        answer = image;
+        arrived = true;
+    });
+
+    // Posted the way the provider posts it, and still in the queue when the pool
+    // goes -- exactly the order a window closing produces.
+    ThumbnailKey key;
+    key.uri = VfsUri::fromString(QStringLiteral("mem:///photos/a.jpg"));
+    key.size = 64;
+    QMetaObject::invokeMethod(m_pump.get(), "startFor", Qt::QueuedConnection, Q_ARG(QObject*, &response),
+        Q_ARG(QString, key.toId()));
+    m_tasks.reset();
+
+    QVERIFY2(waitFor([&] { return arrived; }, 10000), "a request after the pool has gone was never answered");
+    QVERIFY2(answer.isNull(), "there is nothing left to decode with, so the answer is nothing");
+    QCOMPARE(m_pump->outstanding(), 0);
+    QCOMPARE(m_pump->queued(), 0);
 }
 
 MOLE_TEST_MAIN(TestThumbnailSource)

@@ -8,6 +8,8 @@
 #include <QThread>
 #include <QUrlQuery>
 
+#include <utility>
+
 namespace mole {
 
 QString ThumbnailKey::toId() const
@@ -120,6 +122,7 @@ void ThumbnailTask::run()
 ThumbnailPump::ThumbnailPump(PluginServices services, ThumbnailCache* cache, QObject* parent)
     : QObject(parent)
     , m_services(services)
+    , m_tasks(services.tasks)
     , m_cache(cache)
 {
 }
@@ -132,7 +135,7 @@ void ThumbnailPump::startFor(QObject* response, const QString& id)
         return; // asked twice for the same response, which is not a second picture
 
     const ThumbnailKey key = ThumbnailKey::parse(id);
-    if (!key.isValid() || !m_services.tasks) {
+    if (!key.isValid() || !m_tasks) {
         deliver(response, QImage());
         return;
     }
@@ -185,6 +188,21 @@ void ThumbnailPump::setConcurrency(int decodes)
 
 void ThumbnailPump::pumpQueue()
 {
+    // The pool has gone, so nothing queued can ever start: everybody waiting is
+    // answered now, the way a cancelled request is, rather than left hanging or
+    // handed to a TaskManager that no longer exists.
+    if (!m_tasks) {
+        const QHash<QString, QList<QObject*>> stranded = std::exchange(m_waitingFor, {});
+        m_queue.clear();
+        for (const QList<QObject*>& waiting : stranded) {
+            for (QObject* response : waiting) {
+                m_keyOf.remove(response);
+                deliver(response, QImage());
+            }
+        }
+        return;
+    }
+
     while (!m_queue.isEmpty() && int(m_pending.size()) < m_concurrency) {
         const QString slot = m_queue.takeFirst();
         const QList<QObject*> waiting = m_waitingFor.take(slot);
@@ -204,7 +222,7 @@ void ThumbnailPump::pumpQueue()
             settle(slot, task->state() == Task::State::Succeeded ? task->image() : QImage());
             pumpQueue();
         });
-        m_services.tasks->submit(task);
+        m_tasks->submit(task);
     }
 }
 

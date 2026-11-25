@@ -164,6 +164,13 @@ private:
     void settle(const QString& slot, const QImage& answer);
 
     PluginServices m_services;
+    /// The pool the decodes run on, watched rather than trusted. A request is
+    /// posted here from Qt's picture reader, which can still hold the provider
+    /// after the window and the application behind it have gone. A request that
+    /// arrives then finds no pool and is answered with nothing; following
+    /// `m_services.tasks` instead called submit() on a freed TaskManager. See
+    /// MOLE-465.
+    QPointer<TaskManager> m_tasks;
     ThumbnailCache* m_cache = nullptr;
     int m_concurrency = defaultConcurrency();
     /// Key to the decode making its picture, and who is waiting. A key in here is
