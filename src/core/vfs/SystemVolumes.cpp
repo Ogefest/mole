@@ -1,5 +1,7 @@
 #include "core/vfs/SystemVolumes.h"
 
+#include "core/vfs/DiskIdentity.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -84,6 +86,12 @@ namespace {
     }
 
     /// What a test has put in place of the operating system, or nothing.
+    QString& diskDirectory()
+    {
+        static QString directory = QStringLiteral("/dev/disk");
+        return directory;
+    }
+
     SystemVolumes::Enumerator& injected()
     {
         static SystemVolumes::Enumerator hook;
@@ -152,6 +160,11 @@ namespace {
 void SystemVolumes::setEnumerator(Enumerator enumerator)
 {
     injected() = std::move(enumerator);
+}
+
+void SystemVolumes::setDiskDirectory(const QString& directory)
+{
+    diskDirectory() = directory.isEmpty() ? QStringLiteral("/dev/disk") : directory;
 }
 
 QList<SystemVolume> SystemVolumes::parseMountTable(const QByteArray& text)
@@ -375,10 +388,21 @@ QList<SystemVolume> SystemVolumes::enumerate()
             continue;
         seenRoots.insert(volume.rootPath);
 
-        // The label the disk carries is not in the mount table, so the name is
-        // derived from the mount point -- which for /media/user/BACKUP is the
-        // label anyway, because that is where the automounter puts it.
+        // What the disk is, from udev's links to its device: a stick keeps its
+        // identity and its name wherever it was mounted. See MOLE-430.
+        //
+        // The name is the label written on the disk where there is one, and
+        // derived from the mount point where there is not -- which is where the
+        // label used to come from, since the mount table does not carry it, and
+        // which stops being the label the moment the automounter says BACKUP1.
+        // The system's own volume keeps the name people look for, "Root",
+        // whatever its partition happens to be called.
+        const DiskIdentity identity = diskIdentityOf(volume.device, diskDirectory());
+        volume.uuid = identity.uuid;
+        volume.label = identity.label;
         volume.name = displayName(volume.rootPath, volume.name, volume.device);
+        if (!volume.label.isEmpty() && volume.rootPath != QLatin1String("/"))
+            volume.name = volume.label;
         out.append(volume);
     }
 

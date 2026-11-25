@@ -109,9 +109,12 @@ void DriveListModel::reload()
     // now, and once is still the right number of times. Kept until the next
     // rebuild, which is also when a stick that has been plugged in appears.
     m_devicesByRoot.clear();
+    m_uuidsByRoot.clear();
     for (const SystemVolume& volume : SystemVolumes::enumerate()) {
         if (!volume.device.isEmpty())
             m_devicesByRoot.insert(volume.rootPath, volume.device);
+        if (!volume.uuid.isEmpty())
+            m_uuidsByRoot.insert(volume.rootPath, volume.uuid);
     }
 
     beginResetModel();
@@ -603,18 +606,24 @@ QString DriveListModel::keyFor(const Row& row) const
     if (row.isConfigured())
         return QStringLiteral("configured:") + row.drive.id;
 
-    // A detected volume has no id that outlives the run -- the mount id is made
-    // at startup -- so it is keyed on the device, and on the root path where
-    // there is no device to key on.
+    // A detected volume is keyed on what the disk is: its filesystem UUID,
+    // which survives being unplugged and plugged back in at another mount
+    // point, so a stick that was hidden stays hidden when the automounter says
+    // BACKUP1 the second time. See MOLE-430.
     //
-    // **A stick hidden at /media/x/STICK that comes back somewhere else is
-    // visible again**, and that is the documented direction of the error rather
-    // than a fault: a drive that reappears is a nuisance, and a drive that
-    // silently does not appear is somebody's files missing with no way to find
-    // out why. See MOLE-311.
+    // Without one -- a bind mount, a share, a filesystem with no UUID, a
+    // platform with no /dev/disk -- it falls back to the device, and to the
+    // root path where there is no device either. On that path **a stick hidden
+    // at /media/x/STICK that comes back somewhere else is visible again**, which
+    // is the documented direction of the error rather than a fault: a drive
+    // that reappears is a nuisance, and a drive that silently does not appear
+    // is somebody's files missing with no way to find out why. See MOLE-311.
     const QString localPath = row.mount.root.toLocalPath();
     if (!localPath.isEmpty()) {
-        // From the map the last rebuild made. See reload().
+        // From the maps the last rebuild made. See reload().
+        const QString uuid = m_uuidsByRoot.value(localPath);
+        if (!uuid.isEmpty())
+            return QStringLiteral("volume:") + uuid;
         const QString device = m_devicesByRoot.value(localPath);
         if (!device.isEmpty())
             return QStringLiteral("device:") + device;

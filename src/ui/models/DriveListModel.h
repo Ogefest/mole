@@ -354,6 +354,10 @@ private:
     /// them. keyFor() reads it; enumerating per row was O(rows x mounts) and
     /// each enumeration used to be a statvfs apiece. See MOLE-361.
     QHash<QString, QString> m_devicesByRoot;
+    /// The filesystem UUID behind each local mount point, where it has one.
+    /// What a removable disk is keyed on, since its mount point can change
+    /// between one plugging-in and the next. See MOLE-430.
+    QHash<QString, QString> m_uuidsByRoot;
     /// Keyed by configured drive id, and kept across a reload of the mount
     /// table: what a check found does not stop being true because something
     /// else was mounted.

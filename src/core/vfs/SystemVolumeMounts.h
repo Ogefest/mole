@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/vfs/IFileSystem.h"
+#include "core/vfs/SystemVolumes.h"
 
 #include <QHash>
 #include <QObject>
@@ -51,6 +52,16 @@ public:
 
     /// The mount this has made for `rootPath`, or an empty string.
     QString mountIdFor(const QString& rootPath) const;
+
+    /// What a volume is known by across being unplugged and plugged back in:
+    /// its filesystem UUID where it has one, and where it does not, the place
+    /// it is mounted, which is all there was before MOLE-430. Named, because a
+    /// fallback nobody can see is how the old behaviour survives a rewrite.
+    static QString identityOf(const SystemVolume& volume);
+    /// The mount id a volume is given. Stable for a disk with a UUID, so a
+    /// stick that comes back is the same mount id and the same row; empty for
+    /// one without, which lets the Vfs allocate one as before.
+    static QString mountIdOf(const SystemVolume& volume);
     /// How many drives this currently holds a mount for.
     int count() const { return int(m_mounted.size()); }
 
@@ -62,6 +73,7 @@ signals:
 private:
     struct Held
     {
+        QString rootPath;
         QString device;
         QString mountId;
     };
@@ -69,9 +81,10 @@ private:
     VfsManager* m_vfs = nullptr;
     MakeFileSystem m_make;
     QString m_home;
-    /// Mount point to what is mounted there. Keyed on the place and checked
-    /// against the device, so another disk mounted at the same place is a
-    /// different drive rather than the same one.
+    /// Identity (see identityOf()) to what is mounted for it. A disk without a
+    /// UUID is keyed on its place and checked against its device, so another
+    /// disk mounted at the same place is a different drive rather than the same
+    /// one.
     QHash<QString, Held> m_mounted;
 };
 

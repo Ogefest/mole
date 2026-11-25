@@ -16,6 +16,7 @@
 
 #include <QAbstractItemModelTester>
 #include <QDir>
+#include <QFile>
 #include <QScopeGuard>
 #include <QSemaphore>
 #include <QSignalSpy>
@@ -161,6 +162,7 @@ private slots:
     void onlyOneSpaceQueryIsEverOutPerMount();
     void addingAMountAsksNothingOfTheDisksAlreadyMeasured();
     void aDrivePluggedInIsTheOnlyOneAskedHowFullItIs();
+    void aHiddenStickStaysHiddenWhenItComesBackSomewhereElse();
 
 private:
     /// Adds a mount and waits for its space answer to arrive, if one is coming.
@@ -1280,6 +1282,67 @@ void TestDriveListModel::aDrivePluggedInIsTheOnlyOneAskedHowFullItIs()
 
     QCOMPARE(drives.value(QStringLiteral("/"))->timesAsked(), 1);
     QCOMPARE(drives.value(QStringLiteral("/mnt/data"))->timesAsked(), 1);
+}
+
+/// The tick that hid a stick is remembered against what the stick is, so it
+/// still applies when the automounter puts it somewhere else the next time. It
+/// used to be keyed on the device, or the mount point, and the stick came back
+/// as a different drive -- a new row, shown, under its new directory's name.
+/// See MOLE-430.
+void TestDriveListModel::aHiddenStickStaysHiddenWhenItComesBackSomewhereElse()
+{
+    QTemporaryDir disks;
+    QVERIFY(disks.isValid());
+    for (const char* dir : { "dev", "disk/by-uuid", "disk/by-label" })
+        QVERIFY(QDir(disks.path()).mkpath(QLatin1String(dir)));
+    SystemVolumes::setDiskDirectory(disks.filePath(QStringLiteral("disk")));
+    QList<SystemVolume> table;
+    SystemVolumes::setEnumerator([&table] { return table; });
+    const auto restore = qScopeGuard([] {
+        SystemVolumes::setEnumerator(nullptr);
+        SystemVolumes::setDiskDirectory({});
+    });
+
+    // The same disk as two different nodes, with udev's links moved between them.
+    const auto plugIn = [&](const QString& node) {
+        const QString device = disks.filePath(QStringLiteral("dev/") + node);
+        QFile file(device);
+        file.open(QIODevice::WriteOnly);
+        for (const QString& link :
+            { QStringLiteral("disk/by-uuid/0A1B-2C3D"), QStringLiteral("disk/by-label/BACKUP") }) {
+            QFile::remove(disks.filePath(link));
+            QFile::link(QStringLiteral("../../dev/") + node, disks.filePath(link));
+        }
+        return device;
+    };
+    const auto at = [](const QString& root, const QString& device) {
+        SystemVolume volume;
+        volume.rootPath = root;
+        volume.device = device;
+        volume.fileSystemType = QStringLiteral("vfat");
+        return volume;
+    };
+    SystemVolumeMounts volumes(
+        m_vfs.get(), [](const QString&) { return std::make_shared<SizedFileSystem>(); },
+        QStringLiteral("/home/tester"));
+
+    table = { at(QStringLiteral("/media/tester/BACKUP"), plugIn(QStringLiteral("sdb1"))) };
+    volumes.sync();
+    QCOMPARE(m_model->rowCount(), 1);
+    const QString key = m_model->index(0, 0).data(DriveListModel::VisibilityKeyRole).toString();
+    m_model->setShown(0, false);
+
+    table.clear();
+    volumes.sync();
+    QCOMPARE(m_model->rowCount(), 0);
+
+    table = { at(QStringLiteral("/media/tester/BACKUP1"), plugIn(QStringLiteral("sdc1"))) };
+    volumes.sync();
+    QCOMPARE(m_model->rowCount(), 1);
+    const QModelIndex row = m_model->index(0, 0);
+    QCOMPARE(row.data(DriveListModel::VisibilityKeyRole).toString(), key);
+    QVERIFY2(!row.data(DriveListModel::ShownRole).toBool(), "the stick was hidden, and it is the same stick");
+    QCOMPARE(row.data(DriveListModel::DisplayNameRole).toString(), QStringLiteral("BACKUP"));
 }
 
 void TestDriveListModel::everyRowHasAGlyph()

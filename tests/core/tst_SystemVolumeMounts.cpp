@@ -5,8 +5,11 @@
 #include "core/vfs/VfsManager.h"
 #include "core/vfs/backends/MemoryFileSystem.h"
 
+#include <QDir>
+#include <QFile>
 #include <QScopeGuard>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 
 using namespace mole;
 
@@ -32,6 +35,12 @@ private slots:
     void theVolumeCarryingHomeIsLeftToTheHomeRow();
     void onlyTheMountsItMadeAreItsToRemove();
 
+    // --- what a disk is, rather than where it is mounted (MOLE-430) ---------
+    void aStickPluggedBackInElsewhereIsTheSameDriveUnderItsOwnName();
+    void aStickMovedWithoutBeingSeenToGoKeepsItsMountId();
+    void twoSticksWithTheSameLabelAreTwoDrives();
+    void aDiskWithNoUuidFallsBackToItsMountPoint();
+
 private:
     static SystemVolume volume(
         const QString& rootPath, const QString& device, const QString& type = QStringLiteral("ext4"));
@@ -42,6 +51,11 @@ private:
     QList<SystemVolume> m_table;
     std::unique_ptr<VfsManager> m_vfs;
     std::unique_ptr<SystemVolumeMounts> m_volumes;
+    /// A /dev and a /dev/disk of the test's own, so what a disk is does not
+    /// depend on the disks of whoever runs it. Empty unless a case adds to it.
+    std::unique_ptr<QTemporaryDir> m_disks;
+    /// A device node in the fake /dev, with the links udev would make to it.
+    QString plugIn(const QString& node, const QString& uuid, const QString& label = {});
     int m_made = 0;
 };
 
@@ -77,6 +91,11 @@ void TestSystemVolumeMounts::init()
     m_table.clear();
     m_made = 0;
     SystemVolumes::setEnumerator([this] { return m_table; });
+    m_disks = std::make_unique<QTemporaryDir>();
+    QVERIFY(m_disks->isValid());
+    for (const char* dir : { "dev", "disk/by-uuid", "disk/by-label" })
+        QVERIFY(QDir(m_disks->path()).mkpath(QLatin1String(dir)));
+    SystemVolumes::setDiskDirectory(m_disks->filePath(QStringLiteral("disk")));
     m_vfs = std::make_unique<VfsManager>();
     m_volumes = std::make_unique<SystemVolumeMounts>(
         m_vfs.get(),
@@ -92,6 +111,28 @@ void TestSystemVolumeMounts::cleanup()
     m_volumes.reset();
     m_vfs.reset();
     SystemVolumes::setEnumerator(nullptr);
+    SystemVolumes::setDiskDirectory({});
+    m_disks.reset();
+}
+
+QString TestSystemVolumeMounts::plugIn(const QString& node, const QString& uuid, const QString& label)
+{
+    const QString device = m_disks->filePath(QStringLiteral("dev/") + node);
+    QFile file(device);
+    if (!file.open(QIODevice::WriteOnly))
+        return {};
+    // Replaced rather than added, the way udev moves a link when the same disk
+    // comes back as another node.
+    const auto relink = [&](const QString& kind, const QString& name) {
+        const QString at = m_disks->filePath(QStringLiteral("disk/") + kind + QLatin1Char('/') + name);
+        QFile::remove(at);
+        QFile::link(QStringLiteral("../../dev/") + node, at);
+    };
+    if (!uuid.isEmpty())
+        relink(QStringLiteral("by-uuid"), uuid);
+    if (!label.isEmpty())
+        relink(QStringLiteral("by-label"), label);
+    return device;
 }
 
 void TestSystemVolumeMounts::aDrivePluggedInAppearsAndOneUnpluggedGoes()
@@ -217,6 +258,92 @@ void TestSystemVolumeMounts::onlyTheMountsItMadeAreItsToRemove()
 
     QCOMPARE(m_vfs->mounts().size(), 1);
     QCOMPARE(m_vfs->mounts().first().id, homeId);
+}
+
+void TestSystemVolumeMounts::aStickPluggedBackInElsewhereIsTheSameDriveUnderItsOwnName()
+{
+    // Pulled out while another stick was in, and put back: the automounter
+    // gives it BACKUP1, and the kernel may give it another node. It is the same
+    // disk, so it is the same mount id -- which is what the drive list's row
+    // and a pane that was on it go by -- and it reads BACKUP, the label it
+    // carries, rather than the directory it landed in.
+    const SystemVolume root = volume(QStringLiteral("/"), QStringLiteral("/dev/sda2"));
+    const QString first
+        = plugIn(QStringLiteral("sdb1"), QStringLiteral("0A1B-2C3D"), QStringLiteral("BACKUP"));
+    tableIs({ root, volume(QStringLiteral("/media/tester/BACKUP"), first, QStringLiteral("vfat")) });
+    m_volumes->sync();
+    const QString id = m_volumes->mountIdFor(QStringLiteral("/media/tester/BACKUP"));
+    QCOMPARE(id, QStringLiteral("volume:0A1B-2C3D"));
+    QCOMPARE(m_vfs->mount(id).displayName, QStringLiteral("BACKUP"));
+
+    tableIs({ root });
+    m_volumes->sync();
+    QVERIFY(m_vfs->mount(id).id.isEmpty());
+
+    const QString again
+        = plugIn(QStringLiteral("sdc1"), QStringLiteral("0A1B-2C3D"), QStringLiteral("BACKUP"));
+    tableIs({ root, volume(QStringLiteral("/media/tester/BACKUP1"), again, QStringLiteral("vfat")) });
+    m_volumes->sync();
+    QCOMPARE(m_volumes->mountIdFor(QStringLiteral("/media/tester/BACKUP1")), id);
+    QCOMPARE(m_vfs->mount(id).displayName, QStringLiteral("BACKUP"));
+    QCOMPARE(m_vfs->mount(id).root.toLocalPath(), QStringLiteral("/media/tester/BACKUP1"));
+}
+
+void TestSystemVolumeMounts::aStickMovedWithoutBeingSeenToGoKeepsItsMountId()
+{
+    // Out and in between two reads of the table, so the diff never sees it
+    // missing: it is still the same disk, now somewhere else, and its mount is
+    // moved there rather than left pointing at a directory that is gone.
+    const QString device
+        = plugIn(QStringLiteral("sdb1"), QStringLiteral("0A1B-2C3D"), QStringLiteral("BACKUP"));
+    tableIs({ volume(QStringLiteral("/media/tester/BACKUP"), device, QStringLiteral("vfat")) });
+    m_volumes->sync();
+
+    tableIs({ volume(QStringLiteral("/media/tester/BACKUP1"), device, QStringLiteral("vfat")) });
+    m_volumes->sync();
+    QCOMPARE(m_vfs->mounts().size(), 1);
+    QCOMPARE(m_vfs->mounts().first().id, QStringLiteral("volume:0A1B-2C3D"));
+    QCOMPARE(m_vfs->mounts().first().root.toLocalPath(), QStringLiteral("/media/tester/BACKUP1"));
+}
+
+void TestSystemVolumeMounts::twoSticksWithTheSameLabelAreTwoDrives()
+{
+    // Two sticks that both say BACKUP. udev's by-label link can only point at one
+    // of them, so at most one reads BACKUP; what keeps them apart is that they are
+    // two disks, not what either is called.
+    const QString one = plugIn(QStringLiteral("sdb1"), QStringLiteral("1111-1111"), QStringLiteral("BACKUP"));
+    const QString two = plugIn(QStringLiteral("sdc1"), QStringLiteral("2222-2222"), QStringLiteral("BACKUP"));
+    tableIs({ volume(QStringLiteral("/media/tester/BACKUP"), one, QStringLiteral("vfat")),
+        volume(QStringLiteral("/media/tester/BACKUP1"), two, QStringLiteral("vfat")) });
+    m_volumes->sync();
+
+    QCOMPARE(m_vfs->mounts().size(), 2);
+    QCOMPARE(
+        m_volumes->mountIdFor(QStringLiteral("/media/tester/BACKUP")), QStringLiteral("volume:1111-1111"));
+    QCOMPARE(
+        m_volumes->mountIdFor(QStringLiteral("/media/tester/BACKUP1")), QStringLiteral("volume:2222-2222"));
+}
+
+void TestSystemVolumeMounts::aDiskWithNoUuidFallsBackToItsMountPoint()
+{
+    // A bind mount, a share, a filesystem with no UUID, a platform with no
+    // /dev/disk: known by where it is, under a name from its mount point, and
+    // given whatever mount id the Vfs allocates -- which is exactly what every
+    // drive had before MOLE-430. Named here so the fallback cannot disappear in
+    // a rewrite without a test noticing.
+    const QString device = plugIn(QStringLiteral("sdb1"), {});
+    const SystemVolume plain = volume(QStringLiteral("/mnt/scratch"), device);
+    tableIs({ plain });
+    m_volumes->sync();
+
+    SystemVolume read = SystemVolumes::enumerate().first();
+    QVERIFY(read.uuid.isEmpty());
+    QCOMPARE(SystemVolumeMounts::identityOf(read), QStringLiteral("path:/mnt/scratch"));
+    QVERIFY(SystemVolumeMounts::mountIdOf(read).isEmpty());
+    const QString id = m_volumes->mountIdFor(QStringLiteral("/mnt/scratch"));
+    QVERIFY(!id.isEmpty());
+    QVERIFY(!id.startsWith(QStringLiteral("volume:")));
+    QCOMPARE(m_vfs->mount(id).displayName, QStringLiteral("scratch"));
 }
 
 MOLE_TEST_MAIN(TestSystemVolumeMounts)

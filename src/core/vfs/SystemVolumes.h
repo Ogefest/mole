@@ -16,6 +16,12 @@ struct SystemVolume
     QString rootPath; ///< native mount point
     QString device; ///< e.g. /dev/sda2
     QString fileSystemType;
+    /// What the disk is rather than where it is: the filesystem's UUID, empty
+    /// where there is none to be had. See DiskIdentity and MOLE-430.
+    QString uuid;
+    /// The label written on the disk, empty where it carries none. When there
+    /// is one it is also `name`.
+    QString label;
     qint64 totalBytes = 0;
     qint64 freeBytes = 0;
     bool isReadOnly = false;
@@ -55,6 +61,10 @@ public:
     /// would not on the machine. Pass nullptr to go back to the real one.
     using Enumerator = std::function<QList<SystemVolume>()>;
     static void setEnumerator(Enumerator enumerator);
+    /// Where the links from a disk's UUID and label to its device are found:
+    /// /dev/disk unless a test points it at a tree of its own. An empty string
+    /// goes back to /dev/disk. See diskIdentityOf().
+    static void setDiskDirectory(const QString& directory);
 
     /// Reads a mount table -- the text of /proc/self/mounts -- into volumes,
     /// unfiltered.
