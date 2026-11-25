@@ -3,6 +3,7 @@
 #include "ui/TimeWords.h"
 
 #include "core/events/EventBus.h"
+#include "core/text/DateWords.h"
 #include "core/text/SizeWords.h"
 
 #include <QLocale>
@@ -108,7 +109,7 @@ QVariantList ReportsController::folders() const
             { QStringLiteral("label"), folder.label },
             { QStringLiteral("runCount"), folder.runs.size() },
             { QStringLiteral("latestText"), ageInWords(latest.createdAt) },
-            { QStringLiteral("latestAt"), latest.createdAt.toString(QStringLiteral("yyyy-MM-dd HH:mm")) },
+            { QStringLiteral("latestAt"), dateTimeInWords(latest.createdAt) },
             { QStringLiteral("sizeText"), sizeInWords(latest.totalBytes) },
             { QStringLiteral("fileCountText"), locale.toString(latest.fileCount) },
             // The number as well as the formatted text: a view that wants "3
@@ -118,7 +119,7 @@ QVariantList ReportsController::folders() const
             { QStringLiteral("spanText"),
                 folder.runs.size() < 2 ? QStringLiteral("one run")
                                        : QStringLiteral("history back to %1")
-                                             .arg(oldest.createdAt.toString(QStringLiteral("yyyy-MM-dd"))) },
+                                             .arg(dateInWords(oldest.createdAt.toLocalTime().date())) },
             { QStringLiteral("selected"), folder.rootUri == m_selectedRoot },
         });
     }
@@ -156,7 +157,7 @@ QVariantList ReportsController::runs() const
             rows.append(QVariantMap {
                 { QStringLiteral("id"), run.id },
                 { QStringLiteral("rootUri"), run.rootUri },
-                { QStringLiteral("takenAt"), run.createdAt.toString(QStringLiteral("yyyy-MM-dd HH:mm")) },
+                { QStringLiteral("takenAt"), dateTimeInWords(run.createdAt) },
                 { QStringLiteral("whenText"), ageInWords(run.createdAt) },
                 { QStringLiteral("sizeText"), sizeInWords(run.totalBytes) },
                 { QStringLiteral("fileCountText"), locale.toString(run.fileCount) },

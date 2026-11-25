@@ -148,7 +148,7 @@ Rectangle {
             required property string iconText
             /// 0 seen now, 1 from a previous scan. See FileListModel::Provenance.
             required property int provenance
-            required property var indexedAt
+            required property string indexedAtText
             required property string matchLine
             required property int matchLineNumber
             required property string containerName
@@ -197,8 +197,8 @@ Rectangle {
                     color: App.colour.textMuted
                     font.pixelSize: App.smallTextSize
                     ToolTip.visible: hovered.hovered
-                    ToolTip.text: indexedAt && !isNaN(indexedAt.getTime())
-                                  ? "From the index, scanned " + indexedAt.toLocaleString(Qt.locale())
+                    ToolTip.text: indexedAtText !== ""
+                                  ? "From the index, scanned " + indexedAtText
                                   : "From the index"
                     HoverHandler { id: hovered }
                 }

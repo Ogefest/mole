@@ -11,6 +11,7 @@
 #include "core/index/IndexSummary.h"
 #include "core/index/ScanTask.h"
 #include "core/tasks/TaskManager.h"
+#include "core/text/DateWords.h"
 #include "core/vfs/VfsManager.h"
 
 #include <QLocale>
@@ -303,9 +304,7 @@ QVariantList IndexesController::volumes() const
             { QStringLiteral("scannedText"),
                 volume.lastScan.isValid() ? QStringLiteral("scanned %1").arg(ageInWords(volume.lastScan))
                                           : QStringLiteral("never finished a scan") },
-            { QStringLiteral("scannedAt"),
-                volume.lastScan.isValid() ? volume.lastScan.toString(QStringLiteral("yyyy-MM-dd HH:mm"))
-                                          : QString() },
+            { QStringLiteral("scannedAt"), dateTimeInWords(volume.lastScan) },
             { QStringLiteral("entryCount"), QVariant::fromValue(volume.fileCount) },
             { QStringLiteral("entryCountText"), locale.toString(volume.fileCount) },
             // The figure too, for a view that has to pick between "entry" and

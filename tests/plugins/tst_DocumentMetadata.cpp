@@ -89,6 +89,7 @@ class TestDocumentMetadata : public QObject
     Q_OBJECT
 
 private slots:
+    void initTestCase();
     void anOfficeDocumentNamesItsAuthorAndCounts();
     void anOpenDocumentNamesTheOdfEquivalents();
     void aPlainZipContributesNothing();
@@ -99,6 +100,15 @@ private slots:
     void aPdfThatCannotBeReadSaysSoOnOneRow();
     void aLargeRemotePdfIsNotFetchedForTheDrawer();
 };
+
+void TestDocumentMetadata::initTestCase()
+{
+    // The locale is the test's, not the machine's: under en_US the short date
+    // format has a two-digit year, which is how a date assertion once passed in
+    // CI and failed on a workstation. Every date here must read the same anyway.
+    // See MOLE-467.
+    QLocale::setDefault(QLocale(QStringLiteral("en_US")));
+}
 
 void TestDocumentMetadata::anOfficeDocumentNamesItsAuthorAndCounts()
 {
@@ -122,12 +132,15 @@ void TestDocumentMetadata::anOfficeDocumentNamesItsAuthorAndCounts()
     QCOMPARE(factNamed(facts, QStringLiteral("Words")), QStringLiteral("3400"));
     QCOMPARE(factNamed(facts, QStringLiteral("Pages")), QStringLiteral("12"));
 
-    // A date is said the way a reader says one, not as the document stores it.
-    // Compared with the locale's own short form of the fixture's date rather than
-    // searched for "2026": the short form has a two-digit year in en_US, so the
-    // search passed in CI's C locale and failed on a workstation. See MOLE-463.
+    // A date is said the way a reader says one, not as the document stores it:
+    // year-month-day on a 24-hour clock, under the American locale (set in
+    // initTestCase()) that once made it "3/14/26 9:31 AM". The document wrote it
+    // in UTC, so it is shown on the reader's clock; the zone is the machine's,
+    // which is why the expected text is that moment in local time rather than a
+    // literal. See MOLE-467.
     const QDateTime created(QDate(2026, 3, 14), QTime(9, 31), QTimeZone::utc());
-    QCOMPARE(factNamed(facts, QStringLiteral("Created")), QLocale().toString(created, QLocale::ShortFormat));
+    QCOMPARE(factNamed(facts, QStringLiteral("Created")),
+        created.toLocalTime().toString(QStringLiteral("yyyy-MM-dd HH:mm")));
     QVERIFY(!factNamed(facts, QStringLiteral("Created")).contains(QLatin1Char('T')));
     QVERIFY(!factNamed(facts, QStringLiteral("Modified")).isEmpty());
 }
@@ -149,9 +162,9 @@ void TestDocumentMetadata::anOpenDocumentNamesTheOdfEquivalents()
     QCOMPARE(factNamed(facts, QStringLiteral("Application")), QStringLiteral("LibreOffice/24.2"));
     QCOMPARE(factNamed(facts, QStringLiteral("Pages")), QStringLiteral("4"));
     QCOMPARE(factNamed(facts, QStringLiteral("Words")), QStringLiteral("812"));
-    // A date with no zone is the reader's local time, and said in the reader's locale.
-    const QDateTime created(QDate(2026, 1, 8), QTime(11, 0));
-    QCOMPARE(factNamed(facts, QStringLiteral("Created")), QLocale().toString(created, QLocale::ShortFormat));
+    // A date with no zone is the reader's local time, and reads the same in
+    // every locale. See MOLE-467.
+    QCOMPARE(factNamed(facts, QStringLiteral("Created")), QStringLiteral("2026-01-08 11:00"));
 }
 
 void TestDocumentMetadata::aPlainZipContributesNothing()

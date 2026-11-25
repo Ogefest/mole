@@ -194,6 +194,8 @@ add_library(mole_core STATIC
     vfs/PathWords.cpp
     text/SizeWords.h
     text/SizeWords.cpp
+    text/DateWords.h
+    text/DateWords.cpp
     text/DelimitedStore.h
     text/DelimitedStore.cpp
     text/ImportDelimitedTask.h

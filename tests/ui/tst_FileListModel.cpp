@@ -5,6 +5,7 @@
 #include "core/vfs/backends/MemoryFileSystem.h"
 
 #include <QAbstractItemModelTester>
+#include <QLocale>
 #include <QScopeGuard>
 #include <QSignalSpy>
 
@@ -87,6 +88,7 @@ private slots:
     void streamingInsertsRowsInsteadOfResetting();
     void clearEmptiesTheModel();
     void exposesRolesQmlNeeds();
+    void theModifiedColumnReadsYearMonthDayInEveryLocale();
     void uriAndKindLookupsAreBoundsChecked();
     void totalSizeIgnoresDirectories();
     void formatsSizes_data();
@@ -362,6 +364,23 @@ void TestFileListModel::exposesRolesQmlNeeds()
     QCOMPARE(index.data(FileListModel::SuffixRole).toString(), QStringLiteral("pdf"));
     QCOMPARE(index.data(FileListModel::SizeTextRole).toString(), QStringLiteral("2.00 KiB"));
     QVERIFY(!index.data(FileListModel::IconTextRole).toString().isEmpty());
+}
+
+/// The listing's date column, which is the date seen most. Under en_US it was
+/// "3/14/26 9:31 AM": a two-digit year, and a day and a month that trade places
+/// between readers. See MOLE-467 and ADR-0107.
+void TestFileListModel::theModifiedColumnReadsYearMonthDayInEveryLocale()
+{
+    FileListModel model;
+    model.setEntries(
+        { makeEntry(QStringLiteral("old.txt"), false, 1, QDateTime(QDate(1926, 3, 4), QTime(21, 5))) });
+
+    const auto restore = qScopeGuard([] { QLocale::setDefault(QLocale::c()); });
+    for (const char* name : { "en_US", "de_DE", "C" }) {
+        QLocale::setDefault(QLocale(QLatin1String(name)));
+        QCOMPARE(model.index(0, 0).data(FileListModel::ModifiedTextRole).toString(),
+            QStringLiteral("1926-03-04 21:05"));
+    }
 }
 
 void TestFileListModel::uriAndKindLookupsAreBoundsChecked()

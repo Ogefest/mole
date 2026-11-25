@@ -65,6 +65,8 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+2026-11-25 #MOLE-467 Dates are shown as year-month-day, such as 2026-03-14 09:31, in every locale, so a year is never two digits and a day is never mistaken for a month.
+
 ## 0.1.5 — released 2026-11-25
 
 2026-11-16 #MOLE-459 On Ubuntu 26.04 the .deb opens Parquet files as a grid, installing Arrow from the distribution on its own.

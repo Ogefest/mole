@@ -2,6 +2,7 @@
 
 #include "ui/ThumbnailSource.h"
 
+#include "core/text/DateWords.h"
 #include "core/text/SizeWords.h"
 #include "core/vcs/Repository.h"
 #include "core/vfs/PathWords.h"
@@ -332,8 +333,8 @@ void FileListModel::markFromIndex(const QStringList& uris, const QDateTime& scan
     }
 
     if (any && !m_visible.isEmpty()) {
-        emit dataChanged(
-            index(0, 0), index(static_cast<int>(m_visible.size()) - 1, 0), { ProvenanceRole, IndexedAtRole });
+        emit dataChanged(index(0, 0), index(static_cast<int>(m_visible.size()) - 1, 0),
+            { ProvenanceRole, IndexedAtRole, IndexedAtTextRole });
     }
 }
 
@@ -488,6 +489,8 @@ QVariant FileListModel::data(const QModelIndex& index, int role) const
         return m_indexed.contains(entry.uri.toString()) ? FromIndex : SeenNow;
     case IndexedAtRole:
         return m_indexed.value(entry.uri.toString()).scannedAt;
+    case IndexedAtTextRole:
+        return dateTimeInWords(m_indexed.value(entry.uri.toString()).scannedAt);
     case MatchLineRole:
         return m_matches.value(entry.uri.toString()).line;
     case MatchLineNumberRole:
@@ -526,8 +529,7 @@ QVariant FileListModel::data(const QModelIndex& index, int role) const
     case ModifiedRole:
         return entry.modified;
     case ModifiedTextRole:
-        return entry.modified.isValid() ? QLocale().toString(entry.modified, QLocale::ShortFormat)
-                                        : QString();
+        return dateTimeInWords(entry.modified);
     case SuffixRole:
         return entry.uri.suffix();
     case IconTextRole:
@@ -578,6 +580,7 @@ QHash<int, QByteArray> FileListModel::roleNames() const
         { HasDriveActionRole, "hasDriveAction" },
         { ProvenanceRole, "provenance" },
         { IndexedAtRole, "indexedAt" },
+        { IndexedAtTextRole, "indexedAtText" },
         { MatchLineRole, "matchLine" },
         { MatchLineNumberRole, "matchLineNumber" },
         { MatchColumnRole, "matchColumn" },

@@ -3,6 +3,7 @@
 #include "ui/TimeWords.h"
 
 #include "core/automation/ScheduleStore.h"
+#include "core/text/DateWords.h"
 
 namespace mole {
 namespace {
@@ -135,7 +136,7 @@ QVariantList AutomationController::history() const
                 record.status == RunStatus::Failed || record.status == RunStatus::Skipped },
             { QStringLiteral("message"), record.message },
             { QStringLiteral("whenText"), timeInWords(record.startedAt, now) },
-            { QStringLiteral("startedAt"), record.startedAt.toString(QStringLiteral("yyyy-MM-dd HH:mm")) },
+            { QStringLiteral("startedAt"), dateTimeInWords(record.startedAt) },
             { QStringLiteral("durationText"),
                 record.durationMs() < 1000 ? QStringLiteral("%1 ms").arg(record.durationMs())
                                            : QStringLiteral("%1 s").arg(record.durationMs() / 1000) },

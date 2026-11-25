@@ -1,5 +1,6 @@
 #include "ui/models/DuplicateGroupModel.h"
 
+#include "core/text/DateWords.h"
 #include "core/text/SizeWords.h"
 
 namespace mole {
@@ -47,8 +48,7 @@ QVariant DuplicateGroupModel::data(const QModelIndex& index, int role) const
             files.append(QVariantMap { { QStringLiteral("uri"), uri }, { QStringLiteral("name"), entry.name },
                 { QStringLiteral("location"), entry.uri.parent().toString() },
                 { QStringLiteral("sizeText"), sizeInWords(entry.size) },
-                { QStringLiteral("modifiedText"),
-                    entry.modified.toString(QStringLiteral("yyyy-MM-dd HH:mm")) },
+                { QStringLiteral("modifiedText"), dateTimeInWords(entry.modified) },
                 { QStringLiteral("selected"), m_selected.contains(uri) } });
         }
         return files;

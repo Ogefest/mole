@@ -3,6 +3,7 @@
 #include "plugins/builtin/ImageFormats.h"
 #include "plugins/builtin/previews/PreviewProviders.h"
 
+#include "core/text/DateWords.h"
 #include "core/vfs/VfsManager.h"
 
 #include <QBuffer>
@@ -263,7 +264,7 @@ namespace {
     QString dateText(const QString& exifDate)
     {
         const QDateTime when = QDateTime::fromString(exifDate, QStringLiteral("yyyy:MM:dd HH:mm:ss"));
-        return when.isValid() ? QLocale().toString(when, QLocale::ShortFormat) : exifDate;
+        return when.isValid() ? dateTimeInWords(when) : exifDate;
     }
 
     /// Degrees, minutes and seconds as one number, signed by the reference.

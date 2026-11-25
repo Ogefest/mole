@@ -1,5 +1,6 @@
 #include "plugins/builtin/previews/DocumentMetadata.h"
 
+#include "core/text/DateWords.h"
 #include "core/text/SizeWords.h"
 #include "core/vfs/VfsManager.h"
 
@@ -44,7 +45,7 @@ namespace {
         QDateTime when = QDateTime::fromString(raw, Qt::ISODate);
         if (!when.isValid())
             when = QDateTime::fromString(raw, Qt::ISODateWithMs);
-        return when.isValid() ? QLocale().toString(when, QLocale::ShortFormat) : raw;
+        return when.isValid() ? dateTimeInWords(when) : raw;
     }
 
     bool isDateLabel(const QString& label)

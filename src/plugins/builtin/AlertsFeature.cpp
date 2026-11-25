@@ -5,6 +5,7 @@
 #include "core/alerts/CheckAlertsTask.h"
 #include "core/analysis/AnalysisStore.h"
 #include "core/tasks/TaskManager.h"
+#include "core/text/DateWords.h"
 #include "core/vfs/VfsManager.h"
 
 #include <QLocale>
@@ -213,7 +214,7 @@ QVariantList AlertsController::history() const
             { QStringLiteral("value"), event.value },
             { QStringLiteral("message"), event.message },
             { QStringLiteral("whenText"), timeInWords(event.at, now) },
-            { QStringLiteral("at"), event.at.toString(QStringLiteral("yyyy-MM-dd HH:mm")) },
+            { QStringLiteral("at"), dateTimeInWords(event.at) },
         });
     }
     return out;

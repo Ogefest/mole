@@ -59,6 +59,7 @@ class TestImageMetadata : public QObject
     Q_OBJECT
 
 private slots:
+    void initTestCase();
     void readsEveryTagACameraWrote_data();
     void readsEveryTagACameraWrote();
     void anOffsetPastTheEndCostsThatTagAndNothingElse();
@@ -69,6 +70,15 @@ private slots:
     void pngAndFriendsReportDimensionsAndDepth();
     void aHeaderIsEnoughHoweverLargeTheFile();
 };
+
+void TestImageMetadata::initTestCase()
+{
+    // The locale is the test's, not the machine's: under en_US the short date
+    // format has a two-digit year, which is how a date assertion once passed in
+    // CI and failed on a workstation. Every date here must read the same anyway.
+    // See MOLE-467.
+    QLocale::setDefault(QLocale(QStringLiteral("en_US")));
+}
 
 void TestImageMetadata::readsEveryTagACameraWrote_data()
 {
@@ -100,11 +110,9 @@ void TestImageMetadata::readsEveryTagACameraWrote()
     QCOMPARE(factNamed(facts, QStringLiteral("Flash")), QStringLiteral("fired"));
     QCOMPARE(factNamed(facts, QStringLiteral("Orientation")), QStringLiteral("rotated 90° clockwise"));
     QCOMPARE(factNamed(facts, QStringLiteral("Software")), QStringLiteral("Mole 1.0"));
-    // Said in the reader's locale, so compared with that locale's short form of the
-    // date the fixture wrote rather than searched for "2026": in en_US the short
-    // form has a two-digit year. See MOLE-463.
-    const QDateTime taken(QDate(2026, 3, 14), QTime(9, 31, 7));
-    QCOMPARE(factNamed(facts, QStringLiteral("Taken")), QLocale().toString(taken, QLocale::ShortFormat));
+    // Year-month-day in every locale, including the American one whose short
+    // form used to make this "3/14/26 9:31 AM". See MOLE-467.
+    QCOMPARE(factNamed(facts, QStringLiteral("Taken")), QStringLiteral("2026-03-14 09:31"));
 
     // Numbers, and nothing looked up: a preview must put nothing on the network.
     QCOMPARE(factNamed(facts, QStringLiteral("Position")), QStringLiteral("52.22969, 21.01219"));

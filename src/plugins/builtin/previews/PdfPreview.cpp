@@ -6,6 +6,7 @@
 
 #include "core/platform/Staging.h"
 #include "core/tasks/TaskManager.h"
+#include "core/text/DateWords.h"
 #include "core/vfs/VfsManager.h"
 
 #include <QDir>
@@ -388,7 +389,7 @@ namespace {
             if (value.typeId() == QMetaType::QDateTime) {
                 const QDateTime when = value.toDateTime();
                 if (when.isValid())
-                    facts.append({ label, QLocale().toString(when, QLocale::ShortFormat) });
+                    facts.append({ label, dateTimeInWords(when) });
                 return;
             }
             const QString text = value.toString().trimmed();

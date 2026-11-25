@@ -7,11 +7,11 @@
 #include "core/automation/Scheduler.h"
 #include "core/events/EventBus.h"
 #include "core/tasks/TaskManager.h"
+#include "core/text/DateWords.h"
 #include "core/text/SizeWords.h"
 #include "core/vfs/VfsManager.h"
 
 #include <QCryptographicHash>
-#include <QLocale>
 
 namespace mole {
 namespace {
@@ -256,9 +256,7 @@ QVariantMap AnalysisTarget::headline() const
         { QStringLiteral("depth"), m_report.maxDepth },
         { QStringLiteral("unreadable"), m_report.unreadableFolders },
         { QStringLiteral("partial"), m_report.partial },
-        { QStringLiteral("takenAt"),
-            m_report.createdAt.isValid() ? QLocale().toString(m_report.createdAt, QLocale::ShortFormat)
-                                         : QString() },
+        { QStringLiteral("takenAt"), dateTimeInWords(m_report.createdAt) },
     };
 }
 
@@ -286,9 +284,7 @@ QVariantList AnalysisTarget::largestFiles() const
     for (const FileStat& file : m_report.largestFiles) {
         out.append(QVariantMap { { QStringLiteral("name"), file.name }, { QStringLiteral("uri"), file.uri },
             { QStringLiteral("sizeText"), sizeInWords(file.bytes) },
-            { QStringLiteral("modifiedText"),
-                file.modified.isValid() ? QLocale().toString(file.modified, QLocale::ShortFormat)
-                                        : QString() } });
+            { QStringLiteral("modifiedText"), dateTimeInWords(file.modified) } });
     }
     return out;
 }
@@ -325,7 +321,7 @@ QVariantList AnalysisTarget::history() const
 
     for (const ReportSummary& summary : m_store->history(m_rootUri)) {
         out.append(QVariantMap { { QStringLiteral("id"), summary.id },
-            { QStringLiteral("takenAt"), QLocale().toString(summary.createdAt, QLocale::ShortFormat) },
+            { QStringLiteral("takenAt"), dateTimeInWords(summary.createdAt) },
             { QStringLiteral("files"), summary.fileCount },
             { QStringLiteral("sizeText"), sizeInWords(summary.totalBytes) },
             { QStringLiteral("current"), summary.id == m_report.id } });
@@ -346,7 +342,7 @@ QVariantMap AnalysisTarget::diffHeadline() const
     };
 
     return {
-        { QStringLiteral("since"), QLocale().toString(m_diff.beforeAt, QLocale::ShortFormat) },
+        { QStringLiteral("since"), dateTimeInWords(m_diff.beforeAt) },
         { QStringLiteral("filesDelta"), m_diff.fileCountDelta() },
         { QStringLiteral("foldersDelta"), m_diff.folderCountDelta() },
         { QStringLiteral("bytesDelta"), m_diff.totalBytesDelta() },

@@ -2,6 +2,7 @@
 
 #include "core/data/FileType.h"
 #include "core/diagnostics/Diagnostics.h"
+#include "core/text/DateWords.h"
 #include "core/text/SizeWords.h"
 
 #include <QLocale>
@@ -32,7 +33,7 @@ QList<FileFact> GenericMetadataReader::read(const FileEntry& entry, QByteArrayVi
     facts.append({ QStringLiteral("Size"),
         QStringLiteral("%1 (%2 bytes)").arg(sizeInWords(entry.size)).arg(locale.toString(entry.size)) });
     if (entry.modified.isValid())
-        facts.append({ QStringLiteral("Modified"), locale.toString(entry.modified, QLocale::LongFormat) });
+        facts.append({ QStringLiteral("Modified"), dateTimeInWords(entry.modified) });
     facts.append({ QStringLiteral("Location"), entry.uri.parent().toString() });
     facts.append({ QStringLiteral("Full path"), entry.uri.toString() });
     facts.append(

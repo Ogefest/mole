@@ -47,6 +47,9 @@ public:
         ProvenanceRole,
         /// When that scan ran. Invalid for a row seen now.
         IndexedAtRole,
+        /// The same, as a person reads it: "2026-03-14 09:31". Empty for a row
+        /// seen now. Here rather than formatted in QML, so there is one formatter.
+        IndexedAtTextRole,
         /// The line a content search matched, trimmed; empty when the search
         /// asked nothing about what is inside the file.
         MatchLineRole,

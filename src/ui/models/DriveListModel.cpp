@@ -3,6 +3,7 @@
 #include "core/settings/Preferences.h"
 #include "core/tasks/QuerySpaceTask.h"
 #include "core/tasks/TaskManager.h"
+#include "core/text/DateWords.h"
 #include "core/text/SizeWords.h"
 #include "core/vfs/SystemVolumes.h"
 
@@ -560,7 +561,7 @@ QVariant DriveListModel::data(const QModelIndex& index, int role) const
         if (!row.isConfigured())
             return QString();
         const QDateTime at = m_reach.value(row.drive.id).at;
-        return at.isValid() ? QLocale().toString(at.time(), QLocale::ShortFormat) : QString();
+        return at.isValid() ? clockInWords(at.toLocalTime().time()) : QString();
     }
     case ShownRole:
         return isShown(row);
