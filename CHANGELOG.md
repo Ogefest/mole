@@ -65,6 +65,8 @@ to publish something that nothing gated.
 two expressions out of the block above rather than keeping a copy of its own — so
 the file and the thing that checks it cannot come apart.
 
+## 0.1.5 — released 2026-11-25
+
 2026-11-16 #MOLE-459 On Ubuntu 26.04 the .deb opens Parquet files as a grid, installing Arrow from the distribution on its own.
 2026-11-16 #MOLE-458 The .deb installs on Debian 13 and Ubuntu 26.04 as well as Ubuntu 24.04, and every release is checked on all three.
 2026-11-15 #MOLE-453 A column in a table preview can be made wider or narrower by dragging the edge of its header, and a double-click on the edge puts it back
